@@ -139,7 +139,10 @@ func (learner *Learner) Step(envelope *types.Envelope) *types.Envelope {
 
 		learner.At = impulse.At
 		trader := learner.Traders[0]
-		trader.At, trader.Version = impulse.At, trader.Version+1
+		// Resident wallet valuation follows this serialized live clock.
+		// Signal timestamps can regress across symbols or envelopes; they
+		// remain on the impulse for precursor context and decision identity.
+		trader.At, trader.Version = time.Now(), trader.Version+1
 		learner.Agent.Step(impulse)
 
 		if err := learner.Agent.Error(); err != nil {

@@ -21,6 +21,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests/market"
 	"github.com/theapemachine/symm/tests/venue"
@@ -108,10 +109,71 @@ func learningFixture(t testing.TB) (*Learner, *venue.Conn) {
 			t.Error(err)
 		}
 	})
+	// Lifecycle fixtures use four calibration bins so their short tapes can
+	// cover formation and post-formation behavior in the same test.
+	learner.Grid.Space = grid.NewSpaceWithWindow(4)
+
+	for _, cursor := range learner.Rehearsal.cursors {
+		cursor.space = grid.NewSpaceWithWindow(4)
+	}
 	return learner, conn
 }
 
 func TestLearnerStep(t *testing.T) {
+	Convey("Wallet valuations advance while source timestamps arrive out of order", t, func() {
+		learner, conn := learningFixture(t)
+		start := time.Now().Add(-time.Hour)
+		bookTape := market.NewLevel3Tape("BTC/USD", start)
+
+		for _, message := range bookTape.Messages {
+			conn.ApplyLevel3(message)
+		}
+		learner.Agent.Model.Observe(
+			agent.ContextKey("BTC/USD", []uint64{FlatPositionContext}),
+			[]byte(fmt.Sprint(Action{Kind: "wait"})),
+		)
+		tape := market.NewOpportunityTape("BTC/USD", start, 6)
+		var measured uint64
+
+		for _, event := range tape.Steps {
+			measurement := data.NewMeasurement[float64](
+				"sequence", "BTC/USD", "context", event.EventTime, start,
+			)
+			measurement.Maturity = 1
+			measurement.PutMetric(data.Metric[float64]{Label: "development", Raw: event.Context})
+			measurement.PutMetric(data.Metric[float64]{Label: "flow", Raw: -event.Context})
+			measurement.SNR, measurement.SNRDefined = 100, true
+			envelope := learner.Grid.Step(&types.Envelope{CVD: measurement})
+			So(learner.Grid.Error(), ShouldBeNil)
+
+			if !envelope.Impulses[0].Ready || len(envelope.Impulses[0].Regions) == 0 {
+				continue
+			}
+			// Reproduce the reported regression inside a single envelope, then
+			// an equal source instant. Neither changes live valuation order.
+			older := envelope.Impulses[0]
+			older.At = older.At.Add(-1339250 * time.Nanosecond)
+			envelope.Impulses = append(envelope.Impulses, older, older)
+			previous := learner.Agent.Reward
+			before := time.Now()
+			learner.Step(envelope)
+			after := time.Now()
+			So(learner.Error(), ShouldBeNil)
+			measured += uint64(len(envelope.Impulses))
+			outcome := learner.Agent.Reward
+			So(outcome.Through.Version, ShouldEqual, measured)
+			So(outcome.Transitions, ShouldEqual, measured-1)
+			So(outcome.Through.At.Before(before), ShouldBeFalse)
+			So(outcome.Through.At.After(after), ShouldBeFalse)
+			So(outcome.TotalElapsed >= previous.TotalElapsed, ShouldBeTrue)
+			So(outcome.TotalReward, ShouldEqual, 0)
+			So(learner.At.Equal(older.At), ShouldBeTrue)
+			So(learner.Agent.Last.At.Equal(older.At), ShouldBeTrue)
+			So(envelope.Impulses[0].At.Equal(event.EventTime), ShouldBeTrue)
+		}
+		So(measured, ShouldBeGreaterThan, 3)
+	})
+
 	Convey("A grid activation is independent of the envelope transport", t, func() {
 		learner, conn := learningFixture(t)
 		bookTape := market.NewLevel3Tape("BTC/USD", time.Now())
@@ -174,6 +236,10 @@ func BenchmarkLearnerStep(b *testing.B) {
 		if err := learner.Error(); err != nil {
 			b.Fatal(err)
 		}
+	}
+
+	if learner.Steps == 0 {
+		b.Fatal("benchmark did not exercise a live wallet valuation")
 	}
 }
 

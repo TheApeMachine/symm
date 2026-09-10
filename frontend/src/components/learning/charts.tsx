@@ -3,7 +3,7 @@ import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import type { LearningMarkT } from "#/providers/telemetry/telemetry/learning-mark";
 import type { LearningTrackT } from "#/providers/telemetry/telemetry/learning-track";
-import { action, amount, basis, clock, duration, percent } from "./format";
+import { amount, basis, clock, duration, percent } from "./format";
 import type {
 	Influence,
 	LearningEvent,
@@ -522,7 +522,9 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 			return;
 		}
 		if (latest && trained < latest.trained) samples.length = 0;
-		samples.push({ at: Date.parse(view.at), trained });
+		// This rate measures counts observed by this mounted dashboard. Producer
+		// timestamps may be uninitialized or regress across market sources.
+		samples.push({ at: performance.now(), trained });
 
 		if (samples.length > 600) {
 			samples.splice(0, samples.length - 600);
@@ -950,10 +952,24 @@ export const RehearsalTracks = ({
 				<WorkerTrack key={track.id} track={track} />
 			))}
 			<Typography.Mono tone="f3">
-				Each lane is one worker on its own fragment and its own price range. A
-				hollow arrow is a decision the tape has not answered yet; a filled one
-				carries the direction of its outcome.
+				The tape runs past a fixed head. B is the observation the move ignited
+				at and C the one it ended at; the span between them is the move, shaded
+				by what the record says it did. An arrow is a call the worker made,
+				coloured by how well it named the moment it reached for.
 			</Typography.Mono>
+			<Flex className="flex-wrap gap-x-4 gap-y-1">
+				{opportunityLegend.map((entry) => (
+					<Flex.Row key={entry.label} align="center" gap={1}>
+						<span
+							className="h-2 w-2 shrink-0 rounded-[2px] opacity-60"
+							style={{ background: entry.colour }}
+						/>
+						<Typography.Mono size="s" tone="f4">
+							{entry.label}
+						</Typography.Mono>
+					</Flex.Row>
+				))}
+			</Flex>
 		</Flex.Column>
 	);
 };
@@ -967,20 +983,36 @@ const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
 	// An unchanged price is a real reading, not an absent one: it sits on the
 	// centre of its own lane instead of being scaled by a zero range.
 	const height = (value: number) => (span > 0 ? (value - lowest) / span : 0.5);
-	const width = 1000;
 	const tall = 40;
+
+	/*
+	The tape moves and the playhead stays still, the way a tape actually runs
+	past a head. The lane shows a window of observations rather than the whole
+	fragment squeezed into its width, so a step is the same distance in every
+	lane and nothing jumps when a worker mounts its next tape.
+
+	The window comes from how the fragment was cut: a tape is one lead-in leg,
+	the move, and one tail leg, so a third of it is one leg — the amount of
+	tape a moment is worth looking at either side of.
+	*/
+	const window = Math.max(Math.round(track.length / 3), 2);
+	const playhead = 0.72;
+	const from = track.index - window * playhead;
+
+	/* at places an observation across the lane, rounded so the DOM stays stable. */
+	const at = (observation: number) =>
+		`${(((observation - from) / window) * 100).toFixed(2)}%`;
 	const path = track.steps
 		.map((step, index) => {
 			if (!step.defined) return "";
-			const x = (index / Math.max(track.steps.length - 1, 1)) * width;
+			const x = index * track.stride;
 			const y = tall - height(step.value) * (tall - 6) - 3;
 			const previous = track.steps[index - 1];
 
-			return `${index === 0 || !previous?.defined ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+			return `${index === 0 || !previous?.defined ? "M" : "L"} ${x} ${y.toFixed(1)}`;
 		})
 		.filter(Boolean)
 		.join(" ");
-	const played = share(track.index, track.length);
 
 	return (
 		<Flex.Row align="center" gap={2}>
@@ -1002,7 +1034,7 @@ const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
 					<>
 						{steps.length > 1 && (
 							<svg
-								viewBox={`0 0 ${width} ${tall}`}
+								viewBox={`${from} 0 ${window} ${tall}`}
 								className="absolute inset-0 h-full w-full select-none"
 								preserveAspectRatio="none"
 								role="img"
@@ -1014,12 +1046,39 @@ const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
 									fill="none"
 									stroke="var(--f3)"
 									strokeWidth="1.5"
+									vectorEffect="non-scaling-stroke"
 								/>
 							</svg>
 						)}
+						{/* The two moments this tape is asking the worker to recognise. */}
+						{track.entry >= 0 && track.exit > track.entry && (
+							<>
+								{/* The move itself, coloured by what the record says it did. */}
+								<div
+									className="absolute top-0 bottom-0 opacity-20"
+									style={{
+										left: at(track.entry),
+										width: `${(((track.exit - track.entry) / window) * 100).toFixed(2)}%`,
+										background: opportunityColour(
+											String(track.opportunity ?? ""),
+										),
+									}}
+								/>
+								<Moment
+									at={at(track.entry)}
+									letter="B"
+									label="Ignition: the observation the excursion started at"
+								/>
+								<Moment
+									at={at(track.exit)}
+									letter="C"
+									label="Extremum: the observation the excursion ended at"
+								/>
+							</>
+						)}
 						<div
 							className="absolute top-0 bottom-0 w-px bg-(--acc)"
-							style={{ left: `${played * 100}%` }}
+							style={{ left: `${(playhead * 100).toFixed(2)}%` }}
 							title={`Observation ${track.index} of ${track.length}`}
 						/>
 						{track.marks.map((mark) => (
@@ -1027,10 +1086,10 @@ const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
 								key={String(mark.id)}
 								className="-translate-x-1/2 -translate-y-1/2 absolute font-mono text-[11px] leading-none"
 								style={{
-									left: `${share(mark.index, Math.max(track.length - 1, 1)) * 100}%`,
+									left: at(mark.index),
 									// Arrows are inset inside the lane so a decision taken at
 									// the fragment's own extreme is not clipped by its border.
-									top: `${(1 - markHeight(track, mark, height)) * 76 + 12}%`,
+									top: `${((1 - markHeight(track, mark, height)) * 76 + 12).toFixed(2)}%`,
 									color: mark.graded
 										? mark.value >= 0
 											? "var(--up)"
@@ -1038,7 +1097,7 @@ const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
 										: "var(--f2)",
 									opacity: mark.graded ? 1 : 0.55,
 								}}
-								title={`${action(String(mark.kind), mark.power, mark.reduce)} at observation ${mark.index}${mark.graded ? ` · ${basis(mark.value)}` : " · not graded yet"}`}
+								title={`${String(mark.kind)} at observation ${mark.index}${mark.graded ? ` · ${String(mark.verdict ?? "")} · ${mark.value.toFixed(2)}` : " · not judged yet"}`}
 							>
 								{mark.reduce ? "▼" : "▲"}
 							</span>
@@ -1073,3 +1132,43 @@ const markHeight = (
 
 	return step?.defined ? height(step.value) : 0.5;
 };
+
+/* Moment marks one of the two observations a tape is asking a worker to name. */
+const Moment = ({
+	at,
+	letter,
+	label,
+}: {
+	at: string;
+	letter: string;
+	label: string;
+}) => (
+	<div
+		className="absolute top-0 bottom-0 w-px bg-(--f2)"
+		style={{ left: at }}
+		title={label}
+	>
+		<span className="-translate-x-1/2 absolute top-0 left-0 font-mono text-[9px] text-(--f2) leading-none">
+			{letter}
+		</span>
+	</div>
+);
+
+/*
+opportunityLegend names what the record says a tape did, in the same words and
+the same colours the episode pool is counted in beside these lanes. Colour here
+is description, not approval: it says what the coordinate did, never that the
+worker should have wanted it.
+*/
+const opportunityLegend = [
+	{ label: "rise clears costs", colour: "var(--up)" },
+	{ label: "rise eaten by costs", colour: "var(--warn)" },
+	{ label: "price falls", colour: "var(--down)" },
+	{ label: "exit liquidity unavailable", colour: "var(--warn)" },
+	{ label: "no price development", colour: "var(--f3)" },
+];
+
+/* opportunityColour leaves an unnamed tape neutral rather than guessing at it. */
+const opportunityColour = (opportunity: string) =>
+	opportunityLegend.find((entry) => entry.label === opportunity)?.colour ??
+	"var(--f3)";

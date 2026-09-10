@@ -3,6 +3,7 @@ package ui
 import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/catalog"
 )
 
 /*
@@ -31,6 +32,23 @@ default and its CORS policy admits loopback origins only; a deployment that
 moves it onto a network has to put its own authorization in front of it.
 */
 func (hub *Hub) registerWorkbench() {
+	/*
+		/workbench/primitives is the palette the pipeline editor draws from:
+		every nomagique primitive, what each is for, and which of its arguments
+		are streams to be wired rather than settings to be typed. It is derived
+		from nomagique's own declarations, so the editor can only offer what the
+		library actually has.
+	*/
+	hub.app.Get("/workbench/primitives", func(c fiber.Ctx) error {
+		primitives, err := catalog.Primitives()
+
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+
+		return c.JSON(primitives)
+	})
+
 	// /workbench/query evaluates one statement and returns its result as an
 	// Arrow IPC stream, empty for a statement that produces no rows. A
 	// malformed or unanswerable statement is the analyst's to see, so the

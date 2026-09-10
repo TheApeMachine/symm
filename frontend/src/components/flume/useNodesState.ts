@@ -1,6 +1,6 @@
-import { eq, useLiveQuery } from "@tanstack/react-db";
 import React from "react";
-import { researchGraphCollection } from "#/collections/research_graph";
+import { pipelineGraphCollection } from "#/collections/pipeline_graph";
+import { usePipelineGraphRow } from "#/collections/pipeline_graph_row";
 import {
 	buildInitialNodes,
 	type NodeActions,
@@ -15,10 +15,11 @@ import type {
 	PortTypeMap,
 } from "#/components/flume/types";
 import { useNodeActions } from "#/components/flume/useNodeActions";
+import { toastManager } from "#/components/ui/toast";
 
 /*
 useNodesState is the only sanctioned source of truth for Flume graph
-topology. It reads from and writes to researchGraphCollection through
+topology. It reads from and writes to pipelineGraphCollection through
 the NodeActions API — there is no React reducer in the loop. Subgraph
 editors get composite graphIds (e.g. "parent:nodeId") so they persist
 through the same collection.
@@ -36,7 +37,6 @@ export type UseNodesStateOptions = {
 export type UseNodesStateResult = {
 	nodes: NodeMap;
 	actions: NodeActions;
-	isLoading: boolean;
 	hasRow: boolean;
 	/**
 	 * Inserts an initial topology built from defaultNodes/defaultConnections.
@@ -54,19 +54,7 @@ export const useNodesState = (
 	const { graphId, projectId, nodeTypes, portTypes, context, getEnvironment } =
 		options;
 
-	const { data, isLoading } = useLiveQuery(
-		(query) =>
-			query
-				.from({ graph: researchGraphCollection })
-				.where(({ graph }) => eq(graph.id, graphId))
-				.select(({ graph }) => ({
-					id: graph.id,
-					nodes: graph.nodes,
-				})),
-		[graphId],
-	);
-
-	const row = data?.[0];
+	const row = usePipelineGraphRow(graphId);
 	const rawNodes = (row?.nodes as NodeMap | undefined) ?? {};
 
 	// Normalize on every read: persisted rows can drift from the current
@@ -85,7 +73,7 @@ export const useNodesState = (
 
 	const seed = React.useCallback<UseNodesStateResult["seed"]>(
 		({ defaultNodes, defaultConnections }) => {
-			const existing = researchGraphCollection.get(graphId);
+			const existing = pipelineGraphCollection.get(graphId);
 
 			if (existing) {
 				return;
@@ -99,7 +87,7 @@ export const useNodesState = (
 			});
 
 			try {
-				researchGraphCollection.insert({
+				pipelineGraphCollection.insert({
 					id: graphId,
 					project_id: projectId ?? null,
 					schema_version: 1,
@@ -108,8 +96,22 @@ export const useNodesState = (
 					viewport: { scale: 1, translate: { x: 0, y: 0 } },
 					updated_at: new Date(),
 				});
-			} catch {
-				// Lost the race; useLiveQuery will pick up the winner.
+			} catch (cause) {
+				/*
+					A concurrent editor inserting the same row first is the
+					expected loss here and needs no report — the live query
+					picks up the winner. Anything else is a real failure of
+					persistence, and swallowing it leaves an editor that
+					accepts every edit and keeps none.
+				*/
+				if (!pipelineGraphCollection.get(graphId)) {
+					toastManager.add({
+						title: "Pipeline not saved",
+						description: cause instanceof Error ? cause.message : String(cause),
+						type: "error",
+						timeout: 10_000,
+					});
+				}
 			}
 		},
 		[graphId, getEnvironment, projectId],
@@ -118,7 +120,6 @@ export const useNodesState = (
 	return {
 		nodes,
 		actions,
-		isLoading,
 		hasRow: row !== undefined,
 		seed,
 	};

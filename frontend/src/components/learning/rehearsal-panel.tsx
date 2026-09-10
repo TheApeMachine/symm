@@ -99,6 +99,24 @@ export const RehearsalPanel = ({ view }: { view: LearningView | null }) => {
 					<Typography.Mono>
 						{replay.workers} historical workers · the tape each is replaying
 					</Typography.Mono>
+					<Typography.Mono tone="f3">
+						{replay.runs} recorded runs read ·{" "}
+						{Number(replay.observations).toLocaleString()} of{" "}
+						{Number(replay.budget).toLocaleString()} captured observations
+						resident
+					</Typography.Mono>
+					<Typography.Mono tone="f3">
+						{String(replay.passes)} completed passes ·{" "}
+						{String(replay.decisions)} calls judged · {String(replay.warming)}{" "}
+						observations before a worker's grid formed regions ·{" "}
+						{String(replay.unsupported)} carrying no captured precursor
+					</Typography.Mono>
+					{replay.decisions > 0n && (
+						<Typography.Mono tone="f3">
+							Latest: {String(replay.lastSymbol)} · {String(replay.lastAction)}{" "}
+							· {replay.lastFailure}
+						</Typography.Mono>
+					)}
 					<RehearsalTracks tracks={replay.tracks} />
 				</Flex.Column>
 			</Flex>

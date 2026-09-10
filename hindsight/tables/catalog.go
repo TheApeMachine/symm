@@ -3,6 +3,7 @@ package tables
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
@@ -102,13 +103,27 @@ func Open(ctx context.Context) *Catalog {
 
 /*
 Ensure creates the Hindsight namespace and every table it owns if they are not
-already present, and is safe to call on every boot.
+already present, and applies the configured Iceberg commit retry budget.
 
 A concurrent creator racing to the same table is not an error: the loser sees
 ErrTableAlreadyExists and proceeds against what the winner created, since both
 would have written the identical schema.
 */
 func (c *Catalog) Ensure(ctx context.Context) error {
+	properties := iceberg.Properties{}
+
+	if viper.IsSet("storage.iceberg.commit_retries") {
+		retries, err := strconv.Atoi(viper.GetString("storage.iceberg.commit_retries"))
+
+		if err != nil || retries < 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[iceberg] commit_retries must be a nonnegative integer", err,
+			))
+		}
+
+		properties[table.CommitNumRetriesKey] = strconv.Itoa(retries)
+	}
+
 	namespace := table.Identifier{Namespace}
 
 	if err := c.catalog.CreateNamespace(ctx, namespace, nil); err != nil {
@@ -137,7 +152,7 @@ func (c *Catalog) Ensure(ctx context.Context) error {
 	}
 
 	for _, family := range families {
-		if err := c.ensureTable(ctx, family.name, family.schema, family.partitioning); err != nil {
+		if err := c.ensureTable(ctx, family.name, family.schema, family.partitioning, properties); err != nil {
 			return err
 		}
 	}
@@ -151,6 +166,7 @@ func (c *Catalog) ensureTable(
 	name string,
 	schema *iceberg.Schema,
 	partitioning iceberg.PartitionSpec,
+	properties iceberg.Properties,
 ) error {
 	identifier := table.Identifier{Namespace, name}
 	exists, err := c.catalog.CheckTableExists(ctx, identifier)
@@ -164,14 +180,15 @@ func (c *Catalog) ensureTable(
 	}
 
 	if exists {
-		return nil
+		return c.configure(ctx, name, properties)
 	}
 
 	if _, err := c.catalog.CreateTable(
-		ctx, identifier, schema, catalog.WithPartitionSpec(&partitioning),
+		ctx, identifier, schema,
+		catalog.WithPartitionSpec(&partitioning), catalog.WithProperties(properties),
 	); err != nil {
 		if errors.Is(err, catalog.ErrTableAlreadyExists) {
-			return nil
+			return c.configure(ctx, name, properties)
 		}
 
 		return errnie.Error(errnie.Err(
@@ -179,6 +196,35 @@ func (c *Catalog) ensureTable(
 			"[iceberg] failed to create table "+name,
 			err,
 		))
+	}
+
+	return nil
+}
+
+// configure updates existing tables only when their retry budget differs.
+func (c *Catalog) configure(ctx context.Context, name string, properties iceberg.Properties) error {
+	if len(properties) == 0 {
+		return nil
+	}
+
+	loaded, err := c.Load(ctx, name)
+
+	if err != nil {
+		return err
+	}
+
+	if loaded.Properties()[table.CommitNumRetriesKey] == properties[table.CommitNumRetriesKey] {
+		return nil
+	}
+
+	transaction := loaded.NewTransaction()
+
+	if err := transaction.SetProperties(properties); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "[iceberg] configure "+name, err))
+	}
+
+	if _, err := transaction.Commit(ctx); err != nil {
+		return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] configure "+name, err))
 	}
 
 	return nil

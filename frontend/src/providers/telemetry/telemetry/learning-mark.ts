@@ -62,8 +62,15 @@ graded():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
+verdict():string|null
+verdict(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+verdict(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
 static startLearningMark(builder:flatbuffers.Builder) {
-  builder.startObject(7);
+  builder.startObject(8);
 }
 
 static addId(builder:flatbuffers.Builder, id:bigint) {
@@ -94,12 +101,16 @@ static addGraded(builder:flatbuffers.Builder, graded:boolean) {
   builder.addFieldInt8(6, +graded, +false);
 }
 
+static addVerdict(builder:flatbuffers.Builder, verdictOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(7, verdictOffset, 0);
+}
+
 static endLearningMark(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningMark(builder:flatbuffers.Builder, id:bigint, index:number, kindOffset:flatbuffers.Offset, power:number, reduce:boolean, value:number, graded:boolean):flatbuffers.Offset {
+static createLearningMark(builder:flatbuffers.Builder, id:bigint, index:number, kindOffset:flatbuffers.Offset, power:number, reduce:boolean, value:number, graded:boolean, verdictOffset:flatbuffers.Offset):flatbuffers.Offset {
   LearningMark.startLearningMark(builder);
   LearningMark.addId(builder, id);
   LearningMark.addIndex(builder, index);
@@ -108,6 +119,7 @@ static createLearningMark(builder:flatbuffers.Builder, id:bigint, index:number, 
   LearningMark.addReduce(builder, reduce);
   LearningMark.addValue(builder, value);
   LearningMark.addGraded(builder, graded);
+  LearningMark.addVerdict(builder, verdictOffset);
   return LearningMark.endLearningMark(builder);
 }
 
@@ -119,7 +131,8 @@ unpack(): LearningMarkT {
     this.power(),
     this.reduce(),
     this.value(),
-    this.graded()
+    this.graded(),
+    this.verdict()
   );
 }
 
@@ -132,6 +145,7 @@ unpackTo(_o: LearningMarkT): void {
   _o.reduce = this.reduce();
   _o.value = this.value();
   _o.graded = this.graded();
+  _o.verdict = this.verdict();
 }
 }
 
@@ -143,12 +157,14 @@ constructor(
   public power: number = 0,
   public reduce: boolean = false,
   public value: number = 0.0,
-  public graded: boolean = false
+  public graded: boolean = false,
+  public verdict: string|Uint8Array|null = null
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const kind = (this.kind !== null ? builder.createString(this.kind!) : 0);
+  const verdict = (this.verdict !== null ? builder.createString(this.verdict!) : 0);
 
   return LearningMark.createLearningMark(builder,
     this.id,
@@ -157,7 +173,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.power,
     this.reduce,
     this.value,
-    this.graded
+    this.graded,
+    verdict
   );
 }
 }

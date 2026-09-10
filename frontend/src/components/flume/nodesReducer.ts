@@ -1,7 +1,7 @@
 /*
 The React reducer that used to live here has been removed. All node
 topology mutations now flow through nodes-actions, which write
-directly to researchGraphCollection (TanStack DB). Pure helpers live
+directly to pipelineGraphCollection (TanStack DB). Pure helpers live
 in nodes-helpers and nodes-mutations.
 
 This shim re-exports the pure helpers for backward compatibility with

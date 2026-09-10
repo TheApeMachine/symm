@@ -1259,6 +1259,14 @@ table LearningRehearsal {
  lastSymbol:string; lastAction:string; lastReturn:double;
   lastFailure:string;
  illiquid:ulong; quiet:ulong;
+ // warming counts observations a worker was not asked about because its own
+ // grid had not formed regions yet. It is separate from unsupported, which
+ // counts observations that carried no captured precursor at all: one is the
+ // worker warming up, the other is missing evidence.
+ warming:ulong;
+ // What the archive actually supplied: how many recorded runs were read and
+ // how many captured observations are resident against the budget.
+ runs:int; observations:ulong; budget:ulong;
  // One track per replay worker: the tape it is actually playing back now.
  tracks:[LearningTrack];
 }
@@ -1268,7 +1276,7 @@ table LearningStep { atNs:long; value:double; defined:bool; }
 // A decision the worker took on the mounted fragment, positioned by the
 // observation index it was taken at. value/graded arrive when the evaluation
 // resolves, so an ungraded mark stays visibly ungraded.
-table LearningMark { id:ulong; index:int; kind:string; power:int; reduce:bool; value:double; graded:bool; }
+table LearningMark { id:ulong; index:int; kind:string; power:int; reduce:bool; value:double; graded:bool; verdict:string; }
 /*
 LearningTrack is one worker's mounted tape fragment. steps is the captured
 series, decimated by stride only for delivery; index and length stay in the
@@ -1277,6 +1285,13 @@ original observation coordinates, and marks position against them.
 table LearningTrack {
  id:int; symbol:string; index:int; length:int; queued:int; stride:int;
  steps:[LearningStep]; marks:[LearningMark];
+ // The moments this tape is asking the worker to recognise: entry is the
+ // observation the excursion ignited at and exit the one it reached its
+ // extremum at. Both are -1 on a tape carrying no moment at all.
+ entry:int; exit:int;
+ // What the record says this tape did, in the same words the episode pool is
+ // counted in. It describes the tape, never the call made on it.
+ opportunity:string;
 }
 table LearningState {
  atNs:long; steps:ulong; decisions:ulong; resolved:ulong;

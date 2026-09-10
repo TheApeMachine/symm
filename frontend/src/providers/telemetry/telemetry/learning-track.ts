@@ -79,8 +79,25 @@ marksLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+entry():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
+
+exit():number {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
+
+opportunity():string|null
+opportunity(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+opportunity(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
 static startLearningTrack(builder:flatbuffers.Builder) {
-  builder.startObject(8);
+  builder.startObject(11);
 }
 
 static addId(builder:flatbuffers.Builder, id:number) {
@@ -139,12 +156,24 @@ static startMarksVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addEntry(builder:flatbuffers.Builder, entry:number) {
+  builder.addFieldInt32(8, entry, 0);
+}
+
+static addExit(builder:flatbuffers.Builder, exit:number) {
+  builder.addFieldInt32(9, exit, 0);
+}
+
+static addOpportunity(builder:flatbuffers.Builder, opportunityOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(10, opportunityOffset, 0);
+}
+
 static endLearningTrack(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningTrack(builder:flatbuffers.Builder, id:number, symbolOffset:flatbuffers.Offset, index:number, length:number, queued:number, stride:number, stepsOffset:flatbuffers.Offset, marksOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createLearningTrack(builder:flatbuffers.Builder, id:number, symbolOffset:flatbuffers.Offset, index:number, length:number, queued:number, stride:number, stepsOffset:flatbuffers.Offset, marksOffset:flatbuffers.Offset, entry:number, exit:number, opportunityOffset:flatbuffers.Offset):flatbuffers.Offset {
   LearningTrack.startLearningTrack(builder);
   LearningTrack.addId(builder, id);
   LearningTrack.addSymbol(builder, symbolOffset);
@@ -154,6 +183,9 @@ static createLearningTrack(builder:flatbuffers.Builder, id:number, symbolOffset:
   LearningTrack.addStride(builder, stride);
   LearningTrack.addSteps(builder, stepsOffset);
   LearningTrack.addMarks(builder, marksOffset);
+  LearningTrack.addEntry(builder, entry);
+  LearningTrack.addExit(builder, exit);
+  LearningTrack.addOpportunity(builder, opportunityOffset);
   return LearningTrack.endLearningTrack(builder);
 }
 
@@ -166,7 +198,10 @@ unpack(): LearningTrackT {
     this.queued(),
     this.stride(),
     this.bb!.createObjList<LearningStep, LearningStepT>(this.steps.bind(this), this.stepsLength()),
-    this.bb!.createObjList<LearningMark, LearningMarkT>(this.marks.bind(this), this.marksLength())
+    this.bb!.createObjList<LearningMark, LearningMarkT>(this.marks.bind(this), this.marksLength()),
+    this.entry(),
+    this.exit(),
+    this.opportunity()
   );
 }
 
@@ -180,6 +215,9 @@ unpackTo(_o: LearningTrackT): void {
   _o.stride = this.stride();
   _o.steps = this.bb!.createObjList<LearningStep, LearningStepT>(this.steps.bind(this), this.stepsLength());
   _o.marks = this.bb!.createObjList<LearningMark, LearningMarkT>(this.marks.bind(this), this.marksLength());
+  _o.entry = this.entry();
+  _o.exit = this.exit();
+  _o.opportunity = this.opportunity();
 }
 }
 
@@ -192,7 +230,10 @@ constructor(
   public queued: number = 0,
   public stride: number = 0,
   public steps: (LearningStepT)[] = [],
-  public marks: (LearningMarkT)[] = []
+  public marks: (LearningMarkT)[] = [],
+  public entry: number = 0,
+  public exit: number = 0,
+  public opportunity: string|Uint8Array|null = null
 ){}
 
 
@@ -200,6 +241,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
   const steps = LearningTrack.createStepsVector(builder, builder.createObjectOffsetList(this.steps));
   const marks = LearningTrack.createMarksVector(builder, builder.createObjectOffsetList(this.marks));
+  const opportunity = (this.opportunity !== null ? builder.createString(this.opportunity!) : 0);
 
   return LearningTrack.createLearningTrack(builder,
     this.id,
@@ -209,7 +251,10 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.queued,
     this.stride,
     steps,
-    marks
+    marks,
+    this.entry,
+    this.exit,
+    opportunity
   );
 }
 }

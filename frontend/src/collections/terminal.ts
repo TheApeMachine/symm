@@ -16,7 +16,8 @@ export type TerminalSurface =
 	| "regulator"
 	| "diagnostics"
 	| "hindsight"
-	| "workbench";
+	| "workbench"
+	| "pipeline";
 
 export { DEFAULT_FOCUS_SYMBOL };
 

@@ -3,7 +3,7 @@ import type { EdgeRoutingMode } from "#/components/flume/connectionCalculator";
 
 /*
 FlumeEditorState holds the ephemeral, view-only state for the Flume
-graph editor. Persisted graph topology lives in researchGraphCollection;
+graph editor. Persisted graph topology lives in pipelineGraphCollection;
 this store is only for things that don't survive a page reload or
 don't need to round-trip through a backend.
 
@@ -19,7 +19,7 @@ export type FlumeEditorState = {
 	dragOverrideByEditorId: Record<string, Record<string, DragOverride>>;
 };
 
-const STORAGE_KEY = "caramba.flume.routingMode";
+const STORAGE_KEY = "symm.flume.routingMode";
 
 const readInitialRoutingMode = (): FlumeRoutingMode => {
 	if (typeof window === "undefined") return "smooth";

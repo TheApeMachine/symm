@@ -1,0 +1,6529 @@
+{
+	"linear.RegressionSummary": {
+		"kind": "primitive",
+		"category": "linear",
+		"op": "linear.RegressionSummary",
+		"name": "RegressionSummary",
+		"label": "Regression Summary",
+		"description": "NewRegressionSummary composes the supplied cumulative slope and residual SNR. Each intermediate is calculated once. The raw candidates remain visible even when their domain fails; published slope/SNR use the original zero plus false convention. No ridge or stable centered-update algorithm is substituted.",
+		"package": "linear",
+		"builder": "NewRegressionSummary",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"temporal.Velocity": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Velocity",
+		"name": "Velocity",
+		"label": "Velocity",
+		"description": "NewVelocity evaluates source and clock once per input. The first observation and non-advancing time have zero rate with explicit definedness. The latest point is always retained, including when its clock does not advance.",
+		"package": "temporal",
+		"builder": "NewVelocity",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "source",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "clock",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Log": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Log",
+		"name": "Log",
+		"label": "Log",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewLog",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Equal": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Equal",
+		"name": "Equal",
+		"label": "Equal",
+		"description": "",
+		"package": "equation",
+		"builder": "NewEqual",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Polarize": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Polarize",
+		"name": "Polarize",
+		"label": "Polarize",
+		"description": "NewPolarize splits a signed value into nonnegative components and normalizes against a configured scale expression. The result preserves all components.",
+		"package": "equation",
+		"builder": "NewPolarize",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "scale",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.ShedMoments": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.ShedMoments",
+		"name": "ShedMoments",
+		"label": "Shed Moments",
+		"description": "NewShedMoments applies the source's support-shedding domain, without changing its mean or sample dispersion. Non-contraction requests leave the record unchanged. The policy chooses when; this composition defines what shedding is.",
+		"package": "equation",
+		"builder": "NewShedMoments",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Transpose": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Transpose",
+		"name": "Transpose",
+		"label": "Transpose",
+		"description": "",
+		"package": "matrix",
+		"builder": "NewTranspose",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"causal.Features": {
+		"kind": "primitive",
+		"category": "causal",
+		"op": "causal.Features",
+		"name": "Features",
+		"label": "Features",
+		"description": "NewFeatures requires the treatment to be represented, and excludes the outcome from the predictors. Positional shape validation belongs to Gather/At.",
+		"package": "causal",
+		"builder": "NewFeatures",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Ambiguity": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Ambiguity",
+		"name": "Ambiguity",
+		"label": "Ambiguity",
+		"description": "NewAmbiguity divides entropy by the entropy of an equal-mass distribution. A one-member distribution has zero ambiguity by definition.",
+		"package": "probability",
+		"builder": "NewAmbiguity",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"cognition.Primitive": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Primitive",
+		"name": "Primitive",
+		"label": "Primitive",
+		"description": "",
+		"package": "cognition",
+		"builder": "NewPrimitive",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "engine",
+				"type": "*cognition.Engine"
+			}
+		]
+	},
+	"store.Get": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Get",
+		"name": "Get",
+		"label": "Get",
+		"description": "",
+		"package": "store",
+		"builder": "NewGet",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "key",
+				"type": "K"
+			}
+		]
+	},
+	"logic.IsInf": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.IsInf",
+		"name": "IsInf",
+		"label": "Is Inf",
+		"description": "",
+		"package": "logic",
+		"builder": "NewIsInf",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"algo.OLS": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.OLS",
+		"name": "OLS",
+		"label": "OLS",
+		"description": "NewOLS composes ordinary least squares via the supplied source's normal equations, with partial-pivot Gauss-Jordan solving replacing its LU backend. Input is {x: [][]float64, y: []float64}; callers include an intercept column explicitly. n<=p and rank deficiency yield defined=false, empty coefficients, and NaN residual variance. There is no ridge or invented rank tolerance. The configured tolerance expression is forwarded to the linear solver.",
+		"package": "algo",
+		"builder": "NewOLS",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "tolerance",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Branching": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Branching",
+		"name": "Branching",
+		"label": "Branching",
+		"description": "NewBranching composes the source's offspring and stationary-mean formulas. alpha's column names identify the parent side. Supercritical parameters still report their radius/first generation; stationary means and total descendants are marked undefined rather than emitting non-stationary expectations.",
+		"package": "hawkes",
+		"builder": "NewBranching",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Minimum": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Minimum",
+		"name": "Minimum",
+		"label": "Minimum",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewMinimum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.KV": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.KV",
+		"name": "KV",
+		"label": "KV",
+		"description": "",
+		"package": "store",
+		"builder": "NewKV",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Prominence": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Prominence",
+		"name": "Prominence",
+		"label": "Prominence",
+		"description": "NewProminence composes neighbouring profile readings. x coordinates determine units; LagProfile supplies seconds, so curvature uses inverse squared seconds. Edge peaks have no neighbours and report ErrShape rather than old evidence.",
+		"package": "equation",
+		"builder": "NewProminence",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Scale": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Scale",
+		"name": "Scale",
+		"label": "Scale",
+		"description": "NewScale evaluates both configured operands once per observation.",
+		"package": "matrix",
+		"builder": "NewScale",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "values",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "scale",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"data.Quality": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Quality",
+		"name": "Quality",
+		"label": "Quality",
+		"description": "NewQuality derives fresh maturity/SNR facts from optional estimator fields. The source Finalize precedence is preserved, including requiring support>1 before Mahalanobis overrides scalar SNR. This composition receives the facts record itself; external measurement serialization is a separate boundary.",
+		"package": "data",
+		"builder": "NewQuality",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"linear.Determinant2": {
+		"kind": "primitive",
+		"category": "linear",
+		"op": "linear.Determinant2",
+		"name": "Determinant2",
+		"label": "Determinant2",
+		"description": "NewDeterminant2 composes ad-bc for the four entries of a 2-by-2 matrix.",
+		"package": "linear",
+		"builder": "NewDeterminant2",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.First": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.First",
+		"name": "First",
+		"label": "First",
+		"description": "NewFirst configures the value held before anything has been shown.",
+		"package": "store",
+		"builder": "NewFirst",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "state",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Second": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Second",
+		"name": "Second",
+		"label": "Second",
+		"description": "NewSecond configures the value held before anything has been shown.",
+		"package": "store",
+		"builder": "NewSecond",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "state",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Greater": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Greater",
+		"name": "Greater",
+		"label": "Greater",
+		"description": "",
+		"package": "logic",
+		"builder": "NewGreater",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Bound": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Bound",
+		"name": "Bound",
+		"label": "Bound",
+		"description": "NewBound captures the value and both bounds once before selecting. Bounds may be computations; neither their result nor the value is recomputed during selection. NaN passes through unchanged rather than becoming a bound.",
+		"package": "equation",
+		"builder": "NewBound",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "value",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "lower",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "upper",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Ratio": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Ratio",
+		"name": "Ratio",
+		"label": "Ratio",
+		"description": "NewRatio binds two expressions to one captured input run. Both operands are computations, not decoded values; the source is consumed only once.",
+		"package": "equation",
+		"builder": "NewRatio",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Spacings": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Spacings",
+		"name": "Spacings",
+		"label": "Spacings",
+		"description": "NewSpacings subtracts integer nanosecond timestamps before conversion to float. An empty or one-observation run has no adjacent pair and emits no spacing.",
+		"package": "equation",
+		"builder": "NewSpacings",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"adaptive.Envelope": {
+		"kind": "primitive",
+		"category": "adaptive",
+		"op": "adaptive.Envelope",
+		"name": "Envelope",
+		"label": "Envelope",
+		"description": "NewEnvelope uses the supplied moment and width expressions. Choice of a Gaussian or Chebyshev coefficient is topology, not an EnvelopeType switch.",
+		"package": "adaptive",
+		"builder": "NewEnvelope",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "moments",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "coefficient",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Intensity": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Intensity",
+		"name": "Intensity",
+		"label": "Intensity",
+		"description": "NewIntensity evaluates one side's pre-event intensity and beta derivative. Side selection is routing between parameter records; support and arithmetic are shared compositions. Input uses flat natural parameter names and events.",
+		"package": "hawkes",
+		"builder": "NewIntensity",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "side",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Maximum": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Maximum",
+		"name": "Maximum",
+		"label": "Maximum",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewMaximum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Count": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Count",
+		"name": "Count",
+		"label": "Count",
+		"description": "NewCount is addition over unit contributions. It counts delivered objects, regardless of their payload type. Collection members must first be Spread.",
+		"package": "equation",
+		"builder": "NewCount",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.MeanShiftBound": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.MeanShiftBound",
+		"name": "MeanShiftBound",
+		"label": "Mean Shift Bound",
+		"description": "",
+		"package": "equation",
+		"builder": "NewMeanShiftBound",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Diagonal": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Diagonal",
+		"name": "Diagonal",
+		"label": "Diagonal",
+		"description": "NewDiagonal selects row i's member i. An undersized row is a shape error.",
+		"package": "matrix",
+		"builder": "NewDiagonal",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"joint.Estimator": {
+		"kind": "primitive",
+		"category": "joint",
+		"op": "joint.Estimator",
+		"name": "Estimator",
+		"label": "Estimator",
+		"description": "NewEstimator applies one configured moment estimator per coordinate. Input is a values []float64 record, already in log space. Other facts such as at remain in the output. Estimators is a source of actual Primitive endpoints; their count, rather than a hard-coded vector width, establishes the shape. The joint SNR is the source's diagonal standardized-energy mean, not a full inverse-covariance Mahalanobis estimate. Each endpoint owns its own history.",
+		"package": "joint",
+		"builder": "NewEstimator",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "estimators",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.RatioTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.RatioTarget",
+		"name": "RatioTarget",
+		"label": "Ratio Target",
+		"description": "NewRatioTarget is the relative change, with an explicit nonzero past domain.",
+		"package": "learning",
+		"builder": "NewRatioTarget",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Exp": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Exp",
+		"name": "Exp",
+		"label": "Exp",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewExp",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Has": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Has",
+		"name": "Has",
+		"label": "Has",
+		"description": "",
+		"package": "store",
+		"builder": "NewHas",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "key",
+				"type": "K"
+			}
+		]
+	},
+	"equation.IntervalOverlap": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.IntervalOverlap",
+		"name": "IntervalOverlap",
+		"label": "Interval Overlap",
+		"description": "NewIntervalOverlap is (left.from < right.to) AND (right.from < left.to). Endpoints touching at a single instant do not overlap for (from,to] spans.",
+		"package": "equation",
+		"builder": "NewIntervalOverlap",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.Correlation": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.Correlation",
+		"name": "Correlation",
+		"label": "Correlation",
+		"description": "NewCorrelation composes covariance / sqrt(left energy * right energy). It preserves finite-sample asynchronous values outside [-1,1]. Empty or zero-energy normalization is undefined, not zero or a previous result.",
+		"package": "correlation",
+		"builder": "NewCorrelation",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"adaptive.Threshold": {
+		"kind": "primitive",
+		"category": "adaptive",
+		"op": "adaptive.Threshold",
+		"name": "Threshold",
+		"label": "Threshold",
+		"description": "NewThreshold composes a moment estimator with a dispersion coefficient. Coefficient selection is a configured graph, not a ThresholdType switch.",
+		"package": "adaptive",
+		"builder": "NewThreshold",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "moments",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "coefficient",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"collection.Set": {
+		"kind": "primitive",
+		"category": "collection",
+		"op": "collection.Set",
+		"name": "Set",
+		"label": "Set",
+		"description": "",
+		"package": "collection",
+		"builder": "NewSet",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "index",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "value",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Not": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Not",
+		"name": "Not",
+		"label": "Not",
+		"description": "",
+		"package": "logic",
+		"builder": "NewNot",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "seed",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.SamplingVariance": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.SamplingVariance",
+		"name": "SamplingVariance",
+		"label": "Sampling Variance",
+		"description": "NewSamplingVariance retains the record-based connection for Primitive composition.",
+		"package": "equation",
+		"builder": "NewSamplingVariance",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Sigmoid": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Sigmoid",
+		"name": "Sigmoid",
+		"label": "Sigmoid",
+		"description": "NewSigmoid is a composition, including mapping over multiple inputs.",
+		"package": "equation",
+		"builder": "NewSigmoid",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Gradient": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Gradient",
+		"name": "Gradient",
+		"label": "Gradient",
+		"description": "NewGradient adds natural-parameter derivatives to a NewLikelihood result. The output gradient order is mu_x,mu_y,alpha_xx,alpha_xy,alpha_yx,alpha_yy,beta.",
+		"package": "hawkes",
+		"builder": "NewGradient",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Cross": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Cross",
+		"name": "Cross",
+		"label": "Cross",
+		"description": "",
+		"package": "transport",
+		"builder": "NewCross",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Enumerate": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Enumerate",
+		"name": "Enumerate",
+		"label": "Enumerate",
+		"description": "",
+		"package": "transport",
+		"builder": "NewEnumerate",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.MapReduce": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.MapReduce",
+		"name": "MapReduce",
+		"label": "Map Reduce",
+		"description": "NewMapReduce composes the existing map and pipe transports. It contains no second scheduler, reduction implementation, queue, or callback protocol.",
+		"package": "transport",
+		"builder": "NewMapReduce",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "mapping",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "reduction",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Each": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Each",
+		"name": "Each",
+		"label": "Each",
+		"description": "NewEach configures the run being routed and the operation every value of it is stepped through.",
+		"package": "store",
+		"builder": "NewEach",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "source",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "operation",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"adaptive.Path": {
+		"kind": "primitive",
+		"category": "adaptive",
+		"op": "adaptive.Path",
+		"name": "Path",
+		"label": "Path",
+		"description": "NewPath composes timestamp acceptance with adaptive observation retention. The configured window determines retained support from changes in the observed values. No wall-clock expiry or fixed history length is imposed. Regressed observations never reach the policy; restatements are accepted observations.",
+		"package": "adaptive",
+		"builder": "NewPath",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "window",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.DirectionalTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.DirectionalTarget",
+		"name": "DirectionalTarget",
+		"label": "Directional Target",
+		"description": "NewDirectionalTarget composes a finite nonnegative deadband and sign of a delta. deadband is evaluated on the input record. To use a separately updated store as read-only configuration, pass transport.NewApply(retained, nil).",
+		"package": "learning",
+		"builder": "NewDirectionalTarget",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "deadband",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"temporal.Decay": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Decay",
+		"name": "Decay",
+		"label": "Decay",
+		"description": "NewDecay wires input -> clock -> shape, multiplying the original input by the resulting retention factor. No clock means infinite elapsed time; the default linear shape therefore extinguishes a finite input. Configuration is not evaluated by construction, and each slot can be an arbitrary composition.",
+		"package": "temporal",
+		"builder": "NewDecay",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "clock",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "shape",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Discard": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Discard",
+		"name": "Discard",
+		"label": "Discard",
+		"description": "",
+		"package": "transport",
+		"builder": "NewDiscard",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Map": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Map",
+		"name": "Map",
+		"label": "Map",
+		"description": "",
+		"package": "transport",
+		"builder": "NewMap",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "operation",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Square": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Square",
+		"name": "Square",
+		"label": "Square",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewSquare",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Finite": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Finite",
+		"name": "Finite",
+		"label": "Finite",
+		"description": "NewFinite is not-NaN and not-infinite, assembled from existing predicates.",
+		"package": "logic",
+		"builder": "NewFinite",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Standardize": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Standardize",
+		"name": "Standardize",
+		"label": "Standardize",
+		"description": "NewStandardize composes (value - center) / scale. State and the choice of causal center/scale are supplied in the incoming record, not owned here.",
+		"package": "equation",
+		"builder": "NewStandardize",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"algo.Welford": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.Welford",
+		"name": "Welford",
+		"label": "Welford",
+		"description": "NewWelford wires Welford's running-moment recurrence through one retained KV. Optional record-to-record policies may transform support after an update, before variance is derived. With no policy this is cumulative Welford. Prior fields always describe the moments before the current observation.",
+		"package": "algo",
+		"builder": "NewWelford",
+		"variadic": true,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "policies",
+				"type": "primitive",
+				"description": "Streams this primitive reads, any number of them"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.DeltaTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.DeltaTarget",
+		"name": "DeltaTarget",
+		"label": "Delta Target",
+		"description": "NewDeltaTarget returns the observed current-minus-past difference.",
+		"package": "learning",
+		"builder": "NewDeltaTarget",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Batch": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Batch",
+		"name": "Batch",
+		"label": "Batch",
+		"description": "",
+		"package": "transport",
+		"builder": "NewBatch",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "source",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "limit",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.And": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.And",
+		"name": "And",
+		"label": "And",
+		"description": "",
+		"package": "logic",
+		"builder": "NewAnd",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "seed",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Bonferroni": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Bonferroni",
+		"name": "Bonferroni",
+		"label": "Bonferroni",
+		"description": "",
+		"package": "equation",
+		"builder": "NewBonferroni",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Kish": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Kish",
+		"name": "Kish",
+		"label": "Kish",
+		"description": "",
+		"package": "equation",
+		"builder": "NewKish",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Minimum": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Minimum",
+		"name": "Minimum",
+		"label": "Minimum",
+		"description": "NewMinimum binds both expressions to one captured input. The calculus fold owns the comparison and IEEE behavior; no finite sentinel substitutes for infinity.",
+		"package": "equation",
+		"builder": "NewMinimum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.FisherEstimator": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.FisherEstimator",
+		"name": "FisherEstimator",
+		"label": "Fisher Estimator",
+		"description": "NewFisherEstimator transforms admissible scalar correlations before the configured causal estimator, then maps its baseline back with Tanh. Invalid observations do not advance the estimator and are visibly undefined. The configured estimator supplies recurrence; this composer keeps no second copy.",
+		"package": "correlation",
+		"builder": "NewFisherEstimator",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "estimator",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Difference": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Difference",
+		"name": "Difference",
+		"label": "Difference",
+		"description": "NewDifference evaluates each matrix expression once per observation.",
+		"package": "matrix",
+		"builder": "NewDifference",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Likelihood": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Likelihood",
+		"name": "Likelihood",
+		"label": "Likelihood",
+		"description": "NewLikelihood is the bivariate exponential Hawkes log likelihood, given natural parameters, events, origin and horizon. It preserves strict origin exclusion, equal-time grouping semantics and pre-origin kernel history. Invalid parameters are explicit errors. No stationary fit, optimization, significance calibration or parameter-bound selection is claimed here.",
+		"package": "hawkes",
+		"builder": "NewLikelihood",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"collection.Swap": {
+		"kind": "primitive",
+		"category": "collection",
+		"op": "collection.Swap",
+		"name": "Swap",
+		"label": "Swap",
+		"description": "NewSwap is two indexed replacements over one captured collection. It adds no second swapping kernel; both original operands survive the first write.",
+		"package": "collection",
+		"builder": "NewSwap",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.All": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.All",
+		"name": "All",
+		"label": "All",
+		"description": "NewAll combines predicates over the same captured input. Every predicate is evaluated; the empty conjunction is true.",
+		"package": "equation",
+		"builder": "NewAll",
+		"variadic": true,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "predicates",
+				"type": "primitive",
+				"description": "Streams this primitive reads, any number of them"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Fisher": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Fisher",
+		"name": "Fisher",
+		"label": "Fisher",
+		"description": "NewFisher composes the Fisher-z normal-tail formula for records containing \"correlation\" and \"support\". This formula does not establish calibration for dependent asynchronous overlaps. Invalid domains propagate NaN/Inf normally.",
+		"package": "equation",
+		"builder": "NewFisher",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Identity": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Identity",
+		"name": "Identity",
+		"label": "Identity",
+		"description": "NewIdentity enumerates the dimension once, without a scalar graph per coefficient.",
+		"package": "matrix",
+		"builder": "NewIdentity",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"vector.Dot": {
+		"kind": "primitive",
+		"category": "vector",
+		"op": "vector.Dot",
+		"name": "Dot",
+		"label": "Dot",
+		"description": "NewDot pairs two scalar streams, multiplies each pair and adds the products. Zip owns the shape check; no vector-specific arithmetic loop exists.",
+		"package": "vector",
+		"builder": "NewDot",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Key": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Key",
+		"name": "Key",
+		"label": "Key",
+		"description": "",
+		"package": "store",
+		"builder": "NewKey",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "key",
+				"type": "K"
+			}
+		]
+	},
+	"collection.Tail": {
+		"kind": "primitive",
+		"category": "collection",
+		"op": "collection.Tail",
+		"name": "Tail",
+		"label": "Tail",
+		"description": "",
+		"package": "collection",
+		"builder": "NewTail",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "capacity",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.CausalResidual": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.CausalResidual",
+		"name": "CausalResidual",
+		"label": "Causal Residual",
+		"description": "NewCausalResidual measures against the moments that existed before the observation. Its configured estimator owns recurrence and any forgetting. The source's zero-dispersion convention is explicit: use |residual| as the score scale, or zero when the residual is zero. Both the prior variance and the actual score scale are exposed, rather than conflated.",
+		"package": "equation",
+		"builder": "NewCausalResidual",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "moments",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.GeometricMean": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.GeometricMean",
+		"name": "GeometricMean",
+		"label": "Geometric Mean",
+		"description": "NewGeometricMean composes exp(mean(log(x))). Zero and invalid-domain behavior comes from those operations; no alternate product or hand-written loop exists.",
+		"package": "equation",
+		"builder": "NewGeometricMean",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"adaptive.Baseline": {
+		"kind": "primitive",
+		"category": "adaptive",
+		"op": "adaptive.Baseline",
+		"name": "Baseline",
+		"label": "Baseline",
+		"description": "NewBaseline configures one independent causal baseline and window.",
+		"package": "adaptive",
+		"builder": "NewBaseline",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "window",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"causal.LinearPrediction": {
+		"kind": "primitive",
+		"category": "causal",
+		"op": "causal.LinearPrediction",
+		"name": "LinearPrediction",
+		"label": "Linear Prediction",
+		"description": "NewLinearPrediction evaluates one row against a configured-by-record affine fit. Input fields: fit (OLS output record), features, row. It does not train.",
+		"package": "causal",
+		"builder": "NewLinearPrediction",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Compensator": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Compensator",
+		"name": "Compensator",
+		"label": "Compensator",
+		"description": "NewCompensator integrates both intensities across the observed window.",
+		"package": "hawkes",
+		"builder": "NewCompensator",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.Forecast": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Forecast",
+		"name": "Forecast",
+		"label": "Forecast",
+		"description": "NewForecast composes the supplied multiplicative forecast-scale learner. Welford owns the residual moments. Storage owns trust/scale; Mix supplies both recurrences. The current residual participates in its source-defined surprise statistic; this is not mislabeled as a strictly prior standardized residual.",
+		"package": "learning",
+		"builder": "NewForecast",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Subtract": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Subtract",
+		"name": "Subtract",
+		"label": "Subtract",
+		"description": "",
+		"package": "arithmetic",
+		"builder": "NewSubtract",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"collection.Gather": {
+		"kind": "primitive",
+		"category": "collection",
+		"op": "collection.Gather",
+		"name": "Gather",
+		"label": "Gather",
+		"description": "NewGather selects positions supplied by an index-stream expression. At owns index validation; retention owns the captured collection and current index.",
+		"package": "collection",
+		"builder": "NewGather",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "indices",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Curvature": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Curvature",
+		"name": "Curvature",
+		"label": "Curvature",
+		"description": "NewCurvature composes neighbouring profile readings. x coordinates determine units; LagProfile supplies seconds, so curvature uses inverse squared seconds. Edge peaks have no neighbours and report ErrShape rather than old evidence.",
+		"package": "equation",
+		"builder": "NewCurvature",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.ExtremeScale": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.ExtremeScale",
+		"name": "ExtremeScale",
+		"label": "Extreme Scale",
+		"description": "NewExtremeScale evaluates sqrt(2*log(count)), the coefficient used by the supplied EVT and Gaussian envelope modes. It adds no tail calibration claim.",
+		"package": "equation",
+		"builder": "NewExtremeScale",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"adaptive.Window": {
+		"kind": "primitive",
+		"category": "adaptive",
+		"op": "adaptive.Window",
+		"name": "Window",
+		"label": "Window",
+		"description": "NewWindow creates an independent policy with the two-sample variance minimum.",
+		"package": "adaptive",
+		"builder": "NewWindow",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"causal.LinearFit": {
+		"kind": "primitive",
+		"category": "causal",
+		"op": "causal.LinearFit",
+		"name": "LinearFit",
+		"label": "Linear Fit",
+		"description": "NewLinearFit composes the supplied table's affine design into ordinary least squares. Input fields are rows, target (float64 index), features ([]float64 indices). The caller declares the exact feature list; no automatic removal, addition, ordering or deduplication of predictors occurs here.",
+		"package": "causal",
+		"builder": "NewLinearFit",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "tolerance",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Distribution": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Distribution",
+		"name": "Distribution",
+		"label": "Distribution",
+		"description": "NewDistribution composes a simplex and its named readouts. There is no second Collection interface and no accessors that bypass Primitive delivery.",
+		"package": "probability",
+		"builder": "NewDistribution",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.SampleRatio": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.SampleRatio",
+		"name": "SampleRatio",
+		"label": "Sample Ratio",
+		"description": "NewSampleRatio preserves the supplied calibration ratio and observed-range ceiling. Those are model policies, not statistical identities. They are explicit compositions over the shared residual-span update.",
+		"package": "learning",
+		"builder": "NewSampleRatio",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Range": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Range",
+		"name": "Range",
+		"label": "Range",
+		"description": "",
+		"package": "transport",
+		"builder": "NewRange",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "count",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Retained": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Retained",
+		"name": "Retained",
+		"label": "Retained",
+		"description": "",
+		"package": "store",
+		"builder": "NewRetained",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "initial",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.WeightedMean": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.WeightedMean",
+		"name": "WeightedMean",
+		"label": "Weighted Mean",
+		"description": "NewWeightedMean consumes KV-shaped records with \"weight\" and \"value\" keys.",
+		"package": "equation",
+		"builder": "NewWeightedMean",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"vector.Finite": {
+		"kind": "primitive",
+		"category": "vector",
+		"op": "vector.Finite",
+		"name": "Finite",
+		"label": "Finite",
+		"description": "NewFinite asks whether every scalar in the incoming run is finite.",
+		"package": "vector",
+		"builder": "NewFinite",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.CompensatorDerivative": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.CompensatorDerivative",
+		"name": "CompensatorDerivative",
+		"label": "Compensator Derivative",
+		"description": "NewCompensatorDerivative includes the derivative of both the kernel numerator and the 1/beta scale. Omitting either changes the fitted model.",
+		"package": "hawkes",
+		"builder": "NewCompensatorDerivative",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.LogGradient": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.LogGradient",
+		"name": "LogGradient",
+		"label": "Log Gradient",
+		"description": "NewLogGradient applies the source's chain rule for log(mu), log(beta), and log branching coordinates. Beta changes alpha=branch*beta as well as decay.",
+		"package": "hawkes",
+		"builder": "NewLogGradient",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Support": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Support",
+		"name": "Support",
+		"label": "Support",
+		"description": "NewSupport reduces a configured response over events strictly before horizon on the selected side. Equal-time events do not excite one another. The whole retained history may precede origin; origin is not a support cutoff.",
+		"package": "hawkes",
+		"builder": "NewSupport",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "side",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "response",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"temporal.Governor": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Governor",
+		"name": "Governor",
+		"label": "Governor",
+		"description": "NewGovernor composes an observation-driven capacity, retained tail and reduction. The controller yields a record containing capacity (float64). Neither the store nor reduction knows which policy selected the capacity.",
+		"package": "temporal",
+		"builder": "NewGovernor",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "controller",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "reduction",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Pipe": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Pipe",
+		"name": "Pipe",
+		"label": "Pipe",
+		"description": "",
+		"package": "transport",
+		"builder": "NewPipe",
+		"variadic": true,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "stages",
+				"type": "primitive",
+				"description": "Streams this primitive reads, any number of them"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Divide": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Divide",
+		"name": "Divide",
+		"label": "Divide",
+		"description": "",
+		"package": "arithmetic",
+		"builder": "NewDivide",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.LagProfile": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.LagProfile",
+		"name": "LagProfile",
+		"label": "Lag Profile",
+		"description": "NewLagProfile evaluates the configured estimator at every lag over the same decoded paths. Spacing is nanoseconds; span counts steps on either side. Every candidate retains the complete estimator record and its own support. Index identity is retained before conversion to seconds, so boundary indices cannot be corrupted by floating-point round trips.",
+		"package": "equation",
+		"builder": "NewLagProfile",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "estimator",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "spacing",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "span",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.MomentUpdate": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.MomentUpdate",
+		"name": "MomentUpdate",
+		"label": "Moment Update",
+		"description": "",
+		"package": "equation",
+		"builder": "NewMomentUpdate",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.ResidualSpan": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.ResidualSpan",
+		"name": "ResidualSpan",
+		"label": "Residual Span",
+		"description": "NewResidualSpan reproduces the supplied calibration range update. Its count stays at one until the first distinct residual, then counts every update. It is therefore the source's state counter, not a count of observations.",
+		"package": "equation",
+		"builder": "NewResidualSpan",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"adaptive.Gating": {
+		"kind": "primitive",
+		"category": "adaptive",
+		"op": "adaptive.Gating",
+		"name": "Gating",
+		"label": "Gating",
+		"description": "NewGating suppresses values inside a configured threshold of inclusive moments. Estimation, threshold calculation and Boolean routing stay separate.",
+		"package": "adaptive",
+		"builder": "NewGating",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "moments",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "threshold",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"vector.Difference": {
+		"kind": "primitive",
+		"category": "vector",
+		"op": "vector.Difference",
+		"name": "Difference",
+		"label": "Difference",
+		"description": "NewDifference subtracts paired members and collects one output vector.",
+		"package": "vector",
+		"builder": "NewDifference",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Spread": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Spread",
+		"name": "Spread",
+		"label": "Spread",
+		"description": "NewSpread configures the Primitive whose run is handed over. It is not drained here: a Primitive is whole before it is advanced, and the run is taken when a caller begins one.",
+		"package": "store",
+		"builder": "NewSpread",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "source",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.Cohort": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.Cohort",
+		"name": "Cohort",
+		"label": "Cohort",
+		"description": "NewCohort summarizes one peer run of {correlation,support,peer_energy?} records. Support below two and nonfinite correlations are excluded, with counts exposed. The caller supplies the dispersion transform (normally Atanh). It is applied once per admitted peer. No clamp is hidden in this composition: an undefined transform makes fisher_defined false rather than fabricating finite evidence. A new delivery run is a new cohort; no Reset method or replay convention exists.",
+		"package": "correlation",
+		"builder": "NewCohort",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "transform",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.Dependence": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.Dependence",
+		"name": "Dependence",
+		"label": "Dependence",
+		"description": "NewDependence preserves the configured estimator and adds support, path duration, energy-rate and definedness diagnostics. The estimator executes once per pair. Finite-sample correlation remains unclipped; zero-energy estimates are undefined.",
+		"package": "correlation",
+		"builder": "NewDependence",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "estimator",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"adaptive.Clock": {
+		"kind": "primitive",
+		"category": "adaptive",
+		"op": "adaptive.Clock",
+		"name": "Clock",
+		"label": "Clock",
+		"description": "NewClock normalizes |value| by the estimator's inclusive mean and applies its configured pace. Volume time is obtained by placing Absolute before this graph; signed interarrival behavior does not require a ClockType switch.",
+		"package": "adaptive",
+		"builder": "NewClock",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "moments",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "pace",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"algo.HayashiYoshida": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.HayashiYoshida",
+		"name": "HayashiYoshida",
+		"label": "Hayashi Yoshida",
+		"description": "NewHayashiYoshida computes asynchronous covariance from {left,right} observation collections. Each return contributes once to its own energy and to every strictly overlapping cross-product. Support counts overlaps, not independent samples. The existing correlation primitive owns energy normalization, without clipping.",
+		"package": "algo",
+		"builder": "NewHayashiYoshida",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Negate": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Negate",
+		"name": "Negate",
+		"label": "Negate",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewNegate",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Reciprocal": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Reciprocal",
+		"name": "Reciprocal",
+		"label": "Reciprocal",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewReciprocal",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Record": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Record",
+		"name": "Record",
+		"label": "Record",
+		"description": "NewRecord composes field-producing expressions into KV. It introduces no record type and contains no arithmetic or observation interpretation.",
+		"package": "store",
+		"builder": "NewRecord",
+		"variadic": true,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "fields",
+				"type": "primitive",
+				"description": "Streams this primitive reads, any number of them"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.AdaptiveZScore": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.AdaptiveZScore",
+		"name": "AdaptiveZScore",
+		"label": "Adaptive Z Score",
+		"description": "NewAdaptiveZScore uses log-space moments. The configured estimator determines whether its horizon is cumulative or adaptive. Non-positive logarithms keep the underlying real-domain result; they are not replaced by log(1).",
+		"package": "equation",
+		"builder": "NewAdaptiveZScore",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "moments",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Correlation": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Correlation",
+		"name": "Correlation",
+		"label": "Correlation",
+		"description": "NewCorrelation composes covariance / sqrt(left energy * right energy). It preserves finite-sample asynchronous values outside [-1,1]. Empty or zero-energy normalization is undefined, not zero or a previous result.",
+		"package": "equation",
+		"builder": "NewCorrelation",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.CumulativeSum": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.CumulativeSum",
+		"name": "CumulativeSum",
+		"label": "Cumulative Sum",
+		"description": "NewCumulativeSum is Add with explicit feedback through retention. The Add itself remains unchanged and can still be used as a per-run reduction.",
+		"package": "equation",
+		"builder": "NewCumulativeSum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Median": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Median",
+		"name": "Median",
+		"label": "Median",
+		"description": "NewMedian averages the two central order statistics. Any NaN makes the result undefined; infinities remain ordered values. Empty runs report a shape error.",
+		"package": "equation",
+		"builder": "NewMedian",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.SecondDifference": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.SecondDifference",
+		"name": "SecondDifference",
+		"label": "Second Difference",
+		"description": "NewSecondDifference composes 2*center-left-right. Choice of magnitude versus signed value, and spacing normalization, are supplied by the surrounding graph.",
+		"package": "equation",
+		"builder": "NewSecondDifference",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "center",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Floor": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Floor",
+		"name": "Floor",
+		"label": "Floor",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewFloor",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Constant": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Constant",
+		"name": "Constant",
+		"label": "Constant",
+		"description": "",
+		"package": "store",
+		"builder": "NewConstant",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "value",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Any": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Any",
+		"name": "Any",
+		"label": "Any",
+		"description": "NewAny combines predicates over the same captured input. The empty disjunction is false.",
+		"package": "equation",
+		"builder": "NewAny",
+		"variadic": true,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "predicates",
+				"type": "primitive",
+				"description": "Streams this primitive reads, any number of them"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Design": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Design",
+		"name": "Design",
+		"label": "Design",
+		"description": "NewDesign selects configured feature positions and prepends the affine intercept. Its output is a design vector; it does not fit or predict.",
+		"package": "equation",
+		"builder": "NewDesign",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "features",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.EnergyRates": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.EnergyRates",
+		"name": "EnergyRates",
+		"label": "Energy Rates",
+		"description": "NewEnergyRates composes r² / elapsed seconds over interval records.",
+		"package": "equation",
+		"builder": "NewEnergyRates",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.SearchScale": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.SearchScale",
+		"name": "SearchScale",
+		"label": "Search Scale",
+		"description": "NewSearchScale composes sqrt(2*log(candidates)/observations), preserving the source lead/lag threshold formula. This expression alone does not establish a calibrated test for asynchronously overlapping, dependent returns.",
+		"package": "equation",
+		"builder": "NewSearchScale",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "candidates",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "observations",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Softmax": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Softmax",
+		"name": "Softmax",
+		"label": "Softmax",
+		"description": "NewSoftmax captures the maximum, shifts each logit, exponentiates, normalizes. Non-finite logits fail explicitly rather than producing plausible certainty.",
+		"package": "equation",
+		"builder": "NewSoftmax",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.Fisher": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.Fisher",
+		"name": "Fisher",
+		"label": "Fisher",
+		"description": "NewFisher reports the Fisher-z normal approximation for {correlation,support}. Optional search_count supplies Bonferroni multiplication. A finite-sample HY overlap count is NOT thereby made an independent sample size. The caller owns that statistical assumption. Undefined inputs yield defined=false and NaN, never a stale p-value. At +/-1 the extended-real limit yields p=0, not p=1.",
+		"package": "correlation",
+		"builder": "NewFisher",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Atanh": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Atanh",
+		"name": "Atanh",
+		"label": "Atanh",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewAtanh",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"collection.Append": {
+		"kind": "primitive",
+		"category": "collection",
+		"op": "collection.Append",
+		"name": "Append",
+		"label": "Append",
+		"description": "",
+		"package": "collection",
+		"builder": "NewAppend",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"collection.Order": {
+		"kind": "primitive",
+		"category": "collection",
+		"op": "collection.Order",
+		"name": "Order",
+		"label": "Order",
+		"description": "",
+		"package": "collection",
+		"builder": "NewOrder",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.MomentSummary": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.MomentSummary",
+		"name": "MomentSummary",
+		"label": "Moment Summary",
+		"description": "",
+		"package": "equation",
+		"builder": "NewMomentSummary",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.LagShape": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.LagShape",
+		"name": "LagShape",
+		"label": "Lag Shape",
+		"description": "NewLagShape reads the neighbours of the explicitly selected index. It does not search for a different maximum (zero lag may exceed the nonzero winner). Undefined or out-of-range neighbours yield shape_defined=false, never a derivative left over from a previous profile. Coordinates are seconds.",
+		"package": "correlation",
+		"builder": "NewLagShape",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "profile",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "selected",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Augment": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Augment",
+		"name": "Augment",
+		"label": "Augment",
+		"description": "NewAugment joins corresponding rows horizontally. Zip rejects unequal row counts, and the transpose round trips reject ragged input matrices.",
+		"package": "matrix",
+		"builder": "NewAugment",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Outer": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Outer",
+		"name": "Outer",
+		"label": "Outer",
+		"description": "NewOuter lifts two vector-valued expressions to a column and a row.",
+		"package": "matrix",
+		"builder": "NewOuter",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Integral": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Integral",
+		"name": "Integral",
+		"label": "Integral",
+		"description": "NewIntegral reduces a response over each event's [lower,upper] ages inside (origin,horizon]. Events predating origin retain their decayed contribution.",
+		"package": "hawkes",
+		"builder": "NewIntegral",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "side",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "response",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Zip": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Zip",
+		"name": "Zip",
+		"label": "Zip",
+		"description": "",
+		"package": "transport",
+		"builder": "NewZip",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Gate": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Gate",
+		"name": "Gate",
+		"label": "Gate",
+		"description": "",
+		"package": "logic",
+		"builder": "NewGate",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "predicate",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "pass",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "fail",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Less": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Less",
+		"name": "Less",
+		"label": "Less",
+		"description": "",
+		"package": "equation",
+		"builder": "NewLess",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Peak": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Peak",
+		"name": "Peak",
+		"label": "Peak",
+		"description": "NewPeak selects the first absolute maximum; an undefined ordinate remains explicit.",
+		"package": "equation",
+		"builder": "NewPeak",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.PredictiveInflation": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.PredictiveInflation",
+		"name": "PredictiveInflation",
+		"label": "Predictive Inflation",
+		"description": "NewPredictiveInflation evaluates sqrt(1+1/count) on a moment record.",
+		"package": "equation",
+		"builder": "NewPredictiveInflation",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"algo.SquareRootRLS": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.SquareRootRLS",
+		"name": "SquareRootRLS",
+		"label": "Square Root RLS",
+		"description": "NewSquareRootRLS predicts each {design,target} before training. A {design} query never trains on an earlier target. Only a successful update commits the four posterior fields; invalid input does not reset or partially train the model.",
+		"package": "algo",
+		"builder": "NewSquareRootRLS",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "initial",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "forgetting",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"data.Readout": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Readout",
+		"name": "Readout",
+		"label": "Readout",
+		"description": "NewReadout composes credibility, corroboration and the usable raw value. supports/contradictions yield authority values already resolved by their own configured graphs. discrete supplies the caller's coordinate/ordinal policy. No receiver introspection, child type assertion or recursive raw-value helper is needed; a child may be another configured Readout composition.",
+		"package": "data",
+		"builder": "NewReadout",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "authority",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "supports",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "contradictions",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "credibility",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "discrete",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.EventLikelihood": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.EventLikelihood",
+		"name": "EventLikelihood",
+		"label": "Event Likelihood",
+		"description": "NewEventLikelihood evaluates event log intensities on (origin,horizon]. Responses retain per-event supports for the score composition. Captured history is replayed explicitly; this reference topology is O(N*N), not the optimized chronological excitation recurrence from the original package.",
+		"package": "hawkes",
+		"builder": "NewEventLikelihood",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Spread": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Spread",
+		"name": "Spread",
+		"label": "Spread",
+		"description": "",
+		"package": "transport",
+		"builder": "NewSpread",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.LeadLag": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.LeadLag",
+		"name": "LeadLag",
+		"label": "Lead Lag",
+		"description": "NewLeadLag composes the supplied search policy around an opaque estimator. Resolution is the finer path's median spacing; span is min(path counts)-2. The profile output preserves every estimator record and its own support. x is seconds, spacing is nanoseconds. The winning nonzero lag is compared with contemporaneous dependence. Empty searches are explicit undefined records. The inherited search_scale is a policy quantity, not a calibrated p-value.",
+		"package": "correlation",
+		"builder": "NewLeadLag",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "estimator",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"vector.Apply": {
+		"kind": "primitive",
+		"category": "vector",
+		"op": "vector.Apply",
+		"name": "Apply",
+		"label": "Apply",
+		"description": "NewApply aligns one incoming value with each configured operation and forwards the operation's complete output run. Zip checks cardinality; Fan invokes the selected endpoint. No new invocation mechanism is necessary. Operations retain their identity between runs, so each coordinate may own an independent recurrence. A multi-output endpoint remains multi-output.",
+		"package": "vector",
+		"builder": "NewApply",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "operations",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Score": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Score",
+		"name": "Score",
+		"label": "Score",
+		"description": "NewScore sums a supplied per-event derivative on one target side. It consumes the previously computed responses, never the live event source.",
+		"package": "hawkes",
+		"builder": "NewScore",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "side",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "response",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.Pace": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Pace",
+		"name": "Pace",
+		"label": "Pace",
+		"description": "NewPace composes empirical prior-error rank with the source's bounded log alpha controller. config yields rest,lower,upper,gain,band,window. These are explicit configuration, not newly chosen tuning constants. The calibrator owns history, the retained connection owns log alpha, and Mix owns movement.",
+		"package": "learning",
+		"builder": "NewPace",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "config",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"temporal.Timestamp": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Timestamp",
+		"name": "Timestamp",
+		"label": "Timestamp",
+		"description": "",
+		"package": "temporal",
+		"builder": "NewTimestamp",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Apply": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Apply",
+		"name": "Apply",
+		"label": "Apply",
+		"description": "",
+		"package": "transport",
+		"builder": "NewApply",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "target",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "input",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Sign": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Sign",
+		"name": "Sign",
+		"label": "Sign",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewSign",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Sqrt": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Sqrt",
+		"name": "Sqrt",
+		"label": "Sqrt",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewSqrt",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Reject": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Reject",
+		"name": "Reject",
+		"label": "Reject",
+		"description": "",
+		"package": "logic",
+		"builder": "NewReject",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "reason",
+				"type": "error"
+			}
+		]
+	},
+	"equation.RMS": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.RMS",
+		"name": "RMS",
+		"label": "RMS",
+		"description": "",
+		"package": "equation",
+		"builder": "NewRMS",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.ValidPair": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.ValidPair",
+		"name": "ValidPair",
+		"label": "Valid Pair",
+		"description": "NewValidPair is the supplied prediction/actual domain: finite, nonzero values.",
+		"package": "equation",
+		"builder": "NewValidPair",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Vector": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Vector",
+		"name": "Vector",
+		"label": "Vector",
+		"description": "NewVector multiplies a matrix expression by a vector expression, retaining the vector result rather than a one-column matrix payload.",
+		"package": "matrix",
+		"builder": "NewVector",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "matrix",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "vector",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.BinaryTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.BinaryTarget",
+		"name": "BinaryTarget",
+		"label": "Binary Target",
+		"description": "NewBinaryTarget classifies an increase without inventing a new numeric rule.",
+		"package": "learning",
+		"builder": "NewBinaryTarget",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Convert": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Convert",
+		"name": "Convert",
+		"label": "Convert",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewConvert",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Tanh": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Tanh",
+		"name": "Tanh",
+		"label": "Tanh",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewTanh",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.EvidenceShare": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.EvidenceShare",
+		"name": "EvidenceShare",
+		"label": "Evidence Share",
+		"description": "NewEvidenceShare selects one member after normalization. The index is a configured source. An absent index reports a shape error, while zero total mass remains undefined; neither becomes an apparently observed zero share.",
+		"package": "equation",
+		"builder": "NewEvidenceShare",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "index",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Standardizer": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Standardizer",
+		"name": "Standardizer",
+		"label": "Standardizer",
+		"description": "NewStandardizer preserves the source's inclusive score, using moments after incorporation. It is deliberately distinct from NewCausalResidual.",
+		"package": "equation",
+		"builder": "NewStandardizer",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "moments",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"vector.Sum": {
+		"kind": "primitive",
+		"category": "vector",
+		"op": "vector.Sum",
+		"name": "Sum",
+		"label": "Sum",
+		"description": "NewSum adds paired scalar streams and collects their vector.",
+		"package": "vector",
+		"builder": "NewSum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.IntegralDerivative": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.IntegralDerivative",
+		"name": "IntegralDerivative",
+		"label": "Integral Derivative",
+		"description": "NewIntegralDerivative is the derivative of the integral-support numerator with respect to beta, retaining both boundary-age terms.",
+		"package": "hawkes",
+		"builder": "NewIntegralDerivative",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "side",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Kernel": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Kernel",
+		"name": "Kernel",
+		"label": "Kernel",
+		"description": "NewKernel is exp(-beta*age). Rate and age are Primitive expressions; no event, side, storage or observation-window policy belongs to the kernel.",
+		"package": "hawkes",
+		"builder": "NewKernel",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "beta",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "age",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.IdentityTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.IdentityTarget",
+		"name": "IdentityTarget",
+		"label": "Identity Target",
+		"description": "NewIdentityTarget selects the finite current value.",
+		"package": "learning",
+		"builder": "NewIdentityTarget",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Or": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Or",
+		"name": "Or",
+		"label": "Or",
+		"description": "",
+		"package": "logic",
+		"builder": "NewOr",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "seed",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Entropy": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Entropy",
+		"name": "Entropy",
+		"label": "Entropy",
+		"description": "NewEntropy composes -sum(p*log(p)). The zero-mass contribution is its limiting value zero; negative inputs retain the logarithm's undefined-domain result.",
+		"package": "equation",
+		"builder": "NewEntropy",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.IntervalJoin": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.IntervalJoin",
+		"name": "IntervalJoin",
+		"label": "Interval Join",
+		"description": "",
+		"package": "equation",
+		"builder": "NewIntervalJoin",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"core.Proto": {
+		"kind": "primitive",
+		"category": "core",
+		"op": "core.Proto",
+		"name": "Proto",
+		"label": "Proto",
+		"description": "",
+		"package": "core",
+		"builder": "NewProto",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "state",
+				"type": "any"
+			}
+		]
+	},
+	"transport.IO": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.IO",
+		"name": "IO",
+		"label": "IO",
+		"description": "",
+		"package": "transport",
+		"builder": "NewIO",
+		"variadic": true,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "values",
+				"type": "primitive",
+				"description": "Streams this primitive reads, any number of them"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Pairs": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Pairs",
+		"name": "Pairs",
+		"label": "Pairs",
+		"description": "NewPairs configures the Primitive whose run is paired.",
+		"package": "store",
+		"builder": "NewPairs",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "source",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.LessEqual": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.LessEqual",
+		"name": "LessEqual",
+		"label": "Less Equal",
+		"description": "",
+		"package": "logic",
+		"builder": "NewLessEqual",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Product": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Product",
+		"name": "Product",
+		"label": "Product",
+		"description": "NewProduct binds two expressions to one captured input run. Both operands are computations, not decoded values; the source is consumed only once.",
+		"package": "equation",
+		"builder": "NewProduct",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Collect": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Collect",
+		"name": "Collect",
+		"label": "Collect",
+		"description": "",
+		"package": "transport",
+		"builder": "NewCollect",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Fan": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Fan",
+		"name": "Fan",
+		"label": "Fan",
+		"description": "",
+		"package": "transport",
+		"builder": "NewFan",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "inputs",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "outputs",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Erfc": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Erfc",
+		"name": "Erfc",
+		"label": "Erfc",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewErfc",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Multiply": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Multiply",
+		"name": "Multiply",
+		"label": "Multiply",
+		"description": "",
+		"package": "arithmetic",
+		"builder": "NewMultiply",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Pick": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Pick",
+		"name": "Pick",
+		"label": "Pick",
+		"description": "",
+		"package": "logic",
+		"builder": "NewPick",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "predicate",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.WeightedVariance": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.WeightedVariance",
+		"name": "WeightedVariance",
+		"label": "Weighted Variance",
+		"description": "NewWeightedVariance is E_w[x^2]-E_w[x]^2 over {weight,value} records. It is population dispersion, not an unbiased sample-variance correction. The nonnegative floor preserves the source cohort's roundoff convention; NaN remains undefined. There is no second accumulation implementation.",
+		"package": "equation",
+		"builder": "NewWeightedVariance",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"correlation.Path": {
+		"kind": "primitive",
+		"category": "correlation",
+		"op": "correlation.Path",
+		"name": "Path",
+		"label": "Path",
+		"description": "NewPath retains timestamped observations. Equal timestamps restate the last observation; regressions return accepted=false without editing the path. Optional collection-to-collection retention remains caller-configured. Output records and their observation slices remain immutable across later updates.",
+		"package": "correlation",
+		"builder": "NewPath",
+		"variadic": true,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "retention",
+				"type": "primitive",
+				"description": "Streams this primitive reads, any number of them"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"causal.Counterfactual": {
+		"kind": "primitive",
+		"category": "causal",
+		"op": "causal.Counterfactual",
+		"name": "Counterfactual",
+		"label": "Counterfactual",
+		"description": "NewCounterfactual composes abduction, intervention and prediction, preserving the factual residual as in the supplied table. fit and the two prediction connections may be arbitrary compatible graphs. Precision is the source's reconstruction audit weight 1/(1+abs(noise)), not a causal probability.",
+		"package": "causal",
+		"builder": "NewCounterfactual",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "fit",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "factual",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "intervened",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Product": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Product",
+		"name": "Product",
+		"label": "Product",
+		"description": "NewProduct configures the value held before anything has been shown.",
+		"package": "arithmetic",
+		"builder": "NewProduct",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "state",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.EvidenceAuthority": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.EvidenceAuthority",
+		"name": "EvidenceAuthority",
+		"label": "Evidence Authority",
+		"description": "NewEvidenceAuthority is the supplied measurement's maturity/SNR weighting. Unknown-SNR and zero-SNR factors are configuration, not new statistical laws.",
+		"package": "equation",
+		"builder": "NewEvidenceAuthority",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "unknown",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "zero",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Column": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Column",
+		"name": "Column",
+		"label": "Column",
+		"description": "NewColumn arranges a scalar run as an n-by-one matrix.",
+		"package": "matrix",
+		"builder": "NewColumn",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Calibrator": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Calibrator",
+		"name": "Calibrator",
+		"label": "Calibrator",
+		"description": "NewCalibrator scores against retained prior errors before appending a sample. Retention is a configured collection transform: identity for all history, Tail for a bounded history, or another composed selection policy.",
+		"package": "probability",
+		"builder": "NewCalibrator",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "retention",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.IntegralSupport": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.IntegralSupport",
+		"name": "IntegralSupport",
+		"label": "Integral Support",
+		"description": "NewIntegralSupport composes the exponential compensator numerator per side. Divide by beta in the compensator, not here: this matches the source units.",
+		"package": "hawkes",
+		"builder": "NewIntegralSupport",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "side",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.RLS": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.RLS",
+		"name": "RLS",
+		"label": "RLS",
+		"description": "NewRLS supplies an affine intercept and the zero-mean diagonal coefficient prior. All configuration remains Primitive-valued and is evaluated at delivery time. Prediction is prior to the optional target's update, as owned by SquareRootRLS.",
+		"package": "learning",
+		"builder": "NewRLS",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "dimension",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "variance",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "forgetting",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.RLSSum": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.RLSSum",
+		"name": "RLSSum",
+		"label": "RLS Sum",
+		"description": "NewRLSSum predicts a sum of future feature rows from a retained posterior. Shared coefficient covariance is evaluated on the summed design; independent observation noise is counted once per row. The posterior connection is never trained or replaced by this query.",
+		"package": "learning",
+		"builder": "NewRLSSum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "posterior",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Generator": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Generator",
+		"name": "Generator",
+		"label": "Generator",
+		"description": "",
+		"package": "transport",
+		"builder": "NewGenerator",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "source",
+				"type": "iter.Seq[T]"
+			}
+		]
+	},
+	"transport.Window": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Window",
+		"name": "Window",
+		"label": "Window",
+		"description": "",
+		"package": "transport",
+		"builder": "NewWindow",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		],
+		"config": [
+			{
+				"name": "width",
+				"type": "int"
+			},
+			{
+				"name": "stride",
+				"type": "int"
+			}
+		]
+	},
+	"collection.At": {
+		"kind": "primitive",
+		"category": "collection",
+		"op": "collection.At",
+		"name": "At",
+		"label": "At",
+		"description": "",
+		"package": "collection",
+		"builder": "NewAt",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "index",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Equal": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Equal",
+		"name": "Equal",
+		"label": "Equal",
+		"description": "",
+		"package": "logic",
+		"builder": "NewEqual",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.LogReturns": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.LogReturns",
+		"name": "LogReturns",
+		"label": "Log Returns",
+		"description": "NewLogReturns emits the existing {from,to,value} records from typed differences. The adjacent-pair width is two observations; it is not a retained time horizon.",
+		"package": "equation",
+		"builder": "NewLogReturns",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"rls.Prediction": {
+		"kind": "primitive",
+		"category": "rls",
+		"op": "rls.Prediction",
+		"name": "Prediction",
+		"label": "Prediction",
+		"description": "NewPrediction forecasts from the supplied posterior before any model update.",
+		"package": "rls",
+		"builder": "NewPrediction",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "observationCount",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"vector.Scale": {
+		"kind": "primitive",
+		"category": "vector",
+		"op": "vector.Scale",
+		"name": "Scale",
+		"label": "Scale",
+		"description": "NewScale evaluates the vector and scalar once, then maps multiplication. The vector expression yields a []float64 payload; scale yields one scalar.",
+		"package": "vector",
+		"builder": "NewScale",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "values",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "scale",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"data.Authority": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Authority",
+		"name": "Authority",
+		"label": "Authority",
+		"description": "NewAuthority preserves the source measurement's policy factors: .5 for an estimated reading with unknown SNR, .1 for defined non-positive SNR. They are retained compatibility policy, not calibrated probabilities.",
+		"package": "data",
+		"builder": "NewAuthority",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.IsNaN": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.IsNaN",
+		"name": "IsNaN",
+		"label": "Is Na N",
+		"description": "",
+		"package": "logic",
+		"builder": "NewIsNaN",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Greater": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Greater",
+		"name": "Greater",
+		"label": "Greater",
+		"description": "",
+		"package": "equation",
+		"builder": "NewGreater",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.RenewalRate": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.RenewalRate",
+		"name": "RenewalRate",
+		"label": "Renewal Rate",
+		"description": "NewRenewalRate accumulates quantity until a configured target is reached and positive time has elapsed. Input records contain increment and sample (float64) and at (int64 nanoseconds). The target receives each increment and owns its estimation policy. It must yield a positive quantity; no window is selected here. Each observation yields a record. closed distinguishes a completed span from a retained prior rate. The first completed span has no prior sample for change.",
+		"package": "equation",
+		"builder": "NewRenewalRate",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "target",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"rls.Update": {
+		"kind": "primitive",
+		"category": "rls",
+		"op": "rls.Update",
+		"name": "Update",
+		"label": "Update",
+		"description": "NewUpdate returns fresh posterior arrays and preserves the prior predictive facts.",
+		"package": "rls",
+		"builder": "NewUpdate",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"linear.LocalRegression": {
+		"kind": "primitive",
+		"category": "linear",
+		"op": "linear.LocalRegression",
+		"name": "LocalRegression",
+		"label": "Local Regression",
+		"description": "NewLocalRegression uses elapsed seconds from an exact int64 nanosecond origin as x and the observed value as y. The first origin is retained. Like the supplied implementation, this is cumulative; its old horizon argument never restricted evidence and no new retention policy is silently added.",
+		"package": "linear",
+		"builder": "NewLocalRegression",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"linear.RegressionMoments": {
+		"kind": "primitive",
+		"category": "linear",
+		"op": "linear.RegressionMoments",
+		"name": "RegressionMoments",
+		"label": "Regression Moments",
+		"description": "NewRegressionMoments retains the five normal-equation sums and count of scalar (x,y) observations. It owns no regression solver or admission window; arithmetic performs each update and the configured KV feedback retains it.",
+		"package": "linear",
+		"builder": "NewRegressionMoments",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Elapsed": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Elapsed",
+		"name": "Elapsed",
+		"label": "Elapsed",
+		"description": "NewElapsed subtracts int64 nanoseconds before conversion to seconds. In particular, epoch magnitude cannot erase a small interval by cancellation.",
+		"package": "equation",
+		"builder": "NewElapsed",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "from",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "through",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Mix": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Mix",
+		"name": "Mix",
+		"label": "Mix",
+		"description": "NewMix is left + weight*(right-left). Weight is data supplied in the record, not a mode on arithmetic. Zero preserves left; one selects right.",
+		"package": "equation",
+		"builder": "NewMix",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Finite": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Finite",
+		"name": "Finite",
+		"label": "Finite",
+		"description": "",
+		"package": "matrix",
+		"builder": "NewFinite",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"causal.Backdoor": {
+		"kind": "primitive",
+		"category": "causal",
+		"op": "causal.Backdoor",
+		"name": "Backdoor",
+		"label": "Backdoor",
+		"description": "NewBackdoor standardizes configured predictions over the observed rows after replacing the treatment coordinate. Fitting and predicting are Primitive connections, not a linear/nonlinear switch. The result is a model-dependent interventional estimate, not a claim that observational data identifies cause.",
+		"package": "causal",
+		"builder": "NewBackdoor",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "fit",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "predict",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Absolute": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Absolute",
+		"name": "Absolute",
+		"label": "Absolute",
+		"description": "",
+		"package": "calculus",
+		"builder": "NewAbsolute",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.LessEqual": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.LessEqual",
+		"name": "LessEqual",
+		"label": "Less Equal",
+		"description": "",
+		"package": "equation",
+		"builder": "NewLessEqual",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Mean": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Mean",
+		"name": "Mean",
+		"label": "Mean",
+		"description": "",
+		"package": "equation",
+		"builder": "NewMean",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.MomentRetention": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.MomentRetention",
+		"name": "MomentRetention",
+		"label": "Moment Retention",
+		"description": "",
+		"package": "equation",
+		"builder": "NewMomentRetention",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Threshold": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Threshold",
+		"name": "Threshold",
+		"label": "Threshold",
+		"description": "NewThreshold multiplies dispersion by a configured coefficient expression. The source's no-dispersion threshold of one is explicit at this level.",
+		"package": "equation",
+		"builder": "NewThreshold",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "coefficient",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"linear.SpectralRadius2": {
+		"kind": "primitive",
+		"category": "linear",
+		"op": "linear.SpectralRadius2",
+		"name": "SpectralRadius2",
+		"label": "Spectral Radius2",
+		"description": "NewSpectralRadius2 composes the quadratic roots of a 2-by-2 matrix. For a complex-conjugate pair the common modulus is sqrt(det); otherwise the largest absolute real root is selected. Input entries are a,b,c,d.",
+		"package": "linear",
+		"builder": "NewSpectralRadius2",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.TrustWeight": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.TrustWeight",
+		"name": "TrustWeight",
+		"label": "Trust Weight",
+		"description": "NewTrustWeight composes the source's residual-range trust update. No clipping is added to the trust recurrence; rate greater than one retains the original extrapolating behavior. Invalid inputs fail before entering retained state.",
+		"package": "learning",
+		"builder": "NewTrustWeight",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Bivariate": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Bivariate",
+		"name": "Bivariate",
+		"label": "Bivariate",
+		"description": "",
+		"package": "hawkes",
+		"builder": "NewBivariate",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Add": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Add",
+		"name": "Add",
+		"label": "Add",
+		"description": "",
+		"package": "arithmetic",
+		"builder": "NewAdd",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Argmax": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Argmax",
+		"name": "Argmax",
+		"label": "Argmax",
+		"description": "NewArgmax preserves a winning value's ordinal through comparison and selection. Strict comparison keeps the first equal maximum. No hidden profile engine.",
+		"package": "equation",
+		"builder": "NewArgmax",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Difference": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Difference",
+		"name": "Difference",
+		"label": "Difference",
+		"description": "NewDifference binds two expressions to one captured input run. Both operands are computations, not decoded values; the source is consumed only once.",
+		"package": "equation",
+		"builder": "NewDifference",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Energy": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Energy",
+		"name": "Energy",
+		"label": "Energy",
+		"description": "NewEnergy composes the sum of squared incoming scalar values.",
+		"package": "equation",
+		"builder": "NewEnergy",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Maximum": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Maximum",
+		"name": "Maximum",
+		"label": "Maximum",
+		"description": "NewMaximum binds both expressions to one captured input. The calculus fold owns the comparison and IEEE behavior; no finite sentinel substitutes for infinity.",
+		"package": "equation",
+		"builder": "NewMaximum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"matrix.Product": {
+		"kind": "primitive",
+		"category": "matrix",
+		"op": "matrix.Product",
+		"name": "Product",
+		"label": "Product",
+		"description": "NewProduct pairs the configured matrix expressions before multiplying them.",
+		"package": "matrix",
+		"builder": "NewProduct",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"algo.GaussJordan": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.GaussJordan",
+		"name": "GaussJordan",
+		"label": "Gauss Jordan",
+		"description": "NewGaussJordan composes partial-pivot Gauss-Jordan elimination. Input is a record containing left (square [][]float64) and right (n-by-q [][]float64). The tolerance expression supplies an absolute pivot floor. A singular solve yields defined=false and no solution, not regularization or guessed values. Numeric work belongs to dot/scale/difference compositions; this constructor owns only their ordering and feedback. It never operates on Go matrices.",
+		"package": "algo",
+		"builder": "NewGaussJordan",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "tolerance",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"prior.Memory": {
+		"kind": "primitive",
+		"category": "prior",
+		"op": "prior.Memory",
+		"name": "Memory",
+		"label": "Memory",
+		"description": "NewMemory supplies only the sufficient statistics, without transition scratch.",
+		"package": "prior",
+		"builder": "NewMemory",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"logic.Less": {
+		"kind": "primitive",
+		"category": "logic",
+		"op": "logic.Less",
+		"name": "Less",
+		"label": "Less",
+		"description": "",
+		"package": "logic",
+		"builder": "NewLess",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.LogMomentView": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.LogMomentView",
+		"name": "LogMomentView",
+		"label": "Log Moment View",
+		"description": "NewLogMomentView reads a log-space Welford record against prior moments. It does not log the input again. Noise and zscore follow the original joint estimator's minimum prior support and positive-dispersion requirements.",
+		"package": "equation",
+		"builder": "NewLogMomentView",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Normalize": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Normalize",
+		"name": "Normalize",
+		"label": "Normalize",
+		"description": "NewNormalize captures the total once and divides each original value by it. Zero totals remain mathematically undefined, not a fabricated distribution.",
+		"package": "equation",
+		"builder": "NewNormalize",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"equation.Sum": {
+		"kind": "primitive",
+		"category": "equation",
+		"op": "equation.Sum",
+		"name": "Sum",
+		"label": "Sum",
+		"description": "NewSum binds two expressions to one captured input run. Both operands are computations, not decoded values; the source is consumed only once.",
+		"package": "equation",
+		"builder": "NewSum",
+		"variadic": false,
+		"inputs": [
+			{
+				"name": "in",
+				"type": "primitive",
+				"description": "The run this primitive reads"
+			},
+			{
+				"name": "left",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "primitive",
+				"description": "A stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "primitive",
+				"description": "The run this primitive produces"
+			}
+		]
+	}
+}

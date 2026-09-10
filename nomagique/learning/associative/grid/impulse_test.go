@@ -9,12 +9,12 @@ import (
 )
 
 func TestSpaceImpulse(t *testing.T) {
-	Convey("Only resolved multi-quantity regions activate agents", t, func() {
+	Convey("Formation readiness belongs to the settled grid, not current activity", t, func() {
 		for _, regime := range []string{"coherent", "inverse", "immature", "singleton", "independent"} {
 			Convey(regime, func() {
 				space := NewSpace()
 				var impulse Impulse
-				for index := range 128 {
+				for index := range 4096 {
 					at := time.Unix(int64(index+1), 0)
 					measurement := data.NewMeasurement[float64]("fixture", "market", "source", at, time.Unix(1, 0))
 					// Repeated observations with known high SNR; maturity derives from the
@@ -39,11 +39,14 @@ func TestSpaceImpulse(t *testing.T) {
 					var err error
 					impulse, err = space.Impulse("market", at, measurement.From)
 					So(err, ShouldBeNil)
+					if impulse.Ready {
+						break
+					}
 					if index == 0 {
 						So(impulse.Ready, ShouldBeFalse)
 					}
 				}
-				So(impulse.Ready, ShouldEqual, regime == "coherent" || regime == "inverse")
+				So(impulse.Ready, ShouldEqual, regime == "coherent" || regime == "inverse" || regime == "independent")
 				if impulse.Ready {
 					original := impulse.Regions[0]
 					_, _, err := space.Regions("market")

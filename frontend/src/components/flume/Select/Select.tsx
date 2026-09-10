@@ -2,8 +2,8 @@ import { ChevronDown, XIcon } from "lucide-react";
 import React from "react";
 import { createPortal } from "react-dom";
 import type { SelectOption } from "#/components/flume/types";
-import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { Chip } from "#/components/ui/chip";
 import { cn } from "@/lib/utils";
 import ContextMenu from "../ContextMenu/ContextMenu";
 
@@ -120,7 +120,7 @@ const Select = ({
 					ref={wrapper}
 					variant="outline"
 					type="button"
-					size="sm"
+					size="s"
 					onClick={openDrawer}
 					aria-haspopup="listbox"
 					aria-expanded={drawerOpen}
@@ -175,7 +175,7 @@ const SelectedOption = ({
 		data-flume-component="select"
 		type="button"
 		variant="outline"
-		size="sm"
+		size="s"
 		onClick={onClick}
 		aria-haspopup="listbox"
 		aria-expanded={expanded}
@@ -186,7 +186,7 @@ const SelectedOption = ({
 			</span>
 			{description ? (
 				<span
-					className="w-full text-left text-muted-foreground text-xs italic"
+					className="w-full text-left text-(--f3) text-xs italic"
 					data-flume-component="select-desc"
 				>
 					{description}
@@ -204,18 +204,17 @@ interface OptionChipProps {
 
 const OptionChip = ({ children, onRequestDelete }: OptionChipProps) => (
 	<div className="flex w-full min-w-0 items-center gap-2">
-		<Badge
-			variant="outline"
+		<Chip
 			size="lg"
 			className="min-w-0 flex-1 justify-start gap-2 font-normal"
-		>
-			<span className="truncate">{children}</span>
-		</Badge>
+			label={<span className="truncate">{children}</span>}
+		/>
 		<Button
-			className="size-8 shrink-0 text-muted-foreground hover:text-destructive-foreground"
+			className="size-8 shrink-0 text-(--f3) hover:text-(--error)"
 			type="button"
-			size="icon-sm"
-			variant="ghost"
+			size="s"
+			shape="icon"
+			variant="quiet"
 			aria-label="Remove"
 			onMouseDown={(e) => {
 				e.stopPropagation();

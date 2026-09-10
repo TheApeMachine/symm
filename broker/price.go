@@ -297,8 +297,16 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 			return
 		}
 
+		/*
+			A touch whose sides meet or cross describes no executable entry.
+			Like a walk that runs past the far side, this is a reading about
+			book shape — the venue quoting both sides from instants that
+			disagree — and not a fault in this program. It is reported as
+			unprocessable so a caller sizes around it, exactly as it sizes
+			around insufficient depth.
+		*/
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-			err = errnie.Err(errnie.Validation, "entry cost: crossed book for "+symbol, nil)
+			err = errnie.Err(errnie.UnprocessableContent, "entry cost: crossed book for "+symbol, nil)
 			return
 		}
 
@@ -343,7 +351,21 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 		err = errnie.Err(errnie.UnprocessableContent, "entry cost: complete executable book required for "+symbol, nil)
 	}
 
-	return cost, errnie.Error(err)
+	return cost, reported(err)
+}
+
+/*
+reported logs a genuine fault and stays silent about a reading. A book that is
+too thin, crossed or incomplete for a requested size is ordinary market shape
+and is returned to the caller either way; at the rate the instrument universe
+produces those, logging them buries the faults that do matter.
+*/
+func reported(err error) error {
+	if err == nil || errnie.IsUnprocessableContent(err) {
+		return err
+	}
+
+	return errnie.Error(err)
 }
 
 /* SellQuote prices a complete liquidation from visible bids and current fee. */
@@ -364,8 +386,10 @@ func (price *Price) Surface(
 			return
 		}
 
+		// A crossed or touching book prices no liquidation; it reads as
+		// book shape, not as a fault. See EntryCost above.
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-			err = errnie.Err(errnie.Validation, "price: crossed book for "+symbol, nil)
+			err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
 			return
 		}
 
@@ -390,7 +414,7 @@ func (price *Price) Surface(
 		surface.ExecutableValue = price.WithFee(symbol, gross, SELL)
 	})
 
-	return surface, errnie.Error(err)
+	return surface, reported(err)
 }
 
 /* Tradable checks the instrument's actual quantity and notional minimums. */

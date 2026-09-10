@@ -1,8 +1,6 @@
 package strategy
 
 import (
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -135,97 +133,4 @@ func (evaluation *Evaluation) Row(run string) tables.OutcomeRow {
 	}
 
 	return row
-}
-
-// Grade scores completed replay decisions using secured wallet profit. Potential
-// is the best single round trip supported by this tape's quotes for the available
-// quantity and initial funding; future quotes are used only after replay ends.
-// Idle time discounts a gain by captured-span/(captured-span+idle).
-// It never discounts a loss. A flat missed opportunity receives an idle debit;
-// waiting on a tape without executable profit receives no fabricated reward.
-func (evaluation *Evaluation) Grade(observations []hindsight.Observation, price *broker.Price) error {
-	if len(observations) < 2 || evaluation.Initial == nil || evaluation.Initial.Sign() <= 0 || evaluation.Secured == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "evaluation: complete tape, funding and secured result required", nil))
-	}
-	span := observations[len(observations)-1].ReceivedAt.Sub(observations[0].ReceivedAt)
-
-	if span <= 0 || evaluation.Idle < 0 || evaluation.Idle > span {
-		return errnie.Error(errnie.Err(errnie.Validation, "evaluation: invalid captured duration or idle time", nil))
-	}
-	fee := price.FeeIfAvailable(observations[0].Symbol)
-
-	if fee == nil || fee.Fee == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "evaluation: symbol fee required", nil))
-	}
-	quantity := evaluation.Quantity
-
-	if quantity == nil || quantity.Sign() == 0 {
-		quantity = evaluation.Opportunity
-	}
-	evaluation.Potential = nil
-	var cheapest *decimal.Decimal
-
-	for index, observation := range observations {
-		if observation.Symbol != observations[0].Symbol {
-			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: mixed symbols on one tape", nil))
-		}
-
-		// Order is read from the capture coordinate, never from the receive
-		// clock: a batched trade or touch frame decodes into several
-		// observations that all carry that frame's single receive instant.
-		if index > 0 && !observations[index-1].Before(observation) {
-			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: non-increasing capture order", nil))
-		}
-
-		// Idle time is measured against the receive clock below, so that clock
-		// must at least not run backwards across the tape.
-		if index > 0 && observation.ReceivedAt.Before(observations[index-1].ReceivedAt) {
-			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: receive clock runs backwards", nil))
-		}
-
-		if quantity == nil || quantity.Sign() <= 0 {
-			continue // No executable size was available at the decision.
-		}
-
-		if cheapest != nil && observation.HasBid && decimal.NewFromFloat64(observation.BidQty).Cmp(quantity) >= 0 {
-			proceeds := price.WithFee(observation.Symbol, decimal.NewFromFloat64(observation.Bid).Mul(quantity), broker.SELL)
-			profit := proceeds.Sub(cheapest)
-
-			if evaluation.Potential == nil || profit.Cmp(evaluation.Potential) > 0 {
-				evaluation.Potential = profit
-			}
-		}
-
-		if observation.HasAsk && decimal.NewFromFloat64(observation.AskQty).Cmp(quantity) >= 0 {
-			cost := price.WithFee(observation.Symbol, decimal.NewFromFloat64(observation.Ask).Mul(quantity), broker.BUY)
-
-			if cost.Cmp(evaluation.Initial) <= 0 && (cheapest == nil || cost.Cmp(cheapest) < 0) {
-				cheapest = cost
-			}
-		}
-	}
-	evaluation.Value = evaluation.Secured.Div(evaluation.Initial).Float64()
-	evaluation.Failure = "capital loss"
-	idleFraction := float64(evaluation.Idle) / (float64(span) + float64(evaluation.Idle))
-
-	if evaluation.Secured.Sign() > 0 {
-		evaluation.Value *= 1 - idleFraction
-		evaluation.Failure = "profit secured"
-	}
-
-	if evaluation.Secured.Sign() == 0 {
-		evaluation.Failure = "no executable profit secured"
-
-		if evaluation.Potential != nil && evaluation.Potential.Sign() > 0 {
-			evaluation.Value = -evaluation.Potential.Div(evaluation.Initial).Float64() * idleFraction
-			evaluation.Failure = "opportunity missed"
-		}
-	}
-
-	if evaluation.Potential != nil && evaluation.Potential.Sign() > 0 {
-		evaluation.CaptureFraction = evaluation.Secured.Div(evaluation.Potential).Float64()
-	}
-	evaluation.Through = observations[len(observations)-1].ReceivedAt
-	evaluation.Complete = true
-	return nil
 }

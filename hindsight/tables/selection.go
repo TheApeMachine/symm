@@ -45,7 +45,10 @@ func (catalog *Catalog) CaptureReferences(ctx context.Context, run string, seque
 	if len(sequences) == 0 {
 		return rows, nil
 	}
-	batches, err := catalog.scan(ctx, Captures, forRun(run), iceberg.IsIn(iceberg.Reference("sequence"), sequences...))
+	batches, err := catalog.scan(ctx, Captures,
+		[]string{"run", "sequence", "stream", "stream_epoch", "stream_sequence", "received_at"},
+		forRun(run), iceberg.IsIn(iceberg.Reference("sequence"), sequences...),
+	)
 
 	if err != nil {
 		return nil, errnie.Error(err)

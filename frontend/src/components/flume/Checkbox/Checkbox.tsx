@@ -16,8 +16,8 @@ const Checkbox = ({ label, data, onChange }: CheckboxProps) => {
 			<CheckboxPrimitive
 				checked={data}
 				id={id}
-				onCheckedChange={(checked) => {
-					onChange(checked === true);
+				onChange={(event) => {
+					onChange(event.target.checked);
 				}}
 			/>
 			<Label className="cursor-pointer font-normal" htmlFor={id}>

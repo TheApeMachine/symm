@@ -1,17 +1,19 @@
+// @vitest-environment jsdom
+
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { researchGraphCollection } from "#/collections/research_graph";
+import { pipelineGraphCollection } from "#/collections/pipeline_graph";
 import { buildFlumeConfigFromSchemas } from "./build-config-from-schemas";
 import { useNodesState } from "./useNodesState";
 
 const clearCollection = () => {
 	if (typeof window !== "undefined") {
-		window.localStorage.removeItem("caramba:research_graphs");
+		window.localStorage.removeItem("symm:pipeline_graphs");
 	}
 
-	for (const row of Array.from(researchGraphCollection.values())) {
+	for (const row of Array.from(pipelineGraphCollection.values())) {
 		try {
-			researchGraphCollection.delete(row.id);
+			pipelineGraphCollection.delete(row.id);
 		} catch {
 			// ignore
 		}
@@ -72,7 +74,7 @@ describe("useNodesState", () => {
 			});
 		});
 
-		const firstRow = researchGraphCollection.get("graph-b");
+		const firstRow = pipelineGraphCollection.get("graph-b");
 		expect(firstRow).toBeDefined();
 		expect(Object.keys(firstRow?.nodes as object)).toHaveLength(2);
 
@@ -82,7 +84,7 @@ describe("useNodesState", () => {
 			});
 		});
 
-		const secondRow = researchGraphCollection.get("graph-b");
+		const secondRow = pipelineGraphCollection.get("graph-b");
 		// Should match the first row exactly — second seed is a no-op.
 		expect(Object.keys(secondRow?.nodes as object)).toHaveLength(2);
 	});
@@ -96,13 +98,13 @@ describe("useNodesState", () => {
 			});
 		}).not.toThrow();
 
-		expect(researchGraphCollection.get("graph-missing")).toBeUndefined();
+		expect(pipelineGraphCollection.get("graph-missing")).toBeUndefined();
 	});
 
 	it("setNodeCoordinates reconciles the draft so actions see a normalized shape", () => {
 		// Pre-seed a stale row: a node missing the connections field that
 		// the actions expect. reconcileNodes-on-write should fill it in.
-		researchGraphCollection.insert({
+		pipelineGraphCollection.insert({
 			id: "graph-c",
 			project_id: null,
 			schema_version: 1,
@@ -133,7 +135,7 @@ describe("useNodesState", () => {
 			});
 		});
 
-		const row = researchGraphCollection.get("graph-c");
+		const row = pipelineGraphCollection.get("graph-c");
 		const node = (
 			row?.nodes as Record<
 				string,

@@ -62,6 +62,9 @@ describe("RehearsalPanel", () => {
 			length: 4,
 			queued: 3,
 			stride: 1,
+			entry: 1,
+			exit: 3,
+			opportunity: "rise clears costs",
 			steps: [10, 12, 0, 11].map((value, index) => {
 				const step = new LearningStepT();
 				Object.assign(step, {
@@ -78,8 +81,9 @@ describe("RehearsalPanel", () => {
 					kind: "enter",
 					power: 1,
 					reduce: false,
-					value: 0.01,
+					value: 1,
 					graded: true,
+					verdict: "called ignition",
 				}),
 				Object.assign(new LearningMarkT(), {
 					id: 2n,
@@ -87,7 +91,9 @@ describe("RehearsalPanel", () => {
 					kind: "exit",
 					power: 0,
 					reduce: true,
-					graded: false,
+					value: -0.5,
+					graded: true,
+					verdict: "early for extremum",
 				}),
 			],
 		});
@@ -100,10 +106,22 @@ describe("RehearsalPanel", () => {
 		expect(html).toContain("Tape fragment worker 1 is replaying");
 		expect(html).toContain("Observation 2 of 4");
 		expect(html).toContain("Observation 2 of 4 · 3 fragments queued");
-		// The undefined third observation breaks the line rather than crossing zero.
-		expect(html).toContain('d="M 0.0 37.0 L 333.3 3.0 M 1000.0 20.0"');
-		expect(html).toContain("enter ·1/2 at observation 1 · 100.0 bp");
-		expect(html).toContain("exit ↓ ·1/1 at observation 3 · not graded yet");
+		// The undefined third observation breaks the line rather than crossing zero,
+		// and the path is drawn in observation coordinates so the tape can pan.
+		expect(html).toContain('d="M 0 37.0 L 1 3.0 M 3 20.0"');
+		// The tape moves under a fixed head rather than the head crossing it.
+		expect(html).toContain('viewBox="0.56 0 2 40"');
+		expect(html).toContain("left:72.00%");
+		// The move's own span, shaded by what the record says this tape did.
+		expect(html).toContain("left:22.00%;width:100.00%;background:var(--up)");
+		expect(html).toContain("enter at observation 1 · called ignition · 1.00");
+		expect(html).toContain(
+			"exit at observation 3 · early for extremum · -0.50",
+		);
+		expect(html).toContain(
+			"Ignition: the observation the excursion started at",
+		);
+		expect(html).toContain("Extremum: the observation the excursion ended at");
 		expect(html).toContain("No fragment mounted");
 		expect(html).not.toContain("Tape fragment worker 2 is replaying");
 	});

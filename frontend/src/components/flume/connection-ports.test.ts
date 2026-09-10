@@ -20,7 +20,7 @@ describe("resolvePortDropTarget", () => {
 			clientX: 106,
 			clientY: 106,
 			target: inner,
-		} as MouseEvent;
+		} as unknown as MouseEvent;
 
 		expect(resolvePortDropTarget(event)).toBe(portHandle);
 
@@ -47,7 +47,7 @@ describe("resolvePortDropTarget", () => {
 			clientX: 106,
 			clientY: 106,
 			target: overlay,
-		} as MouseEvent;
+		} as unknown as MouseEvent;
 
 		expect(resolvePortDropTarget(event)).toBe(portHandle);
 

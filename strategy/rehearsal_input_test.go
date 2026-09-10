@@ -24,22 +24,25 @@ func TestRehearsalReadInputs(t *testing.T) {
 				Stream: "spot", StreamEpoch: 1, ReceivedAt: observation.ReceivedAt})
 		}
 		other := rehearsalObservation(1, 0, "ETH/USD", 19, 20, 19.5)
-		rehearsal.observations[other.Symbol] = []hindsight.Observation{other}
+		spot := func(symbol string) tapeKey {
+			return tapeKey{run: learner.run, symbol: symbol}
+		}
+		rehearsal.observations[spot(other.Symbol)] = []hindsight.Observation{other}
 		envelope := rehearsalEnvelope(current)
 		envelope.Derivatives = data.NewMeasurement[float64]("other-symbol", other.Symbol, "derivatives", current.ReceivedAt, before.ReceivedAt)
 		envelope.Derivatives.PutMetric(data.Metric[float64]{Label: "basis", Raw: 1})
 		writer.AddWitness(tables.WitnessRow{Run: string(learner.run), ArtifactKind: "precursor",
 			Envelope: tables.EnvelopeRefRow{Run: string(learner.run), Sequence: 2}, Payload: envelope.EncodePrecursor()})
 		So(writer.Commit(t.Context()), ShouldBeNil)
-		rehearsal.observations["BTC/USD"] = []hindsight.Observation{before, future}
-		rehearsal.lastSequence = 3
-		So(rehearsal.readInputs(t.Context()), ShouldBeNil)
-		So(len(rehearsal.observations["BTC/USD"]), ShouldEqual, 3)
-		So(rehearsal.observations["BTC/USD"][1].Bid, ShouldEqual, before.Bid)
+		rehearsal.observations[spot("BTC/USD")] = []hindsight.Observation{before, future}
+		rehearsal.sequences[learner.run] = 3
+		So(rehearsal.readInputs(t.Context(), learner.run), ShouldBeNil)
+		So(len(rehearsal.observations[spot("BTC/USD")]), ShouldEqual, 3)
+		So(rehearsal.observations[spot("BTC/USD")][1].Bid, ShouldEqual, before.Bid)
 		So(len(rehearsal.inputs), ShouldEqual, 1)
-		So(len(rehearsal.observations[other.Symbol]), ShouldEqual, 2)
-		So(rehearsal.observations[other.Symbol][1].Bid, ShouldEqual, other.Bid)
-		So(rehearsal.readInputs(t.Context()), ShouldBeNil)
-		So(len(rehearsal.observations["BTC/USD"]), ShouldEqual, 3)
+		So(len(rehearsal.observations[spot(other.Symbol)]), ShouldEqual, 2)
+		So(rehearsal.observations[spot(other.Symbol)][1].Bid, ShouldEqual, other.Bid)
+		So(rehearsal.readInputs(t.Context(), learner.run), ShouldBeNil)
+		So(len(rehearsal.observations[spot("BTC/USD")]), ShouldEqual, 3)
 	})
 }

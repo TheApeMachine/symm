@@ -15,6 +15,9 @@ type LearningTrackT struct {
 	Stride int32 `json:"stride"`
 	Steps []*LearningStepT `json:"steps"`
 	Marks []*LearningMarkT `json:"marks"`
+	Entry int32 `json:"entry"`
+	Exit int32 `json:"exit"`
+	Opportunity string `json:"opportunity"`
 }
 
 func (t *LearningTrackT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -51,6 +54,10 @@ func (t *LearningTrackT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		}
 		marksOffset = builder.EndVector(marksLength)
 	}
+	opportunityOffset := flatbuffers.UOffsetT(0)
+	if t.Opportunity != "" {
+		opportunityOffset = builder.CreateString(t.Opportunity)
+	}
 	LearningTrackStart(builder)
 	LearningTrackAddId(builder, t.Id)
 	LearningTrackAddSymbol(builder, symbolOffset)
@@ -60,6 +67,9 @@ func (t *LearningTrackT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	LearningTrackAddStride(builder, t.Stride)
 	LearningTrackAddSteps(builder, stepsOffset)
 	LearningTrackAddMarks(builder, marksOffset)
+	LearningTrackAddEntry(builder, t.Entry)
+	LearningTrackAddExit(builder, t.Exit)
+	LearningTrackAddOpportunity(builder, opportunityOffset)
 	return LearningTrackEnd(builder)
 }
 
@@ -84,6 +94,9 @@ func (rcv *LearningTrack) UnPackTo(t *LearningTrackT) {
 		rcv.Marks(&x, j)
 		t.Marks[j] = x.UnPack()
 	}
+	t.Entry = rcv.Entry()
+	t.Exit = rcv.Exit()
+	t.Opportunity = string(rcv.Opportunity())
 }
 
 func (rcv *LearningTrack) UnPack() *LearningTrackT {
@@ -238,8 +251,40 @@ func (rcv *LearningTrack) MarksLength() int {
 	return 0
 }
 
+func (rcv *LearningTrack) Entry() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningTrack) MutateEntry(n int32) bool {
+	return rcv._tab.MutateInt32Slot(20, n)
+}
+
+func (rcv *LearningTrack) Exit() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningTrack) MutateExit(n int32) bool {
+	return rcv._tab.MutateInt32Slot(22, n)
+}
+
+func (rcv *LearningTrack) Opportunity() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
 func LearningTrackStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(11)
 }
 func LearningTrackAddId(builder *flatbuffers.Builder, id int32) {
 	builder.PrependInt32Slot(0, id, 0)
@@ -270,6 +315,15 @@ func LearningTrackAddMarks(builder *flatbuffers.Builder, marks flatbuffers.UOffs
 }
 func LearningTrackStartMarksVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
+}
+func LearningTrackAddEntry(builder *flatbuffers.Builder, entry int32) {
+	builder.PrependInt32Slot(8, entry, 0)
+}
+func LearningTrackAddExit(builder *flatbuffers.Builder, exit int32) {
+	builder.PrependInt32Slot(9, exit, 0)
+}
+func LearningTrackAddOpportunity(builder *flatbuffers.Builder, opportunity flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(opportunity), 0)
 }
 func LearningTrackEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

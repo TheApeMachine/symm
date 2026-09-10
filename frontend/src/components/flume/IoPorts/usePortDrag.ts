@@ -41,6 +41,9 @@ type PendingInputDisconnect = {
 	connectionElement: SVGPathElement;
 };
 
+/* Drag listeners capture, so a port under the cursor cannot swallow the move. */
+const DRAG_LISTENER_OPTIONS: AddEventListenerOptions = { capture: true };
+
 export interface PortDragHandle {
 	isDragging: boolean;
 	dragStartCoordinates: Coordinate;
@@ -175,8 +178,6 @@ export const usePortDrag = ({
 	);
 	const handleDragRef = React.useRef<(event: MouseEvent) => void>(() => {});
 	const handleDragEndRef = React.useRef<(event: MouseEvent) => void>(() => {});
-
-	const DRAG_LISTENER_OPTIONS: AddEventListenerOptions = { capture: true };
 
 	const clientPointToCanvasAt = React.useCallback(
 		(clientX: number, clientY: number): Coordinate => {

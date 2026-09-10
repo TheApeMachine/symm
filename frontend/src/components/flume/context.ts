@@ -24,7 +24,7 @@ export const PortTypesContext = React.createContext<PortTypeMap | null>(null);
 
 /*
 NodeActionsContext exposes the bound action functions that write
-directly to researchGraphCollection. Replaces the prior NodeDispatchContext
+directly to pipelineGraphCollection. Replaces the prior NodeDispatchContext
 + useReducer dispatch chain — there is no React reducer in the Flume
 pipeline, only TanStack DB and TanStack Store.
 */
@@ -59,7 +59,7 @@ export const EditorIdContext = React.createContext<string>("");
 /*
 GraphIdContext exposes the collection row id the current NodeEditor is
 bound to. Subgraph editors derive composite ids from it so they also
-persist through researchGraphCollection — no inline state anywhere.
+persist through pipelineGraphCollection — no inline state anywhere.
 */
 export const GraphIdContext = React.createContext<string>("");
 

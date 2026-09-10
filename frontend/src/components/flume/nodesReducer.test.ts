@@ -7,7 +7,7 @@ import type { DefaultConnection, FlumeNode } from "./types";
 /*
 This file used to exercise the React reducer. The reducer has been
 removed; topology mutations now flow through nodes-actions which
-write directly to researchGraphCollection. The pure helpers
+write directly to pipelineGraphCollection. The pure helpers
 (reconcileNodes, pruneDanglingConnections, buildInitialNodes) are
 still part of the public surface and remain unit-testable in isolation.
 */
@@ -78,10 +78,12 @@ describe("reconcileNodes via buildInitialNodes", () => {
 				kind: "operation",
 				category: "math",
 				op: "math.test",
+				package: "math",
+				builder: "New",
+				variadic: false,
 				name: "math.test",
 				label: "Test",
 				description: "Test op",
-				initial_width: 280,
 				inputs: [{ name: "x", type: "tensor", description: "" }],
 				outputs: [{ name: "y", type: "tensor", description: "" }],
 				config: [],

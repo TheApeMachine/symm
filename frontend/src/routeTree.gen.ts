@@ -13,6 +13,7 @@ import { Route as XrayRouteImport } from './routes/xray'
 import { Route as WorkbenchRouteImport } from './routes/workbench'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as RegulatorRouteImport } from './routes/regulator'
+import { Route as PipelineRouteImport } from './routes/pipeline'
 import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as LearningRouteImport } from './routes/learning'
 import { Route as JournalRouteImport } from './routes/journal'
@@ -43,6 +44,11 @@ const SignalsRoute = SignalsRouteImport.update({
 const RegulatorRoute = RegulatorRouteImport.update({
   id: '/regulator',
   path: '/regulator',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PipelineRoute = PipelineRouteImport.update({
+  id: '/pipeline',
+  path: '/pipeline',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LineageRoute = LineageRouteImport.update({
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
+  '/pipeline': typeof PipelineRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
+  '/pipeline': typeof PipelineRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
+  '/pipeline': typeof PipelineRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
     | '/journal'
     | '/learning'
     | '/lineage'
+    | '/pipeline'
     | '/regulator'
     | '/signals'
     | '/workbench'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/journal'
     | '/learning'
     | '/lineage'
+    | '/pipeline'
     | '/regulator'
     | '/signals'
     | '/workbench'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/journal'
     | '/learning'
     | '/lineage'
+    | '/pipeline'
     | '/regulator'
     | '/signals'
     | '/workbench'
@@ -219,6 +231,7 @@ export interface RootRouteChildren {
   JournalRoute: typeof JournalRoute
   LearningRoute: typeof LearningRoute
   LineageRoute: typeof LineageRoute
+  PipelineRoute: typeof PipelineRoute
   RegulatorRoute: typeof RegulatorRoute
   SignalsRoute: typeof SignalsRoute
   WorkbenchRoute: typeof WorkbenchRoute
@@ -253,6 +266,13 @@ declare module '@tanstack/react-router' {
       path: '/regulator'
       fullPath: '/regulator'
       preLoaderRoute: typeof RegulatorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pipeline': {
+      id: '/pipeline'
+      path: '/pipeline'
+      fullPath: '/pipeline'
+      preLoaderRoute: typeof PipelineRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/lineage': {
@@ -347,6 +367,7 @@ const rootRouteChildren: RootRouteChildren = {
   JournalRoute: JournalRoute,
   LearningRoute: LearningRoute,
   LineageRoute: LineageRoute,
+  PipelineRoute: PipelineRoute,
   RegulatorRoute: RegulatorRoute,
   SignalsRoute: SignalsRoute,
   WorkbenchRoute: WorkbenchRoute,

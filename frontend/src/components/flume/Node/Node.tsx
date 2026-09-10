@@ -1,15 +1,9 @@
 "use client";
 
-import {
-	ChevronDownIcon,
-	Maximize2Icon,
-	Minimize2Icon,
-	NetworkIcon,
-} from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, NetworkIcon } from "lucide-react";
 import type { RefObject } from "react";
 import React from "react";
 import { createPortal } from "react-dom";
-import { BarVertical } from "#/components/charts/bar-vertical";
 import {
 	ConnectionRecalculateContext,
 	FlumeGraphWorkerContext,
@@ -28,22 +22,14 @@ import type {
 	SelectOption,
 } from "#/components/flume/types";
 import { Card, CardPanel } from "#/components/ui/card";
-import {
-	Collapsible,
-	CollapsiblePanel,
-	CollapsibleTrigger,
-} from "#/components/ui/collapsible";
 import { Flex } from "#/components/ui/flex";
 import { Form } from "#/components/ui/form";
 import {
 	Frame,
 	FrameDescription,
-	FrameFooter,
 	FrameHeader,
 	FrameTitle,
 } from "#/components/ui/frame";
-import { Typography } from "#/components/ui/typography";
-import { cn } from "@/lib/utils";
 import ContextMenu from "../ContextMenu/ContextMenu";
 import Draggable from "../Draggable/Draggable";
 import IoPorts from "../IoPorts/IoPorts";
@@ -197,18 +183,6 @@ const Node = ({
 	const portalContainer =
 		typeof document !== "undefined" ? document.body : null;
 
-	const chartPreviewData = React.useMemo(() => {
-		let h = 0;
-		for (let i = 0; i < id.length; i++) {
-			h = (h + id.charCodeAt(i) * (i + 1)) % 101;
-		}
-		return [
-			{ label: "Load", value: 32 + (h % 45) },
-			{ label: "Mem", value: 24 + ((h * 3) % 38) },
-			{ label: "Ops", value: 40 + ((h * 7) % 34) },
-		];
-	}, [id]);
-
 	const resolvedSubGraph = subGraph ?? currentNodeType?.defaultSubGraph;
 
 	const subGraphEditor =
@@ -220,7 +194,7 @@ const Node = ({
 					portTypes={portTypes}
 					disableComments
 					disableFocusCapture
-					className="rounded-lg border border-border/48 bg-background/80"
+					className="rounded-[3px] border border-(--line)/48 bg-(--bg)/80"
 					style={{
 						width: SUBGRAPH_WIDTH,
 						height: SUBGRAPH_HEIGHT,
@@ -236,15 +210,15 @@ const Node = ({
 		subGraphFullscreen &&
 		portalContainer
 			? createPortal(
-					<div className="fixed inset-0 z-50 flex flex-col bg-background">
-						<div className="flex items-center gap-3 border-b px-4 py-2 text-sm text-muted-foreground">
+					<div className="fixed inset-0 z-50 flex flex-col bg-(--bg)">
+						<div className="flex items-center gap-3 border-b px-4 py-2 text-sm text-(--f3)">
 							<NetworkIcon className="size-4" />
-							<span className="font-medium text-foreground">{label}</span>
+							<span className="font-medium text-(--f1)">{label}</span>
 							<span className="flex-1">{description}</span>
 							<button
 								type="button"
 								onClick={() => setSubGraphFullscreen(false)}
-								className="ml-auto flex items-center gap-1.5 rounded px-2 py-1 hover:bg-muted/60"
+								className="ml-auto flex items-center gap-1.5 rounded px-2 py-1 hover:bg-(--raised)/60"
 							>
 								<Minimize2Icon className="size-4" />
 								Exit full screen
@@ -296,30 +270,25 @@ const Node = ({
 			stageRect={stageRect}
 		>
 			<Frame className="min-w-0 w-full">
-				<FrameHeader className="gap-2 py-3">
-					<Collapsible defaultOpen={false}>
-						<CollapsibleTrigger
-							className={cn(
-								"w-full cursor-pointer rounded-lg border border-border/72 bg-background/52 px-3 py-2 text-start font-medium text-sm outline-none transition-colors hover:bg-muted/52 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background [&[data-panel-open]_svg:last-child]:rotate-180",
-							)}
-							type="button"
-						>
-							<Flex.Row align="center" fullWidth justify="between" gap={2}>
-								<span className="min-w-0 truncate text-muted-foreground">
-									Node preview chart
-								</span>
-								<ChevronDownIcon
-									aria-hidden
-									className="size-4 shrink-0 text-muted-foreground transition-transform duration-200"
-								/>
-							</Flex.Row>
-						</CollapsibleTrigger>
-						<CollapsiblePanel className="mt-2">
-							<div className="rounded-lg border border-border/48 bg-muted/24 px-2 py-2">
-								<BarVertical data={chartPreviewData} height={128} />
-							</div>
-						</CollapsiblePanel>
-					</Collapsible>
+				<FrameHeader>
+					{renderNodeHeader ? (
+						renderNodeHeader(FrameTitle, currentNodeType, {
+							openMenu: handleContextMenu,
+							closeMenu: closeContextMenu,
+							deleteNode,
+						})
+					) : (
+						<>
+							<FrameTitle data-flume-component="node-header">
+								{label}
+							</FrameTitle>
+							{description ? (
+								<FrameDescription data-flume-component="node-description">
+									{description}
+								</FrameDescription>
+							) : null}
+						</>
+					)}
 				</FrameHeader>
 
 				<Card>
@@ -340,12 +309,12 @@ const Node = ({
 				</Card>
 
 				{isBlock && (
-					<div className="border-t border-border/48 px-3 py-2">
+					<div className="border-t border-(--line)/48 px-3 py-2">
 						<Flex.Row align="center" gap={2}>
 							<button
 								type="button"
 								onClick={() => setSubGraphOpen((v) => !v)}
-								className="flex flex-1 items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+								className="flex flex-1 items-center gap-1.5 rounded px-2 py-1 text-xs text-(--f3) hover:bg-(--raised)/60 hover:text-(--f1)"
 							>
 								<NetworkIcon className="size-3.5" />
 								{subGraphOpen ? "Collapse operations" : "Expand operations"}
@@ -354,7 +323,7 @@ const Node = ({
 								<button
 									type="button"
 									onClick={() => setSubGraphFullscreen(true)}
-									className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+									className="flex items-center gap-1 rounded px-2 py-1 text-xs text-(--f3) hover:bg-(--raised)/60 hover:text-(--f1)"
 								>
 									<Maximize2Icon className="size-3.5" />
 									Full screen
@@ -372,31 +341,6 @@ const Node = ({
 						)}
 					</div>
 				)}
-
-				<FrameFooter>
-					<Flex.Column fullWidth gap={3}>
-						<Flex.Column className="min-w-0 w-full" gap={1} fullWidth>
-							{renderNodeHeader ? (
-								renderNodeHeader(FrameTitle, currentNodeType, {
-									openMenu: handleContextMenu,
-									closeMenu: closeContextMenu,
-									deleteNode,
-								})
-							) : (
-								<div className="flex min-w-0 w-full flex-col gap-1">
-									<FrameTitle data-flume-component="node-header">
-										{label}
-									</FrameTitle>
-									<FrameDescription data-flume-component="node-description">
-										<Typography.Small variant="muted" truncate>
-											{description ?? ""}
-										</Typography.Small>
-									</FrameDescription>
-								</div>
-							)}
-						</Flex.Column>
-					</Flex.Column>
-				</FrameFooter>
 			</Frame>
 
 			{fullscreenOverlay}

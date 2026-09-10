@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/catalog"
 	"github.com/theapemachine/symm/workbench"
 )
 
@@ -61,6 +63,39 @@ func workbenchHub(t *testing.T) *Hub {
 func TestRegisterWorkbench(t *testing.T) {
 	Convey("Given the workbench mounted over a warehouse", t, func() {
 		hub := workbenchHub(t)
+
+		/*
+			The editor cannot offer a primitive it has not been told about, and
+			the palette is the only thing that tells it. It is served from the
+			generated catalog rather than assembled here.
+		*/
+		Convey("When the editor asks for the primitive palette", func() {
+			response, err := hub.app.Test(
+				httptest.NewRequest(http.MethodGet, "/workbench/primitives", nil),
+			)
+
+			So(err, ShouldBeNil)
+
+			defer response.Body.Close()
+
+			body, err := io.ReadAll(response.Body)
+			So(err, ShouldBeNil)
+
+			Convey("Then it receives nomagique's primitives with their ports", func() {
+				So(response.StatusCode, ShouldEqual, http.StatusOK)
+
+				var palette map[string]catalog.Schema
+				So(json.Unmarshal(body, &palette), ShouldBeNil)
+				So(len(palette), ShouldBeGreaterThan, 100)
+
+				bound, ok := palette["equation.Bound"]
+				So(ok, ShouldBeTrue)
+				So(bound.Category, ShouldEqual, "equation")
+				So(bound.Builder, ShouldEqual, "NewBound")
+				So(len(bound.Inputs), ShouldEqual, 4)
+				So(bound.Outputs, ShouldHaveLength, 1)
+			})
+		})
 
 		/*
 			The viewer materializes a view before reading it, and that statement

@@ -69,7 +69,7 @@ const ColorPicker = ({
 			data-flume-component="color-picker"
 			ref={wrapper}
 			className={cn(
-				"fixed z-9999 flex w-[102px] flex-wrap gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg backdrop-blur-sm",
+				"fixed z-9999 flex w-[102px] flex-wrap gap-0.5 rounded-[4px] border border-(--line) bg-(--surface) p-1 text-(--f1) shadow-lg backdrop-blur-sm",
 			)}
 			style={{
 				left: x,
@@ -104,7 +104,8 @@ const ColorButton = ({
 		<Button
 			type="button"
 			data-flume-component="color-button"
-			size="icon-sm"
+			size="s"
+			shape="icon"
 			variant="outline"
 			className="size-5 min-h-5 min-w-5 rounded-[3px] border-0 p-0 hover:opacity-90"
 			onClick={onSelected}

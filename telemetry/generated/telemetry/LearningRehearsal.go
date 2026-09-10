@@ -25,6 +25,10 @@ type LearningRehearsalT struct {
 	LastFailure string `json:"lastFailure"`
 	Illiquid uint64 `json:"illiquid"`
 	Quiet uint64 `json:"quiet"`
+	Warming uint64 `json:"warming"`
+	Runs int32 `json:"runs"`
+	Observations uint64 `json:"observations"`
+	Budget uint64 `json:"budget"`
 	Tracks []*LearningTrackT `json:"tracks"`
 }
 
@@ -80,6 +84,10 @@ func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	LearningRehearsalAddLastFailure(builder, lastFailureOffset)
 	LearningRehearsalAddIlliquid(builder, t.Illiquid)
 	LearningRehearsalAddQuiet(builder, t.Quiet)
+	LearningRehearsalAddWarming(builder, t.Warming)
+	LearningRehearsalAddRuns(builder, t.Runs)
+	LearningRehearsalAddObservations(builder, t.Observations)
+	LearningRehearsalAddBudget(builder, t.Budget)
 	LearningRehearsalAddTracks(builder, tracksOffset)
 	return LearningRehearsalEnd(builder)
 }
@@ -103,6 +111,10 @@ func (rcv *LearningRehearsal) UnPackTo(t *LearningRehearsalT) {
 	t.LastFailure = string(rcv.LastFailure())
 	t.Illiquid = rcv.Illiquid()
 	t.Quiet = rcv.Quiet()
+	t.Warming = rcv.Warming()
+	t.Runs = rcv.Runs()
+	t.Observations = rcv.Observations()
+	t.Budget = rcv.Budget()
 	tracksLength := rcv.TracksLength()
 	t.Tracks = make([]*LearningTrackT, tracksLength)
 	for j := 0; j < tracksLength; j++ {
@@ -356,8 +368,56 @@ func (rcv *LearningRehearsal) MutateQuiet(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(38, n)
 }
 
-func (rcv *LearningRehearsal) Tracks(obj *LearningTrack, j int) bool {
+func (rcv *LearningRehearsal) Warming() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningRehearsal) MutateWarming(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(40, n)
+}
+
+func (rcv *LearningRehearsal) Runs() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningRehearsal) MutateRuns(n int32) bool {
+	return rcv._tab.MutateInt32Slot(42, n)
+}
+
+func (rcv *LearningRehearsal) Observations() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningRehearsal) MutateObservations(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(44, n)
+}
+
+func (rcv *LearningRehearsal) Budget() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningRehearsal) MutateBudget(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(46, n)
+}
+
+func (rcv *LearningRehearsal) Tracks(obj *LearningTrack, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -369,7 +429,7 @@ func (rcv *LearningRehearsal) Tracks(obj *LearningTrack, j int) bool {
 }
 
 func (rcv *LearningRehearsal) TracksLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -377,7 +437,7 @@ func (rcv *LearningRehearsal) TracksLength() int {
 }
 
 func LearningRehearsalStart(builder *flatbuffers.Builder) {
-	builder.StartObject(19)
+	builder.StartObject(23)
 }
 func LearningRehearsalAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(status), 0)
@@ -433,8 +493,20 @@ func LearningRehearsalAddIlliquid(builder *flatbuffers.Builder, illiquid uint64)
 func LearningRehearsalAddQuiet(builder *flatbuffers.Builder, quiet uint64) {
 	builder.PrependUint64Slot(17, quiet, 0)
 }
+func LearningRehearsalAddWarming(builder *flatbuffers.Builder, warming uint64) {
+	builder.PrependUint64Slot(18, warming, 0)
+}
+func LearningRehearsalAddRuns(builder *flatbuffers.Builder, runs int32) {
+	builder.PrependInt32Slot(19, runs, 0)
+}
+func LearningRehearsalAddObservations(builder *flatbuffers.Builder, observations uint64) {
+	builder.PrependUint64Slot(20, observations, 0)
+}
+func LearningRehearsalAddBudget(builder *flatbuffers.Builder, budget uint64) {
+	builder.PrependUint64Slot(21, budget, 0)
+}
 func LearningRehearsalAddTracks(builder *flatbuffers.Builder, tracks flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(tracks), 0)
+	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(tracks), 0)
 }
 func LearningRehearsalStartTracksVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

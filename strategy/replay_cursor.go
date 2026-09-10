@@ -4,14 +4,10 @@ import (
 	"container/ring"
 	"context"
 	"maps"
-	"sort"
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
@@ -25,25 +21,19 @@ import (
 // advances one captured observation or resolves one completed decision.
 // Pending additions enter the circular list only between complete exercises.
 type replayCursor struct {
-	rehearsal    *Rehearsal
-	ctx          context.Context
-	mutex        sync.Mutex
-	pending      [][]hindsight.Observation
-	fragments    *ring.Ring
-	learned      *cognition.Engine
-	columns      [][2]string
-	observations []hindsight.Observation
-	space        *grid.Space
-	source       *recordedBook
-	trader       *Trader
-	member       *agent.Agent[Action]
-	evaluations  []*Evaluation
-	track        wire.LearningTrackT
-	index        int
-	idle         time.Duration
-	lastProfit   *decimal.Decimal
-	lastAt       time.Time
-	settled      bool
+	rehearsal *Rehearsal
+	ctx       context.Context
+	mutex     sync.Mutex
+	pending   []fragment
+	fragments *ring.Ring
+	learned   *cognition.Engine
+	tape      fragment
+	mounted   bool
+	space     *grid.Space
+	session   *practice
+	member    *agent.Agent[Action]
+	track     wire.LearningTrackT
+	index     int
 }
 
 func (cursor *replayCursor) Step(envelope *types.Envelope) *types.Envelope {
@@ -51,7 +41,7 @@ func (cursor *replayCursor) Step(envelope *types.Envelope) *types.Envelope {
 		return envelope
 	}
 
-	if cursor.observations == nil {
+	if !cursor.mounted {
 		cursor.link()
 
 		if cursor.fragments == nil {
@@ -65,12 +55,12 @@ func (cursor *replayCursor) Step(envelope *types.Envelope) *types.Envelope {
 	}
 	var err error
 
-	if cursor.index < len(cursor.observations) {
+	if cursor.index < len(cursor.tape.observations) {
 		err = cursor.advance()
 	}
 
-	if err == nil && cursor.index == len(cursor.observations) {
-		err = cursor.finish()
+	if err == nil && cursor.index == len(cursor.tape.observations) {
+		cursor.finish()
 	}
 
 	if err != nil {
@@ -87,8 +77,8 @@ func (cursor *replayCursor) link() {
 		return
 	}
 	addition := ring.New(len(cursor.pending))
-	for _, fragment := range cursor.pending {
-		addition.Value = fragment
+	for _, tape := range cursor.pending {
+		addition.Value = tape
 		addition = addition.Next()
 	}
 
@@ -108,23 +98,20 @@ func (cursor *replayCursor) begin() error {
 			return errnie.Error(err)
 		}
 	}
-	cursor.observations = cursor.fragments.Value.([]hindsight.Observation)
-	cursor.space = grid.NewSpace()
-	for _, identity := range cursor.columns {
-		cursor.space.Column(identity[0], identity[1])
+	cursor.tape = cursor.fragments.Value.(fragment)
+	cursor.mounted = true
+	if cursor.space == nil {
+		cursor.space = grid.NewSpace()
 	}
-	cursor.source = &recordedBook{}
-	price := broker.NewRecordedPrice(cursor.rehearsal.price, cursor.source)
-	trader, err := NewTrader(cursor.rehearsal.learner.Traders[0].api, price,
-		cursor.rehearsal.learner.Traders[0].Balance.Quote, cursor.rehearsal.learner.funding)
+	cursor.space.Reset()
+	symbol := ""
 
-	if err != nil {
-		return errnie.Error(err)
+	if len(cursor.tape.observations) > 0 {
+		symbol = cursor.tape.observations[0].Symbol
 	}
-	cursor.trader = trader
-	cursor.member, err = agent.New(cursor.ctx, trader, cursor.learned, true)
-	cursor.index, cursor.idle, cursor.settled = 0, 0, false
-	cursor.lastProfit, cursor.lastAt = nil, time.Time{}
+	cursor.session = &practice{symbol: symbol, entry: cursor.tape.entry, exit: cursor.tape.exit}
+	member, err := agent.New(cursor.ctx, cursor.session, cursor.learned, true)
+	cursor.member, cursor.index = member, 0
 	cursor.mount()
 	return errnie.Error(err)
 }
@@ -140,7 +127,7 @@ itself, read through the same market coordinate episode discovery selected.
 An observation that coordinate is undefined at is delivered as absent.
 */
 func (cursor *replayCursor) mount() {
-	observations := cursor.observations
+	observations := cursor.tape.observations
 	stride := 1 + len(observations)/trackBudget
 	steps := make([]*wire.LearningStepT, 0, len(observations)/stride+1)
 
@@ -165,6 +152,8 @@ func (cursor *replayCursor) mount() {
 	cursor.track = wire.LearningTrackT{
 		Symbol: symbol, Length: int32(len(observations)), Stride: int32(stride),
 		Queued: int32(queued), Steps: steps,
+		Entry: int32(cursor.tape.entry), Exit: int32(cursor.tape.exit),
+		Opportunity: cursor.tape.opportunity,
 	}
 }
 
@@ -188,19 +177,27 @@ func (cursor *replayCursor) wire(id int32) *wire.LearningTrackT {
 	return &track
 }
 
+/*
+advance shows the worker one observation: the grid takes the captured
+measurements, and if they complete an impulse the worker is asked what it makes
+of the system state. The answer is judged against the tape's own geometry
+straight away, because the moment it was asked about already happened.
+*/
 func (cursor *replayCursor) advance() error {
 	index := cursor.index
 	cursor.index++
 	cursor.mutex.Lock()
 	cursor.track.Index = int32(cursor.index)
 	cursor.mutex.Unlock()
-	observation := cursor.observations[index]
-	cursor.source.Step(observation)
-	cursor.trader.At, cursor.trader.Version = observation.ReceivedAt, uint64(index+1)
-	input := observation
-	measurements := make([]*data.Measurement[float64], 0, len(input.Measurements))
+	observation := cursor.tape.observations[index]
+	// Objective marks use this worker's actual processing clock. Captured
+	// venue and receive times can both regress across ordered input frames;
+	// they remain untouched on observations and impulses for causal context.
+	cursor.session.index, cursor.session.at = index, time.Now()
+
+	measurements := make([]*data.Measurement[float64], 0, len(observation.Measurements))
 	from := observation.ReceivedAt
-	for _, captured := range input.Measurements {
+	for _, captured := range observation.Measurements {
 		if captured.Label != observation.Symbol {
 			continue
 		}
@@ -213,38 +210,16 @@ func (cursor *replayCursor) advance() error {
 		}
 	}
 
-	if len(measurements) > 0 {
-		if err := cursor.space.Step(measurements); err != nil {
-			return errnie.Error(err)
-		}
-	}
-
-	if !cursor.trader.Ready(observation.Symbol) {
-		cursor.member.Transition(runtime.WAITING)
-		cursor.lastProfit = nil // Missing valuation cannot establish an idle interval.
-		return nil
-	}
-	mark, err := cursor.trader.Objective()
-
-	if err != nil || mark == nil {
-		cursor.member.Transition(runtime.WAITING)
-		cursor.lastProfit = nil
-		return errnie.Error(err)
-	}
-
-	if cursor.lastProfit != nil && cursor.trader.Profit.Cmp(cursor.lastProfit) <= 0 {
-		cursor.idle += observation.ReceivedAt.Sub(cursor.lastAt)
-	}
-	cursor.lastProfit, cursor.lastAt = cursor.trader.Profit, observation.ReceivedAt
-
-	// Quotes advance the wallet clock even when no precursor was captured.
-	// They cannot activate an absent row or reuse a previous grid impulse.
+	// An observation carrying no captured precursor cannot activate a row or
+	// reuse a previous impulse. The worker is not asked about it.
 	if len(measurements) == 0 {
 		cursor.member.Transition(runtime.WAITING)
-		cursor.rehearsal.mutex.Lock()
-		cursor.rehearsal.progress.Unsupported++
-		cursor.rehearsal.mutex.Unlock()
+		cursor.unsupported()
 		return nil
+	}
+
+	if err := cursor.space.Step(measurements); err != nil {
+		return errnie.Error(err)
 	}
 	impulse, err := cursor.space.Impulse(observation.Symbol, observation.ReceivedAt, from)
 
@@ -252,22 +227,17 @@ func (cursor *replayCursor) advance() error {
 		return errnie.Error(err)
 	}
 
-	if !impulse.Ready || index == len(cursor.observations)-1 {
+	// Formation survives tape changes. Only observation-local baselines reset;
+	// a quiet tape cannot send a formed grid back through calibration.
+	if !impulse.Ready {
 		cursor.member.Transition(runtime.WAITING)
 		cursor.rehearsal.mutex.Lock()
-		cursor.rehearsal.progress.Unsupported++
+		cursor.rehearsal.progress.Warming++
 		cursor.rehearsal.mutex.Unlock()
 		return nil
 	}
-	before, entry := cursor.member.Decisions, -1
-	baseline, realized := cursor.trader.Profit, cursor.trader.Realized
-
-	if opened, holding := cursor.trader.Opened[observation.Symbol]; holding {
-		entry = sort.Search(len(cursor.observations), func(index int) bool {
-			return !cursor.observations[index].ReceivedAt.Before(opened)
-		})
-	}
-
+	before := cursor.member.Decisions
+	holding := cursor.session.holding
 	cursor.member.Step(impulse)
 
 	if err := cursor.member.Error(); err != nil {
@@ -277,97 +247,74 @@ func (cursor *replayCursor) advance() error {
 	if cursor.member.Decisions == before {
 		return nil
 	}
-	decision := cursor.member.Last
-	evaluation := cursor.trader.Evaluations[observation.Symbol][decision.ID]
-	evaluation.Index, evaluation.Entry = index, entry
-	evaluation.Baseline, evaluation.Idle = baseline, cursor.idle
-
-	if decision.Action.Reduce {
-		evaluation.Secured = cursor.trader.Positions[observation.Symbol].Holding.RealizedPnL.Sub(realized)
-	}
-	cursor.evaluations = append(cursor.evaluations, evaluation)
-
-	// Waiting is the absence of an action and is already the whole rest of the
-	// track. Only decisions that reach the account are positioned on it.
-	if decision.Action.Kind != "wait" {
-		cursor.mutex.Lock()
-		cursor.track.Marks = append(cursor.track.Marks, &wire.LearningMarkT{
-			Id: decision.ID, Index: int32(index), Kind: decision.Action.Kind,
-			Power: int32(decision.Action.Power), Reduce: decision.Action.Reduce,
-		})
-		cursor.mutex.Unlock()
-	}
-	return nil
+	return cursor.grade(index, holding, cursor.member.Last)
 }
 
-func (cursor *replayCursor) finish() error {
-	if !cursor.settled {
-		last := cursor.observations[len(cursor.observations)-1]
-		if err := cursor.trader.End(last.Symbol, last.ReceivedAt); err != nil {
-			return errnie.Error(err)
-		}
-		cursor.settled = true
-	}
+/*
+grade judges one call and teaches it. The worker is told how well it named the
+moment, and the shared policy absorbs the same number against the exact
+precursor the worker was looking at when it answered.
+*/
+func (cursor *replayCursor) grade(
+	index int, holding bool, decision *agent.Decision[Action],
+) error {
+	// judge reads the position state the call was made from, not the one it
+	// produced: an entry is judged as an entry, never as a fresh hold.
+	session := practice{holding: holding}
+	value, verdict := session.judge(cursor.tape, index, decision.Action)
 
-	if len(cursor.evaluations) == 0 {
-		cursor.columns = cursor.space.Columns
-		cursor.observations = nil
-		cursor.fragments = cursor.fragments.Next()
-		cursor.rehearsal.mutex.Lock()
-		cursor.rehearsal.progress.Passes++
-		cursor.rehearsal.mutex.Unlock()
-		return nil
-	}
-	evaluation := cursor.evaluations[0]
-
-	if evaluation.Secured == nil && cursor.trader.open() == 0 {
-		evaluation.Secured = cursor.trader.Balance.Cash().Sub(cursor.trader.Initial).Sub(evaluation.Baseline)
-	}
-
-	if evaluation.Secured == nil {
-		// Unreleased basis is explicitly a capital-completion debit. It is not
-		// a fabricated zero mark or a realized loss on remaining inventory.
-		holding := cursor.trader.Positions[evaluation.Label].Holding
-		evaluation.Secured = decimal.NewFromInt64(0).Sub(holding.Basis).Sub(holding.EntryFee)
-	}
-	evaluation.Idle = cursor.idle - evaluation.Idle
-
-	if err := evaluation.Grade(cursor.observations, cursor.rehearsal.price); err != nil {
+	if _, err := cursor.member.Resolve(decision.ID, value); err != nil {
 		return errnie.Error(err)
 	}
 
-	if _, err := cursor.member.Resolve(evaluation.ID, evaluation.Value); err != nil {
+	if err := cursor.rehearsal.learner.Learn(decision.Label, cursor.space.Columns,
+		decision.Context, decision.Action, value, decision.Authority); err != nil {
 		return errnie.Error(err)
 	}
-
-	if err := cursor.rehearsal.learner.Learn(evaluation.Label, cursor.space.Columns, evaluation.Context,
-		evaluation.Action, evaluation.Value, evaluation.Authority); err != nil {
-		return errnie.Error(err)
-	}
-	cursor.grade(evaluation)
-	cursor.evaluations = cursor.evaluations[1:]
+	cursor.mark(index, decision, value, verdict)
 	cursor.rehearsal.mutex.Lock()
 	defer cursor.rehearsal.mutex.Unlock()
 	cursor.rehearsal.progress.Decisions++
 	cursor.rehearsal.progress.Trained++
-	cursor.rehearsal.progress.LastSymbol = evaluation.Label
-	cursor.rehearsal.progress.LastAction = evaluation.Action.Kind
-	cursor.rehearsal.progress.LastReturn = evaluation.Value
-	cursor.rehearsal.progress.LastFailure = evaluation.Failure
+	cursor.rehearsal.progress.LastSymbol = decision.Label
+	cursor.rehearsal.progress.LastAction = decision.Action.Kind
+	cursor.rehearsal.progress.LastReturn = value
+	cursor.rehearsal.progress.LastFailure = verdict
 	return nil
 }
 
-// grade returns a published mark's measured outcome to the track it was taken
-// on, so an arrow that has been answered reads differently from one that has
-// not. A mark whose fragment has already been replaced is simply absent.
-func (cursor *replayCursor) grade(evaluation *Evaluation) {
+/* finish rotates to the next tape; a completed pass teaches nothing further. */
+func (cursor *replayCursor) finish() {
+	cursor.mounted = false
+	cursor.fragments = cursor.fragments.Next()
+	cursor.rehearsal.mutex.Lock()
+	defer cursor.rehearsal.mutex.Unlock()
+	cursor.rehearsal.progress.Passes++
+}
+
+/* unsupported counts an observation the worker could not be asked about. */
+func (cursor *replayCursor) unsupported() {
+	cursor.rehearsal.mutex.Lock()
+	defer cursor.rehearsal.mutex.Unlock()
+	cursor.rehearsal.progress.Unsupported++
+}
+
+/*
+mark publishes one call onto the worker's visible track. A call is judged the
+moment it is made, so it is published already answered: its position says when
+the worker spoke and its value says how well that named the moment.
+*/
+func (cursor *replayCursor) mark(
+	index int, decision *agent.Decision[Action], value float64, verdict string,
+) {
+	if decision.Action.Kind == "wait" || decision.Action.Kind == "hold" {
+		return
+	}
 	cursor.mutex.Lock()
 	defer cursor.mutex.Unlock()
-
-	for _, mark := range cursor.track.Marks {
-		if mark.Id == evaluation.ID {
-			mark.Value, mark.Graded = evaluation.Value, true
-			return
-		}
-	}
+	cursor.track.Marks = append(cursor.track.Marks, &wire.LearningMarkT{
+		Id: decision.ID, Index: int32(index), Kind: decision.Action.Kind,
+		Power: int32(decision.Action.Power), Reduce: decision.Action.Reduce,
+		Value: value, Graded: true, Verdict: verdict,
+	})
 }

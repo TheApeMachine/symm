@@ -14,6 +14,7 @@ type LearningMarkT struct {
 	Reduce bool `json:"reduce"`
 	Value float64 `json:"value"`
 	Graded bool `json:"graded"`
+	Verdict string `json:"verdict"`
 }
 
 func (t *LearningMarkT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -24,6 +25,10 @@ func (t *LearningMarkT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT 
 	if t.Kind != "" {
 		kindOffset = builder.CreateString(t.Kind)
 	}
+	verdictOffset := flatbuffers.UOffsetT(0)
+	if t.Verdict != "" {
+		verdictOffset = builder.CreateString(t.Verdict)
+	}
 	LearningMarkStart(builder)
 	LearningMarkAddId(builder, t.Id)
 	LearningMarkAddIndex(builder, t.Index)
@@ -32,6 +37,7 @@ func (t *LearningMarkT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT 
 	LearningMarkAddReduce(builder, t.Reduce)
 	LearningMarkAddValue(builder, t.Value)
 	LearningMarkAddGraded(builder, t.Graded)
+	LearningMarkAddVerdict(builder, verdictOffset)
 	return LearningMarkEnd(builder)
 }
 
@@ -43,6 +49,7 @@ func (rcv *LearningMark) UnPackTo(t *LearningMarkT) {
 	t.Reduce = rcv.Reduce()
 	t.Value = rcv.Value()
 	t.Graded = rcv.Graded()
+	t.Verdict = string(rcv.Verdict())
 }
 
 func (rcv *LearningMark) UnPack() *LearningMarkT {
@@ -169,8 +176,16 @@ func (rcv *LearningMark) MutateGraded(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
 
+func (rcv *LearningMark) Verdict() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
 func LearningMarkStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(8)
 }
 func LearningMarkAddId(builder *flatbuffers.Builder, id uint64) {
 	builder.PrependUint64Slot(0, id, 0)
@@ -192,6 +207,9 @@ func LearningMarkAddValue(builder *flatbuffers.Builder, value float64) {
 }
 func LearningMarkAddGraded(builder *flatbuffers.Builder, graded bool) {
 	builder.PrependBoolSlot(6, graded, false)
+}
+func LearningMarkAddVerdict(builder *flatbuffers.Builder, verdict flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(verdict), 0)
 }
 func LearningMarkEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

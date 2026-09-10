@@ -5,6 +5,7 @@ import (
 	"context"
 	"iter"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ file order. Callers that need capture order sort explicitly rather than relying
 on the layout, because a compaction or a re-append would silently change it.
 */
 func (catalog *Catalog) scan(
-	ctx context.Context, name string, filters ...iceberg.BooleanExpression,
+	ctx context.Context, name string, fields []string, filters ...iceberg.BooleanExpression,
 ) (iter.Seq2[arrow.RecordBatch, error], error) {
 	loaded, err := catalog.Load(ctx, name)
 
@@ -41,7 +42,12 @@ func (catalog *Catalog) scan(
 		predicate = iceberg.NewAnd(predicate, filter)
 	}
 
-	tasks, err := loaded.Scan(icetable.WithRowFilter(predicate)).PlanFiles(ctx)
+	options := []icetable.ScanOption{icetable.WithRowFilter(predicate)}
+
+	if len(fields) > 0 {
+		options = append(options, icetable.WithSelectedFields(fields...))
+	}
+	tasks, err := loaded.Scan(options...).PlanFiles(ctx)
 
 	if err != nil {
 		return nil, errnie.Error(err)
@@ -56,6 +62,9 @@ func (catalog *Catalog) scan(
 	}
 
 	for _, task := range tasks {
+		if len(fields) > 0 && !slices.Contains(fields, "payload") {
+			break
+		}
 		bound, err := catalog.payloadBound(ctx, loaded, task)
 
 		if err != nil {
@@ -88,7 +97,7 @@ func (catalog *Catalog) scan(
 		return nil, errnie.Error(err)
 	}
 	reader := icetable.New(loaded.Identifier(), bounded, loaded.MetadataLocation(), loaded.FS, nil)
-	_, batches, err := reader.Scan(icetable.WithRowFilter(predicate)).ReadTasks(ctx, tasks)
+	_, batches, err := reader.Scan(options...).ReadTasks(ctx, tasks)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -165,7 +174,7 @@ func (c *Catalog) Captures(ctx context.Context, run string, after int64) ([]Capt
 }
 
 func (c *Catalog) captures(ctx context.Context, run string, filters ...iceberg.BooleanExpression) ([]CaptureRow, error) {
-	batches, err := c.scan(ctx, Captures, append(filters, forRun(run))...)
+	batches, err := c.scan(ctx, Captures, nil, append(filters, forRun(run))...)
 
 	if err != nil {
 		return nil, err
@@ -206,7 +215,7 @@ func (c *Catalog) captures(ctx context.Context, run string, filters ...iceberg.B
 
 // Runs yields every recorded process capture session, newest first.
 func (c *Catalog) Runs(ctx context.Context) ([]RunRow, error) {
-	batches, err := c.scan(ctx, Runs)
+	batches, err := c.scan(ctx, Runs, nil)
 
 	if err != nil {
 		return nil, err
@@ -301,7 +310,7 @@ func (c *Catalog) witnesses(ctx context.Context, run, kind string, sequence, ord
 		filters = append(filters, iceberg.EqualTo(iceberg.Reference("artifact_kind"), kind))
 	}
 
-	batches, err := c.scan(ctx, Witnesses, filters...)
+	batches, err := c.scan(ctx, Witnesses, nil, filters...)
 
 	if err != nil {
 		return nil, err
@@ -378,7 +387,7 @@ func (c *Catalog) Manifests(ctx context.Context, run string) ([]ManifestRow, err
 }
 
 func (c *Catalog) manifests(ctx context.Context, run string, sequence *int64) ([]ManifestRow, error) {
-	batches, err := c.scan(ctx, Manifests, forRun(run))
+	batches, err := c.scan(ctx, Manifests, nil, forRun(run))
 
 	if err != nil {
 		return nil, err
@@ -418,7 +427,7 @@ func (c *Catalog) manifests(ctx context.Context, run string, sequence *int64) ([
 
 // Lifecycle yields the position and order transitions of one run, in time order.
 func (c *Catalog) Lifecycle(ctx context.Context, run string) ([]LifecycleRow, error) {
-	batches, err := c.scan(ctx, Lifecycle, forRun(run))
+	batches, err := c.scan(ctx, Lifecycle, nil, forRun(run))
 
 	if err != nil {
 		return nil, err
@@ -476,7 +485,7 @@ func (c *Catalog) Lifecycle(ctx context.Context, run string) ([]LifecycleRow, er
 
 // Gaps yields the capture-integrity gaps recorded for one run.
 func (c *Catalog) Gaps(ctx context.Context, run string) ([]GapRow, error) {
-	batches, err := c.scan(ctx, Gaps, forRun(run))
+	batches, err := c.scan(ctx, Gaps, nil, forRun(run))
 
 	if err != nil {
 		return nil, err
@@ -542,7 +551,7 @@ func dec(column arrow.Array, row int) *decimal.Decimal {
 
 // Outcomes yields the graded decisions of one run.
 func (c *Catalog) Outcomes(ctx context.Context, run string) ([]OutcomeRow, error) {
-	batches, err := c.scan(ctx, Outcomes, forRun(run))
+	batches, err := c.scan(ctx, Outcomes, nil, forRun(run))
 
 	if err != nil {
 		return nil, err

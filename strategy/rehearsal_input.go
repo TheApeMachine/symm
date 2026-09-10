@@ -13,12 +13,12 @@ import (
 // readInputs admits original precursor measurements at their exact capture
 // coordinate. A witness with no raw quote uses the last preceding captured
 // touch; later quotes cannot fill a missing side. Old decisions are not read.
-func (rehearsal *Rehearsal) readInputs(ctx context.Context) error {
+func (rehearsal *Rehearsal) readInputs(ctx context.Context, run hindsight.RunID) error {
 	if rehearsal.inputs == nil {
 		rehearsal.inputs = make(map[hindsight.EnvelopeRef]hindsight.RehearsalInput)
 		rehearsal.witnessed = make(map[tables.EnvelopeRefRow]bool)
 	}
-	witnesses, err := rehearsal.catalog.WitnessesUnseen(ctx, string(rehearsal.run), "precursor", rehearsal.witnessed)
+	witnesses, err := rehearsal.catalog.WitnessesUnseen(ctx, string(run), "precursor", rehearsal.witnessed)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -34,17 +34,17 @@ func (rehearsal *Rehearsal) readInputs(ctx context.Context) error {
 	for _, witness := range witnesses {
 		sequences = append(sequences, witness.Envelope.Sequence)
 	}
-	captures, err := rehearsal.catalog.CaptureReferences(ctx, string(rehearsal.run), sequences)
+	captures, err := rehearsal.catalog.CaptureReferences(ctx, string(run), sequences)
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
 	for _, witness := range witnesses {
-		if witness.Envelope.Sequence > rehearsal.lastSequence {
+		if witness.Envelope.Sequence > rehearsal.sequences[run] {
 			continue // Its raw capture has not reached this replay pass yet.
 		}
-		if err := rehearsal.admitInput(witness, captures); err != nil {
+		if err := rehearsal.admitInput(run, witness, captures); err != nil {
 			return errnie.Error(err)
 		}
 		rehearsal.witnessed[witness.Envelope] = true
@@ -52,7 +52,7 @@ func (rehearsal *Rehearsal) readInputs(ctx context.Context) error {
 	return nil
 }
 
-func (rehearsal *Rehearsal) admitInput(row tables.WitnessRow, captures map[int64]tables.CaptureRow) error {
+func (rehearsal *Rehearsal) admitInput(run hindsight.RunID, row tables.WitnessRow, captures map[int64]tables.CaptureRow) error {
 	capture, found := captures[row.Envelope.Sequence]
 
 	if !found {
@@ -77,15 +77,15 @@ func (rehearsal *Rehearsal) admitInput(row tables.WitnessRow, captures map[int64
 	}
 
 	for symbol := range symbols {
-		rehearsal.admitObservation(reference, symbol, capture.ReceivedAt)
+		rehearsal.admitObservation(tapeKey{run: run, symbol: symbol}, reference, capture.ReceivedAt)
 	}
 	return nil
 }
 
 // admitObservation locates a decision input on its own symbol's causal tape.
 // An envelope may contain several symbols, as it does on the live learner.
-func (rehearsal *Rehearsal) admitObservation(reference hindsight.EnvelopeRef, symbol string, at time.Time) {
-	observations := rehearsal.observations[symbol]
+func (rehearsal *Rehearsal) admitObservation(key tapeKey, reference hindsight.EnvelopeRef, at time.Time) {
+	observations := rehearsal.observations[key]
 	index := sort.Search(len(observations), func(index int) bool {
 		return observations[index].Capture.Sequence > reference.Origin.Sequence ||
 			(observations[index].Capture.Sequence == reference.Origin.Sequence && observations[index].Ordinal >= reference.Ordinal)
@@ -93,7 +93,7 @@ func (rehearsal *Rehearsal) admitObservation(reference hindsight.EnvelopeRef, sy
 	if index < len(observations) && observations[index].Capture == reference.Origin && observations[index].Ordinal == reference.Ordinal {
 		return
 	}
-	observation := hindsight.Observation{Domain: "spot", Symbol: symbol}
+	observation := hindsight.Observation{Domain: "spot", Symbol: key.symbol}
 
 	for previous := index - 1; previous >= 0; previous-- {
 		if observations[previous].Kind == "ticker" || observations[previous].Kind == "l3_touch" {
@@ -106,6 +106,5 @@ func (rehearsal *Rehearsal) admitObservation(reference hindsight.EnvelopeRef, sy
 	observations = append(observations, hindsight.Observation{})
 	copy(observations[index+1:], observations[index:])
 	observations[index] = observation
-	rehearsal.observations[symbol] = observations
-	return
+	rehearsal.observations[key] = observations
 }

@@ -6,12 +6,12 @@ import {
 	SplineIcon,
 	WaypointsIcon,
 } from "lucide-react";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { Typography } from "#/components/ui/typography";
-import { useOperations } from "#/service/compute";
+import { usePrimitives } from "#/service/compute";
 import { buildFlumeConfigFromSchemas } from "./build-config-from-schemas";
 import type { EdgeRoutingMode } from "./connectionCalculator";
 import { setRoutingMode, useRoutingMode } from "./flume-editor.store";
@@ -66,24 +66,13 @@ const EdgeRoutingToggle = ({
 }) => {
 	return (
 		<Flex.Row className="items-center gap-2">
-			<Typography.Span className="text-xs" variant="muted">
+			<Typography.Label size="s" tone="f4">
 				Edges
-			</Typography.Span>
+			</Typography.Label>
 			<ToggleGroup
-				onValueChange={(next) => {
-					const candidate = next[0];
-
-					if (
-						candidate === "smooth" ||
-						candidate === "straight" ||
-						candidate === "orthogonal"
-					) {
-						onChange(candidate);
-					}
-				}}
-				size="sm"
-				value={[value]}
-				variant="outline"
+				name="flume-edge-routing"
+				onValueChange={onChange}
+				value={value}
 			>
 				{ROUTING_OPTIONS.map((option) => {
 					const Icon = option.icon;
@@ -110,7 +99,7 @@ type FlumeEditorProps = {
 };
 
 export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
-	const { data: operations, isPending, isError, isSuccess } = useOperations();
+	const { data: operations, isPending, isError, isSuccess } = usePrimitives();
 	const graphId = projectId ?? LOCAL_GRAPH_ID;
 	const routingMode = useRoutingMode();
 	const editorHandleRef = useRef<NodeEditorHandle | null>(null);
@@ -122,6 +111,21 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 	const editorMode = isError || !isSuccess ? "builtin-only" : "full";
 
+	/*
+		Every graph mutation is a no-op until the row it would write to exists,
+		so an unseeded editor accepts a node from the menu and silently drops
+		it. An empty pipeline is a valid pipeline, so the row is created when
+		the surface opens rather than when someone first asks for an example.
+		Seeding is idempotent; a graph that already has one is left alone.
+	*/
+	useEffect(() => {
+		if (isPending) {
+			return;
+		}
+
+		editorHandleRef.current?.seed({});
+	}, [isPending]);
+
 	const insertExample = () => {
 		editorHandleRef.current?.seed({
 			defaultNodes: [...EXAMPLE_NODES],
@@ -131,7 +135,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 	if (isPending) {
 		return (
-			<div className="flex min-h-[75vh] flex-1 items-center justify-center text-muted-foreground text-sm">
+			<div className="flex min-h-[75vh] flex-1 items-center justify-center text-(--f3) text-sm">
 				Loading operation schemas…
 			</div>
 		);
@@ -139,7 +143,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 	return (
 		<div className="flex min-h-[75vh] flex-1 flex-col gap-3">
-			<Flex.Row className="shrink-0 items-center justify-between gap-3 rounded-xl border bg-muted/48 px-3 py-2">
+			<Flex.Row className="shrink-0 items-center justify-between gap-3 rounded-[4px] border bg-(--raised)/48 px-3 py-2">
 				<Flex.Row className="items-center gap-3">
 					{isError ? (
 						<Typography.Span className="text-xs" variant="muted">
@@ -152,10 +156,10 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					)}
 					<Button
 						onClick={insertExample}
-						size="sm"
+						size="s"
 						title="Seed a Source → Gate → Sink example (idempotent — no-op if the graph already has nodes)"
 						type="button"
-						variant="ghost"
+						variant="quiet"
 					>
 						<SparklesIcon />
 						Insert example

@@ -1,6 +1,5 @@
 "use client";
 
-import { Autocomplete } from "@base-ui/react/autocomplete";
 import React from "react";
 import type { SelectOption } from "#/components/flume/types";
 import {
@@ -13,6 +12,7 @@ import {
 	CommandItem,
 	CommandList,
 	CommandPanel,
+	useFilteredItems,
 } from "#/components/ui/command";
 import { cn } from "@/lib/utils";
 
@@ -87,16 +87,14 @@ function ContextMenuFilteredBody({
 	optionsLength: number;
 	emptyText: string;
 }) {
-	const filteredItems = Autocomplete.useFilteredItems();
+	const filteredItems = useFilteredItems<SelectOption | FilteredGroup>();
 
 	const renderItem = (item: SelectOption) => (
 		<CommandItem key={item.value} value={item} onClick={() => onPick(item)}>
 			<div className="flex min-w-0 flex-col gap-0.5 text-left">
 				<span>{item.label}</span>
 				{item.description ? (
-					<span className="text-muted-foreground text-xs">
-						{item.description}
-					</span>
+					<span className="text-(--f3) text-xs">{item.description}</span>
 				) : null}
 			</div>
 		</CommandItem>
@@ -236,15 +234,15 @@ const ContextMenu = ({
 			ref={menuWrapper}
 			tabIndex={!showFilter && hideHeader ? 0 : -1}
 		>
-			<CommandPanel className="flex max-h-[min(420px,calc(100vh-48px))] flex-col overflow-hidden rounded-xl shadow-lg">
+			<CommandPanel className="flex max-h-[min(420px,calc(100vh-48px))] flex-col overflow-hidden rounded-[4px] shadow-lg">
 				{showHeader ? (
 					<div
-						className="border-border border-b px-3 py-2"
+						className="border-(--line) border-b px-3 py-2"
 						data-flume-component="ctx-menu-header"
 					>
 						{label ? (
 							<span
-								className="text-base font-semibold leading-tight"
+								className="font-medium text-[12px] text-(--f1) leading-tight"
 								data-flume-component="ctx-menu-title"
 							>
 								{label}

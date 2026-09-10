@@ -1,10 +1,12 @@
 package tables_test
 
 import (
+	"bytes"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 	"testing"
+	"time"
 )
 
 func selectionCatalog(t *testing.T) *tables.Catalog {
@@ -99,4 +101,36 @@ func TestCatalogCaptureReferences(t *testing.T) {
 		So(rows[1].Payload, ShouldBeNil)
 		So(rows[2].Sequence, ShouldEqual, 2)
 	})
+}
+
+func BenchmarkCatalogCaptureReferences(b *testing.B) {
+	catalog := tablestest.New(b)
+	writer := tables.NewWriter(catalog)
+	// Large captured payloads deliberately make an identity-only lookup pay
+	// for any accidental payload-column read. These are storage fixture sizes.
+	payload := bytes.Repeat([]byte("captured order book"), 4096)
+	sequences := make([]int64, 256)
+
+	for index := range sequences {
+		sequences[index] = int64(index + 1)
+		writer.AddCapture(tables.CaptureRow{Run: "bench", Sequence: sequences[index],
+			ReceivedAt: time.Unix(int64(index), 0), Kind: "book", Payload: payload})
+	}
+
+	if err := writer.Commit(b.Context()); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		rows, err := catalog.CaptureReferences(b.Context(), "bench", sequences)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if len(rows) != len(sequences) || rows[1].Payload != nil {
+			b.Fatal("identity-only capture join did not preserve its contract")
+		}
+	}
 }

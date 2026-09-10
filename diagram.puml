@@ -1,0 +1,361 @@
+@startuml
+skinparam shadowing false
+skinparam DefaultFontName Arial
+
+skinparam PartitionBorderColor #555555
+skinparam PartitionFontColor #222222
+
+skinparam ActivityBorderColor #666666
+skinparam ActivityBackgroundColor #FFFFFF
+skinparam ActivityFontColor #222222
+
+skinparam conditionStyle diamond
+
+
+start
+
+
+partition #FFFFFF "**Symm**" {
+
+    ' ============================================================
+    ' TRANSPORT / INFRASTRUCTURE
+    '
+    ' Three Kraken websocket transports publish into the runtime.
+    ' The public and private sessions run against the simulator;
+    ' raw wire frames are captured byte-for-byte before any stage
+    ' reads them.
+    ' ============================================================
+
+    partition #E3F2FD "**Ingress & Infrastructure**" {
+
+        fork
+
+            :public websocket\nticker / trade / book; <<input>>
+
+        fork again
+
+            :private websocket\nlevel3 / executions; <<input>>
+
+        fork again
+
+            :futures websocket\nticker / trade; <<input>>
+
+        end fork
+
+        :Record raw capture\nbyte-for-byte per stream; <<save>>
+
+        :Broker owners\nInstrument / Price / Balance; <<load>>
+
+        :Seed instrument universe\nand restore learner state; <<procedure>>
+    }
+
+
+    ' ============================================================
+    ' WORKSPACE RING
+    '
+    ' The workspace is a single Disruptor ring whose stages are
+    ' nested Workloads. Nodes in one stage run concurrently and a
+    ' barrier completes the stage before the next stage advances.
+    '
+    '   stage1  observations   (signals+flow, classification, capture witness)
+    '   stage2  grid           (impulse map)
+    '   stage3  agents         (live learner + rehearsal)
+    '   stage4  ui sink        (dashboard consumer)
+    ' ============================================================
+
+    partition #F2F2F2 "**Workspace ring**" {
+
+        ' ----------------------------------------------------
+        ' WORKSPACE STAGE 1 — OBSERVATIONS
+        '
+        ' The signals and flow workloads each run on their own
+        ' ring and complete before classification runs.
+        ' ----------------------------------------------------
+
+        partition #FFFFFF "**stage1 — observations**" {
+
+            fork
+
+            partition #C8E6C9 "**Workload: signals**" {
+
+                partition #E8F5E9 "**stage1**" {
+
+                    fork
+
+                        :correlation;
+
+                    fork again
+
+                        :depthflow;
+
+                    fork again
+
+                        :derivatives;
+
+                    fork again
+
+                        :leadlag;
+
+                    fork again
+
+                        :liquidity;
+
+                    fork again
+
+                        :morphology;
+
+                    fork again
+
+                        :pumpdump;
+
+                    fork again
+
+                        :sentiment;
+
+                    fork again
+
+                        :toxicity;
+
+                    end fork
+                }
+
+                partition #E8F5E9 "**stage2**" {
+
+                    :resonance;
+                }
+            }
+
+
+            fork again
+
+            partition #B2DFDB "**Workload: flow**" {
+
+                partition #E0F2F1 "**stage1**" {
+
+                    fork
+
+                        :cvd;
+
+                    fork again
+
+                        :hawkes;
+
+                    end fork
+                }
+
+                partition #E0F2F1 "**stage2**" {
+
+                    :manifold;
+                }
+            }
+
+            end fork
+
+            partition #FFE0B2 "**Workload: classification**" {
+
+                partition #FFF3E0 "**stage1**" {
+
+                    :category;
+                }
+
+                partition #FFF3E0 "**stage2**" {
+
+                    :cognition;
+                }
+            }
+
+            partition #CFD8DC "**Capture witness**" {
+
+                :recording.Session.Step\npersist observation; <<save>>
+            }
+        }
+
+
+        ' ----------------------------------------------------
+        ' WORKSPACE STAGE 2 — GRID / IMPULSE MAP
+        '
+        ' learner.Grid (logic/impulse.Solver) groups the completed
+        ' measurements by label and steps the associative grid.
+        ' Regions replace individual metrics as the agent's
+        ' effective impulse units.
+        ' ----------------------------------------------------
+
+        partition #FFFFFF "**stage2 — grid**" {
+
+            partition #E1BEE7 "**Impulse Map**" {
+
+                :Receive completed\nobservations; <<input>>
+
+                :Group measurements by label\nand advance each grid space; <<task>>
+
+                fork
+
+                    :Affinity field\n(directional / sign / magnitude / phase); <<procedure>>
+
+                fork again
+
+                    :Maturity + SNR\nnode strength; <<procedure>>
+
+                fork again
+
+                    :Sparsify\nretain top-k affinities per metric; <<procedure>>
+
+                end fork
+
+                :Fuse affinity channels\nD + C + Q + optional P; <<procedure>>
+
+                :Preserve relationship sign\nDirect / Inverse / Inconsistent; <<procedure>>
+
+                if (Relationship stable?) then (yes)
+
+                    :Convert similarity to\nattractive affinity; <<procedure>>
+
+                else (no)
+
+                    :Convert instability to\nrepulsive affinity; <<procedure>>
+
+                endif
+
+                :Apply asymmetric influence\nweak -> strong movement; <<procedure>>
+
+                :Build sparse signed\nsympathy graph; <<task>>
+
+                fork
+
+                    :Extract positive\nattraction graph; <<task>>
+
+                    :Detect sympathetic\ncommunities / regions; <<procedure>>
+
+                fork again
+
+                    :Extract repulsive\nrelationships; <<task>>
+
+                    :Apply repulsion as\nregion boundary pressure; <<procedure>>
+
+                end fork
+
+                :Reconcile communities\nwith repulsive boundaries; <<procedure>>
+
+                :Form Impulse Map\nregions; <<task>>
+
+                :Aggregate member impulses\nweighted by SNR + Maturity; <<procedure>>
+
+                :Calculate region\nactivation strength; <<procedure>>
+
+                switch (Activation method)
+
+                    case (SNR-weighted Otsu)
+
+                        :Apply SNR-weighted\nOtsu threshold; <<procedure>>
+
+                    case (Water table)
+
+                        :Apply topological\nwater-table split; <<procedure>>
+
+                    case (Mean + stddev)
+
+                        :Apply mean plus\nstandard deviation; <<procedure>>
+
+                endswitch
+
+                :Rank active regions\nstrongest to weakest; <<procedure>>
+
+                :Impulses\n(region sequence); <<output>>
+            }
+        }
+
+
+        ' ----------------------------------------------------
+        ' WORKSPACE STAGE 3 — AGENTS
+        '
+        ' The live learner and the rehearsal replay workload run
+        ' concurrently behind one barrier. The agent workload is
+        ' gated by learner.Ready so invalid market data never
+        ' becomes an idle choice or a learning sample.
+        ' ----------------------------------------------------
+
+        partition #FFFFFF "**stage3 — agents**" {
+
+            fork
+
+                ' ------------------------------------------------
+                ' LIVE LEARNER (trader 0, forward canary)
+                ' ------------------------------------------------
+
+                partition #FFCDD2 "**Workload: agent**" {
+
+                    partition #FFEBEE "**stage1**" {
+
+                        partition #FFFFFF "**Live Learner**" {
+
+                            :Gate on learner.Ready\nbook + fees + ready impulse; <<input>>
+
+                            :Serialize live clock\nAt / Version; <<task>>
+
+                            :Step associative agent\nwith ready impulses; <<procedure>>
+
+                            :Enumerate feasible actions\nwait / hold / enter / scale / exit; <<procedure>>
+
+                            :Select decision\nfrom cognition engine; <<procedure>>
+
+                            :Execute through position regulator\nand write decision; <<procedure>>
+
+                            :Mark positions and\ncompute wallet objective; <<procedure>>
+
+                            :Resolve durable legs\ninto evaluations + outcomes; <<procedure>>
+
+                            :Persist checkpoint\nwhen interval fires; <<save>>
+                        }
+                    }
+                }
+
+            fork again
+
+                ' ------------------------------------------------
+                ' REHEARSAL WORKERS (historical replay)
+                '
+                ' Only present when the trader population > 1.
+                ' Workers replay balanced historical episodes
+                ' instead of opening another live wallet.
+                ' ------------------------------------------------
+
+                partition #C5CAE9 "**Workload: rehearsal**" {
+
+                    partition #E8EAF6 "**stage1**" {
+
+                        partition #FFFFFF "**Rehearsal Workers**" {
+
+                            :Discover replayable\nhistorical episodes; <<load>>
+
+                            :Replay balanced episodes\nthrough worker traders; <<procedure>>
+
+                            :Grade decisions against\nconfirmed legs; <<procedure>>
+
+                            :Write outcomes\nfor every resolved decision; <<save>>
+                        }
+                    }
+                }
+
+            end fork
+        }
+
+
+        ' ----------------------------------------------------
+        ' WORKSPACE STAGE 4 — UI SINK
+        '
+        ' A non-blocking channel handoff keeps the dashboard from
+        ' running on the ring. The hub owns its own goroutine and
+        ' consumes frames at its own rate.
+        ' ----------------------------------------------------
+
+        partition #FFFFFF "**stage4 — ui sink**" {
+
+            :Offer frame to ui.Hub\n(drop when full); <<output>>
+        }
+    }
+}
+
+
+stop
+
+@enduml

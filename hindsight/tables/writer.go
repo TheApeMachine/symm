@@ -104,9 +104,9 @@ Commit appends every buffered family and clears what it wrote.
 
 The buffers are detached under the lock and written outside it, so producers
 are never blocked on S3. A family that fails leaves the remaining families
-unattempted and its own rows dropped: Iceberg commits are atomic per table, so
-a failure means that table saw nothing, and retrying from here would risk
-double-writing families that already succeeded.
+unattempted and its own rows detached. Iceberg retries explicit commit conflicts
+using the table's configured budget. Other failures can have unknown commit
+outcomes; retrying the whole batch here could duplicate successful families.
 */
 func (w *Writer) Commit(ctx context.Context) error {
 	w.mutex.Lock()

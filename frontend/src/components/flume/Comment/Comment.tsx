@@ -192,7 +192,6 @@ const Comment = ({
 		>
 			{isEditing ? (
 				<Textarea
-					unstyled
 					data-flume-component="comment-textarea"
 					className={styles.textareaWrapper}
 					onChange={handleTextChange}

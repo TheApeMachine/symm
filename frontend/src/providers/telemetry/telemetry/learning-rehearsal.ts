@@ -124,18 +124,38 @@ quiet():bigint {
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
-tracks(index: number, obj?:LearningTrack):LearningTrack|null {
+warming():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 40);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+runs():number {
+  const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
+
+observations():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+budget():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+tracks(index: number, obj?:LearningTrack):LearningTrack|null {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
   return offset ? (obj || new LearningTrack()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 tracksLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
+  const offset = this.bb!.__offset(this.bb_pos, 48);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startLearningRehearsal(builder:flatbuffers.Builder) {
-  builder.startObject(19);
+  builder.startObject(23);
 }
 
 static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
@@ -210,8 +230,24 @@ static addQuiet(builder:flatbuffers.Builder, quiet:bigint) {
   builder.addFieldInt64(17, quiet, BigInt('0'));
 }
 
+static addWarming(builder:flatbuffers.Builder, warming:bigint) {
+  builder.addFieldInt64(18, warming, BigInt('0'));
+}
+
+static addRuns(builder:flatbuffers.Builder, runs:number) {
+  builder.addFieldInt32(19, runs, 0);
+}
+
+static addObservations(builder:flatbuffers.Builder, observations:bigint) {
+  builder.addFieldInt64(20, observations, BigInt('0'));
+}
+
+static addBudget(builder:flatbuffers.Builder, budget:bigint) {
+  builder.addFieldInt64(21, budget, BigInt('0'));
+}
+
 static addTracks(builder:flatbuffers.Builder, tracksOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, tracksOffset, 0);
+  builder.addFieldOffset(22, tracksOffset, 0);
 }
 
 static createTracksVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -231,7 +267,7 @@ static endLearningRehearsal(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createLearningRehearsal(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset, workers:number, episodes:bigint, profitable:bigint, subfriction:bigint, declining:bigint, ungraded:bigint, unsupported:bigint, perWorker:bigint, decisions:bigint, trained:bigint, passes:bigint, lastSymbolOffset:flatbuffers.Offset, lastActionOffset:flatbuffers.Offset, lastReturn:number, lastFailureOffset:flatbuffers.Offset, illiquid:bigint, quiet:bigint, tracksOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createLearningRehearsal(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset, workers:number, episodes:bigint, profitable:bigint, subfriction:bigint, declining:bigint, ungraded:bigint, unsupported:bigint, perWorker:bigint, decisions:bigint, trained:bigint, passes:bigint, lastSymbolOffset:flatbuffers.Offset, lastActionOffset:flatbuffers.Offset, lastReturn:number, lastFailureOffset:flatbuffers.Offset, illiquid:bigint, quiet:bigint, warming:bigint, runs:number, observations:bigint, budget:bigint, tracksOffset:flatbuffers.Offset):flatbuffers.Offset {
   LearningRehearsal.startLearningRehearsal(builder);
   LearningRehearsal.addStatus(builder, statusOffset);
   LearningRehearsal.addWorkers(builder, workers);
@@ -251,6 +287,10 @@ static createLearningRehearsal(builder:flatbuffers.Builder, statusOffset:flatbuf
   LearningRehearsal.addLastFailure(builder, lastFailureOffset);
   LearningRehearsal.addIlliquid(builder, illiquid);
   LearningRehearsal.addQuiet(builder, quiet);
+  LearningRehearsal.addWarming(builder, warming);
+  LearningRehearsal.addRuns(builder, runs);
+  LearningRehearsal.addObservations(builder, observations);
+  LearningRehearsal.addBudget(builder, budget);
   LearningRehearsal.addTracks(builder, tracksOffset);
   return LearningRehearsal.endLearningRehearsal(builder);
 }
@@ -275,6 +315,10 @@ unpack(): LearningRehearsalT {
     this.lastFailure(),
     this.illiquid(),
     this.quiet(),
+    this.warming(),
+    this.runs(),
+    this.observations(),
+    this.budget(),
     this.bb!.createObjList<LearningTrack, LearningTrackT>(this.tracks.bind(this), this.tracksLength())
   );
 }
@@ -299,6 +343,10 @@ unpackTo(_o: LearningRehearsalT): void {
   _o.lastFailure = this.lastFailure();
   _o.illiquid = this.illiquid();
   _o.quiet = this.quiet();
+  _o.warming = this.warming();
+  _o.runs = this.runs();
+  _o.observations = this.observations();
+  _o.budget = this.budget();
   _o.tracks = this.bb!.createObjList<LearningTrack, LearningTrackT>(this.tracks.bind(this), this.tracksLength());
 }
 }
@@ -323,6 +371,10 @@ constructor(
   public lastFailure: string|Uint8Array|null = null,
   public illiquid: bigint = BigInt('0'),
   public quiet: bigint = BigInt('0'),
+  public warming: bigint = BigInt('0'),
+  public runs: number = 0,
+  public observations: bigint = BigInt('0'),
+  public budget: bigint = BigInt('0'),
   public tracks: (LearningTrackT)[] = []
 ){}
 
@@ -353,6 +405,10 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     lastFailure,
     this.illiquid,
     this.quiet,
+    this.warming,
+    this.runs,
+    this.observations,
+    this.budget,
     tracks
   );
 }

@@ -93,10 +93,10 @@ const Port = ({
 						<Button
 							ref={portButtonRef}
 							type="button"
-							size="sm"
-							variant="ghost"
+							size="s"
+							variant="quiet"
 							className={cn(
-								"absolute gap-0 rounded-full border-none p-0 shadow-md ring-offset-background [&]:before:shadow-none!",
+								"absolute gap-0 rounded-full border-none p-0 shadow-md ring-offset-(--bg) [&]:before:shadow-none!",
 								"[&]:hover:bg-transparent!",
 								"[&]:data-pressed:bg-transparent!",
 								styles.port,

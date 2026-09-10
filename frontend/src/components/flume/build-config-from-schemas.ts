@@ -1,4 +1,4 @@
-import type { ConfigParam, Schema } from "#/service/compute";
+import type { Schema, Setting } from "#/service/compute";
 import { Colors, Controls, FlumeConfig, getPortBuilders } from "./typeBuilders";
 import type { Control } from "./types";
 
@@ -24,21 +24,19 @@ const normalizePortType = (raw: string): keyof typeof PORT_PALETTE => {
 		case "int":
 		case "scalar":
 			return "number";
+		case "primitive":
+			return "tensor";
 		default:
 			return "any";
 	}
 };
 
-const configParamToControl = (param: ConfigParam): Control => {
+const settingToControl = (param: Setting): Control => {
 	const label = param.name;
 	const name = param.name;
 
 	if (param.type === "bool" || param.type === "boolean") {
-		return Controls.checkbox({
-			label,
-			name,
-			defaultValue: Boolean(param.default ?? false),
-		});
+		return Controls.checkbox({ label, name, defaultValue: false });
 	}
 
 	if (
@@ -47,18 +45,10 @@ const configParamToControl = (param: ConfigParam): Control => {
 		param.type === "float" ||
 		param.type === "scalar"
 	) {
-		return Controls.number({
-			label,
-			name,
-			defaultValue: Number(param.default ?? 0),
-		});
+		return Controls.number({ label, name, defaultValue: 0 });
 	}
 
-	return Controls.text({
-		label,
-		name,
-		defaultValue: String(param.default ?? ""),
-	});
+	return Controls.text({ label, name, defaultValue: "" });
 };
 
 const registerPortTypes = (config: FlumeConfig) => {
@@ -175,7 +165,7 @@ const schemaToNodeType = (config: FlumeConfig, schema: Schema) => {
 				name: "_config",
 				label: "Config",
 				hidePort: true,
-				controls: configParams.map(configParamToControl),
+				controls: configParams.map(settingToControl),
 			}),
 		);
 	}
@@ -185,7 +175,7 @@ const schemaToNodeType = (config: FlumeConfig, schema: Schema) => {
 		label: schema.label || schema.name || schema.op,
 		description: schema.description,
 		category: schema.category || "Operations",
-		initialWidth: schema.initial_width || 300,
+		initialWidth: 300,
 		inputs: inputPorts,
 		outputs: schema.outputs.map((port) => {
 			const portType = normalizePortType(port.type);

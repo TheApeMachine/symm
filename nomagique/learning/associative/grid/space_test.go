@@ -12,6 +12,14 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
+/* related reads one pair's relationship straight from the window. */
+func related(grid *Space, left, right string) affinity {
+	return grid.window.measure(
+		grid.columnIndex[[2]string{"source", left}],
+		grid.columnIndex[[2]string{"source", right}],
+	)
+}
+
 func TestSpaceStep(t *testing.T) {
 	Convey("Given quantities with shared and opposing activation profiles", t, func() {
 		grid := NewSpace()
@@ -35,16 +43,16 @@ func TestSpaceStep(t *testing.T) {
 		So(alpha, ShouldNotBeNil)
 		So(beta, ShouldNotBeNil)
 		So(opposite, ShouldNotBeNil)
-		alphaColumn := grid.columnIndex[[2]string{"source", "alpha"}]
-		betaColumn := grid.columnIndex[[2]string{"source", "beta"}]
-		oppositeColumn := grid.columnIndex[[2]string{"source", "opposite"}]
 
-		for dimension := range gridDimensions {
-			So(grid.basis[dimension][betaColumn], ShouldAlmostEqual, grid.basis[dimension][alphaColumn])
-			So(grid.basis[dimension][oppositeColumn], ShouldAlmostEqual, -grid.basis[dimension][alphaColumn])
-		}
+		So(related(grid, "alpha", "beta").directional, ShouldAlmostEqual, 1, 1e-9)
+		So(related(grid, "alpha", "opposite").directional, ShouldAlmostEqual, -1, 1e-9)
 
-		So(math.Hypot(alpha[0]-independent[0], alpha[1]-independent[1]), ShouldBeGreaterThan, 0)
+		// A persistent inverse is a relationship, not an absence of one.
+		So(related(grid, "alpha", "opposite").stable(), ShouldBeTrue)
+
+		So(grid.Formed, ShouldBeFalse) // Calibration has not filled its feature window.
+		So(independent, ShouldNotBeNil)
+		So(alpha, ShouldNotBeNil)
 		So(grid.Version, ShouldEqual, len(left))
 
 		Convey("the existing coordinates and storage survive another update", func() {
@@ -77,12 +85,13 @@ func TestSpaceStep(t *testing.T) {
 				So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 			}
 
-			So(math.Hypot(
-				grid.basis[0][alphaColumn]-grid.basis[0][betaColumn],
-				grid.basis[1][alphaColumn]-grid.basis[1][betaColumn]), ShouldAlmostEqual, 0)
-			So(math.Hypot(
-				grid.basis[0][alphaColumn]-grid.basis[0][oppositeColumn],
-				grid.basis[1][alphaColumn]-grid.basis[1][oppositeColumn]), ShouldBeGreaterThan, 0)
+			// beta matched throughout, so it stays a settled relationship.
+			So(grid.separation(related(grid, "alpha", "beta")), ShouldAlmostEqual, 0)
+
+			// opposite reversed halfway, so its relationship no longer holds.
+			So(related(grid, "alpha", "opposite").stable(), ShouldBeFalse)
+			So(grid.separation(related(grid, "alpha", "opposite")),
+				ShouldBeGreaterThan, grid.separation(related(grid, "alpha", "beta")))
 		})
 	})
 
@@ -100,12 +109,10 @@ func TestSpaceStep(t *testing.T) {
 		}
 
 		alpha := first.Metrics["alpha"].Coordinates
-		alphaColumn := grid.columnIndex[[2]string{"source", "alpha"}]
-		scaledColumn := grid.columnIndex[[2]string{"source", "scaled"}]
 
-		for dimension := range gridDimensions {
-			So(grid.basis[dimension][scaledColumn], ShouldAlmostEqual, grid.basis[dimension][alphaColumn])
-		}
+		// Each quantity is standardized against its own behaviour, so a
+		// thousandfold difference of unit is not a difference of behaviour.
+		So(related(grid, "alpha", "scaled").directional, ShouldAlmostEqual, 1, 1e-9)
 
 		So(second.Metrics["alpha"].Coordinates, ShouldEqual, alpha)
 		So(grid.Values[grid.rowIndex["first"]][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 1)
@@ -129,9 +136,16 @@ func TestSpaceStep(t *testing.T) {
 			So(grid.Step([]*data.Measurement[float64]{strong, weak, unknown}), ShouldBeNil)
 		}
 
+		/*
+			These two moved identically, so the layout places them together:
+			position says what a quantity's relationships are, and theirs are
+			the same. How far each reading is to be trusted is a different
+			reading and is reported separately, as accumulated evidence.
+		*/
 		strongPoint := strong.Metrics["value"].Coordinates
 		weakPoint := weak.Metrics["value"].Coordinates
-		So(math.Hypot(strongPoint[0]-weakPoint[0], strongPoint[1]-weakPoint[1]), ShouldBeGreaterThan, 0)
+		So(math.Hypot(strongPoint[0]-weakPoint[0], strongPoint[1]-weakPoint[1]),
+			ShouldAlmostEqual, 0)
 		So(grid.weights[grid.columnIndex[[2]string{"strong", "value"}]], ShouldBeGreaterThan,
 			grid.weights[grid.columnIndex[[2]string{"weak", "value"}]])
 		So(grid.Present[0][grid.columnIndex[[2]string{"unknown", "value"}]], ShouldBeTrue)
@@ -163,14 +177,13 @@ func TestSpaceStep(t *testing.T) {
 
 		alpha := measurement.Metrics["alpha"].Coordinates
 		independent := measurement.Metrics["independent"].Coordinates
-		alphaColumn := grid.columnIndex[[2]string{"source", "alpha"}]
-		inverseColumn := grid.columnIndex[[2]string{"source", "inverse"}]
 
-		for dimension := range gridDimensions {
-			So(grid.basis[dimension][inverseColumn], ShouldAlmostEqual, -grid.basis[dimension][alphaColumn])
-		}
+		So(related(grid, "alpha", "inverse").directional, ShouldAlmostEqual, -1, 1e-9)
+		So(related(grid, "alpha", "inverse").stable(), ShouldBeTrue)
 
-		So(math.Hypot(alpha[0]-independent[0], alpha[1]-independent[1]), ShouldBeGreaterThan, 0)
+		So(grid.Formed, ShouldBeFalse) // Calibration has not filled its feature window.
+		So(independent, ShouldNotBeNil)
+		So(alpha, ShouldNotBeNil)
 
 		Convey("an unchanged value has no movement even while away from its baseline", func() {
 			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
@@ -182,6 +195,9 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Arithmetic overflow reports its source and baseline without committing a version", t, func() {
+		// A movement arithmetic cannot represent is a numerical failure, not a
+		// missing reading: it must stop rather than enter the window as a
+		// value that is not a number.
 		grid := NewSpace()
 		measurement := data.NewMeasurement[float64]("overflow-fixture", "context", "source", time.Time{}, time.Time{})
 		// Both observations are representable. Their difference is not. This
@@ -194,7 +210,7 @@ func TestSpaceStep(t *testing.T) {
 		So(grid.Version, ShouldEqual, 1)
 		So(err.Error(), ShouldContainSubstring, `context="context" committed_version=1`)
 		So(err.Error(), ShouldContainSubstring, `source="source" metric="signed-extreme"`)
-		So(err.Error(), ShouldContainSubstring, "gram_upper=")
+		So(err.Error(), ShouldContainSubstring, "dispersion=")
 		So(err.Error(), ShouldContainSubstring, "baseline=")
 	})
 
@@ -218,19 +234,7 @@ func BenchmarkSpaceStep(b *testing.B) {
 	// column layout while retaining their own values and adaptive baselines.
 	for _, columns := range []int{32, 404} {
 		b.Run(strconv.Itoa(columns), func(b *testing.B) {
-			grid := NewSpace()
-			measurement := data.NewMeasurement[float64]("", "context", "source", time.Time{}, time.Time{})
-
-			for column := range columns {
-				label := strconv.Itoa(column)
-				measurement.PutMetric(data.Metric[float64]{Label: label, Raw: float64(column)})
-			}
-
-			for range 4 {
-				if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
-					b.Fatal(err)
-				}
-			}
+			grid, measurement, _ := formationFixture(b, columns)
 
 			b.ReportAllocs()
 
@@ -302,4 +306,32 @@ func BenchmarkSpaceStepUniverse(b *testing.B) {
 	b.ReportMetric(float64(warmed.HeapAlloc)-float64(initial.HeapAlloc), "initial-retained-B")
 	b.ReportMetric(float64(replayed.HeapAlloc)-float64(initial.HeapAlloc), "replay-retained-B")
 	runtime.KeepAlive(grid)
+}
+
+func TestSpaceReset(t *testing.T) {
+	Convey("Independent tapes retain formation but reset observation state", t, func() {
+		grid := regionFixture(t)
+		coordinates := grid.Coordinates[0]
+		grid.Reset()
+		So(grid.baselines[0][0], ShouldBeNil)
+		So(grid.Present[0][0], ShouldBeFalse)
+		So(grid.Formed, ShouldBeTrue)
+		So(grid.regions.membership, ShouldResemble, []int{0, 0, 1, 1})
+		So(grid.Coordinates[0], ShouldEqual, coordinates)
+	})
+
+	Convey("An unfinished bin cannot combine observations from separate tapes", t, func() {
+		grid := NewSpaceWithWindow(4)
+		grid.Column("source", "first")
+		grid.Column("source", "second")
+		seed(grid, []float64{1, -1})
+		grid.window.observe(0, 7)
+		grid.Reset()
+		grid.window.observe(1, 9)
+		grid.window.close()
+		So(grid.window.count, ShouldEqual, 2)
+		So(grid.window.present[0], ShouldResemble, []bool{true, true})
+		So(grid.window.present[1], ShouldResemble, []bool{false, true})
+		So(grid.window.slots[1][1], ShouldEqual, 9)
+	})
 }

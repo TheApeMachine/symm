@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { researchGraphCollection } from "#/collections/research_graph";
+import { pipelineGraphCollection } from "#/collections/pipeline_graph";
 import type FlumeCache from "#/components/flume/Cache";
 import { deleteConnection } from "#/components/flume/connectionCalculator";
 import {
@@ -33,7 +33,7 @@ import {
 nodes-actions replaces the old NodesAction enum + nodesReducer + dispatch
 chain. Each action is a module-level function bound at hook time to a
 graphId and an env accessor. The action writes directly to
-researchGraphCollection.update so TanStack DB is the only mover of
+pipelineGraphCollection.update so TanStack DB is the only mover of
 state. There is no intermediate React reducer.
 
 createNodeActions returns a stable object of action callbacks. Consumers
@@ -105,13 +105,13 @@ const runMutation = (
 	getEnv: () => NodeActionsEnv,
 	mutator: Mutator,
 ): void => {
-	if (!researchGraphCollection.get(graphId)) {
+	if (!pipelineGraphCollection.get(graphId)) {
 		return;
 	}
 
 	const env = getEnv();
 
-	researchGraphCollection.update(graphId, (draft) => {
+	pipelineGraphCollection.update(graphId, (draft) => {
 		const raw = (draft.nodes as NodeMap | undefined) ?? {};
 		const current = reconcileNodes(
 			raw,

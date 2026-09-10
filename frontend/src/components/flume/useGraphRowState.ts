@@ -1,6 +1,6 @@
-import { eq, useLiveQuery } from "@tanstack/react-db";
 import React from "react";
-import { researchGraphCollection } from "#/collections/research_graph";
+import { pipelineGraphCollection } from "#/collections/pipeline_graph";
+import { usePipelineGraphRow } from "#/collections/pipeline_graph_row";
 import commentsReducer, {
 	type CommentAction,
 } from "#/components/flume/commentsReducer";
@@ -26,23 +26,13 @@ export const useCommentsState = (
 	comments: FlumeCommentMap;
 	dispatch: React.Dispatch<CommentAction>;
 } => {
-	const { data } = useLiveQuery(
-		(query) =>
-			query
-				.from({ graph: researchGraphCollection })
-				.where(({ graph }) => eq(graph.id, graphId))
-				.select(({ graph }) => ({
-					id: graph.id,
-					comments: graph.comments,
-				})),
-		[graphId],
-	);
+	const row = usePipelineGraphRow(graphId);
 
-	const comments = (data?.[0]?.comments as FlumeCommentMap | undefined) ?? {};
+	const comments = (row?.comments as FlumeCommentMap | undefined) ?? {};
 
 	const dispatch = React.useCallback<React.Dispatch<CommentAction>>(
 		(action) => {
-			researchGraphCollection.update(graphId, (draft) => {
+			pipelineGraphCollection.update(graphId, (draft) => {
 				const current = (draft.comments as FlumeCommentMap | undefined) ?? {};
 				const next = commentsReducer(current, action);
 
@@ -71,19 +61,9 @@ export const useViewportState = (
 	viewport: StageState;
 	dispatch: React.Dispatch<StageActionSetter>;
 } => {
-	const { data } = useLiveQuery(
-		(query) =>
-			query
-				.from({ graph: researchGraphCollection })
-				.where(({ graph }) => eq(graph.id, graphId))
-				.select(({ graph }) => ({
-					id: graph.id,
-					viewport: graph.viewport,
-				})),
-		[graphId],
-	);
+	const row = usePipelineGraphRow(graphId);
 
-	const stored = data?.[0]?.viewport as
+	const stored = row?.viewport as
 		| { scale?: number; translate?: StageTranslate }
 		| undefined;
 
@@ -105,7 +85,7 @@ export const useViewportState = (
 
 		if (!pending) return;
 
-		researchGraphCollection.update(graphId, (draft) => {
+		pipelineGraphCollection.update(graphId, (draft) => {
 			draft.viewport = pending;
 			draft.updated_at = new Date();
 		});

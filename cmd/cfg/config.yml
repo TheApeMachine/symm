@@ -20,6 +20,9 @@ storage:
     # attribute, so it cannot be the same bucket as storage.s3.bucket above.
     uri: http://iceberg.seaweed.home.arpa
     warehouse: s3://symmtables/
+    # Operational retry budget for rejected concurrent catalog commits.
+    # Iceberg refreshes and rebases the append; unknown commit outcomes fail.
+    commit_retries: 4
 
 workbench:
   # The Analytical Workbench's DuckDB runs inside this process. An unpivoted
@@ -89,6 +92,16 @@ hindsight:
     # Buffered rows stay in memory until one of these is reached.
     commit_rows: 20000
     commit_interval: 30s
+  rehearsal:
+    # Replay workers practise on the whole capture archive, not only the run
+    # being recorded now: a confirmed excursion needs a qualifying move and
+    # then a retracement away from its extremum, which a freshly started
+    # process has not had time to produce. The live run is always read;
+    # completed runs are then taken newest first until this many observations
+    # are resident, so a larger archive degrades to the most recent tape
+    # rather than exhausting memory. A run is always read whole — stopping
+    # mid-run would end a tape at the budget rather than at the record.
+    observation_budget: 500000
 
 resonance:
   learning_rate: 0.01

@@ -1,11 +1,16 @@
 package grid
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/data"
+)
+
+const (
+	gridDimensions = 2
 )
 
 /*
@@ -26,6 +31,7 @@ type Space struct {
 	Coordinates  []*[2]float64
 	Version      uint64
 	UpdatedLabel string
+	Formed       bool
 
 	rowIndex    map[string]int
 	versions    []uint64
@@ -35,35 +41,48 @@ type Space struct {
 	qualities   [][]float64
 	weights     []float64
 	cursor      int
-	basis       [gridDirections][]float64
-	next        [gridDimensions][]float64
-	gram        [gridDirections * gridDirections]float64
-	eigenvalues [gridDirections]float64
-	work        []float64
-	discarded   float64
-	regions     []regions
+	window      *window
+	graph       [][]affinity
+	regions     regions
+	moved       bool
 }
 
 /*
-NewSpace constructs an empty live grid. Two dimensions are the requested output
-geometry; one additional direction admits the next observation before the
-rank-two truncation. There is no chosen cluster count or history span.
+NewSpace constructs an empty live grid over the declared window span. Two
+dimensions are the requested output geometry. There is no chosen cluster count.
 */
 func NewSpace() *Space {
+	return NewSpaceWithWindow(DefaultWindowBins)
+}
+
+/*
+DefaultWindowBins is the declared span of recent observation bins the affinity
+channels are measured over.
+
+It is a declared selector rather than a derived quantity, in the same sense the
+episode discovery policy declares its thresholds: how much of the past still
+describes the present is a modelling choice, and the honest thing is to state
+it and report it alongside what it produced, not to dress it up as measured.
+*/
+const DefaultWindowBins = 64
+
+/* NewSpaceWithWindow constructs a live grid over a declared window span. */
+func NewSpaceWithWindow(bins int) *Space {
 	return &Space{
 		rowIndex:    make(map[string]int),
 		columnIndex: make(map[[2]string]int),
 		cursor:      -1,
+		window:      newWindow(bins),
 	}
 }
 
 /*
-Step updates one context from its published measurements, then restructures
-the shared layout. Other sources retain their latest values, but only newly
-published changes contribute movement. Missing readings contribute neither
-an observed zero nor a positional force. One update is one sample, not a time
-interval. One evidenced, present coordinate advances per call; successive
-calls cycle through the present coordinates to spread the optimization work.
+Step updates one context from its published measurements. During calibration,
+movement enters the retained feature window. Formation then solves that fixed
+affinity objective one coordinate per observed quantity and retains its partition. Later
+inputs update activation only. Other sources retain their latest values, but
+only newly published changes contribute activation. A missing reading is never
+an observed zero. One update is one sample, not a time interval.
 
 Every raw value reaches Values. Layout influence uses change divided by its
 adaptive level dispersion, baseline maturity and measurement maturity. Producer SNR
@@ -121,24 +140,42 @@ func (grid *Space) Step(measurements []*data.Measurement[float64]) error {
 		}
 	}
 
-	if err := grid.restructure(row); err != nil {
-		return err
+	if grid.window.covered() {
+		grid.window.close()
 	}
 
 	grid.Version++
 	grid.UpdatedLabel = label
 	grid.versions[row] = grid.Version
 
-	for column := range grid.Columns {
-		grid.weights[column] += grid.qualities[row][column]
+	if grid.graph == nil {
+		for column := range grid.Columns {
+			grid.weights[column] += grid.qualities[row][column]
+		}
 	}
 
-	grid.relax(row)
+	for _, observed := range grid.Present[row] {
+		if grid.Formed {
+			break
+		}
+
+		if !observed {
+			continue
+		}
+		grid.form()
+
+		if grid.graph == nil {
+			break
+		}
+	}
 
 	return nil
 }
 
-/* update replaces one source's current readings without clearing its layout. */
+/*
+update replaces one source's current readings without clearing its layout, and
+records their movement in the window's open bin.
+*/
 func (grid *Space) update(row int, measurement *data.Measurement[float64]) error {
 	measurement.Finalize()
 	if measurement.Err != nil {
@@ -165,6 +202,10 @@ func (grid *Space) update(row int, measurement *data.Measurement[float64]) error
 		}
 
 		movement := (metric.Raw - previous) / dispersion
+
+		if math.IsNaN(movement) || math.IsInf(movement, 0) {
+			return grid.numericFailure(row, column, metric.Raw, previous, dispersion)
+		}
 		snr := movement * movement
 
 		if measurement.SNRDefined {
@@ -187,8 +228,35 @@ func (grid *Space) update(row int, measurement *data.Measurement[float64]) error
 		// once in the accumulated second moment, rather than squaring it.
 		grid.activations[row][column] = movement * math.Sqrt(quality)
 		grid.qualities[row][column] = quality
+		if grid.graph == nil {
+			grid.window.observe(column, grid.activations[row][column])
+		}
 	}
 	return nil
+}
+
+/*
+numericFailure reports a movement that arithmetic could not represent, with the
+readings that produced it.
+
+Both observations can be representable while their difference is not. That is a
+numerical failure and it is fatal: writing a value that is not a number into the
+window would silently poison every relationship the quantity takes part in,
+which is worse than stopping. It is never a missing-value fallback — an absent
+reading has its own representation and does not come through here.
+*/
+func (grid *Space) numericFailure(row, column int, raw, previous, dispersion float64) error {
+	detail := fmt.Sprintf(
+		"grid: quantity movement is not finite; context=%q committed_version=%d; source=%q metric=%q raw=%g previous=%g dispersion=%g",
+		grid.Rows[row], grid.Version,
+		grid.Columns[column][0], grid.Columns[column][1], raw, previous, dispersion,
+	)
+
+	if baseline := grid.baselines[row][column]; baseline != nil {
+		detail += fmt.Sprintf(" baseline=%+v", baseline.Reading)
+	}
+
+	return errnie.Error(errnie.Err(errnie.Internal, detail, nil))
 }
 
 /* Column admits one quantity and extends storage only when the grid grows. */
@@ -201,6 +269,14 @@ func (grid *Space) Column(source, key string) int {
 	}
 
 	column = len(grid.Columns)
+	// A new quantity changes the schema of the partition. Ordinary values,
+	// quiet observations and missing producers never invalidate formation.
+	if grid.graph != nil {
+		grid.graph = nil
+		grid.Formed = false
+		grid.window = newWindow(grid.window.capacity)
+		grid.cursor, grid.moved = -1, false
+	}
 	grid.columnIndex[identity] = column
 	grid.Columns = append(grid.Columns, identity)
 	grid.Coordinates = append(grid.Coordinates, new([2]float64))
@@ -214,28 +290,44 @@ func (grid *Space) Column(source, key string) int {
 		grid.qualities[row] = append(grid.qualities[row], 0)
 	}
 
-	for direction := range gridDirections {
-		grid.basis[direction] = append(grid.basis[direction], 0)
-	}
-
-	for dimension := range gridDimensions {
-		grid.next[dimension] = append(grid.next[dimension], 0)
-	}
+	grid.window.columns(len(grid.Columns))
 
 	return column
 }
 
 /*
-CovarianceError bounds the spectral error of the internal signed second-moment
-sketch per committed sample, before deriving distances for coordinate movement.
-Each discarded rank-one PSD component has norm equal to its squared singular
-value, so their sum bounds the accumulated loss by the triangle inequality.
-Proximity in a lossy two-dimensional layout is not proof of identical profiles.
+Reset clears observation-local baselines between independent historical tapes.
+The affinity calibration, settled coordinates and region membership survive.
 */
-func (grid *Space) CovarianceError() float64 {
-	if grid.Version == 0 {
-		return 0
+func (grid *Space) Reset() {
+	// An unfinished calibration bin cannot pair observations from unrelated
+	// tapes. Completed bins still retain their observed relationships.
+	clear(grid.window.open)
+	clear(grid.window.observed)
+
+	for row := range grid.Rows {
+		clear(grid.Values[row])
+		clear(grid.Present[row])
+		clear(grid.baselines[row])
+		clear(grid.activations[row])
+		clear(grid.qualities[row])
+	}
+}
+
+/*
+Support reports how many observation bins one quantity was actually seen in,
+against the window's declared span.
+
+Proximity in a two-dimensional layout is not proof of identical profiles, and a
+relationship measured over two shared bins is not the claim a relationship
+measured over sixty is. This is how a reader tells those apart.
+*/
+func (grid *Space) Support(source, key string) (int, int) {
+	column, exists := grid.columnIndex[[2]string{source, key}]
+
+	if !exists {
+		return 0, grid.window.capacity
 	}
 
-	return grid.discarded / float64(grid.Version)
+	return grid.window.support(column), grid.window.capacity
 }

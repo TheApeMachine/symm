@@ -64,7 +64,7 @@ interface NodeEditorProps {
 	context?: unknown;
 	/**
 	 * Persistence is mandatory. Every editor instance (including embedded
-	 * sub-editors) reads from and writes to researchGraphCollection under
+	 * sub-editors) reads from and writes to pipelineGraphCollection under
 	 * its own id. There is no inline-state mode.
 	 */
 	graphId: string;
@@ -132,7 +132,6 @@ export const NodeEditor = ({
 	const {
 		nodes,
 		actions: nodeActions,
-		isLoading: nodesHydrating,
 		hasRow,
 		seed: seedNodes,
 	} = useNodesState({
@@ -287,13 +286,7 @@ export const NodeEditor = ({
 		if (mode === "freeform") return;
 		dispatchGraphLayout(mode, nodesRefForLayout.current, nodeActions);
 		triggerRecalculation();
-	}, [
-		graphLayoutMode,
-		prevGraphLayout,
-		triggerRecalculation,
-		nodeActions,
-		nodesRefForLayout,
-	]);
+	}, [graphLayoutMode, prevGraphLayout, triggerRecalculation, nodeActions]);
 
 	React.useImperativeHandle(ref, () => ({
 		getNodes: () => {
@@ -316,22 +309,6 @@ export const NodeEditor = ({
 			setSideEffectToasts(undefined);
 		}
 	}, [sideEffectToasts]);
-
-	if (nodesHydrating) {
-		return (
-			<Flex.Column
-				className={cn(
-					"min-h-0 flex-1 items-center justify-center text-muted-foreground text-sm",
-					className,
-				)}
-				style={style}
-				fullHeight
-				fullWidth
-			>
-				Hydrating graph…
-			</Flex.Column>
-		);
-	}
 
 	return (
 		<Flex.Column

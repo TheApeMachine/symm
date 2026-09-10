@@ -170,17 +170,17 @@ const Control = (props: ControlProps) => {
 				return (
 					<InputPrimitive
 						className="w-full min-w-0"
-						data-flume-component="text-input-text"
+						data-flume-component="text-(--f2)-text"
 						value={(props.data as string) ?? ""}
 						onDragStart={(e) => {
 							e.stopPropagation();
 						}}
 						onMouseDown={handleResizeMouseDown}
-						onValueChange={(next) => {
-							commonProps.onChange(next);
+						onChange={(event) => {
+							commonProps.onChange(event.target.value);
 						}}
 						placeholder={placeholder}
-						size="sm"
+						size="s"
 					/>
 				);
 			}
@@ -190,7 +190,7 @@ const Control = (props: ControlProps) => {
 				return (
 					<InputPrimitive
 						className="w-full min-w-0"
-						data-flume-component="text-input-number"
+						data-flume-component="text-(--f2)-number"
 						value={(props.data as number) ?? 0}
 						onDragStart={(e) => {
 							e.stopPropagation();
@@ -206,8 +206,8 @@ const Control = (props: ControlProps) => {
 								commonProps.onChange(0);
 							}
 						}}
-						onValueChange={(raw) => {
-							const inputValue = raw.replace(/e/g, "");
+						onChange={(event) => {
+							const inputValue = event.target.value.replace(/e/g, "");
 							if (!inputValue) {
 								return;
 							}
@@ -217,7 +217,7 @@ const Control = (props: ControlProps) => {
 						step={step ?? 1}
 						type="number"
 						placeholder={placeholder}
-						size="sm"
+						size="s"
 					/>
 				);
 			}

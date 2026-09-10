@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	venue "github.com/theapemachine/symm/tests/venue"
@@ -304,4 +306,63 @@ func TestPriceGetFees(t *testing.T) {
 			So(fee.Fee.Float64(), ShouldAlmostEqual, 0.26, 1e-12)
 		})
 	})
+}
+
+/*
+A venue quoting both sides from instants that disagree produces a touch that
+meets or crosses. It prices no entry and no liquidation, but it is a reading
+about book shape rather than a fault, so callers must be able to size around it
+the way they size around insufficient depth.
+*/
+func TestPriceCrossedBookIsAReading(t *testing.T) {
+	Convey("A crossed touch is unprocessable, not a validation failure", t, func() {
+		touch := &touchBook{}
+		price := NewRecordedPrice(newQuantityPrice(t), touch)
+		touch.quote("BTC/USD", 100000, 99900)
+		quantity := decimal.NewFromFloat64(0.001)
+
+		cost, err := price.EntryCost("BTC/USD", quantity)
+		So(cost, ShouldBeNil)
+		So(errnie.IsUnprocessableContent(err), ShouldBeTrue)
+		So(errnie.IsValidation(err), ShouldBeFalse)
+
+		surface, err := price.Surface("BTC/USD", quantity, time.Now().UTC())
+		So(surface.FullyExecutable, ShouldBeFalse)
+		So(errnie.IsUnprocessableContent(err), ShouldBeTrue)
+		So(errnie.IsValidation(err), ShouldBeFalse)
+
+		Convey("A touch quoted with no spread at all reads the same way", func() {
+			touch.quote("BTC/USD", 100000, 100000)
+			_, err := price.EntryCost("BTC/USD", quantity)
+			So(errnie.IsUnprocessableContent(err), ShouldBeTrue)
+		})
+
+		Convey("An ordinary touch still prices", func() {
+			touch.quote("BTC/USD", 99900, 100000)
+			cost, err := price.EntryCost("BTC/USD", quantity)
+			So(err, ShouldBeNil)
+			So(cost.Total.Sign(), ShouldEqual, 1)
+		})
+	})
+}
+
+// touchBook exposes one quoted touch, the way a captured observation does.
+type touchBook struct{ current *spotbook.Book }
+
+func (source *touchBook) quote(symbol string, bid, ask float64) {
+	source.current = &spotbook.Book{
+		Name: symbol,
+		Bids: &spotbook.Side{High: &spotbook.Level{
+			Price: decimal.NewFromFloat64(bid), Quantity: decimal.NewFromFloat64(1),
+		}},
+		Asks: &spotbook.Side{Low: &spotbook.Level{
+			Price: decimal.NewFromFloat64(ask), Quantity: decimal.NewFromFloat64(1),
+		}},
+	}
+}
+
+func (source *touchBook) Book(symbol string, read func(*spotbook.Book)) {
+	if source.current != nil && source.current.Name == symbol {
+		read(source.current)
+	}
 }
