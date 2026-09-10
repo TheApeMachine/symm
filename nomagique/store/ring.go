@@ -2,63 +2,56 @@ package store
 
 import (
 	container "container/ring"
+	"iter"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Ring plays out a ring of rings.
-
-The child is one recorded sequence and is handed over a position at a time.
-When it has been played through, the run ends and the parent advances, so the
-next run begins at the next sequence rather than running through the seam
-between them as if the two were one. The parent loops, so the sequences replay
-endlessly and their order never restarts.
+Ring plays out a ring of rings. Each Next run is one child sequence. When that
+child is spent the run ends, and the next Next begins at the parent's next
+child. The parent loops, so the sequences replay and their order never restarts.
 */
-type Ring struct {
-	core.PrimitiveError
-	parent  *container.Ring
-	child   *container.Ring
-	played  int
-	current core.Primitive
+type Ring[T any] struct {
+	core.Base[T, T]
+	parent *container.Ring
+	child  *container.Ring
+	played int
 }
 
-/* NewRing plays out the ring of rings the configured state carries. */
-func NewRing(state core.Primitive) *Ring {
-	return &Ring{parent: core.To[*container.Ring](state)}
+func NewRing[T any](parent *container.Ring) *Ring[T] {
+	return &Ring[T]{parent: parent}
 }
 
-func (ring *Ring) Next(core.Primitive) core.Primitive {
-	if ring.parent == nil {
-		return nil
-	}
+func (op *Ring[T]) Next(
+	iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[T, T]] {
+	return func(yield func(core.Primitive[T, T]) bool) {
+		if op.parent == nil {
+			return
+		}
 
-	if ring.child == nil {
-		ring.parent = ring.parent.Next()
-		child, held := ring.parent.Value.(*container.Ring)
+		child, held := op.parent.Value.(*container.Ring)
 
 		if !held || child == nil {
-			return nil
+			return
 		}
-		ring.child, ring.played = child, 0
+
+		op.child, op.played = child, 0
+
+		for op.played < op.child.Len() {
+			value, ok := op.child.Value.(T)
+			op.child, op.played = op.child.Next(), op.played+1
+
+			if !ok {
+				return
+			}
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+
+		op.parent = op.parent.Next()
 	}
-
-	// The child has been played through: the run ends here, and the next one
-	// begins on the parent's next sequence.
-	if ring.played == ring.child.Len() {
-		ring.child = nil
-
-		return nil
-	}
-	value, held := ring.child.Value.(core.Primitive)
-	ring.child, ring.played = ring.child.Next(), ring.played+1
-
-	if !held {
-		return nil
-	}
-	ring.current = value
-
-	return value
 }
-
-func (ring *Ring) Read() any { return core.To[any](ring.current) }

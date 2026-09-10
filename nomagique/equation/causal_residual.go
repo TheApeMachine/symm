@@ -1,85 +1,77 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewCausalResidual measures against the moments that existed before the
-// observation. Its configured estimator owns recurrence and any forgetting.
-// The source's zero-dispersion convention is explicit: use |residual| as the
-// score scale, or zero when the residual is zero. Both the prior variance and
-// the actual score scale are exposed, rather than conflated.
-func NewCausalResidual(moments core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		moments,
-		transport.NewMap(
-			transport.NewPipe(
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(NewGreater[float64](store.NewGet("prior_count"), store.NewConstant(core.From(0.0))), store.NewKey("has_prior")),
-					transport.NewPipe(
-						logic.NewGate(
-							NewGreater[float64](store.NewGet("prior_count"), store.NewConstant(core.From(0.0))),
-							store.NewGet("prior_mean"),
-							store.NewGet("value"),
-						),
-						store.NewKey("baseline"),
-					),
-					transport.NewPipe(
-						logic.NewGate(
-							NewGreater[float64](store.NewGet("prior_count"), store.NewConstant(core.From(1.0))),
-							NewRatio[float64](
-								store.NewGet("prior_m2"),
-								NewDifference[float64](store.NewGet("prior_count"), store.NewConstant(core.From(1.0))),
-							),
-							store.NewConstant(core.From(0.0)),
-						),
-						store.NewKey("prior_variance"),
-					),
-					transport.NewPipe(
-						NewDifference[float64](
-							store.NewConstant(core.From(1.0)),
-							NewRatio[float64](
-								store.NewConstant(core.From(1.0)),
-								NewSum[float64](store.NewGet("prior_count"), store.NewConstant(core.From(1.0))),
-							),
-						),
-						store.NewKey("maturity"),
-					),
-				),
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(
-						NewDifference[float64](store.NewGet("value"), store.NewGet("baseline")), store.NewKey("residual")),
-				),
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(
-						logic.NewGate(
-							NewGreater[float64](store.NewGet("prior_variance"), store.NewConstant(core.From(0.0))),
-							transport.NewPipe(store.NewGet("prior_variance"), calculus.NewSqrt(transport.NewIO(core.From(0.0)))),
-							transport.NewPipe(store.NewGet("residual"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
-						),
-						store.NewKey("score_scale"),
-					),
-				),
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(
-						logic.NewGate(
-							NewGreater[float64](store.NewGet("score_scale"), store.NewConstant(core.From(0.0))),
-							NewRatio[float64](store.NewGet("residual"), store.NewGet("score_scale")),
-							store.NewConstant(core.From(0.0)),
-						),
-						store.NewKey("zscore"),
-					),
-					transport.NewPipe(store.NewGet("variance"), store.NewKey("noise_variance")),
-				),
-			),
-		),
-	)
+/*
+CausalResidualResult measures an observation against the moments that existed
+before it. Zero prior dispersion uses |residual| as the score scale, or zero
+when the residual is zero.
+*/
+type CausalResidualResult struct {
+	MomentReading
+	HasPrior      bool
+	Baseline      float64
+	PriorVariance float64
+	Maturity      float64
+	Residual      float64
+	ScoreScale    float64
+	ZScore        float64
+	NoiseVariance float64
+}
+
+/*
+CausalResidual owns that projection. Recurrence belongs to whoever supplies
+the reading.
+*/
+type CausalResidual struct {
+	core.Base[MomentReading, CausalResidualResult]
+}
+
+func NewCausalResidual() *CausalResidual {
+	return &CausalResidual{}
+}
+
+func (op *CausalResidual) Next(
+	in iter.Seq[core.Primitive[MomentReading, MomentReading]],
+) iter.Seq[core.Primitive[CausalResidualResult, CausalResidualResult]] {
+	return func(yield func(core.Primitive[CausalResidualResult, CausalResidualResult]) bool) {
+		for arriving := range in {
+			reading := arriving.Read()
+			result := CausalResidualResult{
+				MomentReading: reading,
+				HasPrior:      reading.Prior.Count > 0,
+				Baseline:      reading.Value,
+				Maturity:      1 - 1/(reading.Prior.Count+1),
+				NoiseVariance: reading.Variance,
+			}
+
+			if result.HasPrior {
+				result.Baseline = reading.Prior.Mean
+			}
+
+			if reading.Prior.Count > 1 {
+				result.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
+			}
+
+			result.Residual = reading.Value - result.Baseline
+			result.ScoreScale = math.Abs(result.Residual)
+
+			if result.PriorVariance > 0 {
+				result.ScoreScale = math.Sqrt(result.PriorVariance)
+			}
+
+			if result.ScoreScale > 0 {
+				result.ZScore = result.Residual / result.ScoreScale
+			}
+
+			if !yield(op.Carrier(result)) {
+				return
+			}
+		}
+	}
 }

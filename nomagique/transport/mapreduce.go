@@ -1,9 +1,19 @@
 package transport
 
-import "github.com/theapemachine/symm/nomagique/core"
+import (
+	"iter"
 
-// NewMapReduce composes the existing map and pipe transports. It contains no
-// second scheduler, reduction implementation, queue, or callback protocol.
-func NewMapReduce(mapping, reduction core.Primitive) core.Primitive {
-	return NewPipe(NewMap(mapping), reduction)
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+MapReduce is mapper then reducer. There is no second scheduler, queue, or
+callback protocol: the reducer's input is the mapper's output iterator.
+*/
+func MapReduce[T, U, V any](
+	mapper core.Primitive[T, U],
+	reducer core.Primitive[U, V],
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[V, V]] {
+	return reducer.Next(mapper.Next(in))
 }

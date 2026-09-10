@@ -68,7 +68,7 @@ two-line readouts grew taller than the ones between the badges — the same
 component drawing two different lines depending on its neighbours.
 */
 const Rule = () => (
-	<Divider orientation="vertical" className="h-[18px] self-center" />
+	<Divider orientation="vertical" className="h-4.5 self-center" />
 );
 
 /*

@@ -15,6 +15,7 @@ require (
 	github.com/grafana/pyroscope-go v1.4.2
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/krakenfx/api-go/v2 v2.0.0
+	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/pion/sctp v1.11.1
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/smarty/go-disruptor v0.5.0
@@ -119,7 +120,6 @@ require (
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/marcboeker/go-duckdb/arrowmapping v0.0.21 // indirect
 	github.com/marcboeker/go-duckdb/mapping v0.0.21 // indirect
-	github.com/marcboeker/go-duckdb/v2 v2.4.3 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect

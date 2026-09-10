@@ -1,22 +1,36 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewRatio binds two expressions to one captured input run. Both operands are
-// computations, not decoded values; the source is consumed only once.
-func NewRatio[T core.Floating](left, right core.Primitive) core.Primitive {
-	captured := store.NewRetained(core.From([]core.Primitive{}))
-	return transport.NewPipe(
-		transport.NewCollect[core.Primitive](),
-		captured,
-		transport.NewApply(
-			arithmetic.NewDivide[T](transport.NewApply(transport.NewPipe(transport.NewSpread[core.Primitive](), left), captured)),
-			transport.NewApply(transport.NewPipe(transport.NewSpread[core.Primitive](), right), captured),
-		),
-	)
+/*
+Ratio divides corresponding yields of two configured operations over one input
+run.
+*/
+type Ratio[T any, U core.Floating] struct {
+	core.Base[T, U]
+	left  core.Primitive[T, U]
+	right core.Primitive[T, U]
+}
+
+func NewRatio[T any, U core.Floating](left, right core.Primitive[T, U]) *Ratio[T, U] {
+	return &Ratio[T, U]{left: left, right: right}
+}
+
+func (op *Ratio[T, U]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for pair := range transport.Zip(op.left.Next(in), op.right.Next(in)) {
+			sides := pair.Read()
+
+			if !yield(op.Carrier(sides.Left / sides.Right)) {
+				return
+			}
+		}
+	}
 }

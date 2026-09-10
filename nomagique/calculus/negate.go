@@ -1,25 +1,31 @@
 package calculus
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Negate owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Negate struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Negate owns one field operation. What it hands over is the negation of each
+arrival.
+*/
+type Negate[U core.Numeric] struct {
+	core.Base[U, U]
 }
 
-func NewNegate(left core.Primitive) *Negate {
-	return &Negate{left: left}
+func NewNegate[U core.Numeric]() *Negate[U] {
+	return &Negate[U]{}
 }
-func (operation *Negate) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return -value }, operation)
-	if result != nil {
-		operation.current = result
+
+func (op *Negate[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(-arriving.Read())) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (operation *Negate) Read() any { return core.To[any](operation.current) }

@@ -1,20 +1,31 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewSigmoid is a composition, including mapping over multiple inputs.
-func NewSigmoid() core.Primitive {
-	return transport.NewMap(
-		transport.NewPipe(
-			calculus.NewNegate(transport.NewIO(core.From(0.0))),
-			calculus.NewExp(transport.NewIO(core.From(0.0))),
-			arithmetic.NewAdd[float64](transport.NewIO(core.From(1.0))),
-			calculus.NewReciprocal(transport.NewIO(core.From(0.0))),
-		),
-	)
+/*
+Sigmoid owns 1 / (1 + exp(-x)).
+*/
+type Sigmoid[U core.Floating] struct {
+	core.Base[U, U]
+}
+
+func NewSigmoid[U core.Floating]() *Sigmoid[U] {
+	return &Sigmoid[U]{}
+}
+
+func (op *Sigmoid[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(1 / (1 + U(math.Exp(float64(-arriving.Read())))))) {
+				return
+			}
+		}
+	}
 }

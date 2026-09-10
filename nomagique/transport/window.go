@@ -1,44 +1,63 @@
 package transport
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Window exposes fixed-width overlapping groups within a delivery run. Width
-// and stride are structural configuration, not feature modes. Width 2 / stride
-// 1 supplies consecutive pairs; width N / stride N supplies disjoint groups.
-type Window struct {
-	core.PrimitiveError
-	width, stride   int
-	output, current core.Primitive
+/*
+Window exposes fixed-width overlapping groups within a delivery run. Width and
+stride are structural configuration. Width 2 / stride 1 supplies consecutive
+pairs; width N / stride N supplies disjoint groups. Groups are handed over as
+soon as they are complete.
+*/
+type Window[T any] struct {
+	core.Base[T, []T]
+	width  int
+	stride int
 }
 
-func NewWindow(width, stride int) *Window {
-	window := &Window{width: width, stride: stride}
+func NewWindow[T any](width, stride int) *Window[T] {
+	op := &Window[T]{width: width, stride: stride}
+
 	if width < 1 || stride < 1 {
-		window.Error(core.ErrShape)
+		op.Error(core.ErrShape)
 	}
-	return window
+
+	return op
 }
-func (window *Window) Next(in core.Primitive) core.Primitive {
-	if window.Error() != nil {
-		return nil
-	}
-	if window.output == nil {
-		values := []core.Primitive{}
-		core.Yield(NewIO(core.From(0)), in, func(n int, v core.Primitive) int { values = append(values, v); return n }, window)
-		groups := []core.Primitive{}
-		for start := 0; start+window.width <= len(values); start += window.stride {
-			groups = append(groups, core.From(append([]core.Primitive(nil), values[start:start+window.width]...)))
+
+func (op *Window[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[[]T, []T]] {
+	return func(yield func(core.Primitive[[]T, []T]) bool) {
+		if op.Error() != nil {
+			return
 		}
-		window.output = NewIO(groups...)
+
+		var buf []T
+
+		for arriving := range in {
+			buf = append(buf, arriving.Read())
+
+			if len(buf) < op.width {
+				continue
+			}
+
+			group := append([]T(nil), buf[:op.width]...)
+
+			if !yield(op.Carrier(group)) {
+				return
+			}
+
+			drop := op.stride
+
+			if drop > len(buf) {
+				drop = len(buf)
+			}
+
+			buf = append(buf[:0], buf[drop:]...)
+		}
 	}
-	value := window.output.Next(nil)
-	if value == nil {
-		window.output = nil
-	} else {
-		window.current = value
-	}
-	return value
 }
-func (window *Window) Read() any { return core.To[any](window.current) }

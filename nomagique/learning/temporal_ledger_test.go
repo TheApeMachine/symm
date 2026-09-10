@@ -9,7 +9,7 @@ import (
 func TestTemporalLedgerNestedHorizonResolution(t *testing.T) {
 	Convey("Given a temporal ledger over nested cumulative directional targets", t, func() {
 		newLedger := func() *TemporalLedger {
-			return NewTemporalLedger(4, DirectionalTarget(0.01))
+			return NewTemporalLedger(4, DirectionalTransform(0.01))
 		}
 
 		head := func() *ResonanceManifold {

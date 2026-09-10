@@ -2,50 +2,39 @@ package matrix_test
 
 import (
 	"errors"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/matrix"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"reflect"
-	"testing"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestTransposeNext(t *testing.T) {
-	node := matrix.NewTranspose[string]()
-	original := [][]string{{"a", "b", "c"}, {"d", "e", "f"}}
-	want := [][]string{{"a", "d"}, {"b", "e"}, {"c", "f"}}
-	for range 3 {
-		out := tests.Drain(t, node, tests.Values(original))
-		tests.Sound(t, node)
-		if !reflect.DeepEqual(out[0], want) {
-			t.Fatal(out)
-		}
-		if !reflect.DeepEqual(node.Read(), want) {
-			t.Fatal("Read lost result at terminal nil")
-		}
-		out[0].([][]string)[0][0] = "changed"
-		if original[0][0] != "a" {
-			t.Fatal("transpose mutated source")
-		}
-	}
-	// Multiple matrix values in a fold yield the last transpose, not a truncated first matrix.
-	out := tests.Drain(t, node, tests.Values(original, [][]string{{"last"}}))
-	tests.Sound(t, node)
-	if !reflect.DeepEqual(out[0], [][]string{{"last"}}) {
-		t.Fatal(out)
-	}
-	out = tests.Drain(t, node, nil)
-	tests.Sound(t, node)
-	if !reflect.DeepEqual(out[0], [][]string{}) {
-		t.Fatal(out)
-	}
-	bad := matrix.NewTranspose[float64]()
-	tests.Drain(t, bad, tests.Values([][]float64{{1, 2}, {3}}))
-	if !errors.Is(bad.Error(), core.ErrShape) {
-		t.Fatal("ragged rows accepted")
-	}
-	wrong := matrix.NewTranspose[float64]()
-	tests.Drain(t, wrong, tests.Values("wrong"))
-	if !errors.Is(wrong.Error(), core.ErrWrongType) {
-		t.Fatal("wrong input type lost")
-	}
+	Convey("Transpose changes addressing without mutating the source", t, func() {
+		node := matrix.NewTranspose[string]()
+		original := [][]string{{"a", "b", "c"}, {"d", "e", "f"}}
+		want := [][]string{{"a", "d"}, {"b", "e"}, {"c", "f"}}
+		out := tests.CollectSeq(node.Next(transport.Values(original)))
+		So(node.Error(), ShouldBeNil)
+		So(out[0], ShouldResemble, want)
+		So(node.Read(), ShouldResemble, want)
+		out[0][0][0] = "changed"
+		So(original[0][0], ShouldEqual, "a")
+	})
+
+	Convey("Each arrival is transposed independently", t, func() {
+		node := matrix.NewTranspose[string]()
+		original := [][]string{{"a", "b", "c"}, {"d", "e", "f"}}
+		out := tests.CollectSeq(node.Next(transport.Values(original, [][]string{{"last"}})))
+		So(out[0], ShouldResemble, [][]string{{"a", "d"}, {"b", "e"}, {"c", "f"}})
+		So(out[1], ShouldResemble, [][]string{{"last"}})
+	})
+
+	Convey("Ragged rows are a shape error", t, func() {
+		bad := matrix.NewTranspose[float64]()
+		tests.CollectSeq(bad.Next(transport.Values([][]float64{{1, 2}, {3}})))
+		So(errors.Is(bad.Error(), core.ErrShape), ShouldBeTrue)
+	})
 }

@@ -1,17 +1,21 @@
 package nomagique_test
 
 import (
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"testing"
 )
 
-func TestNumberIsPrimitive(t *testing.T) {
-	graph := nomagique.Number(arithmetic.NewAdd[float64](transport.NewIO(core.From(2.0))))
-	outer := arithmetic.NewMultiply[float64](transport.NewIO(core.From(3.0)))
-	got := tests.Drain(t, outer, transport.NewApply(graph, transport.NewIO(core.From(5.0))))
-	tests.EqualNumber(t, got[0], 21)
+func TestNumber(t *testing.T) {
+	Convey("Number threads a run through homogeneous stages", t, func() {
+		add := arithmetic.NewAdd[float64, float64](2.0)
+		multiply := arithmetic.NewMultiply[float64](3.0)
+		out := tests.CollectSeq(multiply.Next(nomagique.Number(transport.Values(5.0), add)))
+
+		So(out[0], ShouldEqual, 21)
+	})
 }

@@ -3,6 +3,7 @@ import {
 	type EdgeRoutingMode,
 	type ObstacleRect,
 } from "#/components/flume/connectionCalculator";
+
 import {
 	buildObstacleMapFromSpatialIndex,
 	type NodeLayoutEntry,
@@ -11,11 +12,13 @@ import {
 	resolveConnectionsFromSpatialIndex,
 	type SpatialIndexSnapshot,
 } from "#/components/flume/spatial-index";
+
 import type {
 	Coordinate,
 	NodeMap,
 	TransputType,
 } from "#/components/flume/types";
+
 import type {
 	ConnectionDescriptor,
 	ConnectionPathResult,

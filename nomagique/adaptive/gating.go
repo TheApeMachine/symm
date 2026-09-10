@@ -1,34 +1,53 @@
 package adaptive
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewGating suppresses values inside a configured threshold of inclusive
-// moments. Estimation, threshold calculation and Boolean routing stay separate.
-func NewGating(moments, threshold core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		moments,
-		transport.NewMap(
-			logic.NewGate(
-				equation.NewAll(
-					equation.NewLess[float64](
-						transport.NewPipe(
-							equation.NewDifference[float64](store.NewGet("value"), store.NewGet("mean")),
-							calculus.NewAbsolute(transport.NewIO(core.From(0.0))),
-						),
-						threshold,
-					),
-					equation.NewGreater[float64](store.NewGet("dispersion"), store.NewConstant(core.From(0.0))),
-				),
-				store.NewConstant(core.From(0.0)),
-				store.NewGet("value"),
-			),
-		),
-	)
+/*
+Gating suppresses values inside a configured threshold of inclusive moments.
+*/
+type Gating struct {
+	core.Base[float64, float64]
+	moments   core.Primitive[float64, equation.MomentReading]
+	threshold core.Primitive[float64, float64]
+}
+
+func NewGating(
+	moments core.Primitive[float64, equation.MomentReading],
+	threshold core.Primitive[float64, float64],
+) *Gating {
+	return &Gating{moments: moments, threshold: threshold}
+}
+
+func (op *Gating) Next(
+	in iter.Seq[core.Primitive[float64, float64]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		for reading := range op.moments.Next(in) {
+			current := reading.Read()
+			value := current.Value
+			limit, err := transport.Evaluate(op.threshold, transport.Values(current.Count))
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if current.Dispersion > 0 && math.Abs(current.Value-current.Mean) < limit {
+				value = 0
+			}
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+
+		op.Error(op.moments.Error())
+	}
 }

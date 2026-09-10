@@ -28,7 +28,8 @@ the accessible statement of the same fact.
 const Lambo = () => (
 	<img
 		src="/lambo.png"
-		alt=""
+		alt="when moon?"
+		title="when lambo?"
 		aria-hidden="true"
 		className="pointer-events-none absolute -top-1.5 right-0 z-0 h-11 opacity-60"
 	/>
@@ -83,11 +84,9 @@ export const Balance = () => {
 		state.findLast((f) => f.equity() !== null && f.equity() !== ""),
 	);
 
-	/*
-		Profit is unrealized rather than equity: the ride is for the book being up
-		right now, not for the account being larger than nothing. Equity is above
-		zero the moment the wallet is funded, which would leave it permanently on.
-	*/
+	// Profit is unrealized rather than equity: the ride is for the book being up
+	// right now, not for the account being larger than nothing. Equity is above
+	// zero the moment the wallet is funded, which would leave it permanently on.
 	const unrealized = Number(
 		policy ? policy.unrealized : lastWithUnrealized?.unrealized(),
 	);

@@ -1,38 +1,37 @@
 package transport
 
-import "github.com/theapemachine/symm/nomagique/core"
+import (
+	"iter"
 
-// Spread presents collection members as individual yields. Collection shape
-// conversion belongs here, not in arithmetic or an estimator.
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Spread presents collection members as individual yields. Collection shape
+conversion belongs here. A member is handed over as soon as it is read from an
+incoming collection.
+
+Spread is Primitive[[]T, T]: what arrives is a collection, what it hands
+downstream is one member.
+*/
 type Spread[T any] struct {
-	core.PrimitiveError
-	output  core.Primitive
-	current core.Primitive
+	core.Base[[]T, T]
 }
 
-func NewSpread[T any]() *Spread[T] { return &Spread[T]{} }
-func (spread *Spread[T]) Next(in core.Primitive) core.Primitive {
-	if spread.output == nil {
-		values := []core.Primitive{}
-		core.Yield(
-			NewIO(core.From(0)),
-			in,
-			func(held int, batch []T) int {
-				for _, value := range batch {
-					values = append(values, core.From(value))
-				}
-				return held
-			},
-			spread,
-		)
-		spread.output = NewIO(values...)
-	}
-	value := spread.output.Next(nil)
-	if value == nil {
-		spread.output = nil
-	} else {
-		spread.current = value
-	}
-	return value
+func NewSpread[T any]() *Spread[T] {
+	return &Spread[T]{}
 }
-func (spread *Spread[T]) Read() any { return core.To[any](spread.current) }
+
+func (op *Spread[T]) Next(
+	in iter.Seq[core.Primitive[[]T, []T]],
+) iter.Seq[core.Primitive[T, T]] {
+	return func(yield func(core.Primitive[T, T]) bool) {
+		for collection := range in {
+			for _, member := range collection.Read() {
+				if !yield(op.Carrier(member)) {
+					return
+				}
+			}
+		}
+	}
+}

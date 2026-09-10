@@ -3,11 +3,13 @@ package hawkes
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"math"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -40,48 +42,63 @@ type State struct {
 	measurement *data.Measurement[float64]
 }
 
-// Bivariate owns bounded arrival histories and the fitted MLE state. Its input
-// is an explicit {key string, at int64 nanoseconds, mark float64} record; the
-// output is the measurement of the event against the previously fitted model.
-// Shape failures follow Primitive.Error. Rejected market events instead return
-// an error-bearing measurement without poisoning subsequent delivery runs.
+/*
+Event is one marked arrival. At is Unix nanoseconds.
+*/
+type Event struct {
+	Key  string
+	At   int64
+	Mark float64
+}
+
+/*
+Bivariate owns bounded arrival histories and the fitted MLE state. The output
+is the measurement of the event against the previously fitted model. Rejected
+market events return an error-bearing measurement without poisoning later runs.
+*/
 type Bivariate struct {
-	core.PrimitiveError
-	seed    core.Primitive
-	states  map[string]*State
-	single  State
-	active  *State
-	current *data.Measurement[float64]
+	core.Base[Event, *data.Measurement[float64]]
+	states map[string]*State
+	single State
+	active *State
+	finite *logic.Finite[float64]
 }
 
 func NewBivariate() *Bivariate {
-	return &Bivariate{seed: transport.NewIO(core.From((*data.Measurement[float64])(nil))), states: make(map[string]*State)}
+	return &Bivariate{states: make(map[string]*State), finite: logic.NewFinite[float64]()}
 }
 
-func (bivariate *Bivariate) Next(in core.Primitive) core.Primitive {
-	return core.Yield(bivariate.seed, in, func(_ *data.Measurement[float64], fields map[string]core.Primitive) *data.Measurement[float64] {
-		decoder := core.NewDecoder(fields)
-		key := core.Decode[string](decoder, "key")
-		nanos := core.Decode[int64](decoder, "at")
-		mark := core.Decode[float64](decoder, "mark")
-		if err := decoder.Error(); err != nil {
-			bivariate.Error(err)
-			return nil
+func (bivariate *Bivariate) Next(
+	in iter.Seq[core.Primitive[Event, Event]],
+) iter.Seq[core.Primitive[*data.Measurement[float64], *data.Measurement[float64]]] {
+	return func(yield func(core.Primitive[*data.Measurement[float64], *data.Measurement[float64]]) bool) {
+		for arriving := range in {
+			event := arriving.Read()
+			measurement := bivariate.observe(event.Key, time.Unix(0, event.At), event.Mark)
+
+			if !yield(bivariate.Carrier(measurement)) {
+				return
+			}
 		}
-		bivariate.current = bivariate.observe(key, time.Unix(0, nanos), mark)
-		return bivariate.current
-	}, bivariate)
+	}
 }
-func (bivariate *Bivariate) Read() any { return bivariate.current }
 
 func (bivariate *Bivariate) observe(key string, at time.Time, mark float64) *data.Measurement[float64] {
 	state := bivariate.resolveState(key)
 	bivariate.active = state
 	state.rejected = false
 	state.hasSNR = false
-	if mark == 0 || math.IsNaN(mark) || math.IsInf(mark, 0) {
+	defined, err := transport.Evaluate(bivariate.finite, transport.Values(mark))
+
+	if err != nil || !defined || mark == 0 {
 		state.rejected = true
-		state.measurement = &data.Measurement[float64]{ID: fmt.Sprintf("%s:hawkes:%s", key, at.Format(time.RFC3339Nano)), Label: key, Source: "hawkes", At: at, Err: errors.New("hawkes: a finite non-zero mark is required")}
+		state.measurement = &data.Measurement[float64]{
+			ID:     fmt.Sprintf("%s:hawkes:%s", key, at.Format(time.RFC3339Nano)),
+			Label:  key,
+			Source: "hawkes",
+			At:     at,
+			Err:    errors.New("hawkes: a finite non-zero mark is required"),
+		}
 		return state.measurement
 	}
 
@@ -510,5 +527,3 @@ func (state *State) NoiseVariance() float64 {
 
 	return 1.0
 }
-
-var _ core.Primitive = (*Bivariate)(nil)

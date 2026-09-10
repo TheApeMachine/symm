@@ -2,7 +2,6 @@ package leadlag
 
 import (
 	"fmt"
-	"math"
 	"sort"
 	"sync"
 	"time"
@@ -10,31 +9,39 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type pricePath struct {
-	graph  core.Primitive
-	record map[string]core.Primitive
+	graph   *nmcorrelation.Path
+	reading nmcorrelation.PathReading
 }
 
-// Ticker preserves asynchronous per-symbol paths, with causal history owned
-// by each ordered pair. There is no cross-market synchronization barrier.
 type Ticker struct {
 	mutex      sync.Mutex
-	search     core.Primitive
-	fisher     core.Primitive
+	search     *nmcorrelation.LeadLag
+	fisher     *nmcorrelation.Fisher
 	projection *data.Projection
 	paths      map[string]*pricePath
 	pipelines  map[[2]string]*pipeline
+	finite     *logic.Finite[float64]
 }
 
 func NewTicker() *Ticker {
-	return &Ticker{search: nmcorrelation.NewLeadLag(algo.NewHayashiYoshida()), fisher: nmcorrelation.NewFisher(), projection: lagProjection(), paths: make(map[string]*pricePath), pipelines: make(map[[2]string]*pipeline)}
+	return &Ticker{
+		search:     nmcorrelation.NewLeadLag(algo.NewHayashiYoshida()),
+		fisher:     nmcorrelation.NewFisher(),
+		projection: lagProjection(),
+		paths:      make(map[string]*pricePath),
+		pipelines:  make(map[[2]string]*pipeline),
+		finite:     logic.NewFinite[float64](),
+	}
 }
+
 func (ticker *Ticker) Close() error { return nil }
 
 func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
@@ -42,7 +49,11 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker requires a last price")}
 	}
 	last := event.Last.Float64()
-	if last < 0 || math.IsNaN(last) || math.IsInf(last, 0) {
+	ok, err := transport.Evaluate(ticker.finite, transport.Values(last))
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
+	}
+	if !ok || last < 0 {
 		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: finite non-negative last price required")}
 	}
 	m := data.NewMeasurement[float64](event.Symbol+":leadlag:"+event.Timestamp.Format(time.RFC3339Nano), event.Symbol, "leadlag", event.Timestamp, event.Timestamp)
@@ -59,32 +70,19 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 		focal = &pricePath{graph: adaptive.NewPath(adaptive.NewWindow())}
 		ticker.paths[event.Symbol] = focal
 	}
-	fields, err := transport.Evaluate[map[string]core.Primitive](focal.graph, core.Record(map[string]any{"at": event.Timestamp.UnixNano(), "value": last}))
+	reading, err := transport.Evaluate(focal.graph, transport.Values(equation.Price{At: event.Timestamp.UnixNano(), Value: last}))
 	if err != nil {
 		m.Err = err
 		return m
 	}
-	d := core.NewDecoder(fields)
-	accepted := core.Decode[bool](d, "accepted")
-	if d.Error() != nil {
-		m.Err = d.Error()
-		return m
-	}
-	if !accepted {
+	if !reading.Accepted {
 		m.Provenance = map[string]string{"event_time_state": "regressed"}
 		m.Finalize()
 		return m
 	}
-	focal.record = fields
-	count := core.Decode[float64](d, "count")
-	left := core.Decode[[]core.Primitive](d, "observations")
-	from := core.Decode[int64](d, "from")
-	if d.Error() != nil {
-		m.Err = d.Error()
-		return m
-	}
+	focal.reading = reading
 	putMetric(m, "last_price", last, data.UnitRate, data.TimescaleInstantaneous)
-	putMetric(m, "observation_count", count, data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(m, "observation_count", reading.Count, data.UnitCount, data.TimescaleInstantaneous)
 	peers := make([]string, 0, len(ticker.paths))
 	for symbol := range ticker.paths {
 		if symbol != event.Symbol {
@@ -93,25 +91,17 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 	}
 	sort.Strings(peers)
 	var selected *pipeline
-	var selectedPair map[string]core.Primitive
+	var selectedPair nmcorrelation.LeadLagReading
 	var selectedPeer string
 	for _, symbol := range peers {
-		right, err := core.Field[[]core.Primitive](ticker.paths[symbol].record, "observations")
+		pair, err := transport.Evaluate(ticker.search, transport.Values(equation.LagProfileInput{
+			Left: reading.Observations, Right: ticker.paths[symbol].reading.Observations,
+		}))
 		if err != nil {
 			m.Err = err
 			return m
 		}
-		pair, err := transport.Evaluate[map[string]core.Primitive](ticker.search, core.Record(map[string]any{"left": left, "right": right}))
-		if err != nil {
-			m.Err = err
-			return m
-		}
-		defined, err := core.Field[bool](pair, "defined")
-		if err != nil {
-			m.Err = err
-			return m
-		}
-		if !defined {
+		if !pair.Defined {
 			continue
 		}
 		key := [2]string{event.Symbol, symbol}
@@ -120,48 +110,35 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 			built = newPipeline()
 			ticker.pipelines[key] = built
 		}
-		if err := built.Observe(pair, event.Timestamp.UnixNano()); err != nil {
-			m.Err = err
-			return m
-		}
+		built.Observe(pairObservation{Lag: pair.X, AbsoluteGain: pair.AbsoluteGain, Correlation: pair.Correlation}, event.Timestamp.UnixNano())
 		selected, selectedPair, selectedPeer = built, pair, symbol
 	}
-
 	if selected == nil {
 		m.Finalize()
 		return m
 	}
-	fisher, err := transport.Evaluate[map[string]core.Primitive](ticker.fisher, core.From(selectedPair))
-
+	fisher, err := transport.Evaluate(ticker.fisher, transport.Values(nmcorrelation.FisherSample{
+		Correlation: selectedPair.Correlation, Support: selectedPair.Support, SearchCount: selectedPair.SearchCount,
+	}))
 	if err != nil {
 		m.Err = err
 		return m
 	}
-	decoder := core.NewDecoder(selectedPair)
-	resolution := core.Decode[float64](decoder, "spacing") * 1e-9
-	span := core.Decode[float64](decoder, "span")
-
-	if err := decoder.Error(); err != nil {
-		m.Err = err
-		return m
-	}
-	progress := selected.Fields(selectedPair)
-	progress["fisher"] = core.From(fisher)
-	progress["resolution"] = core.From(resolution)
-	progress["span_seconds"] = core.From(span * resolution)
+	resolution := selectedPair.Spacing * 1e-9
+	progress := selected.project(selectedPair, fisher, resolution, selectedPair.Span*resolution)
 	ticker.projection.Identity = func() (string, string, time.Time, time.Time) {
-		return m.ID, event.Symbol, event.Timestamp, time.Unix(0, from)
+		return m.ID, event.Symbol, event.Timestamp, time.Unix(0, reading.From)
 	}
 	result := ticker.projection.Project(progress)
-
 	if result.Err != nil {
 		return result
 	}
 	result.Provenance = map[string]string{"peer": selectedPeer, "pair_diagnostics_selection": "last_defined_peer_lexicographic"}
 	putMetric(result, "last_price", last, data.UnitRate, data.TimescaleInstantaneous)
-	putMetric(result, "observation_count", count, data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(result, "observation_count", reading.Count, data.UnitCount, data.TimescaleInstantaneous)
 	return result
 }
+
 func putMetric(m *data.Measurement[float64], label string, raw float64, unit data.Unit, scale data.Timescale) {
 	m.PutMetric(data.Metric[float64]{Label: label, Raw: raw, Unit: unit, Timescale: scale})
 }

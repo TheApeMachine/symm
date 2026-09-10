@@ -6,11 +6,10 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestNewLiquidityGraph(t *testing.T) {
+func TestGraphNext(t *testing.T) {
 	Convey("Given independent bid, ask, and spread histories at irregular event times", t, func() {
 		graph, projection := newLiquidityGraph(), liquidityProjection()
 		var logTotals, residualTotals, timeResidualTotals [3]float64
@@ -20,10 +19,9 @@ func TestNewLiquidityGraph(t *testing.T) {
 			seconds := float64(index*index + index)
 			askPrice := 101 + quantity
 			askQuantity := 1 / quantity
-			fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{
-				"best_bid_price": 100.0, "best_ask_price": askPrice,
-				"touch_quantity:bid": quantity, "touch_quantity:ask": askQuantity,
-				"at": int64(seconds * float64(time.Second)),
+			fields, err := transport.Evaluate(graph, transport.Values(GraphInput{
+				BestBid: 100, BestAsk: askPrice, BidQty: quantity, AskQty: askQuantity,
+				At: int64(seconds * float64(time.Second)),
 			}))
 			So(err, ShouldBeNil)
 			measurement := projection.Project(fields)
@@ -37,15 +35,12 @@ func TestNewLiquidityGraph(t *testing.T) {
 			for coordinate, value := range []float64{100 * quantity, askPrice * askQuantity, (askPrice - 100) / ((askPrice + 100) / 2)} {
 				logValue := math.Log(value)
 				name := []string{"bid", "ask", "spread"}[coordinate]
-				moments := core.To[map[string]core.Primitive](fields[name+"_moments"])
-				velocity := core.To[map[string]core.Primitive](fields[name+"_velocity"])
-				So(core.To[bool](moments["has_prior"]), ShouldEqual, index > 0)
-				// RegressionSummary requires three residual observations for a slope.
-				So(core.To[bool](velocity["slope_defined"]), ShouldEqual, index >= 3)
+				So(fields.Flags[name+"_has_prior"], ShouldEqual, index > 0)
+				So(fields.Flags[name+"_slope_defined"], ShouldEqual, index >= 3)
 
 				if index > 0 {
 					residual := logValue - logTotals[coordinate]/float64(index)
-					So(core.To[float64](moments["residual"]), ShouldAlmostEqual, residual)
+					So(fields.Values[name+"_residual"], ShouldAlmostEqual, residual)
 					residualTotals[coordinate] += residual
 					timeResidualTotals[coordinate] += seconds * residual
 				}
@@ -54,7 +49,7 @@ func TestNewLiquidityGraph(t *testing.T) {
 					count := float64(index)
 					slope := (count*timeResidualTotals[coordinate] - timeTotal*residualTotals[coordinate]) /
 						(count*timeSquaredTotal - timeTotal*timeTotal)
-					So(core.To[float64](velocity["slope"]), ShouldAlmostEqual, slope)
+					So(fields.Values[name+"_slope"], ShouldAlmostEqual, slope)
 				}
 
 				logTotals[coordinate] += logValue
@@ -71,7 +66,7 @@ func TestNewLiquidityGraph(t *testing.T) {
 	})
 }
 
-func BenchmarkNewLiquidityGraph(b *testing.B) {
+func BenchmarkGraphNext(b *testing.B) {
 	graph := newLiquidityGraph()
 	quantities := []float64{1, 2, 1.5, 3, 2.1, 4.2, 2.8, 5}
 	step := 0
@@ -79,10 +74,9 @@ func BenchmarkNewLiquidityGraph(b *testing.B) {
 
 	for b.Loop() {
 		quantity := quantities[step%len(quantities)]
-		_, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{
-			"best_bid_price": 100.0, "best_ask_price": 101 + quantity,
-			"touch_quantity:bid": quantity, "touch_quantity:ask": 1 / quantity,
-			"at": int64(step) * int64(time.Second),
+		_, err := transport.Evaluate(graph, transport.Values(GraphInput{
+			BestBid: 100, BestAsk: 101 + quantity, BidQty: quantity, AskQty: 1 / quantity,
+			At: int64(step) * int64(time.Second),
 		}))
 
 		if err != nil {

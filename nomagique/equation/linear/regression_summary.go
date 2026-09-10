@@ -1,61 +1,76 @@
 package linear
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewRegressionSummary composes the supplied cumulative slope and residual
-// SNR. Each intermediate is calculated once. The raw candidates remain visible
-// even when their domain fails; published slope/SNR use the original zero plus
-// false convention. No ridge or stable centered-update algorithm is substituted.
-func NewRegressionSummary() core.Primitive {
-	means := store.NewRecord(transport.NewPipe(),
-		transport.NewPipe(equation.NewRatio[float64](store.NewGet("sum_x"), store.NewGet("count")), store.NewKey("mean_x")),
-		transport.NewPipe(equation.NewRatio[float64](store.NewGet("sum_y"), store.NewGet("count")), store.NewKey("mean_y")),
-	)
-	centered := store.NewRecord(transport.NewPipe(),
-		transport.NewPipe(equation.NewDifference[float64](store.NewGet("sum_xx"),
-			equation.NewProduct[float64](equation.NewProduct[float64](store.NewGet("count"), store.NewGet("mean_x")), store.NewGet("mean_x"))), store.NewKey("sxx")),
-		transport.NewPipe(equation.NewDifference[float64](store.NewGet("sum_xy"),
-			equation.NewProduct[float64](equation.NewProduct[float64](store.NewGet("count"), store.NewGet("mean_x")), store.NewGet("mean_y"))), store.NewKey("sxy")),
-		transport.NewPipe(equation.NewDifference[float64](store.NewGet("sum_yy"),
-			equation.NewProduct[float64](equation.NewProduct[float64](store.NewGet("count"), store.NewGet("mean_y")), store.NewGet("mean_y"))), store.NewKey("syy")),
-	)
-	fit := transport.NewPipe(
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(
-			equation.NewRatio[float64](store.NewGet("sxy"), store.NewGet("sxx")), store.NewKey("raw_slope"))),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(equation.NewDifference[float64](store.NewGet("syy"),
-			equation.NewProduct[float64](store.NewGet("raw_slope"), store.NewGet("sxy"))), store.NewKey("sse"))),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(equation.NewRatio[float64](store.NewGet("sse"),
-			equation.NewDifference[float64](store.NewGet("count"), store.NewConstant(core.From(2.0)))), store.NewKey("residual_variance"))),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(equation.NewRatio[float64](store.NewGet("residual_variance"), store.NewGet("sxx")), store.NewKey("slope_variance"))),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(equation.NewRatio[float64](
-			transport.NewPipe(store.NewGet("raw_slope"), calculus.NewSquare(transport.NewIO(core.From(0.0)))), store.NewGet("slope_variance")), store.NewKey("raw_snr"))),
-	)
-	domains := store.NewRecord(transport.NewPipe(),
-		transport.NewPipe(equation.NewAll(
-			equation.NewLessEqual[float64](store.NewConstant(core.From(3.0)), store.NewGet("count")),
-			equation.NewGreater[float64](store.NewGet("sxx"), store.NewConstant(core.From(0.0))),
-			transport.NewPipe(store.NewGet("raw_slope"), logic.NewFinite()),
-		), store.NewKey("slope_defined")),
-		transport.NewPipe(equation.NewAll(
-			equation.NewLessEqual[float64](store.NewConstant(core.From(4.0)), store.NewGet("count")),
-			equation.NewGreater[float64](store.NewGet("sxx"), store.NewConstant(core.From(0.0))),
-			equation.NewGreater[float64](store.NewGet("syy"), store.NewConstant(core.From(0.0))),
-			equation.NewGreater[float64](store.NewGet("sse"), store.NewConstant(core.From(0.0))),
-			equation.NewGreater[float64](store.NewGet("residual_variance"), store.NewConstant(core.From(0.0))),
-			transport.NewPipe(store.NewGet("raw_snr"), logic.NewFinite()),
-		), store.NewKey("snr_defined")),
-	)
-	return transport.NewPipe(means, centered, fit, domains,
-		store.NewRecord(transport.NewPipe(),
-			transport.NewPipe(logic.NewGate(store.NewGet("slope_defined"), store.NewGet("raw_slope"), store.NewConstant(core.From(0.0))), store.NewKey("slope")),
-			transport.NewPipe(logic.NewGate(store.NewGet("snr_defined"), store.NewGet("raw_snr"), store.NewConstant(core.From(0.0))), store.NewKey("snr")),
-		),
-	)
+/*
+Summary is the cumulative slope and residual SNR. Undefined domains publish
+zero with an explicit flag; no ridge is substituted.
+*/
+type Summary struct {
+	Slope        float64
+	SlopeDefined bool
+	SNR          float64
+	SNRDefined   bool
+	Count        float64
+}
+
+/*
+RegressionSummary projects moments into slope and SNR.
+*/
+type RegressionSummary struct {
+	core.Base[Moments, Summary]
+	finite *logic.Finite[float64]
+}
+
+func NewRegressionSummary() *RegressionSummary {
+	return &RegressionSummary{finite: logic.NewFinite[float64]()}
+}
+
+func (op *RegressionSummary) Next(
+	in iter.Seq[core.Primitive[Moments, Moments]],
+) iter.Seq[core.Primitive[Summary, Summary]] {
+	return func(yield func(core.Primitive[Summary, Summary]) bool) {
+		for arriving := range in {
+			moments := arriving.Read()
+			summary := Summary{Count: moments.Count}
+
+			if moments.Count == 0 {
+				if !yield(op.Carrier(summary)) {
+					return
+				}
+
+				continue
+			}
+
+			meanX := moments.SumX / moments.Count
+			meanY := moments.SumY / moments.Count
+			sxx := moments.SumXX - moments.Count*meanX*meanX
+			sxy := moments.SumXY - moments.Count*meanX*meanY
+			syy := moments.SumYY - moments.Count*meanY*meanY
+			slope := sxy / sxx
+			sse := syy - slope*sxy
+			residual := sse / (moments.Count - 2)
+			snr := (slope * slope) / (residual / sxx)
+
+			summary.SlopeDefined = moments.Count >= 3 && sxx > 0 && defined(op.finite, slope)
+			summary.SNRDefined = moments.Count >= 4 && sxx > 0 && syy > 0 && sse > 0 && residual > 0 && defined(op.finite, snr)
+
+			if summary.SlopeDefined {
+				summary.Slope = slope
+			}
+
+			if summary.SNRDefined {
+				summary.SNR = snr
+			}
+
+			if !yield(op.Carrier(summary)) {
+				return
+			}
+		}
+	}
 }

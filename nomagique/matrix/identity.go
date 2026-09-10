@@ -1,44 +1,46 @@
 package matrix
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/* Identity constructs the diagonal in typed storage after Range validates the size. */
+/*
+Identity constructs I_n from an arriving dimension. The diagonal is written in
+typed storage; there is no scalar graph per coefficient.
+*/
 type Identity struct {
-	core.PrimitiveError
-	seed    *transport.IO
-	current core.Primitive
+	core.Base[float64, [][]float64]
 }
 
-/* NewIdentity enumerates the dimension once, without a scalar graph per coefficient. */
-func NewIdentity() core.Primitive {
-	size := store.NewRetained(core.From(0.0))
-	return transport.NewPipe(
-		size, transport.NewRange(size), transport.NewCollect[float64](),
-		&Identity{seed: transport.NewIO(core.From([][]float64{}))},
-	)
+func NewIdentity() *Identity {
+	return &Identity{}
 }
 
-func (identity *Identity) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(identity.seed, input, func(_ [][]float64, indices []float64) [][]float64 {
-		size := len(indices)
-		rows := make([][]float64, size)
-		values := make([]float64, size*size)
+func (op *Identity) Next(
+	in iter.Seq[core.Primitive[float64, float64]],
+) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
+	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+		for arriving := range in {
+			size := int(arriving.Read())
 
-		for row := range rows {
-			rows[row] = values[row*size : (row+1)*size]
-			rows[row][row] = 1
+			if float64(size) != arriving.Read() || size < 0 {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			rows := make([][]float64, size)
+			values := make([]float64, size*size)
+
+			for row := range rows {
+				rows[row] = values[row*size : (row+1)*size]
+				rows[row][row] = 1
+			}
+
+			if !yield(op.Carrier(rows)) {
+				return
+			}
 		}
-		return rows
-	}, identity)
-
-	if result != nil {
-		identity.current = result
 	}
-	return result
 }
-
-func (identity *Identity) Read() any { return core.To[any](identity.current) }

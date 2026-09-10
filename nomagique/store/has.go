@@ -1,26 +1,34 @@
 package store
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// Has owns key membership. Missing data can be routed before Get is applied;
-// lookup itself continues to reject absent keys rather than inventing a zero.
-type Has[K comparable] struct {
-	core.PrimitiveError
-	key           K
-	seed, current core.Primitive
+/*
+Has owns key membership. Missing data can be routed before Get is applied;
+lookup itself continues to reject absent keys rather than inventing a zero.
+*/
+type Has[K comparable, V any] struct {
+	core.Base[map[K]V, bool]
+	key K
 }
 
-func NewHas[K comparable](key K) *Has[K] {
-	return &Has[K]{key: key, seed: transport.NewIO(core.From(false))}
+func NewHas[K comparable, V any](key K) *Has[K, V] {
+	return &Has[K, V]{key: key}
 }
-func (has *Has[K]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(has.seed, in, func(_ bool, values map[K]core.Primitive) bool { _, present := values[has.key]; return present }, has)
-	if result != nil {
-		has.current = result
+
+func (op *Has[K, V]) Next(
+	in iter.Seq[core.Primitive[map[K]V, map[K]V]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			_, present := arriving.Read()[op.key]
+
+			if !yield(op.Carrier(present)) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (has *Has[K]) Read() any { return core.To[any](has.current) }

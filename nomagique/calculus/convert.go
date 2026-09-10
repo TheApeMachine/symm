@@ -1,26 +1,31 @@
 package calculus
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// Convert is an explicit numerical representation change. Timestamp differences
-// are taken in int64 before conversion, avoiding subtraction of float epochs.
+/*
+Convert owns one representation change. What it hands over is each arrival
+expressed as U.
+*/
 type Convert[A, B core.Numeric] struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+	core.Base[A, B]
 }
 
 func NewConvert[A, B core.Numeric]() *Convert[A, B] {
-	var zero B
-	return &Convert[A, B]{seed: transport.NewIO(core.From(zero))}
+	return &Convert[A, B]{}
 }
-func (convert *Convert[A, B]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(convert.seed, in, func(_ B, v A) B { return B(v) }, convert)
-	if result != nil {
-		convert.current = result
+
+func (op *Convert[A, B]) Next(
+	in iter.Seq[core.Primitive[A, A]],
+) iter.Seq[core.Primitive[B, B]] {
+	return func(yield func(core.Primitive[B, B]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(B(arriving.Read()))) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (convert *Convert[A, B]) Read() any { return core.To[any](convert.current) }

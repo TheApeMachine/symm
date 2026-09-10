@@ -137,19 +137,19 @@ export const LearningDashboard = () => {
 							{view?.gridVersion ?? 0}
 						</Typography.Mono>
 					</Section.Header>
-					<div className="flex min-h-[340px] border-(--line) border-b max-2xl:flex-col">
-						<div className="w-[380px] shrink-0 border-(--line) border-r max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
+					<div className="flex min-h-85 border-(--line) border-b max-2xl:flex-col">
+						<div className="w-95 shrink-0 border-(--line) border-r max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
 							<ImpulseMap
 								points={view?.points ?? []}
 								regions={view?.regions ?? []}
-								className="h-full w-full min-h-[340px]"
+								className="h-full w-full min-h-85"
 							/>
 						</div>
 						<div className="min-w-0 flex-1 bg-(--surface)">
 							<LearningVisualizer
 								view={view}
 								events={events}
-								className="h-full w-full min-h-[340px]"
+								className="h-full w-full min-h-85"
 							/>
 						</div>
 					</div>

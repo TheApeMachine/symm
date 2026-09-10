@@ -1,49 +1,25 @@
 package transport
 
-import "github.com/theapemachine/symm/nomagique/core"
+import (
+	"iter"
 
-// Pipe moves each complete stage run to the next stage. Intermediate runs are
-// buffered as opaque Primitives, not decoded values. Completing a stage before
-// entering the next also permits a shared store to occur twice in the graph.
-type Pipe struct {
-	core.PrimitiveError
-	stages  []core.Primitive
-	output  core.Primitive
-	current core.Primitive
-	buffers [2]IO
-}
+	"github.com/theapemachine/symm/nomagique/core"
+)
 
-func NewPipe(stages ...core.Primitive) *Pipe {
-	return &Pipe{stages: append([]core.Primitive(nil), stages...)}
-}
-func (pipe *Pipe) Next(in core.Primitive) core.Primitive {
-	if pipe.output == nil {
-		pipe.output = in
-		for index, stage := range pipe.stages {
-			// Adjacent stages need separate buffers until the input is drained.
-			buffer := &pipe.buffers[index%len(pipe.buffers)]
-			buffer.reset()
-			pipe.Error(buffer.appendRun(stage, pipe.output))
-			pipe.output = buffer
-		}
+/*
+Pipe threads a run through stages of one type. The data moving between stages
+is the iterator each Next returns. Heterogeneous composition is nested Next
+calls; a slice cannot hold those.
+*/
+func Pipe[T any](
+	in iter.Seq[core.Primitive[T, T]],
+	stages ...core.Primitive[T, T],
+) iter.Seq[core.Primitive[T, T]] {
+	seq := in
+
+	for _, stage := range stages {
+		seq = stage.Next(seq)
 	}
 
-	if pipe.output == nil {
-		return nil
-	}
-	value := pipe.output.Next(nil)
-	pipe.Error(pipe.output.Error())
-
-	if value == nil {
-		pipe.output = nil
-		for index := range pipe.buffers {
-			pipe.buffers[index].reset()
-		}
-
-		return nil
-	}
-
-	pipe.current = value
-	return value
+	return seq
 }
-func (pipe *Pipe) Read() any { return core.To[any](pipe.current) }

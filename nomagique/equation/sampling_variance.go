@@ -2,52 +2,67 @@ package equation
 
 import (
 	"fmt"
-	"math"
+	"iter"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/* SamplingVariance applies specificity debt, with one observation as the sampling floor. */
+/*
+SamplingVarianceInput is specificity debt: matched depth, context length,
+support and variance.
+*/
+type SamplingVarianceInput struct {
+	Depth         float64
+	ContextLength float64
+	Support       float64
+	Variance      float64
+}
+
+/*
+SamplingVariance applies specificity debt, with one observation as the sampling
+floor.
+*/
 func SamplingVariance(depth, contextLength, support, variance float64) (float64, error) {
-	if !(depth <= contextLength) {
+	if depth > contextLength {
 		return 0, fmt.Errorf("%w: matched depth exceeds context length", core.ErrDomain)
 	}
-	return variance / math.Max(1, support/(1+(contextLength-depth))), nil
-}
 
-/* samplingVariance binds the named Primitive protocol to the numeric equation. */
-type samplingVariance struct {
-	core.PrimitiveError
-	seed    *transport.IO
-	current core.Primitive
-}
+	floor := support / (1 + (contextLength - depth))
 
-/* NewSamplingVariance retains the record-based connection for Primitive composition. */
-func NewSamplingVariance() core.Primitive {
-	return transport.NewMap(&samplingVariance{seed: transport.NewIO(core.From(0.0))})
-}
-
-func (variance *samplingVariance) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(variance.seed, input,
-		func(_ float64, fields map[string]core.Primitive) float64 {
-			decoder := core.NewDecoder(fields)
-			depth, length := core.Decode[float64](decoder, "depth"), core.Decode[float64](decoder, "context_length")
-			support, value := core.Decode[float64](decoder, "support"), core.Decode[float64](decoder, "variance")
-
-			if err := decoder.Error(); err != nil {
-				variance.Error(err)
-				return 0
-			}
-			result, err := SamplingVariance(depth, length, support, value)
-			variance.Error(err)
-			return result
-		}, variance)
-
-	if result != nil {
-		variance.current = result
+	if floor < 1 {
+		floor = 1
 	}
-	return result
+
+	return variance / floor, nil
 }
 
-func (variance *samplingVariance) Read() any { return core.To[any](variance.current) }
+/*
+SamplingVarianceOp binds that equation to the Primitive contract.
+*/
+type SamplingVarianceOp struct {
+	core.Base[SamplingVarianceInput, float64]
+}
+
+func NewSamplingVariance() *SamplingVarianceOp {
+	return &SamplingVarianceOp{}
+}
+
+func (op *SamplingVarianceOp) Next(
+	in iter.Seq[core.Primitive[SamplingVarianceInput, SamplingVarianceInput]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			value, err := SamplingVariance(input.Depth, input.ContextLength, input.Support, input.Variance)
+
+			if err != nil {
+				op.Error(err)
+				continue
+			}
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+	}
+}

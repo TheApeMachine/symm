@@ -1,35 +1,47 @@
 package hawkes_test
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation/hawkes"
-	"github.com/theapemachine/symm/nomagique/tests"
 	"math"
 	"math/rand"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/equation/hawkes"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestBranchingNext(t *testing.T) {
-	node := hawkes.NewBranching()
-	rng := rand.New(rand.NewSource(734))
-	for i := 0; i < 30; i++ {
-		a, b, c, d := 0.25*rng.Float64(), 0.25*rng.Float64(), 0.25*rng.Float64(), 0.25*rng.Float64()
-		beta, muX, muY := 0.5+rng.Float64(), 0.2+rng.Float64(), 0.2+rng.Float64()
-		f := tests.Fields(t, tests.Drain(t, node, tests.Values(tests.Record(map[string]any{"mu_x": muX, "mu_y": muY, "alpha_xx": a * beta, "alpha_xy": b * beta, "alpha_yx": c * beta, "alpha_yy": d * beta, "beta": beta})))[0])
-		tests.Sound(t, node)
-		determinant := (1-a)*(1-d) - b*c
-		tests.EqualNumber(t, tests.Number(t, f, "spectral_radius"), (a+d+math.Sqrt((a-d)*(a-d)+4*b*c))/2)
-		tests.EqualNumber(t, tests.Number(t, f, "mean_x"), ((1-d)*muX+b*muY)/determinant)
-		tests.EqualNumber(t, tests.Number(t, f, "mean_y"), (c*muX+(1-a)*muY)/determinant)
-		tests.EqualNumber(t, tests.Number(t, f, "descendants_x"), (1-d+c)/determinant-1)
-		tests.EqualNumber(t, tests.Number(t, f, "descendants_y"), (1-a+b)/determinant-1)
-		if !core.To[bool](f["defined"]) {
-			t.Fatal("stable system undefined")
+	Convey("Stable branching ratios recover stationary means", t, func() {
+		node := hawkes.NewBranching()
+		rng := rand.New(rand.NewSource(734))
+
+		for range 30 {
+			a, b, c, d := 0.25*rng.Float64(), 0.25*rng.Float64(), 0.25*rng.Float64(), 0.25*rng.Float64()
+			beta, muX, muY := 0.5+rng.Float64(), 0.2+rng.Float64(), 0.2+rng.Float64()
+			out := tests.CollectSeq(node.Next(transport.Values(hawkes.Parameters{
+				MuX: muX, MuY: muY,
+				AlphaXX: a * beta, AlphaXY: b * beta, AlphaYX: c * beta, AlphaYY: d * beta,
+				Beta: beta,
+			})))
+			So(node.Error(), ShouldBeNil)
+			f := out[0]
+			determinant := (1-a)*(1-d) - b*c
+			So(f.SpectralRadius, ShouldAlmostEqual, (a+d+math.Sqrt((a-d)*(a-d)+4*b*c))/2)
+			So(f.MeanX, ShouldAlmostEqual, ((1-d)*muX+b*muY)/determinant)
+			So(f.MeanY, ShouldAlmostEqual, (c*muX+(1-a)*muY)/determinant)
+			So(f.DescendantsX, ShouldAlmostEqual, (1-d+c)/determinant-1)
+			So(f.DescendantsY, ShouldAlmostEqual, (1-a+b)/determinant-1)
+			So(f.Defined, ShouldBeTrue)
 		}
-	}
-	f := tests.Fields(t, tests.Drain(t, node, tests.Values(tests.Record(map[string]any{"mu_x": 1.0, "mu_y": 1.0, "alpha_xx": 1.0, "alpha_xy": 0.0, "alpha_yx": 0.0, "alpha_yy": 0.5, "beta": 1.0})))[0])
-	tests.Sound(t, node)
-	if core.To[bool](f["defined"]) || !math.IsNaN(tests.Number(t, f, "mean_x")) {
-		t.Fatal("critical system invented a stationary mean")
-	}
+	})
+
+	Convey("A critical system does not invent a stationary mean", t, func() {
+		node := hawkes.NewBranching()
+		out := tests.CollectSeq(node.Next(transport.Values(hawkes.Parameters{
+			MuX: 1, MuY: 1, AlphaXX: 1, AlphaXY: 0, AlphaYX: 0, AlphaYY: 0.5, Beta: 1,
+		})))
+		So(out[0].Defined, ShouldBeFalse)
+		So(math.IsNaN(out[0].MeanX), ShouldBeTrue)
+	})
 }

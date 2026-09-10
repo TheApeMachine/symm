@@ -1,51 +1,38 @@
 package transport
 
-import "github.com/theapemachine/symm/nomagique/core"
+import (
+	"iter"
 
-// Fan presents one captured input run to every configured output endpoint.
-// N input values and M output endpoints use the same operation. Endpoint order
-// is deterministic. Each output owns an independent cursor over the snapshot;
-// the original input is consumed once, never replayed per branch.
-type Fan struct {
-	core.PrimitiveError
-	inputs   core.Primitive
-	outputs  core.Primitive
-	delivery core.Primitive
-	current  core.Primitive
-	captured IO
-	branch   IO
-	buffer   IO
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Fan presents one input run to every configured branch and streams what each
+branch yields. The sequence is ranged once per branch; a replayable producer
+(Values, a fold over a collection) supplies the same run to each, and a
+one-shot producer is ranged as many times as it will produce.
+
+Buffering a one-shot run so every branch sees a snapshot is Collect, not Fan.
+*/
+type Fan[T any] struct {
+	core.Base[T, T]
+	branches []core.Primitive[T, T]
 }
 
-func NewFan(inputs, outputs core.Primitive) *Fan { return &Fan{inputs: inputs, outputs: outputs} }
-func (fan *Fan) Next(in core.Primitive) core.Primitive {
-	if fan.delivery == nil {
-		fan.Error(fan.captured.appendRun(fan.inputs, in))
+func NewFan[T any](branches ...core.Primitive[T, T]) *Fan[T] {
+	return &Fan[T]{branches: branches}
+}
 
-		if fan.outputs != nil {
-			fan.Error(fan.outputs.Error())
-
-			for target := fan.outputs.Next(nil); target != nil; target = fan.outputs.Next(nil) {
-				fan.branch = IO{values: fan.captured.values}
-				fan.Error(fan.buffer.appendRun(target, &fan.branch))
+func (op *Fan[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[T, T]] {
+	return func(yield func(core.Primitive[T, T]) bool) {
+		for _, branch := range op.branches {
+			for out := range branch.Next(in) {
+				if !yield(out) {
+					return
+				}
 			}
-
-			fan.Error(fan.outputs.Error())
 		}
-		fan.delivery = &fan.buffer
 	}
-	value := fan.delivery.Next(nil)
-
-	if value == nil {
-		fan.delivery = nil
-		fan.captured.reset()
-		fan.buffer.reset()
-		fan.branch = IO{}
-
-		return nil
-	}
-
-	fan.current = value
-	return value
 }
-func (fan *Fan) Read() any { return core.To[any](fan.current) }

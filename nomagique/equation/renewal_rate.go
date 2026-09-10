@@ -1,97 +1,109 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+	"time"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-NewRenewalRate accumulates quantity until a configured target is reached and
-positive time has elapsed. Input records contain increment and sample (float64)
-and at (int64 nanoseconds). The target receives each increment and owns its
-estimation policy. It must yield a positive quantity; no window is selected here.
-
-Each observation yields a record. closed distinguishes a completed span from a
-retained prior rate. The first completed span has no prior sample for change.
+RenewalInput is one increment toward a quantity target.
 */
-func NewRenewalRate(target core.Primitive) core.Primitive {
-	memory := store.NewRetained(core.From(map[string]core.Primitive{
-		"accumulated": core.From(0.0), "spans": core.From(0.0),
-		"rate": core.From(0.0), "change": core.From(0.0),
-		"maturity": core.From(0.0), "closed": core.From(false),
-	}))
-	state := transport.NewPipe(store.NewKV[string](memory), memory)
-	initialize := logic.NewGate(
-		store.NewHas("origin"), transport.NewPipe(),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("at"), store.NewKey("origin"))),
-	)
-	closeSpan := transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(NewRatio[float64](store.NewGet("accumulated"), store.NewGet("elapsed")), store.NewKey("rate")),
-			transport.NewPipe(
-				logic.NewGate(
-					store.NewHas("last_sample"),
-					transport.NewPipe(
-						NewRatio[float64](store.NewGet("sample"), store.NewGet("last_sample")),
-						calculus.NewLog(transport.NewIO(core.From(0.0))),
-					),
-					store.NewConstant(core.From(0.0)),
-				),
-				store.NewKey("change"),
-			),
-			transport.NewPipe(NewSum[float64](store.NewGet("spans"), store.NewConstant(core.From(1.0))), store.NewKey("spans")),
-			transport.NewPipe(store.NewGet("sample"), store.NewKey("last_sample")),
-			transport.NewPipe(store.NewGet("at"), store.NewKey("origin")),
-			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("accumulated")),
-			transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("closed")),
-		),
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				NewRatio[float64](store.NewGet("spans"), NewSum[float64](store.NewGet("spans"), store.NewConstant(core.From(1.0)))),
-				store.NewKey("maturity"),
-			),
-		),
-	)
+type RenewalInput struct {
+	Increment float64
+	Sample    float64
+	At        int64
+}
 
-	transition := transport.NewPipe(
-		state,
-		initialize,
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(store.NewGet("increment"), target, store.NewKey("target")),
-			transport.NewPipe(NewSum[float64](store.NewGet("accumulated"), store.NewGet("increment")), store.NewKey("accumulated")),
-			transport.NewPipe(NewElapsed(store.NewGet("origin"), store.NewGet("at")), store.NewKey("elapsed")),
-			transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("closed")),
-		),
-		logic.NewGate(
-			NewAll(
-				NewGreater[float64](store.NewGet("target"), store.NewConstant(core.From(0.0))),
-				NewGreater[float64](store.NewGet("sample"), store.NewConstant(core.From(0.0))),
-				NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("increment")),
-				NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("elapsed")),
-			),
-			transport.NewPipe(
-				logic.NewGate(
-					NewAll(
-						NewLessEqual[float64](store.NewGet("target"), store.NewGet("accumulated")),
-						NewGreater[float64](store.NewGet("elapsed"), store.NewConstant(core.From(0.0))),
-					),
-					closeSpan, transport.NewPipe(),
-				),
-				state,
-			),
-			logic.NewReject(core.ErrDomain),
-		),
-	)
+/*
+RenewalReading is the rate after one observation. Closed distinguishes a
+completed span from a retained prior rate.
+*/
+type RenewalReading struct {
+	Rate     float64
+	Change   float64
+	Maturity float64
+	Closed   bool
+	Spans    float64
+	Elapsed  float64
+	Target   float64
+}
 
-	return transport.NewMap(logic.NewGate(
-		NewAll(store.NewHas("increment"), store.NewHas("sample"), store.NewHas("at")),
-		transition,
-		logic.NewReject(core.ErrShape),
-	))
+/*
+RenewalRate accumulates quantity until a configured target is reached and
+positive time has elapsed. The target is a quantity, not a window.
+*/
+type RenewalRate struct {
+	core.Base[RenewalInput, RenewalReading]
+	target      float64
+	origin      int64
+	hasOrigin   bool
+	accumulated float64
+	spans       float64
+	rate        float64
+	lastSample  float64
+	hasSample   bool
+}
+
+func NewRenewalRate(target float64) *RenewalRate {
+	return &RenewalRate{target: target}
+}
+
+func (op *RenewalRate) Next(
+	in iter.Seq[core.Primitive[RenewalInput, RenewalInput]],
+) iter.Seq[core.Primitive[RenewalReading, RenewalReading]] {
+	return func(yield func(core.Primitive[RenewalReading, RenewalReading]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+
+			if input.Increment < 0 || input.Sample <= 0 || op.target <= 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			if !op.hasOrigin {
+				op.origin = input.At
+				op.hasOrigin = true
+			}
+
+			op.accumulated += input.Increment
+			elapsed := float64(input.At-op.origin) / float64(time.Second)
+			reading := RenewalReading{
+				Rate:     op.rate,
+				Target:   op.target,
+				Elapsed:  elapsed,
+				Spans:    op.spans,
+				Maturity: op.spans / (op.spans + 1),
+			}
+
+			if elapsed < 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			if op.accumulated >= op.target && elapsed > 0 {
+				reading.Rate = op.accumulated / elapsed
+				reading.Closed = true
+				reading.Spans = op.spans + 1
+				reading.Maturity = reading.Spans / (reading.Spans + 1)
+
+				if op.hasSample {
+					reading.Change = math.Log(input.Sample / op.lastSample)
+				}
+
+				op.rate = reading.Rate
+				op.spans = reading.Spans
+				op.lastSample = input.Sample
+				op.hasSample = true
+				op.accumulated = 0
+				op.origin = input.At
+			}
+
+			if !yield(op.Carrier(reading)) {
+				return
+			}
+		}
+	}
 }

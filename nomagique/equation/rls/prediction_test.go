@@ -5,34 +5,35 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation/rls"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPredictionNext(t *testing.T) {
 	Convey("Given a posterior and two materially different query designs", t, func() {
-		posterior := map[string]any{
-			"beta": []float64{1, 2}, "root": [][]float64{{1, 0}, {0, 2}},
-			"noise_shape": 2.0, "noise_scale": 4.0, "design": []float64{1, 3},
-		}
-		node := rls.NewPrediction(store.NewConstant(core.From(1.0)))
-		first, err := transport.Evaluate[map[string]core.Primitive](node, core.Record(posterior))
+		node := rls.NewPrediction()
+		first, err := transport.Evaluate(node, transport.Values(rls.State{
+			Beta: []float64{1, 2}, Root: [][]float64{{1, 0}, {0, 2}},
+			NoiseShape: 2, NoiseScale: 4, Design: []float64{1, 3}, Observations: 1,
+		}))
 		So(err, ShouldBeNil)
-		So(tests.Number(t, first, "prediction"), ShouldEqual, 7)
-		So(tests.Number(t, first, "scale"), ShouldAlmostEqual, math.Sqrt(76))
-		posterior["design"] = []float64{1, -1}
-		second, err := transport.Evaluate[map[string]core.Primitive](node, core.Record(posterior))
+		So(first.Prediction, ShouldEqual, 7)
+		So(first.Scale, ShouldAlmostEqual, math.Sqrt(76))
+
+		second, err := transport.Evaluate(node, transport.Values(rls.State{
+			Beta: []float64{1, 2}, Root: [][]float64{{1, 0}, {0, 2}},
+			NoiseShape: 2, NoiseScale: 4, Design: []float64{1, -1}, Observations: 1,
+		}))
 		So(err, ShouldBeNil)
-		So(tests.Number(t, second, "prediction"), ShouldEqual, -1)
-		So(tests.Number(t, second, "scale"), ShouldAlmostEqual, math.Sqrt(12))
-		So(core.To[[]float64](first["factor"]), ShouldResemble, []float64{1, 6})
+		So(second.Prediction, ShouldEqual, -1)
+		So(second.Scale, ShouldAlmostEqual, math.Sqrt(12))
+		So(first.Factor, ShouldResemble, []float64{1, 6})
 
 		Convey("A ragged posterior is rejected instead of partially projected", func() {
-			posterior["root"] = [][]float64{{1}, {0, 2}}
-			_, err := transport.Evaluate[map[string]core.Primitive](node, core.Record(posterior))
+			_, err := transport.Evaluate(node, transport.Values(rls.State{
+				Beta: []float64{1, 2}, Root: [][]float64{{1}, {0, 2}},
+				Design: []float64{1, 3},
+			}))
 			So(err, ShouldNotBeNil)
 		})
 	})

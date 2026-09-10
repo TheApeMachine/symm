@@ -1,33 +1,33 @@
 package store
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// Retained holds the latest Primitive reference. The configured initial value
-// exists before the first update. Asking with nil yields this retained view;
-// delivery itself is owned by IO, not a special nil-input branch here.
-type Retained struct {
-	core.PrimitiveError
-	held     core.Primitive
-	delivery core.Primitive
+/*
+Retained holds the latest arrival. Configuration supplies the value before the
+first update. Read is the query; Next is the update.
+*/
+type Retained[T any] struct {
+	core.Base[T, T]
 }
 
-func NewRetained(initial core.Primitive) *Retained {
-	retained := &Retained{held: initial}
-	retained.delivery = transport.NewIO(retained)
-	return retained
+func NewRetained[T any](current T) *Retained[T] {
+	op := &Retained[T]{}
+	op.Carrier(current)
+	return op
 }
-func (retained *Retained) Next(in core.Primitive) core.Primitive {
-	return core.Yield(
-		retained.delivery,
-		in,
-		func(_ core.Primitive, value core.Primitive) core.Primitive {
-			retained.held = value
-			return value
-		},
-		retained,
-	)
+
+func (op *Retained[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[T, T]] {
+	return func(yield func(core.Primitive[T, T]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(arriving.Read())) {
+				return
+			}
+		}
+	}
 }
-func (retained *Retained) Read() any { return core.To[any](retained.held) }

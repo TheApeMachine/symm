@@ -1,98 +1,43 @@
-package transport_test
+package transport
 
 import (
-	"reflect"
 	"testing"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/collection"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestCollectionMovementByComposition(t *testing.T) {
-	for _, item := range []struct {
-		name string
-		node core.Primitive
-		want float64
-	}{
-		{"squares", transport.NewPipe(transport.NewSpread[float64](),
-			transport.NewMap(calculus.NewSquare(transport.NewIO(core.From(0.0)))),
-			arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0)))), 210},
-		{"count", transport.NewPipe(transport.NewSpread[float64](), equation.NewCount()), 4},
-		{"mean", transport.NewPipe(transport.NewSpread[float64](), equation.NewMean()), 7},
-	} {
-		t.Run(item.name, func(t *testing.T) {
-			out := tests.Drain(t, item.node, tests.Values([]float64{4, 7, 9, 8}))
-			tests.Sound(t, item.node)
-			if len(out) != 1 {
-				t.Fatal(out)
-			}
-			tests.EqualNumber(t, out[0], item.want)
-		})
-	}
+func TestSpreadSquareAdd(t *testing.T) {
+	Convey("Nested Next is the pipeline: spread, square, add", t, func() {
+		add := arithmetic.NewAdd[float64, float64](0.0)
+		out := tests.CollectSeq(add.Next(
+			calculus.NewSquare[float64]().Next(
+				NewSpread[float64]().Next(Values([]float64{4, 7, 9, 8})),
+			),
+		))
+
+		So(out[len(out)-1], ShouldEqual, 210)
+	})
 }
 
-func TestPairingAndSelectionByComposition(t *testing.T) {
-	// The same generic window serves pairing; no consumer inspects its producer.
-	for _, run := range [][]float64{{1, 2, 3, 4}, {1}, {}} {
-		window := transport.NewPipe(transport.NewSpread[float64](), transport.NewWindow(2, 1))
-		out := tests.Drain(t, window, tests.Values(run))
-		tests.Sound(t, window)
-		want := max(0, len(run)-1)
-		if len(out) != want {
-			t.Fatalf("got %d pairs, want %d", len(out), want)
-		}
-		for i, pair := range out {
-			members := pair.([]core.Primitive)
-			if len(members) != 2 {
-				t.Fatal(members)
-			}
-			tests.EqualNumber(t, core.To[float64](members[0]), run[i])
-			tests.EqualNumber(t, core.To[float64](members[1]), run[i+1])
-		}
-	}
-	for _, position := range []float64{0, 1} {
-		selectMember := transport.NewPipe(transport.NewWindow(2, 1),
-			transport.NewMap(collection.NewAt[core.Primitive](transport.NewIO(core.From(position)))))
-		out := tests.Drain(t, selectMember, tests.Values(3.0, 7.0, 11.0))
-		tests.Sound(t, selectMember)
-		wanted := []any{3.0, 7.0}
-		if position == 1 {
-			wanted = []any{7.0, 11.0}
-		}
-		if !reflect.DeepEqual(out, wanted) {
-			t.Fatal(out, wanted)
-		}
-	}
+func TestWindowPairs(t *testing.T) {
+	Convey("Window of width 2 stride 1 yields consecutive pairs", t, func() {
+		out := tests.CollectSeq(NewWindow[float64](2, 1).Next(Values(1.0, 2.0, 3.0, 4.0)))
+
+		So(len(out), ShouldEqual, 3)
+		So(out[0], ShouldResemble, []float64{1, 2})
+		So(out[1], ShouldResemble, []float64{2, 3})
+		So(out[2], ShouldResemble, []float64{3, 4})
+	})
 }
 
-func TestSourceBindingAndExplicitReplay(t *testing.T) {
-	// Independent IOs, rather than caller-identity introspection, own replay.
-	values := []core.Primitive{core.From([]float64{1, 2, 3})}
-	first := transport.NewApply(transport.NewSpread[float64](), transport.NewIO(values...))
-	second := transport.NewApply(transport.NewSpread[float64](), transport.NewIO(values...))
-	if core.To[float64](first.Next(nil)) != 1 {
-		t.Fatal("first source")
-	}
-	out := tests.Drain(t, second, nil)
-	if !reflect.DeepEqual(out, []any{1.0, 2.0, 3.0}) {
-		t.Fatal(out)
-	}
-	out = tests.Drain(t, first, nil)
-	if !reflect.DeepEqual(out, []any{2.0, 3.0}) {
-		t.Fatal(out)
-	}
-}
+func TestApplyBindsARun(t *testing.T) {
+	Convey("Apply asks the target with the bound run, not with what arrives", t, func() {
+		spread := NewApply(NewSpread[float64](), Values([]float64{1, 2, 3}))
+		out := tests.CollectSeq(spread.Next(Values([]float64{9, 9})))
 
-func TestPairProductUsesExistingMultiplication(t *testing.T) {
-	node := transport.NewPipe(transport.NewSpread[float64](),
-		arithmetic.NewMultiply[float64](store.NewConstant(core.From(1.0))))
-	out := tests.Drain(t, node, tests.Values([]float64{3, 7}))
-	tests.Sound(t, node)
-	tests.EqualNumber(t, out[0], 21)
+		So(out, ShouldResemble, []float64{1, 2, 3})
+	})
 }

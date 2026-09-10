@@ -2,18 +2,17 @@ package toxicity
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tradeState struct {
-	graph              core.Primitive
+	graph              *TradeGraph
 	bracketQty         float64
 	matchedBidQty      float64
 	matchedAskQty      float64
@@ -37,13 +36,14 @@ type Trade struct {
 	symbol     string
 	at         time.Time
 	projection *data.Projection
+	finite     *logic.Finite[float64]
 }
 
 /*
 NewTrade constructs the Trade entity with per-symbol Primitive compositions.
 */
 func NewTrade() *Trade {
-	entity := &Trade{states: make(map[string]*tradeState), projection: tradeProjection()}
+	entity := &Trade{states: make(map[string]*tradeState), projection: tradeProjection(), finite: logic.NewFinite[float64]()}
 	entity.projection.Identity = entity.identity
 	return entity
 }
@@ -59,7 +59,11 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	}
 
 	for _, value := range []float64{tick.Price.Float64(), tick.Qty, bidPrice, askPrice, bidQty, askQty} {
-		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		ok, err := transport.Evaluate(trade.finite, transport.Values(value))
+		if err != nil {
+			return &data.Measurement[float64]{Err: err}
+		}
+		if !ok || value < 0 {
 			return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: finite non-negative trade and touch values required")}
 		}
 	}
@@ -89,7 +93,9 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 		state.prevSec = state.lastSec
 		state.prevNsec = state.lastNsec
 		state.hasPrevTime = true
-	} else {
+	}
+
+	if !state.hasTime {
 		state.prevSec = sec
 		state.prevNsec = nsec
 		state.hasPrevTime = false
@@ -130,23 +136,17 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	trade.symbol = tick.Symbol
 	trade.at = tick.Timestamp
 
-	input := make(map[string]any)
-	input["bracketQty"] = state.bracketQty
-	input["matchedBidQty"] = state.matchedBidQty
-	input["matchedAskQty"] = state.matchedAskQty
-	input["touchFillBidQty"] = bidFillQty
-	input["touchFillAskQty"] = askFillQty
-	input["touchFillBidFrac"] = bidFillFraction
-	input["touchFillAskFrac"] = askFillFraction
-
+	input := TradeInput{
+		BracketQty: state.bracketQty, MatchedBidQty: state.matchedBidQty, MatchedAskQty: state.matchedAskQty,
+		TouchFillBidQty: bidFillQty, TouchFillAskQty: askFillQty,
+		TouchFillBidFrac: bidFillFraction, TouchFillAskFrac: askFillFraction,
+	}
 	deltaT := (sec - state.prevSec) + (nsec-state.prevNsec)*1e-9
 
 	if state.hasPrevTime && deltaT > 0 {
-		input["touchFillBidRate"] = bidFillQty / deltaT
-		input["touchFillAskRate"] = askFillQty / deltaT
-		input["hasRate"] = true
-	} else {
-		input["hasRate"] = false
+		input.TouchFillBidRate = bidFillQty / deltaT
+		input.TouchFillAskRate = askFillQty / deltaT
+		input.HasRate = true
 	}
 
 	if bidFillFraction > 0 {
@@ -157,9 +157,9 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 		state.askFractionSamples++
 	}
 
-	input["bidSupported"] = state.bidFractionSamples >= 3
-	input["askSupported"] = state.askFractionSamples >= 3
-	fields, err := transport.Evaluate[map[string]core.Primitive](state.graph, core.Record(input))
+	input.BidSupported = state.bidFractionSamples >= 3
+	input.AskSupported = state.askFractionSamples >= 3
+	fields, err := transport.Evaluate(state.graph, transport.Values(input))
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}

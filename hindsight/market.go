@@ -3,6 +3,7 @@ package hindsight
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -12,38 +13,64 @@ import (
 
 /*
 ReadObservations decodes market facts from the original captured frames in
-capture order after the supplied sequence. The returned cursor includes frames
-with no market projection and advances only after every selected frame decodes.
-It never reads the agent's decisions or reconstructed state.
+capture order after the supplied sequence. It never reads the agent's decisions
+or reconstructed state.
+
+Only the kinds that can carry a market fact are read. The rest decode to
+nothing, so selecting them changes no observation this returns — it only
+decides whether a run's book payloads are pulled out of storage to be thrown
+away. The cursor therefore names the last frame that carried an observation
+rather than the last frame captured, and a tail follower re-plans the frames
+between the two rather than skipping them.
 
 Capture order comes from the sequence column, not from storage layout: Iceberg
 guarantees no row order, so the reader sorts rather than trusting the order
-files happen to arrive in.
+files happen to arrive in. It sorts the decoded observations, never the frames:
+holding a run's frames to sort them is what makes a whole-run read cost
+gigabytes, and the observations they decode to are a fraction of their size.
 */
 func ReadObservations(ctx context.Context, catalog *tables.Catalog, run RunID, after int64) ([]Observation, int64, error) {
-	rows, err := catalog.Captures(ctx, string(run), after)
-
-	if err != nil {
-		return nil, after, err
-	}
-
 	observations := []Observation{}
+	cursor := after
+	failed := error(nil)
 
-	for _, row := range rows {
+	err := catalog.EachMarketCapture(ctx, string(run), after, func(row tables.CaptureRow) error {
 		decoded, err := FrameFromRow(row).Observations()
 
 		if err != nil {
-			return nil, after, err
+			// A malformed frame fails the whole read rather than publishing a
+			// cursor past it: a partially decoded suffix would be indistinguishable
+			// from a complete one on the next call.
+			failed = err
+
+			return err
 		}
 
 		observations = append(observations, decoded...)
+
+		if row.Sequence > cursor {
+			cursor = row.Sequence
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if failed != nil {
+			return nil, after, failed
+		}
+
+		return nil, after, err
 	}
 
-	if len(rows) > 0 {
-		after = rows[len(rows)-1].Sequence
-	}
+	// The stream arrives in storage order, so capture order is imposed here,
+	// on what the frames decoded to rather than on the frames themselves.
+	// Stability keeps each frame's own ordinals in the order it emitted them.
+	sort.SliceStable(observations, func(left, right int) bool {
+		return observations[left].Capture.Sequence < observations[right].Capture.Sequence
+	})
 
-	return observations, after, nil
+	return observations, cursor, nil
 }
 
 // FrameFromRow rebuilds a RawFrame from its stored row, so the decoders below

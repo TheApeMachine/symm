@@ -1,100 +1,89 @@
 package probability
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/collection"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-NewCalibrator scores against retained prior errors before appending a sample.
-Retention is a configured collection transform: identity for all history,
-Tail for a bounded history, or another composed selection policy.
+CalibratorReading scores the arriving sample against retained prior errors
+before appending it. Ready is false until a prior exists.
 */
-func NewCalibrator(retention core.Primitive) core.Primitive {
-	history := store.NewRetained(core.From([]float64{}))
-	sample := store.NewRetained(core.From(0.0))
-	prior := transport.NewApply(transport.NewPipe(
-		transport.NewSpread[float64](),
-	), history)
+type CalibratorReading struct {
+	Value      float64
+	Ready      bool
+	PriorCount float64
+}
 
-	score := logic.NewGate(
-		transport.NewPipe(
-			transport.NewFan(
-				transport.NewPipe(),
-				transport.NewIO(
-					transport.NewApply(transport.NewPipe(
-						transport.NewSpread[float64](), equation.NewCount(),
-					), history),
-					store.NewConstant(core.From(0.0)),
-				),
-			),
-			transport.NewCollect[float64](),
-			logic.NewGreater[float64](),
-		),
-		store.NewRecord(
-			transport.NewPipe(
-				equation.NewRatio[float64](
-					transport.NewPipe(
-						prior,
-						transport.NewMap(
-							logic.NewGate(
-								transport.NewPipe(
-									transport.NewFan(
-										transport.NewPipe(),
-										transport.NewIO(
-											transport.NewPipe(),
-											transport.NewApply(sample, nil),
-										),
-									),
-									transport.NewCollect[float64](),
-									logic.NewGreater[float64](),
-								),
-								store.NewConstant(core.From(1.0)),
-								store.NewConstant(core.From(0.0)),
-							),
-						),
-						arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
-					),
-					transport.NewApply(transport.NewPipe(
-						transport.NewSpread[float64](),
-						equation.NewCount(),
-					), history),
-				),
-				store.NewKey("value"),
-			),
-			transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("ready")),
-			transport.NewPipe(
-				transport.NewApply(transport.NewPipe(
-					transport.NewSpread[float64](),
-					equation.NewCount(),
-				), history),
-				store.NewKey("prior_count"),
-			),
-		),
-		store.NewRecord(
-			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("value")),
-			transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("ready")),
-			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("prior_count")),
-		),
-	)
+/*
+Calibrator owns that rank. Retention is a configured collection transform:
+identity for all history, Tail for a bounded history.
+*/
+type Calibrator struct {
+	core.Base[float64, CalibratorReading]
+	history   []float64
+	retention core.Primitive[[]float64, []float64]
+	finite    *logic.Finite[float64]
+}
 
-	return transport.NewMap(
-		logic.NewGate(logic.NewFinite(), transport.NewPipe(
-			sample,
-			transport.NewFan(
-				transport.NewPipe(),
-				transport.NewIO(score, transport.NewPipe(
-					collection.NewAppend[float64](history),
-					retention,
-					history,
-					transport.NewDiscard(),
-				)),
-			),
-		), logic.NewReject(core.ErrShape)),
-	)
+func NewCalibrator(retention core.Primitive[[]float64, []float64]) *Calibrator {
+	return &Calibrator{retention: retention, finite: logic.NewFinite[float64]()}
+}
+
+func (op *Calibrator) Next(
+	in iter.Seq[core.Primitive[float64, float64]],
+) iter.Seq[core.Primitive[CalibratorReading, CalibratorReading]] {
+	return func(yield func(core.Primitive[CalibratorReading, CalibratorReading]) bool) {
+		for arriving := range in {
+			value := arriving.Read()
+			defined, err := transport.Evaluate(op.finite, transport.Values(value))
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !defined {
+				op.Error(core.ErrShape)
+				continue
+			}
+
+			reading := CalibratorReading{
+				PriorCount: float64(len(op.history)),
+				Ready:      len(op.history) > 0,
+			}
+
+			if reading.Ready {
+				hits := 0.0
+
+				for _, prior := range op.history {
+					if prior > value {
+						hits++
+					}
+				}
+
+				reading.Value = hits / float64(len(op.history))
+			}
+
+			history := append(append([]float64{}, op.history...), value)
+
+			if op.retention != nil {
+				history, err = transport.Evaluate(op.retention, transport.Values(history))
+
+				if err != nil {
+					op.Error(err)
+					return
+				}
+			}
+
+			op.history = history
+
+			if !yield(op.Carrier(reading)) {
+				return
+			}
+		}
+	}
 }

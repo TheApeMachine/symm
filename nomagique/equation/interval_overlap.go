@@ -1,30 +1,50 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/collection"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewIntervalOverlap is (left.from < right.to) AND (right.from < left.to).
-// Endpoints touching at a single instant do not overlap for (from,to] spans.
-func NewIntervalOverlap() core.Primitive {
-	return transport.NewPipe(
-		transport.NewFan(
-			transport.NewPipe(),
-			transport.NewIO(
-				NewLess[int64](
-					transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0))), store.NewGet("from")),
-					transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))), store.NewGet("to")),
-				),
-				NewLess[int64](
-					transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))), store.NewGet("from")),
-					transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0))), store.NewGet("to")),
-				),
-			),
-		),
-		logic.NewAnd(transport.NewIO(core.From(true))),
-	)
+/*
+Interval is a half-open (from, to] span in nanoseconds.
+*/
+type Interval struct {
+	From int64
+	To   int64
+}
+
+/*
+IntervalPair is two intervals that may overlap.
+*/
+type IntervalPair struct {
+	Left  Interval
+	Right Interval
+}
+
+/*
+IntervalOverlap is (left.from < right.to) AND (right.from < left.to).
+Endpoints touching at a single instant do not overlap for (from,to] spans.
+*/
+type IntervalOverlap struct {
+	core.Base[IntervalPair, bool]
+}
+
+func NewIntervalOverlap() *IntervalOverlap {
+	return &IntervalOverlap{}
+}
+
+func (op *IntervalOverlap) Next(
+	in iter.Seq[core.Primitive[IntervalPair, IntervalPair]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			pair := arriving.Read()
+			overlap := pair.Left.From < pair.Right.To && pair.Right.From < pair.Left.To
+
+			if !yield(op.Carrier(overlap)) {
+				return
+			}
+		}
+	}
 }

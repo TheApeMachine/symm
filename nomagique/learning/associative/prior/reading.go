@@ -1,7 +1,6 @@
 package prior
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
 )
 
@@ -26,22 +25,20 @@ type Reading struct {
 	Memory            float64
 }
 
-/* Project decodes the graph's output without recomputing its estimator facts. */
-func Project(fields map[string]core.Primitive) (Reading, error) {
-	decoder := core.NewDecoder(fields)
-	reading := Reading{
-		Samples:           core.Decode[uint64](decoder, "samples"),
-		Defined:           core.Decode[bool](decoder, "defined"),
-		Mean:              core.Decode[float64](decoder, "mean"),
-		Variance:          core.Decode[float64](decoder, "variance"),
-		VarianceDefined:   core.Decode[bool](decoder, "variance_defined"),
-		Support:           core.Decode[float64](decoder, "support"),
-		Maturity:          core.Decode[float64](decoder, "maturity"),
-		EvidenceAuthority: core.Decode[float64](decoder, "evidence_authority"),
-		Authority:         core.Decode[float64](decoder, "authority"),
-		Memory:            core.Decode[float64](decoder, "memory"),
+func fromSummary(summary equation.PriorSummary) Reading {
+	return Reading{
+		Pending:           summary.Pending,
+		Samples:           summary.Samples,
+		Defined:           summary.Defined,
+		Mean:              summary.Mean,
+		Variance:          summary.Variance,
+		VarianceDefined:   summary.VarianceDefined,
+		Support:           summary.Support,
+		Maturity:          summary.Maturity,
+		EvidenceAuthority: summary.EvidenceAuthority,
+		Authority:         summary.Authority,
+		Memory:            summary.Memory,
 	}
-	return reading, decoder.Error()
 }
 
 /* SamplingVariance evaluates the canonical specificity-debt equation. */
@@ -53,5 +50,6 @@ func (reading Reading) SamplingVariance() float64 {
 	if err != nil {
 		panic(err)
 	}
+
 	return variance
 }

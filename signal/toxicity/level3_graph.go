@@ -1,22 +1,107 @@
 package toxicity
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// newLevel3Graph retains only this symbol's explicit Primitive estimators.
-func newLevel3Graph() core.Primitive {
-	return store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("withFracBid"), equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())), store.NewKey("withdraw_bid")), transport.NewPipe(store.NewGet("withFracAsk"), equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())), store.NewKey("withdraw_ask")), transport.NewPipe(store.NewGet("retreatFracBid"), equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())), store.NewKey("retreat_bid")), transport.NewPipe(store.NewGet("retreatFracAsk"), equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())), store.NewKey("retreat_ask")))
+type Level3Input struct {
+	CurBid, CurAsk, PrevBid, PrevAsk             float64
+	CurBidQty, CurAskQty, PrevBidQty, PrevAskQty float64
+	UnfilledBid, UnfilledAsk                     float64
+	LogChangeBid, LogChangeAsk                   float64
+	RetreatedBid, RetreatedAsk                   float64
+	WithdrawnBid, WithdrawnAsk                   float64
+	ReplenishedBid, ReplenishedAsk               float64
+	RetreatFracBid, RetreatFracAsk               float64
+	WithFracBid, WithFracAsk                     float64
+	RepFracBid, RepFracAsk                       float64
+	RetreatRateBid, RetreatRateAsk               float64
+	WithRateBid, WithRateAsk                     float64
+	RepRateBid, RepRateAsk                       float64
+	HasRate                                      bool
 }
 
-// level3Projection declares the source's exact metric labels and evidence.
+type Level3Graph struct {
+	core.Base[Level3Input, data.ProjectionInput]
+	withdrawBid *adaptive.Baseline
+	withdrawAsk *adaptive.Baseline
+	retreatBid  *adaptive.Baseline
+	retreatAsk  *adaptive.Baseline
+}
+
+func newLevel3Graph() *Level3Graph {
+	return &Level3Graph{
+		withdrawBid: adaptive.NewBaseline(adaptive.NewWindow()),
+		withdrawAsk: adaptive.NewBaseline(adaptive.NewWindow()),
+		retreatBid:  adaptive.NewBaseline(adaptive.NewWindow()),
+		retreatAsk:  adaptive.NewBaseline(adaptive.NewWindow()),
+	}
+}
+
+func (op *Level3Graph) Next(
+	in iter.Seq[core.Primitive[Level3Input, Level3Input]],
+) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
+	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(op.observe(arriving.Read()))) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Level3Graph) observe(input Level3Input) data.ProjectionInput {
+	withdrawBid := op.withdrawBid.Observe(input.WithFracBid)
+	withdrawAsk := op.withdrawAsk.Observe(input.WithFracAsk)
+	retreatBid := op.retreatBid.Observe(input.RetreatFracBid)
+	retreatAsk := op.retreatAsk.Observe(input.RetreatFracAsk)
+	values := map[string]float64{
+		"curBid": input.CurBid, "curAsk": input.CurAsk,
+		"prevBid": input.PrevBid, "prevAsk": input.PrevAsk,
+		"curBidQty": input.CurBidQty, "curAskQty": input.CurAskQty,
+		"prevBidQty": input.PrevBidQty, "prevAskQty": input.PrevAskQty,
+		"unfilledBid": input.UnfilledBid, "unfilledAsk": input.UnfilledAsk,
+		"logChangeBid": input.LogChangeBid, "logChangeAsk": input.LogChangeAsk,
+		"retreatedBid": input.RetreatedBid, "retreatedAsk": input.RetreatedAsk,
+		"withdrawnBid": input.WithdrawnBid, "withdrawnAsk": input.WithdrawnAsk,
+		"replenishedBid": input.ReplenishedBid, "replenishedAsk": input.ReplenishedAsk,
+		"retreatFracBid": input.RetreatFracBid, "retreatFracAsk": input.RetreatFracAsk,
+		"withFracBid": input.WithFracBid, "withFracAsk": input.WithFracAsk,
+		"repFracBid": input.RepFracBid, "repFracAsk": input.RepFracAsk,
+		"retreatRateBid": input.RetreatRateBid, "retreatRateAsk": input.RetreatRateAsk,
+		"withRateBid": input.WithRateBid, "withRateAsk": input.WithRateAsk,
+		"repRateBid": input.RepRateBid, "repRateAsk": input.RepRateAsk,
+		"withdrawal_fraction_baseline:bid":   withdrawBid.Mean,
+		"withdrawal_fraction_divergence:bid": withdrawBid.Residual,
+		"withdrawal_fraction_zscore:bid":     withdrawBid.ZScore,
+		"withdrawal_fraction_baseline:ask":   withdrawAsk.Mean,
+		"withdrawal_fraction_divergence:ask": withdrawAsk.Residual,
+		"withdrawal_fraction_zscore:ask":     withdrawAsk.ZScore,
+		"retreat_fraction_baseline:bid":      retreatBid.Mean,
+		"retreat_fraction_divergence:bid":    retreatBid.Residual,
+		"retreat_fraction_zscore:bid":        retreatBid.ZScore,
+		"retreat_fraction_baseline:ask":      retreatAsk.Mean,
+		"retreat_fraction_divergence:ask":    retreatAsk.Residual,
+		"retreat_fraction_zscore:ask":        retreatAsk.ZScore,
+	}
+	flags := map[string]bool{
+		"hasRate":                input.HasRate,
+		"withdraw_bid_has_prior": withdrawBid.HasPrior,
+		"withdraw_ask_has_prior": withdrawAsk.HasPrior,
+		"retreat_bid_has_prior":  retreatBid.HasPrior,
+		"retreat_ask_has_prior":  retreatAsk.HasPrior,
+	}
+
+	return data.ProjectionInput{Values: values, Flags: flags}
+}
+
 func level3Projection() *data.Projection {
-	p := &data.Projection{Source: "toxicity", Metrics: []data.MetricProjection{{Label: "best_price:bid", Path: []string{"curBid"}, Unit: data.Unit("rate"), Timescale: data.Timescale("instantaneous")},
+	p := &data.Projection{Source: "toxicity", Metrics: []data.MetricProjection{
+		{Label: "best_price:bid", Path: []string{"curBid"}, Unit: data.Unit("rate"), Timescale: data.Timescale("instantaneous")},
 		{Label: "best_price:ask", Path: []string{"curAsk"}, Unit: data.Unit("rate"), Timescale: data.Timescale("instantaneous")},
 		{Label: "previous_best_price:bid", Path: []string{"prevBid"}, Unit: data.Unit("rate"), Timescale: data.Timescale("instantaneous")},
 		{Label: "previous_best_price:ask", Path: []string{"prevAsk"}, Unit: data.Unit("rate"), Timescale: data.Timescale("instantaneous")},
@@ -46,17 +131,18 @@ func level3Projection() *data.Projection {
 		{Label: "retreat_rate:ask", Path: []string{"retreatRateAsk"}, Unit: data.Unit("per_second"), Timescale: data.Timescale("per_second"), Defined: []string{"hasRate"}},
 		{Label: "net_withdrawal_rate:ask", Path: []string{"withRateAsk"}, Unit: data.Unit("per_second"), Timescale: data.Timescale("per_second"), Defined: []string{"hasRate"}},
 		{Label: "net_replenishment_rate:ask", Path: []string{"repRateAsk"}, Unit: data.Unit("per_second"), Timescale: data.Timescale("per_second"), Defined: []string{"hasRate"}},
-		{Label: "withdrawal_fraction_baseline:bid", Path: []string{"withdraw_bid", "mean"}, Defined: []string{"withdraw_bid", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "withdrawal_fraction_divergence:bid", Path: []string{"withdraw_bid", "residual"}, Defined: []string{"withdraw_bid", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "withdrawal_fraction_zscore:bid", Path: []string{"withdraw_bid", "zscore"}, Defined: []string{"withdraw_bid", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "withdrawal_fraction_baseline:ask", Path: []string{"withdraw_ask", "mean"}, Defined: []string{"withdraw_ask", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "withdrawal_fraction_divergence:ask", Path: []string{"withdraw_ask", "residual"}, Defined: []string{"withdraw_ask", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "withdrawal_fraction_zscore:ask", Path: []string{"withdraw_ask", "zscore"}, Defined: []string{"withdraw_ask", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "retreat_fraction_baseline:bid", Path: []string{"retreat_bid", "mean"}, Defined: []string{"retreat_bid", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "retreat_fraction_divergence:bid", Path: []string{"retreat_bid", "residual"}, Defined: []string{"retreat_bid", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "retreat_fraction_zscore:bid", Path: []string{"retreat_bid", "zscore"}, Defined: []string{"retreat_bid", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "retreat_fraction_baseline:ask", Path: []string{"retreat_ask", "mean"}, Defined: []string{"retreat_ask", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "retreat_fraction_divergence:ask", Path: []string{"retreat_ask", "residual"}, Defined: []string{"retreat_ask", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		{Label: "retreat_fraction_zscore:ask", Path: []string{"retreat_ask", "zscore"}, Defined: []string{"retreat_ask", "has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous}}}
+		{Label: "withdrawal_fraction_baseline:bid", Path: []string{"withdrawal_fraction_baseline:bid"}, Defined: []string{"withdraw_bid_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "withdrawal_fraction_divergence:bid", Path: []string{"withdrawal_fraction_divergence:bid"}, Defined: []string{"withdraw_bid_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "withdrawal_fraction_zscore:bid", Path: []string{"withdrawal_fraction_zscore:bid"}, Defined: []string{"withdraw_bid_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "withdrawal_fraction_baseline:ask", Path: []string{"withdrawal_fraction_baseline:ask"}, Defined: []string{"withdraw_ask_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "withdrawal_fraction_divergence:ask", Path: []string{"withdrawal_fraction_divergence:ask"}, Defined: []string{"withdraw_ask_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "withdrawal_fraction_zscore:ask", Path: []string{"withdrawal_fraction_zscore:ask"}, Defined: []string{"withdraw_ask_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "retreat_fraction_baseline:bid", Path: []string{"retreat_fraction_baseline:bid"}, Defined: []string{"retreat_bid_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "retreat_fraction_divergence:bid", Path: []string{"retreat_fraction_divergence:bid"}, Defined: []string{"retreat_bid_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "retreat_fraction_zscore:bid", Path: []string{"retreat_fraction_zscore:bid"}, Defined: []string{"retreat_bid_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "retreat_fraction_baseline:ask", Path: []string{"retreat_fraction_baseline:ask"}, Defined: []string{"retreat_ask_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "retreat_fraction_divergence:ask", Path: []string{"retreat_fraction_divergence:ask"}, Defined: []string{"retreat_ask_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+		{Label: "retreat_fraction_zscore:ask", Path: []string{"retreat_fraction_zscore:ask"}, Defined: []string{"retreat_ask_has_prior"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+	}}
 	return p
 }

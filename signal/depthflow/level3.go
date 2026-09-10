@@ -3,7 +3,6 @@ package depthflow
 import (
 	"fmt"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"sync"
@@ -14,13 +13,13 @@ import (
 // current mutation message. No untouched book orders are carried forward.
 type Level3 struct {
 	mu         sync.Mutex
-	graphs     map[string]core.Primitive
+	graphs     map[string]*Depth
 	lastTime   map[string]time.Time
 	projection *data.Projection
 }
 
 func NewLevel3() *Level3 {
-	return &Level3{graphs: make(map[string]core.Primitive), lastTime: make(map[string]time.Time), projection: depthProjection()}
+	return &Level3{graphs: make(map[string]*Depth), lastTime: make(map[string]time.Time), projection: depthProjection()}
 }
 
 func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
@@ -50,12 +49,10 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 		graph = newDepthGraph()
 		level3.graphs[message.Symbol] = graph
 	}
-	fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{
-		"observed_notional:bid": observedBid, "observed_notional:ask": observedAsk,
-		"add_notional:bid": addBid, "add_notional:ask": addAsk,
-		"modify_remaining_notional:bid": modifyBid, "modify_remaining_notional:ask": modifyAsk,
-		"delete_count:bid": deleteBid, "delete_count:ask": deleteAsk,
-		"mutation_count:bid": float64(len(message.Bids)), "mutation_count:ask": float64(len(message.Asks)), "elapsed": elapsed,
+	fields, err := transport.Evaluate(graph, transport.Values(DepthInput{
+		ObservedBid: observedBid, ObservedAsk: observedAsk, AddBid: addBid, AddAsk: addAsk,
+		ModifyBid: modifyBid, ModifyAsk: modifyAsk, DeleteBid: deleteBid, DeleteAsk: deleteAsk,
+		MutationBid: float64(len(message.Bids)), MutationAsk: float64(len(message.Asks)), Elapsed: elapsed,
 	}))
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}

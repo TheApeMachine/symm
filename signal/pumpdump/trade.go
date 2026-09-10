@@ -1,7 +1,6 @@
 package pumpdump
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -11,18 +10,16 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tradeState struct {
-	quantityTarget      core.Primitive
-	rateReading         map[string]core.Primitive
-	rateResidual        core.Primitive
-	returnResidual      core.Primitive
-	returnRateResidual  core.Primitive
+	quantityTarget      *QuantityTarget
+	rateReading         adaptive.BaselineReading
+	rateResidual        *adaptive.Baseline
+	returnResidual      *adaptive.Baseline
+	returnRateResidual  *adaptive.Baseline
 	accumulatedQty      float64
 	accumulatedNotional float64
 	barTradeCount       float64
@@ -75,10 +72,9 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	if !found {
 		state = &tradeState{
 			quantityTarget:     newQuantityTarget(),
-			rateResidual:       equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
-			returnResidual:     equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
-			returnRateResidual: equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
-			rateReading:        core.To[map[string]core.Primitive](core.Record(map[string]any{"count": 0.0, "has_prior": false, "variance_defined": false})),
+			rateResidual:       adaptive.NewBaseline(adaptive.NewWindow()),
+			returnResidual:     adaptive.NewBaseline(adaptive.NewWindow()),
+			returnRateResidual: adaptive.NewBaseline(adaptive.NewWindow()),
 		}
 		trade.states[tick.Symbol] = state
 	}
@@ -87,7 +83,7 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 		return nil
 	}
 	notional := price * qty
-	targetQty, err := transport.Evaluate[float64](state.quantityTarget, core.From(qty))
+	targetQty, err := transport.Evaluate(state.quantityTarget, transport.Values(qty))
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}
@@ -168,18 +164,13 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 		putPumpDumpMetric(measurement, "notional_rate", notionalRate, data.UnitPerSecond)
 		putPumpDumpMetric(measurement, "trade_rate", tradeRate, data.UnitPerSecond)
 
-		state.rateReading, err = transport.Evaluate[map[string]core.Primitive](state.rateResidual, core.From(notionalRate))
+		state.rateReading, err = transport.Evaluate(state.rateResidual, transport.Values(notionalRate))
 		if err != nil {
 			measurement.Err = err
 			return measurement
 		}
-		baseline, err := core.Field[float64](state.rateReading, "baseline")
-		if err != nil {
-			measurement.Err = err
-			return measurement
-		}
-		putPumpDumpMetric(measurement, "notional_rate_baseline", baseline, data.UnitPerSecond)
-		putPumpDumpMetric(measurement, "notional_rate_ratio", notionalRate/baseline, data.UnitDimensionless)
+		putPumpDumpMetric(measurement, "notional_rate_baseline", state.rateReading.Baseline, data.UnitPerSecond)
+		putPumpDumpMetric(measurement, "notional_rate_ratio", notionalRate/state.rateReading.Baseline, data.UnitDimensionless)
 
 		// notional_rate_zscore is this entity's headline throughput reading and
 		// the evidence VerticalIgnition reads. The ratio above says how many
@@ -217,22 +208,17 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 				// OrganicTrend and FadedExhaustion read these two standardized
 				// forms: a bar's move, and that move per second, each against
 				// the run of bars this symbol has already produced.
-				returns, err := transport.Evaluate[map[string]core.Primitive](state.returnResidual, core.From(logReturn))
+				returns, err := transport.Evaluate(state.returnResidual, transport.Values(logReturn))
 				if err != nil {
 					measurement.Err = err
 					return measurement
 				}
-				returnRates, err := transport.Evaluate[map[string]core.Primitive](state.returnRateResidual, core.From(returnRate))
+				returnRates, err := transport.Evaluate(state.returnRateResidual, transport.Values(returnRate))
 				if err != nil {
 					measurement.Err = err
 					return measurement
 				}
-				baseline, err := core.Field[float64](returns, "baseline")
-				if err != nil {
-					measurement.Err = err
-					return measurement
-				}
-				putPumpDumpMetric(measurement, "midpoint_return_baseline", baseline, data.UnitDimensionless)
+				putPumpDumpMetric(measurement, "midpoint_return_baseline", returns.Baseline, data.UnitDimensionless)
 				putResidualReadings(measurement, "midpoint_return", returns, data.UnitDimensionless)
 				putResidualReadings(measurement, "midpoint_return_rate", returnRates, data.UnitPerSecond)
 
@@ -241,7 +227,9 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 
 				if logReturn > 0 {
 					posReturn = logReturn
-				} else if logReturn < 0 {
+				}
+
+				if logReturn < 0 {
 					negReturn = -logReturn
 				}
 
@@ -271,16 +259,11 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	// entity always carries a throughput estimator, so it always declares its
 	// support: an absent support slot would tell Finalize this is a stateless
 	// direct reading and mark it whole, when in truth it may still be immature.
-	rate := core.NewDecoder(state.rateReading)
-	measurement.Metadata[data.MetadataSupport] = core.Decode[float64](rate, "count")
-	if core.Decode[bool](rate, "has_prior") && core.Decode[bool](rate, "variance_defined") {
-		noiseVariance := core.Decode[float64](rate, "variance")
-		if noiseVariance > 0 {
-			measurement.Metadata[data.MetadataDivergence] = core.Decode[float64](rate, "residual")
-			measurement.Metadata[data.MetadataNoiseVariance] = noiseVariance
-		}
+	measurement.Metadata[data.MetadataSupport] = state.rateReading.Count
+	if state.rateReading.HasPrior && state.rateReading.VarianceDefined && state.rateReading.Variance > 0 {
+		measurement.Metadata[data.MetadataDivergence] = state.rateReading.Residual
+		measurement.Metadata[data.MetadataNoiseVariance] = state.rateReading.Variance
 	}
-	measurement.Err = errors.Join(measurement.Err, rate.Error())
 
 	measurement.Finalize()
 
@@ -297,11 +280,11 @@ The estimator must already have observed this sample; the caller drains its deli
 that a metric whose raw form is emitted conditionally cannot silently skip the
 update and leave the baseline behind the tape.
 */
-func putResidualReadings(measurement *data.Measurement[float64], name string, fields map[string]core.Primitive, unit data.Unit) {
-	decoder := core.NewDecoder(fields)
-	if core.Decode[bool](decoder, "has_prior") {
-		putPumpDumpMetric(measurement, name+"_divergence", core.Decode[float64](decoder, "residual"), unit)
-		putPumpDumpMetric(measurement, name+"_zscore", core.Decode[float64](decoder, "zscore"), data.UnitDimensionless)
+func putResidualReadings(measurement *data.Measurement[float64], name string, reading adaptive.BaselineReading, unit data.Unit) {
+	if !reading.HasPrior {
+		return
 	}
-	measurement.Err = errors.Join(measurement.Err, decoder.Error())
+
+	putPumpDumpMetric(measurement, name+"_divergence", reading.Residual, unit)
+	putPumpDumpMetric(measurement, name+"_zscore", reading.ZScore, data.UnitDimensionless)
 }

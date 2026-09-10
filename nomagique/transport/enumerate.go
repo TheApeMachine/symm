@@ -1,39 +1,44 @@
 package transport
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Enumerate attaches a run-relative index to each opaque value. Indexing is
-// structural transport, not a domain count or a statistical support estimate.
-type Enumerate struct {
-	core.PrimitiveError
-	output, current core.Primitive
+/*
+Indexed is a value and where it fell in its run. The index is structural
+transport, not a domain count or a statistical support estimate.
+*/
+type Indexed[T any] struct {
+	Index int
+	Value T
 }
 
-func NewEnumerate() *Enumerate { return &Enumerate{} }
-func (enumerate *Enumerate) Next(in core.Primitive) core.Primitive {
-	if enumerate.output == nil {
-		values := []core.Primitive{}
-		index := 0
-		core.Yield(
-			NewIO(core.From(0)),
-			in,
-			func(n int, v core.Primitive) int {
-				values = append(values, core.From([]core.Primitive{core.From(float64(index)), v}))
-				index++
-				return n
-			},
-			enumerate,
-		)
-		enumerate.output = NewIO(values...)
-	}
-	value := enumerate.output.Next(nil)
-	if value == nil {
-		enumerate.output = nil
-	} else {
-		enumerate.current = value
-	}
-	return value
+/*
+Enumerate attaches a run-relative index to each value. The index restarts with
+every run because it describes a position within one delivery.
+*/
+type Enumerate[T any] struct {
+	core.Base[T, Indexed[T]]
 }
-func (enumerate *Enumerate) Read() any { return core.To[any](enumerate.current) }
+
+func NewEnumerate[T any]() *Enumerate[T] {
+	return &Enumerate[T]{}
+}
+
+func (op *Enumerate[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[Indexed[T], Indexed[T]]] {
+	return func(yield func(core.Primitive[Indexed[T], Indexed[T]]) bool) {
+		index := 0
+
+		for arriving := range in {
+			if !yield(op.Carrier(Indexed[T]{Index: index, Value: arriving.Read()})) {
+				return
+			}
+
+			index++
+		}
+	}
+}

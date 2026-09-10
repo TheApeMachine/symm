@@ -1,101 +1,117 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewLikelihood is the bivariate exponential Hawkes log likelihood, given
-// natural parameters, events, origin and horizon. It preserves strict origin
-// exclusion, equal-time grouping semantics and pre-origin kernel history.
-// Invalid parameters are explicit errors. No stationary fit, optimization,
-// significance calibration or parameter-bound selection is claimed here.
-func NewLikelihood() core.Primitive {
-	return logic.NewGate(
-		equation.NewAll(
-			equation.NewAll(
-				transport.NewPipe(store.NewGet("mu_x"), logic.NewFinite()),
-				equation.NewGreater[float64](store.NewGet("mu_x"), store.NewConstant(core.From(0.0))),
-			),
-			equation.NewAll(
-				transport.NewPipe(store.NewGet("mu_y"), logic.NewFinite()),
-				equation.NewGreater[float64](store.NewGet("mu_y"), store.NewConstant(core.From(0.0))),
-			),
-			equation.NewAll(
-				transport.NewPipe(store.NewGet("beta"), logic.NewFinite()),
-				equation.NewGreater[float64](store.NewGet("beta"), store.NewConstant(core.From(0.0))),
-			),
-			equation.NewAll(
-				transport.NewPipe(store.NewGet("alpha_xx"), logic.NewFinite()),
-				equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_xx")),
-			),
-			equation.NewAll(
-				transport.NewPipe(store.NewGet("alpha_xy"), logic.NewFinite()),
-				equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_xy")),
-			),
-			equation.NewAll(
-				transport.NewPipe(store.NewGet("alpha_yx"), logic.NewFinite()),
-				equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_yx")),
-			),
-			equation.NewAll(
-				transport.NewPipe(store.NewGet("alpha_yy"), logic.NewFinite()),
-				equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_yy")),
-			),
-			transport.NewPipe(store.NewGet("origin"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("horizon"), logic.NewFinite()),
-			equation.NewGreater[float64](store.NewGet("horizon"), store.NewGet("origin")),
-			equation.NewGreater[float64](
-				transport.NewPipe(store.NewGet("events"), transport.NewSpread[core.Primitive](), equation.NewCount()),
-				store.NewConstant(core.From(0.0)),
-			),
-			transport.NewPipe(
-				store.NewGet("events"),
-				transport.NewSpread[core.Primitive](),
-				transport.NewMap(
-					equation.NewAll(
-						transport.NewPipe(store.NewGet("at"), logic.NewFinite()),
-						equation.NewAny(
-							equation.NewEqual[float64](store.NewGet("side"), store.NewConstant(core.From(0.0))),
-							equation.NewEqual[float64](store.NewGet("side"), store.NewConstant(core.From(1.0))),
-						),
-					),
-				),
-				logic.NewAnd(transport.NewIO(core.From(true))),
-			),
-		),
-		transport.NewPipe(
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(equation.NewDifference[float64](store.NewGet("horizon"), store.NewGet("origin")), store.NewKey("span")),
-				transport.NewPipe(NewEventLikelihood(), store.NewKey("scored")),
-				transport.NewPipe(NewIntegralSupport(store.NewConstant(core.From(0.0))), store.NewKey("integral_x")),
-				transport.NewPipe(NewIntegralSupport(store.NewConstant(core.From(1.0))), store.NewKey("integral_y")),
-				transport.NewPipe(NewIntegralDerivative(store.NewConstant(core.From(0.0))), store.NewKey("integral_x_beta")),
-				transport.NewPipe(NewIntegralDerivative(store.NewConstant(core.From(1.0))), store.NewKey("integral_y_beta")),
-			),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(
-					transport.NewPipe(
-						transport.NewPipe(store.NewGet("scored"), transport.NewSpread[core.Primitive](), transport.NewMap(store.NewGet("log_intensity"))),
-						arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
-					),
-					store.NewKey("log_sum"),
-				),
-				transport.NewPipe(NewCompensator(), store.NewKey("compensator")),
-			),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(
-					equation.NewDifference[float64](store.NewGet("log_sum"), store.NewGet("compensator")),
-					store.NewKey("log_likelihood"),
-				),
-			),
-		),
-		logic.NewReject(core.ErrDomain),
-	)
+/*
+LikelihoodInput is the bivariate exponential Hawkes log likelihood's data.
+*/
+type LikelihoodInput struct {
+	Parameters
+	Origin  float64
+	Horizon float64
+	Events  []Event
+}
+
+/*
+LikelihoodResult is the log likelihood and the pieces used by the gradient.
+*/
+type LikelihoodResult struct {
+	LogLikelihood float64
+	LogSum        float64
+	Compensator   float64
+	Span          float64
+	Scored        []ScoredEvent
+	IntegralX     float64
+	IntegralY     float64
+	IntegralXBeta float64
+	IntegralYBeta float64
+	Parameters
+}
+
+/*
+Likelihood owns that log likelihood. Invalid parameters are explicit errors.
+*/
+type Likelihood struct {
+	core.Base[LikelihoodInput, LikelihoodResult]
+	events      *EventLikelihood
+	integral    *Integral
+	beta        *Integral
+	compensator *Compensator
+}
+
+func NewLikelihood() *Likelihood {
+	return &Likelihood{
+		events:      NewEventLikelihood(),
+		integral:    NewIntegralSupport(),
+		beta:        NewIntegralDerivative(),
+		compensator: NewCompensator(),
+	}
+}
+
+func (op *Likelihood) Next(
+	in iter.Seq[core.Primitive[LikelihoodInput, LikelihoodInput]],
+) iter.Seq[core.Primitive[LikelihoodResult, LikelihoodResult]] {
+	return func(yield func(core.Primitive[LikelihoodResult, LikelihoodResult]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+
+			if input.Beta <= 0 || input.MuX <= 0 || input.MuY <= 0 || input.Horizon <= input.Origin || len(input.Events) == 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			var scored []ScoredEvent
+			logSum := 0.0
+
+			for event := range op.events.Next(transport.Values(EventLikelihoodInput{
+				Parameters: input.Parameters, Origin: input.Origin, Horizon: input.Horizon, Events: input.Events,
+			})) {
+				scored = append(scored, event.Read())
+				logSum += event.Read().LogIntensity
+			}
+
+			integral := func(side float64, kind *Integral) float64 {
+				value := 0.0
+
+				for out := range kind.Next(transport.Values(IntegralInput{
+					Parameters: input.Parameters, Side: side, Origin: input.Origin, Horizon: input.Horizon, Events: input.Events,
+				})) {
+					value = out.Read()
+				}
+
+				return value
+			}
+
+			ix, iy := integral(0, op.integral), integral(1, op.integral)
+			ixb, iyb := integral(0, op.beta), integral(1, op.beta)
+			span := input.Horizon - input.Origin
+			compensator := 0.0
+
+			for out := range op.compensator.Next(transport.Values(CompensatorInput{
+				Parameters: input.Parameters, Span: span, IntegralX: ix, IntegralY: iy,
+			})) {
+				compensator = out.Read()
+			}
+
+			if !yield(op.Carrier(LikelihoodResult{
+				LogLikelihood: logSum - compensator,
+				LogSum:        logSum,
+				Compensator:   compensator,
+				Span:          span,
+				Scored:        scored,
+				IntegralX:     ix,
+				IntegralY:     iy,
+				IntegralXBeta: ixb,
+				IntegralYBeta: iyb,
+				Parameters:    input.Parameters,
+			})) {
+				return
+			}
+		}
+	}
 }

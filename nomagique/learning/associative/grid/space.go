@@ -6,11 +6,12 @@ import (
 	"strconv"
 	"time"
 
+	"iter"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 const (
@@ -28,9 +29,7 @@ Present distinguishes readings in the current update from missing readings,
 including previously observed values still retained in Values.
 */
 type Space struct {
-	core.PrimitiveError
-	seed         *transport.IO
-	current      core.Primitive
+	core.Base[[]*data.Measurement[float64], Impulse]
 	Rows         []string
 	Columns      [][2]string
 	Values       [][]float64
@@ -79,7 +78,6 @@ const DefaultWindowBins = 64
 /* NewSpaceWithWindow constructs a live grid over a declared window span. */
 func NewSpaceWithWindow(bins int) *Space {
 	return &Space{
-		seed:        transport.NewIO(core.From(Impulse{})),
 		rowIndex:    make(map[string]int),
 		columnIndex: make(map[[2]string]int),
 		cursor:      -1,
@@ -101,35 +99,32 @@ supplies its signal-power fraction. When a producer supplies no noise estimate,
 the grid uses its own change-to-dispersion power without declaring the producer's
 SNR defined. Both paths retain the baseline and measurement maturity factors.
 */
-func (grid *Space) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(grid.seed, in,
-		func(held Impulse, measurements []*data.Measurement[float64]) Impulse {
+func (grid *Space) Next(
+	in iter.Seq[core.Primitive[[]*data.Measurement[float64], []*data.Measurement[float64]]],
+) iter.Seq[core.Primitive[Impulse, Impulse]] {
+	return func(yield func(core.Primitive[Impulse, Impulse]) bool) {
+		for arriving := range in {
+			measurements := arriving.Read()
+
 			if err := grid.Step(measurements); err != nil {
 				grid.Error(err)
-
-				return held
+				return
 			}
+
 			at, from := observed(measurements)
 			impulse, err := grid.Impulse(grid.UpdatedLabel, at, from)
 
 			if err != nil {
 				grid.Error(err)
-
-				return held
+				return
 			}
 
-			return impulse
-		}, grid)
-
-	if result != nil {
-		grid.current = result
+			if !yield(grid.Carrier(impulse)) {
+				return
+			}
+		}
 	}
-
-	return result
 }
-
-/* Read surfaces the impulse the last advance formed. */
-func (grid *Space) Read() any { return core.To[any](grid.current) }
 
 /*
 observed is when one context's readings were taken and how far back the

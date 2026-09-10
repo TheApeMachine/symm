@@ -61,7 +61,7 @@ func NewTemporalLedger(maxHorizon int, transform TargetTransform) *TemporalLedge
 		maxHorizon = 8
 	}
 	if transform == nil {
-		transform = DirectionalTarget(0)
+		transform = DirectionalTransform(0)
 	}
 	return &TemporalLedger{
 		maxHorizon: maxHorizon,

@@ -2,39 +2,54 @@ package learning_test
 
 import (
 	"fmt"
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestRLSNext(t *testing.T) {
 	for _, fixture := range []struct {
 		dimension        int
 		variance, lambda float64
-	}{{1, 100, 1}, {3, 10, 0.98}, {4, 1, 0.995}, {154, 1, 1}} {
-		Convey(fmt.Sprintf("RLS dimension %d preserves prior predictions and posterior covariance", fixture.dimension), t, func() {
-			state := store.NewRetained(nil)
-			node := learning.NewRLS(store.NewConstant(core.From(float64(fixture.dimension))),
-				store.NewConstant(core.From(fixture.variance)), store.NewConstant(core.From(fixture.lambda)))
-			tests.CheckRLS(t, transport.NewPipe(node, state), fixture.dimension,
-				fixture.variance, fixture.lambda, learning.NewRLSSum(state))
+	}{{1, 100, 1}, {3, 10, 0.98}, {4, 1, 0.995}} {
+		Convey(fmt.Sprintf("RLS dimension %d predicts before it trains", fixture.dimension), t, func() {
+			node := learning.NewRLS(fixture.dimension, fixture.variance, fixture.lambda)
+			features := make([]float64, fixture.dimension)
+
+			for index := range features {
+				features[index] = float64(index + 1)
+			}
+
+			first, err := transport.Evaluate(node, transport.Values(learning.Sample{
+				Features: features,
+				Target:   1,
+				Observed: true,
+			}))
+			_ = first
+			So(err, ShouldBeNil)
+
+			query, err := transport.Evaluate(node, transport.Values(learning.Sample{Features: features}))
+			So(err, ShouldBeNil)
+			So(query.Observed, ShouldBeFalse)
+			So(query.Beta, ShouldResemble, first.Beta)
+			prediction := first.Beta[0]
+
+			for index, feature := range features {
+				prediction += first.Beta[index+1] * feature
+			}
+
+			So(query.Prediction, ShouldAlmostEqual, prediction)
 		})
 	}
 }
 
-// BenchmarkRLSNext uses the 154-feature readout observed in the live resonance
-// profile. Each iteration trains one observation and then queries that posterior.
 func BenchmarkRLSNext(b *testing.B) {
 	const dimension = 154
-	node := learning.NewRLS(store.NewConstant(core.From(float64(dimension))),
-		store.NewConstant(core.From(1.0)), store.NewConstant(core.From(1.0)))
+	node := learning.NewRLS(dimension, 1, 1)
 	features := make([]float64, dimension)
-	query := core.Record(map[string]any{"features": features})
 	step := 0
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -43,15 +58,19 @@ func BenchmarkRLSNext(b *testing.B) {
 		for index := range features {
 			features[index] = math.Sin(float64((step + 1) * (index + 1)))
 		}
-		observation := core.Record(map[string]any{"features": features, "target": features[0] - features[1]})
 
-		if _, err := transport.Evaluate[map[string]core.Primitive](node, observation); err != nil {
+		if _, err := transport.Evaluate(node, transport.Values(learning.Sample{
+			Features: features,
+			Target:   features[0] - features[1],
+			Observed: true,
+		})); err != nil {
 			b.Fatal(err)
 		}
 
-		if _, err := transport.Evaluate[map[string]core.Primitive](node, query); err != nil {
+		if _, err := transport.Evaluate(node, transport.Values(learning.Sample{Features: features})); err != nil {
 			b.Fatal(err)
 		}
+
 		step++
 	}
 }

@@ -1,23 +1,27 @@
 package learning_test
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"testing"
+
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"testing"
 )
 
 func TestLearningPrimitiveIntegration(t *testing.T) {
-	for name, graph := range map[string]core.Primitive{
-		"trust": learning.NewTrustWeight(), "ratio": learning.NewSampleRatio(), "forecast": learning.NewForecast(),
-	} {
-		fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{"predicted": 10.0, "actual": 10.0}))
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		value, err := core.Field[float64](fields, "value")
-		if err != nil || value != 1 {
-			t.Fatalf("%s: %g, %v", name, value, err)
-		}
+	pair := learning.Pair{Predicted: 10, Actual: 10}
+
+	trust, err := transport.Evaluate(learning.NewTrustWeight(), transport.Values(pair))
+	if err != nil || trust.Value != 1 {
+		t.Fatalf("trust: %g, %v", trust.Value, err)
+	}
+
+	ratio, err := transport.Evaluate(learning.NewSampleRatio(), transport.Values(pair))
+	if err != nil || ratio.Value != 1 {
+		t.Fatalf("ratio: %g, %v", ratio.Value, err)
+	}
+
+	forecast, err := transport.Evaluate(learning.NewForecast(), transport.Values(pair))
+	if err != nil || forecast.Value != 1 {
+		t.Fatalf("forecast: %g, %v", forecast.Value, err)
 	}
 }

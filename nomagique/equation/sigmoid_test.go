@@ -1,20 +1,23 @@
 package equation_test
 
 import (
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/tests"
 	"math"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestNewSigmoid(t *testing.T) {
-	node := equation.NewSigmoid()
-	for _, value := range []float64{0, 10, -10} {
-		out := tests.Drain(t, node, tests.Values(value))
-		tests.Sound(t, node)
-		if len(out) != 1 {
-			t.Fatal("expected one sigmoid result")
+	Convey("Sigmoid matches 1/(1+exp(-x))", t, func() {
+		op := equation.NewSigmoid[float64]()
+
+		for _, value := range []float64{0, 10, -10} {
+			out := tests.CollectSeq(op.Next(transport.Values(value)))
+			So(len(out), ShouldEqual, 1)
+			So(out[0], ShouldEqual, 1/(1+math.Exp(-value)))
 		}
-		tests.EqualNumber(t, out[0], 1/(1+math.Exp(-value)))
-	}
+	})
 }

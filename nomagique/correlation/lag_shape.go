@@ -1,44 +1,99 @@
 package correlation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/collection"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewLagShape reads the neighbours of the explicitly selected index. It does
-// not search for a different maximum (zero lag may exceed the nonzero winner).
-// Undefined or out-of-range neighbours yield shape_defined=false, never a
-// derivative left over from a previous profile. Coordinates are seconds.
-func NewLagShape(profile, selected core.Primitive) core.Primitive {
-	lower := transport.NewPipe(transport.NewApply(profile, nil), collection.NewAt[core.Primitive](
-		transport.NewApply(equation.NewDifference[float64](store.NewGet("index"), store.NewConstant(core.From(1.0))), selected)))
-	upper := transport.NewPipe(transport.NewApply(profile, nil), collection.NewAt[core.Primitive](
-		transport.NewApply(equation.NewSum[float64](store.NewGet("index"), store.NewConstant(core.From(1.0))), selected)))
-	left := transport.NewPipe(store.NewGet("lower"), store.NewGet("y"), calculus.NewAbsolute(transport.NewIO(core.From(0.0))))
-	center := transport.NewPipe(store.NewGet("y"), calculus.NewAbsolute(transport.NewIO(core.From(0.0))))
-	right := transport.NewPipe(store.NewGet("upper"), store.NewGet("y"), calculus.NewAbsolute(transport.NewIO(core.From(0.0))))
-	absent := store.NewRecord(transport.NewPipe(),
-		transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("shape_defined")))
-	return logic.NewGate(equation.NewAll(
-		equation.NewGreater[float64](store.NewGet("index"), store.NewConstant(core.From(0.0))),
-		equation.NewLess[float64](store.NewGet("index"), equation.NewProduct[float64](store.NewGet("span"), store.NewConstant(core.From(2.0))))),
-		transport.NewPipe(
-			store.NewRecord(transport.NewPipe(), transport.NewPipe(lower, store.NewKey("lower")), transport.NewPipe(upper, store.NewKey("upper"))),
-			logic.NewGate(equation.NewAll(
-				transport.NewPipe(store.NewGet("lower"), store.NewGet("defined")),
-				transport.NewPipe(store.NewGet("upper"), store.NewGet("defined"))),
-				store.NewRecord(transport.NewPipe(),
-					transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("shape_defined")),
-					transport.NewPipe(equation.NewRatio[float64](equation.NewSecondDifference(left, center, right), store.NewConstant(core.From(2.0))), store.NewKey("prominence")),
-					transport.NewPipe(equation.NewRatio[float64](
-						equation.NewSecondDifference(left, center, right),
-						transport.NewPipe(equation.NewProduct[float64](store.NewGet("spacing"), store.NewConstant(core.From(1e-9))),
-							calculus.NewSquare(transport.NewIO(core.From(0.0))))), store.NewKey("curvature"))),
-				absent)),
-		absent)
+/*
+LagShapeInput is a completed profile and the selected index, not a new search.
+*/
+type LagShapeInput struct {
+	Profile []equation.LagCandidate
+	Index   float64
+	Span    float64
+	Spacing float64
+}
+
+/*
+LagShapeResult reads the neighbours of the selected index. Undefined or
+out-of-range neighbours yield ShapeDefined=false, never a leftover derivative.
+Coordinates are seconds.
+*/
+type LagShapeResult struct {
+	ShapeDefined bool
+	Prominence   float64
+	Curvature    float64
+}
+
+/*
+LagShape owns that neighbour projection.
+*/
+type LagShape struct {
+	core.Base[LagShapeInput, LagShapeResult]
+	difference *equation.SecondDifference[float64]
+}
+
+func NewLagShape() *LagShape {
+	return &LagShape{difference: equation.NewSecondDifference[float64]()}
+}
+
+func (op *LagShape) Next(
+	in iter.Seq[core.Primitive[LagShapeInput, LagShapeInput]],
+) iter.Seq[core.Primitive[LagShapeResult, LagShapeResult]] {
+	return func(yield func(core.Primitive[LagShapeResult, LagShapeResult]) bool) {
+		for arriving := range in {
+			result, err := op.Evaluate(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(result)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *LagShape) Evaluate(input LagShapeInput) (LagShapeResult, error) {
+	index := int(input.Index)
+
+	if !(input.Index > 0 && input.Index < input.Span*2) {
+		return LagShapeResult{}, nil
+	}
+
+	if index <= 0 || index >= len(input.Profile)-1 {
+		return LagShapeResult{}, nil
+	}
+
+	lower := input.Profile[index-1]
+	upper := input.Profile[index+1]
+
+	if !lower.Defined() || !upper.Defined() {
+		return LagShapeResult{}, nil
+	}
+
+	diff, err := transport.Evaluate(op.difference, transport.Values(equation.SecondDifferenceInput[float64]{
+		Left:   math.Abs(lower.Y),
+		Center: math.Abs(input.Profile[index].Y),
+		Right:  math.Abs(upper.Y),
+	}))
+
+	if err != nil {
+		return LagShapeResult{}, err
+	}
+
+	seconds := input.Spacing * 1e-9
+
+	return LagShapeResult{
+		ShapeDefined: true,
+		Prominence:   diff / 2,
+		Curvature:    diff / (seconds * seconds),
+	}, nil
 }

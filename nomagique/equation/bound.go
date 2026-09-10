@@ -1,26 +1,51 @@
 package equation
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewBound captures the value and both bounds once before selecting. Bounds
-// may be computations; neither their result nor the value is recomputed during
-// selection. NaN passes through unchanged rather than becoming a bound.
-func NewBound(value, lower, upper core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(value, store.NewKey("value")),
-			transport.NewPipe(lower, store.NewKey("lower")),
-			transport.NewPipe(upper, store.NewKey("upper")),
-		),
-		logic.NewGate(
-			NewLess[float64](store.NewGet("value"), store.NewGet("lower")),
-			store.NewGet("lower"),
-			logic.NewGate(NewGreater[float64](store.NewGet("value"), store.NewGet("upper")), store.NewGet("upper"), store.NewGet("value")),
-		),
-	)
+/*
+BoundRecord is a value and the interval that may replace it.
+*/
+type BoundRecord[U core.Numeric] struct {
+	Value U
+	Lower U
+	Upper U
+}
+
+/*
+Bound selects lower, value, or upper. A NaN value compares as unordered and
+passes through rather than becoming a bound.
+*/
+type Bound[U core.Numeric] struct {
+	core.Base[BoundRecord[U], U]
+}
+
+func NewBound[U core.Numeric]() *Bound[U] {
+	return &Bound[U]{}
+}
+
+func (op *Bound[U]) Next(
+	in iter.Seq[core.Primitive[BoundRecord[U], BoundRecord[U]]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			record := arriving.Read()
+			value := record.Value
+
+			if value < record.Lower {
+				value = record.Lower
+			}
+
+			if value > record.Upper {
+				value = record.Upper
+			}
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+	}
 }

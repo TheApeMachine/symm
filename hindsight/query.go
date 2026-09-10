@@ -60,12 +60,46 @@ func (tape *Tape) Measurements() [][][]*data.Measurement[float64] {
 
 		return nil
 	}
+
+	return tape.MeasurementsFrom(observations)
+}
+
+/*
+MeasurementsFrom derives the confirmed-move tape from observations already in
+hand. It is the same projection Measurements performs, split out so a bounded
+reader can accumulate pages and re-project them as each page arrives instead
+of waiting for a whole run to decode.
+*/
+func (tape *Tape) MeasurementsFrom(
+	observations []Observation,
+) [][][]*data.Measurement[float64] {
+	return tape.measurements(observations, false)
+}
+
+/*
+MeasurementsLive derives the same tape but admits the run's final, not yet
+retraced excursion. The hindsight page shows the live run's developing move
+immediately; the learning loader does the same so the grid and learner lanes
+have data before a retracement closes the move.
+*/
+func (tape *Tape) MeasurementsLive(
+	observations []Observation,
+) [][][]*data.Measurement[float64] {
+	return tape.measurements(observations, true)
+}
+
+func (tape *Tape) measurements(
+	observations []Observation, live bool,
+) [][][]*data.Measurement[float64] {
+	if tape.catalog == nil || tape.selector != Excursions {
+		return nil
+	}
 	index := NewRunIndex(tape.run, observations)
 	legs := make([][][]*data.Measurement[float64], 0)
 
 	for _, summary := range index.Summaries(tape.policy) {
 		for _, move := range index.Discover(summary.Symbol, tape.policy).Episodes {
-			if leg := tape.move(index, summary.Symbol, move); len(leg) > 0 {
+			if leg := tape.move(index, summary.Symbol, move, live); len(leg) > 0 {
 				legs = append(legs, leg)
 			}
 		}
@@ -75,13 +109,16 @@ func (tape *Tape) Measurements() [][][]*data.Measurement[float64] {
 }
 
 /*
-move is the readings held across one confirmed excursion.
+move is the readings held across one excursion.
 
 The identities are the instrument's own captures at or before the extremum,
 which is the only tape that could have carried its signals, walked forwards.
+Historical callers pass live=false and only receive retraced (confirmed) moves;
+the live loader passes true so the current run's developing move is learned
+before its retracement has printed.
 */
 func (tape *Tape) move(
-	index *RunIndex, symbol string, move Episode,
+	index *RunIndex, symbol string, move Episode, live bool,
 ) [][]*data.Measurement[float64] {
 	endpoint := ReferencePeak
 
@@ -94,7 +131,7 @@ func (tape *Tape) move(
 	}
 	reached, named := move.Reference(endpoint)
 
-	if !move.Confirmed || !named {
+	if (!live && !move.Confirmed) || !named {
 		return nil
 	}
 	candidates := index.CapturesBefore(symbol, EnvelopeRef{

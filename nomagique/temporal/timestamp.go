@@ -1,26 +1,31 @@
 package temporal
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"iter"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Timestamp converts a time.Time boundary payload to signed Unix nanoseconds.
-// Holding a clock value is Retained's job, not another clock object model.
+/*
+Timestamp converts a time.Time arrival to signed Unix nanoseconds.
+*/
 type Timestamp struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+	core.Base[time.Time, int64]
 }
 
 func NewTimestamp() *Timestamp {
-	return &Timestamp{seed: transport.NewIO(core.From(int64(0)))}
+	return &Timestamp{}
 }
-func (stamp *Timestamp) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(stamp.seed, in, func(_ int64, value time.Time) int64 { return value.UnixNano() }, stamp)
-	if result != nil {
-		stamp.current = result
+
+func (op *Timestamp) Next(
+	in iter.Seq[core.Primitive[time.Time, time.Time]],
+) iter.Seq[core.Primitive[int64, int64]] {
+	return func(yield func(core.Primitive[int64, int64]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(arriving.Read().UnixNano())) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (stamp *Timestamp) Read() any { return core.To[any](stamp.current) }

@@ -1,53 +1,31 @@
 package equation_test
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"math"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
-	"testing"
 )
 
 func TestNewCorrelation(t *testing.T) {
-	node := equation.NewCorrelation()
-	for _, covariance := range []float64{2, -2, 0, 1} {
-		out := tests.Drain(t, node, tests.Values(tests.Record(map[string]any{"covariance": covariance, "left_energy": 1.0, "right_energy": 2.0})))
-		tests.Sound(t, node)
-		if len(out) != 1 {
-			t.Fatal("expected one correlation")
-		}
-		tests.EqualNumber(t, out[0], covariance/math.Sqrt2)
-	}
-	out := tests.Drain(t, node, tests.Values(tests.Record(map[string]any{"covariance": 0.0, "left_energy": 0.0, "right_energy": 0.0})))
-	tests.Sound(t, node)
-	if len(out) != 1 {
-		t.Fatal("expected undefined numeric result")
-	}
-	tests.EqualNumber(t, out[0], math.NaN())
-}
+	Convey("Correlation is covariance over sqrt of the two energies", t, func() {
+		op := equation.NewCorrelation[float64]()
 
-func BenchmarkNewCorrelation(b *testing.B) {
-	correlation := equation.NewCorrelation()
-	input := transport.NewIO(tests.Record(map[string]any{
-		"covariance": 2.0, "left_energy": 1.0, "right_energy": 2.0,
-	}))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for iteration := 0; iteration < b.N; iteration++ {
-		output := correlation.Next(input)
-
-		if output == nil || core.To[float64](output) != 2/math.Sqrt(2) {
-			b.Fatal("incorrect correlation output")
+		for _, covariance := range []float64{2, -2, 0, 1} {
+			out := tests.CollectSeq(op.Next(transport.Values(equation.CorrelationInput[float64]{
+				Covariance:  covariance,
+				LeftEnergy:  1,
+				RightEnergy: 2,
+			})))
+			So(len(out), ShouldEqual, 1)
+			So(out[0], ShouldEqual, covariance/math.Sqrt2)
 		}
 
-		if correlation.Next(input) != nil {
-			b.Fatal("correlation delivery did not end")
-		}
-	}
-
-	if err := correlation.Error(); err != nil {
-		b.Fatal(err)
-	}
+		out := tests.CollectSeq(op.Next(transport.Values(equation.CorrelationInput[float64]{})))
+		So(len(out), ShouldEqual, 1)
+		So(math.IsNaN(out[0]), ShouldBeTrue)
+	})
 }

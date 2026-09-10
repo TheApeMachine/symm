@@ -2,26 +2,34 @@ package collection
 
 import (
 	"cmp"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"iter"
 	"slices"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Order owns ordering a collection. It never reorders a caller's storage.
+/*
+Order owns ordering a collection. It never reorders a caller's storage.
+*/
 type Order[T cmp.Ordered] struct {
-	core.PrimitiveError
-	seed    core.Primitive
-	current core.Primitive
+	core.Base[[]T, []T]
 }
 
 func NewOrder[T cmp.Ordered]() *Order[T] {
-	return &Order[T]{seed: transport.NewIO(core.From([]T{}))}
+	return &Order[T]{}
 }
-func (order *Order[T]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(order.seed, in, func(_, values []T) []T { out := slices.Clone(values); slices.Sort(out); return out }, order)
-	if result != nil {
-		order.current = result
+
+func (op *Order[T]) Next(
+	in iter.Seq[core.Primitive[[]T, []T]],
+) iter.Seq[core.Primitive[[]T, []T]] {
+	return func(yield func(core.Primitive[[]T, []T]) bool) {
+		for arriving := range in {
+			ordered := slices.Clone(arriving.Read())
+			slices.Sort(ordered)
+
+			if !yield(op.Carrier(ordered)) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (order *Order[T]) Read() any { return core.To[any](order.current) }

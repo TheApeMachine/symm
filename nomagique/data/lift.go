@@ -2,7 +2,6 @@ package data
 
 import (
 	"errors"
-	"github.com/theapemachine/symm/nomagique/core"
 	"strings"
 )
 
@@ -70,8 +69,8 @@ LiftReadouts flattens a set of measurements into Readouts keyed by
 source-qualified metric name, preserving the full quality context (maturity,
 SNR, credibility, and corroborations) for downstream logic layers.
 */
-func LiftReadouts(measurements []*Measurement[float64]) (map[string]core.Primitive, error) {
-	readouts := make(map[string]core.Primitive)
+func LiftReadouts(measurements []*Measurement[float64]) (map[string]Readout, error) {
+	readouts := make(map[string]Readout)
 
 	var failure error
 
@@ -90,13 +89,14 @@ func LiftReadouts(measurements []*Measurement[float64]) (map[string]core.Primiti
 
 		for label := range measurement.Metrics {
 			readout := measurement.Readout(label)
+
 			if measurement.Err != nil {
 				failure = errors.Join(failure, measurement.Err)
 				break
 			}
 
 			if readout != nil {
-				readouts[measurement.Source+"/"+label] = readout
+				readouts[measurement.Source+"/"+label] = *readout
 			}
 		}
 	}

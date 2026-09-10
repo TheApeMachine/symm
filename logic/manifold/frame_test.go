@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
 	"math"
 	"testing"
 )
@@ -25,13 +24,13 @@ func TestPrimitiveResidentFrame(t *testing.T) {
 		}
 		previous = x
 	}
-	before, _ := core.Field[float64](frame.symbols["A"].lastPrice, "count")
+	before := frame.symbols["A"].lastPrice.Count
 	for range 5 {
 		if _, _, err := frame.placePrice("A", math.Log(101)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	after, _ := core.Field[float64](frame.symbols["A"].lastPrice, "count")
+	after := frame.symbols["A"].lastPrice.Count
 	if before != after {
 		t.Fatal("probe trained observed frame")
 	}

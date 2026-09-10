@@ -5,56 +5,61 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-The learner is one composition: read the store as it stands, move the link the
-observation names, write the result back, and keep it.
-*/
+func learn(
+	t *testing.T,
+	radix *store.Radix,
+	assoc cognition.Association,
+) *iradix.Tree[[]byte] {
+	t.Helper()
+	observe := cognition.NewObserve()
+	write, err := observe.Record(cognition.ObserveInput{Tree: radix.Read(), Association: assoc})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tree, err := transport.Evaluate(radix, transport.Values(observe.Map(write)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return tree
+}
+
 func TestObserveLearnsAPrecursor(t *testing.T) {
 	config := cognition.DefaultConfig()
-	retained := store.NewRetained(core.From(iradix.New[[]byte]()))
-	seen := store.NewRetained(core.From(map[string][]byte{}))
-
-	learn := transport.NewPipe(
-		transport.NewApply(retained, nil),
-		cognition.NewObserve(transport.NewApply(seen, nil)),
-		store.NewRadix[iradix.Tree[any]](retained),
-		retained,
-	)
+	radix := store.NewRadix(iradix.New[[]byte]())
 
 	observe := func(step uint64, context, class string, grade ...float64) {
 		t.Helper()
-		observation := map[string][]byte{
-			"context":   []byte(context),
-			"class":     []byte(class),
-			"step":      cognition.Counted(step),
-			"retention": cognition.Measured(config.DecayFactor()),
+		assoc := cognition.Association{
+			Context:   []byte(context),
+			Class:     []byte(class),
+			Step:      step,
+			Retention: config.DecayFactor(),
 		}
 
 		if len(grade) > 0 {
-			observation["feedback"] = cognition.Measured(grade[0])
+			assoc.Feedback = grade[0]
+			assoc.Graded = true
 		}
-		tests.Drain(t, seen, transport.NewIO(core.From(observation)))
-		tests.Drain(t, learn, nil)
-		tests.Sound(t, learn)
+
+		learn(t, radix, assoc)
 	}
 
-	// A precursor seen repeatedly, and a competing one seen once.
 	for step := uint64(1); step <= 5; step++ {
 		observe(step, "A\x00B\x00C", "enter")
 	}
 	observe(6, "A\x00B\x00C", "wait")
 
-	tree := core.To[*iradix.Tree[[]byte]](transport.NewApply(retained, nil).Next(nil))
-
+	tree := radix.Read()
 	if tree == nil {
 		t.Fatal("expected the store to hold what was learned")
 	}
+
 	found := map[string]cognition.PackedWeight{}
 	iterator := tree.Root().Iterator()
 	iterator.SeekPrefix([]byte("b/"))
@@ -66,6 +71,7 @@ func TestObserveLearnsAPrecursor(t *testing.T) {
 	if len(found) != 2 {
 		t.Fatalf("expected one link per class, received %d: %v", len(found), found)
 	}
+
 	entered := found["b/enter/A\x00B\x00C"]
 	waited := found["b/wait/A\x00B\x00C"]
 
@@ -77,12 +83,8 @@ func TestObserveLearnsAPrecursor(t *testing.T) {
 		t.Fatalf("expected one observation of the competitor, received %d", waited.Count)
 	}
 
-	// Raw strength is not the ranking. An ungraded link opens at one, so a
-	// single coincidence reads as certain until its evidence is weighed
-	// against the prior standing for having learned nothing at all.
 	smoothed := func(weight cognition.PackedWeight) float64 {
 		alpha := config.DirichletAlpha
-
 		return (float64(weight.Count)*weight.Probability + alpha) /
 			(float64(weight.Count) + alpha*16)
 	}
@@ -99,54 +101,31 @@ func TestObserveLearnsAPrecursor(t *testing.T) {
 	}
 }
 
-/*
-What was learned is read back through the same store, and a sequence that was
-never stored in full is still answered for by the ones that were.
-*/
 func TestEvaluateRecallsAPrecursor(t *testing.T) {
 	config := cognition.DefaultConfig()
-	retained := store.NewRetained(core.From(iradix.New[[]byte]()))
-	seen := store.NewRetained(core.From(map[string][]byte{}))
-	asked := store.NewRetained(core.From(cognition.Evaluation{}))
-
-	learn := transport.NewPipe(
-		transport.NewApply(retained, nil),
-		cognition.NewObserve(transport.NewApply(seen, nil)),
-		store.NewRadix[iradix.Tree[any]](retained),
-		retained,
-	)
-	recall := transport.NewPipe(
-		transport.NewApply(retained, nil),
-		cognition.NewEvaluate(transport.NewApply(asked, nil)),
-	)
+	radix := store.NewRadix(iradix.New[[]byte]())
+	recall := cognition.NewEvaluate()
 
 	observe := func(step uint64, context, class string) {
 		t.Helper()
-		tests.Drain(t, seen, transport.NewIO(core.From(map[string][]byte{
-			"context":   []byte(context),
-			"class":     []byte(class),
-			"step":      cognition.Counted(step),
-			"retention": cognition.Measured(config.DecayFactor()),
-		})))
-		tests.Drain(t, learn, nil)
-		tests.Sound(t, learn)
+		learn(t, radix, cognition.Association{
+			Context:   []byte(context),
+			Class:     []byte(class),
+			Step:      step,
+			Retention: config.DecayFactor(),
+		})
 	}
 
 	evaluate := func(context string) cognition.Evaluation {
 		t.Helper()
-		tests.Drain(t, asked, transport.NewIO(core.From(cognition.Evaluation{
-			Context: []byte(context), Config: config, Step: 32,
-		})))
-		answered := tests.Drain(t, recall, nil)
-		tests.Sound(t, recall)
-
-		if len(answered) == 0 {
-			t.Fatal("expected the store to answer")
-		}
-		reading, held := answered[len(answered)-1].(cognition.Evaluation)
-
-		if !held {
-			t.Fatalf("expected a reading, received %T", answered[len(answered)-1])
+		reading, err := recall.Recall(cognition.EvaluateInput{
+			Tree: radix.Read(),
+			Evaluation: cognition.Evaluation{
+				Context: []byte(context), Config: config, Step: 32,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
 
 		return reading
@@ -157,9 +136,7 @@ func TestEvaluateRecallsAPrecursor(t *testing.T) {
 	}
 	observe(9, "A\x00B\x00C", "wait")
 
-	// The sequence it was taught on.
 	reading := evaluate("A\x00B\x00C")
-
 	if reading.WinnerClass != "enter" {
 		t.Fatalf("expected the learned precursor, received %q", reading.WinnerClass)
 	}
@@ -176,13 +153,10 @@ func TestEvaluateRecallsAPrecursor(t *testing.T) {
 		t.Fatalf("expected the evidence behind the winner, received %d", reading.Support)
 	}
 
-	// A longer sequence that was never stored: it ends with one that was, so
-	// what was learned there still answers for it.
 	if unseen := evaluate("Z\x00A\x00B\x00C"); unseen.WinnerClass != "enter" {
 		t.Fatalf("expected the suffix to answer, received %q", unseen.WinnerClass)
 	}
 
-	// A sequence sharing nothing reaches no stored link at all.
 	if foreign := evaluate("X\x00Y"); foreign.WinnerClass != "" {
 		t.Fatalf("expected no association, received %q", foreign.WinnerClass)
 	}

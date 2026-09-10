@@ -1,34 +1,32 @@
 package store
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// Key associates each delivered value with its configured key. Repeated writes
-// to the same key in a run retain the last value, exactly as KV does.
-type Key[K comparable] struct {
-	core.PrimitiveError
-	key     K
-	seed    core.Primitive
-	current core.Primitive
+/*
+Key associates each arrival with its configured key. Repeated writes to the
+same key in a run retain the last value, exactly as KV does.
+*/
+type Key[K comparable, V any] struct {
+	core.Base[V, map[K]V]
+	key K
 }
 
-func NewKey[K comparable](key K) *Key[K] {
-	return &Key[K]{key: key, seed: transport.NewIO(core.From(map[K]core.Primitive{}))}
+func NewKey[K comparable, V any](key K) *Key[K, V] {
+	return &Key[K, V]{key: key}
 }
-func (key *Key[K]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(
-		key.seed,
-		in,
-		func(_ map[K]core.Primitive, value core.Primitive) map[K]core.Primitive {
-			return map[K]core.Primitive{key.key: value}
-		},
-		key,
-	)
-	if result != nil {
-		key.current = result
+
+func (op *Key[K, V]) Next(
+	in iter.Seq[core.Primitive[V, V]],
+) iter.Seq[core.Primitive[map[K]V, map[K]V]] {
+	return func(yield func(core.Primitive[map[K]V, map[K]V]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(map[K]V{op.key: arriving.Read()})) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (key *Key[K]) Read() any { return core.To[any](key.current) }

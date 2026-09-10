@@ -9,8 +9,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -69,14 +70,14 @@ func (training *Training) State() *Recognition {
 		}}
 	}
 
-	return held.state(at)
+	return held.state(at, training.frames.Load())
 }
 
 /* state is what one mounted tape and its learners currently amount to. */
-func (held *replay) state(at int64) *Recognition {
+func (held *replay) state(at int64, frames uint64) *Recognition {
 	state := &telemetry.LearningStateT{
 		AtNs:     at,
-		Steps:    held.frames,
+		Steps:    frames,
 		Status:   held.status(),
 		Restored: held.space.Formed,
 		Markets:  held.markets(at),
@@ -92,9 +93,185 @@ func (held *replay) state(at int64) *Recognition {
 		state.Decisions += uint64(held.links)
 		learners = append(learners, held.held)
 	}
-	state.Recognition = held.recognised(at, learners)
+	state.Recognition = held.recognised(at, frames, learners)
+	state.Rehearsal = held.rehearsal(frames, learners)
 
 	return &Recognition{state: state}
+}
+
+/*
+rehearsal restores the per-learner tape lanes the dashboard draws: one track
+per learner, the mounted fragment it is being shown, and one arrow for each
+precursor answer its memory currently holds. The new pipeline has no wallet,
+so the grading fields stay at zero and only the lanes that genuinely exist
+are populated.
+*/
+func (held *replay) rehearsal(
+	frames uint64, learners []*telemetry.LearningLearnerT,
+) *telemetry.LearningRehearsalT {
+	rehearsal := &telemetry.LearningRehearsalT{
+		Status:       held.status(),
+		Workers:      int32(len(learners)),
+		Episodes:     uint64(held.fragments),
+		Trained:      uint64(held.fragments),
+		Observations: frames,
+		Budget:       uint64(max(held.fragments, 1)),
+		Runs:         1,
+		Tracks:       make([]*telemetry.LearningTrackT, 0, len(learners)),
+	}
+	steps, symbol, entry, exit := held.tapeSteps()
+
+	for index, learner := range learners {
+		rehearsal.Tracks = append(
+			rehearsal.Tracks, learnerTrack(index, learner, steps, symbol, entry, exit, frames),
+		)
+	}
+
+	return rehearsal
+}
+
+/* tapeSteps projects the first mounted fragment into one scalar per frame. */
+func (held *replay) tapeSteps() (
+	[]*telemetry.LearningStepT, string, int32, int32,
+) {
+	if len(held.tape) == 0 {
+		return nil, "", -1, -1
+	}
+	leg := held.tape[0]
+	steps := make([]*telemetry.LearningStepT, 0, len(leg))
+	symbol := ""
+	entry, exit := int32(-1), int32(-1)
+
+	for index, frame := range leg {
+		value, defined := frameValue(frame)
+
+		if symbol == "" && len(frame) > 0 {
+			symbol = frame[0].Label
+		}
+		moment := frameMoment(frame)
+
+		if moment == "enter" && entry < 0 {
+			entry = int32(index)
+		}
+
+		if moment == "exit" {
+			exit = int32(index)
+		}
+		at := int64(0)
+
+		if len(frame) > 0 && !frame[0].At.IsZero() {
+			at = frame[0].At.UnixNano()
+		}
+		steps = append(steps, &telemetry.LearningStepT{
+			AtNs: at, Value: value, Defined: defined,
+		})
+	}
+
+	return steps, symbol, entry, exit
+}
+
+/* frameValue picks the most legible scalar a frame carries. */
+func frameValue(frame []*data.Measurement[float64]) (float64, bool) {
+	for _, measurement := range frame {
+		if measurement == nil || len(measurement.Metrics) == 0 {
+			continue
+		}
+
+		for _, key := range []string{"level", "rate", "value", "raw"} {
+			if metric, ok := measurement.Metrics[key]; ok {
+				return metric.Raw, true
+			}
+		}
+
+		for _, metric := range measurement.Metrics {
+			return metric.Raw, true
+		}
+	}
+
+	return 0, false
+}
+
+/* frameMoment reads the moment the tape named this frame, if it named one. */
+func frameMoment(frame []*data.Measurement[float64]) string {
+	for _, measurement := range frame {
+		if measurement == nil {
+			continue
+		}
+
+		if moment := measurement.Provenance["moment"]; moment != "" {
+			return moment
+		}
+	}
+
+	return ""
+}
+
+/* learnerTrack builds one lane and the arrows that learner's memory holds. */
+func learnerTrack(
+	index int,
+	learner *telemetry.LearningLearnerT,
+	steps []*telemetry.LearningStepT,
+	symbol string,
+	entry, exit int32,
+	frames uint64,
+) *telemetry.LearningTrackT {
+	length := int32(len(steps))
+	playhead := int32(0)
+
+	if length > 0 {
+		playhead = int32(frames % uint64(length))
+	}
+	marks := make([]*telemetry.LearningMarkT, 0, len(learner.Answers))
+
+	for mark, answer := range learner.Answers {
+		marks = append(marks, &telemetry.LearningMarkT{
+			Id:      uint64(mark),
+			Index:   momentIndex(answer.Asked, entry, exit, length),
+			Kind:    answer.Answered,
+			Value:   answer.Confidence,
+			Graded:  answer.Confidence > 0,
+			Verdict: answer.Answered,
+		})
+	}
+
+	return &telemetry.LearningTrackT{
+		Id:     int32(index),
+		Symbol: symbol,
+		Index:  playhead,
+		Length: length,
+		Stride: 1,
+		Steps:  steps,
+		Marks:  marks,
+		Entry:  entry,
+		Exit:   exit,
+		Queued: max(length-1, 0),
+	}
+}
+
+/* momentIndex places a precursor answer on the lane it describes. */
+func momentIndex(moment string, entry, exit, length int32) int32 {
+	if length <= 0 {
+		return 0
+	}
+
+	switch moment {
+	case "enter":
+		if entry >= 0 {
+			return entry
+		}
+
+		return length / 3
+	case "exit":
+		if exit >= 0 {
+			return exit
+		}
+
+		return 2 * length / 3
+	case "hold":
+		return length / 2
+	}
+
+	return 0
 }
 
 /* status is what the learning path is waiting on, in its own words. */
@@ -177,12 +354,12 @@ func (held *replay) markets(at int64) []*telemetry.LearningDevelopmentT {
 
 /* recognised is the precursor view: the grid, and what each learner holds. */
 func (held *replay) recognised(
-	at int64, learners []*telemetry.LearningLearnerT,
+	at int64, frames uint64, learners []*telemetry.LearningLearnerT,
 ) *telemetry.LearningRecognitionT {
 	return &telemetry.LearningRecognitionT{
 		AtNs:      at,
 		Fragments: int32(held.fragments),
-		Frames:    held.frames,
+		Frames:    frames,
 		Grid:      held.layout(),
 		Learners:  learners,
 	}
@@ -237,12 +414,12 @@ The questions are the learner's own stored sequences, so what comes back is the
 learner being asked about something it has actually seen rather than about a
 situation invented to make it look decisive.
 */
-func learner(index int, memory core.Primitive) reading {
+func learner(index int, memory *store.Retained[*iradix.Tree[[]byte]]) reading {
 	answer := reading{
 		agent: &telemetry.LearningAgentT{Id: int32(index), Status: "recognising"},
 		held:  &telemetry.LearningLearnerT{Id: int32(index)},
 	}
-	tree := core.To[*iradix.Tree[[]byte]](transport.NewApply(memory, nil).Next(nil))
+	tree := memory.Read()
 
 	if tree == nil {
 		answer.agent.Status = "empty"
@@ -348,16 +525,11 @@ func ask(
 	if len(sequence) == 0 {
 		return nil
 	}
-	recall := associative.NewRecall(
-		transport.NewIO(core.From(tree)),
-		transport.NewIO(core.From(cognition.Evaluation{
-			Context: sequence, Config: cognition.DefaultConfig(), Step: step,
-		})),
-	)
-	var given cognition.Evaluation
-
-	for answered := recall.Next(nil); answered != nil; answered = recall.Next(nil) {
-		given = core.To[cognition.Evaluation](answered)
+	given, err := transport.Evaluate(associative.NewRecall(store.NewRetained(tree)), transport.Values(cognition.Evaluation{
+		Context: sequence, Config: cognition.DefaultConfig(), Step: step,
+	}))
+	if err != nil {
+		return nil
 	}
 
 	return &telemetry.LearningAnswerT{

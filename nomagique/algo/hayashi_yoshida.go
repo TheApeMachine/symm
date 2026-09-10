@@ -1,94 +1,101 @@
 package algo
 
 import (
+	"iter"
+	"math"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
 )
 
-/* HayashiYoshida owns two typed return paths and their asynchronous overlap sum. */
-type HayashiYoshida struct {
-	core.PrimitiveError
-	paths     [2]equation.LogReturns
-	seed      *transport.IO
-	current   core.Primitive
-	normalize core.Primitive
-}
-
 /*
-NewHayashiYoshida computes asynchronous covariance from {left,right} observation
-collections. Each return contributes once to its own energy and to every strictly
-
-	overlapping cross-product. Support counts overlaps, not independent samples.
-
-The existing correlation primitive owns energy normalization, without clipping.
+HayashiYoshida owns asynchronous covariance of two already-decoded return
+paths. Each return contributes once to its energy and to every strictly
+overlapping cross-product. Support counts overlaps, not independent samples.
 */
-func NewHayashiYoshida() *HayashiYoshida {
-	return &HayashiYoshida{
-		seed:      transport.NewIO(core.From(map[string]core.Primitive{})),
-		normalize: correlation.NewCorrelation(),
-	}
+type HayashiYoshida struct {
+	core.Base[equation.LagProfileInput, equation.LagEstimate]
+	paths     [2]equation.LogReturns
+	normalize *equation.Correlation[float64]
 }
 
-/* Next decodes one pair and advances the earlier-ending interval at each overlap. */
-func (estimator *HayashiYoshida) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(estimator.seed, input,
-		func(_ map[string]core.Primitive, fields map[string]core.Primitive) map[string]core.Primitive {
-			for index, name := range [2]string{"left", "right"} {
-				observations, err := core.Field[[]core.Primitive](fields, name)
+func NewHayashiYoshida() *HayashiYoshida {
+	return &HayashiYoshida{normalize: equation.NewCorrelation[float64]()}
+}
 
-				if err != nil {
-					estimator.Error(err)
-					return nil
-				}
+func (op *HayashiYoshida) Next(
+	in iter.Seq[core.Primitive[equation.LagProfileInput, equation.LagProfileInput]],
+) iter.Seq[core.Primitive[equation.LagEstimate, equation.LagEstimate]] {
+	return func(yield func(core.Primitive[equation.LagEstimate, equation.LagEstimate]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
 
-				if err := estimator.paths[index].Load(observations); err != nil {
-					estimator.Error(err)
-					return nil
-				}
+			if err := op.paths[0].Load(input.Left); err != nil {
+				op.Error(err)
+				return
 			}
-			estimate, err := estimator.Estimate(&estimator.paths[0], &estimator.paths[1], 0)
-			estimator.Error(err)
-			return estimate
-		}, estimator)
 
-	if result != nil {
-		estimator.current = result
+			if err := op.paths[1].Load(input.Right); err != nil {
+				op.Error(err)
+				return
+			}
+
+			estimate, err := op.Estimate(&op.paths[0], &op.paths[1], 0)
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(estimate)) {
+				return
+			}
+		}
 	}
-	return result
 }
 
 /*
 Estimate owns covariance evaluation for both direct and lagged callers. Shifting
-all timestamps leaves log differences and their energies unchanged. Normalization
-still belongs to the configured correlation graph.
+all timestamps leaves log differences and their energies unchanged.
 */
-func (estimator *HayashiYoshida) Estimate(
+func (op *HayashiYoshida) Estimate(
 	left, right *equation.LogReturns, lag int64,
-) (map[string]core.Primitive, error) {
+) (equation.LagEstimate, error) {
 	if (lag > 0 && left.Through > math.MaxInt64-lag) ||
 		(lag < 0 && left.From < math.MinInt64-lag) {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "hayashi-yoshida: timestamp offset overflows int64", nil))
+		return equation.LagEstimate{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hayashi-yoshida: timestamp offset overflows int64",
+			nil,
+		))
 	}
-	covariance, support := estimator.Overlap(left.Intervals, right.Intervals, lag)
-	fields := map[string]core.Primitive{
-		"covariance": core.From(covariance), "support": core.From(support),
-		"left_energy": core.From(left.Energy), "right_energy": core.From(right.Energy),
-	}
-	coefficient, err := transport.Evaluate[float64](estimator.normalize, core.From(fields))
+
+	covariance, support := op.Overlap(left.Intervals, right.Intervals, lag)
+	correlation, err := transport.Evaluate(op.normalize, transport.Values(equation.CorrelationInput[float64]{
+		Covariance:  covariance,
+		LeftEnergy:  left.Energy,
+		RightEnergy: right.Energy,
+	}))
 
 	if err != nil {
-		return nil, errnie.Error(err)
+		return equation.LagEstimate{}, errnie.Error(err)
 	}
-	fields["correlation"] = core.From(coefficient)
-	return fields, nil
+
+	return equation.LagEstimate{
+		Correlation: correlation,
+		Covariance:  covariance,
+		Support:     support,
+		LeftEnergy:  left.Energy,
+		RightEnergy: right.Energy,
+	}, nil
 }
 
-/* Overlap traverses borrowed, ordered return intervals without shifted copies. */
-func (estimator *HayashiYoshida) Overlap(
+/*
+Overlap traverses borrowed, ordered return intervals without shifted copies.
+*/
+func (op *HayashiYoshida) Overlap(
 	left, right []equation.LogReturn, lag int64,
 ) (covariance, support float64) {
 	leftIndex, rightIndex := 0, 0
@@ -107,9 +114,9 @@ func (estimator *HayashiYoshida) Overlap(
 			leftIndex++
 			continue
 		}
+
 		rightIndex++
 	}
+
 	return covariance, support
 }
-
-func (estimator *HayashiYoshida) Read() any { return core.To[any](estimator.current) }

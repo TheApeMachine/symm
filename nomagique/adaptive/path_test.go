@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -15,52 +15,50 @@ func TestPathNext(t *testing.T) {
 		path := adaptive.NewPath(window)
 		expected := adaptive.NewWindow()
 		retained := []float64{}
-		var fields map[string]core.Primitive
-		var first map[string]core.Primitive
+		var reading equation.Price
+		var firstCount float64
 		shed := false
 		var at int64
 
-		// Stable observations, a rising regime, a reversal and a stable plateau
-		// force both support growth and change-driven reductions.
 		for phase, level := range []float64{100, 1000, 10, 500} {
 			for index := range 64 {
 				at++
 				value := level + float64(index%3)
-				reading := expected.Observe(value)
+				policy := expected.Observe(value)
 				retained = append(retained, value)
 
-				if len(retained) > int(reading.Capacity) {
-					retained = retained[len(retained)-int(reading.Capacity):]
+				if len(retained) > int(policy.Capacity) {
+					retained = retained[len(retained)-int(policy.Capacity):]
 					shed = true
 				}
-				var err error
-				fields, err = transport.Evaluate[map[string]core.Primitive](path, core.Record(map[string]any{"at": at, "value": value}))
-				So(err, ShouldBeNil)
-				observations, err := core.Field[[]core.Primitive](fields, "observations")
-				So(err, ShouldBeNil)
-				So(len(observations), ShouldEqual, len(retained))
 
-				for offset, observation := range observations {
-					actual, err := core.Field[float64](core.To[map[string]core.Primitive](observation), "value")
-					So(err, ShouldBeNil)
-					So(actual, ShouldEqual, retained[offset])
+				out, err := transport.Evaluate(path, transport.Values(equation.Price{At: at, Value: value}))
+				So(err, ShouldBeNil)
+				So(len(out.Observations), ShouldEqual, len(retained))
+
+				for offset, observation := range out.Observations {
+					So(observation.Value, ShouldEqual, retained[offset])
 				}
 
 				if phase == 0 && index == 0 {
-					first = fields
+					firstCount = out.Count
 				}
+
+				reading = equation.Price{At: at, Value: value}
 			}
 		}
+
 		So(shed, ShouldBeTrue)
-		So(core.To[float64](first["count"]), ShouldEqual, 1)
+		So(firstCount, ShouldEqual, 1)
+		_ = reading
 
 		Convey("A regressed event does not advance the retention policy or edit history", func() {
 			before := window.Reading
-			regressed, err := transport.Evaluate[map[string]core.Primitive](path, core.Record(map[string]any{"at": at - 1, "value": -1000.0}))
+			regressed, err := transport.Evaluate(path, transport.Values(equation.Price{At: at - 1, Value: -1000}))
 			So(err, ShouldBeNil)
-			So(core.To[bool](regressed["accepted"]), ShouldBeFalse)
+			So(regressed.Accepted, ShouldBeFalse)
 			So(window.Reading, ShouldResemble, before)
-			So(core.To[float64](regressed["count"]), ShouldEqual, core.To[float64](fields["count"]))
+			So(regressed.Count, ShouldEqual, float64(len(retained)))
 		})
 	})
 }
@@ -72,10 +70,9 @@ func BenchmarkPathNext(b *testing.B) {
 
 	for b.Loop() {
 		sequence++
-		// Repeated changes exercise shrinking and regrowing history.
 		value := float64(100 + (sequence/64)%2*900 + sequence%3)
 
-		if _, err := transport.Evaluate[map[string]core.Primitive](path, core.Record(map[string]any{"at": sequence, "value": value})); err != nil {
+		if _, err := transport.Evaluate(path, transport.Values(equation.Price{At: sequence, Value: value})); err != nil {
 			b.Fatal(err)
 		}
 	}

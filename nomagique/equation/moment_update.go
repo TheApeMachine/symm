@@ -1,45 +1,42 @@
 package equation
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
-	"maps"
 )
 
-/* MomentUpdate applies the canonical typed recurrence at a named-record boundary. */
+/*
+MomentUpdateInput is the current sufficient statistics and the arriving value.
+*/
+type MomentUpdateInput struct {
+	Moments Moments
+	Value   float64
+}
+
+/*
+MomentUpdate applies the canonical typed recurrence.
+*/
 type MomentUpdate struct {
-	core.PrimitiveError
-	seed    *transport.IO
-	current core.Primitive
+	core.Base[MomentUpdateInput, MomentReading]
 }
 
-func NewMomentUpdate() core.Primitive {
-	return &MomentUpdate{seed: transport.NewIO(core.From(map[string]core.Primitive(nil)))}
+func NewMomentUpdate() *MomentUpdate {
+	return &MomentUpdate{}
 }
 
-func (update *MomentUpdate) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(update.seed, input, func(_ map[string]core.Primitive, fields map[string]core.Primitive) map[string]core.Primitive {
-		decoder := core.NewDecoder(fields)
-		moments := Moments{
-			Count: core.Decode[float64](decoder, "count"), Mean: core.Decode[float64](decoder, "mean"), M2: core.Decode[float64](decoder, "m2"),
-		}
-		value := core.Decode[float64](decoder, "value")
+func (op *MomentUpdate) Next(
+	in iter.Seq[core.Primitive[MomentUpdateInput, MomentUpdateInput]],
+) iter.Seq[core.Primitive[MomentReading, MomentReading]] {
+	return func(yield func(core.Primitive[MomentReading, MomentReading]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			moments := input.Moments
+			reading := moments.Update(input.Value)
 
-		if err := decoder.Error(); err != nil {
-			update.Error(err)
-			return nil
+			if !yield(op.Carrier(reading)) {
+				return
+			}
 		}
-		reading := moments.Update(value)
-		output := maps.Clone(fields)
-		output["prior_count"], output["prior_mean"], output["prior_m2"] = core.From(reading.Prior.Count), core.From(reading.Prior.Mean), core.From(reading.Prior.M2)
-		output["count"], output["mean"], output["m2"] = core.From(reading.Count), core.From(reading.Mean), core.From(reading.M2)
-		output["delta"] = core.From(reading.Delta)
-		return output
-	}, update)
-
-	if result != nil {
-		update.current = result
 	}
-	return result
 }
-func (update *MomentUpdate) Read() any { return core.To[any](update.current) }

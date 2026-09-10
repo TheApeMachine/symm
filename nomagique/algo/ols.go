@@ -1,162 +1,210 @@
 package algo
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/collection"
+	"fmt"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/matrix"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/vector"
 )
 
-// NewOLS composes ordinary least squares via the supplied source's normal
-// equations, with partial-pivot Gauss-Jordan solving replacing its LU backend.
-// Input is {x: [][]float64, y: []float64}; callers include an intercept column
-// explicitly. n<=p and rank deficiency yield defined=false, empty coefficients,
-// and NaN residual variance. There is no ridge or invented rank tolerance.
-// The configured tolerance expression is forwarded to the linear solver.
-func NewOLS(tolerance core.Primitive) core.Primitive {
-	memory := store.NewRetained(core.From(map[string]core.Primitive{}))
-	state := transport.NewPipe(store.NewKV[string](memory), memory)
-	parameters := transport.NewApply(store.NewGet("parameters"), memory)
-	prepare := store.NewRecord(
-		transport.NewPipe(),
-		transport.NewPipe(store.NewGet("x"), transport.NewSpread[[]float64](), equation.NewCount(), store.NewKey("observations")),
-		transport.NewPipe(
-			store.NewGet("x"),
-			matrix.NewTranspose[float64](),
-			transport.NewSpread[[]float64](),
-			equation.NewCount(),
-			store.NewKey("parameters"),
-		),
-		transport.NewPipe(store.NewGet("y"), transport.NewSpread[float64](), equation.NewCount(), store.NewKey("outcomes")),
-		transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("defined")),
-		transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("rank")),
-		transport.NewPipe(store.NewConstant(core.From([]float64{})), store.NewKey("coefficients")),
-		transport.NewPipe(store.NewConstant(core.From([]float64{})), store.NewKey("coefficient_variance")),
-		transport.NewPipe(
-			equation.NewRatio[float64](store.NewConstant(core.From(0.0)), store.NewConstant(core.From(0.0))),
-			store.NewKey("residual_variance"),
-		),
-		transport.NewPipe(
-			equation.NewRatio[float64](store.NewConstant(core.From(0.0)), store.NewConstant(core.From(0.0))),
-			store.NewKey("residual_sse"),
-		),
-	)
-	cross := store.NewRecord(
-		transport.NewPipe(),
-		transport.NewPipe(
-			matrix.NewProduct(transport.NewPipe(store.NewGet("x"), matrix.NewTranspose[float64]()), store.NewGet("x")),
-			store.NewKey("xtx"),
-		),
-		transport.NewPipe(
-			matrix.NewProduct(
-				transport.NewPipe(store.NewGet("x"), matrix.NewTranspose[float64]()),
-				transport.NewPipe(store.NewGet("y"), transport.NewSpread[float64](), matrix.NewColumn()),
-			),
-			store.NewKey("xty"),
-		),
-		transport.NewPipe(store.NewGet("y"), transport.NewSpread[float64](), equation.NewEnergy(), store.NewKey("yty")),
-	)
-	solve := transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(store.NewGet("xtx"), store.NewKey("left")),
-			transport.NewPipe(
-				matrix.NewAugment(store.NewGet("xty"), transport.NewPipe(store.NewGet("parameters"), matrix.NewIdentity())),
-				store.NewKey("right"),
-			),
-		),
-		NewGaussJordan(tolerance),
-		store.NewRecord(
-			transport.NewPipe(store.NewGet("solution"), store.NewKey("solution")),
-			transport.NewPipe(store.NewGet("rank"), store.NewKey("rank")),
-			transport.NewPipe(store.NewGet("defined"), store.NewKey("defined")),
-		),
-		state,
-	)
-	coefficients := transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				store.NewGet("solution"),
-				transport.NewSpread[[]float64](),
-				transport.NewMap(collection.NewAt[float64](transport.NewIO(core.From(0.0)))),
-				transport.NewCollect[float64](),
-				store.NewKey("coefficients"),
-			),
-			transport.NewPipe(
-				store.NewGet("solution"),
-				transport.NewSpread[[]float64](),
-				transport.NewMap(collection.NewTail[float64](transport.NewPipe(parameters, calculus.NewConvert[float64, int]()))),
-				transport.NewCollect[[]float64](),
-				store.NewKey("inverse"),
-			),
-		),
-		state,
-	)
-	residual := transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					store.NewGet("yty"),
-					vector.NewDot(
-						transport.NewPipe(store.NewGet("coefficients"), transport.NewSpread[float64]()),
-						transport.NewPipe(store.NewGet("xty"), transport.NewSpread[[]float64](), transport.NewSpread[float64]()),
-					),
-				),
-				calculus.NewMaximum(transport.NewIO(core.From(0.0))),
-				store.NewKey("residual_sse"),
-			),
-		),
-		state,
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				equation.NewRatio[float64](
-					store.NewGet("residual_sse"),
-					equation.NewDifference[float64](store.NewGet("observations"), store.NewGet("parameters")),
-				),
-				store.NewKey("residual_variance"),
-			),
-		),
-		state,
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				vector.NewScale(
-					transport.NewPipe(store.NewGet("inverse"), matrix.NewDiagonal()), store.NewGet("residual_variance")),
-				store.NewKey("coefficient_variance"),
-			),
-		),
-	)
-	fit := transport.NewPipe(
-		cross,
-		state,
-		solve,
-		logic.NewGate(store.NewGet("defined"), transport.NewPipe(coefficients, residual), transport.NewPipe()),
-	)
-	return transport.NewPipe(
-		prepare,
-		state,
-		logic.NewGate(
-			equation.NewAll(
-				equation.NewEqual[float64](store.NewGet("observations"), store.NewGet("outcomes")),
-				transport.NewPipe(store.NewGet("x"), matrix.NewFinite()),
-				transport.NewPipe(store.NewGet("y"), transport.NewSpread[float64](), vector.NewFinite()),
-			),
-			logic.NewGate(
-				equation.NewAll(
-					equation.NewGreater[float64](store.NewGet("parameters"), store.NewConstant(core.From(0.0))),
-					equation.NewGreater[float64](store.NewGet("observations"), store.NewGet("parameters")),
-				),
-				fit,
-				transport.NewPipe(),
-			),
-			logic.NewReject(core.ErrShape),
-		),
-	)
+/*
+Design is the observation matrix and its outcomes. Callers include an intercept
+column explicitly.
+*/
+type Design struct {
+	X [][]float64
+	Y []float64
+}
+
+/*
+Fit is one ordinary-least-squares solution. Rank deficiency and n<=p are
+Defined=false with empty coefficients and an undefined residual variance.
+*/
+type Fit struct {
+	Coefficients        []float64
+	CoefficientVariance []float64
+	Rank                int
+	Observations        int
+	Parameters          int
+	ResidualSSE         float64
+	ResidualVariance    float64
+	Defined             bool
+}
+
+/*
+OLS owns the normal equations and the configured linear solver.
+*/
+type OLS struct {
+	core.Base[Design, Fit]
+	solver *GaussJordan
+}
+
+func NewOLS(tolerance float64) *OLS {
+	return &OLS{solver: NewGaussJordan(tolerance)}
+}
+
+func (op *OLS) Next(
+	in iter.Seq[core.Primitive[Design, Design]],
+) iter.Seq[core.Primitive[Fit, Fit]] {
+	return func(yield func(core.Primitive[Fit, Fit]) bool) {
+		for arriving := range in {
+			fit, err := op.Fit(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(fit)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Fit forms X'X β = X'y and solves it. There is no ridge or invented rank.
+*/
+func (op *OLS) Fit(design Design) (Fit, error) {
+	observations := len(design.X)
+
+	if observations != len(design.Y) {
+		return Fit{}, fmt.Errorf("%w: OLS design rows and outcomes differ", core.ErrShape)
+	}
+
+	parameters := 0
+
+	if observations > 0 {
+		parameters = len(design.X[0])
+	}
+
+	for _, row := range design.X {
+		if len(row) != parameters {
+			return Fit{}, fmt.Errorf("%w: OLS design is ragged", core.ErrShape)
+		}
+	}
+
+	undefined := Fit{
+		Observations:        observations,
+		Parameters:          parameters,
+		ResidualVariance:    math.NaN(),
+		Coefficients:        []float64{},
+		CoefficientVariance: []float64{},
+	}
+
+	if observations == 0 || parameters == 0 || observations <= parameters {
+		return undefined, nil
+	}
+
+	transpose, err := transport.Evaluate(matrix.NewTranspose[float64](), transport.Values(design.X))
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	product := matrix.NewProduct()
+	xtx := product.Multiply(transpose, design.X)
+
+	if err := product.Error(); err != nil {
+		return Fit{}, err
+	}
+
+	column, err := transport.Evaluate(matrix.NewColumn(), transport.Values(design.Y...))
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	xty := product.Multiply(transpose, column)
+
+	if err := product.Error(); err != nil {
+		return Fit{}, err
+	}
+
+	identity, err := transport.Evaluate(matrix.NewIdentity(), transport.Values(float64(parameters)))
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	right, err := transport.Evaluate(matrix.NewAugment(), transport.Values(matrix.AugmentInput{
+		Left:  xty,
+		Right: identity,
+	}))
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	solved, err := op.solver.Solve(System{Left: xtx, Right: right})
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	if !solved.Defined {
+		return undefined, nil
+	}
+
+	coefficients := make([]float64, parameters)
+	inverse := make([][]float64, parameters)
+	xtyVector := make([]float64, parameters)
+
+	for row := range parameters {
+		coefficients[row] = solved.Solution[row][0]
+		inverse[row] = solved.Solution[row][1:]
+		xtyVector[row] = xty[row][0]
+	}
+
+	projection, err := transport.Evaluate(vector.NewDot(), transport.Values(vector.Pair{
+		Left:  coefficients,
+		Right: xtyVector,
+	}))
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	energy := 0.0
+
+	for _, outcome := range design.Y {
+		energy += outcome * outcome
+	}
+
+	sse := energy - projection
+
+	if sse < 0 {
+		sse = 0
+	}
+
+	residualVariance := sse / float64(observations-parameters)
+	diagonal, err := transport.Evaluate(matrix.NewDiagonal(), transport.Values(inverse))
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	variance, err := transport.Evaluate(vector.NewScale(), transport.Values(vector.ScaleInput{
+		Values: diagonal,
+		Factor: residualVariance,
+	}))
+
+	if err != nil {
+		return Fit{}, err
+	}
+
+	return Fit{
+		Coefficients:        coefficients,
+		CoefficientVariance: variance,
+		Rank:                solved.Rank,
+		Observations:        observations,
+		Parameters:          parameters,
+		ResidualSSE:         sse,
+		ResidualVariance:    residualVariance,
+		Defined:             true,
+	}, nil
 }

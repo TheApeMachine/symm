@@ -1,21 +1,33 @@
 package logic
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Or owns only its Boolean operation.
+/*
+Or owns one Boolean operation. Configuration supplies the value a run starts
+from. What it hands over is the running disjunction after every arrival.
+*/
 type Or struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+	core.Base[bool, bool]
 }
 
-func NewOr(seed core.Primitive) *Or { return &Or{seed: seed} }
-func (operation *Or) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.seed, in, func(held, value bool) bool { return held || value }, operation)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewOr(current bool) *Or {
+	op := &Or{}
+	op.Carrier(current)
+	return op
 }
-func (operation *Or) Read() any { return core.To[any](operation.current) }
+
+func (op *Or) Next(
+	in iter.Seq[core.Primitive[bool, bool]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(op.Read() || arriving.Read())) {
+				return
+			}
+		}
+	}
+}

@@ -1,57 +1,91 @@
 package equation
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewResidualSpan reproduces the supplied calibration range update. Its count
-// stays at one until the first distinct residual, then counts every update.
-// It is therefore the source's state counter, not a count of observations.
-func NewResidualSpan() core.Primitive {
-	return transport.NewPipe(
-		logic.NewGate(
-			NewEqual[float64](store.NewGet("count"), store.NewConstant(core.From(0.0))),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(store.NewGet("residual"), store.NewKey("minimum")),
-				transport.NewPipe(store.NewGet("residual"), store.NewKey("maximum")),
-				transport.NewPipe(store.NewConstant(core.From(1.0)), store.NewKey("count")),
-				transport.NewPipe(store.NewGet("predicted"), store.NewKey("prev")),
-			),
-			transport.NewPipe(),
-		),
-		logic.NewGate(
-			NewGreater[float64](store.NewGet("count"), store.NewConstant(core.From(1.0))),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(NewMinimum(store.NewGet("minimum"), store.NewGet("residual")), store.NewKey("minimum")),
-				transport.NewPipe(NewMaximum(store.NewGet("maximum"), store.NewGet("residual")), store.NewKey("maximum")),
-				transport.NewPipe(NewSum[float64](store.NewGet("count"), store.NewConstant(core.From(1.0))), store.NewKey("count")),
-			),
-			transport.NewPipe(),
-		),
-		logic.NewGate(
-			NewAll(
-				NewEqual[float64](store.NewGet("count"), store.NewConstant(core.From(1.0))),
-				transport.NewPipe(
-					NewEqual[float64](store.NewGet("residual"), store.NewGet("minimum")),
-					logic.NewNot(transport.NewIO(core.From(false))),
-				),
-			),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(NewMinimum(store.NewGet("minimum"), store.NewGet("residual")), store.NewKey("minimum")),
-				transport.NewPipe(NewMaximum(store.NewGet("maximum"), store.NewGet("residual")), store.NewKey("maximum")),
-				transport.NewPipe(store.NewConstant(core.From(2.0)), store.NewKey("count")),
-			),
-			transport.NewPipe(),
-		),
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(NewDifference[float64](store.NewGet("maximum"), store.NewGet("minimum")), store.NewKey("span")),
-		),
-	)
+/*
+ResidualSpanInput is the running calibration range and the arriving residual.
+*/
+type ResidualSpanInput struct {
+	Count    float64
+	Minimum  float64
+	Maximum  float64
+	Residual float64
+}
+
+/*
+ResidualSpanResult is the source's state counter and the observed residual
+range. Count stays at one until the first distinct residual, then counts every
+update.
+*/
+type ResidualSpanResult struct {
+	Count   float64
+	Minimum float64
+	Maximum float64
+	Span    float64
+}
+
+/*
+ResidualSpan reproduces the supplied calibration range update.
+*/
+type ResidualSpan struct {
+	core.Base[ResidualSpanInput, ResidualSpanResult]
+}
+
+func NewResidualSpan() *ResidualSpan {
+	return &ResidualSpan{}
+}
+
+func (op *ResidualSpan) Next(
+	in iter.Seq[core.Primitive[ResidualSpanInput, ResidualSpanInput]],
+) iter.Seq[core.Primitive[ResidualSpanResult, ResidualSpanResult]] {
+	return func(yield func(core.Primitive[ResidualSpanResult, ResidualSpanResult]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			result := ResidualSpanResult{
+				Count:   input.Count,
+				Minimum: input.Minimum,
+				Maximum: input.Maximum,
+			}
+
+			if input.Count == 0 {
+				result.Minimum = input.Residual
+				result.Maximum = input.Residual
+				result.Count = 1
+			}
+
+			if result.Count > 1 {
+				if input.Residual < result.Minimum {
+					result.Minimum = input.Residual
+				}
+
+				if input.Residual > result.Maximum {
+					result.Maximum = input.Residual
+				}
+
+				result.Count = input.Count + 1
+			}
+
+			if result.Count == 1 && input.Residual != result.Minimum {
+				if input.Residual < result.Minimum {
+					result.Minimum = input.Residual
+				}
+
+				if input.Residual > result.Maximum {
+					result.Maximum = input.Residual
+				}
+
+				result.Count = 2
+			}
+
+			result.Span = result.Maximum - result.Minimum
+
+			if !yield(op.Carrier(result)) {
+				return
+			}
+		}
+	}
 }

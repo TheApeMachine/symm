@@ -1,39 +1,46 @@
 package collection
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"iter"
 	"slices"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Tail selects the last configured number of collection members. Capacity is
-// supplied as an integer Primitive, never inferred from the payload's use case.
+/*
+Tail selects the last configured number of collection members. Capacity is
+configuration, never inferred from the payload.
+*/
 type Tail[T any] struct {
-	core.PrimitiveError
-	capacity, seed, current core.Primitive
+	core.Base[[]T, []T]
+	capacity int
 }
 
-func NewTail[T any](capacity core.Primitive) *Tail[T] {
-	return &Tail[T]{capacity: capacity, seed: transport.NewIO(core.From([]T{}))}
-}
-func (t *Tail[T]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(
-		t.seed,
-		in,
-		func(_ []T, value []T) []T {
-			count := 0
-			core.Yield(transport.NewIO(core.From(0)), t.capacity, func(_ int, n int) int { count = n; return n }, t)
-			if count < 0 {
-				t.Error(core.ErrShape)
-				return nil
-			}
-			return slices.Clone(value[max(0, len(value)-count):])
-		},
-		t,
-	)
-	if result != nil {
-		t.current = result
+func NewTail[T any](capacity int) *Tail[T] {
+	op := &Tail[T]{capacity: capacity}
+
+	if capacity < 0 {
+		op.Error(core.ErrShape)
 	}
-	return result
+
+	return op
 }
-func (t *Tail[T]) Read() any { return core.To[any](t.current) }
+
+func (op *Tail[T]) Next(
+	in iter.Seq[core.Primitive[[]T, []T]],
+) iter.Seq[core.Primitive[[]T, []T]] {
+	return func(yield func(core.Primitive[[]T, []T]) bool) {
+		if op.Error() != nil {
+			return
+		}
+
+		for arriving := range in {
+			values := arriving.Read()
+			start := max(0, len(values)-op.capacity)
+
+			if !yield(op.Carrier(slices.Clone(values[start:]))) {
+				return
+			}
+		}
+	}
+}

@@ -1,18 +1,51 @@
 package vector
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewSum adds paired scalar streams and collects their vector.
-func NewSum(left, right core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		transport.NewZip(left, right),
-		transport.NewMap(
-			transport.NewPipe(transport.NewSpread[core.Primitive](), arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0)))),
-		),
-		transport.NewCollect[float64](),
-	)
+/*
+Pair is two vectors of equal length.
+*/
+type Pair struct {
+	Left  []float64
+	Right []float64
+}
+
+/*
+Sum adds paired members. Unequal lengths are a shape error.
+*/
+type Sum struct {
+	core.Base[Pair, []float64]
+}
+
+func NewSum() *Sum {
+	return &Sum{}
+}
+
+func (op *Sum) Next(
+	in iter.Seq[core.Primitive[Pair, Pair]],
+) iter.Seq[core.Primitive[[]float64, []float64]] {
+	return func(yield func(core.Primitive[[]float64, []float64]) bool) {
+		for arriving := range in {
+			pair := arriving.Read()
+
+			if len(pair.Left) != len(pair.Right) {
+				op.Error(core.ErrShape)
+				continue
+			}
+
+			out := make([]float64, len(pair.Left))
+
+			for index, value := range pair.Left {
+				out[index] = value + pair.Right[index]
+			}
+
+			if !yield(op.Carrier(out)) {
+				return
+			}
+		}
+	}
 }

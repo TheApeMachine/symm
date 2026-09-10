@@ -1,21 +1,22 @@
-package store_test
+package store
 
 import (
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/tests"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestHasNext(t *testing.T) {
-	node := store.NewHas("x")
-	for _, example := range []struct {
-		fields map[string]any
-		want   bool
-	}{{map[string]any{"x": 0.0}, true}, {map[string]any{}, false}} {
-		output := tests.Drain(t, node, tests.Values(tests.Record(example.fields)))
-		tests.Sound(t, node)
-		if len(output) != 1 || output[0] != example.want {
-			t.Fatal(output)
-		}
-	}
+	Convey("Has reports membership of a configured key", t, func() {
+		op := NewHas[string, float64]("x")
+		out := tests.CollectSeq(op.Next(transport.Values(
+			map[string]float64{"x": 0},
+			map[string]float64{},
+		)))
+
+		So(out, ShouldResemble, []bool{true, false})
+		So(op.Error(), ShouldBeNil)
+	})
 }

@@ -1,61 +1,114 @@
 package liquidity
 
 import (
-	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/collection"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/equation/joint"
 	"github.com/theapemachine/symm/nomagique/equation/linear"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// newLiquidityGraph retains one joint model and three event-time regressions
-// per symbol. The configured log-moment view keeps noise absent until the prior
-// sample actually supports it. Velocity remains OLS, not a message difference.
-func newLiquidityGraph() core.Primitive {
-	field := func(name string, node core.Primitive) core.Primitive {
-		return transport.NewPipe(node, store.NewKey(name))
-	}
-	get := func(name string) core.Primitive { return store.NewGet(name) }
-	moments := []core.Primitive{transport.NewPipe()}
-	velocities := []core.Primitive{transport.NewPipe()}
+type GraphInput struct {
+	BestBid, BestAsk, BidQty, AskQty float64
+	At                               int64
+}
 
-	for index, name := range []string{"bid", "ask", "spread"} {
-		channel := name + "_moments"
-		moments = append(moments, field(channel, transport.NewPipe(
-			get("channels"), collection.NewAt[core.Primitive](store.NewConstant(core.From(float64(index)))),
-		)))
-		velocities = append(velocities, field(name+"_velocity", logic.NewGate(
-			transport.NewPipe(get(channel), get("has_prior")),
-			transport.NewPipe(
-				store.NewRecord(field("at", get("at")), field("value", transport.NewPipe(get(channel), get("residual")))),
-				linear.NewLocalRegression(),
-			),
-			store.NewConstant(core.Record(map[string]any{"slope_defined": false, "snr_defined": false})),
-		)))
+type Graph struct {
+	core.Base[GraphInput, data.ProjectionInput]
+	estimator *joint.Estimator
+	velocity  [3]*linear.LocalRegression
+}
+
+func newLiquidityGraph() *Graph {
+	return &Graph{
+		estimator: joint.NewEstimator(equation.NewWelford(), equation.NewWelford(), equation.NewWelford()),
+		velocity:  [3]*linear.LocalRegression{linear.NewLocalRegression(), linear.NewLocalRegression(), linear.NewLocalRegression()},
 	}
-	return transport.NewPipe(
-		store.NewRecord(transport.NewPipe(),
-			field("touch_notional:bid", equation.NewProduct[float64](get("best_bid_price"), get("touch_quantity:bid"))),
-			field("touch_notional:ask", equation.NewProduct[float64](get("best_ask_price"), get("touch_quantity:ask"))),
-			field("midpoint", equation.NewRatio[float64](equation.NewSum[float64](get("best_bid_price"), get("best_ask_price")), store.NewConstant(core.From(2.0)))),
-			field("spread", equation.NewDifference[float64](get("best_ask_price"), get("best_bid_price")))),
-		store.NewRecord(transport.NewPipe(),
-			field("relative_spread", equation.NewRatio[float64](get("spread"), get("midpoint"))),
-			field("two_sided_touch_notional", equation.NewMinimum(get("touch_notional:bid"), get("touch_notional:ask"))),
-			field("touch_notional_imbalance", equation.NewRatio[float64](equation.NewDifference[float64](get("touch_notional:bid"), get("touch_notional:ask")), equation.NewSum[float64](get("touch_notional:bid"), get("touch_notional:ask"))))),
-		store.NewRecord(transport.NewPipe(), field("values", transport.NewPipe(
-			transport.NewFan(transport.NewPipe(), transport.NewIO(get("touch_notional:bid"), get("touch_notional:ask"), get("relative_spread"))),
-			transport.NewMap(calculus.NewLog(transport.NewIO(core.From(0.0)))), transport.NewCollect[float64]()))),
-		joint.NewEstimator(transport.NewIO(algo.NewWelford(), algo.NewWelford(), algo.NewWelford())),
-		store.NewRecord(moments...),
-		store.NewRecord(velocities...),
-	)
+}
+
+func (op *Graph) Next(
+	in iter.Seq[core.Primitive[GraphInput, GraphInput]],
+) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
+	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+		for arriving := range in {
+			projected, err := op.observe(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(projected)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Graph) observe(input GraphInput) (data.ProjectionInput, error) {
+	bidNotional := input.BestBid * input.BidQty
+	askNotional := input.BestAsk * input.AskQty
+	midpoint := (input.BestBid + input.BestAsk) / 2
+	spread := input.BestAsk - input.BestBid
+	relative := spread / midpoint
+	values := map[string]float64{
+		"best_bid_price":           input.BestBid,
+		"best_ask_price":           input.BestAsk,
+		"touch_quantity:bid":       input.BidQty,
+		"touch_quantity:ask":       input.AskQty,
+		"touch_notional:bid":       bidNotional,
+		"touch_notional:ask":       askNotional,
+		"midpoint":                 midpoint,
+		"spread":                   spread,
+		"relative_spread":          relative,
+		"two_sided_touch_notional": math.Min(bidNotional, askNotional),
+		"touch_notional_imbalance": (bidNotional - askNotional) / (bidNotional + askNotional),
+	}
+	flags := map[string]bool{}
+	logged := []float64{math.Log(bidNotional), math.Log(askNotional), math.Log(relative)}
+	originals := []float64{bidNotional, askNotional, relative}
+	names := []string{"bid", "ask", "spread"}
+	result, err := transport.Evaluate(op.estimator, transport.Values(joint.Input{Values: logged}))
+
+	if err != nil {
+		return data.ProjectionInput{}, err
+	}
+
+	values["snr"] = result.SNR
+	flags["snr_defined"] = result.SNRDefined
+
+	for index, name := range names {
+		channel := result.Channels[index]
+		flags[name+"_has_prior"] = channel.HasPrior
+		flags[name+"_noise_defined"] = channel.ScoreScale > 0
+		flags[name+"_slope_defined"] = false
+		flags[name+"_snr_defined"] = false
+		values[name+"_count"] = channel.Count
+		values[name+"_residual"] = channel.Residual
+
+		if channel.HasPrior {
+			values[name+"_baseline"] = channel.Baseline
+			values[name+"_ratio"] = originals[index] / channel.Baseline
+			values[name+"_zscore"] = channel.ZScore
+			values[name+"_noise"] = channel.ScoreScale
+			summary, err := transport.Evaluate(op.velocity[index], transport.Values(equation.Price{At: input.At, Value: channel.Residual}))
+
+			if err != nil {
+				return data.ProjectionInput{}, err
+			}
+
+			flags[name+"_slope_defined"] = summary.SlopeDefined
+			flags[name+"_snr_defined"] = summary.SNRDefined
+			values[name+"_slope"] = summary.Slope
+			values[name+"_velocity_snr"] = summary.SNR
+		}
+	}
+
+	return data.ProjectionInput{Values: values, Flags: flags}, nil
 }
 
 func liquidityProjection() *data.Projection {
@@ -71,26 +124,27 @@ func liquidityProjection() *data.Projection {
 	}
 	for _, side := range []string{"bid", "ask", "spread"} {
 		names := []string{"touch_notional_baseline:" + side, "depth_ratio:" + side, "depth_divergence:" + side, "depth_noise_scale:" + side, "depth_zscore:" + side, "divergence_velocity:" + side, "divergence_velocity_snr:" + side}
+		keys := []string{side + "_baseline", side + "_ratio", side + "_residual", side + "_noise", side + "_zscore"}
 		if side == "spread" {
 			names = []string{"relative_spread_baseline", "spread_ratio", "spread_divergence", "spread_noise_scale", "spread_zscore", "spread_divergence_velocity", "spread_divergence_velocity_snr"}
 		}
-		for index, key := range []string{"baseline", "ratio", "residual", "noise", "zscore"} {
-			gate := "has_prior"
+		for index, key := range keys {
+			gate := side + "_has_prior"
 			if index >= 3 {
-				gate = "noise_defined"
+				gate = side + "_noise_defined"
 			}
 			unit := data.UnitDimensionless
 			if index == 0 && side != "spread" {
 				unit = data.UnitRate
 			}
-			p.Metrics = append(p.Metrics, data.MetricProjection{Label: names[index], Path: []string{side + "_moments", key}, Defined: []string{side + "_moments", gate}, Unit: unit, Timescale: data.TimescaleInstantaneous})
+			p.Metrics = append(p.Metrics, data.MetricProjection{Label: names[index], Path: []string{key}, Defined: []string{gate}, Unit: unit, Timescale: data.TimescaleInstantaneous})
 		}
 		p.Metrics = append(p.Metrics,
-			data.MetricProjection{Label: names[5], Path: []string{side + "_velocity", "slope"}, Defined: []string{side + "_velocity", "slope_defined"}, Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.MetricProjection{Label: names[6], Path: []string{side + "_velocity", "snr"}, Defined: []string{side + "_velocity", "snr_defined"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous})
+			data.MetricProjection{Label: names[5], Path: []string{side + "_slope"}, Defined: []string{side + "_slope_defined"}, Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.MetricProjection{Label: names[6], Path: []string{side + "_velocity_snr"}, Defined: []string{side + "_snr_defined"}, Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous})
 	}
 	p.Facts = []data.FactProjection{
-		{Name: data.MetadataSupport, Path: []string{"bid_moments", "count"}},
+		{Name: data.MetadataSupport, Path: []string{"bid_count"}},
 		{Name: data.MetadataMahalanobisSNR, Path: []string{"snr"}, Defined: []string{"snr_defined"}},
 	}
 	return p

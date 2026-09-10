@@ -1,22 +1,23 @@
 package equation_test
 
 import (
-	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/tests"
 	"math"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestAdaptiveZScoreNext(t *testing.T) {
-	node := equation.NewAdaptiveZScore(algo.NewWelford())
-	results := tests.Drain(t, node, tests.Values(0.02, 0.01))
-	tests.Sound(t, node)
-	first, second := tests.Fields(t, results[0]), tests.Fields(t, results[1])
-	tests.EqualNumber(t, tests.Number(t, first, "baseline"), 0.02)
-	tests.EqualNumber(t, tests.Number(t, first, "zscore"), 0)
-	tests.EqualNumber(t, tests.Number(t, second, "baseline"), 0.02)
-	tests.EqualNumber(t, tests.Number(t, second, "ratio"), 0.5)
-	tests.EqualNumber(t, tests.Number(t, second, "divergence"), math.Log(0.5))
-	tests.EqualNumber(t, tests.Number(t, second, "zscore"), -1)
+	Convey("Adaptive z-score uses log-space prior moments", t, func() {
+		op := equation.NewAdaptiveZScore(equation.NewWelford())
+		results := tests.CollectSeq(op.Next(transport.Values(0.02, 0.01)))
+		So(results[0].Baseline, ShouldAlmostEqual, 0.02, 1e-15)
+		So(results[0].ZScore, ShouldEqual, 0)
+		So(results[1].Baseline, ShouldAlmostEqual, 0.02, 1e-15)
+		So(results[1].Residual, ShouldAlmostEqual, math.Log(0.5), 1e-15)
+		So(results[1].ZScore, ShouldAlmostEqual, -1, 1e-12)
+	})
 }

@@ -1,53 +1,114 @@
 package correlation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewFisher reports the Fisher-z normal approximation for {correlation,support}.
-// Optional search_count supplies Bonferroni multiplication. A finite-sample HY
-// overlap count is NOT thereby made an independent sample size. The caller owns
-// that statistical assumption. Undefined inputs yield defined=false and NaN,
-// never a stale p-value. At +/-1 the extended-real limit yields p=0, not p=1.
-func NewFisher() core.Primitive {
-	undefined := equation.NewRatio[float64](store.NewConstant(core.From(0.0)), store.NewConstant(core.From(0.0)))
-	valid := equation.NewAll(
-		transport.NewPipe(store.NewGet("correlation"), logic.NewFinite()),
-		transport.NewPipe(store.NewGet("support"), logic.NewFinite()),
-		equation.NewGreater[float64](store.NewGet("support"), store.NewConstant(core.From(3.0))),
-		equation.NewLessEqual[float64](
-			transport.NewPipe(store.NewGet("correlation"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
-			store.NewConstant(core.From(1.0))))
-	return transport.NewMap(logic.NewGate(
-		equation.NewAll(store.NewHas("correlation"), store.NewHas("support")),
-		transport.NewPipe(
-			store.NewRecord(transport.NewPipe(), transport.NewPipe(valid, store.NewKey("defined"))),
-			store.NewRecord(transport.NewPipe(),
-				transport.NewPipe(logic.NewGate(store.NewGet("defined"), equation.NewFisher(), undefined), store.NewKey("p_value")),
-				transport.NewPipe(logic.NewGate(store.NewGet("defined"),
-					equation.NewProduct[float64](
-						transport.NewPipe(store.NewGet("correlation"), calculus.NewAtanh(transport.NewIO(core.From(0.0)))),
-						transport.NewPipe(equation.NewDifference[float64](store.NewGet("support"), store.NewConstant(core.From(3.0))),
-							calculus.NewSqrt(transport.NewIO(core.From(0.0))))), undefined), store.NewKey("z")),
-				transport.NewPipe(logic.NewGate(store.NewGet("defined"),
-					equation.NewRatio[float64](store.NewConstant(core.From(1.0)),
-						transport.NewPipe(equation.NewDifference[float64](store.NewGet("support"), store.NewConstant(core.From(3.0))),
-							calculus.NewSqrt(transport.NewIO(core.From(0.0))))), undefined), store.NewKey("standard_error"))),
-			store.NewRecord(transport.NewPipe(),
-				transport.NewPipe(logic.NewGate(store.NewHas("search_count"),
-					equation.NewAll(
-						transport.NewPipe(store.NewGet("search_count"), logic.NewFinite()),
-						equation.NewLessEqual[float64](store.NewConstant(core.From(1.0)), store.NewGet("search_count"))),
-					store.NewConstant(core.From(false))), store.NewKey("has_search"))),
-			store.NewRecord(transport.NewPipe(),
-				transport.NewPipe(logic.NewGate(equation.NewAll(store.NewGet("defined"), store.NewGet("has_search")),
-					transport.NewPipe(
-						equation.NewProduct[float64](store.NewGet("p_value"), store.NewGet("search_count")),
-						calculus.NewMinimum(transport.NewIO(core.From(1.0)))), undefined), store.NewKey("search_adjusted_p_value"))),
-		), logic.NewReject(core.ErrShape)))
+/*
+FisherSample is a correlation, its support, and an optional search multiplicity.
+A finite-sample overlap count is not thereby made an independent sample size.
+*/
+type FisherSample struct {
+	Correlation float64
+	Support     float64
+	SearchCount float64
+}
+
+/*
+FisherReading is the Fisher-z normal approximation. Undefined inputs yield
+Defined=false and NaN, never a stale p-value. At ±1 the extended-real limit
+yields p=0, not p=1.
+*/
+type FisherReading struct {
+	Defined              bool
+	PValue               float64
+	Z                    float64
+	StandardError        float64
+	SearchAdjustedPValue float64
+	HasSearch            bool
+}
+
+/*
+Fisher owns that approximation.
+*/
+type Fisher struct {
+	core.Base[FisherSample, FisherReading]
+	fisher     *equation.Fisher
+	bonferroni *equation.Bonferroni[float64]
+}
+
+func NewFisher() *Fisher {
+	return &Fisher{
+		fisher:     equation.NewFisher(),
+		bonferroni: equation.NewBonferroni[float64](),
+	}
+}
+
+func (op *Fisher) Next(
+	in iter.Seq[core.Primitive[FisherSample, FisherSample]],
+) iter.Seq[core.Primitive[FisherReading, FisherReading]] {
+	return func(yield func(core.Primitive[FisherReading, FisherReading]) bool) {
+		for arriving := range in {
+			reading, err := op.Evaluate(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(reading)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Fisher) Evaluate(sample FisherSample) (FisherReading, error) {
+	reading := FisherReading{
+		PValue:               math.NaN(),
+		Z:                    math.NaN(),
+		StandardError:        math.NaN(),
+		SearchAdjustedPValue: math.NaN(),
+		HasSearch:            sample.SearchCount >= 1,
+	}
+
+	if !(sample.Support > 3 && math.Abs(sample.Correlation) <= 1) {
+		return reading, nil
+	}
+
+	p, err := transport.Evaluate(op.fisher, transport.Values(equation.FisherInput{
+		Correlation: sample.Correlation,
+		Support:     sample.Support,
+	}))
+
+	if err != nil {
+		return FisherReading{}, err
+	}
+
+	degrees := math.Sqrt(sample.Support - 3)
+	reading.Defined = true
+	reading.PValue = p
+	reading.Z = math.Atanh(sample.Correlation) * degrees
+	reading.StandardError = 1 / degrees
+
+	if !reading.HasSearch {
+		return reading, nil
+	}
+
+	adjusted, err := transport.Evaluate(op.bonferroni, transport.Values(equation.BonferroniInput[float64]{
+		P:          p,
+		Candidates: sample.SearchCount,
+	}))
+
+	if err != nil {
+		return FisherReading{}, err
+	}
+
+	reading.SearchAdjustedPValue = adjusted
+	return reading, nil
 }

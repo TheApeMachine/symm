@@ -1,12 +1,20 @@
 package arithmetic
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestMultiplyNext(t *testing.T) {
-	tests.Check(t, tests.Case{Name: "multiply", Seed: 1, Operation: NewMultiply[float64](transport.NewIO(core.From(float64(1))))})
+	tests.Check(
+		t, tests.Case[float64, float64]{
+			Name:      "multiply",
+			Seed:      0.0,
+			Operation: NewMultiply(0.0),
+			Reference: func(acc, val float64) float64 {
+				return acc * val
+			},
+		},
+	)
 }

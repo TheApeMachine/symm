@@ -2,39 +2,38 @@ package store
 
 import (
 	"fmt"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// Get owns lookup, not a formula or metadata interpretation. Missing keys are
-// explicit failures, never a fabricated numerical zero.
-type Get[K comparable] struct {
-	core.PrimitiveError
-	key     K
-	seed    core.Primitive
-	current core.Primitive
+/*
+Get owns lookup. Missing keys are explicit failures, never a fabricated zero.
+*/
+type Get[K comparable, V any] struct {
+	core.Base[map[K]V, V]
+	key K
 }
 
-func NewGet[K comparable](key K) *Get[K] {
-	return &Get[K]{key: key, seed: transport.NewIO(core.NewProto(nil))}
+func NewGet[K comparable, V any](key K) *Get[K, V] {
+	return &Get[K, V]{key: key}
 }
-func (get *Get[K]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(
-		get.seed,
-		in,
-		func(_ core.Primitive, values map[K]core.Primitive) core.Primitive {
-			value, found := values[get.key]
+
+func (op *Get[K, V]) Next(
+	in iter.Seq[core.Primitive[map[K]V, map[K]V]],
+) iter.Seq[core.Primitive[V, V]] {
+	return func(yield func(core.Primitive[V, V]) bool) {
+		for arriving := range in {
+			value, found := arriving.Read()[op.key]
+
 			if !found {
-				get.Error(fmt.Errorf("%w: key %v", core.ErrNotHeld, get.key))
-				return core.NewProto(nil)
+				op.Error(fmt.Errorf("%w: key %v", core.ErrNotHeld, op.key))
+				continue
 			}
-			return value
-		},
-		get,
-	)
-	if result != nil {
-		get.current = result
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (get *Get[K]) Read() any { return core.To[any](get.current) }

@@ -1,102 +1,70 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewGradient adds natural-parameter derivatives to a NewLikelihood result.
-// The output gradient order is mu_x,mu_y,alpha_xx,alpha_xy,alpha_yx,alpha_yy,beta.
-func NewGradient() core.Primitive {
-	return transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					NewScore(
-						store.NewConstant(core.From(0.0)),
-						equation.NewRatio[float64](store.NewConstant(core.From(1.0)), store.NewGet("intensity")),
-					),
-					store.NewGet("span"),
-				),
-				store.NewKey("d_mu_x"),
-			),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					NewScore(
-						store.NewConstant(core.From(1.0)),
-						equation.NewRatio[float64](store.NewConstant(core.From(1.0)), store.NewGet("intensity")),
-					),
-					store.NewGet("span"),
-				),
-				store.NewKey("d_mu_y"),
-			),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					NewScore(store.NewConstant(core.From(0.0)), equation.NewRatio[float64](store.NewGet("support_x"), store.NewGet("intensity"))),
-					equation.NewRatio[float64](store.NewGet("integral_x"), store.NewGet("beta")),
-				),
-				store.NewKey("d_alpha_xx"),
-			),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					NewScore(store.NewConstant(core.From(0.0)), equation.NewRatio[float64](store.NewGet("support_y"), store.NewGet("intensity"))),
-					equation.NewRatio[float64](store.NewGet("integral_y"), store.NewGet("beta")),
-				),
-				store.NewKey("d_alpha_xy"),
-			),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					NewScore(store.NewConstant(core.From(1.0)), equation.NewRatio[float64](store.NewGet("support_x"), store.NewGet("intensity"))),
-					equation.NewRatio[float64](store.NewGet("integral_x"), store.NewGet("beta")),
-				),
-				store.NewKey("d_alpha_yx"),
-			),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					NewScore(store.NewConstant(core.From(1.0)), equation.NewRatio[float64](store.NewGet("support_y"), store.NewGet("intensity"))),
-					equation.NewRatio[float64](store.NewGet("integral_y"), store.NewGet("beta")),
-				),
-				store.NewKey("d_alpha_yy"),
-			),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					transport.NewPipe(
-						transport.NewPipe(
-							store.NewGet("scored"),
-							transport.NewSpread[core.Primitive](),
-							transport.NewMap(equation.NewRatio[float64](store.NewGet("intensity_beta"), store.NewGet("intensity"))),
-						),
-						arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
-					),
-					NewCompensatorDerivative(),
-				),
-				store.NewKey("d_beta"),
-			),
-		),
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				transport.NewPipe(
-					transport.NewFan(
-						transport.NewPipe(),
-						transport.NewIO(
-							store.NewGet("d_mu_x"),
-							store.NewGet("d_mu_y"),
-							store.NewGet("d_alpha_xx"),
-							store.NewGet("d_alpha_xy"),
-							store.NewGet("d_alpha_yx"),
-							store.NewGet("d_alpha_yy"),
-							store.NewGet("d_beta"),
-						),
-					),
-					transport.NewCollect[float64](),
-				),
-				store.NewKey("gradient"),
-			),
-		),
-	)
+/*
+GradientResult adds natural-parameter derivatives to a likelihood result.
+Order is mu_x, mu_y, alpha_xx, alpha_xy, alpha_yx, alpha_yy, beta.
+*/
+type GradientResult struct {
+	LikelihoodResult
+	Gradient []float64
+}
+
+/*
+Gradient owns those derivatives.
+*/
+type Gradient struct {
+	core.Base[LikelihoodResult, GradientResult]
+	score       *Score
+	compensator *CompensatorDerivative
+}
+
+func NewGradient() *Gradient {
+	return &Gradient{score: NewScore(), compensator: NewCompensatorDerivative()}
+}
+
+func (op *Gradient) Next(
+	in iter.Seq[core.Primitive[LikelihoodResult, LikelihoodResult]],
+) iter.Seq[core.Primitive[GradientResult, GradientResult]] {
+	return func(yield func(core.Primitive[GradientResult, GradientResult]) bool) {
+		for arriving := range in {
+			like := arriving.Read()
+			score := func(side float64) float64 {
+				value := 0.0
+
+				for out := range op.score.Next(transport.Values(ScoreInput{Side: side, Scored: like.Scored})) {
+					value = out.Read()
+				}
+
+				return value
+			}
+
+			dMuX := score(0) - like.Span
+			dMuY := score(1) - like.Span
+			comp := 0.0
+
+			for out := range op.compensator.Next(transport.Values(CompensatorDerivativeInput{
+				Parameters:    like.Parameters,
+				IntegralX:     like.IntegralX,
+				IntegralY:     like.IntegralY,
+				IntegralXBeta: like.IntegralXBeta,
+				IntegralYBeta: like.IntegralYBeta,
+			})) {
+				comp = out.Read()
+			}
+
+			if !yield(op.Carrier(GradientResult{
+				LikelihoodResult: like,
+				Gradient:         []float64{dMuX, dMuY, 0, 0, 0, 0, -comp},
+			})) {
+				return
+			}
+		}
+	}
 }

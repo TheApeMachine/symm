@@ -1,139 +1,121 @@
 package hawkes
 
 import (
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/equation/linear"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewBranching composes the source's offspring and stationary-mean formulas.
-// alpha's column names identify the parent side. Supercritical parameters still
-// report their radius/first generation; stationary means and total descendants
-// are marked undefined rather than emitting non-stationary expectations.
-func NewBranching() core.Primitive {
-	return logic.NewGate(
-		equation.NewAll(
-			transport.NewPipe(store.NewGet("mu_x"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("mu_y"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("alpha_xx"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("alpha_xy"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("alpha_yx"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("alpha_yy"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("beta"), logic.NewFinite()),
-			equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("mu_x")),
-			equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("mu_y")),
-			equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_xx")),
-			equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_xy")),
-			equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_yx")),
-			equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("alpha_yy")),
-			equation.NewGreater[float64](store.NewGet("beta"), store.NewConstant(core.From(0.0))),
-		),
-		transport.NewPipe(
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(equation.NewRatio[float64](store.NewGet("alpha_xx"), store.NewGet("beta")), store.NewKey("a")),
-				transport.NewPipe(equation.NewRatio[float64](store.NewGet("alpha_xy"), store.NewGet("beta")), store.NewKey("b")),
-				transport.NewPipe(equation.NewRatio[float64](store.NewGet("alpha_yx"), store.NewGet("beta")), store.NewKey("c")),
-				transport.NewPipe(equation.NewRatio[float64](store.NewGet("alpha_yy"), store.NewGet("beta")), store.NewKey("d")),
-			),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(linear.NewSpectralRadius2(), store.NewKey("spectral_radius")),
-				transport.NewPipe(
-					equation.NewDifference[float64](
-						equation.NewProduct[float64](
-							equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("a")),
-							equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("d")),
-						),
-						equation.NewProduct[float64](store.NewGet("b"), store.NewGet("c")),
-					),
-					store.NewKey("stationary_determinant"),
-				),
-				transport.NewPipe(equation.NewSum[float64](store.NewGet("a"), store.NewGet("c")), store.NewKey("offspring_x")),
-				transport.NewPipe(equation.NewSum[float64](store.NewGet("b"), store.NewGet("d")), store.NewKey("offspring_y")),
-			),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(
-					equation.NewLess[float64](store.NewGet("spectral_radius"), store.NewConstant(core.From(1.0))),
-					store.NewKey("defined"),
-				),
-			),
-			logic.NewGate(
-				store.NewGet("defined"),
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(
-						equation.NewRatio[float64](
-							equation.NewSum[float64](
-								equation.NewProduct[float64](
-									equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("d")),
-									store.NewGet("mu_x"),
-								),
-								equation.NewProduct[float64](store.NewGet("b"), store.NewGet("mu_y")),
-							),
-							store.NewGet("stationary_determinant"),
-						),
-						store.NewKey("mean_x"),
-					),
-					transport.NewPipe(
-						equation.NewRatio[float64](
-							equation.NewSum[float64](
-								equation.NewProduct[float64](store.NewGet("c"), store.NewGet("mu_x")),
-								equation.NewProduct[float64](
-									equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("a")),
-									store.NewGet("mu_y"),
-								),
-							),
-							store.NewGet("stationary_determinant"),
-						),
-						store.NewKey("mean_y"),
-					),
-					transport.NewPipe(
-						equation.NewDifference[float64](
-							equation.NewRatio[float64](
-								equation.NewSum[float64](equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("d")), store.NewGet("c")),
-								store.NewGet("stationary_determinant"),
-							),
-							store.NewConstant(core.From(1.0)),
-						),
-						store.NewKey("descendants_x"),
-					),
-					transport.NewPipe(
-						equation.NewDifference[float64](
-							equation.NewRatio[float64](
-								equation.NewSum[float64](store.NewGet("b"), equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("a"))),
-								store.NewGet("stationary_determinant"),
-							),
-							store.NewConstant(core.From(1.0)),
-						),
-						store.NewKey("descendants_y"),
-					),
-				),
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(
-						equation.NewRatio[float64](store.NewConstant(core.From(0.0)), store.NewConstant(core.From(0.0))),
-						store.NewKey("mean_x"),
-					),
-					transport.NewPipe(
-						equation.NewRatio[float64](store.NewConstant(core.From(0.0)), store.NewConstant(core.From(0.0))),
-						store.NewKey("mean_y"),
-					),
-					transport.NewPipe(
-						equation.NewRatio[float64](store.NewConstant(core.From(0.0)), store.NewConstant(core.From(0.0))),
-						store.NewKey("descendants_x"),
-					),
-					transport.NewPipe(
-						equation.NewRatio[float64](store.NewConstant(core.From(0.0)), store.NewConstant(core.From(0.0))),
-						store.NewKey("descendants_y"),
-					),
-				),
-			),
-		),
-		logic.NewReject(core.ErrDomain),
-	)
+/*
+Parameters are the bivariate exponential Hawkes natural parameters.
+*/
+type Parameters struct {
+	MuX     float64
+	MuY     float64
+	AlphaXX float64
+	AlphaXY float64
+	AlphaYX float64
+	AlphaYY float64
+	Beta    float64
+}
+
+/*
+BranchingResult is the offspring matrix, spectral radius and stationary means.
+Supercritical parameters still report radius; means are undefined (NaN).
+*/
+type BranchingResult struct {
+	SpectralRadius        float64
+	StationaryDeterminant float64
+	OffspringX            float64
+	OffspringY            float64
+	Defined               bool
+	MeanX                 float64
+	MeanY                 float64
+	DescendantsX          float64
+	DescendantsY          float64
+}
+
+/*
+Branching owns those formulas.
+*/
+type Branching struct {
+	core.Base[Parameters, BranchingResult]
+	finite *logic.Finite[float64]
+	radius *linear.SpectralRadius2
+}
+
+func NewBranching() *Branching {
+	return &Branching{
+		finite: logic.NewFinite[float64](),
+		radius: linear.NewSpectralRadius2(),
+	}
+}
+
+func (op *Branching) Next(
+	in iter.Seq[core.Primitive[Parameters, Parameters]],
+) iter.Seq[core.Primitive[BranchingResult, BranchingResult]] {
+	return func(yield func(core.Primitive[BranchingResult, BranchingResult]) bool) {
+		for arriving := range in {
+			p := arriving.Read()
+
+			if !hawkesFinite(op.finite, p) || p.Beta <= 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			a, b, c, d := p.AlphaXX/p.Beta, p.AlphaXY/p.Beta, p.AlphaYX/p.Beta, p.AlphaYY/p.Beta
+			radius := 0.0
+
+			for out := range op.radius.Next(transport.Values(linear.Matrix2{A: a, B: b, C: c, D: d})) {
+				radius = out.Read()
+			}
+
+			det := (1-a)*(1-d) - b*c
+			result := BranchingResult{
+				SpectralRadius:        radius,
+				StationaryDeterminant: det,
+				OffspringX:            a + c,
+				OffspringY:            b + d,
+				Defined:               radius < 1,
+			}
+
+			if result.Defined {
+				result.MeanX = ((1-d)*p.MuX + b*p.MuY) / det
+				result.MeanY = (c*p.MuX + (1-a)*p.MuY) / det
+				result.DescendantsX = (1-d+c)/det - 1
+				result.DescendantsY = (1-a+b)/det - 1
+			}
+
+			if !result.Defined {
+				result.MeanX = math.NaN()
+				result.MeanY = math.NaN()
+				result.DescendantsX = math.NaN()
+				result.DescendantsY = math.NaN()
+			}
+
+			if !yield(op.Carrier(result)) {
+				return
+			}
+		}
+	}
+}
+
+func hawkesFinite(predicate *logic.Finite[float64], p Parameters) bool {
+	for _, value := range []float64{p.MuX, p.MuY, p.AlphaXX, p.AlphaXY, p.AlphaYX, p.AlphaYY, p.Beta} {
+		ok := true
+
+		for decision := range predicate.Next(transport.Values(value)) {
+			ok = decision.Read()
+		}
+
+		if !ok || value < 0 {
+			return false
+		}
+	}
+
+	return true
 }

@@ -2,99 +2,115 @@ package rls
 
 import (
 	"fmt"
+	"iter"
 	"math"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/* Prediction owns configured observation-noise multiplicity and typed projection. */
+/*
+State is the posterior and the query design used to forecast.
+*/
+type State struct {
+	Beta         []float64
+	Design       []float64
+	Root         [][]float64
+	NoiseShape   float64
+	NoiseScale   float64
+	Observations float64
+}
+
+/*
+Forecast is the projection of a posterior through a design.
+*/
+type Forecast struct {
+	State
+	Prediction         float64
+	Factor             []float64
+	Scale              float64
+	DegreesOfFreedom   float64
+	PredictiveVariance float64
+	Ready              bool
+}
+
+/*
+Prediction forecasts from the supplied posterior before any model update.
+*/
 type Prediction struct {
-	core.PrimitiveError
-	observations core.Primitive
-	seed         *transport.IO
-	current      core.Primitive
+	core.Base[State, Forecast]
 }
 
-/* NewPrediction forecasts from the supplied posterior before any model update. */
-func NewPrediction(observationCount core.Primitive) core.Primitive {
-	return transport.NewMap(&Prediction{
-		observations: observationCount, seed: transport.NewIO(core.From(map[string]core.Primitive{})),
-	})
+func NewPrediction() *Prediction {
+	return &Prediction{}
 }
 
-func (prediction *Prediction) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(prediction.seed, input,
-		func(_ map[string]core.Primitive, fields map[string]core.Primitive) map[string]core.Primitive {
-			output, err := prediction.Project(fields)
-			prediction.Error(err)
-			return output
-		}, prediction)
+func (op *Prediction) Next(
+	in iter.Seq[core.Primitive[State, State]],
+) iter.Seq[core.Primitive[Forecast, Forecast]] {
+	return func(yield func(core.Primitive[Forecast, Forecast]) bool) {
+		for arriving := range in {
+			forecast, err := op.Project(arriving.Read())
 
-	if result != nil {
-		prediction.current = result
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(forecast)) {
+				return
+			}
+		}
 	}
-	return result
 }
 
-/* Project multiplies the root's transpose implicitly, retaining only its factor. */
-func (prediction *Prediction) Project(fields map[string]core.Primitive) (map[string]core.Primitive, error) {
-	decoder := core.NewDecoder(fields)
-	beta := core.Decode[[]float64](decoder, "beta")
-	design := core.Decode[[]float64](decoder, "design")
-	root := core.Decode[[][]float64](decoder, "root")
-	shape := core.Decode[float64](decoder, "noise_shape")
-	noise := core.Decode[float64](decoder, "noise_scale")
-
-	if err := decoder.Error(); err != nil {
-		return nil, err
+/*
+Project multiplies the root's transpose implicitly, retaining only its factor.
+*/
+func (op *Prediction) Project(state State) (Forecast, error) {
+	if len(state.Beta) != len(state.Design) || len(state.Root) != len(state.Design) {
+		return Forecast{}, fmt.Errorf("%w: RLS prediction coefficient, root and design dimensions differ", core.ErrShape)
 	}
 
-	if len(beta) != len(design) || len(root) != len(design) {
-		return nil, fmt.Errorf("%w: RLS prediction coefficient, root and design dimensions differ", core.ErrShape)
-	}
-	factor := make([]float64, len(design))
+	factor := make([]float64, len(state.Design))
 	value := 0.0
 
-	for row, feature := range design {
-		if len(root[row]) != len(design) {
-			return nil, fmt.Errorf("%w: RLS root must be square", core.ErrShape)
+	for row, feature := range state.Design {
+		if len(state.Root[row]) != len(state.Design) {
+			return Forecast{}, fmt.Errorf("%w: RLS root must be square", core.ErrShape)
 		}
-		value += beta[row] * feature
 
-		for column, coefficient := range root[row] {
+		value += state.Beta[row] * feature
+
+		for column, coefficient := range state.Root[row] {
 			factor[column] += coefficient * feature
 		}
 	}
-	output := make(map[string]core.Primitive, len(fields)+6)
 
-	for name, field := range fields {
-		output[name] = field
+	forecast := Forecast{
+		State:      state,
+		Prediction: value,
+		Factor:     factor,
 	}
-	output["prediction"], output["factor"] = core.From(value), core.From(factor)
-	output["scale"], output["degrees_of_freedom"], output["ready"] = core.From(0.0), core.From(0.0), core.From(false)
 
-	if !(shape > 0 && noise > 0) {
-		return output, nil
+	if !(state.NoiseShape > 0 && state.NoiseScale > 0) {
+		return forecast, nil
 	}
-	observations, err := transport.Evaluate[float64](prediction.observations, core.From(fields))
 
-	if err != nil {
-		return nil, err
-	}
 	energy := 0.0
 
-	for _, value := range factor {
-		energy += value * value
+	for _, member := range factor {
+		energy += member * member
 	}
-	variance := (noise / shape) * (observations + energy)
 
-	if !(variance > 0) || math.IsNaN(variance) || math.IsInf(variance, 0) {
-		return nil, fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance)
+	variance := (state.NoiseScale / state.NoiseShape) * (state.Observations + energy)
+
+	if !(variance > 0) {
+		return Forecast{}, fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance)
 	}
-	output["predictive_variance"] = core.From(variance)
-	output["scale"], output["degrees_of_freedom"], output["ready"] = core.From(math.Sqrt(variance)), core.From(2*shape), core.From(true)
-	return output, nil
+
+	forecast.PredictiveVariance = variance
+	forecast.Scale = math.Sqrt(variance)
+	forecast.DegreesOfFreedom = 2 * state.NoiseShape
+	forecast.Ready = true
+	return forecast, nil
 }
-
-func (prediction *Prediction) Read() any { return core.To[any](prediction.current) }

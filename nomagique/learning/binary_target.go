@@ -1,25 +1,59 @@
 package learning
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewBinaryTarget classifies an increase without inventing a new numeric rule.
-func NewBinaryTarget() core.Primitive {
-	return logic.NewGate(
-		equation.NewAll(
-			transport.NewPipe(store.NewGet("current"), logic.NewFinite()),
-			transport.NewPipe(store.NewGet("past"), logic.NewFinite()),
-		),
-		logic.NewGate(
-			equation.NewGreater[float64](store.NewGet("current"), store.NewGet("past")),
-			store.NewConstant(core.From(1.0)),
-			store.NewConstant(core.From(0.0)),
-		),
-		logic.NewReject(core.ErrDomain),
-	)
+/*
+BinaryTarget classifies an increase without inventing a new numeric rule.
+*/
+type BinaryTarget struct {
+	core.Base[Observation, float64]
+	finite *logic.Finite[float64]
+}
+
+func NewBinaryTarget() *BinaryTarget {
+	return &BinaryTarget{finite: logic.NewFinite[float64]()}
+}
+
+func (op *BinaryTarget) Next(
+	in iter.Seq[core.Primitive[Observation, Observation]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		for arriving := range in {
+			sample := arriving.Read()
+			current, err := transport.Evaluate(op.finite, transport.Values(sample.Current))
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			past, err := transport.Evaluate(op.finite, transport.Values(sample.Past))
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !current || !past {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			value := 0.0
+
+			if sample.Current > sample.Past {
+				value = 1
+			}
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+	}
 }

@@ -1,38 +1,41 @@
 package correlation_test
 
 import (
+	"math"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
-	"testing"
 )
 
 func TestCohortNext(t *testing.T) {
-	node := correlation.NewCohort(calculus.NewAtanh(transport.NewIO(core.From(0.0))))
-	source := tests.Values(
-		tests.Record(map[string]any{"correlation": .4, "support": 3.0, "peer_energy": 2.0}),
-		tests.Record(map[string]any{"correlation": -.2, "support": 2.0, "peer_energy": 4.0}),
-		tests.Record(map[string]any{"correlation": .9, "support": 1.0}))
-	out := tests.Drain(t, node, source)
-	tests.Sound(t, node)
-	f := tests.Fields(t, out[0])
-	z1, z2 := math.Atanh(.4), math.Atanh(-.2)
-	mean := (3*z1 + 2*z2) / 5
-	for key, want := range map[string]float64{
-		"peers_seen": 3, "peers": 2, "rejected_peers": 1, "total_support": 5,
-		"effective_peers": 25.0 / 13, "signed_correlation": .16, "absolute_correlation": .32,
-		"peer_energy_rate": 2.8, "dispersion": math.Sqrt((3*z1*z1+2*z2*z2)/5 - mean*mean),
-	} {
-		tests.EqualNumber(t, tests.Number(t, f, key), want)
-	}
-	empty := tests.Drain(t, node, tests.Values[core.Primitive]())
-	tests.Sound(t, node)
-	f = tests.Fields(t, empty[0])
-	if core.To[bool](f["defined"]) {
-		t.Fatal("empty cohort reused old evidence")
-	}
-	tests.EqualNumber(t, tests.Number(t, f, "signed_correlation"), math.NaN())
+	Convey("Admitted peers keep support-weighted summaries and reject the rest", t, func() {
+		node := correlation.NewCohort(calculus.NewAtanh[float64]())
+		out := tests.CollectSeq(node.Next(transport.Values(
+			correlation.Peer{Correlation: .4, Support: 3, PeerEnergy: 2},
+			correlation.Peer{Correlation: -.2, Support: 2, PeerEnergy: 4},
+			correlation.Peer{Correlation: .9, Support: 1},
+		)))
+		So(node.Error(), ShouldBeNil)
+		So(len(out), ShouldEqual, 1)
+		z1, z2 := math.Atanh(.4), math.Atanh(-.2)
+		mean := (3*z1 + 2*z2) / 5
+		So(out[0].PeersSeen, ShouldEqual, 3)
+		So(out[0].Peers, ShouldEqual, 2)
+		So(out[0].RejectedPeers, ShouldEqual, 1)
+		So(out[0].TotalSupport, ShouldEqual, 5)
+		So(out[0].EffectivePeers, ShouldAlmostEqual, 25.0/13)
+		So(out[0].SignedCorrelation, ShouldAlmostEqual, .16)
+		So(out[0].AbsoluteCorrelation, ShouldAlmostEqual, .32)
+		So(out[0].PeerEnergyRate, ShouldAlmostEqual, 2.8)
+		So(out[0].Dispersion, ShouldAlmostEqual, math.Sqrt((3*z1*z1+2*z2*z2)/5-mean*mean))
+
+		empty := tests.CollectSeq(node.Next(transport.Values[correlation.Peer]()))
+		So(node.Error(), ShouldBeNil)
+		So(empty[0].Defined, ShouldBeFalse)
+		So(math.IsNaN(empty[0].SignedCorrelation), ShouldBeTrue)
+	})
 }

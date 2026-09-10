@@ -15,7 +15,7 @@ func coderFixture(horizon int) *PredictiveCoder {
 	return NewPredictiveCoder(PredictiveCoderConfig{
 		CustomArch: []int{3, 6, 3},
 		MaxHorizon: horizon,
-		Target:     DirectionalTarget(0),
+		Target:     DirectionalTransform(0),
 		Learn:      true,
 	})
 }
@@ -254,7 +254,7 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 			return NewPredictiveCoder(PredictiveCoderConfig{
 				CustomArch: []int{3, 6, 3},
 				MaxHorizon: 4,
-				Target:     DirectionalTarget(0),
+				Target:     DirectionalTransform(0),
 				Learn:      true,
 				Readout:    mode,
 			})
@@ -288,7 +288,7 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 			explicit := NewPredictiveCoder(PredictiveCoderConfig{
 				CustomArch: []int{3, 6, 3},
 				MaxHorizon: 4,
-				Target:     DirectionalTarget(0),
+				Target:     DirectionalTransform(0),
 				Learn:      true,
 			})
 

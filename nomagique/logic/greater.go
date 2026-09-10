@@ -2,35 +2,33 @@ package logic
 
 import (
 	"cmp"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// Greater compares two ordered payloads; pairing and routing are external.
+/*
+Greater owns one ordering relation. Pairing is external: what arrives is already
+two values.
+*/
 type Greater[T cmp.Ordered] struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+	core.Base[[2]T, bool]
 }
 
 func NewGreater[T cmp.Ordered]() *Greater[T] {
-	return &Greater[T]{seed: transport.NewIO(core.From(false))}
+	return &Greater[T]{}
 }
-func (operation *Greater[T]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(
-		operation.seed,
-		in,
-		func(_ bool, values []T) bool {
-			if len(values) != 2 {
-				operation.Error(core.ErrShape)
-				return false
+
+func (op *Greater[T]) Next(
+	in iter.Seq[core.Primitive[[2]T, [2]T]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			pair := arriving.Read()
+
+			if !yield(op.Carrier(pair[0] > pair[1])) {
+				return
 			}
-			return values[0] > values[1]
-		},
-		operation,
-	)
-	if result != nil {
-		operation.current = result
+		}
 	}
-	return result
 }
-func (operation *Greater[T]) Read() any { return core.To[any](operation.current) }

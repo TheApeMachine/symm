@@ -1,25 +1,31 @@
 package calculus
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Reciprocal owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Reciprocal struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Reciprocal owns one field operation. What it hands over is the multiplicative
+inverse of each arrival.
+*/
+type Reciprocal[U core.Floating] struct {
+	core.Base[U, U]
 }
 
-func NewReciprocal(left core.Primitive) *Reciprocal {
-	return &Reciprocal{left: left}
+func NewReciprocal[U core.Floating]() *Reciprocal[U] {
+	return &Reciprocal[U]{}
 }
-func (operation *Reciprocal) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return 1 / value }, operation)
-	if result != nil {
-		operation.current = result
+
+func (op *Reciprocal[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(1 / arriving.Read())) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (operation *Reciprocal) Read() any { return core.To[any](operation.current) }

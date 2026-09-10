@@ -1,52 +1,76 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewPolarize splits a signed value into nonnegative components and normalizes
-// against a configured scale expression. The result preserves all components.
-func NewPolarize(scale core.Primitive) core.Primitive {
-	return transport.NewMap(
-		transport.NewPipe(
-			store.NewRecord(
-				transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("alpha_normalized")),
-				transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("beta_normalized")),
-				transport.NewPipe(scale, store.NewKey("scale")),
-				transport.NewPipe(calculus.NewMaximum(transport.NewIO(core.From(0.0))), store.NewKey("alpha")),
-				transport.NewPipe(
-					calculus.NewNegate(transport.NewIO(core.From(0.0))),
-					calculus.NewMaximum(transport.NewIO(core.From(0.0))),
-					store.NewKey("beta"),
-				),
-			),
-			logic.NewGate(
-				NewGreater[float64](store.NewGet("scale"), store.NewConstant(core.From(0.0))),
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(
-						NewRatio[float64](store.NewGet("alpha"), NewSum[float64](store.NewGet("alpha"), store.NewGet("scale"))),
-						store.NewKey("alpha_normalized"),
-					),
-					transport.NewPipe(
-						NewRatio[float64](store.NewGet("beta"), NewSum[float64](store.NewGet("beta"), store.NewGet("scale"))),
-						store.NewKey("beta_normalized"),
-					),
-				),
-				transport.NewPipe(),
-			),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(
-					NewDifference[float64](
-						store.NewGet("alpha_normalized"), store.NewGet("beta_normalized")),
-					store.NewKey("value"),
-				),
-			),
-		),
-	)
+/*
+PolarizeInput is a signed value and the scale it is normalized against.
+*/
+type PolarizeInput[U core.Floating] struct {
+	Value U
+	Scale U
+}
+
+/*
+PolarizeResult splits a signed value into nonnegative components.
+*/
+type PolarizeResult[U core.Floating] struct {
+	Alpha           U
+	Beta            U
+	AlphaNormalized U
+	BetaNormalized  U
+	Scale           U
+	Value           U
+}
+
+/*
+Polarize splits a signed value into nonnegative components and normalizes
+against a configured scale. The result preserves all components.
+*/
+type Polarize[U core.Floating] struct {
+	core.Base[PolarizeInput[U], PolarizeResult[U]]
+}
+
+func NewPolarize[U core.Floating]() *Polarize[U] {
+	return &Polarize[U]{}
+}
+
+func (op *Polarize[U]) Next(
+	in iter.Seq[core.Primitive[PolarizeInput[U], PolarizeInput[U]]],
+) iter.Seq[core.Primitive[PolarizeResult[U], PolarizeResult[U]]] {
+	return func(yield func(core.Primitive[PolarizeResult[U], PolarizeResult[U]]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			alpha := input.Value
+			beta := -input.Value
+
+			if alpha < 0 {
+				alpha = 0
+			}
+
+			if beta < 0 {
+				beta = 0
+			}
+
+			result := PolarizeResult[U]{
+				Alpha: alpha,
+				Beta:  beta,
+				Scale: input.Scale,
+			}
+
+			if input.Scale > 0 {
+				result.AlphaNormalized = alpha / (alpha + input.Scale)
+				result.BetaNormalized = beta / (beta + input.Scale)
+			}
+
+			result.Value = result.AlphaNormalized - result.BetaNormalized
+
+			if !yield(op.Carrier(result)) {
+				return
+			}
+		}
+	}
 }

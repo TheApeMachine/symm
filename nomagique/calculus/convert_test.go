@@ -1,13 +1,20 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestConvertNext(t *testing.T) {
-	result := tests.Drain(t, NewConvert[int64, float64](), transport.NewIO(core.From(int64(12))))
-	tests.EqualNumber(t, result[0], 12)
+	tests.Check(
+		t, tests.Case[int64, float64]{
+			Name:      "convert",
+			Seed:      0.0,
+			Operation: NewConvert[int64, float64](),
+			Reference: func(_ float64, value int64) float64 {
+				return float64(value)
+			},
+		},
+	)
 }

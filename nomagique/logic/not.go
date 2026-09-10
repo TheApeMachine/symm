@@ -1,21 +1,31 @@
 package logic
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Not owns only its Boolean operation.
+/*
+Not owns one Boolean operation. What it hands over is the negation of each
+arrival.
+*/
 type Not struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+	core.Base[bool, bool]
 }
 
-func NewNot(seed core.Primitive) *Not { return &Not{seed: seed} }
-func (operation *Not) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.seed, in, func(held, value bool) bool { return !value }, operation)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewNot() *Not {
+	return &Not{}
 }
-func (operation *Not) Read() any { return core.To[any](operation.current) }
+
+func (op *Not) Next(
+	in iter.Seq[core.Primitive[bool, bool]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(!arriving.Read())) {
+				return
+			}
+		}
+	}
+}

@@ -1,47 +1,48 @@
 package equation
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/* Spacings owns consecutive timestamp differences within one delivery run. */
-type Spacings struct {
-	core.PrimitiveError
-	seed    *transport.IO
-	current core.Primitive
+/*
+Stamp is a nanosecond timestamp. Spacings subtract integer nanoseconds before
+conversion to float.
+*/
+type Stamp struct {
+	At int64
 }
 
 /*
-NewSpacings subtracts integer nanosecond timestamps before conversion to float.
-An empty or one-observation run has no adjacent pair and emits no spacing.
+Spacings owns consecutive timestamp differences within one delivery run. An
+empty or one-observation run has no adjacent pair and emits no spacing.
 */
-func NewSpacings() core.Primitive {
-	return transport.NewPipe(
-		&Spacings{seed: transport.NewIO(core.From([]float64{}))},
-		transport.NewSpread[float64](),
-	)
+type Spacings struct {
+	core.Base[Stamp, float64]
 }
 
-func (spacings *Spacings) Next(input core.Primitive) core.Primitive {
-	var previous int64
-	observed := false
-	result := core.Yield(spacings.seed, input,
-		func(held []float64, fields map[string]core.Primitive) []float64 {
-			at, err := core.Field[int64](fields, "at")
-			spacings.Error(err)
+func NewSpacings() *Spacings {
+	return &Spacings{}
+}
 
-			if observed {
-				held = append(held, float64(at-previous))
+func (op *Spacings) Next(
+	in iter.Seq[core.Primitive[Stamp, Stamp]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		var previous int64
+		seen := false
+
+		for arriving := range in {
+			at := arriving.Read().At
+
+			if seen {
+				if !yield(op.Carrier(float64(at - previous))) {
+					return
+				}
 			}
-			previous, observed = at, true
-			return held
-		}, spacings)
 
-	if result != nil {
-		spacings.current = result
+			previous, seen = at, true
+		}
 	}
-	return result
 }
-
-func (spacings *Spacings) Read() any { return core.To[any](spacings.current) }

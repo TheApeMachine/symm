@@ -5,15 +5,13 @@ import (
 	"sync"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tickerState struct {
-	graph core.Primitive
+	graph *equation.AdaptiveZScore
 }
 
 /*
@@ -56,15 +54,14 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	state, found := ticker.states[tick.Symbol]
 
 	if !found {
-		state = &tickerState{graph: equation.NewAdaptiveZScore(adaptive.NewBaseline(adaptive.NewWindow()))}
+		state = &tickerState{graph: equation.NewAdaptiveZScore(equation.NewWelford())}
 		ticker.states[tick.Symbol] = state
 	}
 
-	fields, err := transport.Evaluate[map[string]core.Primitive](state.graph, core.From(relativeSpread))
+	reading, err := transport.Evaluate(state.graph, transport.Values(relativeSpread))
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}
-	dyn := core.NewDecoder(fields)
 
 	id := fmt.Sprintf("pumpdump:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
 	measurement := data.NewMeasurement[float64](id, tick.Symbol, "pumpdump", tick.Timestamp, tick.Timestamp)
@@ -74,10 +71,9 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	putPumpDumpMetric(measurement, "best_ask", ask, data.UnitRate)
 	putPumpDumpMetric(measurement, "midpoint", midpoint, data.UnitRate)
 	putPumpDumpMetric(measurement, "spread", spread, data.UnitRate)
-	putPumpDumpMetric(measurement, "relative_spread", float64(relativeSpread), data.UnitDimensionless)
-
-	putPumpDumpMetric(measurement, "relative_spread_baseline", core.Decode[float64](dyn, "baseline"), data.UnitDimensionless)
-	putPumpDumpMetric(measurement, "spread_ratio", core.Decode[float64](dyn, "ratio"), data.UnitDimensionless)
+	putPumpDumpMetric(measurement, "relative_spread", relativeSpread, data.UnitDimensionless)
+	putPumpDumpMetric(measurement, "relative_spread_baseline", reading.Baseline, data.UnitDimensionless)
+	putPumpDumpMetric(measurement, "spread_ratio", relativeSpread/reading.Baseline, data.UnitDimensionless)
 
 	// Quality is derived by Finalize from the measurement's own facts, never
 	// assigned here. spread_zscore is this entity's headline reading, so its
@@ -86,21 +82,18 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	// This entity always has an estimator behind it, so it always declares its
 	// support — an absent support slot would tell Finalize this is a stateless
 	// direct reading and mark it whole, when in truth it is simply immature.
-	measurement.Metadata[data.MetadataSupport] = core.Decode[float64](dyn, "prior_count")
+	measurement.Metadata[data.MetadataSupport] = reading.Prior.Count
 
-	if core.Decode[bool](dyn, "has_prior") {
-		putPumpDumpMetric(measurement, "spread_divergence", core.Decode[float64](dyn, "divergence"), data.UnitDimensionless)
-		putPumpDumpMetric(measurement, "spread_zscore", core.Decode[float64](dyn, "zscore"), data.UnitDimensionless)
+	if reading.HasPrior {
+		putPumpDumpMetric(measurement, "spread_divergence", reading.Residual, data.UnitDimensionless)
+		putPumpDumpMetric(measurement, "spread_zscore", reading.ZScore, data.UnitDimensionless)
 
-		variance := core.Decode[float64](dyn, "prior_variance")
-
-		if variance > 0 {
-			measurement.Metadata[data.MetadataDivergence] = core.Decode[float64](dyn, "divergence")
-			measurement.Metadata[data.MetadataNoiseVariance] = variance
+		if reading.PriorVariance > 0 {
+			measurement.Metadata[data.MetadataDivergence] = reading.Residual
+			measurement.Metadata[data.MetadataNoiseVariance] = reading.PriorVariance
 		}
 	}
 
-	measurement.Err = dyn.Error()
 	measurement.Finalize()
 
 	return measurement

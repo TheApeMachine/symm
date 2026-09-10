@@ -1,14 +1,23 @@
 package cognition
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
+Input is one context and an optional training class.
+*/
+type Input struct {
+	Context []byte
+	Class   []byte
+}
+
+/*
 CognitiveResult adapts Engine.Evaluate into nomagique's streaming algebra while
-retaining the immutable context that produced the reading. It is a boundary
-value, not a second evaluation owner: Engine remains the single evaluator.
+retaining the immutable context that produced the reading. Engine remains the
+single evaluator.
 */
 type CognitiveResult struct {
 	Evaluation
@@ -20,10 +29,8 @@ type CognitiveResult struct {
 Primitive adapts the Engine into nomagique's streaming algebra.
 */
 type Primitive struct {
-	core.PrimitiveError
-	engine  *Engine
-	seed    *transport.IO
-	current core.Primitive
+	core.Base[Input, CognitiveResult]
+	engine *Engine
 }
 
 func NewPrimitive(engine *Engine) *Primitive {
@@ -31,41 +38,27 @@ func NewPrimitive(engine *Engine) *Primitive {
 		engine = NewEngine(DefaultConfig())
 	}
 
-	return &Primitive{
-		engine: engine,
-		seed:   transport.NewIO(core.From(CognitiveResult{})),
-	}
+	return &Primitive{engine: engine}
 }
 
-func (p *Primitive) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(p.seed, input, func(_ CognitiveResult, fields map[string]core.Primitive) CognitiveResult {
-		contextBytes, err := core.Field[[]byte](fields, "context")
+func (op *Primitive) Next(
+	in iter.Seq[core.Primitive[Input, Input]],
+) iter.Seq[core.Primitive[CognitiveResult, CognitiveResult]] {
+	return func(yield func(core.Primitive[CognitiveResult, CognitiveResult]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
 
-		if err != nil {
-			p.Error(err)
-			return CognitiveResult{}
+			if len(input.Class) > 0 {
+				op.engine.Observe(input.Context, input.Class)
+			}
+
+			if !yield(op.Carrier(CognitiveResult{
+				Evaluation: op.engine.Evaluate(input.Context),
+				Context:    input.Context,
+				Class:      input.Class,
+			})) {
+				return
+			}
 		}
-
-		// If a training label is provided, learn first
-		classBytes, err := core.Field[[]byte](fields, "class")
-		if err == nil && len(classBytes) > 0 {
-			p.engine.Observe(contextBytes, classBytes)
-		}
-
-		return CognitiveResult{
-			Evaluation: p.engine.Evaluate(contextBytes),
-			Context:    contextBytes,
-			Class:      classBytes,
-		}
-	}, p)
-
-	if result != nil {
-		p.current = result
 	}
-
-	return result
-}
-
-func (p *Primitive) Read() any {
-	return core.To[any](p.current)
 }

@@ -2,6 +2,7 @@ package cognition
 
 import (
 	"encoding/binary"
+	"iter"
 	"math"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
@@ -9,86 +10,111 @@ import (
 )
 
 /*
+Association is one observed precursor, the class that followed it, and the
+grade when one has been earned.
+*/
+type Association struct {
+	Context   []byte
+	Class     []byte
+	Step      uint64
+	Retention float64
+	Feedback  float64
+	Graded    bool
+}
+
+/*
+Write is the store mutation Observe names: the basin key and packed weight.
+*/
+type Write struct {
+	Selector []byte
+	Data     []byte
+}
+
+/*
+ObserveInput is the store as it stands and the association being recorded.
+*/
+type ObserveInput struct {
+	Tree        *iradix.Tree[[]byte]
+	Association Association
+}
+
+/*
 Observe turns one observed association into the write that records it.
-
-It is configured with the observation being made — the precursor sequence, the
-class that followed it, and the grade when one has been earned — and is handed
-the store as it currently stands. What it answers with is the question that
-writes the result back, so it drops straight into the store it just read.
-
 Reading the link, moving it and addressing the write are one step because they
-are one fact. Split across two owners they can disagree about what was there in
-between.
-
-The reinforcement is the recurrence a link follows when its context is seen
-again. Without a grade the link strengthens on having been observed, at a rate
-that falls as it is seen more often. With one, the grade's magnitude divides the
-link down and only its positive part adds back, so a loss inhibits, a larger
-grade moves it further, and a zero grade leaves it exactly where it was. An
-ungraded observation and one graded zero are opposite readings and never share a
-representation.
+are one fact.
 */
 type Observe struct {
-	core.PrimitiveError
-	current core.Primitive
+	core.Base[ObserveInput, Write]
 }
 
-func NewObserve(state core.Primitive) *Observe {
-	return &Observe{current: state}
+func NewObserve() *Observe {
+	return &Observe{}
 }
 
-func (observe *Observe) Next(in core.Primitive) core.Primitive {
-	return core.Yield(
-		observe.current,
-		in,
-		func(held map[string][]byte, arriving *iradix.Tree[[]byte]) map[string][]byte {
-			if arriving == nil {
-				observe.Error(core.ErrNotHeld)
+func (op *Observe) Next(
+	in iter.Seq[core.Primitive[ObserveInput, ObserveInput]],
+) iter.Seq[core.Primitive[Write, Write]] {
+	return func(yield func(core.Primitive[Write, Write]) bool) {
+		for arriving := range in {
+			write, err := op.Record(arriving.Read())
 
-				return held
+			if err != nil {
+				op.Error(err)
+				return
 			}
 
-			// Nothing was recognised, so there is nothing to record. An empty
-			// question asks the store nothing rather than writing an empty
-			// association, which would be a link to a situation that never was.
-			if len(held["context"]) == 0 || len(held["class"]) == 0 {
-				return map[string][]byte{}
+			if !yield(op.Carrier(write)) {
+				return
 			}
-			step := Count(held["step"])
-			key := makeBasinKey(held["class"], held["context"])
-			grade, graded := held["feedback"]
-			weight := PackedWeight{Probability: 1, WriteStep: step}
-
-			if graded {
-				// Neutral between reinforcement and inhibition, so a first
-				// graded observation is not read as a link already believed.
-				weight.Probability = 0.5
-			}
-
-			if existing, found := arriving.Get(key); found {
-				weight = DecodeWeight(existing).Effective(step, Retention(held["retention"]))
-			}
-			weight.Count++
-			weight.WriteStep = step
-
-			if graded {
-				weight.Reinforce(Retention(grade))
-			} else {
-				weight.Reinforce()
-			}
-			encoded := make([]byte, WeightSize)
-			weight.Encode(encoded)
-
-			// A sequence is also recorded as having been seen at all, which is
-			// what lets a context that has never been followed by anything
-			// still answer how surprising it was.
-			return map[string][]byte{"selector": key, "data": encoded}
-		},
-		observe,
-	)
+		}
+	}
 }
 
-func (observe *Observe) Read() any { return core.To[any](observe.current) }
+func (op *Observe) Record(input ObserveInput) (Write, error) {
+	if input.Tree == nil {
+		return Write{}, core.ErrNotHeld
+	}
+
+	assoc := input.Association
+
+	if len(assoc.Context) == 0 || len(assoc.Class) == 0 {
+		return Write{}, nil
+	}
+
+	key := makeBasinKey(assoc.Class, assoc.Context)
+	weight := PackedWeight{Probability: 1, WriteStep: assoc.Step}
+
+	if assoc.Graded {
+		weight.Probability = 0.5
+	}
+
+	if existing, found := input.Tree.Get(key); found {
+		weight = DecodeWeight(existing).Effective(assoc.Step, assoc.Retention)
+	}
+
+	weight.Count++
+	weight.WriteStep = assoc.Step
+
+	if assoc.Graded {
+		weight.Reinforce(assoc.Feedback)
+	}
+
+	if !assoc.Graded {
+		weight.Reinforce()
+	}
+
+	encoded := make([]byte, WeightSize)
+	weight.Encode(encoded)
+	return Write{Selector: key, Data: encoded}, nil
+}
+
+func (op *Observe) Map(write Write) map[string][]byte {
+	if len(write.Data) == 0 {
+		return map[string][]byte{}
+	}
+
+	return map[string][]byte{"selector": write.Selector, "data": write.Data}
+}
 
 /* Count reads an observation counter out of a record. */
 func Count(encoded []byte) uint64 {

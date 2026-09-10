@@ -3,16 +3,15 @@ package liquidity
 import (
 	"fmt"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
 	"sync"
 	"time"
 )
 
 type liquidityState struct {
-	graph core.Primitive
+	graph *Graph
 	at    time.Time
 }
 
@@ -22,10 +21,11 @@ type Ticker struct {
 	mu         sync.Mutex
 	states     map[string]*liquidityState
 	projection *data.Projection
+	finite     *logic.Finite[float64]
 }
 
 func NewTicker() *Ticker {
-	return &Ticker{states: make(map[string]*liquidityState), projection: liquidityProjection()}
+	return &Ticker{states: make(map[string]*liquidityState), projection: liquidityProjection(), finite: logic.NewFinite[float64]()}
 }
 
 func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
@@ -34,7 +34,11 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 	}
 	bid, ask := event.Bid.Float64(), event.Ask.Float64()
 	for _, value := range []float64{bid, ask, event.BidQty, event.AskQty, bid * event.BidQty, ask * event.AskQty} {
-		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		ok, err := transport.Evaluate(ticker.finite, transport.Values(value))
+		if err != nil {
+			return &data.Measurement[float64]{Err: err}
+		}
+		if !ok || value <= 0 {
 			return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: finite positive prices and displayed quantities required")}
 		}
 	}
@@ -50,8 +54,8 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 	} else if event.Timestamp.Before(state.at) {
 		return nil
 	}
-	fields, err := transport.Evaluate[map[string]core.Primitive](state.graph, core.Record(map[string]any{
-		"best_bid_price": bid, "best_ask_price": ask, "touch_quantity:bid": event.BidQty, "touch_quantity:ask": event.AskQty, "at": event.Timestamp.UnixNano(),
+	fields, err := transport.Evaluate(state.graph, transport.Values(GraphInput{
+		BestBid: bid, BestAsk: ask, BidQty: event.BidQty, AskQty: event.AskQty, At: event.Timestamp.UnixNano(),
 	}))
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}

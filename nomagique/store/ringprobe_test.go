@@ -1,31 +1,36 @@
-package store_test
+package store
 
 import (
 	container "container/ring"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
-func TestRingProbe(t *testing.T) {
-	held := container.New(6)
+func TestRingNext(t *testing.T) {
+	Convey("Ring plays one child sequence per run and advances the parent", t, func() {
+		child := func(values ...float64) *container.Ring {
+			ring := container.New(len(values))
 
-	for _, value := range []core.Primitive{
-		core.From(1.0), core.From(2.0), nil,
-		core.From(3.0), core.From(4.0), nil,
-	} {
-		held.Value = value
-		held = held.Next()
-	}
-	replay := store.NewRing(store.NewRetained(core.From(held)))
+			for _, value := range values {
+				ring.Value = value
+				ring = ring.Next()
+			}
 
-	for run := range 5 {
-		var got []float64
-
-		for value := replay.Next(nil); value != nil; value = replay.Next(nil) {
-			got = append(got, value.Read().(float64))
+			return ring
 		}
-		t.Logf("run %d: %v err=%v", run, got, replay.Error())
-	}
+
+		parent := container.New(2)
+		parent.Value = child(1, 2)
+		parent = parent.Next()
+		parent.Value = child(3, 4)
+		parent = parent.Next()
+
+		op := NewRing[float64](parent)
+
+		So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{1, 2})
+		So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{3, 4})
+		So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{1, 2})
+	})
 }

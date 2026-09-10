@@ -1,46 +1,53 @@
 package matrix
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Product owns matrix multiplication at the typed numeric boundary. Operands are
-evaluated once per input and coefficients stay in contiguous float64 storage;
-individual scalar products do not construct delivery graphs or boxed values.
+ProductInput is a pair of matrices.
+*/
+type ProductInput struct {
+	Left  [][]float64
+	Right [][]float64
+}
+
+/*
+Product owns matrix multiplication. Coefficients stay in contiguous float64
+storage.
 */
 type Product struct {
-	core.PrimitiveError
-	seed    *transport.IO
-	current core.Primitive
+	core.Base[ProductInput, [][]float64]
 }
 
-/* NewProduct pairs the configured matrix expressions before multiplying them. */
-func NewProduct(left, right core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		transport.NewZip(left, right),
-		transport.NewMap(&Product{seed: transport.NewIO(core.From([][]float64{}))}),
-	)
+func NewProduct() *Product {
+	return &Product{}
 }
 
-/* Next consumes matrix operands through Yield and preserves the completed result. */
-func (product *Product) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(product.seed, input,
-		func(_ core.Primitive, operands []core.Primitive) core.Primitive {
-			return core.Yield(transport.NewIO(operands[0]), transport.NewIO(operands[1]),
-				product.Multiply, product)
-		}, product)
+func (op *Product) Next(
+	in iter.Seq[core.Primitive[ProductInput, ProductInput]],
+) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
+	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+		for arriving := range in {
+			product := op.Multiply(arriving.Read().Left, arriving.Read().Right)
 
-	if result != nil {
-		product.current = result
+			if op.Error() != nil {
+				return
+			}
+
+			if !yield(op.Carrier(product)) {
+				return
+			}
+		}
 	}
-
-	return result
 }
 
-/* Multiply returns a fresh rectangular product without mutating either operand. */
-func (product *Product) Multiply(left, right [][]float64) [][]float64 {
+/*
+Multiply returns a fresh rectangular product without mutating either operand.
+*/
+func (op *Product) Multiply(left, right [][]float64) [][]float64 {
 	width := 0
 
 	if len(right) > 0 {
@@ -49,14 +56,14 @@ func (product *Product) Multiply(left, right [][]float64) [][]float64 {
 
 	for _, row := range right {
 		if len(row) != width {
-			product.Error(core.ErrShape)
+			op.Error(core.ErrShape)
 			return nil
 		}
 	}
 
 	for _, row := range left {
 		if len(row) != len(right) {
-			product.Error(core.ErrShape)
+			op.Error(core.ErrShape)
 			return nil
 		}
 	}
@@ -76,5 +83,3 @@ func (product *Product) Multiply(left, right [][]float64) [][]float64 {
 
 	return rows
 }
-
-func (product *Product) Read() any { return core.To[any](product.current) }

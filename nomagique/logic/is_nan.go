@@ -1,25 +1,32 @@
 package logic
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// IsNaN is the numerical undefinedness predicate, not a fallback policy.
-type IsNaN struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+/*
+IsNaN owns the undefinedness predicate. It reports whether an arrival is NaN;
+it does not replace, skip, or otherwise keep invalid state alive.
+*/
+type IsNaN[U core.Floating] struct {
+	core.Base[U, bool]
 }
 
-func NewIsNaN() *IsNaN {
-	return &IsNaN{seed: transport.NewIO(core.From(false))}
+func NewIsNaN[U core.Floating]() *IsNaN[U] {
+	return &IsNaN[U]{}
 }
-func (predicate *IsNaN) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(predicate.seed, in, func(_ bool, v float64) bool { return math.IsNaN(v) }, predicate)
-	if result != nil {
-		predicate.current = result
+
+func (op *IsNaN[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(math.IsNaN(float64(arriving.Read())))) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (predicate *IsNaN) Read() any { return core.To[any](predicate.current) }

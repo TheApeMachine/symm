@@ -9,7 +9,7 @@ import (
 )
 
 func TestReadObservations(t *testing.T) {
-	Convey("An archive cursor advances only over completely decoded capture suffixes", t, func() {
+	Convey("An archive cursor names the last capture that carried an observation", t, func() {
 		catalog := tablestest.New(t)
 		writer := tables.NewWriter(catalog)
 		writer.AddCapture(tables.CaptureRow{Run: "run", Sequence: 2, Kind: "heartbeat", Payload: []byte(`{}`)})
@@ -18,10 +18,31 @@ func TestReadObservations(t *testing.T) {
 		So(writer.Commit(t.Context()), ShouldBeNil)
 		observations, through, err := ReadObservations(t.Context(), catalog, "run", 0)
 		So(err, ShouldBeNil)
-		So(through, ShouldEqual, 2)
+		// Sequence 2 is a heartbeat. Only the kinds that can carry a market
+		// fact are read at all, so the cursor stops at the ticker that did:
+		// a run's book and heartbeat payloads are the bulk of it, and pulling
+		// them out of storage to discard them costs gigabytes of residency.
+		So(through, ShouldEqual, 1)
 		So(len(observations), ShouldEqual, 2)
 		So(observations[0].Symbol, ShouldEqual, "BTC/USD")
 		So(observations[1].Ordinal, ShouldEqual, 1)
+
+		Convey("Frames the cursor stopped short of are re-planned, never skipped", func() {
+			// The cursor lagging behind the heartbeat is safe precisely
+			// because the next read starts before it and loses nothing.
+			suffix, next, err := ReadObservations(t.Context(), catalog, "run", through)
+			So(err, ShouldBeNil)
+			So(len(suffix), ShouldEqual, 0)
+			So(next, ShouldEqual, through)
+
+			writer.AddCapture(tables.CaptureRow{Run: "run", Sequence: 3, Kind: "ticker", Payload: []byte(`{"data":[{"symbol":"BTC/USD","bid":102}]}`)})
+			So(writer.Commit(t.Context()), ShouldBeNil)
+			resumed, next, err := ReadObservations(t.Context(), catalog, "run", through)
+			So(err, ShouldBeNil)
+			So(len(resumed), ShouldEqual, 1)
+			So(resumed[0].Bid, ShouldEqual, 102)
+			So(next, ShouldEqual, 3)
+		})
 
 		Convey("Caught-up reads return no observations and preserve the cursor", func() {
 			suffix, next, err := ReadObservations(t.Context(), catalog, "run", through)

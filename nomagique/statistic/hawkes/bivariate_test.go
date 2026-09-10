@@ -1,18 +1,18 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestBivariatePrimitiveDelivery(t *testing.T) {
 	graph := NewBivariate()
 	observe := func(key string, at int64, mark float64) *data.Measurement[float64] {
 		t.Helper()
-		result, err := transport.Evaluate[*data.Measurement[float64]](graph, core.Record(map[string]any{"key": key, "at": at, "mark": mark}))
+		result, err := transport.Evaluate(graph, transport.Values(Event{Key: key, At: at, Mark: mark}))
 		if err != nil {
 			t.Fatal(err)
 		}

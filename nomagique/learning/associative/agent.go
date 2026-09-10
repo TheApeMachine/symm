@@ -1,58 +1,128 @@
 package associative
 
 import (
+	"iter"
+
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-NewAgent composes one learner: the regions it is shown become the sequence it
+Agent owns one learner: the regions it is shown become the sequence it
 recognises, and what it recognises is written into a memory that is its own.
-
-Each agent owns its store because what one learned about a precursor is its own
-memory and not a register the others write through. Two agents shown the same
-tape reach their own readings of it, and that difference is the point.
-
-Retention is the composition, not the store: the memory is read, the link the
-observation names is moved, and the Pipe decides the result is kept.
 */
-func NewAgent(memory core.Primitive) core.Primitive {
-	intent := store.NewRetained(core.From(map[string][]byte{}))
-	observed := store.NewRetained(core.From(map[string][]byte{}))
-
-	// One observation at a time. A fold would collapse a whole fragment into
-	// its last frame, so an agent would be taught only what the tape happened
-	// to end on and never what ran into anything.
-	return transport.NewMap(transport.NewPipe(
-		// What lit up becomes the sequence, carrying whatever the agent was
-		// told followed it and how that was graded.
-		NewContext(transport.NewApply(intent, nil)),
-		observed,
-		transport.NewDiscard(),
-
-		// The memory as it stands, moved by that observation, and kept.
-		transport.NewApply(memory, nil),
-		cognition.NewObserve(transport.NewApply(observed, nil)),
-		store.NewRadix[iradix.Tree[any]](memory),
-		memory,
-	))
+type Agent struct {
+	core.Base[grid.Impulse, *iradix.Tree[[]byte]]
+	memory  *store.Retained[*iradix.Tree[[]byte]]
+	context *Context
+	observe *cognition.Observe
+	recall  *cognition.Evaluate
 }
 
-/* NewMemory is one agent's own store, empty until it has recognised something. */
-func NewMemory() core.Primitive {
-	return store.NewRetained(core.From(iradix.New[[]byte]()))
+func NewAgent(memory *store.Retained[*iradix.Tree[[]byte]]) *Agent {
+	if memory == nil {
+		memory = NewMemory()
+	}
+
+	return &Agent{
+		memory:  memory,
+		context: NewContext(),
+		observe: cognition.NewObserve(),
+		recall:  cognition.NewEvaluate(),
+	}
+}
+
+func NewMemory() *store.Retained[*iradix.Tree[[]byte]] {
+	return store.NewRetained(iradix.New[[]byte]())
+}
+
+func (op *Agent) Next(
+	in iter.Seq[core.Primitive[grid.Impulse, grid.Impulse]],
+) iter.Seq[core.Primitive[*iradix.Tree[[]byte], *iradix.Tree[[]byte]]] {
+	return func(yield func(core.Primitive[*iradix.Tree[[]byte], *iradix.Tree[[]byte]]) bool) {
+		for arriving := range in {
+			tree, err := op.Learn(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(tree)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Agent) Learn(impulse grid.Impulse) (*iradix.Tree[[]byte], error) {
+	assoc := op.context.Encode(impulse)
+	write, err := op.observe.Record(cognition.ObserveInput{
+		Tree:        op.memory.Read(),
+		Association: assoc,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	tree, err := transport.Evaluate(store.NewRadix(op.memory.Read()), transport.Values(op.observe.Map(write)))
+
+	if err != nil {
+		return nil, err
+	}
+
+	op.memory.Carrier(tree)
+	return tree, nil
+}
+
+func (op *Agent) Recall(evaluation cognition.Evaluation) (cognition.Evaluation, error) {
+	return op.recall.Recall(cognition.EvaluateInput{
+		Tree:       op.memory.Read(),
+		Evaluation: evaluation,
+	})
 }
 
 /*
-NewRecall composes the reading half over the same memory: what the agent
-associates with the sequence it is being shown, without changing anything.
+Recall reads what the agent associates with the sequence it is being shown,
+without changing anything.
 */
-func NewRecall(memory, asked core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		transport.NewApply(memory, nil),
-		cognition.NewEvaluate(transport.NewApply(asked, nil)),
-	)
+type Recall struct {
+	core.Base[cognition.Evaluation, cognition.Evaluation]
+	memory   *store.Retained[*iradix.Tree[[]byte]]
+	evaluate *cognition.Evaluate
+}
+
+func NewRecall(memory *store.Retained[*iradix.Tree[[]byte]]) *Recall {
+	if memory == nil {
+		memory = NewMemory()
+	}
+
+	return &Recall{memory: memory, evaluate: cognition.NewEvaluate()}
+}
+
+func (op *Recall) Next(
+	in iter.Seq[core.Primitive[cognition.Evaluation, cognition.Evaluation]],
+) iter.Seq[core.Primitive[cognition.Evaluation, cognition.Evaluation]] {
+	return func(yield func(core.Primitive[cognition.Evaluation, cognition.Evaluation]) bool) {
+		for arriving := range in {
+			reading, err := op.evaluate.Recall(cognition.EvaluateInput{
+				Tree:       op.memory.Read(),
+				Evaluation: arriving.Read(),
+			})
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(reading)) {
+				return
+			}
+		}
+	}
 }

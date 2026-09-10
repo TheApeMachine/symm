@@ -2,44 +2,33 @@ package equation_test
 
 import (
 	"errors"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"testing"
 )
 
 func TestNewRenewalRate(t *testing.T) {
-	target := store.NewRetained(core.From(4.0))
-	tests.CheckRenewalRate(t, equation.NewRenewalRate(transport.NewApply(target, nil)))
-	tests.CheckRenewalMissing(t, equation.NewRenewalRate(store.NewConstant(core.From(4.0))))
-	tests.Drain(t, target, tests.Values(0.0))
-	node := equation.NewRenewalRate(transport.NewApply(target, nil))
-	out := tests.Drain(t, node, tests.Values(tests.Record(map[string]any{"increment": 2.0, "sample": 100.0, "at": int64(0)})))
-	if len(out) != 0 || !errors.Is(node.Error(), core.ErrDomain) {
-		t.Fatal("invalid target accepted")
-	}
-}
+	Convey("A non-positive target is a domain failure", t, func() {
+		op := equation.NewRenewalRate(0)
+		out := tests.CollectSeq(op.Next(transport.Values(equation.RenewalInput{
+			Increment: 2, Sample: 100, At: 0,
+		})))
+		So(len(out), ShouldEqual, 0)
+		So(errors.Is(op.Error(), core.ErrDomain), ShouldBeTrue)
+	})
 
-func BenchmarkNewRenewalRate(b *testing.B) {
-	rate := equation.NewRenewalRate(store.NewConstant(core.From(4.0)))
-	var timestamp int64
-	b.ReportAllocs()
-
-	for iteration := 0; iteration < b.N; iteration++ {
-		input := transport.NewIO(tests.Record(map[string]any{
-			"increment": 2.0, "sample": 100.0, "at": timestamp,
-		}))
-
-		if rate.Next(input) == nil || rate.Next(input) != nil {
-			b.Fatal("expected one renewal record")
-		}
-
-		timestamp += 1e9
-	}
-
-	if err := rate.Error(); err != nil {
-		b.Fatal(err)
-	}
+	Convey("Quantity accumulates until the target and elapsed time are met", t, func() {
+		op := equation.NewRenewalRate(4)
+		out := tests.CollectSeq(op.Next(transport.Values(
+			equation.RenewalInput{Increment: 2, Sample: 100, At: 0},
+			equation.RenewalInput{Increment: 2, Sample: 100, At: 1e9},
+		)))
+		So(out[0].Closed, ShouldBeFalse)
+		So(out[1].Closed, ShouldBeTrue)
+		So(out[1].Rate, ShouldEqual, 4)
+	})
 }

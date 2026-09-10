@@ -1,23 +1,43 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"time"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewEnergyRates composes r² / elapsed seconds over interval records.
-func NewEnergyRates() core.Primitive {
-	return transport.NewMap(
-		NewRatio[float64](
-			transport.NewPipe(store.NewGet("value"), calculus.NewSquare(transport.NewIO(core.From(0.0)))),
-			transport.NewPipe(
-				NewDifference[int64](store.NewGet("to"), store.NewGet("from")),
-				calculus.NewConvert[int64, float64](),
-				arithmetic.NewMultiply[float64](transport.NewIO(core.From(1e-9))),
-			),
-		),
-	)
+/*
+EnergyRateInput is one interval's value and its open-left time bounds.
+*/
+type EnergyRateInput[U core.Floating] struct {
+	Value U
+	From  int64
+	To    int64
+}
+
+/*
+EnergyRates owns r² / elapsed seconds over interval arrivals.
+*/
+type EnergyRates[U core.Floating] struct {
+	core.Base[EnergyRateInput[U], U]
+}
+
+func NewEnergyRates[U core.Floating]() *EnergyRates[U] {
+	return &EnergyRates[U]{}
+}
+
+func (op *EnergyRates[U]) Next(
+	in iter.Seq[core.Primitive[EnergyRateInput[U], EnergyRateInput[U]]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			elapsed := U(float64(input.To-input.From) / float64(time.Second))
+
+			if !yield(op.Carrier((input.Value * input.Value) / elapsed)) {
+				return
+			}
+		}
+	}
 }

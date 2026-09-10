@@ -1,23 +1,31 @@
 package transport
 
-import "github.com/theapemachine/symm/nomagique/core"
+import (
+	"iter"
 
-// Discard consumes a run without yielding values. Failures are retained.
-type Discard struct{ core.PrimitiveError }
+	"github.com/theapemachine/symm/nomagique/core"
+)
 
-func NewDiscard() *Discard { return &Discard{} }
-func (discard *Discard) Next(in core.Primitive) core.Primitive {
-	if in == nil {
-		return nil
-	}
+/*
+Discard consumes a run without handing anything over.
 
-	discard.Error(in.Error())
-
-	for value := in.Next(nil); value != nil; value = in.Next(nil) {
-		discard.Error(value.Error())
-	}
-
-	discard.Error(in.Error())
-	return nil
+A run that nobody ranges never happens, so discarding is an operation: it is
+what asks a stage to do its work when the work is the point and the values are
+not.
+*/
+type Discard[T any] struct {
+	core.Base[T, T]
 }
-func (discard *Discard) Read() any { return nil }
+
+func NewDiscard[T any]() *Discard[T] {
+	return &Discard[T]{}
+}
+
+func (op *Discard[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[T, T]] {
+	return func(func(core.Primitive[T, T]) bool) {
+		for range in {
+		}
+	}
+}

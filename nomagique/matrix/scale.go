@@ -1,48 +1,49 @@
 package matrix
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/* Scale multiplies typed matrix coefficients by one evaluated scalar. */
+/*
+ScaleInput is a matrix and the scalar that multiplies every coefficient.
+*/
+type ScaleInput struct {
+	Values [][]float64
+	Factor float64
+}
+
+/*
+Scale multiplies typed matrix coefficients by one scalar.
+*/
 type Scale struct {
-	core.PrimitiveError
-	seed    *transport.IO
-	current core.Primitive
+	core.Base[ScaleInput, [][]float64]
 }
 
-/* NewScale evaluates both configured operands once per observation. */
-func NewScale(values, scale core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		transport.NewZip(values, scale),
-		transport.NewMap(&Scale{seed: transport.NewIO(core.From([][]float64{}))}),
-	)
+func NewScale() *Scale {
+	return &Scale{}
 }
 
-/* Next scales complete typed rows without constructing a graph per coefficient. */
-func (scale *Scale) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(scale.seed, input,
-		func(_ core.Primitive, operands []core.Primitive) core.Primitive {
-			return core.Yield(transport.NewIO(operands[0]), transport.NewIO(operands[1]),
-				func(rows [][]float64, factor float64) [][]float64 {
-					scaled := make([][]float64, len(rows))
+func (op *Scale) Next(
+	in iter.Seq[core.Primitive[ScaleInput, ScaleInput]],
+) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
+	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			scaled := make([][]float64, len(input.Values))
 
-					for row, values := range rows {
-						scaled[row] = make([]float64, len(values))
+			for row, values := range input.Values {
+				scaled[row] = make([]float64, len(values))
 
-						for column, value := range values {
-							scaled[row][column] = value * factor
-						}
-					}
-					return scaled
-				}, scale)
-		}, scale)
+				for column, value := range values {
+					scaled[row][column] = value * input.Factor
+				}
+			}
 
-	if result != nil {
-		scale.current = result
+			if !yield(op.Carrier(scaled)) {
+				return
+			}
+		}
 	}
-	return result
 }
-
-func (scale *Scale) Read() any { return core.To[any](scale.current) }

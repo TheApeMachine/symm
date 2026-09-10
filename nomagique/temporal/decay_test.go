@@ -1,20 +1,37 @@
 package temporal
 
 import (
+	"math"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
-	"testing"
 )
 
-func TestDecayComposition(t *testing.T) {
-	node := NewDecay(nil, nil)
-	tests.EqualNumber(t, tests.Drain(t, node, transport.NewIO(core.From(10.0)))[0], 0)
-	node = NewDecay(store.NewConstant(core.From(0.25)), nil)
-	tests.EqualNumber(t, tests.Drain(t, node, transport.NewIO(core.From(10.0)))[0], 7.5)
-	node = NewDecay(store.NewConstant(core.From(math.Ln2)), transport.NewPipe(calculus.NewNegate(transport.NewIO(core.From(0.0))), calculus.NewExp(transport.NewIO(core.From(0.0)))))
-	tests.EqualNumber(t, tests.Drain(t, node, transport.NewIO(core.From(10.0)))[0], 5)
+func TestDecayNext(t *testing.T) {
+	Convey("A missing clock extinguishes a finite input", t, func() {
+		out := tests.CollectSeq(NewDecay[float64](nil, nil).Next(transport.Values(10.0)))
+		So(out[0], ShouldEqual, 0)
+	})
+
+	Convey("Linear retention uses one minus elapsed, floored at zero", t, func() {
+		out := tests.CollectSeq(
+			NewDecay[float64](store.NewConstant[float64, float64](0.25), nil).Next(transport.Values(10.0)),
+		)
+		So(out[0], ShouldEqual, 7.5)
+	})
+
+	Convey("A configured shape sees elapsed time, not a second protocol", t, func() {
+		shape := transport.NewStages(
+			calculus.NewNegate[float64](),
+			calculus.NewExp[float64](),
+		)
+		out := tests.CollectSeq(
+			NewDecay[float64](store.NewConstant[float64, float64](math.Ln2), shape).Next(transport.Values(10.0)),
+		)
+		So(out[0], ShouldEqual, 5)
+	})
 }

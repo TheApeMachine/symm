@@ -1,16 +1,34 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewEnergy composes the sum of squared incoming scalar values.
-func NewEnergy() core.Primitive {
-	return transport.NewMapReduce(
-		calculus.NewSquare(transport.NewIO(core.From(0.0))),
-		arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
-	)
+/*
+Energy owns the sum of squares of each arrival.
+*/
+type Energy[U core.Numeric] struct {
+	core.Base[U, U]
+}
+
+func NewEnergy[U core.Numeric]() *Energy[U] {
+	op := &Energy[U]{}
+	op.Carrier(0)
+	return op
+}
+
+func (op *Energy[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			value := arriving.Read()
+
+			if !yield(op.Carrier(op.Read() + value*value)) {
+				return
+			}
+		}
+	}
 }

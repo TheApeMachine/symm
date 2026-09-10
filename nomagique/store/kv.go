@@ -1,43 +1,39 @@
 package store
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"iter"
 	"maps"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// KV associates incoming keys and values with a configured map source. It never
-// mutates that source. Retaining successive maps is explicit feedback through
-// Retained; a fresh seed instead builds an independent record on every run.
-type KV[K comparable] struct {
-	core.PrimitiveError
-	left, current core.Primitive
+/*
+KV associates incoming keys and values with a configured map. It never mutates
+that source: each arrival is merged into a private copy.
+*/
+type KV[K comparable, V any] struct {
+	core.Base[map[K]V, map[K]V]
 }
 
-func NewKV[K comparable](left core.Primitive) *KV[K] {
-	return &KV[K]{left: left}
+func NewKV[K comparable, V any](current map[K]V) *KV[K, V] {
+	op := &KV[K, V]{}
+	op.Carrier(current)
+	return op
 }
-func (kv *KV[K]) Next(in core.Primitive) core.Primitive {
-	owned := false
-	result := core.Yield(
-		kv.left,
-		in,
-		func(held, arriving map[K]core.Primitive) map[K]core.Primitive {
-			// Only the completed fold is published. Copy the configured source
-			// once; all further fields in this run belong to that private map.
-			if !owned {
-				merged := make(map[K]core.Primitive, len(held)+len(arriving))
-				maps.Copy(merged, held)
-				held, owned = merged, true
+
+func (op *KV[K, V]) Next(
+	in iter.Seq[core.Primitive[map[K]V, map[K]V]],
+) iter.Seq[core.Primitive[map[K]V, map[K]V]] {
+	return func(yield func(core.Primitive[map[K]V, map[K]V]) bool) {
+		for arriving := range in {
+			held := op.Read()
+			merged := make(map[K]V, len(held)+len(arriving.Read()))
+			maps.Copy(merged, held)
+			maps.Copy(merged, arriving.Read())
+
+			if !yield(op.Carrier(merged)) {
+				return
 			}
-
-			maps.Copy(held, arriving)
-			return held
-		},
-		kv,
-	)
-	if result != nil {
-		kv.current = result
+		}
 	}
-	return result
 }
-func (kv *KV[K]) Read() any { return core.To[any](kv.current) }

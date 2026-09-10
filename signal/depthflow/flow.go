@@ -1,42 +1,104 @@
 package depthflow
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// newDepthGraph consumes one message's mutation facts, not a reconstructed
-// book. Only its two explicitly configured estimators retain numerical state.
-func newDepthGraph() core.Primitive {
-	field := func(name string, p core.Primitive) core.Primitive { return transport.NewPipe(p, store.NewKey(name)) }
-	get := func(name string) core.Primitive { return store.NewGet(name) }
-	zero := func() core.Primitive { return store.NewConstant(core.From(0.0)) }
-	emptyEstimate := func() core.Primitive {
-		return store.NewConstant(core.Record(map[string]any{"has_prior": false, "count": 0.0, "variance_defined": false}))
+/*
+DepthInput is one message's mutation facts, not a reconstructed book.
+*/
+type DepthInput struct {
+	ObservedBid, ObservedAsk, AddBid, AddAsk   float64
+	ModifyBid, ModifyAsk, DeleteBid, DeleteAsk float64
+	MutationBid, MutationAsk, Elapsed          float64
+}
+
+/*
+Depth owns the two explicitly configured estimators for one symbol.
+*/
+type Depth struct {
+	core.Base[DepthInput, data.ProjectionInput]
+	imbalance *adaptive.Baseline
+	rate      *adaptive.Baseline
+}
+
+func newDepthGraph() *Depth {
+	return &Depth{
+		imbalance: adaptive.NewBaseline(adaptive.NewWindow()),
+		rate:      adaptive.NewBaseline(adaptive.NewWindow()),
 	}
-	return transport.NewPipe(
-		store.NewRecord(transport.NewPipe(),
-			field("observed_notional", equation.NewSum[float64](get("observed_notional:bid"), get("observed_notional:ask"))),
-			field("observed_notional_diff", equation.NewDifference[float64](get("observed_notional:bid"), get("observed_notional:ask"))),
-			field("mutation_count", equation.NewSum[float64](get("mutation_count:bid"), get("mutation_count:ask"))),
-			field("mutation_count_diff", equation.NewDifference[float64](get("mutation_count:bid"), get("mutation_count:ask")))),
-		store.NewRecord(transport.NewPipe(),
-			field("observed_defined", equation.NewGreater[float64](get("observed_notional"), zero())),
-			field("mutation_defined", equation.NewGreater[float64](get("mutation_count"), zero())),
-			field("rate_defined", equation.NewGreater[float64](get("elapsed"), zero()))),
-		store.NewRecord(transport.NewPipe(),
-			logic.NewGate(get("observed_defined"), store.NewRecord(field("observed_notional_imbalance", equation.NewRatio[float64](get("observed_notional_diff"), get("observed_notional")))), store.NewRecord()),
-			logic.NewGate(get("mutation_defined"), store.NewRecord(field("mutation_activity_imbalance", equation.NewRatio[float64](get("mutation_count_diff"), get("mutation_count")))), store.NewRecord()),
-			logic.NewGate(get("rate_defined"), store.NewRecord(field("observed_notional_rate", equation.NewRatio[float64](get("observed_notional"), get("elapsed")))), store.NewRecord())),
-		store.NewRecord(transport.NewPipe(),
-			field("imbalance", logic.NewGate(get("observed_defined"), transport.NewPipe(get("observed_notional_imbalance"), equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow()))), emptyEstimate())),
-			field("rate", logic.NewGate(get("rate_defined"), transport.NewPipe(get("observed_notional_rate"), equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow()))), emptyEstimate()))),
-	)
+}
+
+func (op *Depth) Next(
+	in iter.Seq[core.Primitive[DepthInput, DepthInput]],
+) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
+	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(op.observe(arriving.Read()))) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Depth) observe(input DepthInput) data.ProjectionInput {
+	observed := input.ObservedBid + input.ObservedAsk
+	observedDiff := input.ObservedBid - input.ObservedAsk
+	mutations := input.MutationBid + input.MutationAsk
+	mutationDiff := input.MutationBid - input.MutationAsk
+	values := map[string]float64{
+		"observed_notional:bid":         input.ObservedBid,
+		"observed_notional:ask":         input.ObservedAsk,
+		"observed_notional":             observed,
+		"observed_notional_diff":        observedDiff,
+		"add_notional:bid":              input.AddBid,
+		"add_notional:ask":              input.AddAsk,
+		"modify_remaining_notional:bid": input.ModifyBid,
+		"modify_remaining_notional:ask": input.ModifyAsk,
+		"delete_count:bid":              input.DeleteBid,
+		"delete_count:ask":              input.DeleteAsk,
+		"mutation_count:bid":            input.MutationBid,
+		"mutation_count:ask":            input.MutationAsk,
+		"mutation_count":                mutations,
+		"mutation_count_diff":           mutationDiff,
+	}
+	flags := map[string]bool{
+		"observed_defined": observed > 0,
+		"mutation_defined": mutations > 0,
+		"rate_defined":     input.Elapsed > 0,
+	}
+
+	if observed > 0 {
+		values["observed_notional_imbalance"] = observedDiff / observed
+		reading := op.imbalance.Observe(observedDiff / observed)
+		putBaseline(values, flags, "imbalance", reading)
+	}
+
+	if mutations > 0 {
+		values["mutation_activity_imbalance"] = mutationDiff / mutations
+	}
+
+	if input.Elapsed > 0 {
+		values["observed_notional_rate"] = observed / input.Elapsed
+		reading := op.rate.Observe(observed / input.Elapsed)
+		putBaseline(values, flags, "rate", reading)
+	}
+
+	return data.ProjectionInput{Values: values, Flags: flags}
+}
+
+func putBaseline(values map[string]float64, flags map[string]bool, prefix string, reading adaptive.BaselineReading) {
+	flags[prefix+"_has_prior"] = reading.HasPrior
+	flags[prefix+"_variance_defined"] = reading.VarianceDefined
+	values[prefix+"_baseline"] = reading.Baseline
+	values[prefix+"_residual"] = reading.Residual
+	values[prefix+"_zscore"] = reading.ZScore
+	values[prefix+"_count"] = reading.Count
+	values[prefix+"_variance"] = reading.Variance
 }
 
 func depthProjection() *data.Projection {
@@ -61,13 +123,18 @@ func depthProjection() *data.Projection {
 			if item[0] == "zscore" {
 				metricUnit = data.UnitDimensionless
 			}
-			p.Metrics = append(p.Metrics, data.MetricProjection{Label: "observed_notional_" + prefix + "_" + item[0], Path: []string{prefix, item[1]}, Defined: []string{prefix, "has_prior"}, Unit: metricUnit, Timescale: scale})
+			p.Metrics = append(p.Metrics, data.MetricProjection{
+				Label:   "observed_notional_" + prefix + "_" + item[0],
+				Path:    []string{prefix + "_" + item[1]},
+				Defined: []string{prefix + "_has_prior"},
+				Unit:    metricUnit, Timescale: scale,
+			})
 		}
 	}
 	p.Facts = []data.FactProjection{
-		{Name: data.MetadataSupport, Path: []string{"imbalance", "count"}},
-		{Name: data.MetadataDivergence, Path: []string{"imbalance", "residual"}, Defined: []string{"imbalance", "has_prior"}},
-		{Name: data.MetadataNoiseVariance, Path: []string{"imbalance", "variance"}, Defined: []string{"imbalance", "variance_defined"}},
+		{Name: data.MetadataSupport, Path: []string{"imbalance_count"}},
+		{Name: data.MetadataDivergence, Path: []string{"imbalance_residual"}, Defined: []string{"imbalance_has_prior"}},
+		{Name: data.MetadataNoiseVariance, Path: []string{"imbalance_variance"}, Defined: []string{"imbalance_variance_defined"}},
 	}
 	return p
 }

@@ -1,20 +1,21 @@
-package collection_test
+package collection
 
 import (
-	"github.com/theapemachine/symm/nomagique/collection"
-	"github.com/theapemachine/symm/nomagique/tests"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestSwapNext(t *testing.T) {
-	node := collection.NewSwap[float64](tests.Values(0.0), tests.Values(2.0))
-	for range 3 {
+	Convey("Swap exchanges two configured indices without mutating the input", t, func() {
+		op := NewSwap[float64](0, 2)
 		original := []float64{2, 3, 4}
-		output := tests.Drain(t, node, tests.Values(original))
-		tests.Sound(t, node)
-		for index, value := range []float64{4, 3, 2} {
-			tests.EqualNumber(t, output[0].([]float64)[index], value)
-		}
-		tests.EqualNumber(t, original[0], 2)
-	}
+		out := tests.CollectSeq(op.Next(transport.Values(original)))
+
+		So(out[0], ShouldResemble, []float64{4, 3, 2})
+		So(original[0], ShouldEqual, 2)
+		So(op.Error(), ShouldBeNil)
+	})
 }

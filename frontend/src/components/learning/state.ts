@@ -208,7 +208,7 @@ export const useLearning = (symbol: string) => {
 		events,
 		error: !online
 			? "Learning connection offline"
-			: state && state.status !== "learning"
+			: state && !learningStatusHealthy(state.status)
 				? String(state.status)
 				: "",
 	};
@@ -304,11 +304,18 @@ export const useAgentSkill = () => {
 			: null,
 		error: !online
 			? "Learning connection offline"
-			: data && data.status !== "learning"
+			: data && !learningStatusHealthy(data.status)
 				? String(data.status)
 				: "",
 	};
 };
+
+const learningStatusHealthy = (status: string) =>
+	status === "learning" ||
+	status === "reading the record" ||
+	status === "no tape" ||
+	status === "forming the impulse map" ||
+	status === "recognising precursors";
 
 const date = (ns: bigint) => new Date(Number(ns / 1000000n)).toISOString();
 const prior = (reading: LearningPriorT | null): Prior => ({

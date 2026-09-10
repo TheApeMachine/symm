@@ -1,48 +1,35 @@
 package transport
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"math"
 )
 
-// Range enumerates [0,count). Its count is supplied by a Primitive; iteration
-// state is private and never leaks into the data payload as a control opcode.
-type Range struct {
-	core.PrimitiveError
-	count        core.Primitive
-	index, total int
-	open         bool
-	current      core.Primitive
+/*
+Range enumerates [0, count) for each arriving count. Iteration state is
+private and never leaks into the payload as a control opcode.
+*/
+type Range[U core.Numeric] struct {
+	core.Base[U, U]
 }
 
-func NewRange(count core.Primitive) *Range { return &Range{count: count} }
-func (sequence *Range) Next(core.Primitive) core.Primitive {
-	if !sequence.open {
-		core.Yield(
-			NewIO(core.From(0.0)),
-			sequence.count,
-			func(_, count float64) float64 {
-				if math.IsNaN(count) || math.IsInf(count, 0) || count < 0 || math.Trunc(count) != count || count >= float64(int(^uint(0)>>1)) {
-					sequence.Error(core.ErrShape)
-					return count
-				}
-				sequence.total = int(count)
-				return count
-			},
-			sequence,
-		)
-		sequence.index = 0
-		sequence.open = true
-	}
-	if sequence.Error() != nil {
-		return nil
-	}
-	if sequence.index == sequence.total {
-		sequence.open = false
-		return nil
-	}
-	sequence.current = core.From(float64(sequence.index))
-	sequence.index++
-	return sequence.current
+func NewRange[U core.Numeric]() *Range[U] {
+	return &Range[U]{}
 }
-func (sequence *Range) Read() any { return core.To[any](sequence.current) }
+
+func (op *Range[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			count := arriving.Read()
+
+			for index := U(0); index < count; index++ {
+				if !yield(op.Carrier(index)) {
+					return
+				}
+			}
+		}
+	}
+}

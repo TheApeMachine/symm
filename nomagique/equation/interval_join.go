@@ -2,128 +2,81 @@ package equation
 
 import (
 	"fmt"
+	"iter"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-IntervalJoin emits overlapping pairs from two ordered, internally disjoint
-interval paths. Input is one record with left/right Primitive collections of
-(from, to] int64 intervals. Touching endpoints do not overlap. It advances the
-interval ending first, visiting O(left + right) intervals instead of constructing
-a Cartesian product. Emitted pairs retain the original immutable carriers.
+IntervalJoinInput is two ordered, internally disjoint interval paths.
+*/
+type IntervalJoinInput struct {
+	Left  []Interval
+	Right []Interval
+}
+
+/*
+IntervalJoin emits overlapping pairs from two ordered paths. Touching endpoints
+do not overlap. It advances the interval ending first, visiting O(left+right)
+intervals instead of constructing a Cartesian product.
 */
 type IntervalJoin struct {
-	core.PrimitiveError
-	paths    [2][]core.Primitive
-	bounds   [2][][2]int64
-	position [2]int
-	open     bool
-	current  core.Primitive
+	core.Base[IntervalJoinInput, IntervalPair]
 }
 
-func NewIntervalJoin() *IntervalJoin { return &IntervalJoin{} }
-
-func (join *IntervalJoin) Next(input core.Primitive) core.Primitive {
-	if !join.open {
-		if err := join.load(input); err != nil {
-			join.Error(err)
-			return nil
-		}
-
-		join.open = true
-	}
-
-	for join.position[0] < len(join.paths[0]) && join.position[1] < len(join.paths[1]) {
-		left, right := join.position[0], join.position[1]
-		leftBounds, rightBounds := join.bounds[0][left], join.bounds[1][right]
-
-		if leftBounds[1] <= rightBounds[1] {
-			join.position[0]++
-		}
-
-		if rightBounds[1] <= leftBounds[1] {
-			join.position[1]++
-		}
-
-		if leftBounds[0] < rightBounds[1] && rightBounds[0] < leftBounds[1] {
-			join.current = core.From([]core.Primitive{join.paths[0][left], join.paths[1][right]})
-			return join.current
-		}
-	}
-
-	join.paths = [2][]core.Primitive{}
-	join.position = [2]int{}
-	join.open = false
-	return nil
+func NewIntervalJoin() *IntervalJoin {
+	return &IntervalJoin{}
 }
 
-func (join *IntervalJoin) Read() any { return core.To[any](join.current) }
+func (op *IntervalJoin) Next(
+	in iter.Seq[core.Primitive[IntervalJoinInput, IntervalJoinInput]],
+) iter.Seq[core.Primitive[IntervalPair, IntervalPair]] {
+	return func(yield func(core.Primitive[IntervalPair, IntervalPair]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
 
-func (join *IntervalJoin) load(input core.Primitive) error {
-	count := 0
-	record := core.Yield(
-		transport.NewIO(core.From(map[string]core.Primitive{})), input,
-		func(_ map[string]core.Primitive, fields map[string]core.Primitive) map[string]core.Primitive {
-			count++
-			return fields
-		},
-	)
+			if err := ordered(input.Left); err != nil {
+				op.Error(err)
+				return
+			}
 
-	if err := record.Error(); err != nil {
-		return err
-	}
+			if err := ordered(input.Right); err != nil {
+				op.Error(err)
+				return
+			}
 
-	if count != 1 {
-		return fmt.Errorf("%w: interval join requires one path record, received %d", core.ErrShape, count)
-	}
+			left, right := 0, 0
 
-	fields := core.To[map[string]core.Primitive](record)
+			for left < len(input.Left) && right < len(input.Right) {
+				a, b := input.Left[left], input.Right[right]
 
-	for side, name := range []string{"left", "right"} {
-		path, err := core.Field[[]core.Primitive](fields, name)
+				if a.From < b.To && b.From < a.To {
+					if !yield(op.Carrier(IntervalPair{Left: a, Right: b})) {
+						return
+					}
+				}
 
-		if err != nil {
-			return err
+				if a.To <= b.To {
+					left++
+				}
+
+				if b.To <= a.To {
+					right++
+				}
+			}
 		}
-
-		if err := join.readPath(side, path); err != nil {
-			return err
-		}
 	}
-
-	return nil
 }
 
-func (join *IntervalJoin) readPath(side int, path []core.Primitive) error {
-	join.paths[side] = path
-	join.bounds[side] = join.bounds[side][:0]
-
+func ordered(path []Interval) error {
 	for index, interval := range path {
-		fields := core.To[map[string]core.Primitive](interval)
-
-		if err := interval.Error(); err != nil {
-			return err
+		if interval.From >= interval.To {
+			return fmt.Errorf("%w: interval join interval %d must be positive", core.ErrShape, index)
 		}
 
-		from, err := core.Field[int64](fields, "from")
-
-		if err != nil {
-			return err
+		if index > 0 && interval.From < path[index-1].To {
+			return fmt.Errorf("%w: interval join interval %d overlaps its predecessor", core.ErrShape, index)
 		}
-
-		to, err := core.Field[int64](fields, "to")
-
-		if err != nil {
-			return err
-		}
-
-		if from >= to || (index > 0 && from < join.bounds[side][index-1][1]) {
-			return fmt.Errorf("%w: interval join path %d interval %d must be positive and ordered without internal overlap", core.ErrShape, side, index)
-		}
-
-		join.bounds[side] = append(join.bounds[side], [2]int64{from, to})
 	}
 
 	return nil

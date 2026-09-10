@@ -1,122 +1,122 @@
 package equation
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-LagEstimator consumes borrowed, already decoded return paths for one timestamp
-offset. It must finish reading them before returning and publish owned result
-fields. Estimators and diagnostic compositions implement the same operation.
+LagEstimate is what an estimator publishes for one timestamp offset.
 */
-type LagEstimator interface {
-	core.Primitive
-	Estimate(left, right *LogReturns, lag int64) (map[string]core.Primitive, error)
-}
-
-/* LagProfile owns the configured estimator and exact discrete search coordinates. */
-type LagProfile struct {
-	core.PrimitiveError
-	estimator     LagEstimator
-	spacing, span core.Primitive
-	paths         [2]LogReturns
-	seed          *transport.IO
-	current       core.Primitive
+type LagEstimate struct {
+	Correlation float64
+	Covariance  float64
+	Support     float64
+	LeftEnergy  float64
+	RightEnergy float64
 }
 
 /*
-NewLagProfile evaluates the configured estimator at every lag over the same
-decoded paths. Spacing is nanoseconds;
-span counts steps on either side. Every candidate retains the complete estimator
-record and its own support. Index identity is retained before conversion to
-seconds, so boundary indices cannot be corrupted by floating-point round trips.
+Defined is overlap with two positive energies. Zero-energy normalization stays
+undefined.
 */
-func NewLagProfile(estimator LagEstimator, spacing, span core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		transport.NewMap(&LagProfile{
-			estimator: estimator, spacing: spacing, span: span,
-			seed: transport.NewIO(core.From([]core.Primitive{})),
-		}),
-		transport.NewSpread[core.Primitive](),
-	)
+func (estimate LagEstimate) Defined() bool {
+	return estimate.Support > 0 && estimate.LeftEnergy > 0 && estimate.RightEnergy > 0
 }
 
-/* Next consumes one input pair and emits its complete immutable candidate run. */
-func (profile *LagProfile) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(profile.seed, input,
-		func(_ []core.Primitive, fields map[string]core.Primitive) []core.Primitive {
-			candidates, err := profile.Search(fields)
-			profile.Error(err)
-			return candidates
-		}, profile)
-
-	if result != nil {
-		profile.current = result
-	}
-	return result
+/*
+LagEstimator consumes borrowed, already decoded return paths for one timestamp
+offset. It must finish reading them before returning.
+*/
+type LagEstimator interface {
+	Estimate(left, right *LogReturns, lag int64) (LagEstimate, error)
 }
 
-/* Search decodes path coordinates once and leaves covariance ownership to the estimator. */
-func (profile *LagProfile) Search(fields map[string]core.Primitive) ([]core.Primitive, error) {
-	decoder := core.NewDecoder(fields)
-	left := core.Decode[[]core.Primitive](decoder, "left")
-	right := core.Decode[[]core.Primitive](decoder, "right")
-
-	if err := decoder.Error(); err != nil {
-		return nil, err
-	}
-	spacing, err := transport.Evaluate[float64](profile.spacing, nil)
-
-	if err != nil {
-		return nil, err
-	}
-	span, err := transport.Evaluate[float64](profile.span, nil)
-
-	if err != nil {
-		return nil, err
-	}
-	if err := profile.paths[0].Load(left); err != nil {
-		return nil, err
-	}
-
-	if err := profile.paths[1].Load(right); err != nil {
-		return nil, err
-	}
-	// Range owns validation of the discrete count, including non-integral counts.
-	sequence := transport.NewRange(transport.NewIO(core.From(span*2 + 1)))
-	candidates := []core.Primitive{}
-	core.Yield(transport.NewIO(core.From(0.0)), sequence, func(held, index float64) float64 {
-		candidate, err := profile.Candidate(index, span, spacing)
-		profile.Error(err)
-		candidates = append(candidates, candidate)
-		return held
-	}, profile)
-	return candidates, profile.Error()
+/*
+LagProfileInput is two price paths searched at every lag.
+*/
+type LagProfileInput struct {
+	Left  []Price
+	Right []Price
 }
 
-/* Candidate applies one exact timestamp offset without copying either path. */
-func (profile *LagProfile) Candidate(index, span, spacing float64) (core.Primitive, error) {
-	lagIndex := index - span
-	lag := int64(lagIndex * spacing)
-	estimate, err := profile.estimator.Estimate(&profile.paths[0], &profile.paths[1], lag)
-
-	if err != nil {
-		return nil, err
-	}
-	coefficient, err := core.Field[float64](estimate, "correlation")
-
-	if err != nil {
-		return nil, err
-	}
-	fields := make(map[string]core.Primitive, len(estimate)+4)
-
-	for name, value := range estimate {
-		fields[name] = value
-	}
-	fields["index"], fields["lag_index"] = core.From(index), core.From(lagIndex)
-	fields["x"], fields["y"] = core.From(float64(lag)*1e-9), core.From(coefficient)
-	return core.From(fields), nil
+/*
+LagCandidate retains the complete estimator record and its own support.
+*/
+type LagCandidate struct {
+	LagEstimate
+	Index    float64
+	LagIndex float64
+	X        float64
+	Y        float64
 }
 
-func (profile *LagProfile) Read() any { return core.To[any](profile.current) }
+/*
+LagProfile owns the configured estimator and exact discrete search coordinates.
+Spacing is nanoseconds; span counts steps on either side.
+*/
+type LagProfile struct {
+	core.Base[LagProfileInput, LagCandidate]
+	estimator LagEstimator
+	spacing   int64
+	span      float64
+	paths     [2]LogReturns
+}
+
+func NewLagProfile(estimator LagEstimator, spacing int64, span float64) *LagProfile {
+	return &LagProfile{estimator: estimator, spacing: spacing, span: span}
+}
+
+func (op *LagProfile) Next(
+	in iter.Seq[core.Primitive[LagProfileInput, LagProfileInput]],
+) iter.Seq[core.Primitive[LagCandidate, LagCandidate]] {
+	return func(yield func(core.Primitive[LagCandidate, LagCandidate]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+
+			if err := op.paths[0].Load(input.Left); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if err := op.paths[1].Load(input.Right); err != nil {
+				op.Error(err)
+				return
+			}
+
+			limit := int(op.span*2 + 1)
+
+			for index := 0; index < limit; index++ {
+				candidate, err := op.candidate(float64(index))
+
+				if err != nil {
+					op.Error(err)
+					return
+				}
+
+				if !yield(op.Carrier(candidate)) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (op *LagProfile) candidate(index float64) (LagCandidate, error) {
+	lagIndex := index - op.span
+	lag := int64(lagIndex * float64(op.spacing))
+	estimate, err := op.estimator.Estimate(&op.paths[0], &op.paths[1], lag)
+
+	if err != nil {
+		return LagCandidate{}, err
+	}
+
+	return LagCandidate{
+		LagEstimate: estimate,
+		Index:       index,
+		LagIndex:    lagIndex,
+		X:           float64(lag) * 1e-9,
+		Y:           estimate.Correlation,
+	}, nil
+}

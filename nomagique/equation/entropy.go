@@ -1,30 +1,41 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewEntropy composes -sum(p*log(p)). The zero-mass contribution is its limiting
-// value zero; negative inputs retain the logarithm's undefined-domain result.
-func NewEntropy() core.Primitive {
-	return transport.NewMapReduce(
-		logic.NewGate(
-			transport.NewPipe(
-				transport.NewFan(transport.NewPipe(), transport.NewIO(transport.NewPipe(), store.NewConstant(core.From(0.0)))),
-				transport.NewCollect[float64](),
-				logic.NewEqual[float64](),
-			),
-			store.NewConstant(core.From(0.0)),
-			transport.NewPipe(
-				NewProduct[float64](transport.NewPipe(), calculus.NewLog(transport.NewIO(core.From(0.0)))),
-				calculus.NewNegate(transport.NewIO(core.From(0.0))),
-			),
-		),
-		arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
-	)
+/*
+Entropy owns -sum(p log p). Zero mass contributes its limiting value zero;
+negative inputs retain the logarithm's undefined-domain result.
+*/
+type Entropy[U core.Floating] struct {
+	core.Base[U, U]
+}
+
+func NewEntropy[U core.Floating]() *Entropy[U] {
+	op := &Entropy[U]{}
+	op.Carrier(0)
+	return op
+}
+
+func (op *Entropy[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			mass := arriving.Read()
+			contribution := U(0)
+
+			if mass != 0 {
+				contribution = -mass * U(math.Log(float64(mass)))
+			}
+
+			if !yield(op.Carrier(op.Read() + contribution)) {
+				return
+			}
+		}
+	}
 }

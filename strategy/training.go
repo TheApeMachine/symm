@@ -1,17 +1,17 @@
 package strategy
 
 import (
-	"container/ring"
 	"context"
+	"errors"
 	"slices"
 	"sync/atomic"
 
+	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
@@ -32,17 +32,26 @@ type Training struct {
 	// mounted is the tape once the record has actually been read. It is only
 	// ever published whole, so the ring never observes a half-built replay.
 	mounted atomic.Pointer[replay]
-	agents  int
+	// frames is the cumulative number of measurements drained across every
+	// published tape. It lives here rather than on replay so refreshing the
+	// tape never resets the dashboard's observation counter.
+	frames atomic.Uint64
+	agents int
 }
 
 /* replay is one mounted tape and the learners replaying it. */
 type replay struct {
-	pipeline  core.Primitive
 	space     *grid.Space
-	memories  []core.Primitive
-	learners  []core.Primitive
+	memories  []*store.Retained[*iradix.Tree[[]byte]]
+	learners  []*associative.Agent
 	fragments int
-	frames    uint64
+	fragment  int
+	frame     int
+	err       error
+
+	// tape is the mounted fragments themselves, kept so the dashboard can
+	// draw each learner's lane without disturbing the live pipeline.
+	tape [][][]*data.Measurement[float64]
 }
 
 /*
@@ -67,93 +76,130 @@ func NewTraining(
 	training := &Training{agents: agents}
 
 	// Reading the record is I/O, so it never happens here and never on the
-	// ring. Construction returns immediately and the tape is mounted once it
-	// has been read; until then the learners have nothing to replay and say so.
-	//
-	// What it reads is bounded and ordered: the most recent runs first, and
-	// only until the policy's declared number of episodes is mounted. Reading
-	// the whole record instead contends with the capture writer, and capture
-	// backpressure stalls the ring the instrument subscription is waiting on,
-	// so the process never finishes starting.
-	go training.mount(Archive(catalog, run, policy))
+	// ring. Construction returns immediately with an empty tape mounted, and
+	// the loader atomically replaces it as each run it walks yields more
+	// confirmed moves. An unmounted tape would keep the dashboard on
+	// "reading the record" until the whole archive had been walked; publishing
+	// per run instead lets it fill in as the walk proceeds.
+	training.publish(nil)
+
+	if catalog == nil {
+		return training
+	}
+
+	go training.load(catalog, run, policy)
 
 	return training
 }
 
-/* mount publishes a tape once it has been read, whole. */
-func (training *Training) mount(fragments [][][]*data.Measurement[float64]) {
-	training.mounted.Store(compose(fragments, training.agents))
+/* publish atomically swaps the mounted tape for the one the walk has reached. */
+func (training *Training) publish(fragments [][][]*data.Measurement[float64]) {
+	previous := training.mounted.Load()
+	training.mounted.Store(composeOver(previous, fragments, training.agents))
 }
 
 /*
-Archive is every confirmed move the record holds, across every run it holds one
-for.
+load walks the record newest run first and mounts what each one holds, one run
+at a time.
 
-The run this process is starting has no moves in it yet — it has not observed
-anything — so a learner pointed at its own run is handed an empty tape and
-replays nothing. What there is to learn from is what was captured before, and
-the current run is skipped rather than read: it is still being written, and its
-last leg has not been confirmed.
+A run is the smallest read that can hold a confirmed move, so it is also the
+smallest step that can add anything to the tape: a move qualifies on its own
+geometry and is confirmed only once price retraced away from the extremum it
+reached, and a discovery needs the policy's minimum observations for a symbol
+before it will look at all. Publishing per run rather than per page is what
+lets the dashboard fill in as the walk proceeds without ever mounting a tape
+built from a fraction of a run.
 
-How much is mounted is the discovery policy's to say. It already declares how
-many episodes a set may hold, so that is the bound the walk stops at rather
-than a second number invented here. Decoded readings stay resident while they
-are mounted, so an unbounded walk is a memory claim as well as a read that
-competes with whatever is writing the record.
+The run this process is starting is skipped. It has not observed anything yet,
+it is still being written, and its last leg has not been confirmed, so a
+learner pointed at it is handed an empty tape and replays nothing. What there
+is to learn from is what was captured before.
+
+How much is walked is the rehearsal budget's to say: runs are opened newest
+first until that many observations are resident. A run is always read whole —
+stopping mid-run would end a tape at the budget rather than at the record — so
+the budget decides how many runs are opened, never how much of one is read.
 */
-func Archive(
+func (training *Training) load(
 	catalog *tables.Catalog, current hindsight.RunID, policy hindsight.DiscoveryPolicy,
-) [][][]*data.Measurement[float64] {
-	if catalog == nil {
-		return nil
-	}
-	runs, err := catalog.Runs(context.Background())
-
-	if err != nil {
-		errnie.Error(err)
-
-		return nil
-	}
-
-	// Most recent first. What the instrument did lately describes it better
-	// than what it did first, and the bound below stops the walk part way, so
-	// which end it starts from decides what is learned from.
-	slices.SortFunc(runs, func(left, right tables.RunRow) int {
-		return right.StartedAt.Compare(left.StartedAt)
-	})
+) {
 	limit := policy.MaxEpisodesPerSet
 
 	if limit <= 0 {
 		limit = hindsight.DefaultDiscoveryPolicy().MaxEpisodesPerSet
 	}
+	budget := viper.GetInt("hindsight.rehearsal.observation_budget")
+
+	if budget <= 0 {
+		fallback := hindsight.DefaultDiscoveryPolicy()
+		budget = fallback.MinObservations * fallback.MaxEpisodesPerSet
+	}
+	ctx := context.Background()
+	runs, err := catalog.Runs(ctx)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	// Most recent first. What the instrument did lately describes it better
+	// than what it did first, and the budget stops the walk part way, so which
+	// end it starts from decides what is learned from.
+	slices.SortFunc(runs, func(left, right tables.RunRow) int {
+		return right.StartedAt.Compare(left.StartedAt)
+	})
 	fragments := make([][][]*data.Measurement[float64], 0, limit)
+	resident := 0
 
 	for _, run := range runs {
 		if run.ID == string(current) {
 			continue
 		}
 
-		if len(fragments) >= limit {
+		if resident >= budget || len(fragments) >= limit {
 			break
 		}
+
+		// Read whole and in capture order. A bounded read is not an option
+		// here: Iceberg plans files in its own order, so a row limit returns
+		// an arbitrary slice of the run rather than its next rows, and a
+		// cursor taken from one skips everything the planner did not reach.
+		observations, _, err := hindsight.ReadObservations(
+			ctx, catalog, hindsight.RunID(run.ID), 0,
+		)
+
+		if err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+		resident += len(observations)
 		tape := hindsight.Query(
 			hindsight.Excursions, catalog, hindsight.RunID(run.ID), policy,
 		)
-		found := tape.Measurements()
+		found := tape.MeasurementsFrom(observations)
 
 		if err := tape.Error(); err != nil {
 			errnie.Error(err)
 
 			continue
 		}
+
+		// A run the record kept no confirmed move for adds nothing, and
+		// republishing an unchanged tape would rebuild the ring the learners
+		// are already replaying for no reason.
+		if len(found) == 0 {
+			continue
+		}
 		fragments = append(fragments, found...)
-	}
 
-	if len(fragments) > limit {
-		fragments = fragments[:limit]
-	}
+		if len(fragments) > limit {
+			fragments = fragments[:limit]
+		}
 
-	return fragments
+		training.publish(fragments)
+	}
 }
 
 /*
@@ -165,55 +211,47 @@ func NewTrainingOver(
 	fragments [][][]*data.Measurement[float64], agents int,
 ) *Training {
 	training := &Training{agents: agents}
-	training.mounted.Store(compose(fragments, agents))
+	training.publish(fragments)
 
 	return training
 }
 
-/* compose builds one mounted tape and the learners that replay it. */
-func compose(
-	fragments [][][]*data.Measurement[float64], agents int,
+/*
+composeOver builds the tape for the latest fragments while preserving the
+learners the previous tape already trained. The grid and every agent's memory
+are state: recreating them on each page would discard what the earlier pages
+taught, so a refreshed tape reuses them and only replaces the ring they are
+being shown.
+*/
+func composeOver(
+	previous *replay, fragments [][][]*data.Measurement[float64], agents int,
 ) *replay {
-	parent := ring.New(max(len(fragments), 1))
+	if previous == nil {
+		space := grid.NewSpace()
+		memories := make([]*store.Retained[*iradix.Tree[[]byte]], 0, max(agents, 1))
+		learners := make([]*associative.Agent, 0, max(agents, 1))
 
-	for _, leg := range fragments {
-		// Twice the slots, with an empty one after every frame. The store ends
-		// a run on a slot it cannot read and resumes at the one after it, so a
-		// frame is delivered on its own and the stage downstream advances once
-		// per frame rather than being handed the whole leg at once.
-		child := ring.New(len(leg) * 2)
-
-		for _, measurement := range leg {
-			child.Value = core.From(measurement)
-			child = child.Next().Next()
+		for range max(agents, 1) {
+			memory := associative.NewMemory()
+			memories = append(memories, memory)
+			learners = append(learners, associative.NewAgent(memory))
 		}
 
-		parent = parent.Next()
-		parent.Value = child
-	}
-	space := grid.NewSpace()
-	memories := make([]core.Primitive, 0, max(agents, 1))
-	learners := make([]core.Primitive, 0, max(agents, 1))
-
-	for range max(agents, 1) {
-		memory := associative.NewMemory()
-		memories = append(memories, memory)
-		learners = append(learners, associative.NewAgent(memory))
+		return &replay{
+			space:     space,
+			memories:  memories,
+			learners:  learners,
+			fragments: len(fragments),
+			tape:      fragments,
+		}
 	}
 
 	return &replay{
-		space:     space,
-		memories:  memories,
-		learners:  learners,
+		space:     previous.space,
+		memories:  previous.memories,
+		learners:  previous.learners,
 		fragments: len(fragments),
-		pipeline: nomagique.Number(
-			store.NewRing(core.From(parent)),
-			space,
-			transport.NewFan(
-				transport.NewPipe(),
-				transport.NewIO(learners...),
-			),
-		),
+		tape:      fragments,
 	}
 }
 
@@ -234,8 +272,24 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 		return envelope
 	}
 
-	for value := held.pipeline.Next(nil); value != nil; value = held.pipeline.Next(nil) {
-		held.frames++
+	// An empty tape is not replayed. The fan hands every learner its (empty)
+	// delivery run regardless, so draining one would step all of them against
+	// nothing and count each step as a frame — the dashboard would report
+	// observations it never held.
+	if held.fragments == 0 {
+		if envelope != nil {
+			envelope.Learning = training
+		}
+
+		return envelope
+	}
+
+	if err := held.step(); err != nil {
+		held.err = err
+	}
+
+	if held.err == nil {
+		training.frames.Add(1)
 	}
 
 	// The envelope carries the owner, not a reading taken from it. Building one
@@ -258,7 +312,7 @@ func (training *Training) Space() *grid.Space {
 }
 
 /* Learners are the agents sharing the tape, each with its own memory. */
-func (training *Training) Learners() []core.Primitive {
+func (training *Training) Learners() []*associative.Agent {
 	if held := training.mounted.Load(); held != nil {
 		return held.learners
 	}
@@ -267,7 +321,7 @@ func (training *Training) Learners() []core.Primitive {
 }
 
 /* Memories are what each agent has learned, readable without disturbing it. */
-func (training *Training) Memories() []core.Primitive {
+func (training *Training) Memories() []*store.Retained[*iradix.Tree[[]byte]] {
 	if held := training.mounted.Load(); held != nil {
 		return held.memories
 	}
@@ -278,7 +332,34 @@ func (training *Training) Memories() []core.Primitive {
 /* Error exposes the composition's failure through the runtime node protocol. */
 func (training *Training) Error() error {
 	if held := training.mounted.Load(); held != nil {
-		return held.pipeline.Error()
+		return errors.Join(held.err, held.space.Error())
+	}
+
+	return nil
+}
+
+func (held *replay) step() error {
+	if len(held.tape) == 0 {
+		return nil
+	}
+
+	measurements := held.tape[held.fragment][held.frame]
+	held.frame++
+
+	if held.frame >= len(held.tape[held.fragment]) {
+		held.frame = 0
+		held.fragment = (held.fragment + 1) % len(held.tape)
+	}
+
+	impulse, err := transport.Evaluate(held.space, transport.Values(measurements))
+	if err != nil {
+		return err
+	}
+
+	for _, learner := range held.learners {
+		if _, err := learner.Learn(impulse); err != nil {
+			return err
+		}
 	}
 
 	return nil

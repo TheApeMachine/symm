@@ -1,39 +1,46 @@
 package causal
 
-import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
-)
+import "github.com/theapemachine/symm/nomagique/core"
 
-// NewFeatures requires the treatment to be represented, and excludes the
-// outcome from the predictors. Positional shape validation belongs to Gather/At.
-func NewFeatures() core.Primitive {
-	context := store.NewRetained(nil)
-	return transport.NewPipe(
-		context,
-		equation.NewAll(
-			transport.NewPipe(
-				store.NewGet("features"),
-				transport.NewSpread[float64](),
-				transport.NewMap(equation.NewEqual[float64](
-					transport.NewPipe(), transport.NewApply(store.NewGet("treatment"), context))),
-				logic.NewOr(transport.NewIO(core.From(false))),
-			),
-			transport.NewPipe(
-				store.NewGet("features"),
-				transport.NewSpread[float64](),
-				transport.NewMap(
-					transport.NewPipe(
-						equation.NewEqual[float64](
-							transport.NewPipe(), transport.NewApply(store.NewGet("target"), context)),
-						logic.NewNot(transport.NewIO(core.From(false))),
-					),
-				),
-				logic.NewAnd(transport.NewIO(core.From(true))),
-			),
-		),
-	)
+/*
+Query is one observational table, the declared predictors, and the intervention.
+The caller declares the exact feature list; no automatic removal, addition,
+ordering or deduplication of predictors occurs here.
+*/
+type Query struct {
+	Rows      [][]float64
+	Features  []int
+	Target    int
+	Treatment int
+	Level     float64
+	Actual    []float64
+}
+
+/*
+Features reports whether the treatment is represented and the outcome is
+excluded from the predictors.
+*/
+func Features(query Query) bool {
+	hasTreatment := false
+	hasTarget := false
+
+	for _, index := range query.Features {
+		if index == query.Treatment {
+			hasTreatment = true
+		}
+
+		if index == query.Target {
+			hasTarget = true
+		}
+	}
+
+	return hasTreatment && !hasTarget
+}
+
+func shape(query Query) error {
+	if !Features(query) {
+		return core.ErrDomain
+	}
+
+	return nil
 }

@@ -1,24 +1,31 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Exp owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Exp struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Exp owns one field operation. What it hands over is e raised to each arrival.
+*/
+type Exp[U core.Floating] struct {
+	core.Base[U, U]
 }
 
-func NewExp(left core.Primitive) *Exp { return &Exp{left: left} }
-func (operation *Exp) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Exp(value) }, operation)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewExp[U core.Floating]() *Exp[U] {
+	return &Exp[U]{}
 }
-func (operation *Exp) Read() any { return core.To[any](operation.current) }
+
+func (op *Exp[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(U(math.Exp(float64(arriving.Read()))))) {
+				return
+			}
+		}
+	}
+}

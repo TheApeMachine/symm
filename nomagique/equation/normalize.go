@@ -1,24 +1,41 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewNormalize captures the total once and divides each original value by it.
-// Zero totals remain mathematically undefined, not a fabricated distribution.
-func NewNormalize() core.Primitive {
-	total := store.NewRetained(core.From(0.0))
-	return transport.NewPipe(
-		transport.NewFan(
-			transport.NewPipe(),
-			transport.NewIO(
-				transport.NewPipe(arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))), total, transport.NewDiscard()),
-				transport.NewPipe(),
-			),
-		),
-		transport.NewMap(NewRatio[float64](transport.NewPipe(), transport.NewApply(total, nil))),
-	)
+/*
+Normalize divides each arrival by the run's total. A collection is not complete
+until its run is spent, so nothing is handed over until everything has arrived.
+Zero totals remain mathematically undefined.
+*/
+type Normalize[U core.Floating] struct {
+	core.Base[U, U]
+}
+
+func NewNormalize[U core.Floating]() *Normalize[U] {
+	return &Normalize[U]{}
+}
+
+func (op *Normalize[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		var values []U
+		var total U
+
+		for arriving := range in {
+			value := arriving.Read()
+			values = append(values, value)
+			total += value
+		}
+
+		for _, value := range values {
+			if !yield(op.Carrier(value / total)) {
+				return
+			}
+		}
+	}
 }

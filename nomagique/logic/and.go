@@ -1,21 +1,33 @@
 package logic
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// And owns only its Boolean operation.
+/*
+And owns one Boolean operation. Configuration supplies the value a run starts
+from. What it hands over is the running conjunction after every arrival.
+*/
 type And struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+	core.Base[bool, bool]
 }
 
-func NewAnd(seed core.Primitive) *And { return &And{seed: seed} }
-func (operation *And) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.seed, in, func(held, value bool) bool { return held && value }, operation)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewAnd(current bool) *And {
+	op := &And{}
+	op.Carrier(current)
+	return op
 }
-func (operation *And) Read() any { return core.To[any](operation.current) }
+
+func (op *And) Next(
+	in iter.Seq[core.Primitive[bool, bool]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(op.Read() && arriving.Read())) {
+				return
+			}
+		}
+	}
+}

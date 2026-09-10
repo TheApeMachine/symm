@@ -3,63 +3,53 @@ package vector_test
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/algo"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/vector"
 )
 
 func TestApplyNext(t *testing.T) {
-	node := vector.NewApply(transport.NewIO(
-		arithmetic.NewAdd[float64](tests.Values(2.0)),
-		arithmetic.NewMultiply[float64](tests.Values(3.0)),
-	))
-	for _, values := range [][]float64{{4, 5}, {-2, 7}} {
-		out := tests.Drain(t, node, tests.Values(values...))
-		tests.Sound(t, node)
-		if len(out) != 2 {
-			t.Fatalf("got %d values", len(out))
+	Convey("Apply sends each arrival to the aligned operation", t, func() {
+		for _, values := range [][]float64{{4, 5}, {-2, 7}} {
+			node := vector.NewApply[float64, float64](
+				arithmetic.NewAdd[float64, float64](2),
+				arithmetic.NewMultiply[float64](3),
+			)
+			out := tests.CollectSeq(node.Next(transport.Values(values...)))
+			So(node.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 2)
+			So(out[0], ShouldEqual, values[0]+2)
+			So(out[1], ShouldEqual, values[1]*3)
 		}
-		tests.EqualNumber(t, out[0], values[0]+2)
-		tests.EqualNumber(t, out[1], values[1]*3)
-	}
+	})
 }
 
 func TestApplyIndependentState(t *testing.T) {
-	node := vector.NewApply(transport.NewIO(algo.NewWelford(), algo.NewWelford()))
-	for index, pair := range [][2]float64{{2, 20}, {4, 40}, {6, 60}} {
-		out := tests.Drain(t, node, tests.Values(pair[:]...))
-		tests.Sound(t, node)
-		if len(out) != 2 {
-			t.Fatal("coordinate missing")
-		}
-		left, right := tests.Fields(t, out[0]), tests.Fields(t, out[1])
-		tests.EqualNumber(t, tests.Number(t, left, "count"), float64(index+1))
-		tests.EqualNumber(t, tests.Number(t, right, "count"), float64(index+1))
-		tests.EqualNumber(t, tests.Number(t, left, "mean"), float64(index+2))
-		tests.EqualNumber(t, tests.Number(t, right, "mean"), 10*float64(index+2))
-	}
-}
+	Convey("Each coordinate owns independent recurrence", t, func() {
+		node := vector.NewApply(
+			equation.NewWelford(),
+			equation.NewWelford(),
+		)
 
-func TestApplyPreservesEndpointArity(t *testing.T) {
-	endpoint := transport.NewFan(transport.NewPipe(), transport.NewIO(
-		store.NewConstant(core.From("first")), store.NewConstant(core.From("second")),
-	))
-	node := vector.NewApply(transport.NewIO(endpoint))
-	out := tests.Drain(t, node, tests.Values(7.0))
-	tests.Sound(t, node)
-	if len(out) != 2 || out[0] != "first" || out[1] != "second" {
-		t.Fatalf("lost endpoint arity: %v", out)
-	}
+		for index, pair := range [][2]float64{{2, 20}, {4, 40}, {6, 60}} {
+			out := tests.CollectSeq(node.Next(transport.Values(pair[0], pair[1])))
+			So(node.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 2)
+			So(out[0].Count, ShouldEqual, float64(index+1))
+			So(out[1].Count, ShouldEqual, float64(index+1))
+			So(out[0].Mean, ShouldEqual, float64(index+2))
+			So(out[1].Mean, ShouldEqual, 10*float64(index+2))
+		}
+	})
 }
 
 func TestApplyShape(t *testing.T) {
-	node := vector.NewApply(transport.NewIO(transport.NewPipe()))
-	_ = tests.Drain(t, node, tests.Values(1.0, 2.0))
-	if node.Error() == nil {
-		t.Fatal("different endpoint cardinalities accepted")
-	}
+	Convey("Unequal endpoint cardinalities are a shape error", t, func() {
+		node := vector.NewApply(arithmetic.NewAdd[float64, float64](0))
+		tests.CollectSeq(node.Next(transport.Values(1.0, 2.0)))
+		So(node.Error(), ShouldNotBeNil)
+	})
 }

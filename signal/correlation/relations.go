@@ -5,8 +5,6 @@ import (
 	"math"
 	"sync"
 	"time"
-
-	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -38,23 +36,19 @@ type Relations struct {
 
 // observe projects a checked pair record. Undefined Fisher fields remain
 // explicitly unavailable; NaN is not serialized as though it were a p-value.
-func (relations *Relations) observe(left, right string, pair map[string]core.Primitive, leftAt, rightAt int64) error {
+func (relations *Relations) observe(left, right string, pair pairResult, leftAt, rightAt int64) error {
 	if right < left {
 		left, right = right, left
 	}
-	d := core.NewDecoder(pair)
-	value := Relation{Left: left, Right: right, Support: core.Decode[float64](d, "support"), Defined: core.Decode[bool](d, "defined"), At: time.Unix(0, min(leftAt, rightAt))}
+	value := Relation{Left: left, Right: right, Support: pair.dependence.Support, Defined: pair.dependence.Defined, At: time.Unix(0, min(leftAt, rightAt))}
 	if value.Defined {
-		value.Signed = core.Decode[float64](d, "correlation")
+		value.Signed = pair.dependence.Correlation
 		value.Absolute = math.Abs(value.Signed)
 	}
-	value.FisherDefined = core.Decode[bool](d, "fisher", "defined")
+	value.FisherDefined = pair.fisher.Defined
 	if value.FisherDefined {
-		value.PValue = core.Decode[float64](d, "fisher", "p_value")
-		value.StandardError = core.Decode[float64](d, "fisher", "standard_error")
-	}
-	if d.Error() != nil {
-		return d.Error()
+		value.PValue = pair.fisher.PValue
+		value.StandardError = pair.fisher.StandardError
 	}
 	relations.mutex.Lock()
 	defer relations.mutex.Unlock()

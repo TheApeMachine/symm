@@ -1,59 +1,46 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewLogMomentView reads a log-space Welford record against prior moments.
-// It does not log the input again. Noise and zscore follow the original joint
-// estimator's minimum prior support and positive-dispersion requirements.
-func NewLogMomentView() core.Primitive {
-	return transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(NewDifference[float64](store.NewGet("value"), store.NewGet("prior_mean")), store.NewKey("residual")),
-			transport.NewPipe(store.NewGet("prior_mean"), calculus.NewExp(transport.NewIO(core.From(0.0))), store.NewKey("baseline")),
-			transport.NewPipe(NewGreater[float64](store.NewGet("prior_count"), store.NewConstant(core.From(0.0))), store.NewKey("has_prior")),
-			transport.NewPipe(
-				NewAll(
-					NewGreater[float64](store.NewGet("prior_count"), store.NewConstant(core.From(1.0))),
-					NewGreater[float64](store.NewGet("prior_m2"), store.NewConstant(core.From(0.0))),
-				),
-				store.NewKey("noise_defined"),
-			),
-		),
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(store.NewGet("residual"), calculus.NewExp(transport.NewIO(core.From(0.0))), store.NewKey("ratio")),
-			transport.NewPipe(
-				logic.NewGate(
-					store.NewGet("noise_defined"),
-					transport.NewPipe(
-						NewRatio[float64](
-							store.NewGet("prior_m2"),
-							NewDifference[float64](store.NewGet("prior_count"), store.NewConstant(core.From(1.0))),
-						),
-						calculus.NewSqrt(transport.NewIO(core.From(0.0))),
-					),
-					store.NewConstant(core.From(0.0)),
-				),
-				store.NewKey("noise"),
-			),
-		),
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				logic.NewGate(
-					store.NewGet("noise_defined"),
-					NewRatio[float64](store.NewGet("residual"), store.NewGet("noise")),
-					store.NewConstant(core.From(0.0)),
-				),
-				store.NewKey("zscore"),
-			),
-		),
-	)
+/*
+LogMomentView reads a log-space Welford record against prior moments. It does
+not log the input again.
+*/
+type LogMomentView struct {
+	core.Base[MomentReading, CausalResidualResult]
+}
+
+func NewLogMomentView() *LogMomentView {
+	return &LogMomentView{}
+}
+
+func (op *LogMomentView) Next(
+	in iter.Seq[core.Primitive[MomentReading, MomentReading]],
+) iter.Seq[core.Primitive[CausalResidualResult, CausalResidualResult]] {
+	return func(yield func(core.Primitive[CausalResidualResult, CausalResidualResult]) bool) {
+		for arriving := range in {
+			reading := arriving.Read()
+			result := CausalResidualResult{
+				MomentReading: reading,
+				HasPrior:      reading.Prior.Count > 0,
+				Baseline:      math.Exp(reading.Prior.Mean),
+				Residual:      reading.Value - reading.Prior.Mean,
+			}
+
+			if reading.Prior.Count > 1 && reading.Prior.M2 > 0 {
+				result.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
+				result.ScoreScale = math.Sqrt(result.PriorVariance)
+				result.ZScore = result.Residual / result.ScoreScale
+			}
+
+			if !yield(op.Carrier(result)) {
+				return
+			}
+		}
+	}
 }

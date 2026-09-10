@@ -7,13 +7,12 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type level3State struct {
-	graph          core.Primitive
+	graph          *Level3Graph
 	retainedBid    float64
 	retainedAsk    float64
 	retainedBidQty float64
@@ -234,44 +233,27 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	level3.symbol = symbol
 	level3.at = at
 
-	input := make(map[string]any)
-	input["curBid"] = curBid
-	input["curAsk"] = curAsk
-	input["prevBid"] = prevBid
-	input["prevAsk"] = prevAsk
-	input["curBidQty"] = curBidQty
-	input["curAskQty"] = curAskQty
-	input["prevBidQty"] = prevBidQty
-	input["prevAskQty"] = prevAskQty
-	input["unfilledBid"] = prevBidQty
-	input["unfilledAsk"] = prevAskQty
-	input["logChangeBid"] = logChangeBid
-	input["logChangeAsk"] = logChangeAsk
-
-	input["retreatedBid"] = retreatedBidQty
-	input["retreatedAsk"] = retreatedAskQty
-	input["withdrawnBid"] = withdrawnBidQty
-	input["withdrawnAsk"] = withdrawnAskQty
-	input["replenishedBid"] = replenishedBidQty
-	input["replenishedAsk"] = replenishedAskQty
-
-	input["retreatFracBid"] = retreatFractionBid
-	input["retreatFracAsk"] = retreatFractionAsk
-	input["withFracBid"] = withdrawalFractionBid
-	input["withFracAsk"] = withdrawalFractionAsk
-	input["repFracBid"] = replenishmentFractionBid
-	input["repFracAsk"] = replenishmentFractionAsk
+	typed := Level3Input{
+		CurBid: curBid, CurAsk: curAsk, PrevBid: prevBid, PrevAsk: prevAsk,
+		CurBidQty: curBidQty, CurAskQty: curAskQty, PrevBidQty: prevBidQty, PrevAskQty: prevAskQty,
+		UnfilledBid: prevBidQty, UnfilledAsk: prevAskQty,
+		LogChangeBid: logChangeBid, LogChangeAsk: logChangeAsk,
+		RetreatedBid: retreatedBidQty, RetreatedAsk: retreatedAskQty,
+		WithdrawnBid: withdrawnBidQty, WithdrawnAsk: withdrawnAskQty,
+		ReplenishedBid: replenishedBidQty, ReplenishedAsk: replenishedAskQty,
+		RetreatFracBid: retreatFractionBid, RetreatFracAsk: retreatFractionAsk,
+		WithFracBid: withdrawalFractionBid, WithFracAsk: withdrawalFractionAsk,
+		RepFracBid: replenishmentFractionBid, RepFracAsk: replenishmentFractionAsk,
+	}
 
 	if deltaT > 0 {
-		input["retreatRateBid"] = retreatedBidQty / deltaT
-		input["retreatRateAsk"] = retreatedAskQty / deltaT
-		input["withRateBid"] = withdrawnBidQty / deltaT
-		input["withRateAsk"] = withdrawnAskQty / deltaT
-		input["repRateBid"] = replenishedBidQty / deltaT
-		input["repRateAsk"] = replenishedAskQty / deltaT
-		input["hasRate"] = true
-	} else {
-		input["hasRate"] = false
+		typed.RetreatRateBid = retreatedBidQty / deltaT
+		typed.RetreatRateAsk = retreatedAskQty / deltaT
+		typed.WithRateBid = withdrawnBidQty / deltaT
+		typed.WithRateAsk = withdrawnAskQty / deltaT
+		typed.RepRateBid = replenishedBidQty / deltaT
+		typed.RepRateAsk = replenishedAskQty / deltaT
+		typed.HasRate = true
 	}
 
 	state.prevBid = curBid
@@ -281,7 +263,7 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	state.prevSec = sec
 	state.prevNsec = nsec
 
-	fields, err := transport.Evaluate[map[string]core.Primitive](state.graph, core.Record(input))
+	fields, err := transport.Evaluate(state.graph, transport.Values(typed))
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}

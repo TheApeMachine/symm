@@ -1,21 +1,44 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewCorrelation composes covariance / sqrt(left energy * right energy).
-// It preserves finite-sample asynchronous values outside [-1,1]. Empty or
-// zero-energy normalization is undefined, not zero or a previous result.
-func NewCorrelation() core.Primitive {
-	return NewRatio[float64](
-		store.NewGet("covariance"),
-		transport.NewPipe(
-			NewProduct[float64](store.NewGet("left_energy"), store.NewGet("right_energy")),
-			calculus.NewSqrt(transport.NewIO(core.From(0.0))),
-		),
-	)
+/*
+CorrelationInput is a covariance and the two energies that normalize it.
+*/
+type CorrelationInput[U core.Floating] struct {
+	Covariance  U
+	LeftEnergy  U
+	RightEnergy U
+}
+
+/*
+Correlation owns covariance / sqrt(left energy * right energy). Empty or
+zero-energy normalization is undefined, not zero or a previous result.
+*/
+type Correlation[U core.Floating] struct {
+	core.Base[CorrelationInput[U], U]
+}
+
+func NewCorrelation[U core.Floating]() *Correlation[U] {
+	return &Correlation[U]{}
+}
+
+func (op *Correlation[U]) Next(
+	in iter.Seq[core.Primitive[CorrelationInput[U], CorrelationInput[U]]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			scale := U(math.Sqrt(float64(input.LeftEnergy * input.RightEnergy)))
+
+			if !yield(op.Carrier(input.Covariance / scale)) {
+				return
+			}
+		}
+	}
 }

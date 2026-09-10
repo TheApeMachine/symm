@@ -1,26 +1,40 @@
 package calculus
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"math"
 )
 
-// Minimum owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Minimum struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Minimum owns one field operation. Configuration supplies the value a run starts
+from. What it hands over is the running minimum after every arrival.
+*/
+type Minimum[U core.Numeric] struct {
+	core.Base[U, U]
 }
 
-func NewMinimum(left core.Primitive) *Minimum {
-	return &Minimum{left: left}
+func NewMinimum[U core.Numeric](current U) *Minimum[U] {
+	op := &Minimum[U]{}
+	op.Carrier(current)
+	return op
 }
-func (operation *Minimum) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Min(held, value) }, operation)
-	if result != nil {
-		operation.current = result
+
+func (op *Minimum[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			total := op.Read()
+			value := arriving.Read()
+
+			if value < total {
+				total = value
+			}
+
+			if !yield(op.Carrier(total)) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (operation *Minimum) Read() any { return core.To[any](operation.current) }

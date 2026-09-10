@@ -1,49 +1,47 @@
 package transport
 
-import "github.com/theapemachine/symm/nomagique/core"
+import (
+	"iter"
 
-// Zip pairs corresponding outputs from two configured branches. Neither branch
-// rereads the original source. Unequal lengths are an explicit shape error.
-type Zip struct {
-	core.PrimitiveError
-	left, right, output, current core.Primitive
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Pair is corresponding values from two runs. Zip does not compare, multiply, or
+interpret the pairing.
+*/
+type Pair[T, U any] struct {
+	Left  T
+	Right U
 }
 
-func NewZip(left, right core.Primitive) *Zip { return &Zip{left: left, right: right} }
-func (z *Zip) Next(in core.Primitive) core.Primitive {
-	if z.output == nil {
-		input := []core.Primitive{}
-		left := []core.Primitive{}
-		right := []core.Primitive{}
-		core.Yield(NewIO(core.From(0)), in, func(n int, v core.Primitive) int { input = append(input, v); return n }, z)
-		core.Yield(
-			NewIO(core.From(0)),
-			NewApply(z.left, NewIO(input...)),
-			func(n int, v core.Primitive) int { left = append(left, v); return n },
-			z,
-		)
-		core.Yield(
-			NewIO(core.From(0)),
-			NewApply(z.right, NewIO(input...)),
-			func(n int, v core.Primitive) int { right = append(right, v); return n },
-			z,
-		)
-		if len(left) != len(right) {
-			z.Error(core.ErrShape)
-			return nil
+/*
+Zip pairs corresponding yields from two runs. It stops when either run ends.
+Neither run is buffered into a collection first.
+*/
+func Zip[T, U any](
+	left iter.Seq[core.Primitive[T, T]],
+	right iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[Pair[T, U], Pair[T, U]]] {
+	return func(yield func(core.Primitive[Pair[T, U], Pair[T, U]]) bool) {
+		next, stop := iter.Pull(right)
+		defer stop()
+
+		carrier := &core.Carrier[Pair[T, U]]{}
+
+		for arriving := range left {
+			other, ok := next()
+
+			if !ok {
+				return
+			}
+
+			if !yield(carrier.Carrier(Pair[T, U]{
+				Left:  arriving.Read(),
+				Right: other.Read(),
+			})) {
+				return
+			}
 		}
-		pairs := make([]core.Primitive, len(left))
-		for i := range left {
-			pairs[i] = core.From([]core.Primitive{left[i], right[i]})
-		}
-		z.output = NewIO(pairs...)
 	}
-	value := z.output.Next(nil)
-	if value == nil {
-		z.output = nil
-	} else {
-		z.current = value
-	}
-	return value
 }
-func (z *Zip) Read() any { return core.To[any](z.current) }

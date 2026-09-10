@@ -1,13 +1,13 @@
 package cvd
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestFlowGraphPrimitiveAccounting(t *testing.T) {
+func TestFlowNext(t *testing.T) {
 	graph, p := newFlowGraph(), flowProjection()
 	for index, event := range []struct {
 		buy                              bool
@@ -15,7 +15,10 @@ func TestFlowGraphPrimitiveAccounting(t *testing.T) {
 	}{
 		{true, 2, 0, 200, 0}, {false, 1, 1, 100, 1}, {true, 1, 3, 200, 2.0 / 3},
 	} {
-		fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{"price": 100.0, "quantity": event.quantity, "buy": event.buy, "at": int64(event.seconds * 1e9), "from": int64(0), "quoted": false}))
+		fields, err := transport.Evaluate(graph, transport.Values(FlowInput{
+			Price: 100, Quantity: event.quantity, Buy: event.buy,
+			At: int64(event.seconds * 1e9),
+		}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,16 +39,21 @@ func TestFlowGraphPrimitiveAccounting(t *testing.T) {
 			if m.SNRDefined || m.Maturity != 0 {
 				t.Fatalf("cold evidence: %+v", m)
 			}
-		} else if math.Abs(m.Metrics["signed_net_fraction_baseline"].Raw-event.baseline) > 1e-12 {
+			continue
+		}
+		if math.Abs(m.Metrics["signed_net_fraction_baseline"].Raw-event.baseline) > 1e-12 {
 			t.Fatalf("baseline: %+v", m)
 		}
 	}
 }
 
-func TestFlowGraphBalancedQuoteHasNoDivisionByZero(t *testing.T) {
+func TestFlowQuotedResponse(t *testing.T) {
 	graph, p := newFlowGraph(), flowProjection()
 	for index := 0; index < 3; index++ {
-		fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{"price": 100.0, "quantity": 1.0, "buy": index != 1, "at": int64(index) * 1e9, "from": int64(0), "quoted": index > 0, "midpoint": 102.0, "prior_mid": 101.0}))
+		fields, err := transport.Evaluate(graph, transport.Values(FlowInput{
+			Price: 100, Quantity: 1, Buy: index != 1, At: int64(index) * 1e9,
+			Quoted: index > 0, Midpoint: 102, PriorMid: 101,
+		}))
 		if err != nil {
 			t.Fatal(err)
 		}

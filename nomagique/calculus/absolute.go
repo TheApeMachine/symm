@@ -1,26 +1,32 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Absolute owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Absolute struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Absolute owns one field operation. What it hands over is the absolute value of
+each arrival.
+*/
+type Absolute[U core.Floating] struct {
+	core.Base[U, U]
 }
 
-func NewAbsolute(left core.Primitive) *Absolute {
-	return &Absolute{left: left}
+func NewAbsolute[U core.Floating]() *Absolute[U] {
+	return &Absolute[U]{}
 }
-func (operation *Absolute) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Abs(value) }, operation)
-	if result != nil {
-		operation.current = result
+
+func (op *Absolute[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(U(math.Abs(float64(arriving.Read()))))) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (operation *Absolute) Read() any { return core.To[any](operation.current) }

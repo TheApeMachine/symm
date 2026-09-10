@@ -1,41 +1,56 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/collection"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewArgmax preserves a winning value's ordinal through comparison and selection.
-// Strict comparison keeps the first equal maximum. No hidden profile engine.
-func NewArgmax() core.Primitive {
-	return transport.NewPipe(
-		transport.NewEnumerate(),
-		logic.NewPick(
-			transport.NewPipe(
-				transport.NewFan(
-					transport.NewPipe(),
-					transport.NewIO(
-						transport.NewPipe(
-							collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))),
-							collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))),
-						),
-						transport.NewPipe(
-							collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0))),
-							collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))),
-						),
-					),
-				),
-				transport.NewCollect[float64](),
-				logic.NewGreater[float64](),
-			),
-		),
-		transport.NewSpread[core.Primitive](),
-		transport.NewMap(store.NewRecord(
-			transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0))), store.NewKey("index")),
-			transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))), store.NewKey("value")),
-		)),
-	)
+/*
+ArgmaxResult is a winning value and the first index at which it occurred.
+*/
+type ArgmaxResult[U core.Numeric] struct {
+	Index int
+	Value U
+}
+
+/*
+Argmax preserves a winning value's ordinal through comparison. Strict
+comparison keeps the first equal maximum.
+*/
+type Argmax[U core.Numeric] struct {
+	core.Base[U, ArgmaxResult[U]]
+}
+
+func NewArgmax[U core.Numeric]() *Argmax[U] {
+	return &Argmax[U]{}
+}
+
+func (op *Argmax[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[ArgmaxResult[U], ArgmaxResult[U]]] {
+	return func(yield func(core.Primitive[ArgmaxResult[U], ArgmaxResult[U]]) bool) {
+		var best ArgmaxResult[U]
+		seen := false
+		index := 0
+
+		for arriving := range in {
+			value := arriving.Read()
+
+			if !seen || value > best.Value {
+				best = ArgmaxResult[U]{Index: index, Value: value}
+				seen = true
+			}
+
+			index++
+		}
+
+		if !seen {
+			return
+		}
+
+		if !yield(op.Carrier(best)) {
+			return
+		}
+	}
 }

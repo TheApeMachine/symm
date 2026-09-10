@@ -1,25 +1,33 @@
 package calculus
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Square owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Square struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Square owns one field operation. What it hands over is the square of each
+arrival.
+*/
+type Square[U core.Numeric] struct {
+	core.Base[U, U]
 }
 
-func NewSquare(left core.Primitive) *Square {
-	return &Square{left: left}
+func NewSquare[U core.Numeric]() *Square[U] {
+	return &Square[U]{}
 }
-func (operation *Square) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return value * value }, operation)
-	if result != nil {
-		operation.current = result
+
+func (op *Square[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			value := arriving.Read()
+
+			if !yield(op.Carrier(value * value)) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (operation *Square) Read() any { return core.To[any](operation.current) }

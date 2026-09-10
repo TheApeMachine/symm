@@ -173,18 +173,65 @@ func (c *Catalog) Captures(ctx context.Context, run string, after int64) ([]Capt
 	return c.captures(ctx, run, iceberg.GreaterThan(iceberg.Reference("sequence"), after))
 }
 
-func (c *Catalog) captures(ctx context.Context, run string, filters ...iceberg.BooleanExpression) ([]CaptureRow, error) {
-	batches, err := c.scan(ctx, Captures, nil, append(filters, forRun(run))...)
+/*
+MarketKinds are the capture kinds that carry a market fact. Every other kind —
+book and depth frames above all, which are the overwhelming majority of a run —
+decodes to no observation at all.
+*/
+var MarketKinds = []string{"ticker", "trade", "trade_snapshot", "l3_touch"}
 
-	if err != nil {
+func (c *Catalog) captures(ctx context.Context, run string, filters ...iceberg.BooleanExpression) ([]CaptureRow, error) {
+	rows := []CaptureRow{}
+
+	if err := c.eachCapture(ctx, run, func(row CaptureRow) error {
+		rows = append(rows, row)
+
+		return nil
+	}, filters...); err != nil {
 		return nil, err
 	}
 
-	rows := []CaptureRow{}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Sequence < rows[j].Sequence })
+
+	return rows, nil
+}
+
+/*
+EachMarketCapture hands every capture that can carry a market fact to fn, one
+at a time, without ever holding the run.
+
+Collecting first is what a whole-run read cannot afford: a few minutes of one
+run is over a million captures, and it is their payloads — book frames above
+all — that make the collection gigabytes rather than megabytes. Streaming them
+past a decoder keeps only what the decoder kept.
+
+Rows arrive in the order Iceberg planned them, not in capture order. Nothing
+here can sort without holding the run, which is precisely the cost being
+avoided, so ordering is the caller's to apply to whatever it derives — which
+is smaller than the payloads it derived them from.
+*/
+func (c *Catalog) EachMarketCapture(
+	ctx context.Context, run string, after int64, fn func(CaptureRow) error,
+) error {
+	return c.eachCapture(
+		ctx, run, fn,
+		iceberg.GreaterThan(iceberg.Reference("sequence"), after),
+		iceberg.IsIn(iceberg.Reference("kind"), MarketKinds...),
+	)
+}
+
+func (c *Catalog) eachCapture(
+	ctx context.Context, run string, fn func(CaptureRow) error, filters ...iceberg.BooleanExpression,
+) error {
+	batches, err := c.scan(ctx, Captures, nil, append(filters, forRun(run))...)
+
+	if err != nil {
+		return err
+	}
 
 	for batch, err := range batches {
 		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] captures batch", err))
+			return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] captures batch", err))
 		}
 
 		for index := range int(batch.NumRows()) {
@@ -204,13 +251,13 @@ func (c *Catalog) captures(ctx context.Context, run string, filters ...iceberg.B
 				row.ReceivedAt = micros.ToTime(arrow.Microsecond).UTC()
 			}
 
-			rows = append(rows, row)
+			if err := fn(row); err != nil {
+				return err
+			}
 		}
 	}
 
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Sequence < rows[j].Sequence })
-
-	return rows, nil
+	return nil
 }
 
 // Runs yields every recorded process capture session, newest first.

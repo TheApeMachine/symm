@@ -1,36 +1,47 @@
 package matrix
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
 )
 
-/* Finite evaluates the existing matrix validity predicate without scalar delivery graphs. */
+/*
+Finite reports whether every coefficient is a finite number.
+*/
 type Finite struct {
-	core.PrimitiveError
-	seed    *transport.IO
-	current core.Primitive
+	core.Base[[][]float64, bool]
+	finite *logic.Finite[float64]
 }
 
 func NewFinite() *Finite {
-	return &Finite{seed: transport.NewIO(core.From(true))}
+	return &Finite{finite: logic.NewFinite[float64]()}
 }
 
-func (finite *Finite) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(finite.seed, input, func(valid bool, rows [][]float64) bool {
-		for _, row := range rows {
-			for _, value := range row {
-				valid = valid && !math.IsNaN(value) && !math.IsInf(value, 0)
+func (op *Finite) Next(
+	in iter.Seq[core.Primitive[[][]float64, [][]float64]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			valid := true
+
+			for _, row := range arriving.Read() {
+				for _, value := range row {
+					ok := true
+
+					for decision := range op.finite.Next(transport.Values(value)) {
+						ok = decision.Read()
+					}
+
+					valid = valid && ok
+				}
+			}
+
+			if !yield(op.Carrier(valid)) {
+				return
 			}
 		}
-		return valid
-	}, finite)
-
-	if result != nil {
-		finite.current = result
 	}
-	return result
 }
-
-func (finite *Finite) Read() any { return core.To[any](finite.current) }

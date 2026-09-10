@@ -1,22 +1,32 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Floor owns one scalar transform, including its mathematical domain.
-type Floor struct {
-	core.PrimitiveError
-	left, current core.Primitive
+/*
+Floor owns one field operation. What it hands over is the greatest integer not
+exceeding each arrival.
+*/
+type Floor[U core.Floating] struct {
+	core.Base[U, U]
 }
 
-func NewFloor(left core.Primitive) *Floor { return &Floor{left: left} }
-func (operation *Floor) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Floor(value) }, operation)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewFloor[U core.Floating]() *Floor[U] {
+	return &Floor[U]{}
 }
-func (operation *Floor) Read() any { return core.To[any](operation.current) }
+
+func (op *Floor[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(U(math.Floor(float64(arriving.Read()))))) {
+				return
+			}
+		}
+	}
+}

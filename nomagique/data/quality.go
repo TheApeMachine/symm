@@ -1,105 +1,166 @@
 package data
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewQuality derives fresh maturity/SNR facts from optional estimator fields.
-// The source Finalize precedence is preserved, including requiring support>1
-// before Mahalanobis overrides scalar SNR. This composition receives the facts
-// record itself; external measurement serialization is a separate boundary.
-func NewQuality() core.Primitive {
-	initialize := store.NewRecord(
-		transport.NewPipe(),
-		transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("snr")),
-		transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("snr_defined")),
-		transport.NewPipe(
-			equation.NewAny(store.NewHas("support"), store.NewHas("divergence"), store.NewHas("mahalanobis_snr")),
-			store.NewKey("estimated"),
-		),
-	)
-	scalar := logic.NewGate(
-		equation.NewAll(store.NewHas("divergence"), store.NewHas("noise_variance")),
-		logic.NewGate(
-			equation.NewGreater[float64](store.NewGet("noise_variance"), store.NewConstant(core.From(0.0))),
-			store.NewRecord(
-				transport.NewPipe(),
-				transport.NewPipe(
-					equation.NewRatio[float64](
-						transport.NewPipe(store.NewGet("divergence"), calculus.NewSquare(transport.NewIO(core.From(0.0)))),
-						store.NewGet("noise_variance"),
-					),
-					store.NewKey("snr"),
-				),
-				transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("snr_defined")),
-			),
-			transport.NewPipe(),
-		),
-		transport.NewPipe(),
-	)
-	supported := transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				equation.NewDifference[float64](
-					store.NewConstant(core.From(1.0)),
-					equation.NewRatio[float64](store.NewConstant(core.From(1.0)), store.NewGet("support")),
-				),
-				store.NewKey("maturity"),
-			),
-		),
-		logic.NewGate(
-			store.NewHas("mahalanobis_snr"),
-			logic.NewGate(
-				equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("mahalanobis_snr")),
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(store.NewGet("mahalanobis_snr"), store.NewKey("snr")),
-					transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("snr_defined")),
-				),
-				transport.NewPipe(),
-			),
-			transport.NewPipe(),
-		),
-	)
-	maturity := logic.NewGate(
-		store.NewHas("support"),
-		logic.NewGate(
-			equation.NewGreater[float64](store.NewGet("support"), store.NewConstant(core.From(1.0))),
-			supported,
-			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("maturity"))),
-		),
-		logic.NewGate(store.NewHas("maturity"),
-			transport.NewPipe(),
-			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(1.0)), store.NewKey("maturity"))),
-		),
-	)
-	finite := equation.NewAll(
-		logic.NewGate(
-			store.NewHas("support"),
-			transport.NewPipe(store.NewGet("support"), logic.NewFinite()),
-			store.NewConstant(core.From(true)),
-		),
-		logic.NewGate(
-			store.NewHas("divergence"),
-			transport.NewPipe(store.NewGet("divergence"), logic.NewFinite()),
-			store.NewConstant(core.From(true)),
-		),
-		logic.NewGate(
-			store.NewHas("noise_variance"),
-			transport.NewPipe(store.NewGet("noise_variance"), logic.NewFinite()),
-			store.NewConstant(core.From(true)),
-		),
-		logic.NewGate(
-			store.NewHas("mahalanobis_snr"),
-			transport.NewPipe(store.NewGet("mahalanobis_snr"), logic.NewFinite()),
-			store.NewConstant(core.From(true)),
-		),
-	)
-	return transport.NewMap(logic.NewGate(finite, transport.NewPipe(initialize, scalar, maturity), logic.NewReject(core.ErrDomain)))
+/*
+QualityFacts are the optional estimator fields Finalize reads. Absence is not
+zero: a missing support is a direct measurement, not N=0.
+*/
+type QualityFacts struct {
+	Support        float64
+	Divergence     float64
+	NoiseVariance  float64
+	MahalanobisSNR float64
+	Maturity       float64
+	HasSupport     bool
+	HasDivergence  bool
+	HasNoise       bool
+	HasMahalanobis bool
+	HasMaturity    bool
+}
+
+/*
+QualityReading is derived maturity/SNR. SNRDefined distinguishes a measured
+zero from an unestimable noise model.
+*/
+type QualityReading struct {
+	SNR        float64
+	SNRDefined bool
+	Estimated  bool
+	Maturity   float64
+}
+
+/*
+Quality owns that derivation. Support>1 is required before Mahalanobis
+overrides scalar SNR.
+*/
+type Quality struct {
+	core.Base[QualityFacts, QualityReading]
+	finite *logic.Finite[float64]
+}
+
+func NewQuality() *Quality {
+	return &Quality{finite: logic.NewFinite[float64]()}
+}
+
+func (op *Quality) Next(
+	in iter.Seq[core.Primitive[QualityFacts, QualityFacts]],
+) iter.Seq[core.Primitive[QualityReading, QualityReading]] {
+	return func(yield func(core.Primitive[QualityReading, QualityReading]) bool) {
+		for arriving := range in {
+			reading, err := op.Derive(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(reading)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Quality) Derive(facts QualityFacts) (QualityReading, error) {
+	if err := op.finiteField(facts.HasSupport, facts.Support); err != nil {
+		return QualityReading{}, err
+	}
+
+	if err := op.finiteField(facts.HasDivergence, facts.Divergence); err != nil {
+		return QualityReading{}, err
+	}
+
+	if err := op.finiteField(facts.HasNoise, facts.NoiseVariance); err != nil {
+		return QualityReading{}, err
+	}
+
+	if err := op.finiteField(facts.HasMahalanobis, facts.MahalanobisSNR); err != nil {
+		return QualityReading{}, err
+	}
+
+	reading := QualityReading{
+		Estimated: facts.HasSupport || facts.HasDivergence || facts.HasMahalanobis,
+		Maturity:  1,
+	}
+
+	if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
+		reading.SNR = facts.Divergence * facts.Divergence / facts.NoiseVariance
+		reading.SNRDefined = true
+	}
+
+	if facts.HasSupport {
+		reading.Maturity = 0
+
+		if facts.Support > 1 {
+			reading.Maturity = 1 - 1/facts.Support
+
+			if facts.HasMahalanobis && facts.MahalanobisSNR >= 0 {
+				reading.SNR = facts.MahalanobisSNR
+				reading.SNRDefined = true
+			}
+		}
+
+		return reading, nil
+	}
+
+	if facts.HasMaturity {
+		reading.Maturity = facts.Maturity
+	}
+
+	return reading, nil
+}
+
+func (op *Quality) finiteField(present bool, value float64) error {
+	if !present {
+		return nil
+	}
+
+	defined, err := transport.Evaluate(op.finite, transport.Values(value))
+
+	if err != nil {
+		return err
+	}
+
+	if !defined {
+		return core.ErrDomain
+	}
+
+	return nil
+}
+
+func factsFromMetadata(metadata map[string]float64) QualityFacts {
+	facts := QualityFacts{}
+
+	if metadata == nil {
+		return facts
+	}
+
+	if value, ok := metadata[MetadataSupport]; ok {
+		facts.Support, facts.HasSupport = value, true
+	}
+
+	if value, ok := metadata[MetadataDivergence]; ok {
+		facts.Divergence, facts.HasDivergence = value, true
+	}
+
+	if value, ok := metadata[MetadataNoiseVariance]; ok {
+		facts.NoiseVariance, facts.HasNoise = value, true
+	}
+
+	if value, ok := metadata[MetadataMahalanobisSNR]; ok {
+		facts.MahalanobisSNR, facts.HasMahalanobis = value, true
+	}
+
+	if value, ok := metadata[MetadataMaturity]; ok {
+		facts.Maturity, facts.HasMaturity = value, true
+	}
+
+	return facts
 }

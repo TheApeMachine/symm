@@ -1,36 +1,39 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Sign discards magnitude. NaN remains undefined; infinities have defined signs.
-type Sign struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Sign owns one field operation. What it hands over is the unit sign of each
+arrival. Zero keeps its own value, including a signed zero.
+*/
+type Sign[U core.Floating] struct {
+	core.Base[U, U]
 }
 
-func NewSign(left core.Primitive) *Sign { return &Sign{left: left} }
-func (operation *Sign) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(
-		operation.left,
-		in,
-		func(_, value float64) float64 {
-			if math.IsNaN(value) {
-				return value
-			}
-			if value == 0 {
-				return value
-			}
-			return math.Copysign(1, value)
-		},
-		operation,
-	)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewSign[U core.Floating]() *Sign[U] {
+	return &Sign[U]{}
 }
-func (operation *Sign) Read() any { return core.To[any](operation.current) }
+
+func (op *Sign[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			value := arriving.Read()
+			signed := value
+
+			if value != 0 {
+				signed = U(math.Copysign(1, float64(value)))
+			}
+
+			if !yield(op.Carrier(signed)) {
+				return
+			}
+		}
+	}
+}

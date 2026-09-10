@@ -12,7 +12,7 @@ type TargetTransform func(current float64, past float64) (float64, bool)
 DirectionalTarget classifies whether the reference signal moved up (+1) or down (-1).
 If the absolute change is less than the deadband threshold, it returns 0.
 */
-func DirectionalTarget(deadband float64) TargetTransform {
+func DirectionalTransform(deadband float64) TargetTransform {
 	return func(current, past float64) (float64, bool) {
 		if !finite(current) || !finite(past) {
 			return 0, false
@@ -31,7 +31,7 @@ func DirectionalTarget(deadband float64) TargetTransform {
 /*
 BinaryTarget returns 1.0 if the reference signal increased, otherwise 0.0.
 */
-func BinaryTarget() TargetTransform {
+func BinaryTransform() TargetTransform {
 	return func(current, past float64) (float64, bool) {
 		if !finite(current) || !finite(past) {
 			return 0, false
@@ -46,7 +46,7 @@ func BinaryTarget() TargetTransform {
 /*
 DeltaTarget returns the continuous difference (current - past).
 */
-func DeltaTarget() TargetTransform {
+func DeltaTransform() TargetTransform {
 	return func(current, past float64) (float64, bool) {
 		if !finite(current) || !finite(past) {
 			return 0, false
@@ -58,7 +58,7 @@ func DeltaTarget() TargetTransform {
 /*
 IdentityTarget returns the current value itself, unchanged.
 */
-func IdentityTarget() TargetTransform {
+func IdentityTransform() TargetTransform {
 	return func(current, past float64) (float64, bool) {
 		if !finite(current) {
 			return 0, false
@@ -70,7 +70,7 @@ func IdentityTarget() TargetTransform {
 /*
 RatioTarget returns relative change (current / past - 1.0).
 */
-func RatioTarget() TargetTransform {
+func RatioTransform() TargetTransform {
 	return func(current, past float64) (float64, bool) {
 		if !finite(current) || !finite(past) || past == 0 {
 			return 0, false

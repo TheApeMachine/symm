@@ -1,47 +1,68 @@
 package temporal
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/collection"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewGovernor composes an observation-driven capacity, retained tail and
-// reduction. The controller yields a record containing capacity (float64).
-// Neither the store nor reduction knows which policy selected the capacity.
-func NewGovernor(controller, reduction core.Primitive) core.Primitive {
-	history := store.NewRetained(core.From([]float64{}))
-	capacity := store.NewRetained(core.From(2))
-	return transport.NewMap(
-		transport.NewFan(
-			transport.NewPipe(),
-			transport.NewIO(
-				transport.NewPipe(
-					controller,
-					store.NewGet("capacity"),
-					calculus.NewMaximum(transport.NewIO(core.From(2.0))),
-					calculus.NewConvert[float64, int](),
-					capacity,
-					transport.NewDiscard(),
-				),
-				transport.NewPipe(
-					collection.NewAppend[float64](history),
-					collection.NewTail[float64](capacity),
-					history,
-					logic.NewGate(
-						equation.NewGreater[float64](
-							transport.NewPipe(transport.NewSpread[float64](), equation.NewCount()),
-							store.NewConstant(core.From(1.0)),
-						),
-						transport.NewPipe(transport.NewSpread[float64](), reduction),
-						store.NewConstant(core.From(0.0)),
-					),
-				),
-			),
-		),
-	)
+/*
+Governor retains a tail of arrivals whose length is the configured capacity
+and hands that tail, as one collection, to a reduction. Until two observations
+exist there is nothing to reduce, so the yield is the zero value.
+*/
+type Governor[U core.Numeric] struct {
+	core.Base[U, U]
+	capacity  int
+	reduction core.Primitive[[]U, U]
+	history   []U
+}
+
+func NewGovernor[U core.Numeric](capacity int, reduction core.Primitive[[]U, U]) *Governor[U] {
+	op := &Governor[U]{capacity: capacity, reduction: reduction}
+
+	if capacity < 1 {
+		op.Error(core.ErrShape)
+	}
+
+	return op
+}
+
+func (op *Governor[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		if op.Error() != nil {
+			return
+		}
+
+		for arriving := range in {
+			op.history = append(op.history, arriving.Read())
+
+			if len(op.history) > op.capacity {
+				op.history = append([]U(nil), op.history[len(op.history)-op.capacity:]...)
+			}
+
+			if len(op.history) < 2 {
+				var zero U
+
+				if !yield(op.Carrier(zero)) {
+					return
+				}
+
+				continue
+			}
+
+			var reduced U
+
+			for out := range op.reduction.Next(transport.Values(op.history)) {
+				reduced = out.Read()
+			}
+
+			if !yield(op.Carrier(reduced)) {
+				return
+			}
+		}
+	}
 }

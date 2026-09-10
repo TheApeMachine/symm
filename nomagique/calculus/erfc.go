@@ -1,24 +1,32 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Erfc owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Erfc struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Erfc owns one field operation. What it hands over is the complementary error
+function of each arrival.
+*/
+type Erfc[U core.Floating] struct {
+	core.Base[U, U]
 }
 
-func NewErfc(left core.Primitive) *Erfc { return &Erfc{left: left} }
-func (operation *Erfc) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Erfc(value) }, operation)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewErfc[U core.Floating]() *Erfc[U] {
+	return &Erfc[U]{}
 }
-func (operation *Erfc) Read() any { return core.To[any](operation.current) }
+
+func (op *Erfc[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(U(math.Erfc(float64(arriving.Read()))))) {
+				return
+			}
+		}
+	}
+}

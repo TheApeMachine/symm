@@ -1,14 +1,33 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewCount is addition over unit contributions. It counts delivered objects,
-// regardless of their payload type. Collection members must first be Spread.
-func NewCount() core.Primitive {
-	return transport.NewMapReduce(store.NewConstant(core.From(1.0)), arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))))
+/*
+Count owns addition over unit contributions. It counts delivered objects,
+regardless of their payload.
+*/
+type Count[T any] struct {
+	core.Base[T, float64]
+}
+
+func NewCount[T any]() *Count[T] {
+	op := &Count[T]{}
+	op.Carrier(0)
+	return op
+}
+
+func (op *Count[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		for range in {
+			if !yield(op.Carrier(op.Read() + 1)) {
+				return
+			}
+		}
+	}
 }

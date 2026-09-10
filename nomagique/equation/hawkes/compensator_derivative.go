@@ -1,36 +1,47 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewCompensatorDerivative includes the derivative of both the kernel
-// numerator and the 1/beta scale. Omitting either changes the fitted model.
-func NewCompensatorDerivative() core.Primitive {
-	return equation.NewSum[float64](
-		equation.NewProduct[float64](
-			equation.NewSum[float64](store.NewGet("alpha_xx"), store.NewGet("alpha_yx")),
-			equation.NewDifference[float64](
-				equation.NewRatio[float64](store.NewGet("integral_x_beta"), store.NewGet("beta")),
-				equation.NewRatio[float64](
-					store.NewGet("integral_x"),
-					transport.NewPipe(store.NewGet("beta"), calculus.NewSquare(transport.NewIO(core.From(0.0)))),
-				),
-			),
-		),
-		equation.NewProduct[float64](
-			equation.NewSum[float64](store.NewGet("alpha_xy"), store.NewGet("alpha_yy")),
-			equation.NewDifference[float64](
-				equation.NewRatio[float64](store.NewGet("integral_y_beta"), store.NewGet("beta")),
-				equation.NewRatio[float64](
-					store.NewGet("integral_y"),
-					transport.NewPipe(store.NewGet("beta"), calculus.NewSquare(transport.NewIO(core.From(0.0)))),
-				),
-			),
-		),
-	)
+/*
+CompensatorDerivativeInput includes both kernel-numerator and 1/beta scale
+derivatives.
+*/
+type CompensatorDerivativeInput struct {
+	Parameters
+	IntegralX     float64
+	IntegralY     float64
+	IntegralXBeta float64
+	IntegralYBeta float64
+}
+
+/*
+CompensatorDerivative includes the derivative of both the kernel numerator
+and the 1/beta scale.
+*/
+type CompensatorDerivative struct {
+	core.Base[CompensatorDerivativeInput, float64]
+}
+
+func NewCompensatorDerivative() *CompensatorDerivative {
+	return &CompensatorDerivative{}
+}
+
+func (op *CompensatorDerivative) Next(
+	in iter.Seq[core.Primitive[CompensatorDerivativeInput, CompensatorDerivativeInput]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			value := (input.AlphaXX+input.AlphaYX)*(input.IntegralXBeta/input.Beta-input.IntegralX/(input.Beta*input.Beta)) +
+				(input.AlphaXY+input.AlphaYY)*(input.IntegralYBeta/input.Beta-input.IntegralY/(input.Beta*input.Beta))
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+	}
 }

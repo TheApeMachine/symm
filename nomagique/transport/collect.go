@@ -1,22 +1,38 @@
 package transport
 
-import "github.com/theapemachine/symm/nomagique/core"
+import (
+	"iter"
 
-// Collect retains the values of one run as one collection. It neither converts
-// elements nor assigns domain meanings to them.
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Collect retains the values of one run as one collection.
+
+It is the one shape that cannot stream: a collection is not complete until its
+run is spent, so nothing is handed over until everything has arrived. That is a
+property of the operation, not of the contract.
+*/
 type Collect[T any] struct {
-	core.PrimitiveError
-	seed    core.Primitive
-	current core.Primitive
+	core.Base[T, []T]
 }
 
 func NewCollect[T any]() *Collect[T] {
-	return &Collect[T]{seed: NewIO(core.From([]T{}))}
+	return &Collect[T]{}
 }
-func (collect *Collect[T]) Next(in core.Primitive) core.Primitive {
-	collect.current = core.Yield(collect.seed, in, func(held []T, value T) []T {
-		return append(held, value)
-	}, collect)
-	return collect.current
+
+func (op *Collect[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[[]T, []T]] {
+	return func(yield func(core.Primitive[[]T, []T]) bool) {
+		var gathered []T
+
+		for arriving := range in {
+			gathered = append(gathered, arriving.Read())
+		}
+
+		if !yield(op.Carrier(gathered)) {
+			return
+		}
+	}
 }
-func (collect *Collect[T]) Read() any { return core.To[any](collect.current) }

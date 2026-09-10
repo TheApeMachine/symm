@@ -2,8 +2,6 @@ package learning
 
 import (
 	"errors"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 )
@@ -20,7 +18,7 @@ type PredictiveCoderConfig struct {
 	CustomArch   []int
 	MaxHorizon   int
 	Target       TargetTransform
-	Pace         core.Primitive
+	Pace         *Pace
 	InitialAlpha float64
 	Learn        bool
 
@@ -135,7 +133,7 @@ it was allowed to see.
 type PredictiveCoder struct {
 	manifold *ResonanceManifold
 	target   TargetTransform
-	pace     core.Primitive
+	pace     *Pace
 	alpha    float64
 	learn    bool
 
@@ -176,11 +174,10 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		coder.alpha = 0.03
 	}
 	if coder.pace == nil {
-		// Preserve the established coder policy; NewPace itself chooses no defaults.
-		coder.pace = NewPace(store.NewConstant(core.Record(map[string]any{
-			"rest": coder.alpha, "lower": 0.005, "upper": 0.150,
-			"gain": 0.1, "band": 0.2, "window": 256.0,
-		})))
+		coder.pace = NewPace(PaceConfig{
+			Rest: coder.alpha, Lower: 0.005, Upper: 0.150,
+			Gain: 0.1, Band: 0.2, Window: 256,
+		})
 	}
 
 	if len(config.CustomArch) == 0 {
@@ -228,17 +225,13 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 	// own input and sets the learning rate from it, so the rate is derived
 	// rather than configured.
 	if coder.pace != nil {
-		fields, err := transport.Evaluate[map[string]core.Primitive](coder.pace, core.From(coder.manifold.ReconstructionError()))
+		reading, err := transport.Evaluate(coder.pace, transport.Values(coder.manifold.ReconstructionError()))
 		if err != nil {
 			return PredictiveOutput{}, err
 		}
-		alpha, err := core.Field[float64](fields, "alpha")
-		if err != nil {
-			return PredictiveOutput{}, err
-		}
-		coder.alpha = alpha
+		coder.alpha = reading.Alpha
 
-		if err := coder.manifold.SetAlpha(alpha); err != nil {
+		if err := coder.manifold.SetAlpha(coder.alpha); err != nil {
 			return PredictiveOutput{}, err
 		}
 	}

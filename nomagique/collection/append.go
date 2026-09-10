@@ -1,24 +1,33 @@
 package collection
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Append extends a collection supplied by the configured left connection.
-// Persisting the output belongs to a composed storage Primitive.
+/*
+Append owns extending a collection. Configuration supplies the value a run
+starts from. What it hands over is the collection after every arrival.
+*/
 type Append[T any] struct {
-	core.PrimitiveError
-	left, current core.Primitive
+	core.Base[T, []T]
 }
 
-func NewAppend[T any](left core.Primitive) *Append[T] {
-	return &Append[T]{left: left}
+func NewAppend[T any](current []T) *Append[T] {
+	op := &Append[T]{}
+	op.Carrier(current)
+	return op
 }
-func (a *Append[T]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(a.left, in, func(held []T, value T) []T { return append(held, value) }, a)
-	if result != nil {
-		a.current = result
+
+func (op *Append[T]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[[]T, []T]] {
+	return func(yield func(core.Primitive[[]T, []T]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(append(op.Read(), arriving.Read()))) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (a *Append[T]) Read() any { return core.To[any](a.current) }

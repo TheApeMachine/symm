@@ -1,27 +1,45 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// NewFisher composes the Fisher-z normal-tail formula for records containing
-// "correlation" and "support". This formula does not establish calibration for
-// dependent asynchronous overlaps. Invalid domains propagate NaN/Inf normally.
-func NewFisher() core.Primitive {
-	return transport.NewPipe(
-		NewProduct[float64](
-			transport.NewPipe(store.NewGet("correlation"), calculus.NewAtanh(transport.NewIO(core.From(0.0)))),
-			transport.NewPipe(
-				NewDifference[float64](store.NewGet("support"), store.NewConstant(core.From(3.0))),
-				calculus.NewSqrt(transport.NewIO(core.From(0.0))),
-			),
-		),
-		calculus.NewAbsolute(transport.NewIO(core.From(0.0))),
-		NewRatio[float64](transport.NewPipe(), store.NewConstant(core.From(math.Sqrt2))),
-		calculus.NewErfc(transport.NewIO(core.From(0.0))),
-	)
+/*
+FisherInput is a correlation and the support that scales its Fisher z.
+*/
+type FisherInput struct {
+	Correlation float64
+	Support     float64
+}
+
+/*
+Fisher owns the Fisher-z normal-tail formula. The n-3 degrees of freedom and
+the √2 in the complementary error function are identities of that formula.
+Invalid domains propagate NaN/Inf normally.
+*/
+type Fisher struct {
+	core.Base[FisherInput, float64]
+}
+
+func NewFisher() *Fisher {
+	return &Fisher{}
+}
+
+func (op *Fisher) Next(
+	in iter.Seq[core.Primitive[FisherInput, FisherInput]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+			z := math.Atanh(input.Correlation) * math.Sqrt(input.Support-3)
+			p := math.Erfc(math.Abs(z) / math.Sqrt2)
+
+			if !yield(op.Carrier(p)) {
+				return
+			}
+		}
+	}
 }

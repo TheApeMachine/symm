@@ -1,11 +1,8 @@
 package data
 
 import (
-	"time"
-
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"strings"
+	"time"
 )
 
 /*
@@ -53,9 +50,6 @@ func (measurement *Measurement[Value]) Symbol() string {
 	return measurement.Label
 }
 
-/*
-NewMeasurement builds an empty projection with its metrics map allocated.
-*/
 func NewMeasurement[Value any](id, label, source string, at, from time.Time) *Measurement[Value] {
 	return &Measurement[Value]{
 		ID:      id,
@@ -67,9 +61,6 @@ func NewMeasurement[Value any](id, label, source string, at, from time.Time) *Me
 	}
 }
 
-/*
-PutMetric stores one projected metric under its own label.
-*/
 func (measurement *Measurement[Value]) PutMetric(metric Metric[Value]) {
 	if measurement == nil || metric.Label == "" {
 		return
@@ -82,10 +73,6 @@ func (measurement *Measurement[Value]) PutMetric(metric Metric[Value]) {
 	measurement.Metrics[metric.Label] = metric
 }
 
-/*
-QualityFact names the raw estimator facts a pipeline must carry as metadata so
-Finalize can derive Maturity and SNR without any caller-supplied numbers.
-*/
 const (
 	MetadataSupport        = "support"
 	MetadataMaturity       = "maturity"
@@ -94,127 +81,117 @@ const (
 	MetadataMahalanobisSNR = "mahalanobis_snr"
 )
 
+func (measurement *Measurement[Value]) quality() QualityReading {
+	return QualityReading{
+		SNR:        measurement.SNR,
+		SNRDefined: measurement.SNRDefined,
+		Estimated:  measurement.Estimated,
+		Maturity:   measurement.Maturity,
+	}
+}
+
 /*
 Finalize derives Maturity and SNR from the measurement's own estimator facts.
-
-Maturity follows the global spec (§8): effective support N maps to
-1 - 1/N when N > 1, otherwise 0. A stateless direct measurement with no
-historical estimator carries no support slot and is whole (Maturity 1).
-
-SNR follows spec §7:
-- Multivariate Mahalanobis SNR (§7.2): (1/k) * delta^T * Sigma^-1 * delta
-- Scalar SNR (§7.1): divergence^2 / noise_variance
-
-When no noise model or covariance is estimable the SNR is undefined (reported as
-zero and left distinguishable from a genuine zero departure by the absence of the
-noise or covariance fact).
 */
 func (measurement *Measurement[Value]) Finalize() {
 	if measurement == nil || measurement.Err != nil {
 		return
 	}
-	facts := make(map[string]core.Primitive, len(measurement.Metadata))
-	for name, value := range measurement.Metadata {
-		facts[name] = core.From(value)
-	}
-	graphs := projectionPool.Get().(*projectionGraphs)
-	fields, err := transport.Evaluate[map[string]core.Primitive](graphs.quality, core.From(facts))
+
+	reading, err := NewQuality().Derive(factsFromMetadata(measurement.Metadata))
+
 	if err != nil {
 		measurement.Err = err
 		return
 	}
-	decoder := core.NewDecoder(fields)
-	measurement.Maturity = core.Decode[float64](decoder, "maturity")
-	measurement.SNR = core.Decode[float64](decoder, "snr")
-	measurement.SNRDefined = core.Decode[bool](decoder, "snr_defined")
-	measurement.Estimated = core.Decode[bool](decoder, "estimated")
-	measurement.Err = decoder.Error()
-	if measurement.Err == nil {
-		projectionPool.Put(graphs)
-	}
+
+	measurement.Maturity = reading.Maturity
+	measurement.SNR = reading.SNR
+	measurement.SNRDefined = reading.SNRDefined
+	measurement.Estimated = reading.Estimated
 }
 
-/* Authority reads the canonical Primitive authority equation, never a duplicate formula. */
+/* Authority reads the canonical evidence-authority equation. */
 func (measurement *Measurement[Value]) Authority() float64 {
 	if measurement == nil {
 		return 0
 	}
+
 	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
 		measurement.Finalize()
 	}
+
 	if measurement.Err != nil {
 		return 0
 	}
-	graphs := projectionPool.Get().(*projectionGraphs)
-	authority, err := transport.Evaluate[float64](graphs.authority, core.Record(map[string]any{
-		"maturity": measurement.Maturity, "snr": measurement.SNR,
-		"snr_defined": measurement.SNRDefined, "estimated": measurement.Estimated,
-	}))
+
+	value, err := NewAuthority().Weight(measurement.quality())
+
 	if err != nil {
 		measurement.Err = err
 		return 0
 	}
-	projectionPool.Put(graphs)
-	return authority
+
+	return value
 }
 
 /*
-Readout projects one metric into the Primitive record used by NewReadout.
-Unit, timestamps and optional normalized/standardized values remain provenance;
-no former Readout receiver or hidden graph traversal is recreated.
+Readout projects one metric into the usable authority-weighted observation.
 */
-func (measurement *Measurement[Value]) Readout(label string) core.Primitive {
+func (measurement *Measurement[Value]) Readout(label string) *Readout {
 	if measurement == nil || measurement.Err != nil {
 		return nil
 	}
+
 	metric, found := measurement.Metrics[label]
+
 	if !found {
 		return nil
 	}
+
 	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
 		measurement.Finalize()
 	}
+
 	if measurement.Err != nil {
 		return nil
 	}
+
 	raw, valid := any(metric.Raw).(float64)
+
 	if !valid {
-		measurement.Err = core.ErrWrongType
 		return nil
 	}
-	record := core.Record(map[string]any{
-		"source": measurement.Source, "label": label, "raw": raw,
-		"maturity": measurement.Maturity, "snr": measurement.SNR,
-		"snr_defined": measurement.SNRDefined, "estimated": measurement.Estimated,
-		"at": measurement.At.UnixNano(), "unit": string(metric.Unit), "timescale": string(metric.Timescale),
-		"discrete": metric.Unit == UnitCount || strings.Contains(label, "ordinal"),
+
+	reading, err := NewReadout().Resolve(ReadoutInput{
+		QualityReading: measurement.quality(),
+		Raw:            raw,
+		Credibility:    1,
+		Defined:        true,
+		Discrete:       metric.Unit == UnitCount || strings.Contains(label, "ordinal"),
 	})
-	graphs := projectionPool.Get().(*projectionGraphs)
-	fields, err := transport.Evaluate[map[string]core.Primitive](graphs.readout, record)
+
 	if err != nil {
 		measurement.Err = err
 		return nil
 	}
-	if metric.Normalized != nil {
-		fields["normalized"] = core.From(*metric.Normalized)
-	}
-	if metric.Standardized != nil {
-		fields["standardized"] = core.From(*metric.Standardized)
-	}
-	projectionPool.Put(graphs)
-	return core.From(fields)
+
+	return &reading
 }
 
-/* Readouts retains each metric's explicit Primitive result record. */
-func (measurement *Measurement[Value]) Readouts() map[string]core.Primitive {
+/* Readouts retains each metric's explicit readout. */
+func (measurement *Measurement[Value]) Readouts() map[string]Readout {
 	if measurement == nil {
 		return nil
 	}
-	readouts := make(map[string]core.Primitive, len(measurement.Metrics))
+
+	readouts := make(map[string]Readout, len(measurement.Metrics))
+
 	for label := range measurement.Metrics {
 		if readout := measurement.Readout(label); readout != nil {
-			readouts[label] = readout
+			readouts[label] = *readout
 		}
 	}
+
 	return readouts
 }

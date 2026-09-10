@@ -1,25 +1,32 @@
 package logic
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// IsInf tests whether one number is infinite, irrespective of sign.
-type IsInf struct {
-	core.PrimitiveError
-	seed, current core.Primitive
+/*
+IsInf owns the infinity predicate. It reports whether an arrival is infinite,
+irrespective of sign.
+*/
+type IsInf[U core.Floating] struct {
+	core.Base[U, bool]
 }
 
-func NewIsInf() *IsInf {
-	return &IsInf{seed: transport.NewIO(core.From(false))}
+func NewIsInf[U core.Floating]() *IsInf[U] {
+	return &IsInf[U]{}
 }
-func (p *IsInf) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(p.seed, in, func(_ bool, v float64) bool { return math.IsInf(v, 0) }, p)
-	if result != nil {
-		p.current = result
+
+func (op *IsInf[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(math.IsInf(float64(arriving.Read()), 0))) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (p *IsInf) Read() any { return core.To[any](p.current) }

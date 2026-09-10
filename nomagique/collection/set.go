@@ -1,63 +1,45 @@
 package collection
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
+	"fmt"
+	"iter"
 	"slices"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Set replaces one indexed member without mutating its input collection. Index
-// and replacement are configured Primitive sources. Numerical formulas deciding
-// the replacement remain outside this structural operation.
+/*
+Set replaces one indexed member without mutating its input collection. Index
+and replacement are configuration.
+*/
 type Set[T any] struct {
-	core.PrimitiveError
-	index, value, seed, current core.Primitive
+	core.Base[[]T, []T]
+	index int
+	value T
 }
 
-func NewSet[T any](index, value core.Primitive) *Set[T] {
-	return &Set[T]{index: index, value: value, seed: transport.NewIO(core.From([]T{}))}
+func NewSet[T any](index int, value T) *Set[T] {
+	return &Set[T]{index: index, value: value}
 }
-func (set *Set[T]) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(
-		set.seed,
-		in,
-		func(_ []T, values []T) []T {
-			index := -1
-			core.Yield(
-				transport.NewIO(core.From(0.0)),
-				set.index,
-				func(_ float64, value float64) float64 {
-					if math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value || value < 0 || value >= float64(len(values)) {
-						set.Error(core.ErrShape)
-						return value
-					}
-					index = int(value)
-					return value
-				},
-				set,
-			)
-			output := slices.Clone(values)
-			observed := 0
-			var replacement T
-			core.Yield(
-				transport.NewIO(core.NewProto(replacement)),
-				set.value,
-				func(_ T, value T) T { observed++; replacement = value; return value },
-				set,
-			)
-			if index < 0 || observed != 1 {
-				set.Error(core.ErrShape)
-				return output
+
+func (op *Set[T]) Next(
+	in iter.Seq[core.Primitive[[]T, []T]],
+) iter.Seq[core.Primitive[[]T, []T]] {
+	return func(yield func(core.Primitive[[]T, []T]) bool) {
+		for arriving := range in {
+			values := arriving.Read()
+
+			if op.index < 0 || op.index >= len(values) {
+				op.Error(fmt.Errorf("%w: index %d of %d", core.ErrShape, op.index, len(values)))
+				continue
 			}
-			output[index] = replacement
-			return output
-		},
-		set,
-	)
-	if result != nil {
-		set.current = result
+
+			updated := slices.Clone(values)
+			updated[op.index] = op.value
+
+			if !yield(op.Carrier(updated)) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (set *Set[T]) Read() any { return core.To[any](set.current) }

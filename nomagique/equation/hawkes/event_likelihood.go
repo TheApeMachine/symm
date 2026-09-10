@@ -1,52 +1,77 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewEventLikelihood evaluates event log intensities on (origin,horizon].
-// Responses retain per-event supports for the score composition. Captured
-// history is replayed explicitly; this reference topology is O(N*N), not the
-// optimized chronological excitation recurrence from the original package.
-func NewEventLikelihood() core.Primitive {
-	context := store.NewRetained(nil)
-	return transport.NewPipe(
-		context,
-		store.NewGet("events"),
-		transport.NewSpread[core.Primitive](),
-		transport.NewMap(
-			logic.NewGate(
-				equation.NewAll(
-					equation.NewGreater[float64](store.NewGet("at"), transport.NewApply(store.NewGet("origin"), context)),
-					equation.NewLessEqual[float64](store.NewGet("at"), transport.NewApply(store.NewGet("horizon"), context)),
-				),
-				transport.NewPipe(
-					store.NewKV[string](context),
-					store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("at"), store.NewKey("horizon"))),
-					NewIntensity(store.NewGet("side")),
-					logic.NewGate(
-						equation.NewAll(
-							equation.NewGreater[float64](store.NewGet("intensity"), store.NewConstant(core.From(0.0))),
-							transport.NewPipe(store.NewGet("intensity"), logic.NewFinite()),
-						),
-						store.NewRecord(
-							transport.NewPipe(),
-							transport.NewPipe(
-								transport.NewPipe(store.NewGet("intensity"), calculus.NewLog(transport.NewIO(core.From(0.0)))),
-								store.NewKey("log_intensity"),
-							),
-						),
-						logic.NewReject(core.ErrDomain),
-					),
-				),
-				transport.NewDiscard(),
-			),
-		),
-		transport.NewCollect[core.Primitive](),
-	)
+/*
+ScoredEvent is one event's log intensity on (origin,horizon].
+*/
+type ScoredEvent struct {
+	Event
+	LogIntensity float64
+	Intensity    float64
+}
+
+/*
+EventLikelihoodInput is the process window used to score events.
+*/
+type EventLikelihoodInput struct {
+	Parameters
+	Origin  float64
+	Horizon float64
+	Events  []Event
+}
+
+/*
+EventLikelihood evaluates event log intensities on (origin,horizon].
+*/
+type EventLikelihood struct {
+	core.Base[EventLikelihoodInput, ScoredEvent]
+	intensity *Intensity
+}
+
+func NewEventLikelihood() *EventLikelihood {
+	return &EventLikelihood{intensity: NewIntensity()}
+}
+
+func (op *EventLikelihood) Next(
+	in iter.Seq[core.Primitive[EventLikelihoodInput, EventLikelihoodInput]],
+) iter.Seq[core.Primitive[ScoredEvent, ScoredEvent]] {
+	return func(yield func(core.Primitive[ScoredEvent, ScoredEvent]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
+
+			for _, event := range input.Events {
+				if !(event.At > input.Origin && event.At <= input.Horizon) {
+					continue
+				}
+
+				reading := IntensityResult{}
+
+				for out := range op.intensity.Next(func(yield func(core.Primitive[IntensityInput, IntensityInput]) bool) {
+					carrier := &core.Carrier[IntensityInput]{}
+					yield(carrier.Carrier(IntensityInput{
+						Parameters: input.Parameters,
+						Side:       event.Side,
+						Horizon:    event.At,
+						Events:     input.Events,
+					}))
+				}) {
+					reading = out.Read()
+				}
+
+				if !yield(op.Carrier(ScoredEvent{
+					Event:        event,
+					Intensity:    reading.Intensity,
+					LogIntensity: math.Log(reading.Intensity),
+				})) {
+					return
+				}
+			}
+		}
+	}
 }

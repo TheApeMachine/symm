@@ -36,6 +36,18 @@ export const ImpulseMap = ({
 					stroke="var(--line)"
 					strokeWidth="0.5"
 				/>
+				{points.length === 0 && (
+					<text
+						x="0"
+						y="0"
+						textAnchor="middle"
+						fill="var(--f3)"
+						fontSize="14"
+						fontFamily="monospace"
+					>
+						No numeric cells yet — waiting for tape
+					</text>
+				)}
 				{points.map((point) => {
 					const light = energy > 0 ? Math.sqrt(point.energy / energy) : 0;
 					return (

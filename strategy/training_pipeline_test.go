@@ -10,10 +10,9 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
-	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -194,9 +193,7 @@ func TestTrainingLearnsFromATape(t *testing.T) {
 
 	// Every agent wrote what it recognised into its own memory.
 	for index, memory := range training.Memories() {
-		tree := core.To[*iradix.Tree[[]byte]](
-			transport.NewApply(memory, nil).Next(nil),
-		)
+		tree := memory.Read()
 
 		if tree == nil || tree.Len() == 0 {
 			t.Fatalf("agent %d learned nothing", index)
@@ -249,18 +246,12 @@ func recognised(t *testing.T, agent int, tree *iradix.Tree[[]byte]) {
 		// between handing its value over and ending the run, so reading one
 		// straight after writing it lands on whichever phase is next rather
 		// than on the answer.
-		recall := associative.NewRecall(transport.NewIO(core.From(tree)), transport.NewIO(
-			core.From(cognition.Evaluation{
-				Context: context, Config: cognition.DefaultConfig(), Step: 1 << 20,
-			}),
-		))
-		answered := tests.Drain(t, recall, nil)
-		tests.Sound(t, recall)
-
-		if len(answered) == 0 {
-			t.Fatalf("agent %d did not answer about %q", agent, moment)
+		reading, err := transport.Evaluate(associative.NewRecall(store.NewRetained(tree)), transport.Values(cognition.Evaluation{
+			Context: context, Config: cognition.DefaultConfig(), Step: 1 << 20,
+		}))
+		if err != nil {
+			t.Fatalf("agent %d did not answer about %q: %v", agent, moment, err)
 		}
-		reading := answered[len(answered)-1].(cognition.Evaluation)
 		t.Logf(
 			"  agent %d shown a %q sequence -> %q (confidence %.3f, contrast %.3f, support %d, runner-up %q)",
 			agent, moment, reading.WinnerClass, reading.Confidence,

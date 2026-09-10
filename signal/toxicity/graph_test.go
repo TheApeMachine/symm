@@ -1,18 +1,19 @@
 package toxicity
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestTradeGraphPrimitiveFractions(t *testing.T) {
+func TestTradeGraphNext(t *testing.T) {
 	graph, p := newTradeGraph(), tradeProjection()
 	for index, fraction := range []float64{.3, .5, .9, 1.2} {
-		fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{
-			"bracketQty": fraction * 10, "matchedBidQty": fraction * 10, "matchedAskQty": 0.0, "touchFillBidQty": fraction * 10, "touchFillAskQty": 0.0,
-			"touchFillBidFrac": fraction, "touchFillAskFrac": 0.0, "hasRate": index > 0, "touchFillBidRate": fraction * 10, "touchFillAskRate": 0.0,
-			"bidSupported": index >= 2, "askSupported": false,
+		fields, err := transport.Evaluate(graph, transport.Values(TradeInput{
+			BracketQty: fraction * 10, MatchedBidQty: fraction * 10,
+			TouchFillBidQty: fraction * 10, TouchFillBidFrac: fraction,
+			HasRate: index > 0, TouchFillBidRate: fraction * 10,
+			BidSupported: index >= 2,
 		}))
 		if err != nil {
 			t.Fatal(err)
@@ -33,17 +34,14 @@ func TestTradeGraphPrimitiveFractions(t *testing.T) {
 	}
 }
 
-func TestLevel3GraphPrimitiveDirectFacts(t *testing.T) {
+func TestLevel3GraphNext(t *testing.T) {
 	graph, p := newLevel3Graph(), level3Projection()
-	values := map[string]any{"curBid": 99.0, "curAsk": 101.0, "prevBid": 99.0, "prevAsk": 101.0, "curBidQty": 10.0, "curAskQty": 12.0, "prevBidQty": 10.0, "prevAskQty": 12.0, "unfilledBid": 10.0, "unfilledAsk": 12.0, "hasRate": false}
-	for _, name := range []string{"logChangeBid", "logChangeAsk", "retreatedBid", "retreatedAsk", "withdrawnBid", "withdrawnAsk", "replenishedBid", "replenishedAsk", "retreatFracBid", "retreatFracAsk", "withFracBid", "withFracAsk", "repFracBid", "repFracAsk"} {
-		values[name] = 0.0
-	}
+	input := Level3Input{CurBid: 99, CurAsk: 101, PrevBid: 99, PrevAsk: 101, CurBidQty: 10, CurAskQty: 12, PrevBidQty: 10, PrevAskQty: 12, UnfilledBid: 10, UnfilledAsk: 12}
 	for index := 0; index < 2; index++ {
 		if index == 1 {
-			values["withFracBid"] = .6
+			input.WithFracBid = .6
 		}
-		fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(values))
+		fields, err := transport.Evaluate(graph, transport.Values(input))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,27 +1,64 @@
 package causal
 
 import (
+	"iter"
+
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/vector"
 )
 
-// NewLinearPrediction evaluates one row against a configured-by-record affine
-// fit. Input fields: fit (OLS output record), features, row. It does not train.
-func NewLinearPrediction() core.Primitive {
-	context := store.NewRetained(nil)
-	return transport.NewPipe(
-		context,
-		vector.NewDot(
-			transport.NewPipe(store.NewGet("fit"), store.NewGet("coefficients"), transport.NewSpread[float64]()),
-			transport.NewPipe(
-				store.NewGet("row"),
-				equation.NewDesign(transport.NewApply(
-					transport.NewPipe(store.NewGet("features"), transport.NewSpread[float64]()), context)),
-				transport.NewSpread[float64](),
-			),
-		),
-	)
+/*
+PredictionQuery is one row evaluated against a fitted affine model.
+*/
+type PredictionQuery struct {
+	Fit      algo.Fit
+	Features []int
+	Row      []float64
+}
+
+/*
+LinearPrediction evaluates one row against a fit. It does not train.
+*/
+type LinearPrediction struct {
+	core.Base[PredictionQuery, float64]
+	dot *vector.Dot
+}
+
+func NewLinearPrediction() *LinearPrediction {
+	return &LinearPrediction{dot: vector.NewDot()}
+}
+
+func (op *LinearPrediction) Next(
+	in iter.Seq[core.Primitive[PredictionQuery, PredictionQuery]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		for arriving := range in {
+			value, err := op.Predict(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *LinearPrediction) Predict(query PredictionQuery) (float64, error) {
+	design, err := transport.Evaluate(equation.NewDesign[float64](query.Features), transport.Values(query.Row))
+
+	if err != nil {
+		return 0, err
+	}
+
+	return transport.Evaluate(op.dot, transport.Values(vector.Pair{
+		Left:  query.Fit.Coefficients,
+		Right: design,
+	}))
 }

@@ -1,12 +1,20 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestReciprocalNext(t *testing.T) {
-	tests.Check(t, tests.Case{Name: "reciprocal", Seed: 1, Operation: NewReciprocal(transport.NewIO(core.From(float64(1))))})
+	tests.Check(
+		t, tests.Case[float64, float64]{
+			Name:      "reciprocal",
+			Seed:      0.0,
+			Operation: NewReciprocal[float64](),
+			Reference: func(_, value float64) float64 {
+				return 1 / value
+			},
+		},
+	)
 }

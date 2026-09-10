@@ -1,28 +1,45 @@
 package collection
 
 import (
+	"fmt"
+	"iter"
+	"slices"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewSwap is two indexed replacements over one captured collection. It adds
-// no second swapping kernel; both original operands survive the first write.
-func NewSwap[T any](left, right core.Primitive) core.Primitive {
-	values := store.NewRetained(core.From([]T{}))
-	first := store.NewRetained(core.From(0.0))
-	second := store.NewRetained(core.From(0.0))
-	return transport.NewPipe(
-		transport.NewFan(
-			transport.NewPipe(),
-			transport.NewIO(
-				transport.NewPipe(transport.NewApply(first, left), transport.NewDiscard()),
-				transport.NewPipe(transport.NewApply(second, right), transport.NewDiscard()),
-				transport.NewPipe(),
-			),
-		),
-		values,
-		NewSet[T](first, transport.NewApply(NewAt[T](second), values)),
-		NewSet[T](second, transport.NewApply(NewAt[T](first), values)),
-	)
+/*
+Swap exchanges two indexed members without mutating its input collection.
+Both indices are configuration.
+*/
+type Swap[T any] struct {
+	core.Base[[]T, []T]
+	left  int
+	right int
+}
+
+func NewSwap[T any](left, right int) *Swap[T] {
+	return &Swap[T]{left: left, right: right}
+}
+
+func (op *Swap[T]) Next(
+	in iter.Seq[core.Primitive[[]T, []T]],
+) iter.Seq[core.Primitive[[]T, []T]] {
+	return func(yield func(core.Primitive[[]T, []T]) bool) {
+		for arriving := range in {
+			values := arriving.Read()
+
+			if op.left < 0 || op.left >= len(values) || op.right < 0 || op.right >= len(values) {
+				op.Error(fmt.Errorf("%w: swap %d, %d of %d", core.ErrShape, op.left, op.right, len(values)))
+				continue
+			}
+
+			updated := slices.Clone(values)
+			updated[op.left], updated[op.right] = updated[op.right], updated[op.left]
+
+			if !yield(op.Carrier(updated)) {
+				return
+			}
+		}
+	}
 }

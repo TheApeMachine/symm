@@ -1,21 +1,22 @@
-package collection_test
+package collection
 
 import (
-	"github.com/theapemachine/symm/nomagique/collection"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"slices"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestOrderNext(t *testing.T) {
-	input := []float64{3, 1, 2}
-	out := tests.Drain(t, collection.NewOrder[float64](), transport.NewIO(core.From(input)))
-	if !slices.Equal(out[0].([]float64), []float64{1, 2, 3}) {
-		t.Fatal(out)
-	}
-	if !slices.Equal(input, []float64{3, 1, 2}) {
-		t.Fatal("mutated input")
-	}
+	Convey("Order sorts a clone and leaves the input collection alone", t, func() {
+		input := []float64{3, 1, 2}
+		op := NewOrder[float64]()
+		out := tests.CollectSeq(op.Next(transport.Values(input)))
+
+		So(out[0], ShouldResemble, []float64{1, 2, 3})
+		So(slices.Equal(input, []float64{3, 1, 2}), ShouldBeTrue)
+		So(op.Error(), ShouldBeNil)
+	})
 }

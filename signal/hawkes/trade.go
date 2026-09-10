@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -13,7 +12,7 @@ import (
 // Trade presents complete, event-timed arrivals to one keyed Primitive owner.
 // No clock or symbol side-channel can change during an observation.
 type Trade struct {
-	process core.Primitive
+	process *nmhawkes.Bivariate
 }
 
 func NewTrade() *Trade {
@@ -31,13 +30,11 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 		}
 	}
 
-	measurement, err := transport.Evaluate[*data.Measurement[float64]](
-		trade.process, core.Record(map[string]any{
-			"key":  observation.Symbol,
-			"at":   observation.Timestamp.UnixNano(),
-			"mark": markForSide(observation.Side),
-		}),
-	)
+	measurement, err := transport.Evaluate(trade.process, transport.Values(nmhawkes.Event{
+		Key:  observation.Symbol,
+		At:   observation.Timestamp.UnixNano(),
+		Mark: markForSide(observation.Side),
+	}))
 
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}

@@ -1,15 +1,34 @@
 package logic
 
 import (
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewFinite is not-NaN and not-infinite, assembled from existing predicates.
-func NewFinite() core.Primitive {
-	return transport.NewPipe(
-		transport.NewFan(transport.NewPipe(), transport.NewIO(NewIsNaN(), NewIsInf())),
-		NewOr(transport.NewIO(core.From(false))),
-		NewNot(transport.NewIO(core.From(false))),
-	)
+/*
+Finite owns the finiteness predicate. What it hands over is whether each
+arrival is a finite number.
+*/
+type Finite[U core.Floating] struct {
+	core.Base[U, bool]
+}
+
+func NewFinite[U core.Floating]() *Finite[U] {
+	return &Finite[U]{}
+}
+
+func (op *Finite[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[bool, bool]] {
+	return func(yield func(core.Primitive[bool, bool]) bool) {
+		for arriving := range in {
+			value := float64(arriving.Read())
+
+			if !yield(op.Carrier(!math.IsNaN(value) && !math.IsInf(value, 0))) {
+				return
+			}
+		}
+	}
 }

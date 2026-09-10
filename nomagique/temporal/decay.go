@@ -1,27 +1,68 @@
 package temporal
 
 import (
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
 )
 
-// NewDecay wires input -> clock -> shape, multiplying the original input by the
-// resulting retention factor. No clock means infinite elapsed time; the default
-// linear shape therefore extinguishes a finite input. Configuration is not
-// evaluated by construction, and each slot can be an arbitrary composition.
-func NewDecay(clock, shape core.Primitive) core.Primitive {
+/*
+Decay multiplies each arrival by a retention factor. The clock yields elapsed
+time; the shape yields the factor for that elapsed time. A missing clock is
+infinite elapsed time. A missing shape is linear retention, floored at zero.
+*/
+type Decay[U core.Floating] struct {
+	core.Base[U, U]
+	clock  core.Primitive[U, U]
+	shape  core.Primitive[U, U]
+	linear bool
+}
+
+func NewDecay[U core.Floating](clock, shape core.Primitive[U, U]) *Decay[U] {
+	linear := shape == nil
+
 	if clock == nil {
-		clock = store.NewConstant(core.From(math.Inf(1)))
+		clock = store.NewConstant[U, U](U(math.Inf(1)))
 	}
+
 	if shape == nil {
-		shape = transport.NewPipe(
-			equation.NewDifference[float64](store.NewConstant(core.From(1.0)), transport.NewPipe()),
-			calculus.NewMaximum(transport.NewIO(core.From(0.0))),
-		)
+		shape = calculus.NewMaximum[U](0)
 	}
-	return transport.NewMap(equation.NewProduct[float64](transport.NewPipe(), transport.NewPipe(clock, shape)))
+
+	return &Decay[U]{clock: clock, shape: shape, linear: linear}
+}
+
+func (op *Decay[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			value := arriving.Read()
+			elapsed := U(0)
+
+			for tick := range op.clock.Next(transport.One(arriving)) {
+				elapsed = tick.Read()
+			}
+
+			shaped := elapsed
+
+			if op.linear {
+				shaped = 1 - elapsed
+			}
+
+			factor := shaped
+
+			for out := range op.shape.Next(transport.Values(shaped)) {
+				factor = out.Read()
+			}
+
+			if !yield(op.Carrier(value * factor)) {
+				return
+			}
+		}
+	}
 }

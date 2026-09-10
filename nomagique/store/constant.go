@@ -1,27 +1,33 @@
 package store
 
 import (
+	"iter"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// Constant replaces each delivered value with a configured Primitive. Mapping
-// this replacement to one, then Add, is counting; no Count kernel is needed.
-type Constant struct {
-	core.PrimitiveError
-	value   core.Primitive
-	seed    core.Primitive
-	current core.Primitive
+/*
+Constant replaces each arrival with a configured value. The arrival is the
+clock; the payload is ignored.
+*/
+type Constant[T, U any] struct {
+	core.Base[T, U]
 }
 
-func NewConstant(value core.Primitive) *Constant {
-	return &Constant{value: value, seed: transport.NewIO(value)}
+func NewConstant[T, U any](current U) *Constant[T, U] {
+	op := &Constant[T, U]{}
+	op.Carrier(current)
+	return op
 }
-func (constant *Constant) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(constant.seed, in, func(held core.Primitive, _ core.Primitive) core.Primitive { return held }, constant)
-	if result != nil {
-		constant.current = result
+
+func (op *Constant[T, U]) Next(
+	in iter.Seq[core.Primitive[T, T]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for range in {
+			if !yield(op.Carrier(op.Read())) {
+				return
+			}
+		}
 	}
-	return result
 }
-func (constant *Constant) Read() any { return core.To[any](constant.current) }

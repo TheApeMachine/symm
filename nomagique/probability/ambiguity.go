@@ -1,27 +1,53 @@
 package probability
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"iter"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewAmbiguity divides entropy by the entropy of an equal-mass distribution.
-// A one-member distribution has zero ambiguity by definition.
-func NewAmbiguity() core.Primitive {
-	return logic.NewGate(
-		transport.NewPipe(
-			transport.NewFan(transport.NewPipe(), transport.NewIO(equation.NewCount(), store.NewConstant(core.From(1.0)))),
-			transport.NewCollect[float64](),
-			logic.NewGreater[float64](),
-		),
-		equation.NewRatio[float64](
-			transport.NewPipe(equation.NewNormalize(), equation.NewEntropy()),
-			transport.NewPipe(equation.NewCount(), calculus.NewLog(transport.NewIO(core.From(0.0)))),
-		),
-		store.NewConstant(core.From(0.0)),
-	)
+/*
+Ambiguity divides entropy by the entropy of an equal-mass distribution.
+A one-member distribution has zero ambiguity by definition.
+*/
+type Ambiguity struct {
+	core.Base[float64, float64]
+}
+
+func NewAmbiguity() *Ambiguity {
+	return &Ambiguity{}
+}
+
+func (op *Ambiguity) Next(
+	in iter.Seq[core.Primitive[float64, float64]],
+) iter.Seq[core.Primitive[float64, float64]] {
+	return func(yield func(core.Primitive[float64, float64]) bool) {
+		var values []float64
+
+		for arriving := range in {
+			values = append(values, arriving.Read())
+		}
+
+		if len(values) <= 1 {
+			if !yield(op.Carrier(0)) {
+				return
+			}
+
+			return
+		}
+
+		entropy := equation.NewEntropy[float64]()
+		value := 0.0
+
+		for out := range entropy.Next(equation.NewNormalize[float64]().Next(transport.Values(values...))) {
+			value = out.Read()
+		}
+
+		if !yield(op.Carrier(value / math.Log(float64(len(values))))) {
+			return
+		}
+	}
 }

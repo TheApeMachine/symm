@@ -1,93 +1,95 @@
 package correlation
 
 import (
+	"iter"
+	"math"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/* Dependence owns the typed path diagnostics surrounding an opaque estimator. */
-type Dependence struct {
-	core.PrimitiveError
-	paths     [2]equation.LogReturns
-	seed      *transport.IO
-	current   core.Primitive
-	estimator equation.LagEstimator
+/*
+DependenceReading preserves estimator fields and the path diagnostics around one
+pair. Finite-sample correlation remains unclipped; zero-energy estimates are
+undefined.
+*/
+type DependenceReading struct {
+	equation.LagEstimate
+	LeftReturns     float64
+	RightReturns    float64
+	LeftEnergyRate  float64
+	RightEnergyRate float64
+	Defined         bool
+	SharedTime      float64
+	OverlapDensity  float64
 }
 
 /*
-NewDependence preserves the configured estimator and adds support, path duration,
-energy-rate and definedness diagnostics. The estimator executes once per pair.
-Finite-sample correlation remains unclipped; zero-energy estimates are undefined.
+Dependence owns the typed path diagnostics surrounding an opaque estimator.
 */
+type Dependence struct {
+	core.Base[equation.LagProfileInput, DependenceReading]
+	paths     [2]equation.LogReturns
+	estimator equation.LagEstimator
+}
+
 func NewDependence(estimator equation.LagEstimator) *Dependence {
-	return &Dependence{
-		estimator: estimator,
-		seed:      transport.NewIO(core.From(map[string]core.Primitive{})),
-	}
+	return &Dependence{estimator: estimator}
 }
 
-/* Next computes path diagnostics once, with no graph construction per return. */
-func (dependence *Dependence) Next(input core.Primitive) core.Primitive {
-	result := core.Yield(dependence.seed, input,
-		func(_ map[string]core.Primitive, fields map[string]core.Primitive) map[string]core.Primitive {
-			for index, name := range [2]string{"left", "right"} {
-				observations, err := core.Field[[]core.Primitive](fields, name)
+func (op *Dependence) Next(
+	in iter.Seq[core.Primitive[equation.LagProfileInput, equation.LagProfileInput]],
+) iter.Seq[core.Primitive[DependenceReading, DependenceReading]] {
+	return func(yield func(core.Primitive[DependenceReading, DependenceReading]) bool) {
+		for arriving := range in {
+			input := arriving.Read()
 
-				if err != nil {
-					dependence.Error(err)
-					return nil
-				}
-
-				if err := dependence.paths[index].Load(observations); err != nil {
-					dependence.Error(err)
-					return nil
-				}
+			if err := op.paths[0].Load(input.Left); err != nil {
+				op.Error(err)
+				return
 			}
-			estimate, err := dependence.Estimate(&dependence.paths[0], &dependence.paths[1], 0)
-			dependence.Error(err)
-			return estimate
-		}, dependence)
 
-	if result != nil {
-		dependence.current = result
+			if err := op.paths[1].Load(input.Right); err != nil {
+				op.Error(err)
+				return
+			}
+
+			reading, err := op.Summarize(&op.paths[0], &op.paths[1], 0)
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(op.Carrier(reading)) {
+				return
+			}
+		}
 	}
-	return result
 }
 
-/* Estimate shares the caller's decoded paths with the configured estimator. */
-func (dependence *Dependence) Estimate(
+/*
+Estimate shares the caller's decoded paths with the configured estimator.
+*/
+func (op *Dependence) Estimate(
 	left, right *equation.LogReturns, lag int64,
-) (map[string]core.Primitive, error) {
-	estimate, err := dependence.estimator.Estimate(left, right, lag)
+) (equation.LagEstimate, error) {
+	return op.estimator.Estimate(left, right, lag)
+}
+
+/*
+Summarize preserves estimator fields and derives the existing reporting facts.
+*/
+func (op *Dependence) Summarize(
+	left, right *equation.LogReturns, lag int64,
+) (DependenceReading, error) {
+	estimate, err := op.estimator.Estimate(left, right, lag)
 
 	if err != nil {
-		return nil, err
+		return DependenceReading{}, err
 	}
-	return dependence.Summarize(estimate, left, right, lag), dependence.Error()
-}
 
-/* Summarize preserves estimator fields and derives the existing reporting facts. */
-func (dependence *Dependence) Summarize(
-	estimate map[string]core.Primitive, left, right *equation.LogReturns, lag int64,
-) map[string]core.Primitive {
-	decoder := core.NewDecoder(estimate)
-	support := core.Decode[float64](decoder, "support")
-	leftEnergy := core.Decode[float64](decoder, "left_energy")
-	rightEnergy := core.Decode[float64](decoder, "right_energy")
-	core.Decode[float64](decoder, "correlation")
-
-	if err := decoder.Error(); err != nil {
-		dependence.Error(err)
-		return nil
-	}
-	fields := make(map[string]core.Primitive, len(estimate)+8)
-
-	for name, value := range estimate {
-		fields[name] = value
-	}
 	shared, density := 0.0, 0.0
 
 	if len(left.Intervals) > 0 && len(right.Intervals) > 0 {
@@ -95,15 +97,27 @@ func (dependence *Dependence) Summarize(
 	}
 
 	if shared > 0 {
-		density = support / shared
+		density = estimate.Support / shared
 	}
-	fields["left_returns"] = core.From(float64(len(left.Intervals)))
-	fields["right_returns"] = core.From(float64(len(right.Intervals)))
-	fields["left_energy_rate"] = core.From(left.MedianEnergyRate())
-	fields["right_energy_rate"] = core.From(right.MedianEnergyRate())
-	fields["defined"] = core.From(support > 0 && leftEnergy > 0 && rightEnergy > 0)
-	fields["shared_time"], fields["overlap_density"] = core.From(shared), core.From(density)
-	return fields
-}
 
-func (dependence *Dependence) Read() any { return core.To[any](dependence.current) }
+	leftRate, rightRate := math.NaN(), math.NaN()
+
+	if len(left.Intervals) > 0 {
+		leftRate = left.MedianEnergyRate()
+	}
+
+	if len(right.Intervals) > 0 {
+		rightRate = right.MedianEnergyRate()
+	}
+
+	return DependenceReading{
+		LagEstimate:     estimate,
+		LeftReturns:     float64(len(left.Intervals)),
+		RightReturns:    float64(len(right.Intervals)),
+		LeftEnergyRate:  leftRate,
+		RightEnergyRate: rightRate,
+		Defined:         estimate.Support > 0 && estimate.LeftEnergy > 0 && estimate.RightEnergy > 0,
+		SharedTime:      shared,
+		OverlapDensity:  density,
+	}, nil
+}

@@ -1,24 +1,32 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"iter"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Tanh owns only its numeric operation. The configured left source remains
-// connected; neither a yielded result nor an exhausted run can replace it.
-type Tanh struct {
-	core.PrimitiveError
-	left    core.Primitive
-	current core.Primitive
+/*
+Tanh owns one field operation. What it hands over is the hyperbolic tangent of
+each arrival.
+*/
+type Tanh[U core.Floating] struct {
+	core.Base[U, U]
 }
 
-func NewTanh(left core.Primitive) *Tanh { return &Tanh{left: left} }
-func (operation *Tanh) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Tanh(value) }, operation)
-	if result != nil {
-		operation.current = result
-	}
-	return result
+func NewTanh[U core.Floating]() *Tanh[U] {
+	return &Tanh[U]{}
 }
-func (operation *Tanh) Read() any { return core.To[any](operation.current) }
+
+func (op *Tanh[U]) Next(
+	in iter.Seq[core.Primitive[U, U]],
+) iter.Seq[core.Primitive[U, U]] {
+	return func(yield func(core.Primitive[U, U]) bool) {
+		for arriving := range in {
+			if !yield(op.Carrier(U(math.Tanh(float64(arriving.Read()))))) {
+				return
+			}
+		}
+	}
+}

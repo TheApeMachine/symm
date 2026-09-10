@@ -3,14 +3,11 @@ package core_test
 import (
 	"errors"
 	"fmt"
-	. "github.com/smartystreets/goconvey/convey"
 	"strings"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPrimitiveErrorError(t *testing.T) {
@@ -26,6 +23,7 @@ func TestPrimitiveErrorError(t *testing.T) {
 				left.Error(right.Error())
 				right.Error(left.Error())
 			}
+
 			So(errors.Is(left.Error(), core.ErrShape), ShouldBeTrue)
 			So(errors.Is(left.Error(), core.ErrNotHeld), ShouldBeTrue)
 			So(strings.Count(left.Error().Error(), "left operand"), ShouldEqual, 1)
@@ -33,11 +31,6 @@ func TestPrimitiveErrorError(t *testing.T) {
 			So(left.Error(nil), ShouldEqual, left.Error())
 		})
 	})
-}
-
-// Type failures must survive both the returned value and the run boundary.
-func TestErrorTravels(t *testing.T) {
-	tests.CheckTypeFailure(t, arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))))
 }
 
 func BenchmarkPrimitiveErrorError(b *testing.B) {
