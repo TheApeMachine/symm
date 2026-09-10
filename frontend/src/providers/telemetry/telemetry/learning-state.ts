@@ -7,6 +7,7 @@ import * as flatbuffers from 'flatbuffers';
 
 import { LearningAgent, LearningAgentT } from '../telemetry/learning-agent.js';
 import { LearningDevelopment, LearningDevelopmentT } from '../telemetry/learning-development.js';
+import { LearningRecognition, LearningRecognitionT } from '../telemetry/learning-recognition.js';
 import { LearningRehearsal, LearningRehearsalT } from '../telemetry/learning-rehearsal.js';
 
 
@@ -85,8 +86,13 @@ rehearsal(obj?:LearningRehearsal):LearningRehearsal|null {
   return offset ? (obj || new LearningRehearsal()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
+recognition(obj?:LearningRecognition):LearningRecognition|null {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? (obj || new LearningRecognition()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
 static startLearningState(builder:flatbuffers.Builder) {
-  builder.startObject(11);
+  builder.startObject(12);
 }
 
 static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
@@ -149,6 +155,10 @@ static addRehearsal(builder:flatbuffers.Builder, rehearsalOffset:flatbuffers.Off
   builder.addFieldOffset(10, rehearsalOffset, 0);
 }
 
+static addRecognition(builder:flatbuffers.Builder, recognitionOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(11, recognitionOffset, 0);
+}
+
 static endLearningState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -165,7 +175,8 @@ unpack(): LearningStateT {
     this.bb!.createObjList<LearningAgent, LearningAgentT>(this.agents.bind(this), this.agentsLength()),
     this.bb!.createObjList<LearningDevelopment, LearningDevelopmentT>(this.markets.bind(this), this.marketsLength()),
     this.restored(),
-    (this.rehearsal() !== null ? this.rehearsal()!.unpack() : null)
+    (this.rehearsal() !== null ? this.rehearsal()!.unpack() : null),
+    (this.recognition() !== null ? this.recognition()!.unpack() : null)
   );
 }
 
@@ -180,6 +191,7 @@ unpackTo(_o: LearningStateT): void {
   _o.markets = this.bb!.createObjList<LearningDevelopment, LearningDevelopmentT>(this.markets.bind(this), this.marketsLength());
   _o.restored = this.restored();
   _o.rehearsal = (this.rehearsal() !== null ? this.rehearsal()!.unpack() : null);
+  _o.recognition = (this.recognition() !== null ? this.recognition()!.unpack() : null);
 }
 }
 
@@ -193,7 +205,8 @@ constructor(
   public agents: (LearningAgentT)[] = [],
   public markets: (LearningDevelopmentT)[] = [],
   public restored: boolean = false,
-  public rehearsal: LearningRehearsalT|null = null
+  public rehearsal: LearningRehearsalT|null = null,
+  public recognition: LearningRecognitionT|null = null
 ){}
 
 
@@ -202,6 +215,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const agents = LearningState.createAgentsVector(builder, builder.createObjectOffsetList(this.agents));
   const markets = LearningState.createMarketsVector(builder, builder.createObjectOffsetList(this.markets));
   const rehearsal = (this.rehearsal !== null ? this.rehearsal!.pack(builder) : 0);
+  const recognition = (this.recognition !== null ? this.recognition!.pack(builder) : 0);
 
   LearningState.startLearningState(builder);
   LearningState.addAtNs(builder, this.atNs);
@@ -213,6 +227,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   LearningState.addMarkets(builder, markets);
   LearningState.addRestored(builder, this.restored);
   LearningState.addRehearsal(builder, rehearsal);
+  LearningState.addRecognition(builder, recognition);
 
   return LearningState.endLearningState(builder);
 }

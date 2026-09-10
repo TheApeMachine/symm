@@ -3,6 +3,7 @@ package grid
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -47,6 +48,9 @@ type Space struct {
 	qualities   [][]float64
 	weights     []float64
 	cursor      int
+	moment      string
+	grade       float64
+	graded      bool
 	window      *window
 	graph       [][]affinity
 	regions     regions
@@ -193,6 +197,26 @@ func (grid *Space) Step(measurements []*data.Measurement[float64]) error {
 	clear(grid.activations[row])
 	clear(grid.qualities[row])
 	clear(grid.Present[row])
+	grid.moment, grid.grade, grid.graded = "", 0, false
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if named := measurement.Provenance["moment"]; named != "" {
+			grid.moment = named
+			// A grade the record could not state is absent, not zero: parsing
+			// failure must never become a judgement nobody made.
+			if stated, err := strconv.ParseFloat(
+				measurement.Provenance["grade"], 64,
+			); err == nil {
+				grid.grade, grid.graded = stated, true
+			}
+
+			break
+		}
+	}
 
 	for _, measurement := range measurements {
 		if measurement != nil {

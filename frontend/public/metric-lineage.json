@@ -6,7 +6,7 @@
       "metric": "call",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 70,
+      "line": 72,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -17,7 +17,7 @@
       "metric": "confidence",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 58,
+      "line": 60,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -28,7 +28,7 @@
       "metric": "entropy_bits",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 50,
+      "line": 52,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -39,7 +39,7 @@
       "metric": "switch_confidence",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 71,
+      "line": 73,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1853,7 +1853,7 @@
       "metric": "call",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 70,
+      "line": 72,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1864,7 +1864,7 @@
       "metric": "confidence",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 58,
+      "line": 60,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1875,7 +1875,7 @@
       "metric": "entropy_bits",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 50,
+      "line": 52,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1886,7 +1886,7 @@
       "metric": "switch_confidence",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 71,
+      "line": 73,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2765,7 +2765,7 @@
       "metric": "call",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 70,
+      "line": 72,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2776,7 +2776,7 @@
       "metric": "confidence",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 58,
+      "line": 60,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2787,7 +2787,7 @@
       "metric": "entropy_bits",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 50,
+      "line": 52,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2798,7 +2798,7 @@
       "metric": "switch_confidence",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
-      "line": 71,
+      "line": 73,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5528,7 +5528,7 @@
     {
       "package": "github.com/theapemachine/symm/types",
       "file": "types/envelope.go",
-      "line": 534,
+      "line": 533,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     }
   ],

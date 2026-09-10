@@ -19,6 +19,7 @@ import {
 import { action, amount, basis, clock, duration, percent } from "./format";
 import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap } from "./map";
+import { RecognitionPanel } from "./recognition-panel";
 import { RehearsalPanel } from "./rehearsal-panel";
 import { SkillPanel } from "./skill-panel";
 import { type LearningEvent, useLearning } from "./state";
@@ -40,10 +41,17 @@ const JournalEntry = ({ event }: { event: LearningEvent }) => (
 	</Flex.Column>
 );
 
-type Tab = "decision" | "capital" | "influence" | "forward" | "wallets";
+type Tab =
+	| "decision"
+	| "recognition"
+	| "capital"
+	| "influence"
+	| "forward"
+	| "wallets";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "decision", label: "Decision" },
+	{ key: "recognition", label: "Precursor recognition" },
 	{ key: "capital", label: "Consolidated account" },
 	{ key: "influence", label: "Discovery" },
 	{ key: "forward", label: "Forward test" },
@@ -168,6 +176,7 @@ export const LearningDashboard = () => {
 							<KnowledgePanel view={view} />
 						</>
 					)}
+					{tab === "recognition" && <RecognitionPanel />}
 					{tab === "influence" && <InfluencePanel view={view} />}
 					{tab === "forward" && (
 						<>

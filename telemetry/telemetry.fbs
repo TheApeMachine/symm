@@ -1293,12 +1293,50 @@ table LearningTrack {
  // counted in. It describes the tape, never the call made on it.
  opportunity:string;
 }
+// What a precursor learner has actually recognised. These describe the tape and
+// the memory built from it, never an account: an agent here holds no position,
+// pays no fee and owns no wallet, and reporting one would be describing
+// something that does not exist.
+
+// One moment the record put on an observation, and how many distinct situations
+// the agent has learned under it.
+table LearningMoment { name:string (required); links:int; }
+
+// One region the grid formed, as the agent was shown it.
+table LearningActive { id:ulong; condition:ulong; strength:double; authority:double; members:int; }
+
+// One question put to an agent's memory and the answer it gave back. Support is
+// how much evidence stood behind the answer, and contrast how far ahead of the
+// next answer it was: a winner at zero contrast is a tie, not a decision.
+table LearningAnswer {
+ asked:string; answered:string; runnerUp:string;
+ confidence:double; contrast:double; ambiguity:double; support:ulong;
+}
+
+// One learner. Links is everything it has committed to memory.
+table LearningLearner {
+ id:int; links:int; moments:[LearningMoment]; answers:[LearningAnswer];
+}
+
+// The grid as the learners are being shown it.
+table LearningGrid {
+ symbol:string; formed:bool; columns:int; version:ulong; moment:string;
+ regions:[LearningActive];
+}
+
+table LearningRecognition {
+ atNs:long; fragments:int; frames:ulong; grid:LearningGrid; learners:[LearningLearner];
+}
+
 table LearningState {
  atNs:long; steps:ulong; decisions:ulong; resolved:ulong;
  status:string; agents:[LearningAgent]; markets:[LearningDevelopment]; restored:bool;
  // episodes totals the explorer wallet renewals across the swarm. forced counts
  // decisions released instead of trained because only one action was feasible.
  episodes:ulong (deprecated); forced:ulong (deprecated); rehearsal:LearningRehearsal;
+ // What the precursor learners recognised. The wallet-shaped fields above
+ // describe a model that no longer exists; this one describes the one that does.
+ recognition:LearningRecognition;
 }
 
 table EnvelopeState {

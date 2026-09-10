@@ -10,6 +10,17 @@ type LookaheadPath struct {
 Evaluation is the full information-theoretic readout of an evaluated context.
 */
 type Evaluation struct {
+	// What is being asked about, and the terms it is asked under. Both travel
+	// with the reading so a caller never has to pair an answer back up with the
+	// question by position.
+	Context []byte
+	Config  Config
+	Step    uint64
+
+	// How much evidence stands behind the leading class, which is what
+	// separates a strong association from one coincidence of the same shape.
+	Support uint64
+
 	// Attractor Basin Classification
 	WinnerClass string
 	RunnerUp    string

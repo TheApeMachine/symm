@@ -408,8 +408,9 @@ export const projectLearning = (
 			members: region.members,
 		})),
 		candidates:
-			member?.last?.symbol === market?.symbol
-				? member.alternatives.map((choice) => ({
+			member?.last?.symbol !== undefined &&
+			member.last.symbol === market?.symbol
+				? (member.alternatives ?? []).map((choice) => ({
 						kind: String(choice.kind),
 						power: choice.power,
 						reduce: choice.reduce,
@@ -421,8 +422,9 @@ export const projectLearning = (
 					}))
 				: [],
 		influence:
-			member?.last?.symbol === market?.symbol
-				? member.alternatives.map((choice) => ({
+			member?.last?.symbol !== undefined &&
+			member.last.symbol === market?.symbol
+				? (member.alternatives ?? []).map((choice) => ({
 						token: choice.prior?.depth ?? 0,
 						source: "Context",
 						label: `prefix ${choice.prior?.depth ?? 0}/${choice.prior?.contextLength ?? 0}`,

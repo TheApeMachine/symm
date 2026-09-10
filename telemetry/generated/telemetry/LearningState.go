@@ -16,6 +16,7 @@ type LearningStateT struct {
 	Markets []*LearningDevelopmentT `json:"markets"`
 	Restored bool `json:"restored"`
 	Rehearsal *LearningRehearsalT `json:"rehearsal"`
+	Recognition *LearningRecognitionT `json:"recognition"`
 }
 
 func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -53,6 +54,7 @@ func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		marketsOffset = builder.EndVector(marketsLength)
 	}
 	rehearsalOffset := t.Rehearsal.Pack(builder)
+	recognitionOffset := t.Recognition.Pack(builder)
 	LearningStateStart(builder)
 	LearningStateAddAtNs(builder, t.AtNs)
 	LearningStateAddSteps(builder, t.Steps)
@@ -63,6 +65,7 @@ func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	LearningStateAddMarkets(builder, marketsOffset)
 	LearningStateAddRestored(builder, t.Restored)
 	LearningStateAddRehearsal(builder, rehearsalOffset)
+	LearningStateAddRecognition(builder, recognitionOffset)
 	return LearningStateEnd(builder)
 }
 
@@ -88,6 +91,7 @@ func (rcv *LearningState) UnPackTo(t *LearningStateT) {
 	}
 	t.Restored = rcv.Restored()
 	t.Rehearsal = rcv.Rehearsal(nil).UnPack()
+	t.Recognition = rcv.Recognition(nil).UnPack()
 }
 
 func (rcv *LearningState) UnPack() *LearningStateT {
@@ -255,8 +259,21 @@ func (rcv *LearningState) Rehearsal(obj *LearningRehearsal) *LearningRehearsal {
 	return nil
 }
 
+func (rcv *LearningState) Recognition(obj *LearningRecognition) *LearningRecognition {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(LearningRecognition)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
 func LearningStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(11)
+	builder.StartObject(12)
 }
 func LearningStateAddAtNs(builder *flatbuffers.Builder, atNs int64) {
 	builder.PrependInt64Slot(0, atNs, 0)
@@ -290,6 +307,9 @@ func LearningStateAddRestored(builder *flatbuffers.Builder, restored bool) {
 }
 func LearningStateAddRehearsal(builder *flatbuffers.Builder, rehearsal flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(rehearsal), 0)
+}
+func LearningStateAddRecognition(builder *flatbuffers.Builder, recognition flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(recognition), 0)
 }
 func LearningStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -44,3 +44,30 @@ func (c Config) DecayFactor() float64 {
 	}
 	return 1.0 - (1.0 / c.MemoryScale)
 }
+
+/*
+normalised fills unset bounds from the default. An unset bound is not a chosen
+zero, and reading it as one is how a model comes to claim it decided something
+it was never configured for.
+*/
+func (c Config) normalised() Config {
+	fallback := DefaultConfig()
+
+	if c.MemoryScale == 0 {
+		c.MemoryScale = fallback.MemoryScale
+	}
+
+	if c.DirichletAlpha <= 0 {
+		c.DirichletAlpha = fallback.DirichletAlpha
+	}
+
+	if c.MaxBackoffOrder <= 0 {
+		c.MaxBackoffOrder = fallback.MaxBackoffOrder
+	}
+
+	if c.SurprisalBreakBits <= 0 {
+		c.SurprisalBreakBits = fallback.SurprisalBreakBits
+	}
+
+	return c
+}

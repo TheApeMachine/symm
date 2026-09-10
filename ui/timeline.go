@@ -10,7 +10,9 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -93,6 +95,73 @@ func (cache *timelineCache) index(
 }
 
 /*
+resident is what the running binary actually held at one capture coordinate.
+
+The instrument's own captures are walked backwards from the coordinate and the
+first value seen for each quantity is kept, so what comes back is the latest
+value causally available there rather than the nearest one in time (§9). The
+walk never looks forward (§31): a capture after the coordinate carried a fact
+the binary did not have yet.
+
+Nothing is projected into a second shape. A measurement already says what it is,
+where it came from and how old it is, so the reading is the measurements
+themselves — one per quantity, each with the capture that carried it.
+*/
+func (hub *Hub) resident(
+	index *hindsight.RunIndex,
+	symbol string,
+	target hindsight.EnvelopeRef,
+	budget int,
+) ([]*data.Measurement[float64], error) {
+	held := make(map[string]*data.Measurement[float64])
+	order := make([]string, 0)
+
+	for _, capture := range index.CapturesBefore(symbol, target, budget) {
+		payload, stored, err := hub.store.ReadStatePayload(
+			string(capture.Origin.Run),
+			uint64(capture.Origin.Sequence),
+			capture.Ordinal,
+		)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if !stored {
+			continue
+		}
+		measurements, err := types.MeasurementsFromState(payload)
+
+		if err != nil {
+			return nil, err
+		}
+
+		for _, measurement := range measurements {
+			if measurement == nil {
+				continue
+			}
+			// Captures arrive newest first, so the first value seen for a
+			// quantity is the one that was resident. An older capture carrying
+			// the same quantity is what it replaced, never what it held.
+			quantity := measurement.Source + "\x00" + measurement.ID
+
+			if _, carried := held[quantity]; carried {
+				continue
+			}
+			held[quantity] = measurement
+			order = append(order, quantity)
+		}
+	}
+	reading := make([]*data.Measurement[float64], 0, len(order))
+
+	for _, quantity := range order {
+		reading = append(reading, held[quantity])
+	}
+
+	return reading, nil
+}
+
+/*
 registerTimeline mounts the Episode-discovery reads. They project the capture
 tape — the external market record — and never read a witness, so the moments
 they mark are selected by market coordinates alone (§27).
@@ -153,21 +222,13 @@ func (hub *Hub) registerTimeline() {
 			Ordinal: ordinal,
 		}
 
-		at := time.Time{}
-
-		if observation, known := index.ObservationAt(symbol, target); known {
-			at = observation.At()
+		if _, known := index.ObservationAt(symbol, target); !known {
+			return fiber.NewError(
+				fiber.StatusNotFound,
+				"no observation at that capture coordinate",
+			)
 		}
-
-		resident, err := hindsight.ResolveResident(
-			hindsight.RunID(run),
-			symbol,
-			target,
-			at,
-			index.CapturesBefore(symbol, target, budget),
-			hub.store,
-			budget,
-		)
+		resident, err := hub.resident(index, symbol, target, budget)
 
 		if err != nil {
 			return err
