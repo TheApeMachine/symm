@@ -422,6 +422,21 @@ func (index *RunIndex) Summaries(policy DiscoveryPolicy) []SymbolSummary {
 }
 
 /*
+causalAfter reports that one coordinate is future with respect to another.
+
+Causal availability is lexicographic over (CaptureSequence, Ordinal): an
+envelope on the same raw capture with a greater ordinal was produced by that
+same capture and is future with respect to the target, never a predecessor.
+*/
+func causalAfter(candidate, target EnvelopeRef) bool {
+	if candidate.Origin.Sequence != target.Origin.Sequence {
+		return candidate.Origin.Sequence > target.Origin.Sequence
+	}
+
+	return candidate.Ordinal > target.Ordinal
+}
+
+/*
 CapturesBefore returns the instrument's own envelopes at or before one capture
 coordinate, newest first and bounded by limit.
 

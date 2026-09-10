@@ -69,7 +69,14 @@ type Tape struct {
 	LastSequence int64
 	// Retrace overrides DefaultRetraceFraction when set in (0, 1).
 	Retrace float64
-	points  map[string]*tapePoint
+	// Reach overrides DefaultReach: how far back a move's readings are gathered.
+	Reach    int
+	points   map[string]*tapePoint
+	selector Selector
+	catalog  *tables.Catalog
+	run      RunID
+	policy   DiscoveryPolicy
+	err      error
 }
 
 /* retracement reports the configured share of a leg's excursion, or the default. */

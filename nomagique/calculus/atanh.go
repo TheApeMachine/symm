@@ -1,8 +1,9 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
 	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 // Atanh owns only its numeric operation. The configured left source remains
@@ -14,11 +15,24 @@ type Atanh struct {
 }
 
 func NewAtanh(left core.Primitive) *Atanh { return &Atanh{left: left} }
+
 func (operation *Atanh) Next(in core.Primitive) core.Primitive {
-	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Atanh(value) }, operation)
+	result := core.Yield(
+		operation.left,
+		in,
+		func(held, value float64) float64 {
+			return math.Atanh(value)
+		},
+		operation,
+	)
+
 	if result != nil {
 		operation.current = result
 	}
+
 	return result
 }
-func (operation *Atanh) Read() any { return core.To[any](operation.current) }
+
+func (operation *Atanh) Read() any {
+	return core.To[any](operation.current)
+}

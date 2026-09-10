@@ -3,10 +3,13 @@ package grid
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 const (
@@ -24,6 +27,9 @@ Present distinguishes readings in the current update from missing readings,
 including previously observed values still retained in Values.
 */
 type Space struct {
+	core.PrimitiveError
+	seed         *transport.IO
+	current      core.Primitive
 	Rows         []string
 	Columns      [][2]string
 	Values       [][]float64
@@ -69,6 +75,7 @@ const DefaultWindowBins = 64
 /* NewSpaceWithWindow constructs a live grid over a declared window span. */
 func NewSpaceWithWindow(bins int) *Space {
 	return &Space{
+		seed:        transport.NewIO(core.From(Impulse{})),
 		rowIndex:    make(map[string]int),
 		columnIndex: make(map[[2]string]int),
 		cursor:      -1,
@@ -90,6 +97,61 @@ supplies its signal-power fraction. When a producer supplies no noise estimate,
 the grid uses its own change-to-dispersion power without declaring the producer's
 SNR defined. Both paths retain the baseline and measurement maturity factors.
 */
+func (grid *Space) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(grid.seed, in,
+		func(held Impulse, measurements []*data.Measurement[float64]) Impulse {
+			if err := grid.Step(measurements); err != nil {
+				grid.Error(err)
+
+				return held
+			}
+			at, from := observed(measurements)
+			impulse, err := grid.Impulse(grid.UpdatedLabel, at, from)
+
+			if err != nil {
+				grid.Error(err)
+
+				return held
+			}
+
+			return impulse
+		}, grid)
+
+	if result != nil {
+		grid.current = result
+	}
+
+	return result
+}
+
+/* Read surfaces the impulse the last advance formed. */
+func (grid *Space) Read() any { return core.To[any](grid.current) }
+
+/*
+observed is when one context's readings were taken and how far back the
+earliest of them looks. Both come from the readings themselves: an impulse is
+positioned where its evidence was observed, never where it was processed.
+*/
+func observed(measurements []*data.Measurement[float64]) (time.Time, time.Time) {
+	var at, from time.Time
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if measurement.At.After(at) {
+			at = measurement.At
+		}
+
+		if !measurement.From.IsZero() && (from.IsZero() || measurement.From.Before(from)) {
+			from = measurement.From
+		}
+	}
+
+	return at, from
+}
+
 func (grid *Space) Step(measurements []*data.Measurement[float64]) error {
 	label := ""
 

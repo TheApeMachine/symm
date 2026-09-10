@@ -6,4 +6,6 @@ import (
 )
 
 // Number constructs a live composition. Construction does not tick a stage.
-func Number(stages ...core.Primitive) core.Primitive { return transport.NewPipe(stages...) }
+func Number(stages ...core.Primitive) core.Primitive {
+	return transport.NewPipe(stages...)
+}

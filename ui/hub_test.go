@@ -138,11 +138,11 @@ func TestHubSetHindsightStore(t *testing.T) {
 	})
 }
 
-func BenchmarkHubFindState(b *testing.B) {
+func BenchmarkCatalogStateAt(b *testing.B) {
 	hub := inspectionArchive(b)
 	b.ReportAllocs()
 	for b.Loop() {
-		state, found, err := hub.findState("run", 2, 1)
+		state, found, err := hub.store.StateAt(hub.ctx, "run", 2, 1)
 		if err != nil || !found || len(state.Payload) != 1 || state.Payload[0] != 2 {
 			b.Fatal(state, found, err)
 		}

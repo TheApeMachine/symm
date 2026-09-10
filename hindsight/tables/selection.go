@@ -27,6 +27,41 @@ func (catalog *Catalog) WitnessesAt(ctx context.Context, run, kind string, seque
 	return catalog.witnesses(ctx, run, kind, &sequence, ordinal, nil)
 }
 
+/*
+ReadStatePayload supplies the persisted EnvelopeState for one exact envelope
+identity, which is the state the running binary actually held there. It is the
+whole of hindsight.StateReader, so an as-of view resolves through the catalog
+itself rather than through whichever surface happens to be asking.
+*/
+func (catalog *Catalog) ReadStatePayload(run string, sequence, ordinal uint64) ([]byte, bool, error) {
+	row, found, err := catalog.StateAt(context.Background(), run, sequence, ordinal)
+
+	return row.Payload, found, err
+}
+
+/*
+StateAt selects the persisted EnvelopeState witness for one exact envelope
+identity. An identity the run carries no state for is absent, not an error.
+*/
+func (catalog *Catalog) StateAt(
+	ctx context.Context, run string, sequence, ordinal uint64,
+) (WitnessRow, bool, error) {
+	requested := int64(ordinal)
+	rows, err := catalog.WitnessesAt(ctx, run, "state", int64(sequence), &requested)
+
+	if err != nil {
+		return WitnessRow{}, false, errnie.Error(err)
+	}
+
+	for _, row := range rows {
+		if uint64(row.Envelope.Sequence) == sequence && uint64(row.Envelope.Ordinal) == ordinal {
+			return row, true, nil
+		}
+	}
+
+	return WitnessRow{}, false, nil
+}
+
 // ManifestsAt selects the envelopes produced by one captured input.
 func (catalog *Catalog) ManifestsAt(ctx context.Context, run string, sequence int64) ([]ManifestRow, error) {
 	return catalog.manifests(ctx, run, &sequence)

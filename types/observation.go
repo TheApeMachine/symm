@@ -2,7 +2,9 @@ package types
 
 import (
 	"bytes"
+	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -110,4 +112,81 @@ func (envelope *Envelope) EncodePrecursor() []byte {
 	defer func() { builder.Reset(); envelopeBuilders.Put(builder) }()
 	wire.FinishEnvelopeStateBuffer(builder, state.Pack(builder))
 	return bytes.Clone(builder.FinishedBytes())
+}
+
+/*
+MeasurementsFromState reads back the observations one captured envelope held.
+
+It is the inverse of EncodePrecursor, which writes exactly Measurements() into
+the stored state, so what comes back is what the running binary was looking at
+at that capture identity — in the same representation every other stage speaks,
+with no second shape in between.
+*/
+func MeasurementsFromState(payload []byte) (measurements []*data.Measurement[float64], err error) {
+	defer func() {
+		if invalid := recover(); invalid != nil {
+			measurements, err = nil, fmt.Errorf("envelope: malformed captured state: %v", invalid)
+		}
+	}()
+	state := wire.GetRootAsEnvelopeState(payload, 0)
+
+	for index := range state.LearningObservationsLength() {
+		encoded := new(wire.EnvelopeMeasurement)
+
+		if !state.LearningObservations(encoded, index) {
+			return nil, fmt.Errorf("envelope: absent observation %d of captured state", index)
+		}
+		measurements = append(measurements, decodeMeasurement(encoded.UnPack()))
+	}
+
+	return measurements, nil
+}
+
+/*
+decodeMeasurement rebuilds one reading from its stored form. Absent optional
+components stay absent: a normalization that was never computed is not a zero.
+*/
+func decodeMeasurement(reading *wire.EnvelopeMeasurementT) *data.Measurement[float64] {
+	from := time.Time{}
+
+	if reading.HasFrom {
+		from = time.Unix(0, reading.FromNs)
+	}
+	measurement := data.NewMeasurement[float64](
+		reading.Id, reading.Label, reading.Source, time.Unix(0, reading.AtNs), from,
+	)
+	measurement.SeqIdx, measurement.Maturity = reading.SeqIdx, reading.Maturity
+	measurement.SNR, measurement.SNRDefined = reading.Snr, reading.SnrDefined
+	measurement.Metadata = make(map[string]float64, len(reading.Metadata))
+	measurement.Provenance = make(map[string]string, len(reading.Provenance))
+
+	for _, fact := range reading.Metadata {
+		measurement.Metadata[fact.Name] = fact.Value
+	}
+
+	for _, fact := range reading.Provenance {
+		measurement.Provenance[fact.Name] = fact.Value
+	}
+
+	for _, metric := range reading.Metrics {
+		if metric == nil || metric.Value == nil {
+			continue
+		}
+		value := metric.Value
+		decoded := data.Metric[float64]{
+			Label: value.Label, Raw: value.Raw,
+			Unit: data.Unit(value.Unit), Timescale: data.Timescale(value.Timescale),
+		}
+
+		if value.HasNormalized {
+			decoded.Normalized = &value.Normalized
+		}
+
+		if value.HasStandardized {
+			decoded.Standardized = &value.Standardized
+		}
+		measurement.Metrics[metric.Key] = decoded
+	}
+
+	return measurement
 }

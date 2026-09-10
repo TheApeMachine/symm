@@ -165,7 +165,7 @@ func (hub *Hub) registerTimeline() {
 			target,
 			at,
 			index.CapturesBefore(symbol, target, budget),
-			hub,
+			hub.store,
 			budget,
 		)
 

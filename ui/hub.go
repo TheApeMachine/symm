@@ -326,7 +326,7 @@ func NewHub(ctx context.Context) *Hub {
 		sequence := parseUintQuery(c.Query("seq"))
 		ordinal := parseUintQuery(c.Query("ordinal"))
 
-		state, found, err := hub.findState(run, sequence, ordinal)
+		state, found, err := hub.store.StateAt(hub.ctx, run, sequence, ordinal)
 
 		if err != nil {
 			return err
@@ -656,38 +656,4 @@ func (hub *Hub) Close() error {
 	}
 
 	return err
-}
-
-/*
-findState locates the resident-state witness for one exact envelope.
-
-Resident state is the witnesses table restricted to artifact_kind = 'state',
-which is what the separate states/ key prefix used to express.
-*/
-func (hub *Hub) findState(run string, sequence, ordinal uint64) (tables.WitnessRow, bool, error) {
-	requestedOrdinal := int64(ordinal)
-	rows, err := hub.store.WitnessesAt(hub.ctx, run, "state", int64(sequence), &requestedOrdinal)
-
-	if err != nil {
-		return tables.WitnessRow{}, false, err
-	}
-
-	for _, row := range rows {
-		if uint64(row.Envelope.Sequence) == sequence && uint64(row.Envelope.Ordinal) == ordinal {
-			return row, true, nil
-		}
-	}
-
-	return tables.WitnessRow{}, false, nil
-}
-
-// ReadStatePayload supplies the original stored witness to the resident-state inspector.
-func (hub *Hub) ReadStatePayload(run string, sequence, ordinal uint64) ([]byte, bool, error) {
-	witness, found, err := hub.findState(run, sequence, ordinal)
-
-	if err != nil {
-		return nil, false, err
-	}
-
-	return witness.Payload, found, nil
 }

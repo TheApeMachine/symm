@@ -6,7 +6,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
-	"github.com/theapemachine/symm/strategy"
 	"log"
 	"net/http"
 	"net/http/pprof"
@@ -44,6 +43,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -291,38 +291,39 @@ var (
 			derivativesSolver := derivatives.NewSignal(runtimeCtx)
 
 			if err := price.GetFees(instrument.Symbols()); err != nil {
-				return err
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"[symm] initial fees are not available",
+					nil,
+				))
 			}
+
 			if balance.Status() != types.READY {
-				return errnie.Error(errnie.Err(errnie.NotAcceptable, "symm: initial balance is not ready", nil))
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"[symm] initial balance is not ready",
+					nil,
+				))
 			}
 
-			learner, err := strategy.NewLearner(runtimeCtx, api, price, balance, system.Cfg.Learning.Traders, catalog, storageEngine, runID, rawCapture)
-
-			if err != nil {
-				return err
-			}
-			defer func() {
-				if err := learner.Save(context.Background()); err != nil {
-					errnie.Error(err)
-				}
-			}()
-			go learner.Run(runtimeCtx, system.Cfg.Learning.CheckpointInterval)
-
-			signals := nmruntime.NewWorkload(runtimeCtx, "signals", [][]nmruntime.Node[*types.Envelope]{
-				{
-					system.NewTraced("signal.correlation", correlation.NewSignal(runtimeCtx)),
-					system.NewTraced("signal.depthflow", depthflow.NewSignal(runtimeCtx)),
-					system.NewTraced("signal.derivatives", derivativesSolver),
-					system.NewTraced("signal.leadlag", leadlag.NewSignal(runtimeCtx)),
-					system.NewTraced("signal.liquidity", liquidity.NewSignal(runtimeCtx)),
-					system.NewTraced("signal.morphology", morphology.NewSignal(runtimeCtx)),
-					system.NewTraced("signal.pumpdump", pumpdumpSolver),
-					system.NewTraced("signal.sentiment", sentiment.NewSignal(runtimeCtx)),
-					system.NewTraced("signal.toxicity", toxicitySolver),
+			signals := nmruntime.NewWorkload(
+				runtimeCtx, "signals",
+				[][]nmruntime.Node[*types.Envelope]{
+					{
+						system.NewTraced("signal.correlation", correlation.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.depthflow", depthflow.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.derivatives", derivativesSolver),
+						system.NewTraced("signal.leadlag", leadlag.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.liquidity", liquidity.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.morphology", morphology.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.pumpdump", pumpdumpSolver),
+						system.NewTraced("signal.sentiment", sentiment.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.toxicity", toxicitySolver),
+					},
+					{system.NewTraced("logic.resonance", resonanceSolver)},
 				},
-				{system.NewTraced("logic.resonance", resonanceSolver)},
-			})
+			)
+
 			flow := nmruntime.NewWorkload(runtimeCtx, "flow", [][]nmruntime.Node[*types.Envelope]{
 				{
 					system.NewTraced("signal.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
@@ -337,35 +338,45 @@ var (
 				},
 				{system.NewTraced("logic.manifold", manifoldSolver)},
 			})
-			classification := nmruntime.NewWorkload(runtimeCtx, "classification", [][]nmruntime.Node[*types.Envelope]{
-				{system.NewTraced("logic.category", categorySolver)},
-				{system.NewTraced("logic.cognition", cognitionSolver)},
-			})
+
+			classification := nmruntime.NewWorkload(
+				runtimeCtx,
+				"classification",
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewTraced("logic.category", categorySolver)},
+					{system.NewTraced("logic.cognition", cognitionSolver)},
+				},
+			)
+
 			// Category consumes the current envelope's signal measurements. Its ring
 			// follows their join; all numerical output is complete before Grid runs.
-			observations := nmruntime.NewWorkload(runtimeCtx, "observations", [][]nmruntime.Node[*types.Envelope]{
-				{signals, flow},
-				{classification},
-				{rawCapture},
-			})
-			gridWorkload := nmruntime.NewWorkload(runtimeCtx, "grid", [][]nmruntime.Node[*types.Envelope]{
-				{system.NewTraced("logic.impulse", learner.Grid)},
-			})
-			agentWorkload := nmruntime.NewWorkload(runtimeCtx, "agent", [][]nmruntime.Node[*types.Envelope]{
-				{system.NewTraced("learning", learner)},
-			})
-			agentWorkload.Require(learner.Ready)
-			agents := []nmruntime.Node[*types.Envelope]{agentWorkload}
+			observations := nmruntime.NewWorkload(
+				runtimeCtx,
+				"observations",
+				[][]nmruntime.Node[*types.Envelope]{
+					{signals, flow},
+					{classification},
+					{rawCapture},
+				},
+			)
 
-			if learner.Rehearsal != nil {
-				agents = append(agents, learner.Rehearsal.Workload)
-			}
-			workspace := nmruntime.NewWorkspace(runtimeCtx, "workspace", [][]nmruntime.Node[*types.Envelope]{
-				{observations},
-				{gridWorkload},
-				agents,
-				{uiSink},
-			})
+			trainer := nmruntime.NewWorkload(
+				runtimeCtx,
+				"trainer",
+				[][]nmruntime.Node[*types.Envelope]{
+					{strategy.NewTraining(catalog, runID, hindsight.DiscoveryPolicy{}, 7)},
+				},
+			)
+
+			workspace := nmruntime.NewWorkspace(
+				runtimeCtx,
+				"workspace",
+				[][]nmruntime.Node[*types.Envelope]{
+					{observations},
+					{trainer},
+					{uiSink},
+				},
+			)
 
 			defer func() {
 				if err := workspace.Close(); err != nil {
@@ -398,7 +409,11 @@ var (
 				))
 			}
 			if instrument.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(errnie.NotAcceptable, "symm: instrument universe is not seeded", nil))
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"symm: instrument universe is not seeded",
+					nil,
+				))
 			}
 
 			workspace.Admit()

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
@@ -167,7 +166,7 @@ type Envelope struct {
 	// input this envelope was parsed from. It is assigned before parsing and
 	// carried unchanged for the envelope's whole ring traversal; a zero value
 	// means the ingress stream was not wired with a capture sequencer.
-	CaptureID hindsight.CaptureIdentity
+	CaptureID CaptureIdentity
 
 	// CaptureOrdinal is this envelope's deterministic ordinal within the raw
 	// frame that produced it (§12). A single raw frame may yield zero, one, or
@@ -179,7 +178,7 @@ type Envelope struct {
 	// websocket transport (epoch bumps on reconnect, sequence on frame) and is
 	// present whether or not Hindsight capture is enabled. Live trading reads
 	// this operational metadata; Hindsight records the same fact in CaptureID.
-	Stream hindsight.StreamRef
+	Stream StreamRef
 
 	TickerData        kraken.TickerData
 	TradeData         kraken.TradeData
