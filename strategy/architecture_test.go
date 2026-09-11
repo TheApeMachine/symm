@@ -750,6 +750,11 @@ func TestArchitectureProperties(t *testing.T) {
 			}
 
 			So(engine.Root().Len(), ShouldBeGreaterThan, 0)
+			answers := agent.Answers()
+			So(len(answers), ShouldBeGreaterThan, 0)
+			So(answers[0].Asked, ShouldNotEqual, "action")
+			So(answers[0].Asked, ShouldBeIn, []string{"enter", "wait", "exit"})
+			So(answers[0].Answered, ShouldBeIn, []string{"enter", "wait", "exit"})
 
 			// Live evaluation of the learned precursor context on held-out agent with deterministic policy (rng == nil):
 			evalAgent := NewAgent(99, false, engine, 16)
@@ -762,10 +767,10 @@ func TestArchitectureProperties(t *testing.T) {
 				meas := bullFrames[idx]
 				imp, err := evalAgent.Step(meas, "BTC/USD")
 				So(err, ShouldBeNil)
-				act, _, _, _, supp := evalAgent.ChooseAction(imp, holding)
-				chosenActions = append(chosenActions, act)
-				supports = append(supports, supp)
-				if act == ActionEnter {
+				decision := evalAgent.ChooseAction(imp, holding)
+				chosenActions = append(chosenActions, decision.Action)
+				supports = append(supports, decision.Support)
+				if decision.Action == ActionEnter {
 					holding = true
 				}
 			}
@@ -962,9 +967,9 @@ func TestArchitectureProperties(t *testing.T) {
 			// In holding state with empty/unseen cognition:
 			// Live agent MUST deterministically produce ActionWait 100% of the time (never random liquidation)
 			for idx := 0; idx < 50; idx++ {
-				action, _, _, _, support := liveAgent.ChooseAction(impulse, true)
-				So(action, ShouldEqual, ActionWait)
-				So(support, ShouldEqual, 0)
+				decision := liveAgent.ChooseAction(impulse, true)
+				So(decision.Action, ShouldEqual, ActionWait)
+				So(decision.Support, ShouldEqual, 0)
 			}
 
 			// 2. Rehearsal worker (isLive = false with RNG)
@@ -978,14 +983,14 @@ func TestArchitectureProperties(t *testing.T) {
 			exitCount := 0
 			waitCount := 0
 			for idx := 0; idx < 100; idx++ {
-				action, _, _, _, support := rehearsalAgent.ChooseAction(rehearsalImpulse, true)
-				So(support, ShouldEqual, 0)
+				decision := rehearsalAgent.ChooseAction(rehearsalImpulse, true)
+				So(decision.Support, ShouldEqual, 0)
 
-				if action == ActionExit {
+				if decision.Action == ActionExit {
 					exitCount++
 				}
 
-				if action == ActionWait {
+				if decision.Action == ActionWait {
 					waitCount++
 				}
 			}

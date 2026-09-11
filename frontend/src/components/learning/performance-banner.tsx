@@ -53,17 +53,18 @@ export const LearningPerformanceBanner = ({ view }: PerformanceBannerProps) => {
 	const totalRated = wins + losses;
 	const winRate = totalRated > 0 ? (wins / totalRated) * 100 : null;
 	const edge = skill?.defined ? skill.mean : 0;
+	const realized = Number(mainAgent?.realized ?? 0);
+	const unrealized = Number(mainAgent?.unrealized ?? 0);
 	const profit = Number(mainAgent?.profit ?? view?.lanes?.[0]?.profit ?? 0);
 	const isTrading = skill?.mode === "trading";
 	const isPaused =
-		mainAgent?.status === "learning" &&
 		totalRated >= 3 &&
 		(edge === null || edge <= 0);
 
 	// Robustness / Promotion criteria to switch to paper/real trading
 	const sampleGate = samples >= 10;
 	const edgeGate = edge !== null && edge > 0;
-	const pnlGate = profit > 0;
+	const pnlGate = realized > 0;
 	const confGate =
 		Boolean(skill?.varianceDefined) &&
 		edge !== null &&
@@ -102,12 +103,12 @@ export const LearningPerformanceBanner = ({ view }: PerformanceBannerProps) => {
 								isTrading
 									? `MAIN AGENT · ${skill?.account?.toUpperCase()} TRADING`
 									: isPaused
-										? "MAIN AGENT · PAUSED (NEGATIVE EDGE)"
+										? "MAIN AGENT · FORWARD TESTING (NEGATIVE EDGE)"
 										: "MAIN AGENT · FORWARD TESTING (SIMULATED)"
 							}
 							title={
 								isPaused
-									? `Simulated entries paused: measured edge is non-positive (${basis(edge)}). Awaiting precursor model positive edge.`
+									? `Forward testing with negative edge (${basis(edge)}). Policy continues to simulate entries as precursor model trains.`
 									: isTrading
 										? `Live/paper trading active on ${skill?.account} account.`
 										: "Main Agent executes trades based on the precursor model developed by parallel learners"
@@ -297,16 +298,18 @@ export const LearningPerformanceBanner = ({ view }: PerformanceBannerProps) => {
 
 							<Flex.Column className="gap-0.5">
 								<Typography.Mono size="s" tone="f4">
-									Simulated Net P&L
+									Simulated Realized P&L
 								</Typography.Mono>
 								<Typography.Mono
 									size="lg"
-									className={profit >= 0 ? "text-(--up)" : "text-(--down)"}
+									className={realized >= 0 ? "text-(--up)" : "text-(--down)"}
 								>
-									{amount(profit)}
+									{amount(realized)}
 								</Typography.Mono>
 								<Typography.Mono size="s" tone="f4">
-									After execution fees
+									{unrealized !== 0
+										? `${amount(unrealized)} open`
+										: "Closed trades net"}
 								</Typography.Mono>
 							</Flex.Column>
 

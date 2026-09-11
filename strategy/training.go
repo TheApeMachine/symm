@@ -224,14 +224,8 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 
 						if impulse.Ready {
 							holding := training.main.IsHolding(symbol)
-							action, context, conf, contrast, support := training.agents[0].ChooseAction(impulse, holding)
-							training.main.Step(envelope, ActionDecision{
-								Action:     action,
-								Context:    context,
-								Confidence: conf,
-								Contrast:   contrast,
-								Support:    support,
-							})
+							decision := training.agents[0].ChooseAction(impulse, holding)
+							training.main.Step(envelope, decision)
 						}
 					}
 				}

@@ -267,28 +267,28 @@ func TestMainAgent(t *testing.T) {
 			So(noisyAgent.fills, ShouldEqual, 2)
 		})
 
-		Convey("When forward-tested edge turns negative, new simulated entries are halted", func() {
-			lossAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, nil)
+		Convey("When edge turns negative, live trading execution is demoted to protect capital", func() {
+			tradingAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, nil)
+			tradingAgent.status = "trading"
 			// Record 20 losing outcomes so samples >= 20 and meanReturn < 0
 			for index := 0; index < 20; index++ {
-				lossAgent.recordOutcome(TradeOutcome{
+				tradingAgent.recordOutcome(TradeOutcome{
 					Symbol:   "BTC/USD",
 					Profit:   decimal.NewFromInt64(-50),
 					ReturnBp: -50.0,
 					EntryAt:  time.Now().Add(-time.Minute),
 					ExitAt:   time.Now(),
 				}, -50.0)
-				lossAgent.losses++
+				tradingAgent.losses++
 			}
-			lossAgent.realized = decimal.NewFromInt64(-1000)
+			tradingAgent.realized = decimal.NewFromInt64(-1000)
+			tradingAgent.evaluateRobustness()
 
-			So(lossAgent.meanReturn, ShouldBeLessThan, 0)
-			So(lossAgent.Status(), ShouldEqual, "learning")
+			So(tradingAgent.meanReturn, ShouldBeLessThan, 0)
+			So(tradingAgent.status, ShouldEqual, "simulated")
+			So(tradingAgent.Status(), ShouldEqual, "learning")
 
-			tel := lossAgent.AgentTelemetry()
-			So(tel.Status, ShouldEqual, "learning")
-
-			// Even with a high-conviction precursor signal, entry is blocked while edge is negative
+			// In simulated mode, forward testing continues evaluating high-conviction decisions
 			envelope := &types.Envelope{
 				TickerData: kraken.TickerData{
 					Symbol: "BTC/USD",
@@ -301,10 +301,10 @@ func TestMainAgent(t *testing.T) {
 				Contrast:   2.5,
 				Support:    20,
 			}
-			lossAgent.Step(envelope, strongDecision)
+			tradingAgent.Step(envelope, strongDecision)
 
-			So(len(lossAgent.positions), ShouldEqual, 0)
-			So(lossAgent.fills, ShouldEqual, 0)
+			So(len(tradingAgent.positions), ShouldEqual, 1)
+			So(tradingAgent.fills, ShouldEqual, 1)
 		})
 
 		Convey("When fee is present but resident book is absent or insufficient, MainAgent takes zero fills and zero positions", func() {

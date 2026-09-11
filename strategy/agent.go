@@ -359,11 +359,11 @@ When holding: {ActionExit, ActionWait}
 func (agent *Agent) ChooseAction(
 	impulse grid.Impulse,
 	holding bool,
-) (Action, []byte, float64, float64, uint64) {
+) ActionDecision {
 	sequence := agent.context.Sequence(impulse)
 
 	if len(sequence) == 0 {
-		return ActionWait, nil, 0, 0, 0
+		return ActionDecision{Action: ActionWait}
 	}
 
 	evaluation := agent.learner.Engine().Evaluate(sequence)
@@ -375,25 +375,28 @@ func (agent *Agent) ChooseAction(
 	legal := LegalActions(holding)
 	action, confidence, contrast, support := selectLegalAction(legal, evaluation.Candidates, agent.isLive, agent.rng)
 
-	agent.recordAnswer(&telemetry.LearningAnswerT{
-		Asked:      "action",
-		Answered:   string(action),
-		RunnerUp:   evaluation.RunnerUp,
+	return ActionDecision{
+		Action:     action,
+		Context:    sequence,
 		Confidence: confidence,
 		Contrast:   contrast,
-		Ambiguity:  evaluation.Ambiguity,
 		Support:    support,
-	})
-
-	return action, sequence, confidence, contrast, support
+		RunnerUp:   evaluation.RunnerUp,
+		Ambiguity:  evaluation.Ambiguity,
+	}
 }
 
 type rehearsalTransition struct {
-	context  []byte
-	action   Action
-	frameIdx int
-	holding  bool
-	entryIdx int
+	context    []byte
+	action     Action
+	frameIdx   int
+	holding    bool
+	entryIdx   int
+	runnerUp   string
+	confidence float64
+	contrast   float64
+	ambiguity  float64
+	support    uint64
 }
 
 /*
@@ -507,26 +510,31 @@ func (agent *Agent) RehearseChild() (int, error) {
 			continue
 		}
 
-		action, context, _, _, _ := agent.ChooseAction(impulse, holding)
+		decision := agent.ChooseAction(impulse, holding)
 
-		if len(context) == 0 {
+		if len(decision.Context) == 0 {
 			continue
 		}
 
 		transitions = append(transitions, rehearsalTransition{
-			context:  context,
-			action:   action,
-			frameIdx: frameIdx,
-			holding:  holding,
-			entryIdx: entryIdx,
+			context:    decision.Context,
+			action:     decision.Action,
+			frameIdx:   frameIdx,
+			holding:    holding,
+			entryIdx:   entryIdx,
+			runnerUp:   decision.RunnerUp,
+			confidence: decision.Confidence,
+			contrast:   decision.Contrast,
+			ambiguity:  decision.Ambiguity,
+			support:    decision.Support,
 		})
 
-		if action == ActionEnter {
+		if decision.Action == ActionEnter {
 			holding = true
 			entryIdx = frameIdx
 		}
 
-		if action == ActionExit {
+		if decision.Action == ActionExit {
 			holding = false
 			exitIdx = frameIdx
 		}
@@ -562,6 +570,36 @@ func (agent *Agent) RehearseChild() (int, error) {
 			Graded:  true,
 			Reduce:  tr.holding,
 			Verdict: fmt.Sprintf("c=%.2f t=%.2f r=%.2f", outcome.Correctness, outcome.Timing, outcome.Reinforcement),
+		})
+
+		groundTruth := tr.action
+
+		if outcome.Correctness <= 0 {
+			if !tr.holding {
+				groundTruth = ActionWait
+
+				if tr.action == ActionWait {
+					groundTruth = ActionEnter
+				}
+			}
+
+			if tr.holding {
+				groundTruth = ActionWait
+
+				if tr.action == ActionWait {
+					groundTruth = ActionExit
+				}
+			}
+		}
+
+		agent.recordAnswer(&telemetry.LearningAnswerT{
+			Asked:      string(groundTruth),
+			Answered:   string(tr.action),
+			RunnerUp:   tr.runnerUp,
+			Confidence: tr.confidence,
+			Contrast:   tr.contrast,
+			Ambiguity:  tr.ambiguity,
+			Support:    tr.support,
 		})
 	}
 

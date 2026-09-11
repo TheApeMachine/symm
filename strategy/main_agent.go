@@ -35,7 +35,6 @@ type TradeOutcome struct {
 ActionDecision represents the single shared model's learned evaluation for
 a given context: the chosen action and its measured evidence strength.
 */
-const maxConcurrentPositions = 5
 
 type ActionDecision struct {
 	Action     Action
@@ -43,6 +42,8 @@ type ActionDecision struct {
 	Confidence float64
 	Contrast   float64
 	Support    uint64
+	RunnerUp   string
+	Ambiguity  float64
 }
 
 /*
@@ -240,10 +241,6 @@ func (agent *MainAgent) canEnter(decision ActionDecision) bool {
 		return false
 	}
 
-	if agent.statusLocked() == "learning" {
-		return false
-	}
-
 	return true
 }
 
@@ -321,8 +318,8 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 			}
 			agent.symbolPhase[symbol] = string(decision.Action)
 
-			// No position open: enter only when precursor model has developed positive skill/edge
-			if len(agent.positions) < maxConcurrentPositions && agent.canEnter(decision) {
+			// Enter when precursor model has developed positive skill/edge
+			if agent.canEnter(decision) {
 				agent.enterLong(envelope, symbol, currentPrice, decision, now)
 			}
 		}
@@ -342,6 +339,14 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 			// Exit when learner's policy chooses EXIT with empirical support
 			if !shouldExit && agent.canExit(decision) {
 				shouldExit = true
+			}
+
+			if !shouldExit && agent.price != nil {
+				surface, err := agent.price.Surface(symbol, holding.Qty, now)
+
+				if err == nil && surface != nil && !surface.FullyExecutable {
+					shouldExit = true
+				}
 			}
 
 			if shouldExit {
@@ -465,7 +470,13 @@ func (agent *MainAgent) enterLong(
 	decision ActionDecision,
 	now time.Time,
 ) {
-	allocatedCash := agent.cash.Div(decimal.NewFromInt64(maxConcurrentPositions))
+	maxFraction := 1.0
+
+	if system.Cfg != nil && system.Cfg.Planner != nil && system.Cfg.Planner.MaxAllocationFraction > 0 {
+		maxFraction = system.Cfg.Planner.MaxAllocationFraction
+	}
+
+	allocatedCash := agent.cash.Mul(decimal.NewFromFloat64(maxFraction))
 
 	var quantity *decimal.Decimal
 	var notional *decimal.Decimal
@@ -803,6 +814,11 @@ func (agent *MainAgent) evaluateRobustness() {
 	}
 
 	if agent.realized.Sign() <= 0 || agent.meanReturn <= 0 {
+		if agent.status == "trading" {
+			agent.status = "simulated"
+			errnie.Info("main agent demoted to simulated: edge degraded")
+		}
+
 		return
 	}
 	standardError := math.Sqrt(agent.variance / float64(samples))
