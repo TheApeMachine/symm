@@ -41,10 +41,10 @@ func NewTape() *Tape {
 }
 
 func (tape *Tape) Publish(fragment types.ReplayFragment) {
-	tape.queue.Enqueue(fragment)
-}
+	if len(fragment.Frames) == 0 || fragment.AnchorIndex <= 0 || fragment.AnchorIndex >= len(fragment.Frames) {
+		return
+	}
 
-func (tape *Tape) PublishFragment(fragment types.ReplayFragment) {
 	tape.queue.Enqueue(fragment)
 }
 
@@ -216,15 +216,23 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 					}
 
 					if training.main != nil {
-						holding := training.main.IsHolding(symbol)
-						action, context, conf, contrast, support := training.agents[0].ChooseAction(impulse, holding)
-						training.main.Step(envelope, ActionDecision{
-							Action:     action,
-							Context:    context,
-							Confidence: conf,
-							Contrast:   contrast,
-							Support:    support,
-						})
+						if !impulse.Ready {
+							training.main.Step(envelope, ActionDecision{
+								Action: ActionWait,
+							})
+						}
+
+						if impulse.Ready {
+							holding := training.main.IsHolding(symbol)
+							action, context, conf, contrast, support := training.agents[0].ChooseAction(impulse, holding)
+							training.main.Step(envelope, ActionDecision{
+								Action:     action,
+								Context:    context,
+								Confidence: conf,
+								Contrast:   contrast,
+								Support:    support,
+							})
+						}
 					}
 				}
 			}
@@ -257,6 +265,10 @@ func (training *Training) mount() {
 			return
 		}
 
+		if len(fragment.Frames) == 0 || fragment.AnchorIndex <= 0 || fragment.AnchorIndex >= len(fragment.Frames) {
+			continue
+		}
+
 		training.mu.Lock()
 		training.legs = append(training.legs, fragment)
 		training.mu.Unlock()
@@ -270,7 +282,7 @@ func (training *Training) mount() {
 
 			worker.IngestReplay(fragment, randSlot)
 
-			if worker.Space().UpdatedLabel == "" {
+			if worker.IsUnprimed() {
 				if _, err := worker.RehearseChild(); err != nil {
 					errnie.Error(err)
 				}

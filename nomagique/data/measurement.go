@@ -61,6 +61,56 @@ func NewMeasurement[Value any](id, label, source string, at, from time.Time) *Me
 	}
 }
 
+/* Clone returns an independent deep copy of the measurement and its mappings. */
+func (measurement *Measurement[Value]) Clone() *Measurement[Value] {
+	if measurement == nil {
+		return nil
+	}
+
+	metrics := make(map[string]Metric[Value], len(measurement.Metrics))
+
+	for key, val := range measurement.Metrics {
+		metrics[key] = val
+	}
+
+	var metadata map[string]float64
+
+	if measurement.Metadata != nil {
+		metadata = make(map[string]float64, len(measurement.Metadata))
+
+		for key, val := range measurement.Metadata {
+			metadata[key] = val
+		}
+	}
+
+	var provenance map[string]string
+
+	if measurement.Provenance != nil {
+		provenance = make(map[string]string, len(measurement.Provenance))
+
+		for key, val := range measurement.Provenance {
+			provenance[key] = val
+		}
+	}
+
+	return &Measurement[Value]{
+		ID:         measurement.ID,
+		Label:      measurement.Label,
+		Source:     measurement.Source,
+		SeqIdx:     measurement.SeqIdx,
+		At:         measurement.At,
+		From:       measurement.From,
+		Maturity:   measurement.Maturity,
+		SNR:        measurement.SNR,
+		SNRDefined: measurement.SNRDefined,
+		Estimated:  measurement.Estimated,
+		Err:        measurement.Err,
+		Metrics:    metrics,
+		Metadata:   metadata,
+		Provenance: provenance,
+	}
+}
+
 func (measurement *Measurement[Value]) PutMetric(metric Metric[Value]) {
 	if measurement == nil || metric.Label == "" {
 		return

@@ -209,8 +209,18 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 
 		// Check suffixes (temporal Markov order reduction: keeping most recent tokens)
 		for _, sub := range suffixes {
-			if searchSubPrefix(root, sub, step, e.decayFactor, e.cfg.DirichletAlpha, 1, &acc) {
-				break
+			if _, exists := root.Get(makeSensoryKey(sub)); exists {
+				if searchSubPrefix(root, sub, step, e.decayFactor, e.cfg.DirichletAlpha, 1, &acc) {
+					break
+				}
+			}
+		}
+
+		if acc.count == 0 {
+			for _, sub := range suffixes {
+				if searchSubPrefix(root, sub, step, e.decayFactor, e.cfg.DirichletAlpha, 1, &acc) {
+					break
+				}
 			}
 		}
 
@@ -457,10 +467,13 @@ func backoffCandidates(context []byte, maxSteps int) (prefixes [][]byte, suffixe
 		}
 
 		if offset == len(context) && len(frameOffsets) > 1 {
-			steps := min(len(frameOffsets)-1, maxSteps)
-
-			for step := 1; step <= steps; step++ {
+			for step := 1; step < len(frameOffsets); step++ {
 				suffixes = append(suffixes, context[frameOffsets[step]:])
+			}
+
+			prefSteps := min(len(frameOffsets)-1, maxSteps)
+
+			for step := 1; step <= prefSteps; step++ {
 				endIdx := frameOffsets[len(frameOffsets)-step]
 				prefixes = append(prefixes, context[:endIdx])
 			}

@@ -203,6 +203,14 @@ func (agent *Agent) Tree() *iradix.Tree[[]byte] {
 	return agent.learner.Tree()
 }
 
+/* IsUnprimed reports whether the agent space has processed any observation. */
+func (agent *Agent) IsUnprimed() bool {
+	agent.mu.RLock()
+	defer agent.mu.RUnlock()
+
+	return agent.space.UpdatedLabel == ""
+}
+
 /*
 IngestReplay loads one replay fragment carrying frames, symbol, and objective anchor metadata.
 */
@@ -214,11 +222,28 @@ func (agent *Agent) IngestReplay(fragment types.ReplayFragment, slot int) {
 	agent.mu.Lock()
 	defer agent.mu.Unlock()
 
-	agent.replays.WriteAt(fragment, slot)
+	clonedFrames := make([][]*data.Measurement[float64], len(fragment.Frames))
+
+	for frameIdx, frame := range fragment.Frames {
+		clonedFrame := make([]*data.Measurement[float64], len(frame))
+
+		for measIdx, meas := range frame {
+			if meas != nil {
+				clonedFrame[measIdx] = meas.Clone()
+			}
+		}
+
+		clonedFrames[frameIdx] = clonedFrame
+	}
+
+	fragCopy := fragment
+	fragCopy.Frames = clonedFrames
+
+	agent.replays.WriteAt(fragCopy, slot)
 
 	child := store.NewRing[[]*data.Measurement[float64]]()
 
-	for _, frame := range fragment.Frames {
+	for _, frame := range clonedFrames {
 		child.Write(frame)
 	}
 
@@ -267,11 +292,16 @@ func selectLegalAction(
 	}
 
 	// Case 1: Fresh or unseen context. No legal action has evidence in cognitive memory.
-	// Explore among currently legal actions with symmetric uniform sampling.
+	// In live mode (rng == nil), default to ActionWait until empirical evidence exists.
+	// In rehearsal exploration (rng != nil), explore among currently legal actions with symmetric uniform sampling.
 	if supportedCount == 0 {
+		if rng == nil {
+			return ActionWait, 0, 0, 0
+		}
+
 		chosenIdx := 0
 
-		if rng != nil && len(legal) > 1 {
+		if len(legal) > 1 {
 			chosenIdx = rng.Intn(len(legal))
 		}
 
@@ -382,6 +412,14 @@ func (agent *Agent) RehearseChild() (int, error) {
 	childLen := len(replay.Frames)
 
 	if childLen <= 0 {
+		if agent.replays != nil && agent.replays.Len() > 0 {
+			agent.replays.Advance()
+		}
+
+		if agent.ring != nil && agent.ring.Len() > 0 {
+			agent.ring.Advance()
+		}
+
 		return 0, nil
 	}
 
@@ -390,6 +428,14 @@ func (agent *Agent) RehearseChild() (int, error) {
 	anchorIdx := replay.AnchorIndex
 
 	if anchorIdx <= 0 || anchorIdx >= childLen {
+		if agent.replays != nil && agent.replays.Len() > 0 {
+			agent.replays.Advance()
+		}
+
+		if agent.ring != nil && agent.ring.Len() > 0 {
+			agent.ring.Advance()
+		}
+
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"rehearsal: invalid or missing anchor index B in replay fragment",

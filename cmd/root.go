@@ -809,7 +809,11 @@ func readRecord(
 				return
 			}
 
-			tape.PublishFragment(fragment)
+			if len(fragment.Frames) == 0 || fragment.AnchorIndex <= 0 || fragment.AnchorIndex >= len(fragment.Frames) {
+				continue
+			}
+
+			tape.Publish(fragment)
 			published++
 		}
 	}

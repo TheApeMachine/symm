@@ -2,7 +2,9 @@ package hindsight
 
 import (
 	"context"
+	"slices"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -143,7 +145,9 @@ func (tape *Tape) fragments(
 	fragments := make([]types.ReplayFragment, 0, len(excursions))
 
 	for _, window := range excursions {
-		if fragment := tape.fragment(window, decoded); len(fragment.Frames) > 0 {
+		fragment := tape.fragment(index, window, decoded)
+
+		if len(fragment.Frames) > 0 && fragment.AnchorIndex > 0 && fragment.AnchorIndex < len(fragment.Frames) {
 			fragments = append(fragments, fragment)
 		}
 
@@ -336,10 +340,12 @@ should do is the learner's decision, not something the record pre-writes.
 The anchor and extremum indices are factual replay boundaries.
 */
 func (tape *Tape) fragment(
+	index *RunIndex,
 	window excursionWindow,
 	decoded map[tables.EnvelopeRefRow][]*data.Measurement[float64],
 ) types.ReplayFragment {
 	held := make([][]*data.Measurement[float64], 0, len(window.captures))
+	surfaces := make([]*types.ExecutionSurface, 0, len(window.captures))
 	anchorIdx := -1
 	extremumIdx := -1
 
@@ -348,6 +354,24 @@ func (tape *Tape) fragment(
 
 		if !stored || len(measurements) == 0 {
 			continue
+		}
+
+		var surface *types.ExecutionSurface
+
+		if index != nil {
+			observation, hasObs := index.ObservationAt(window.symbol, candidate)
+
+			if hasObs {
+				priceVal, hasPrice := extractObsPrice(observation)
+
+				if hasPrice {
+					measurements = ensurePriceMeasurement(measurements, observation, priceVal)
+				}
+
+				if observation.HasBid && observation.Bid > 0 {
+					surface = buildObsSurface(observation)
+				}
+			}
 		}
 
 		if candidate == window.anchor && anchorIdx < 0 {
@@ -359,14 +383,77 @@ func (tape *Tape) fragment(
 		}
 
 		held = append(held, measurements)
+		surfaces = append(surfaces, surface)
 	}
 
 	return types.ReplayFragment{
 		Frames:        held,
+		Surfaces:      surfaces,
 		Symbol:        window.symbol,
 		AnchorIndex:   anchorIdx,
 		ExtremumIndex: extremumIdx,
 	}
+}
+
+func extractObsPrice(observation Observation) (float64, bool) {
+	if observation.HasLast && observation.Last > 0 {
+		return observation.Last, true
+	}
+
+	if observation.HasTrade && observation.TradePrice > 0 {
+		return observation.TradePrice, true
+	}
+
+	if observation.HasBid && observation.Bid > 0 {
+		return observation.Bid, true
+	}
+
+	return 0, false
+}
+
+func ensurePriceMeasurement(
+	measurements []*data.Measurement[float64],
+	observation Observation,
+	priceVal float64,
+) []*data.Measurement[float64] {
+	for _, meas := range measurements {
+		if meas != nil && (meas.Source == "price" || meas.Source == "ticker" || meas.Label == "price" || meas.Label == "last") {
+			return measurements
+		}
+	}
+
+	priceMeas := data.NewMeasurement[float64](
+		string(observation.Capture.Run),
+		observation.Symbol,
+		"price",
+		observation.At(),
+		observation.VenueAt,
+	)
+	priceMeas.PutMetric(data.Metric[float64]{Label: "price", Raw: priceVal})
+	priceMeas.PutMetric(data.Metric[float64]{Label: "last", Raw: priceVal})
+
+	return append(slices.Clone(measurements), priceMeas)
+}
+
+func buildObsSurface(observation Observation) *types.ExecutionSurface {
+	bestBid := decimal.NewFromFloat64(observation.Bid)
+	execVal := bestBid
+
+	surface := &types.ExecutionSurface{
+		Symbol:          observation.Symbol,
+		At:              observation.At(),
+		BestBid:         bestBid,
+		ExecutableValue: execVal,
+		BookComplete:    true,
+		FullyExecutable: true,
+	}
+
+	if observation.HasAsk && observation.Ask > 0 {
+		bestAsk := decimal.NewFromFloat64(observation.Ask)
+		surface.BestAsk = bestAsk
+	}
+
+	return surface
 }
 
 /* Error exposes what the record refused, if anything. */

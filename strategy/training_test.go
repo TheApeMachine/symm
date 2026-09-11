@@ -40,8 +40,8 @@ func TestTrainingStep(t *testing.T) {
 		training := NewTraining(context.Background(), tape)
 		envelope := &types.Envelope{}
 		So(training.Step(envelope), ShouldEqual, envelope)
-		So(training.agents[1].Space().UpdatedLabel, ShouldEqual, "BTC/USD")
-		So(training.space.UpdatedLabel, ShouldEqual, "")
+		So(training.agents[1].Space().Label(), ShouldEqual, "BTC/USD")
+		So(training.space.Label(), ShouldEqual, "")
 		So(training.Error(), ShouldBeNil)
 	})
 

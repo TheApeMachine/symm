@@ -10,6 +10,9 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -17,6 +20,23 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/types"
 )
+
+func formAgentSpace(targetAgent *Agent, now time.Time) {
+	calibrationStart := now.Add(-time.Hour)
+	for idx := 0; idx < 128; idx++ {
+		at := calibrationStart.Add(time.Duration(idx) * time.Second)
+		measurement := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, at)
+		measurement.Metadata = map[string]float64{data.MetadataSupport: float64(idx + 1), data.MetadataMahalanobisSNR: 100}
+		first := float64(idx%2)*2 - 1
+		measurement.PutMetric(data.Metric[float64]{Label: "raw", Raw: first})
+		measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: first})
+		_ = targetAgent.Space().Step([]*data.Measurement[float64]{measurement})
+		impulse, _ := targetAgent.Space().Impulse("BTC/USD", at, at)
+		if impulse.Ready {
+			break
+		}
+	}
+}
 
 func TestArchitectureProperties(t *testing.T) {
 	Convey("Reinforcement Learning System Architectural Invariants", t, func() {
@@ -478,6 +498,326 @@ func TestArchitectureProperties(t *testing.T) {
 			eval := engine.Evaluate([]byte("trade_context_test"))
 			So(eval.Support, ShouldEqual, 0)
 			So(engine.Root().Len(), ShouldEqual, 0)
+		})
+
+		Convey("13. Production economic replay wiring: Hindsight derives execution surfaces and price measurements that train agent cognition", func() {
+			series := make([]hindsight.Observation, 0, 400)
+			now := time.Now().UTC()
+			seq := uint64(0)
+			addRamp := func(startPrice, endPrice float64, steps int) {
+				for idx := 0; idx < steps; idx++ {
+					fraction := float64(idx) / float64(steps)
+					priceVal := startPrice + (endPrice-startPrice)*fraction
+					at := now.Add(time.Duration(seq) * time.Second)
+					series = append(series, hindsight.Observation{
+						Capture:    hindsight.CaptureIdentity{Run: "run-test", Sequence: types.CaptureSequence(seq)},
+						Ordinal:    1,
+						ReceivedAt: at,
+						VenueAt:    at,
+						Symbol:     "BTC/USD",
+						HasBid:     true,
+						Bid:        priceVal - 0.05,
+						HasAsk:     true,
+						Ask:        priceVal + 0.05,
+						HasLast:    true,
+						Last:       priceVal,
+					})
+					seq++
+				}
+			}
+			addRamp(100, 100, 100)
+			addRamp(100, 120, 100)
+			addRamp(120, 100, 100)
+			addRamp(100, 105, 100)
+
+			catalog := tablestest.New(t)
+			writer := tables.NewWriter(catalog)
+
+			for _, obs := range series {
+				identity := tables.EnvelopeRefRow{
+					Run:      "run-test",
+					Sequence: int64(obs.Capture.Sequence),
+					Ordinal:  1,
+				}
+				env := &types.Envelope{Key: "BTC/USD"}
+				measurement := data.NewMeasurement[float64]("flow", "BTC/USD", "cvd", obs.At(), obs.At())
+				measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: obs.Bid})
+				env.CVD = measurement
+				writer.AddWitness(tables.WitnessRow{
+					Run: identity.Run, Envelope: identity, ArtifactKind: "precursor",
+					Boundary: "after-logic", Payload: env.EncodePrecursor(),
+				})
+			}
+			So(writer.Commit(t.Context()), ShouldBeNil)
+
+			tape := hindsight.Query(hindsight.Excursions, catalog, "run-test", hindsight.DefaultDiscoveryPolicy())
+			fragments := tape.ReplayFragmentsFrom(series)
+			So(len(fragments), ShouldBeGreaterThan, 0)
+
+			// Real fragment carries execution surfaces and price measurements with ZERO manual injection
+			frag := fragments[0]
+			So(len(frag.Surfaces), ShouldBeGreaterThan, 0)
+			So(frag.Surfaces[0].BestBid, ShouldNotBeNil)
+			So(frag.Surfaces[0].BestAsk, ShouldNotBeNil)
+			So(frag.Surfaces[0].ExecutableValue, ShouldNotBeNil)
+
+			engine := cognition.NewEngine(cognition.DefaultConfig())
+			agent := NewAgent(10, false, engine, 16, rand.New(rand.NewSource(12345)))
+			agent.SetFeeRate(0.001)
+			formAgentSpace(agent, now)
+
+			agent.IngestReplay(frag, 0)
+			stepped, err := agent.RehearseChild()
+			So(err, ShouldBeNil)
+			So(stepped, ShouldBeGreaterThan, 0)
+
+			marks := agent.LastMarks()
+			So(len(marks), ShouldBeGreaterThan, 0)
+			So(engine.Root().Len(), ShouldBeGreaterThan, 0)
+		})
+
+		Convey("14. Pump-exit timing criterion: WAIT at 100 > EXIT at 100, EXIT at 115/120 > WAIT there, WAIT into 80 strongly punished", func() {
+			feeRate := 0.001
+			evaluator := NewFragmentEvaluator(&feeRate)
+
+			now := time.Now().UTC()
+			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
+				measurement := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
+				measurement.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+				return []*data.Measurement[float64]{measurement}
+			}
+
+			pumpFrames := [][]*data.Measurement[float64]{
+				makeFrame(100.0), // 0: price 100
+				makeFrame(120.0), // 1: pump peak at 120
+				makeFrame(115.0), // 2: beginning dump at 115
+				makeFrame(80.0),  // 3: crash to 80
+			}
+
+			entryIdx := 0 // Position entered at 100
+
+			// 1. At 100 (frame 0): WAIT > EXIT (premature to exit before pump to 120)
+			wait0, err := evaluator.EvaluateWait(pumpFrames, 0, true, entryIdx)
+			So(err, ShouldBeNil)
+			exit0, err := evaluator.EvaluateExit(pumpFrames, 0, entryIdx)
+			So(err, ShouldBeNil)
+			So(wait0.Correctness, ShouldBeGreaterThan, exit0.Correctness)
+			So(exit0.Correctness, ShouldBeLessThan, 0)
+
+			// 2. At 120 (frame 1): EXIT > WAIT (peak reached, protects against dump to 80)
+			wait1, err := evaluator.EvaluateWait(pumpFrames, 1, true, entryIdx)
+			So(err, ShouldBeNil)
+			exit1, err := evaluator.EvaluateExit(pumpFrames, 1, entryIdx)
+			So(err, ShouldBeNil)
+			So(exit1.Correctness, ShouldBeGreaterThan, wait1.Correctness)
+			So(exit1.Correctness, ShouldBeGreaterThan, 0)
+
+			// 3. At 115 (frame 2): EXIT > WAIT (protects against further dump to 80)
+			wait2, err := evaluator.EvaluateWait(pumpFrames, 2, true, entryIdx)
+			So(err, ShouldBeNil)
+			exit2, err := evaluator.EvaluateExit(pumpFrames, 2, entryIdx)
+			So(err, ShouldBeNil)
+			So(exit2.Correctness, ShouldBeGreaterThan, wait2.Correctness)
+			So(exit2.Correctness, ShouldBeGreaterThan, 0)
+
+			// 4. Into 80 (frame 3): WAIT is strongly punished (<= -0.5) for terminal loss
+			wait3, err := evaluator.EvaluateWait(pumpFrames, 3, true, entryIdx)
+			So(err, ShouldBeNil)
+			So(wait3.Correctness, ShouldBeLessThanOrEqualTo, -0.5)
+		})
+
+		Convey("15. Entry timing counterfactual: in [100, 90, 120], WAIT at 100 > ENTER at 100, ENTER at 90 > WAIT at 90", func() {
+			feeRate := 0.001
+			evaluator := NewFragmentEvaluator(&feeRate)
+
+			now := time.Now().UTC()
+			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
+				measurement := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
+				measurement.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+				return []*data.Measurement[float64]{measurement}
+			}
+
+			dipFrames := [][]*data.Measurement[float64]{
+				makeFrame(100.0), // 0: initial price 100
+				makeFrame(90.0),  // 1: dip to 90
+				makeFrame(120.0), // 2: rally to 120
+			}
+
+			// When flat:
+			// At 100 (frame 0): WAIT > ENTER because a substantially better entry (90) is available
+			enter0, err := evaluator.EvaluateEntry(dipFrames, 0)
+			So(err, ShouldBeNil)
+			wait0, err := evaluator.EvaluateWait(dipFrames, 0, false, 0)
+			So(err, ShouldBeNil)
+			So(wait0.Correctness, ShouldBeGreaterThan, enter0.Correctness)
+			So(enter0.Correctness, ShouldBeLessThan, 0)
+
+			// At 90 (frame 1): ENTER > WAIT because 90 is optimal entry before the rally to 120
+			enter1, err := evaluator.EvaluateEntry(dipFrames, 1)
+			So(err, ShouldBeNil)
+			wait1, err := evaluator.EvaluateWait(dipFrames, 1, false, 0)
+			So(err, ShouldBeNil)
+			So(enter1.Correctness, ShouldBeGreaterThan, wait1.Correctness)
+			So(enter1.Correctness, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("16. Canonical entry book economics: identical chart move evaluates profitable on deep book and loss on thin/wide book", func() {
+			feeRate := 0.001
+			evalDeep := NewFragmentEvaluator(&feeRate)
+			evalThin := NewFragmentEvaluator(&feeRate)
+
+			now := time.Now().UTC()
+			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
+				measurement := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
+				measurement.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+				return []*data.Measurement[float64]{measurement}
+			}
+
+			chartFrames := [][]*data.Measurement[float64]{
+				makeFrame(100.0),
+				makeFrame(120.0),
+			}
+
+			// Deep book: tight spread (ask 100.10 at entry, bid 119.90 at peak)
+			evalDeep.SetSurfaces([]*types.ExecutionSurface{
+				{BestAsk: decimal.NewFromFloat64(100.10), BestBid: decimal.NewFromFloat64(100.00)},
+				{BestAsk: decimal.NewFromFloat64(120.00), BestBid: decimal.NewFromFloat64(119.90)},
+			})
+
+			// Thin/wide book: wide spread (ask 115.00 at entry, bid 105.00 at peak)
+			evalThin.SetSurfaces([]*types.ExecutionSurface{
+				{BestAsk: decimal.NewFromFloat64(115.00), BestBid: decimal.NewFromFloat64(95.00)},
+				{BestAsk: decimal.NewFromFloat64(125.00), BestBid: decimal.NewFromFloat64(105.00)},
+			})
+
+			outcomeDeep, err := evalDeep.EvaluateEntry(chartFrames, 0)
+			So(err, ShouldBeNil)
+			So(outcomeDeep.Correctness, ShouldBeGreaterThan, 0)
+
+			outcomeThin, err := evalThin.EvaluateEntry(chartFrames, 0)
+			So(err, ShouldBeNil)
+			So(outcomeThin.Correctness, ShouldEqual, -1.0)
+		})
+
+		Convey("17. Behavioral learning via rehearsal: ReplayFragments train cognition via RehearseChild with zero manual Observe", func() {
+			engine := cognition.NewEngine(cognition.DefaultConfig())
+			seed := int64(1337)
+			agent := NewAgent(5, false, engine, 16, rand.New(rand.NewSource(seed)))
+			agent.SetFeeRate(0.001)
+			formAgentSpace(agent, time.Now().UTC())
+
+			now := time.Now().UTC()
+			makeFlowFrame := func(sigValue float64, step int) []*data.Measurement[float64] {
+				at := now.Add(time.Duration(step) * time.Second)
+				mFlow := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, at)
+				mFlow.PutMetric(data.Metric[float64]{Label: "raw", Raw: sigValue})
+				mFlow.PutMetric(data.Metric[float64]{Label: "level", Raw: sigValue})
+				return []*data.Measurement[float64]{mFlow}
+			}
+
+			// Bullish fragment: precursor at 100 with dynamic signals, then huge rally to 150
+			bullFrames := make([][]*data.Measurement[float64], 8)
+			surfaces := make([]*types.ExecutionSurface, 8)
+			for idx := 0; idx < 4; idx++ {
+				bullFrames[idx] = makeFlowFrame(float64(idx+1), idx)
+				surfaces[idx] = &types.ExecutionSurface{
+					BestAsk: decimal.NewFromFloat64(100.0),
+					BestBid: decimal.NewFromFloat64(99.95),
+				}
+			}
+			for idx := 4; idx < 8; idx++ {
+				bullFrames[idx] = makeFlowFrame(5.0, idx)
+				rallyPrice := 100.0 + float64(idx-3)*15.0
+				surfaces[idx] = &types.ExecutionSurface{
+					BestAsk: decimal.NewFromFloat64(rallyPrice),
+					BestBid: decimal.NewFromFloat64(rallyPrice - 0.05),
+				}
+			}
+			bullFrag := types.ReplayFragment{
+				Frames:      bullFrames,
+				Surfaces:    surfaces,
+				Symbol:      "BTC/USD",
+				AnchorIndex: 4,
+			}
+
+			for iter := 0; iter < 10; iter++ {
+				agent.IngestReplay(bullFrag, iter)
+				stepped, err := agent.RehearseChild()
+				So(err, ShouldBeNil)
+				So(stepped, ShouldBeGreaterThan, 0)
+			}
+
+			So(engine.Root().Len(), ShouldBeGreaterThan, 0)
+
+			// Live evaluation of the learned precursor context on held-out agent with deterministic policy (rng == nil):
+			evalAgent := NewAgent(99, false, engine, 16)
+			formAgentSpace(evalAgent, now)
+
+			var chosenActions []Action
+			var supports []uint64
+			holding := false
+			for idx := 0; idx < 4; idx++ {
+				meas := bullFrames[idx]
+				imp, err := evalAgent.Step(meas, "BTC/USD")
+				So(err, ShouldBeNil)
+				act, _, _, _, supp := evalAgent.ChooseAction(imp, holding)
+				chosenActions = append(chosenActions, act)
+				supports = append(supports, supp)
+				if act == ActionEnter {
+					holding = true
+				}
+			}
+
+			So(supports[0], ShouldBeGreaterThan, 0)
+			So(chosenActions[0], ShouldEqual, ActionEnter)
+			So(chosenActions[1], ShouldEqual, ActionWait)
+			So(chosenActions[2], ShouldEqual, ActionWait)
+			So(chosenActions[3], ShouldEqual, ActionWait)
+		})
+
+		Convey("18. Live context adaptive suffix matching: 100-step live history recalls learned precursor sequence", func() {
+			engine := cognition.NewEngine(cognition.DefaultConfig())
+			seed := int64(42)
+			agent := NewAgent(8, false, engine, 16, rand.New(rand.NewSource(seed)))
+			formAgentSpace(agent, time.Now().UTC())
+
+			now := time.Now().UTC()
+			ctxLearned := associative.NewContext()
+			var learnedSeq []byte
+
+			for idx := 0; idx < 12; idx++ {
+				at := now.Add(time.Duration(idx) * time.Second)
+				meas := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, now)
+				val := float64((idx % 3) + 1)
+				meas.PutMetric(data.Metric[float64]{Label: "raw", Raw: val})
+				meas.PutMetric(data.Metric[float64]{Label: "level", Raw: val})
+				_ = agent.Space().Step([]*data.Measurement[float64]{meas})
+				imp, _ := agent.Space().Impulse("BTC/USD", at, now)
+				learnedSeq = ctxLearned.Sequence(imp)
+			}
+			So(len(learnedSeq), ShouldBeGreaterThan, 0)
+
+			engine.Observe(learnedSeq, []byte("ENTER"), 1.0)
+
+			ctxLive := associative.NewContext()
+			var liveSeq []byte
+			for idx := 0; idx < 100; idx++ {
+				at := now.Add(time.Duration(100+idx) * time.Second)
+				meas := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, now)
+				val := float64(-1.0)
+				if idx >= 88 {
+					val = float64(((idx - 88) % 3) + 1)
+				}
+				meas.PutMetric(data.Metric[float64]{Label: "raw", Raw: val})
+				meas.PutMetric(data.Metric[float64]{Label: "level", Raw: val})
+				_ = agent.Space().Step([]*data.Measurement[float64]{meas})
+				imp, _ := agent.Space().Impulse("BTC/USD", at, now)
+				liveSeq = ctxLive.Sequence(imp)
+			}
+
+			eval := engine.Evaluate(liveSeq)
+			So(eval.Support, ShouldBeGreaterThan, 0)
+			So(eval.WinnerClass, ShouldEqual, "ENTER")
 		})
 	})
 }

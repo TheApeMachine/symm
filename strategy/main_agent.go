@@ -191,7 +191,7 @@ func (agent *MainAgent) ID() int {
 func (agent *MainAgent) statusLocked() string {
 	samples := agent.wins + agent.losses
 
-	if agent.status == "simulated" && samples > 0 {
+	if agent.status == "simulated" && samples >= 10 {
 		stdErr := 0.0
 
 		if samples > 1 {
@@ -229,6 +229,10 @@ func (agent *MainAgent) Graded() uint64 {
 
 func (agent *MainAgent) canEnter(decision ActionDecision) bool {
 	if decision.Action != ActionEnter {
+		return false
+	}
+
+	if decision.Support == 0 || decision.Contrast <= 0 {
 		return false
 	}
 
@@ -469,25 +473,11 @@ func (agent *MainAgent) enterLong(
 	}
 
 	if quantity == nil || notional == nil || totalCost == nil {
-		feeRate := agent.feeRate(symbol)
+		return
+	}
 
-		if feeRate == nil {
-			return
-		}
-
-		notional = allocatedCash
-		fee = notional.Mul(feeRate)
-		totalCost = notional.Add(fee)
-
-		if agent.cash.Cmp(totalCost) < 0 {
-			return
-		}
-
-		quantity = notional.SetScale(decimal.DefaultScale).Div(price)
-
-		if quantity.Sign() <= 0 {
-			return
-		}
+	if agent.cash.Cmp(totalCost) < 0 {
+		return
 	}
 
 	agent.cash = agent.cash.Sub(totalCost)

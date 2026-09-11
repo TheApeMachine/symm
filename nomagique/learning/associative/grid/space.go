@@ -422,6 +422,14 @@ func (grid *Space) Support(source, key string) (int, int) {
 	return grid.window.support(column), grid.window.capacity
 }
 
+/* Label returns the most recently updated context label under read lock. */
+func (grid *Space) Label() string {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
+	return grid.UpdatedLabel
+}
+
 /*
 QuantitySnapshot is a point-in-time capture of one quantity for telemetry.
 */

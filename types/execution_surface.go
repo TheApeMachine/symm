@@ -22,6 +22,7 @@ type ExecutionSurface struct {
 	// intended, original-allocation, or pre-fill quantity.
 	SellableQty   *decimal.Decimal
 	BestBid       *decimal.Decimal
+	BestAsk       *decimal.Decimal
 	ExecutableQty *decimal.Decimal
 	// ExecutableVWAP is the full-lot liquidation-equivalent GROSS price (raw
 	// filled VWAP in price coordinate), comparable to the stoploss's gross

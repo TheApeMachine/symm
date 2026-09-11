@@ -1,16 +1,46 @@
 package strategy
 
 import (
+	"sync"
 	"testing"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/types"
 )
+
+type testBookSource struct {
+	books sync.Map
+}
+
+func (source *testBookSource) Book(symbol string, read func(*spotbook.Book)) {
+	if val, ok := source.books.Load(symbol); ok {
+		read(val.(*spotbook.Book))
+	}
+}
+
+func (source *testBookSource) SetTouch(symbol string, bidPrice, bidQty, askPrice, askQty *decimal.Decimal) {
+	book := spotbook.New()
+	book.Update(&spotbook.UpdateOptions{
+		Direction: spotbook.Bid,
+		ID:        "1",
+		Price:     bidPrice,
+		Quantity:  bidQty,
+	})
+	book.Update(&spotbook.UpdateOptions{
+		Direction: spotbook.Ask,
+		ID:        "2",
+		Price:     askPrice,
+		Quantity:  askQty,
+	})
+	source.books.Store(symbol, book)
+}
 
 func testPrice() *broker.Price {
 	instrument := broker.NewInstrumentWithQuote("USD")
@@ -23,11 +53,44 @@ func testPrice() *broker.Price {
 	return price
 }
 
+func testExecutablePrice() (*broker.Price, *testBookSource) {
+	instrument := broker.NewInstrumentWithQuote("USD")
+	price := broker.NewPrice(nil, instrument)
+	feeRate := decimal.NewFromFloat64(0.26)
+	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: feeRate})
+	price.SetFee("ETH/USD", kraken.TradeVolumeFee{Fee: feeRate})
+	price.SetFee("SOL/USD", kraken.TradeVolumeFee{Fee: feeRate})
+
+	if price.Normalizer() != nil {
+		price.Normalizer().Update(&spot.AssetsManagerUpdate{
+			NewAssets: map[string]spot.AssetInfo{
+				"BTC": {AltName: "BTC", Decimals: 8, DisplayDecimals: 8},
+				"ETH": {AltName: "ETH", Decimals: 8, DisplayDecimals: 8},
+				"SOL": {AltName: "SOL", Decimals: 8, DisplayDecimals: 8},
+				"USD": {AltName: "USD", Decimals: 2, DisplayDecimals: 2},
+			},
+			NewPairs: map[string]spot.AssetPair{
+				"BTCUSD": {WSName: "BTC/USD", Base: "BTC", Quote: "USD", PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1},
+				"ETHUSD": {WSName: "ETH/USD", Base: "ETH", Quote: "USD", PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1},
+				"SOLUSD": {WSName: "SOL/USD", Base: "SOL", Quote: "USD", PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1},
+			},
+		})
+	}
+
+	books := &testBookSource{}
+	books.SetTouch("BTC/USD", decimal.NewFromInt64(49990), decimal.NewFromInt64(10), decimal.NewFromInt64(50000), decimal.NewFromInt64(10))
+	books.SetTouch("ETH/USD", decimal.NewFromInt64(2990), decimal.NewFromInt64(100), decimal.NewFromInt64(3000), decimal.NewFromInt64(100))
+	books.SetTouch("SOL/USD", decimal.NewFromInt64(95), decimal.NewFromInt64(1000), decimal.NewFromInt64(100), decimal.NewFromInt64(1000))
+	price.Books = books
+
+	return price, books
+}
+
 func TestMainAgent(t *testing.T) {
 	Convey("Given a MainAgent operating with an associative cognition engine", t, func() {
 		initialCash := decimal.NewFromInt64(1000)
 		engine := cognition.NewEngine(cognition.DefaultConfig())
-		priceSvc := testPrice()
+		priceSvc, _ := testExecutablePrice()
 		mainAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, engine)
 
 		So(mainAgent.ID(), ShouldEqual, 0)
@@ -241,6 +304,31 @@ func TestMainAgent(t *testing.T) {
 
 			So(len(lossAgent.positions), ShouldEqual, 0)
 			So(lossAgent.fills, ShouldEqual, 0)
+		})
+
+		Convey("When fee is present but resident book is absent or insufficient, MainAgent takes zero fills and zero positions", func() {
+			priceNoBook := testPrice()
+			strictAgent := NewMainAgent(initialCash, "paper", nil, priceNoBook, engine)
+
+			envelope := &types.Envelope{
+				TickerData: kraken.TickerData{
+					Symbol: "BTC/USD",
+					Last:   decimal.NewFromInt64(50000),
+				},
+			}
+			decision := ActionDecision{
+				Action:     ActionEnter,
+				Context:    []byte("entry_ctx"),
+				Confidence: 0.85,
+				Contrast:   2.4,
+				Support:    12,
+			}
+
+			strictAgent.Step(envelope, decision)
+
+			So(strictAgent.fills, ShouldEqual, 0)
+			So(len(strictAgent.positions), ShouldEqual, 0)
+			So(strictAgent.cash.Cmp(initialCash), ShouldEqual, 0)
 		})
 	})
 }

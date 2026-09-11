@@ -112,7 +112,7 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 		return outcome, nil
 	}
 
-	entryValue, hasEntry := framePrice(fragment[decisionIdx])
+	entryValue, hasEntry := frameOrSurfacePrice(evaluator, fragment, decisionIdx, true)
 
 	if !hasEntry || entryValue <= 0 {
 		return ActionOutcome{}, errnie.Error(errnie.Err(
@@ -151,23 +151,23 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 		))
 	}
 
-	maxValue := entryValue
+	maxRealizable := entryValue
 	maxIdx := decisionIdx
 
 	for idx := decisionIdx + 1; idx < len(fragment); idx++ {
-		value, defined := framePrice(fragment[idx])
+		val, defined := frameOrSurfacePrice(evaluator, fragment, idx, false)
 
 		if !defined {
 			continue
 		}
 
-		if value > maxValue {
-			maxValue = value
+		if val > maxRealizable {
+			maxRealizable = val
 			maxIdx = idx
 		}
 	}
 
-	move := (maxValue - entryValue) / entryValue
+	move := (maxRealizable - entryValue) / entryValue
 
 	if move <= roundTrip {
 		outcome.Correctness = -1.0
@@ -176,18 +176,44 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 		return outcome, nil
 	}
 
+	betterEntryFound := false
+	minEntryAhead := entryValue
+
+	for idx := decisionIdx + 1; idx <= maxIdx; idx++ {
+		val, defined := frameOrSurfacePrice(evaluator, fragment, idx, true)
+
+		if defined && val > 0 && val < minEntryAhead {
+			minEntryAhead = val
+		}
+	}
+
+	if minEntryAhead < entryValue*(1.0-roundTrip) {
+		betterEntryFound = true
+	}
+
+	if betterEntryFound {
+		missedDiscount := (entryValue - minEntryAhead) / entryValue
+		outcome.Correctness = -clamp(missedDiscount, 0.1, 1.0)
+		outcome.Timing = clamp(minEntryAhead/entryValue, 0, 1)
+		outcome.Reinforcement = outcome.Correctness
+
+		return outcome, nil
+	}
+
 	margin := move - roundTrip
 	outcome.Correctness = clamp(margin/roundTrip, 0.1, 1.0)
 
-	// Economic timing: evaluate entry relative to the best feasible entry price
 	minEntry := entryValue
 	for idx := 0; idx <= maxIdx; idx++ {
-		if val, defined := framePrice(fragment[idx]); defined && val > 0 && val < minEntry {
+		val, defined := frameOrSurfacePrice(evaluator, fragment, idx, true)
+
+		if defined && val > 0 && val < minEntry {
 			minEntry = val
 		}
 	}
 
-	maxFeasibleMove := (maxValue - minEntry) / minEntry
+	maxFeasibleMove := (maxRealizable - minEntry) / minEntry
+
 	if maxFeasibleMove > 0 {
 		outcome.Timing = clamp(move/maxFeasibleMove, 0, 1)
 	}
@@ -218,101 +244,76 @@ func (evaluator *FragmentEvaluator) EvaluateExit(
 		return outcome, nil
 	}
 
-	// 1. Authoritative evaluation against captured execution surfaces
-	if evaluator.surfaces != nil && decisionIdx < len(evaluator.surfaces) && evaluator.surfaces[decisionIdx] != nil {
-		currSurface := evaluator.surfaces[decisionIdx]
-		if currSurface.ExecutableValue != nil && currSurface.ExecutableValue.Float64() > 0 {
-			exitRealizable := currSurface.ExecutableValue.Float64()
-			worstLater := exitRealizable
-			bestLater := exitRealizable
+	exitVal, hasExit := frameOrSurfacePrice(evaluator, fragment, decisionIdx, false)
 
-			for idx := decisionIdx + 1; idx < len(evaluator.surfaces); idx++ {
-				surf := evaluator.surfaces[idx]
-				if surf == nil || surf.ExecutableValue == nil {
-					continue
-				}
-				val := surf.ExecutableValue.Float64()
-				if val < worstLater {
-					worstLater = val
-				}
-				if val > bestLater {
-					bestLater = val
-				}
-			}
-
-			// If subsequent liquidity evaporated or price collapsed below exit realization:
-			// EXIT successfully protected realizable liquidation capital before the pull.
-			if worstLater < exitRealizable {
-				protection := (exitRealizable - worstLater) / exitRealizable
-				outcome.Correctness = clamp(protection, 0.1, 1.0)
-				outcome.Timing = 1.0
-				outcome.Reinforcement = outcome.Correctness
-				return outcome, nil
-			}
-
-			// If bids remained deep and realizable proceeds continued to rise:
-			// EXIT was premature, holding would have realized more proceeds.
-			missed := (bestLater - exitRealizable) / exitRealizable
-			outcome.Correctness = -clamp(missed, 0.1, 1.0)
-			outcome.Timing = clamp(exitRealizable/bestLater, 0, 1)
-			outcome.Reinforcement = outcome.Correctness
-			return outcome, nil
-		}
-	}
-
-	// 2. Fallback to genuine frame prices when execution surfaces are not provided
-	exitValue, hasExit := framePrice(fragment[decisionIdx])
-
-	if !hasExit || exitValue <= 0 {
+	if !hasExit || exitVal <= 0 {
 		return outcome, nil
 	}
 
-	endValue := exitValue
+	entryVal, hasEntry := frameOrSurfacePrice(evaluator, fragment, entryIdx, true)
 
-	if len(fragment) > decisionIdx+1 {
-		if value, defined := framePrice(fragment[len(fragment)-1]); defined {
-			endValue = value
+	if !hasEntry || entryVal <= 0 {
+		entryVal = exitVal
+	}
+
+	if decisionIdx == len(fragment)-1 {
+		if exitVal < entryVal {
+			loss := (exitVal - entryVal) / entryVal
+			outcome.Correctness = clamp(loss, -1.0, -0.1)
+			outcome.Timing = 0.0
+			outcome.Reinforcement = outcome.Correctness
+
+			return outcome, nil
 		}
-	}
 
-	postExitMove := (endValue - exitValue) / exitValue
-
-	if postExitMove <= 0 {
-		outcome.Correctness = clamp(-postExitMove, 0.1, 1.0)
-	}
-
-	if postExitMove > 0 {
-		outcome.Correctness = -clamp(postExitMove, 0.1, 1.0)
-	}
-
-	peakValue := exitValue
-
-	for idx := entryIdx; idx < len(fragment); idx++ {
-		value, defined := framePrice(fragment[idx])
-
-		if defined && value > peakValue {
-			peakValue = value
-		}
-	}
-
-	entryValue, hasEntryValue := framePrice(fragment[entryIdx])
-
-	if hasEntryValue && peakValue > entryValue {
-		totalAvailable := peakValue - entryValue
-		captured := exitValue - entryValue
-
-		if totalAvailable > 0 {
-			outcome.Timing = clamp(captured/totalAvailable, 0, 1)
-		}
-	}
-
-	if outcome.Correctness > 0 {
-		outcome.Reinforcement = outcome.Correctness * math.Max(0.1, outcome.Timing)
-	}
-
-	if outcome.Correctness <= 0 {
+		gain := (exitVal - entryVal) / entryVal
+		outcome.Correctness = clamp(gain, 0.1, 1.0)
+		outcome.Timing = 1.0
 		outcome.Reinforcement = outcome.Correctness
+
+		return outcome, nil
 	}
+
+	bestLater := exitVal
+	worstLater := exitVal
+
+	for idx := decisionIdx + 1; idx < len(fragment); idx++ {
+		val, defined := frameOrSurfacePrice(evaluator, fragment, idx, false)
+
+		if !defined {
+			continue
+		}
+
+		if val > bestLater {
+			bestLater = val
+		}
+
+		if val < worstLater {
+			worstLater = val
+		}
+	}
+
+	if bestLater > exitVal {
+		missed := (bestLater - exitVal) / exitVal
+		outcome.Correctness = -clamp(missed, 0.1, 1.0)
+		outcome.Timing = clamp(exitVal/bestLater, 0, 1)
+		outcome.Reinforcement = outcome.Correctness
+
+		return outcome, nil
+	}
+
+	if worstLater < exitVal {
+		protection := (exitVal - worstLater) / exitVal
+		outcome.Correctness = clamp(protection, 0.1, 1.0)
+		outcome.Timing = 1.0
+		outcome.Reinforcement = outcome.Correctness
+
+		return outcome, nil
+	}
+
+	outcome.Correctness = 0.0
+	outcome.Timing = 1.0
+	outcome.Reinforcement = 0.0
 
 	return outcome, nil
 }
@@ -327,6 +328,7 @@ WAIT gets positive feedback (avoided loss).
 
 When holding (alternative is EXIT): If exiting was correct (liquidity evaporated or price fell),
 WAIT gets negative feedback. If holding captured continued gains, WAIT gets positive feedback.
+At terminal collapse or when position is underwater, WAIT is strongly punished.
 */
 func (evaluator *FragmentEvaluator) EvaluateWait(
 	fragment [][]*data.Measurement[float64],
@@ -350,6 +352,18 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 		return outcome, nil
 	}
 
+	currentVal, hasCurrent := frameOrSurfacePrice(evaluator, fragment, decisionIdx, false)
+	entryVal, hasEntry := frameOrSurfacePrice(evaluator, fragment, entryIdx, true)
+
+	if hasCurrent && hasEntry && currentVal < entryVal {
+		loss := (entryVal - currentVal) / entryVal
+		outcome.Correctness = -clamp(math.Max(0.5, loss*2.0), 0.5, 1.0)
+		outcome.Timing = 0.0
+		outcome.Reinforcement = outcome.Correctness
+
+		return outcome, nil
+	}
+
 	exitOutcome, err := evaluator.EvaluateExit(fragment, decisionIdx, entryIdx)
 
 	if err != nil {
@@ -361,6 +375,39 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 	outcome.Reinforcement = -exitOutcome.Reinforcement
 
 	return outcome, nil
+}
+
+func frameOrSurfacePrice(
+	evaluator *FragmentEvaluator,
+	fragment [][]*data.Measurement[float64],
+	index int,
+	isAsk bool,
+) (float64, bool) {
+	if evaluator != nil && evaluator.surfaces != nil && index >= 0 && index < len(evaluator.surfaces) && evaluator.surfaces[index] != nil {
+		surf := evaluator.surfaces[index]
+
+		if isAsk && surf.BestAsk != nil && surf.BestAsk.Float64() > 0 {
+			return surf.BestAsk.Float64(), true
+		}
+
+		if !isAsk && surf.BestBid != nil && surf.BestBid.Float64() > 0 {
+			return surf.BestBid.Float64(), true
+		}
+
+		if !isAsk && surf.ExecutableVWAP != nil && surf.ExecutableVWAP.Float64() > 0 {
+			return surf.ExecutableVWAP.Float64(), true
+		}
+
+		if surf.ExecutableValue != nil && surf.ExecutableValue.Float64() > 0 {
+			return surf.ExecutableValue.Float64(), true
+		}
+	}
+
+	if index >= 0 && index < len(fragment) {
+		return framePrice(fragment[index])
+	}
+
+	return 0, false
 }
 
 /* framePrice extracts genuine market price data from an authoritative price measurement. */

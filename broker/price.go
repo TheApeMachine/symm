@@ -80,6 +80,15 @@ func (price *Price) SetFee(symbol string, fee kraken.TradeVolumeFee) {
 	price.fees.Store(price.normalizer.Name(symbol), fee)
 }
 
+/* Normalizer returns the normalizer used for symbol and precision resolution. */
+func (price *Price) Normalizer() *spot.Normalizer {
+	if price == nil {
+		return nil
+	}
+
+	return price.normalizer
+}
+
 func (price *Price) Status() types.Status { return price.status }
 
 func (price *Price) Update(ticker *kraken.TickerData) {
@@ -174,6 +183,10 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 
 	var quantity *decimal.Decimal
 	var err error
+
+	if price.Books == nil {
+		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: books unavailable", nil))
+	}
 
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil {
@@ -291,6 +304,10 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 	var cost *types.EntryCost
 	var err error
 
+	if price.Books == nil {
+		return nil, errnie.Error(errnie.Err(errnie.NotFound, "entry cost: books unavailable", nil))
+	}
+
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
 			err = errnie.Err(errnie.NotFound, "entry cost: book unavailable for "+symbol, nil)
@@ -379,6 +396,10 @@ func (price *Price) Surface(
 ) (*types.ExecutionSurface, error) {
 	surface := &types.ExecutionSurface{Symbol: symbol, At: at, SellableQty: quantity}
 	var err error
+
+	if price.Books == nil {
+		return nil, errnie.Error(errnie.Err(errnie.NotFound, "price: books unavailable", nil))
+	}
 
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
