@@ -138,6 +138,50 @@ func (op *Ring[T]) ChildLen() int {
 }
 
 /*
+CurrentChildValues returns all values from the child ring at the current parent position,
+preserving their original sequence.
+*/
+func (op *Ring[T]) CurrentChildValues() []T {
+	if op.parent == nil {
+		return nil
+	}
+
+	child, held := op.parent.Value.(*container.Ring)
+
+	if !held || child == nil {
+		return nil
+	}
+
+	length := child.Len()
+
+	if length == 0 {
+		return nil
+	}
+
+	values := make([]T, 0, length)
+	current := child
+
+	for range length {
+		if value, ok := current.Value.(T); ok {
+			values = append(values, value)
+		}
+
+		current = current.Next()
+	}
+
+	return values
+}
+
+/*
+Advance moves the parent ring forward to the next child sequence.
+*/
+func (op *Ring[T]) Advance() {
+	if op.parent != nil {
+		op.parent = op.parent.Next()
+	}
+}
+
+/*
 WriteAt inserts one value into the parent ring at an offset slot relative
 to the current element.
 */

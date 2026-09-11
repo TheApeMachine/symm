@@ -2,7 +2,6 @@ package hindsight
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -295,9 +294,9 @@ func missingIdentities(
 /*
 frames is the readings held across one excursion, in capture order.
 
-An identity the record stored no measurements for contributes no frame. Each
-frame is named with the moment the move itself occupies: the precursor before
-the anchor, the run into the extremum, the extremum, and the aftermath.
+An identity the record stored no measurements for contributes no frame.
+Frames are produced without semantic action labels: what the learner
+should do is the learner's decision, not something the record pre-writes.
 */
 func (tape *Tape) frames(
 	window excursionWindow,
@@ -305,114 +304,17 @@ func (tape *Tape) frames(
 ) [][]*data.Measurement[float64] {
 	held := make([][]*data.Measurement[float64], 0, len(window.captures))
 
-	// Friction hurdle: 2 * 0.008 = 0.016 (1.6% round trip at 0.8% taker fee tier).
-	// An excursion must clear round-trip friction to qualify as an opportunity.
-	// If magnitude is unrecorded (<= 0), we don't disqualify synthetic test frames.
-	clearsFriction := window.magnitude <= 0 || window.magnitude > 0.016
-
-	anchorIdx := -1
-	extremumIdx := -1
-
-	for i, candidate := range window.captures {
-		if candidate == window.anchor {
-			anchorIdx = i
-		}
-
-		if candidate == window.extremum {
-			extremumIdx = i
-		}
-	}
-
-	for idx, candidate := range window.captures {
+	for _, candidate := range window.captures {
 		measurements, stored := decoded[envelopeRow(candidate)]
 
 		if !stored || len(measurements) == 0 {
 			continue
 		}
 
-		moment, grade := evaluateMoment(candidate, idx, anchorIdx, extremumIdx, window, clearsFriction)
-		stampMoment(measurements, moment, grade)
 		held = append(held, measurements)
 	}
 
 	return held
-}
-
-func evaluateMoment(
-	candidate EnvelopeRef,
-	idx, anchorIdx, extremumIdx int,
-	window excursionWindow,
-	clearsFriction bool,
-) (string, float64) {
-	if !clearsFriction {
-		return "wait", 0.0
-	}
-
-	suffix := "_long"
-
-	if window.kind == EpisodeDownwardExcursion {
-		suffix = "_short"
-	}
-
-	if causalCmp(candidate, window.anchor) < 0 {
-		u := 0.0
-
-		if anchorIdx > 0 {
-			u = float64(idx) / float64(anchorIdx)
-		}
-
-		// Mature convergence window: last 25% of precursor right before anchor
-		if u >= 0.75 {
-			grade := 1.0
-
-			if window.magnitude > 0.016 {
-				margin := window.magnitude - 0.016
-
-				if margin < 0.01 {
-					grade = 0.5 + 50.0*margin
-				}
-			}
-
-			return "enter" + suffix, grade
-		}
-
-		// Early precursor coiling: premature entry gets lower grade
-		return "enter" + suffix, 0.3 + 0.4*u
-	}
-
-	if causalCmp(candidate, window.extremum) < 0 {
-		return "hold" + suffix, 0.8
-	}
-
-	if causalCmp(candidate, window.extremum) == 0 {
-		return "exit" + suffix, 1.0
-	}
-
-	return "wait", 0.0
-}
-
-func stampMoment(measurements []*data.Measurement[float64], moment string, grade ...float64) {
-	gradeStr := ""
-
-	if len(grade) > 0 {
-		gradeStr = strconv.FormatFloat(grade[0], 'f', 4, 64)
-	}
-
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
-
-		if measurement.Provenance == nil {
-			measurement.Provenance = make(map[string]string, 2)
-		}
-
-		measurement.Provenance["moment"] = moment
-
-		if gradeStr != "" {
-			measurement.Provenance["grade"] = gradeStr
-		}
-	}
 }
 
 /* Error exposes what the record refused, if anything. */

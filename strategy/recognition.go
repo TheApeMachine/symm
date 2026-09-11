@@ -216,26 +216,19 @@ func (held *replay) tapeSteps(index int) (
 	symbol := ""
 	entry, exit := int32(-1), int32(-1)
 
-	for index, frame := range leg {
+	for _, frame := range leg {
 		value, defined := frameValue(frame)
 
 		if symbol == "" && len(frame) > 0 {
 			symbol = frame[0].Label
 		}
-		moment := frameMoment(frame)
 
-		if (moment == "enter" || moment == "enter_long" || moment == "enter_short") && entry < 0 {
-			entry = int32(index)
-		}
-
-		if moment == "exit" || moment == "exit_long" || moment == "exit_short" {
-			exit = int32(index)
-		}
 		at := int64(0)
 
 		if len(frame) > 0 && !frame[0].At.IsZero() {
 			at = frame[0].At.UnixNano()
 		}
+
 		steps = append(steps, &telemetry.LearningStepT{
 			AtNs: at, Value: value, Defined: defined,
 		})
@@ -263,21 +256,6 @@ func frameValue(frame []*data.Measurement[float64]) (float64, bool) {
 	}
 
 	return 0, false
-}
-
-/* frameMoment reads the moment the tape named this frame, if it named one. */
-func frameMoment(frame []*data.Measurement[float64]) string {
-	for _, measurement := range frame {
-		if measurement == nil {
-			continue
-		}
-
-		if moment := measurement.Provenance["moment"]; moment != "" {
-			return moment
-		}
-	}
-
-	return ""
 }
 
 /* learnerTrack builds one lane and the arrows that learner's memory holds. */
@@ -322,27 +300,25 @@ func learnerTrack(
 	}
 }
 
-/* momentIndex places a precursor answer on the lane it describes. */
-func momentIndex(moment string, entry, exit, length int32) int32 {
+/* momentIndex places an action answer on the lane it describes. */
+func momentIndex(action string, entry, exit, length int32) int32 {
 	if length <= 0 {
 		return 0
 	}
 
-	switch moment {
-	case "enter", "enter_long", "enter_short":
+	switch action {
+	case "enter":
 		if entry >= 0 {
 			return entry
 		}
 
 		return length / 3
-	case "exit", "exit_long", "exit_short":
+	case "exit":
 		if exit >= 0 {
 			return exit
 		}
 
 		return 2 * length / 3
-	case "hold", "hold_long", "hold_short":
-		return length / 2
 	}
 
 	return 0

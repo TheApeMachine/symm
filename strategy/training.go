@@ -130,16 +130,9 @@ func NewTraining(
 		count = system.Cfg.Learning.Traders
 	}
 
-	sharedEngine := cognition.NewEngine(cognition.DefaultConfig())
-	agents := make([]*Agent, count)
-
-	for idx := 0; idx < count; idx++ {
-		isLive := (idx == 0)
-		agents[idx] = NewAgent(idx, isLive, sharedEngine, 64)
-	}
-
 	var inst *broker.Instrument
 	var prc *broker.Price
+	var rng *rand.Rand
 
 	for _, dep := range deps {
 		switch v := dep.(type) {
@@ -147,6 +140,31 @@ func NewTraining(
 			inst = v
 		case *broker.Price:
 			prc = v
+		case *rand.Rand:
+			rng = v
+		}
+	}
+
+	sharedEngine := cognition.NewEngine(cognition.DefaultConfig())
+	agents := make([]*Agent, count)
+
+	for idx := 0; idx < count; idx++ {
+		isLive := (idx == 0)
+		var agentRNG *rand.Rand
+
+		if rng != nil {
+			agentRNG = rand.New(rand.NewSource(rng.Int63() + int64(idx)))
+		}
+
+		agents[idx] = NewAgent(idx, isLive, sharedEngine, 64, agentRNG)
+
+		if prc != nil {
+			fee := prc.FeeIfAvailable("")
+
+			if fee != nil && fee.Fee != nil {
+				rate := fee.Fee.Float64()
+				agents[idx].SetFeeRate(rate * 0.01)
+			}
 		}
 	}
 
@@ -200,9 +218,15 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 					}
 
 					if training.main != nil {
-						consensus := training.consensus(impulse)
-						seq := PrecursorSequence(impulse)
-						training.main.Step(envelope, consensus, seq)
+						holding := training.main.IsHolding(symbol)
+						action, context, conf, contrast, support := training.agents[0].ChooseAction(impulse, holding)
+						training.main.Step(envelope, ActionDecision{
+							Action:     action,
+							Context:    context,
+							Confidence: conf,
+							Contrast:   contrast,
+							Support:    support,
+						})
 					}
 				}
 			}
@@ -287,55 +311,6 @@ func (training *Training) rehearseCycle() {
 	}
 }
 
-func (training *Training) consensus(impulse grid.Impulse) PrecursorConsensus {
-	if len(training.agents) == 0 || len(impulse.Regions) == 0 {
-		return PrecursorConsensus{Action: "wait", Confidence: 0.5}
-	}
-
-	actionCounts := make(map[string]int)
-	totalConfidence, totalContrast := 0.0, 0.0
-	var totalSupport uint64
-
-	for _, individual := range training.agents {
-		action, confidence, contrast, support := individual.EvaluatePrecursor(impulse)
-		totalConfidence += confidence
-		totalContrast += contrast
-		totalSupport += support
-
-		if action != "" {
-			actionCounts[action]++
-		}
-	}
-
-	numAgents := float64(len(training.agents))
-	avgConfidence := totalConfidence / numAgents
-	avgContrast := totalContrast / numAgents
-
-	waitCount := actionCounts["wait"]
-	bestAction := "wait"
-	bestCount := waitCount
-	minMajority := (len(training.agents) + 1) / 2
-
-	for a, count := range actionCounts {
-		if a != "wait" && count > bestCount && count >= minMajority {
-			bestAction = a
-			bestCount = count
-		}
-	}
-
-	if bestAction != "wait" {
-		if avgContrast <= 0 || avgConfidence <= 0.5 || totalSupport <= 1 {
-			bestAction = "wait"
-		}
-	}
-
-	return PrecursorConsensus{
-		Action:     bestAction,
-		Confidence: avgConfidence,
-		Contrast:   avgContrast,
-		Support:    totalSupport,
-	}
-}
 
 func (training *Training) snapshot() *replay {
 	memories := make([]*store.Retained[*iradix.Tree[[]byte]], len(training.agents))

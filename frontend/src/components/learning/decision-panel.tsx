@@ -26,13 +26,12 @@ export const ForwardPanel = ({ view }: { view: LearningView | null }) => (
 				<Typography.Mono key={member.id}>
 					{member.id === 0
 						? `Main Agent (Policy Trader) · ${String(member.reading?.samples ?? 0n)} simulated trades graded · ${String(member.wins)} profitable · ${String(member.losses)} unprofitable · ${String(member.pending)} pending fills`
-						: `Precursor Learner ${member.id + 1} · ${String(member.reading?.samples ?? 0n)} precursor movements graded · ${String(member.wins)} accurate · ${String(member.losses)} inaccurate · ${String(member.pending)} pending`}
+						: `Rehearsal Worker ${member.id + 1} · ${String(member.reading?.samples ?? 0n)} fragment steps graded · ${String(member.wins)} profitable · ${String(member.losses)} unprofitable · ${String(member.pending)} pending`}
 				</Typography.Mono>
 			))}
 			<Typography.Mono tone="f4">
 				The Main Agent executes forward-test trades evaluated against live market economics and fees.
-				Parallel precursor learners are decoupled from economics, evaluated purely on anticipating
-				upward, downward, and stagnant market movement.
+				Parallel rehearsal workers contribute experience to the shared model across varying precursor horizons.
 			</Typography.Mono>
 		</Section.Body>
 	</Section>
@@ -108,7 +107,7 @@ export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
 			title="Main agent action evaluation at current impulse"
-			meta={`${view?.candidates?.length ?? 0} candidates · evaluated against precursor consensus`}
+			meta={`${view?.candidates?.length ?? 0} candidates · evaluated against action priors`}
 		/>
 		<Section.Body className="overflow-x-auto">
 			<table className="w-full text-left font-mono text-xs">
@@ -238,18 +237,18 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 };
 
 /*
-DeskPanel presents the Main Agent alongside the parallel precursor learners.
+DeskPanel presents the Main Agent alongside the parallel rehearsal workers.
 The Main Agent owns the execution wallet, carrying simulated economics and forward-testing
-returns. Parallel learners are decoupled from economics, dedicating their compute entirely
-to identifying precursors to upward, downward, and stagnant market movements.
+returns. Parallel rehearsal workers dedicate their compute to exploring actions
+across fragmented observation histories.
 */
 export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
-			title="Main Agent & Parallel Precursor Learners"
+			title="Main Agent & Rehearsal Workers"
 			meta={
 				view?.desk
-					? `1 execution wallet (Main Agent) · ${Math.max(0, view.desk.traders.length - 1)} decoupled learners · ${view.desk.settled} verdicts settled`
+					? `1 execution wallet (Main Agent) · ${Math.max(0, view.desk.traders.length - 1)} rehearsal workers · ${view.desk.settled} verdicts settled`
 					: "Awaiting the desk"
 			}
 		/>
@@ -258,7 +257,7 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 				<thead className="text-(--f4)">
 					<tr>
 						{[
-							"Agent / Learner",
+							"Agent / Worker",
 							"Role",
 							"Wealth (Return)",
 							"Quality",
@@ -283,14 +282,14 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 									<Typography.Mono tone="accent">
 										{isMain
 											? "Agent 1 (Main Agent)"
-											: `Agent ${trader.id + 1} (Precursor Learner)`}
+											: `Agent ${trader.id + 1} (Rehearsal Worker)`}
 									</Typography.Mono>
 								</td>
 								<td className="p-3">
 									<Typography.Mono tone={isMain ? "f1" : "f3"}>
 										{isMain
 											? "Forward Test Trader (Policy)"
-											: "Precursor Learner (Decoupled)"}
+											: "Rehearsal Worker (Fragmented)"}
 									</Typography.Mono>
 								</td>
 								<td
@@ -306,7 +305,7 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 										? trader.observed > 0 || trader.fills > 0
 											? basis(trader.wealth)
 											: "unvalued"
-										: "— (decoupled)"}
+										: "— (rehearsal)"}
 								</td>
 								<td className="p-3">
 									{trader.observed > 0 ? basis(trader.quality) : "—"}
@@ -322,7 +321,7 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 					{!view?.desk?.traders.length && (
 						<tr>
 							<td className="p-3 text-(--f3)" colSpan={9}>
-								No traders or learners have been woken by the market yet.
+								No traders or workers have been woken by the market yet.
 							</td>
 						</tr>
 					)}
@@ -330,19 +329,19 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 			</table>
 		</Section.Body>
 		<Typography.Mono className="px-3 pb-3 text-(--f4)">
-			The Main Agent (Agent 1) carries execution capital, testing simulated trades against the live book. Parallel learners (Agents 2+) are decoupled from economics, dedicating their compute entirely to identifying causal precursors to upward, downward, and stagnant price movement. When the Main Agent demonstrates robust net-positive edge, it is promoted to live paper or real execution.
+			The Main Agent (Agent 1) carries execution capital, testing simulated trades against the live book. Parallel rehearsal workers (Agents 2+) dedicate their compute to exploring actions across fragmented observation histories and updating the shared associative memory. When the Main Agent demonstrates robust net-positive edge, it is promoted to live paper or real execution.
 		</Typography.Mono>
 	</Section>
 );
 
-/* LanePanel keeps the Main Agent's execution wallet separate from the decoupled precursor learner channels. */
+/* LanePanel keeps the Main Agent's execution wallet separate from parallel rehearsal workers. */
 export const LanePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
 			title="Execution Lanes & Channels"
 			meta={
 				view
-					? `Lane 1: Main Agent Wallet ($${view.initialCapital || "10,000"}) · Lanes 2+: Decoupled Precursor Learners`
+					? `Lane 1: Main Agent Wallet ($${view.initialCapital || "10,000"}) · Lanes 2+: Rehearsal Workers`
 					: "Awaiting account economics"
 			}
 		/>
@@ -378,13 +377,13 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 										<Typography.Mono tone="accent">
 											{isMain
 												? "Lane 1 (Main Agent Policy)"
-												: `Lane ${lane.lane + 1} (Precursor Learner)`}
+												: `Lane ${lane.lane + 1} (Rehearsal Worker)`}
 										</Typography.Mono>
 									</Flex.Row>
 								</td>
 								<td className="p-3">
 									<Typography.Mono tone={isMain ? "f1" : "f3"}>
-										{isMain ? "Forward Test Wallet" : "Decoupled Channel"}
+										{isMain ? "Forward Test Wallet" : "Rehearsal Worker"}
 									</Typography.Mono>
 								</td>
 								<td className="p-3">
@@ -394,7 +393,7 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 												lane.action.power,
 												lane.action.reduce,
 											)
-										: "precursor evaluation"}
+										: "fragment evaluation"}
 								</td>
 								<td className="p-3">
 									{isMain ? amount(Number(lane.cash)) : "—"}
@@ -427,7 +426,7 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 			</table>
 		</Section.Body>
 		<Typography.Mono className="px-3 pb-3 text-(--f4)">
-			The Main Agent exclusively manages Lane 1 with simulated execution capital, fees, and positions. Lanes 2+ represent parallel statistical learners decoupled from capital, exploring precursor spaces across multi-dimensional order book features.
+			The Main Agent exclusively manages Lane 1 with simulated execution capital, fees, and positions. Lanes 2+ represent parallel rehearsal workers exploring actions across fragmented observation histories.
 		</Typography.Mono>
 	</Section>
 );

@@ -6,27 +6,35 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/types"
 )
 
+func testPrice() *broker.Price {
+	instrument := broker.NewInstrumentWithQuote("USD")
+	price := broker.NewPrice(nil, instrument)
+	feeRate := decimal.NewFromFloat64(0.26)
+	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: feeRate})
+	price.SetFee("ETH/USD", kraken.TradeVolumeFee{Fee: feeRate})
+	price.SetFee("SOL/USD", kraken.TradeVolumeFee{Fee: feeRate})
+
+	return price
+}
+
 func TestMainAgent(t *testing.T) {
-	Convey("Given a freshly initialized MainAgent", t, func() {
-		initialCash := decimal.NewFromInt64(10000)
+	Convey("Given a MainAgent operating with an associative cognition engine", t, func() {
+		initialCash := decimal.NewFromInt64(1000)
 		engine := cognition.NewEngine(cognition.DefaultConfig())
-		mainAgent := NewMainAgent(initialCash, "paper", engine)
+		priceSvc := testPrice()
+		mainAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, engine)
 
 		So(mainAgent.ID(), ShouldEqual, 0)
 		So(mainAgent.Status(), ShouldEqual, "simulated")
-		So(mainAgent.TargetAccount(), ShouldEqual, "paper")
-
-		telemetry := mainAgent.AgentTelemetry()
-		So(telemetry.Initial, ShouldStartWith, "10000")
-		So(telemetry.Cash, ShouldStartWith, "10000")
-		So(telemetry.Equity, ShouldStartWith, "10000")
-		So(telemetry.Fills, ShouldEqual, 0)
-		So(telemetry.Decisions, ShouldEqual, 0)
+		So(mainAgent.fills, ShouldEqual, 0)
+		So(mainAgent.decisions, ShouldEqual, 0)
+		So(mainAgent.cash.Cmp(initialCash), ShouldEqual, 0)
 
 		Convey("When an upward precursor signal arrives with high confidence", func() {
 			price50k := decimal.NewFromInt64(50000)
@@ -36,15 +44,16 @@ func TestMainAgent(t *testing.T) {
 					Last:   price50k,
 				},
 			}
-			consensus := PrecursorConsensus{
-				Action:     "enter_long",
+			entryCtx := []byte("entry_precursor_pattern_123")
+			decision := ActionDecision{
+				Action:     ActionEnter,
+				Context:    entryCtx,
 				Confidence: 0.85,
 				Contrast:   2.4,
 				Support:    12,
 			}
-			entryCtx := []byte("entry_precursor_pattern_123")
 
-			mainAgent.Step(envelope, consensus, entryCtx)
+			mainAgent.Step(envelope, decision)
 
 			So(mainAgent.fills, ShouldEqual, 1)
 			So(mainAgent.decisions, ShouldEqual, 1)
@@ -66,26 +75,26 @@ func TestMainAgent(t *testing.T) {
 					},
 				}
 
-				mainAgent.Step(envelopeHigher, PrecursorConsensus{Action: "hold_long", Confidence: 0.6})
+				mainAgent.Step(envelopeHigher, ActionDecision{Action: ActionWait, Confidence: 0.6})
 
 				So(mainAgent.unrealized.Sign(), ShouldBeGreaterThan, 0)
 				So(mainAgent.equity.Cmp(initialCash), ShouldBeGreaterThan, 0)
 
-				Convey("When a downward precursor signal triggers an exit", func() {
+				Convey("When an exit action triggers an exit", func() {
 					envelopeExit := &types.Envelope{
 						TickerData: kraken.TickerData{
 							Symbol: "BTC/USD",
 							Last:   price55k,
 						},
 					}
-					downConsensus := PrecursorConsensus{
-						Action:     "exit_long",
+					downDecision := ActionDecision{
+						Action:     ActionExit,
 						Confidence: 0.80,
 						Contrast:   1.8,
 						Support:    15,
 					}
 
-					mainAgent.Step(envelopeExit, downConsensus)
+					mainAgent.Step(envelopeExit, downDecision)
 
 					So(mainAgent.fills, ShouldEqual, 2)
 					So(len(mainAgent.positions), ShouldEqual, 0)
@@ -95,14 +104,14 @@ func TestMainAgent(t *testing.T) {
 					So(mainAgent.outcomes[0].ReturnBp, ShouldBeGreaterThan, 0)
 
 					evaluation := engine.Evaluate(entryCtx)
-					So(evaluation.WinnerClass, ShouldEqual, "enter_long")
+					So(evaluation.WinnerClass, ShouldEqual, string(ActionEnter))
 					So(evaluation.Confidence, ShouldBeGreaterThan, 0.5)
 				})
 			})
 		})
 
 		Convey("When sufficient profitable trades accumulate to prove a net-positive edge", func() {
-			for i := 0; i < 12; i++ {
+			for index := 0; index < 12; index++ {
 				mainAgent.recordOutcome(TradeOutcome{
 					Symbol:   "BTC/USD",
 					Profit:   decimal.NewFromInt64(50),
@@ -125,7 +134,7 @@ func TestMainAgent(t *testing.T) {
 		})
 
 		Convey("When a weak or sparse precursor signal arrives", func() {
-			weakAgent := NewMainAgent(initialCash, "paper")
+			weakAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, nil)
 			envelope := &types.Envelope{
 				TickerData: kraken.TickerData{
 					Symbol: "ETH/USD",
@@ -133,27 +142,27 @@ func TestMainAgent(t *testing.T) {
 				},
 			}
 			// Action is wait, not an entry signal
-			sparseConsensus := PrecursorConsensus{
-				Action:     "wait",
+			sparseDecision := ActionDecision{
+				Action:     ActionWait,
 				Confidence: 0.22,
 				Contrast:   0.3,
 				Support:    1,
 			}
-			weakAgent.Step(envelope, sparseConsensus)
+			weakAgent.Step(envelope, sparseDecision)
 
 			So(len(weakAgent.positions), ShouldEqual, 0)
 			So(weakAgent.fills, ShouldEqual, 0)
 		})
 
 		Convey("When a long position is held and tick noise arrives", func() {
-			noisyAgent := NewMainAgent(initialCash, "paper")
+			noisyAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, nil)
 			price := decimal.NewFromInt64(100)
 			envelope := &types.Envelope{
 				TickerData: kraken.TickerData{Symbol: "SOL/USD", Last: price},
 			}
 			// Strong entry
-			noisyAgent.Step(envelope, PrecursorConsensus{
-				Action:     "enter_long",
+			noisyAgent.Step(envelope, ActionDecision{
+				Action:     ActionEnter,
 				Confidence: 0.75,
 				Contrast:   1.5,
 				Support:    10,
@@ -161,43 +170,43 @@ func TestMainAgent(t *testing.T) {
 			So(len(noisyAgent.positions), ShouldEqual, 1)
 
 			// Single-tick noise: wait with support = 1, contrast = 0.1
-			noiseConsensus := PrecursorConsensus{
-				Action:     "wait",
+			noiseDecision := ActionDecision{
+				Action:     ActionWait,
 				Confidence: 0.35,
 				Contrast:   0.1,
 				Support:    1,
 			}
-			noisyAgent.Step(envelope, noiseConsensus)
+			noisyAgent.Step(envelope, noiseDecision)
 
 			// Position MUST remain open: not dumped on noise
 			So(len(noisyAgent.positions), ShouldEqual, 1)
 
-			// Momentum continuation: hold_long
-			holdConsensus := PrecursorConsensus{
-				Action:     "hold_long",
+			// Wait while holding: keep holding
+			holdDecision := ActionDecision{
+				Action:     ActionWait,
 				Confidence: 0.65,
 				Contrast:   1.2,
 				Support:    8,
 			}
-			noisyAgent.Step(envelope, holdConsensus)
+			noisyAgent.Step(envelope, holdDecision)
 			So(len(noisyAgent.positions), ShouldEqual, 1)
 
-			// Explicit exit signal: exit_long
-			exitConsensus := PrecursorConsensus{
-				Action:     "exit_long",
+			// Explicit exit signal: exit
+			exitDecision := ActionDecision{
+				Action:     ActionExit,
 				Confidence: 0.70,
 				Contrast:   1.4,
 				Support:    9,
 			}
-			noisyAgent.Step(envelope, exitConsensus)
+			noisyAgent.Step(envelope, exitDecision)
 			So(len(noisyAgent.positions), ShouldEqual, 0)
 			So(noisyAgent.fills, ShouldEqual, 2)
 		})
 
 		Convey("When forward-tested edge turns negative, new simulated entries are halted", func() {
-			lossAgent := NewMainAgent(initialCash, "paper")
+			lossAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, nil)
 			// Record 20 losing outcomes so samples >= 20 and meanReturn < 0
-			for i := 0; i < 20; i++ {
+			for index := 0; index < 20; index++ {
 				lossAgent.recordOutcome(TradeOutcome{
 					Symbol:   "BTC/USD",
 					Profit:   decimal.NewFromInt64(-50),
@@ -222,17 +231,16 @@ func TestMainAgent(t *testing.T) {
 					Last:   decimal.NewFromInt64(50000),
 				},
 			}
-			strongConsensus := PrecursorConsensus{
-				Action:     "enter_long",
+			strongDecision := ActionDecision{
+				Action:     ActionEnter,
 				Confidence: 0.90,
 				Contrast:   2.5,
 				Support:    20,
 			}
-			lossAgent.Step(envelope, strongConsensus)
+			lossAgent.Step(envelope, strongDecision)
 
 			So(len(lossAgent.positions), ShouldEqual, 0)
 			So(lossAgent.fills, ShouldEqual, 0)
 		})
 	})
 }
-

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	maxBasinCandidates   = 7  // Canonical precursor moments: enter_long, hold_long, exit_long, enter_short, hold_short, exit_short, wait
+	maxBasinCandidates   = 3  // Candidate actions: enter, exit, wait
 	maxSensoryCandidates = 16 // Sensory transition hypothesis space
 	maxCandidates        = maxBasinCandidates
 )

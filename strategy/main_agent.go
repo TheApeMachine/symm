@@ -33,16 +33,17 @@ type TradeOutcome struct {
 }
 
 /*
-PrecursorConsensus summarizes the collective belief across the parallel
-learning agents regarding the upcoming movement.
+ActionDecision represents the single shared model's learned evaluation for
+a given context: the chosen action and its measured evidence strength.
 */
 const maxConcurrentPositions = 5
 
-type PrecursorConsensus struct {
-	Action     string  // "enter_long", "hold_long", "exit_long", "enter_short", "hold_short", "exit_short", "wait"
-	Confidence float64 // [0, 1]
-	Contrast   float64 // bits ahead of runner-up
-	Support    uint64  // total evidence samples
+type ActionDecision struct {
+	Action     Action
+	Context    []byte
+	Confidence float64
+	Contrast   float64
+	Support    uint64
 }
 
 /*
@@ -183,7 +184,7 @@ func (agent *MainAgent) feeRate(symbol string) *decimal.Decimal {
 		}
 	}
 
-	return decimal.NewFromFloat64(0.008)
+	return nil
 }
 
 func (agent *MainAgent) ID() int {
@@ -221,12 +222,12 @@ func (agent *MainAgent) Graded() uint64 {
 	return agent.wins + agent.losses
 }
 
-func (agent *MainAgent) canEnter(consensus PrecursorConsensus) bool {
-	if consensus.Action != "enter_long" {
+func (agent *MainAgent) canEnter(decision ActionDecision) bool {
+	if decision.Action != ActionEnter {
 		return false
 	}
 
-	if consensus.Contrast <= 0 || consensus.Confidence <= 0.5 || consensus.Support <= 1 {
+	if decision.Contrast <= 0 || decision.Support <= 1 {
 		return false
 	}
 	samples := agent.wins + agent.losses
@@ -243,10 +244,22 @@ func (agent *MainAgent) canEnter(consensus PrecursorConsensus) bool {
 }
 
 /*
-Step evaluates the precursor consensus, manages simulated positions, and
+IsHolding reports whether a position is currently held for the symbol.
+*/
+func (agent *MainAgent) IsHolding(symbol string) bool {
+	agent.mu.RLock()
+	defer agent.mu.RUnlock()
+
+	holding := agent.positions[symbol]
+
+	return holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0
+}
+
+/*
+Step evaluates the learned action decision, manages simulated positions, and
 executes forward-testing trades.
 */
-func (agent *MainAgent) Step(envelope *types.Envelope, consensus PrecursorConsensus, precursorContext ...[]byte) {
+func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) {
 	if envelope == nil {
 		return
 	}
@@ -279,55 +292,40 @@ func (agent *MainAgent) Step(envelope *types.Envelope, consensus PrecursorConsen
 		// 1. Mark existing open positions to market
 		agent.markPositions()
 
-		// 2. Score candidate actions against precursor consensus
-		agent.buildCandidates(symbol, consensus)
+		// 2. Score candidate actions against learned decision
+		agent.buildCandidates(symbol, decision)
 
 		// 3. Evaluate trading action
 		if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
-			if consensus.Action == "enter_long" {
+			if decision.Action == ActionEnter {
 				agent.symbolMaturity[symbol]++
 			}
-			if consensus.Action != "enter_long" {
+			if decision.Action != ActionEnter {
 				agent.symbolMaturity[symbol] = 0
 			}
-			agent.symbolPhase[symbol] = consensus.Action
+			agent.symbolPhase[symbol] = string(decision.Action)
 
 			// No position open: enter only when precursor model has developed positive skill/edge
-			if len(agent.positions) < maxConcurrentPositions && agent.canEnter(consensus) {
-				agent.enterLong(envelope, symbol, currentPrice, consensus, now, precursorContext...)
+			if len(agent.positions) < maxConcurrentPositions && agent.canEnter(decision) {
+				agent.enterLong(envelope, symbol, currentPrice, decision, now)
 			}
 		}
 
 		if holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
-			// Position open: manage excursion holding and exit
-			cost := agent.posCosts[symbol]
-			qty := agent.posQuantities[symbol]
 			shouldExit := false
 
-			// Check economic bounds using authoritative exchange fees
-			if cost != nil && cost.Sign() > 0 && qty != nil && qty.Sign() > 0 {
-				marketValue := currentPrice.Mul(qty)
-				pnl := marketValue.Sub(cost)
-				retBp := pnl.SetScale(decimal.DefaultScale).Div(cost).Mul(decimal.NewFromInt64(10000)).Float64()
+			// Check venue status: exit if pair goes offline
+			if agent.instrument != nil && agent.instrument.Has(symbol) {
+				pair := agent.instrument.Pair(symbol)
 
-				roundTripBp := agent.feeRate(symbol).Mul(decimal.NewFromInt64(20000)).Float64()
-
-				// Take profit: excursion moved enough to clear fees and capture gains (+40 bp margin)
-				if retBp >= roundTripBp+40.0 {
-					shouldExit = true
-				}
-
-				// Stop loss: adverse excursion exceeded risk boundary
-				if retBp <= -roundTripBp {
+				if pair.Status != "" && pair.Status != "online" {
 					shouldExit = true
 				}
 			}
 
-			// Exit when learners predict an exit action or downward reversal
-			if !shouldExit {
-				if consensus.Action == "exit_long" || consensus.Action == "enter_short" {
-					shouldExit = true
-				}
+			// Exit when learner's policy chooses EXIT
+			if !shouldExit && decision.Action == ActionExit {
+				shouldExit = true
 			}
 
 			if shouldExit {
@@ -344,7 +342,7 @@ func (agent *MainAgent) Step(envelope *types.Envelope, consensus PrecursorConsen
 
 	// 6. Ensure continuous decision round telemetry on every evaluation step
 	if envelope.StrategyRound == nil {
-		agent.attachContinuousDecision(envelope, symbol, currentPrice, consensus, holding, now)
+		agent.attachContinuousDecision(envelope, symbol, currentPrice, decision, holding, now)
 	}
 }
 
@@ -352,7 +350,7 @@ func (agent *MainAgent) attachContinuousDecision(
 	envelope *types.Envelope,
 	symbol string,
 	price *decimal.Decimal,
-	consensus PrecursorConsensus,
+	decision ActionDecision,
 	holding *types.Holding,
 	now time.Time,
 ) {
@@ -363,24 +361,36 @@ func (agent *MainAgent) attachContinuousDecision(
 	if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
 		action = types.ActionNothing
 		outcome = "wait"
-		reason = consensus.Action
+		reason = string(decision.Action)
 
 		if reason == "" {
 			reason = "scanning for precursor opportunity"
 		}
 	}
 
-	decision := &types.Decision{
+	if decision.Action == ActionEnter {
+		action = types.ActionEnter
+		outcome = "enter"
+		reason = "precursor opportunity qualified"
+	}
+
+	if decision.Action == ActionExit && holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
+		action = types.ActionExit
+		outcome = "exit"
+		reason = "learned exit trigger"
+	}
+
+	decisionRecord := &types.Decision{
 		ID:               uuid.NewString(),
 		Action:           action,
 		Symbol:           symbol,
 		At:               now,
 		Direction:        0.0,
 		ReferencePrice:   price,
-		Confidence:       consensus.Confidence,
+		Confidence:       decision.Confidence,
 		AvailableCapital: agent.cash,
 		OpenPositions:    len(agent.positions),
-		Cause:            "precursor_consensus",
+		Cause:            "learned_policy",
 		Reason:           reason,
 	}
 
@@ -388,7 +398,7 @@ func (agent *MainAgent) attachContinuousDecision(
 		Symbol:    symbol,
 		Evaluated: true,
 		Outcome:   outcome,
-		Decisions: []*types.Decision{decision},
+		Decisions: []*types.Decision{decisionRecord},
 	}
 }
 
@@ -436,13 +446,11 @@ func (agent *MainAgent) enterLong(
 	envelope *types.Envelope,
 	symbol string,
 	price *decimal.Decimal,
-	consensus PrecursorConsensus,
+	decision ActionDecision,
 	now time.Time,
-	precursorContext ...[]byte,
 ) {
-	// Allocate 10% of current cash per entry
-	allocationFraction := decimal.NewFromFloat64(0.10)
-	notional := agent.cash.Mul(allocationFraction)
+	// Allocate available cash across max concurrent position slots
+	notional := agent.cash.Div(decimal.NewFromInt64(maxConcurrentPositions))
 
 	// Validate position viability against venue facts via Instrument
 	if agent.instrument != nil && agent.instrument.Has(symbol) {
@@ -472,6 +480,10 @@ func (agent *MainAgent) enterLong(
 		notional = decimal.NewFromInt64(10)
 	}
 	feeRate := agent.feeRate(symbol)
+
+	if feeRate == nil {
+		return
+	}
 	fee := notional.Mul(feeRate)
 	totalCost := notional.Add(fee)
 
@@ -513,12 +525,12 @@ func (agent *MainAgent) enterLong(
 	agent.posQuantities[symbol] = quantity
 	agent.posCosts[symbol] = notional
 
-	if len(precursorContext) > 0 && len(precursorContext[0]) > 0 {
-		agent.entryContexts[symbol] = bytes.Clone(precursorContext[0])
+	if len(decision.Context) > 0 {
+		agent.entryContexts[symbol] = bytes.Clone(decision.Context)
 	}
 
 	if envelope != nil {
-		decision := &types.Decision{
+		decisionRecord := &types.Decision{
 			ID:               uuid.NewString(),
 			Action:           types.ActionEnter,
 			Symbol:           symbol,
@@ -527,17 +539,17 @@ func (agent *MainAgent) enterLong(
 			ProposedNotional: notional,
 			ProposedQuantity: quantity,
 			ReferencePrice:   price,
-			Confidence:       consensus.Confidence,
+			Confidence:       decision.Confidence,
 			AvailableCapital: agent.cash,
 			OpenPositions:    len(agent.positions),
-			Cause:            "precursor_consensus",
-			Reason:           consensus.Action,
+			Cause:            "learned_policy",
+			Reason:           string(decision.Action),
 		}
 		envelope.StrategyRound = &types.StrategyRound{
 			Symbol:    symbol,
 			Evaluated: true,
 			Outcome:   "buy",
-			Decisions: []*types.Decision{decision},
+			Decisions: []*types.Decision{decisionRecord},
 		}
 	}
 
@@ -552,10 +564,10 @@ func (agent *MainAgent) enterLong(
 			Power: 1,
 			Prior: &telemetry.LearningPriorT{
 				Defined:           true,
-				Mean:              consensus.Confidence,
-				Support:           float64(consensus.Support),
-				Authority:         consensus.Confidence,
-				EvidenceAuthority: consensus.Contrast,
+				Mean:              decision.Confidence,
+				Support:           float64(decision.Support),
+				Authority:         decision.Confidence,
+				EvidenceAuthority: decision.Contrast,
 			},
 		},
 	}
@@ -624,19 +636,18 @@ func (agent *MainAgent) exitLong(
 
 	// Forward-testing feedback into the cognitive attractor trie:
 	if entryContext, hasContext := agent.entryContexts[symbol]; hasContext && len(entryContext) > 0 && agent.engine != nil {
-		roundTripBp := agent.feeRate(symbol).Mul(decimal.NewFromInt64(20000)).Float64()
+		fee := agent.feeRate(symbol)
 		feedback := -1.0
 
-		if netProfit.Sign() > 0 {
-			hurdle := roundTripBp + 40.0
-			feedback = math.Min(1.0, returnBp/hurdle)
+		if fee != nil {
+			roundTripBp := fee.Mul(decimal.NewFromInt64(20000)).Float64()
 
-			if feedback <= 0 {
-				feedback = 0.5
+			if returnBp > roundTripBp {
+				feedback = math.Min(1.0, (returnBp-roundTripBp)/roundTripBp)
 			}
 		}
 
-		agent.engine.Observe(entryContext, []byte("enter_long"), feedback)
+		agent.engine.Observe(entryContext, []byte(ActionEnter), feedback)
 	}
 
 	delete(agent.entryContexts, symbol)
@@ -703,31 +714,31 @@ func (agent *MainAgent) recordOutcome(outcome TradeOutcome, returnBp float64) {
 	}
 }
 
-func (agent *MainAgent) buildCandidates(symbol string, consensus PrecursorConsensus) {
+func (agent *MainAgent) buildCandidates(symbol string, decision ActionDecision) {
 	samples := uint64(len(agent.outcomes))
 	meanFraction := agent.meanReturn / 10000.0
 	varFraction := agent.variance / 100000000.0
 
 	priorUp := &telemetry.LearningPriorT{
-		Defined:           consensus.Support > 0,
-		Mean:              meanFraction + (consensus.Confidence * 0.001),
+		Defined:           decision.Support > 0,
+		Mean:              meanFraction,
 		Variance:          varFraction,
 		VarianceDefined:   samples > 1,
 		Samples:           samples,
-		Support:           float64(consensus.Support),
-		Authority:         consensus.Confidence,
-		EvidenceAuthority: consensus.Contrast,
+		Support:           float64(decision.Support),
+		Authority:         decision.Confidence,
+		EvidenceAuthority: decision.Contrast,
 	}
 
 	priorDown := &telemetry.LearningPriorT{
-		Defined:           consensus.Support > 0,
+		Defined:           decision.Support > 0,
 		Mean:              -meanFraction,
 		Variance:          varFraction,
 		VarianceDefined:   samples > 1,
 		Samples:           samples,
-		Support:           float64(consensus.Support),
-		Authority:         1.0 - consensus.Confidence,
-		EvidenceAuthority: consensus.Contrast,
+		Support:           float64(decision.Support),
+		Authority:         1.0 - decision.Confidence,
+		EvidenceAuthority: decision.Contrast,
 	}
 
 	priorWait := &telemetry.LearningPriorT{
@@ -736,13 +747,13 @@ func (agent *MainAgent) buildCandidates(symbol string, consensus PrecursorConsen
 		Variance:        0,
 		VarianceDefined: true,
 		Samples:         samples,
-		Support:         float64(consensus.Support),
+		Support:         float64(decision.Support),
 		Authority:       0.5,
 	}
 
 	agent.alternatives = []*telemetry.LearningActionT{
-		{Kind: "buy", Power: 1, Reduce: false, Prior: priorUp},
-		{Kind: "sell", Power: 1, Reduce: true, Prior: priorDown},
+		{Kind: "enter", Power: 1, Reduce: false, Prior: priorUp},
+		{Kind: "exit", Power: 1, Reduce: true, Prior: priorDown},
 		{Kind: "wait", Power: 0, Reduce: false, Prior: priorWait},
 	}
 }

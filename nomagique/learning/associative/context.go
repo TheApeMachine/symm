@@ -11,6 +11,8 @@ import (
 
 /*
 Context turns the regions that lit up into the sequence an agent recognises.
+It carries no trading semantics: region token sequences are addresses in the
+cognitive memory trie.
 */
 type Context struct {
 	core.Base[grid.Impulse, cognition.Association]
@@ -32,9 +34,12 @@ func (op *Context) Next(
 	}
 }
 
-func (op *Context) Encode(impulse grid.Impulse) cognition.Association {
+/*
+Sequence encodes the active impulse regions into a binary token sequence.
+*/
+func (op *Context) Sequence(impulse grid.Impulse) []byte {
 	if !impulse.Ready || len(impulse.Regions) == 0 {
-		return cognition.Association{}
+		return nil
 	}
 
 	sequence := make([]byte, 0, len(impulse.Regions)*8)
@@ -45,18 +50,24 @@ func (op *Context) Encode(impulse grid.Impulse) cognition.Association {
 		sequence = append(sequence, token[:]...)
 	}
 
-	assoc := cognition.Association{
+	return sequence
+}
+
+/*
+Encode constructs an association frame from an impulse. Class and Feedback
+are left unset because the learner chooses actions and receives feedback
+separately through reinforcement evaluation.
+*/
+func (op *Context) Encode(impulse grid.Impulse) cognition.Association {
+	sequence := op.Sequence(impulse)
+
+	if len(sequence) == 0 {
+		return cognition.Association{}
+	}
+
+	return cognition.Association{
 		Context:   sequence,
 		Step:      impulse.Version,
 		Retention: cognition.DefaultConfig().DecayFactor(),
-		Class:     []byte(impulse.Moment),
-		Feedback:  impulse.Grade,
-		Graded:    impulse.Graded,
 	}
-
-	if impulse.Moment == "" {
-		assoc.Class = nil
-	}
-
-	return assoc
 }
