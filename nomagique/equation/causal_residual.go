@@ -62,7 +62,11 @@ func (op *CausalResidual) Next(
 			result.ScoreScale = math.Abs(result.Residual)
 
 			if result.PriorVariance > 0 {
-				result.ScoreScale = math.Sqrt(result.PriorVariance)
+				dispersion := math.Sqrt(result.PriorVariance)
+
+				if dispersion > 2.220446049250313e-16 {
+					result.ScoreScale = dispersion
+				}
 			}
 
 			if result.ScoreScale > 0 {

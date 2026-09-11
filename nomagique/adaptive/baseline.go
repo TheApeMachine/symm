@@ -68,7 +68,11 @@ func (op *Baseline) Observe(value float64) BaselineReading {
 	}
 
 	if reading.PriorVariance > 0 {
-		reading.ScoreScale = math.Sqrt(reading.PriorVariance)
+		dispersion := math.Sqrt(reading.PriorVariance)
+
+		if dispersion > 2.220446049250313e-16 {
+			reading.ScoreScale = dispersion
+		}
 	}
 
 	if reading.ScoreScale > 0 {

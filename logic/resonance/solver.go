@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,8 +11,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/adaptive"
 
 	"github.com/theapemachine/errnie"
-
-	"github.com/theapemachine/symm/kraken"
 
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 
@@ -23,10 +20,6 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-type symbolSensoryState struct {
-	mu       sync.Mutex
-	features [11]float64
-}
 
 /*
 Solver orchestrates Predictive Coding across the multi-sensory microstructure stream.
@@ -77,10 +70,7 @@ type Solver struct {
 	err           error
 	status        *runtime.Status
 	detectors     *sync.Map
-	queues        *sync.Map
-	schemas       *sync.Map
 	standardizers *sync.Map
-	states        *sync.Map
 	references    *sync.Map
 	returnNoise   *sync.Map
 	steps         *sync.Map
@@ -123,18 +113,6 @@ func (tracker *returnNoiseTracker) scale() (float64, bool) {
 }
 
 /*
-Event is one enqueued ticker observation routed to a single feature detector.
-Keying the queue by symbol makes every observation that shares a coder land in
-the same lock-free FIFO; a drain goroutine replays that queue serially so the
-manifold is only ever touched by one goroutine at a time.
-*/
-type Event struct {
-	symbol   string
-	at       time.Time
-	features []float64
-}
-
-/*
 NewSolver returns a feature detection solver using the configured pace.
 */
 func NewSolver(
@@ -148,9 +126,7 @@ func NewSolver(
 		cancel:        cancel,
 		status:        runtime.NewStatus(),
 		detectors:     &sync.Map{},
-		schemas:       &sync.Map{},
 		standardizers: &sync.Map{},
-		states:        &sync.Map{},
 		references:    &sync.Map{},
 		returnNoise:   &sync.Map{},
 		steps:         &sync.Map{},
@@ -187,22 +163,8 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	at := extractTimestamp(envelope)
 	midpoint := extractMidpoint(envelope)
 
-	loadedState, _ := solver.states.LoadOrStore(symbol, &symbolSensoryState{})
-	sensoryState := loadedState.(*symbolSensoryState)
-
-	measurements := envelope.SignalMeasurements()
-
-	sensoryState.mu.Lock()
-
-	for index, measurement := range measurements {
-		if val, ok := extractHeadlineMetric(index, measurement); ok {
-			sensoryState.features[index] = val
-		}
-	}
-
-	features := make([]float64, 11)
-	copy(features, sensoryState.features[:])
-	sensoryState.mu.Unlock()
+	scorer := solver.scorer(symbol)
+	features := scorer.Step(envelope.SignalMeasurements())
 
 	envelope.Resonance = solver.Update(symbol, at, features, midpoint)
 
@@ -227,19 +189,6 @@ func (solver *Solver) SetObserver(observer func(*types.Envelope)) {
 	solver.observe = observer
 }
 
-// StepTicker advances one symbol's predictive coder over one ticker observation and returns the resulting artifact.
-func (solver *Solver) StepTicker(ticker kraken.TickerData) *types.ResonanceArtifact {
-	envelope := types.NewEnvelope(types.EnvelopeTicker)
-	envelope.TickerData = ticker
-
-	result := solver.Step(envelope)
-
-	if result == nil {
-		return nil
-	}
-
-	return result.Resonance
-}
 
 /*
 Update steps one feature detector for one symbol and publishes the settled
@@ -283,7 +232,7 @@ func (solver *Solver) Update(
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch:   []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
-			MaxHorizon:   10,                                                                        // Forward rollouts to t+300: a next-tick call is not actionable
+			MaxHorizon:   10,                                                                        // Forward rollouts to t+10: a next-tick call is not actionable
 			Target:       solver.directionalTarget(symbolName),                                      // Noise-scaled directional call
 			InitialAlpha: solver.pace,                                                               // Adaptive learning pace
 			Learn:        true,
@@ -302,17 +251,6 @@ func (solver *Solver) Update(
 		return nil
 	}
 
-	standardized, stdErr := solver.standardize(symbolName, features)
-
-	if stdErr != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("resonance: standardization failed for %s", symbolName),
-			stdErr,
-		))
-		return nil
-	}
-
 	hasReference := priorMidpoint > 0
 	loadedStep, _ := solver.steps.LoadOrStore(symbolName, &atomic.Int64{})
 	step := loadedStep.(*atomic.Int64).Add(1)
@@ -320,7 +258,7 @@ func (solver *Solver) Update(
 	stepStarted := time.Now()
 
 	out, err := coder.Step(learning.PredictiveInput{
-		Features:     standardized,
+		Features:     features,
 		Reference:    midpoint,
 		HasReference: hasReference,
 		Step:         step,
@@ -352,25 +290,31 @@ func extractMidpoint(envelope *types.Envelope) float64 {
 		return 0
 	}
 
-	if envelope.TickerData.Bid != nil && envelope.TickerData.Ask != nil &&
-		envelope.TickerData.Bid.Sign() > 0 && envelope.TickerData.Ask.Sign() > 0 {
-		return (envelope.TickerData.Bid.Float64() + envelope.TickerData.Ask.Float64()) / 2
-	}
+	switch envelope.TypeID {
+	case types.EnvelopeTicker:
+		if envelope.TickerData.Bid != nil && envelope.TickerData.Ask != nil &&
+			envelope.TickerData.Bid.Sign() > 0 && envelope.TickerData.Ask.Sign() > 0 {
+			return (envelope.TickerData.Bid.Float64() + envelope.TickerData.Ask.Float64()) / 2
+		}
 
-	if envelope.TradeData.Price.Sign() > 0 {
-		return envelope.TradeData.Price.Float64()
-	}
+		if envelope.TickerData.Last != nil && envelope.TickerData.Last.Sign() > 0 {
+			return envelope.TickerData.Last.Float64()
+		}
 
-	if envelope.TickerData.Last != nil && envelope.TickerData.Last.Sign() > 0 {
-		return envelope.TickerData.Last.Float64()
-	}
+	case types.EnvelopeTrade:
+		if envelope.TradeData.Price.Sign() > 0 {
+			return envelope.TradeData.Price.Float64()
+		}
 
-	if envelope.FuturesTickerData.Last != nil && envelope.FuturesTickerData.Last.Sign() > 0 {
-		return envelope.FuturesTickerData.Last.Float64()
-	}
+	case types.EnvelopeFuturesTicker:
+		if envelope.FuturesTickerData.Last != nil && envelope.FuturesTickerData.Last.Sign() > 0 {
+			return envelope.FuturesTickerData.Last.Float64()
+		}
 
-	if envelope.FuturesTradeData.Price.Sign() > 0 {
-		return envelope.FuturesTradeData.Price.Float64()
+	case types.EnvelopeFuturesTrade:
+		if envelope.FuturesTradeData.Price.Sign() > 0 {
+			return envelope.FuturesTradeData.Price.Float64()
+		}
 	}
 
 	if envelope.Liquidity != nil && envelope.Liquidity.Metrics != nil {
@@ -393,24 +337,31 @@ func extractTimestamp(envelope *types.Envelope) time.Time {
 		return time.Now()
 	}
 
-	if !envelope.TickerData.Timestamp.IsZero() {
-		return envelope.TickerData.Timestamp
-	}
+	switch envelope.TypeID {
+	case types.EnvelopeTicker:
+		if !envelope.TickerData.Timestamp.IsZero() {
+			return envelope.TickerData.Timestamp
+		}
 
-	if !envelope.TradeData.Timestamp.IsZero() {
-		return envelope.TradeData.Timestamp
-	}
+	case types.EnvelopeTrade:
+		if !envelope.TradeData.Timestamp.IsZero() {
+			return envelope.TradeData.Timestamp
+		}
 
-	if !envelope.Level3Data.Timestamp.IsZero() {
-		return envelope.Level3Data.Timestamp
-	}
+	case types.EnvelopeLevel3:
+		if !envelope.Level3Data.Timestamp.IsZero() {
+			return envelope.Level3Data.Timestamp
+		}
 
-	if !envelope.FuturesTickerData.Timestamp.IsZero() {
-		return envelope.FuturesTickerData.Timestamp
-	}
+	case types.EnvelopeFuturesTicker:
+		if !envelope.FuturesTickerData.Timestamp.IsZero() {
+			return envelope.FuturesTickerData.Timestamp
+		}
 
-	if !envelope.FuturesTradeData.Timestamp.IsZero() {
-		return envelope.FuturesTradeData.Timestamp
+	case types.EnvelopeFuturesTrade:
+		if !envelope.FuturesTradeData.Timestamp.IsZero() {
+			return envelope.FuturesTradeData.Timestamp
+		}
 	}
 
 	measurements := envelope.SignalMeasurements()
@@ -503,78 +454,69 @@ func (solver *Solver) directionalTarget(symbolName string) learning.TargetTransf
 	}
 }
 
-/*
-standardize z-scores one symbol's feature row per feature, using Welford
-moments retained in one nomagique.Number per feature width. Raw ticker fields
-span wildly different magnitudes (price vs quantity vs percentage), so the
-manifold is fed adaptive z-scores rather than heterogeneous magnitudes; the
-target reference stays in raw price so delayed resolution remains wall-clock
-honest.
+func (solver *Solver) scorer(symbol string) *featureScorer {
+	loaded, found := solver.standardizers.Load(symbol)
 
-Each feature occupies its own namespaced adaptive.Standardizer primitive inside
-the Number, so the running moments persist in the Number's committed frame and
-advance only when an observation is real. A failed standardizer measurement now
-propagates as the frame's Err rather than a silent zero.
-*/
-func (solver *Solver) standardize(
-	symbolName string,
-	features []float64,
-) ([]float64, error) {
-	if len(features) == 0 {
-		return features, nil
+	if found {
+		if s, ok := loaded.(*featureScorer); ok && s != nil {
+			return s
+		}
 	}
 
-	width := len(features)
-	key := symbolName + "\x00" + strconv.Itoa(width)
-
-	loaded, found := solver.standardizers.Load(key)
-	if !found {
-		loaded, _ = solver.standardizers.LoadOrStore(key, newFeatureScorer(width))
-	}
-	scorer, valid := loaded.(*featureScorer)
-
-	if !valid || scorer == nil {
-		scorer = newFeatureScorer(width)
-		solver.standardizers.Store(key, scorer)
-	}
-
-	return scorer.Score(features)
+	created := newFeatureScorer()
+	actual, _ := solver.standardizers.LoadOrStore(symbol, created)
+	return actual.(*featureScorer)
 }
 
 /*
-featureScorer standardizes a feature vector, one causal estimator per slot.
-
-Each slot owns its own estimator, so a feature's running moments cannot be
-contaminated by another's. Scoring is causal: a feature is measured against
-the moments its slot showed BEFORE it, so a burst of near-identical values
-cannot collapse its own scale and blow the score up.
+featureScorer owns the 11 causal adaptive standardizers for one symbol's sensory stream.
+Observations advance only on envelopes where the corresponding signal measurement fired,
+preventing variance collapse from repeated identical pseudo-observations.
 */
 type featureScorer struct {
-	pipelines    []*adaptive.Baseline
-	standardized []float64
+	mu           sync.Mutex
+	pipelines    [11]*adaptive.Baseline
+	standardized [11]float64
 }
 
-func newFeatureScorer(width int) *featureScorer {
-	scorer := &featureScorer{pipelines: make([]*adaptive.Baseline, width), standardized: make([]float64, width)}
+func newFeatureScorer() *featureScorer {
+	scorer := &featureScorer{}
+
 	for index := range scorer.pipelines {
 		scorer.pipelines[index] = adaptive.NewBaseline(adaptive.NewWindow())
 	}
+
 	return scorer
 }
 
-/* Score drains one causal observation per independently owned feature graph. */
-func (scorer *featureScorer) Score(features []float64) ([]float64, error) {
-	if len(features) != len(scorer.pipelines) {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"resonance: feature width changed",
-			nil,
-		))
+/*
+Step advances only the pipelines for signals that actually produced a valid measurement
+on this envelope. Absent signals retain their last standardized z-score without observing,
+preventing variance collapse from repeated identical pseudo-observations.
+*/
+func (scorer *featureScorer) Step(measurements [11]*data.Measurement[float64]) []float64 {
+	scorer.mu.Lock()
+	defer scorer.mu.Unlock()
+
+	for index, measurement := range measurements {
+		if measurement == nil || measurement.Err != nil {
+			continue
+		}
+
+		val, ok := extractHeadlineMetric(index, measurement)
+
+		if !ok {
+			continue
+		}
+
+		reading := scorer.pipelines[index].Observe(val)
+		authority := measurement.Authority()
+		scorer.standardized[index] = reading.ZScore * authority * reading.Maturity
 	}
-	for index, value := range features {
-		scorer.standardized[index] = scorer.pipelines[index].Observe(value).ZScore
-	}
-	return scorer.standardized, nil
+
+	features := make([]float64, 11)
+	copy(features, scorer.standardized[:])
+	return features
 }
 
 /*

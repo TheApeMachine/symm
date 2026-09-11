@@ -2,10 +2,8 @@ package broker
 
 import (
 	"context"
-	"sync"
-
 	"maps"
-	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -25,25 +22,14 @@ type balanceSnapshot struct {
 	status types.Status
 }
 
-/*
-	Balance publishes complete exchange-owned wallet maps atomically. Reservations
-
-belong to execution admission and never modify these authoritative balances.
-*/
-type cashReservation struct {
-	cost     *decimal.Decimal
-	terminal time.Time
-}
-
 type Balance struct {
-	reservations map[string]cashReservation
-	api          *websocket.API
-	Quote        string
-	snapshot     atomic.Pointer[balanceSnapshot]
-	Reading      atomic.Pointer[types.EquityReading]
-	Failure      atomic.Pointer[error]
-	version      atomic.Uint64
-	mu           sync.Mutex
+	api      *websocket.API
+	Quote    string
+	snapshot atomic.Pointer[balanceSnapshot]
+	Reading  atomic.Pointer[types.EquityReading]
+	Failure  atomic.Pointer[error]
+	version  atomic.Uint64
+	mu       sync.Mutex
 }
 
 /* NewBalance binds the existing account and fetches its initial holdings. */
@@ -58,17 +44,6 @@ func NewBalance(api *websocket.API) *Balance {
 
 /* Status reports the latest REST observation's readiness. */
 func (balance *Balance) Status() types.Status { return balance.snapshot.Load().status }
-
-/* Wallet publishes the same authoritative assets used by execution and recovery. */
-func (balance *Balance) Wallet() *types.UIFrame {
-	snapshot := balance.snapshot.Load()
-	balances := make([]*wire.BalanceT, 0, len(snapshot.assets))
-	for asset, amount := range snapshot.assets {
-		balances = append(balances, &wire.BalanceT{Asset: asset, Amount: amount.String()})
-	}
-	sort.Slice(balances, func(left, right int) bool { return balances[left].Asset < balances[right].Asset })
-	return &wire.FrameT{Type: wire.FrameBalancesFrame, Value: &wire.BalancesFrameT{Balances: balances}}
-}
 
 /* Update replaces the entire map; readers cannot observe a partially refreshed account. */
 func (balance *Balance) Update() {
@@ -217,80 +192,12 @@ func (balance *Balance) Refresh(instrument *Instrument) (err error) {
 			}
 		}
 	}
-	for identity, reservation := range balance.reservations {
-		if !reservation.terminal.IsZero() && reading.From.After(reservation.terminal) {
-			delete(balance.reservations, identity)
-		}
-	}
+
 	balance.Reading.Store(reading)
 
 	return nil
 }
 
-/* Reserve atomically charges a commitment against the latest authoritative cash. */
-func (balance *Balance) Reserve(identity string, cost *decimal.Decimal) bool {
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
-	reading := balance.Reading.Load()
-
-	if reading == nil || !reading.Complete || cost.Sign() <= 0 {
-		return false
-	}
-
-	if _, found := balance.reservations[identity]; found {
-		return false
-	}
-	available, err := decimal.NewFromString(reading.AvailableCash)
-
-	if err != nil {
-		errnie.Error(errnie.Err(errnie.Validation, "balance: invalid available cash", err))
-		return false
-	}
-
-	for _, reservation := range balance.reservations {
-		available = available.Sub(reservation.cost)
-	}
-
-	if available.Cmp(cost) < 0 {
-		return false
-	}
-
-	if balance.reservations == nil {
-		balance.reservations = make(map[string]cashReservation)
-	}
-	balance.reservations[identity] = cashReservation{cost: cost}
-	return true
-}
-
-/* Release retains submitted commitments until a causally later balance arrives. */
-func (balance *Balance) Release(identity string, terminal time.Time) {
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
-	reservation, found := balance.reservations[identity]
-
-	if !found {
-		return
-	}
-
-	if terminal.IsZero() {
-		delete(balance.reservations, identity)
-		return
-	}
-	reservation.terminal = terminal
-	balance.reservations[identity] = reservation
-}
-
-/* Committed returns the total still charged to locally submitted orders. */
-func (balance *Balance) Committed() *decimal.Decimal {
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
-	committed := decimalZero
-
-	for _, reservation := range balance.reservations {
-		committed = committed.Add(reservation.cost)
-	}
-	return committed
-}
 
 /*
 	NewFundedBalance opens an independent simulated quote account. Positions

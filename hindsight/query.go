@@ -36,35 +36,6 @@ func Query(
 }
 
 /*
-Measurements is what the running binary held across every move the query
-selected: one leg per move, and within a leg one frame per capture identity, in
-the order they were captured.
-
-The legs stay separate because the reading after a move's last is not its
-successor, and anything replaying them as one sequence would learn a join that
-never happened.
-
-An identity the record stored no state for contributes no frame. A learner shown
-an empty update learns that nothing happened, when in fact nothing was measured.
-*/
-func (tape *Tape) Measurements() [][][]*data.Measurement[float64] {
-	if tape.catalog == nil || tape.selector != Excursions {
-		return nil
-	}
-	observations, _, err := ReadObservations(
-		context.Background(), tape.catalog, tape.run, 0,
-	)
-
-	if err != nil {
-		tape.err = errnie.Error(err)
-
-		return nil
-	}
-
-	return tape.MeasurementsFrom(observations)
-}
-
-/*
 MeasurementsFrom derives the confirmed-move tape from observations already in
 hand. Discovery runs on those market facts; the numerical frames are then
 read from the precursor witnesses those facts name, in one scan of the run.
@@ -95,15 +66,6 @@ func (tape *Tape) MeasurementsLive(
 	observations []Observation,
 ) [][][]*data.Measurement[float64] {
 	return tape.measurements(observations, true)
-}
-
-/*
-ReplayFragmentsLive derives developing replay fragments for live runs.
-*/
-func (tape *Tape) ReplayFragmentsLive(
-	observations []Observation,
-) []types.ReplayFragment {
-	return tape.fragments(observations, true)
 }
 
 func (tape *Tape) measurements(
@@ -208,12 +170,14 @@ func (tape *Tape) window(
 	default:
 		return excursionWindow{}
 	}
+
 	anchor, hasAnchor := move.Reference(ReferenceAnchor)
 	extremum, hasExtremum := move.Reference(endpoint)
 
 	if (!live && !move.Confirmed) || !hasAnchor || !hasExtremum {
 		return excursionWindow{}
 	}
+
 	from := EnvelopeRef{Origin: anchor.Capture, Ordinal: anchor.Ordinal}
 	through := EnvelopeRef{Origin: extremum.Capture, Ordinal: extremum.Ordinal}
 
@@ -266,6 +230,7 @@ func (tape *Tape) decode(
 	wanted []tables.EnvelopeRefRow,
 ) (map[tables.EnvelopeRefRow][]*data.Measurement[float64], error) {
 	held := make(map[tables.EnvelopeRefRow][]*data.Measurement[float64], len(wanted))
+
 	err := tape.catalog.EachWitnessPayload(
 		context.Background(), string(tape.run), "precursor", wanted,
 		func(identity tables.EnvelopeRefRow, payload []byte) error {
@@ -276,6 +241,7 @@ func (tape *Tape) decode(
 	if err != nil {
 		return nil, err
 	}
+
 	missing := missingIdentities(wanted, held)
 
 	if len(missing) == 0 {
@@ -404,4 +370,4 @@ func extractObsPrice(observation Observation) (float64, bool) {
 }
 
 /* Error exposes what the record refused, if anything. */
-func (tape *Tape) Error() error { return tape.err }
+func (tape *Tape) Error() error { return errnie.Error(tape.err) }

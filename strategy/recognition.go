@@ -673,16 +673,3 @@ func formatRegionToken(tokenVal uint64) string {
 
 	return fmt.Sprintf("R%d %s%s", regionID, levelStr, changeStr)
 }
-
-/* named lists the regions a stored sequence is made of, in their own order. */
-func named(sequence []byte) []string {
-	regions := make([]string, 0, len(sequence)/8)
-
-	for at := 0; at+8 <= len(sequence); at += 8 {
-		regions = append(regions, strconv.FormatUint(
-			binary.BigEndian.Uint64(sequence[at:at+8]), 16,
-		))
-	}
-
-	return regions
-}

@@ -94,19 +94,3 @@ func NewOpportunityTape(symbol string, start time.Time, legs int) *OpportunityTa
 		Steps:        steps,
 	}
 }
-
-// NewPrecursorTape supplies formation, ignition, a pullback, renewed development,
-// exhaustion and a quiet tail. The explicit prices and one-second spacing are
-// fixture coordinates: the dip at step five must not conceal the higher peak.
-func NewPrecursorTape(symbol string, start time.Time) *OpportunityTape {
-	prices := []float64{100, 100, 100, 101, 110, 105, 120, 100, 100, 100}
-	tape := &OpportunityTape{Symbol: symbol}
-
-	for index, price := range prices {
-		tape.Steps = append(tape.Steps, OpportunityStep{
-			EventTime:     start.Add(time.Duration(index) * time.Second),
-			ExecutableBid: price,
-		})
-	}
-	return tape
-}

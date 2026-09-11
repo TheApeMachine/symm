@@ -43,7 +43,6 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -116,30 +115,6 @@ var (
 			privateIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
 			futuresIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
 
-			// The storage writer is the single CaptureSink for every raw
-			// websocket stream (public/private/futures). Each frame is accepted
-			// exactly once, byte-for-byte as it left the wire, tagged with its
-			// origin kind (channel/feed) and endpoint. Nothing else is recorded
-			// here — raw capture is the irreducible stream, not a re-serialized
-			// copy of pipeline state.
-			storageStarted := time.Now()
-			errnie.Info("store: opening S3 archive")
-			storageEngine, err := store.NewS3(cmd.Context())
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: open storage engine",
-					err,
-				))
-			}
-
-			errnie.Info(fmt.Sprintf("store: S3 archive ready after %s", time.Since(storageStarted)))
-			defer func() {
-				if err := storageEngine.Close(); err != nil {
-					errnie.Error(err)
-				}
-			}()
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
 			// them; everything a reader queries lives in the catalog.
@@ -496,13 +471,6 @@ var (
 		},
 	}
 )
-
-/*
-Register attaches an external subcommand to the root command.
-*/
-func Register(command *cobra.Command) {
-	rootCmd.AddCommand(command)
-}
 
 func Execute() {
 	err := rootCmd.Execute()

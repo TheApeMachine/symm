@@ -64,13 +64,6 @@ Summarize refreshes the post-policy sample moments without rewriting the prior.
 func (reading *MomentReading) Summarize(moments Moments) {
 	reading.Moments = moments
 	reading.VarianceDefined = moments.Count > 1
-
-	if reading.VarianceDefined {
-		reading.Variance = moments.M2 / (moments.Count - 1)
-		reading.Dispersion = math.Sqrt(reading.Variance)
-		return
-	}
-
-	reading.Variance = 0
-	reading.Dispersion = 0
+	reading.Variance = moments.M2 / (moments.Count - 1)
+	reading.Dispersion = math.Sqrt(reading.Variance)
 }
