@@ -5924,19 +5924,19 @@
     {
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/recognition.go",
-      "line": 566,
+      "line": 574,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/recognition.go",
-      "line": 614,
+      "line": 622,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/recognition.go",
-      "line": 645,
+      "line": 653,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
