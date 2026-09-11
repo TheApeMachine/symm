@@ -394,6 +394,37 @@ func TestSolverStep(t *testing.T) {
 			So(solver.Error(), ShouldBeNil)
 		})
 	})
+
+	Convey("Given measurements with sub-100ms clock differences and negative z-scores", t, func() {
+		solver := NewSolver(t.Context())
+		at1 := time.Unix(10, 0)
+		at2 := at1.Add(5 * time.Millisecond)
+
+		envelope := types.NewEnvelope(types.EnvelopeTrade)
+		envelope.CVD = data.NewMeasurement[float64](
+			"cvd", "BTC/USD", "cvd", at1, at1,
+		)
+		envelope.CVD.Maturity = 1
+		envelope.CVD.PutMetric(data.Metric[float64]{
+			Label: "signed_net_fraction_zscore", Raw: -3.5,
+		})
+		envelope.Hawkes = data.NewMeasurement[float64](
+			"hawkes", "BTC/USD", "hawkes", at2, at2,
+		)
+		envelope.Hawkes.Maturity = 1
+		envelope.Hawkes.PutMetric(data.Metric[float64]{
+			Label: "arrival_rate", Raw: 0.6,
+		})
+
+		result := solver.Step(envelope)
+
+		Convey("timestamp skew within tolerance is accepted and negative z-scores are retained", func() {
+			So(solver.Error(), ShouldBeNil)
+			So(result, ShouldNotBeNil)
+			So(len(result.Categories), ShouldBeGreaterThan, 0)
+			So(result.Categories[0].Type, ShouldEqual, types.AggressiveDrive)
+		})
+	})
 }
 
 func BenchmarkSolverStepMeasurement(b *testing.B) {

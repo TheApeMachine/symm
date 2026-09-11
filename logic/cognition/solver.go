@@ -20,6 +20,7 @@ import (
 )
 
 type symbolCognitionState struct {
+	mu            sync.RWMutex
 	activeTokens  []string
 	activeRegime  types.Category
 	reading       types.Cognition
@@ -201,6 +202,8 @@ func (solver *Solver) processBatch(
 
 	at := categories[0].At
 	state := solver.getSymbolState(symbol)
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
 	// Select the dominant category for this symbol on this observation.
 	dominantCategory := solver.selectDominantCategory(categories)
@@ -221,6 +224,35 @@ func (solver *Solver) processBatch(
 	}
 
 	transitionOrdinal := solver.tickCounter.Add(1)
+	consolidating := false
+
+	if transitionOrdinal%128 == 0 {
+		consolidating = true
+		solver.treeMu.Lock()
+		outcome := solver.tree.ExecuteREMSleepConsolidation(0, transitionOrdinal)
+		discrim := solver.tree.ExtractDiscriminativeSymbols(16)
+		solver.treeMu.Unlock()
+
+		solver.remOutcome = outcome
+		solver.remThrough = at
+
+		if solver.remFrom.IsZero() {
+			solver.remFrom = at
+		}
+
+		symbols := make([]types.CognitionSymbol, 0, len(discrim))
+
+		for _, item := range discrim {
+			symbols = append(symbols, types.CognitionSymbol{
+				Symbol: solver.decodeCategoryPath(item.Symbol),
+				Class:  string(item.Class),
+				Score:  item.Score,
+				Purity: item.Purity,
+			})
+		}
+
+		solver.symbols = symbols
+	}
 
 	// 2. Evaluate if appending this category causes a Sequence Break
 	broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
@@ -461,7 +493,7 @@ func (solver *Solver) processBatch(
 		// below, so "consolidating" is true only for the reading
 		// published on the very tick that triggered it — every other
 		// tick reports the awake state between passes.
-		REMConsolidating: false,
+		REMConsolidating: consolidating,
 	}
 
 	state.reading = cognition
@@ -511,8 +543,21 @@ func (solver *Solver) stabilizeReading(
 		}
 	}
 
+	effectiveThreshold := switchThreshold
+	numClasses := len(classes)
+
+	if numClasses > 2 {
+		uniform := 1.0 / float64(numClasses)
+		excess := switchThreshold - 0.5
+		effectiveThreshold = uniform + excess
+
+		if effectiveThreshold < uniform {
+			effectiveThreshold = uniform
+		}
+	}
+
 	if candidate != "" && isRegimeName(candidate) && !ambiguous &&
-		candidateConfidence >= switchThreshold {
+		candidateConfidence >= effectiveThreshold {
 		return stabilizedReading{
 			winner:      candidate,
 			confidence:  candidateConfidence,
@@ -659,42 +704,15 @@ func (solver *Solver) selectRegime(
 }
 
 func isRegimeCategory(category types.CategoryType) bool {
-	switch category {
-	case types.CategoryTurbulent,
-		types.CategoryOrganicTrend,
-		types.CategoryAggressiveDrive,
-		types.CategoryVolumeStarvation,
-		types.CategoryStochasticBalance:
-		return true
-	default:
-		return false
-	}
+	return category != types.CategoryTypeNone
 }
 
 func regimeName(category types.CategoryType) string {
-	switch category {
-	case types.CategoryTurbulent:
-		return "volatility"
-	case types.CategoryOrganicTrend:
-		return "trend"
-	case types.CategoryAggressiveDrive:
-		return "drive"
-	case types.CategoryVolumeStarvation:
-		return "starved"
-	case types.CategoryStochasticBalance:
-		return "chop"
-	default:
-		return ""
-	}
+	return string(category)
 }
 
 func isRegimeName(name string) bool {
-	switch name {
-	case "volatility", "trend", "drive", "starved", "chop":
-		return true
-	default:
-		return false
-	}
+	return name != "" && name != string(types.CategoryTypeNone)
 }
 
 func (solver *Solver) regimeClasses(
@@ -1016,4 +1034,21 @@ Close cleans up the solver.
 func (solver *Solver) Close() error {
 	solver.cancel()
 	return nil
+}
+
+/*
+Reading returns the freshest cognition reading for a symbol in a thread-safe manner.
+*/
+func (solver *Solver) Reading(symbol string) (types.Cognition, bool) {
+	loaded, found := solver.states.Load(symbol)
+
+	if !found {
+		return types.Cognition{}, false
+	}
+
+	state := loaded.(*symbolCognitionState)
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.reading, state.hasReading
 }

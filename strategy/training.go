@@ -3,82 +3,152 @@ package strategy
 import (
 	"context"
 	"errors"
-	"iter"
 	"sync"
 	"sync/atomic"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"golang.design/x/lockfree/lf"
 )
 
 /*
-Training is one contained learning pipeline. Every stage is
-Primitive[*types.Envelope, *types.Envelope], which is the value Step already
-holds, so Number can thread them as one run.
+Tape is the lock-free handoff from the archive walk to the learner.
+
+The walk is a long object-store read; Step is on the disruptor. A channel would
+block one of them. The queue is the same shape capture already uses: enqueue
+never waits, dequeue is empty or a fragment.
+*/
+type Tape struct {
+	queue        *lf.Queue[[][]*data.Measurement[float64]]
+	done         atomic.Bool
+	runs         atomic.Uint64
+	observations atomic.Uint64
+	budget       atomic.Uint64
+}
+
+func NewTape() *Tape {
+	return &Tape{queue: lf.NewQueue[[][]*data.Measurement[float64]]()}
+}
+
+func (tape *Tape) Publish(leg [][]*data.Measurement[float64]) {
+	tape.queue.Enqueue(leg)
+}
+
+func (tape *Tape) Close() {
+	tape.done.Store(true)
+}
+
+func (tape *Tape) take() ([][]*data.Measurement[float64], bool) {
+	return tape.queue.Dequeue()
+}
+
+func (tape *Tape) loading() bool {
+	return !tape.done.Load()
+}
+
+func (tape *Tape) SetBudget(budget uint64) {
+	tape.budget.Store(budget)
+}
+
+func (tape *Tape) AddObservations(count uint64) {
+	tape.observations.Add(count)
+}
+
+func (tape *Tape) AddRuns(count uint64) {
+	tape.runs.Add(count)
+}
+
+func (tape *Tape) Budget() uint64 {
+	return tape.budget.Load()
+}
+
+func (tape *Tape) Observations() uint64 {
+	return tape.observations.Load()
+}
+
+func (tape *Tape) Runs() uint64 {
+	return tape.runs.Load()
+}
+
+/*
+Training is the composition root for the learning cohort.
+
+Agent 0 operates as the live canary stepping incoming market envelopes, while
+Agents 1..N-1 operate as rehearsal workers practicing on historical tape
+excursions. All agents share the underlying cognition memory trie.
 */
 type Training struct {
 	*runtime.System
-	mu       sync.Mutex
-	tape     <-chan [][]*data.Measurement[float64]
-	query    *store.QueryOp[*types.Envelope]
-	frames   *frames
-	space    *space
-	judge    *judge
-	agent    *agent
-	pipeline func() iter.Seq[core.Primitive[any, any]]
-	legs     [][][]*data.Measurement[float64]
-	seen     atomic.Uint64
+	mu     sync.Mutex
+	tape   *Tape
+	space  *grid.Space
+	agent  *associative.Agent
+	agents []*Agent
+	main   *MainAgent
+	legs   [][][]*data.Measurement[float64]
+	seen   atomic.Uint64
 }
 
 /* replay is the dashboard's reading of this pipeline. */
 type replay struct {
-	space     *grid.Space
-	memories  []*store.Retained[*iradix.Tree[[]byte]]
-	learners  []*associative.Agent
-	fragments int
-	tape      [][][]*data.Measurement[float64]
-	loading   bool
+	space        *grid.Space
+	memories     []*store.Retained[*iradix.Tree[[]byte]]
+	learners     []*associative.Agent
+	cohort       []*Agent
+	mainAgent    *MainAgent
+	fragments    int
+	tape         [][][]*data.Measurement[float64]
+	loading      bool
+	runs         uint64
+	observations uint64
+	budget       uint64
 }
 
 /*
 NewTraining builds a learning pipeline over a tape that arrives as it is read.
-
-The record is on the far side of an object store, and walking it takes long
-enough that doing it here would hold the boot up until it finished. So the tape
-is a channel rather than a slice: the pipeline is composed immediately over an
-empty ring, and each fragment the reader recovers is played as soon as it
-lands. An empty ring is a run with nothing in it, which is what a learner that
-has not been shown anything yet honestly is.
+It instantiates the full cohort of agents according to configuration.
 */
 func NewTraining(
 	ctx context.Context,
-	tape <-chan [][]*data.Measurement[float64],
+	tape *Tape,
+	instrument ...*broker.Instrument,
 ) *Training {
-	memory := associative.NewMemory()
+	count := 8
+
+	if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.Traders > 0 {
+		count = system.Cfg.Learning.Traders
+	}
+
+	agents := make([]*Agent, count)
+
+	for idx := 0; idx < count; idx++ {
+		isLive := (idx == 0)
+		engine := cognition.NewEngine(cognition.DefaultConfig())
+		agents[idx] = NewAgent(idx, isLive, engine, 64)
+	}
+	var inst *broker.Instrument
+
+	if len(instrument) > 0 {
+		inst = instrument[0]
+	}
+
 	training := &Training{
 		tape:   tape,
-		query:  store.Query[*types.Envelope](),
-		frames: newFrames(),
-		space:  newSpace(),
-		judge:  newJudge(memory),
-		agent:  newAgent(memory),
+		space:  agents[0].Space(),
+		agent:  agents[0].learner,
+		agents: agents,
+		main:   NewMainAgent(nil, "", inst),
 		System: runtime.NewSystem(ctx, "training"),
 	}
-	training.pipeline = nomagique.Number(
-		training.query,
-		training.frames,
-		training.space,
-		training.judge,
-		training.agent,
-	)
 
 	return training
 }
@@ -86,22 +156,48 @@ func NewTraining(
 /*
 Step is one delivery of the composition.
 
-The envelope is the run. Query holds it, Number threads it through every
-Envelope-typed stage, and what comes back is the same envelope with whatever
-those stages wrote.
+The live envelope asks. The ring answers. Number threads that answer through
+the grid and the agent. Learning is stamped on the clock so the dashboard can
+read it; the measurements never are.
 */
 func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || training.pipeline == nil {
-		return envelope
-	}
-
+	training.mu.Lock()
+	defer training.mu.Unlock()
 	training.mount()
-	training.query.Carrier(envelope)
 
-	for range training.pipeline() {
+	if envelope != nil {
+		envelope.Learning = training
+
+		if len(training.agents) > 0 {
+			liveMeasurements := envelope.Measurements()
+
+			if len(liveMeasurements) > 0 {
+				symbol := envelope.Symbol()
+
+				if symbol == "" {
+					for _, measurement := range liveMeasurements {
+						if measurement != nil && measurement.Label != "" {
+							symbol = measurement.Label
+							break
+						}
+					}
+				}
+
+				if symbol != "" {
+					impulse, err := training.agents[0].Step(liveMeasurements, symbol)
+
+					if err != nil {
+						errnie.Error(err)
+					}
+
+					if training.main != nil {
+						consensus := training.consensus(impulse)
+						training.main.Step(envelope, consensus)
+					}
+				}
+			}
+		}
 	}
-
-	envelope.Learning = training
 	training.seen.Add(1)
 
 	return envelope
@@ -110,275 +206,156 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 /*
 mount takes up whatever the reader has recovered since the last step.
 
-It never waits. The envelope that asked for this step is a market frame the
-runtime is holding, so blocking here to see whether more tape is coming would
-stall ingress on a read of the record. What has landed is played; what has not
-is played on a later step.
+It distributes incoming fragments across the rehearsal workers.
 */
 func (training *Training) mount() {
-	for {
-		select {
-		case fragment, open := <-training.tape:
-			if !open {
-				training.mu.Lock()
-				training.tape = nil
-				training.mu.Unlock()
+	if training.tape == nil {
+		return
+	}
 
-				return
-			}
+	for count := 0; count < 2; count++ {
+		fragment, ok := training.tape.take()
 
-			training.mu.Lock()
-			training.legs = append(training.legs, fragment)
-			training.mu.Unlock()
-
-			for _, measurements := range fragment {
-				child := store.NewRing[*types.Envelope]()
-				child.Write(&types.Envelope{Observations: measurements})
-				training.frames.ring.Write(child)
-			}
-		default:
+		if !ok {
 			return
 		}
+		training.legs = append(training.legs, fragment)
+
+		// Distribute replay across rehearsal workers (or all agents if single-agent)
+		rehearsalWorkers := training.agents
+
+		if len(training.agents) > 1 {
+			rehearsalWorkers = training.agents[1:]
+		}
+		worker := rehearsalWorkers[(len(training.legs)-1)%len(rehearsalWorkers)]
+
+		for _, measurements := range fragment {
+			symbol := ""
+
+			for _, measurement := range measurements {
+				if measurement != nil && measurement.Label != "" {
+					symbol = measurement.Label
+					break
+				}
+			}
+
+			if symbol != "" {
+				if _, err := worker.Step(measurements, symbol); err != nil {
+					errnie.Error(err)
+				}
+			}
+		}
+	}
+}
+
+func (training *Training) consensus(impulse grid.Impulse) PrecursorConsensus {
+	if len(training.agents) == 0 || len(impulse.Regions) == 0 {
+		return PrecursorConsensus{Action: "wait", Confidence: 0.5}
+	}
+
+	actionCounts := make(map[string]int)
+	totalConfidence, totalContrast := 0.0, 0.0
+	var totalSupport uint64
+
+	for _, individual := range training.agents {
+		action, confidence, contrast, support := individual.EvaluatePrecursor(impulse)
+		totalConfidence += confidence
+		totalContrast += contrast
+		totalSupport += support
+
+		if action != "" {
+			actionCounts[action]++
+		}
+	}
+
+	numAgents := float64(len(training.agents))
+	avgConfidence := totalConfidence / numAgents
+	avgContrast := totalContrast / numAgents
+
+	waitCount := actionCounts["wait"]
+	bestAction := "wait"
+	bestCount := waitCount
+	minMajority := (len(training.agents) + 1) / 2
+
+	for a, count := range actionCounts {
+		if a != "wait" && count > bestCount && count >= minMajority {
+			bestAction = a
+			bestCount = count
+		}
+	}
+
+	if bestAction != "wait" {
+		if avgContrast <= 0 || avgConfidence <= 0.5 || totalSupport <= 1 {
+			bestAction = "wait"
+		}
+	}
+
+	return PrecursorConsensus{
+		Action:     bestAction,
+		Confidence: avgConfidence,
+		Contrast:   avgContrast,
+		Support:    totalSupport,
 	}
 }
 
 func (training *Training) snapshot() *replay {
+	memories := make([]*store.Retained[*iradix.Tree[[]byte]], len(training.agents))
+	learners := make([]*associative.Agent, len(training.agents))
+
+	for idx, individual := range training.agents {
+		memories[idx] = store.NewRetained(individual.Tree())
+		learners[idx] = individual.learner
+	}
+	activeSpace := training.space
+
+	if activeSpace.UpdatedLabel == "" && len(training.agents) > 1 {
+		for _, individual := range training.agents {
+			if individual.Space().UpdatedLabel != "" {
+				activeSpace = individual.Space()
+				break
+			}
+		}
+	}
+
+	var runs, observations, budget uint64
+	loading := false
+
+	if training.tape != nil {
+		runs = training.tape.Runs()
+		observations = training.tape.Observations()
+		budget = training.tape.Budget()
+		loading = training.tape.loading()
+	}
+
+	if budget == 0 {
+		budget = uint64(max(len(training.legs), 1))
+	}
+
+	return &replay{
+		space:        activeSpace,
+		memories:     memories,
+		learners:     learners,
+		cohort:       training.agents,
+		mainAgent:    training.main,
+		fragments:    len(training.legs),
+		tape:         training.legs,
+		loading:      loading,
+		runs:         runs,
+		observations: observations,
+		budget:       budget,
+	}
+}
+
+/* Error joins the pipeline's failure for the runtime node protocol. */
+func (training *Training) Error() error {
 	training.mu.Lock()
 	defer training.mu.Unlock()
 
-	return &replay{
-		space:     training.space.grid,
-		memories:  []*store.Retained[*iradix.Tree[[]byte]]{training.agent.memory},
-		learners:  []*associative.Agent{training.agent.inner},
-		fragments: len(training.legs),
-		tape:      training.legs,
-		loading:   training.tape != nil,
+	var errs []error
+
+	for _, individual := range training.agents {
+		errs = append(errs, individual.space.Error(), individual.learner.Error())
 	}
-}
 
-/* Error joins every stage's failure for the runtime node protocol. */
-func (training *Training) Error() error {
-	return errors.Join(
-		training.frames.Error(),
-		training.space.Error(),
-		training.space.grid.Error(),
-		training.judge.Error(),
-		training.judge.inner.Error(),
-		training.agent.Error(),
-		training.agent.inner.Error(),
-	)
-}
-
-/*
-frames plays one child of the tape ring onto the envelope that arrived.
-
-The child is itself a ring of envelopes, each carrying one numerical frame.
-One Next is one child, which is the delivery boundary the parent ring owns.
-*/
-type frames struct {
-	core.Base[*types.Envelope, *types.Envelope]
-	ring *store.Ring[*types.Envelope]
-}
-
-func newFrames() *frames {
-	return &frames{ring: store.NewRing[*types.Envelope]()}
-}
-
-func (op *frames) Next(
-	in iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]],
-) iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]] {
-	return func(yield func(core.Primitive[*types.Envelope, *types.Envelope]) bool) {
-		if in == nil {
-			return
-		}
-
-		for arriving := range in {
-			envelope := arriving.Read()
-
-			if envelope == nil {
-				return
-			}
-
-			played := false
-
-			for frame := range op.ring.Next(nil) {
-				played = true
-				held := frame.Read()
-
-				if held != nil {
-					envelope.Observations = held.Observations
-				}
-
-				if !yield(op.Carrier(envelope)) {
-					return
-				}
-			}
-
-			if !played {
-				if !yield(op.Carrier(envelope)) {
-					return
-				}
-			}
-		}
-	}
-}
-
-/*
-space steps the grid from the envelope's observations and writes the impulse
-back onto it.
-*/
-type space struct {
-	core.Base[*types.Envelope, *types.Envelope]
-	grid *grid.Space
-}
-
-func newSpace() *space {
-	return &space{grid: grid.NewSpace()}
-}
-
-func (op *space) Next(
-	in iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]],
-) iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]] {
-	return func(yield func(core.Primitive[*types.Envelope, *types.Envelope]) bool) {
-		if in == nil {
-			return
-		}
-
-		for arriving := range in {
-			envelope := arriving.Read()
-
-			if envelope == nil {
-				return
-			}
-
-			if len(envelope.Observations) == 0 {
-				if !yield(op.Carrier(envelope)) {
-					return
-				}
-
-				continue
-			}
-
-			impulse, err := transport.Evaluate(
-				op.grid, transport.Values(envelope.Observations),
-			)
-
-			if err != nil {
-				op.Error(err)
-
-				return
-			}
-
-			envelope.Impulses = append(envelope.Impulses[:0], impulse)
-
-			if !yield(op.Carrier(envelope)) {
-				return
-			}
-		}
-	}
-}
-
-/*
-judge grades the envelope's impulse against the agent's memory before the
-agent writes.
-*/
-type judge struct {
-	core.Base[*types.Envelope, *types.Envelope]
-	inner *associative.EvaluatorOp
-}
-
-func newJudge(memory *store.Retained[*iradix.Tree[[]byte]]) *judge {
-	return &judge{inner: associative.Evaluator(memory)}
-}
-
-func (op *judge) Next(
-	in iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]],
-) iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]] {
-	return func(yield func(core.Primitive[*types.Envelope, *types.Envelope]) bool) {
-		if in == nil {
-			return
-		}
-
-		for arriving := range in {
-			envelope := arriving.Read()
-
-			if envelope == nil {
-				return
-			}
-
-			if len(envelope.Impulses) == 0 {
-				if !yield(op.Carrier(envelope)) {
-					return
-				}
-
-				continue
-			}
-
-			impulse := envelope.Impulses[len(envelope.Impulses)-1]
-			assoc, err := transport.Evaluate(op.inner, transport.Values(impulse))
-
-			if err != nil {
-				op.Error(err)
-
-				return
-			}
-
-			impulse.Graded = assoc.Graded
-			impulse.Grade = assoc.Feedback
-			envelope.Impulses[len(envelope.Impulses)-1] = impulse
-
-			if !yield(op.Carrier(envelope)) {
-				return
-			}
-		}
-	}
-}
-
-/*
-agent learns the envelope's impulse into its own memory.
-*/
-type agent struct {
-	core.Base[*types.Envelope, *types.Envelope]
-	inner  *associative.Agent
-	memory *store.Retained[*iradix.Tree[[]byte]]
-}
-
-func newAgent(memory *store.Retained[*iradix.Tree[[]byte]]) *agent {
-	return &agent{inner: associative.NewAgent(memory), memory: memory}
-}
-
-func (op *agent) Next(
-	in iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]],
-) iter.Seq[core.Primitive[*types.Envelope, *types.Envelope]] {
-	return func(yield func(core.Primitive[*types.Envelope, *types.Envelope]) bool) {
-		if in == nil {
-			return
-		}
-
-		for arriving := range in {
-			envelope := arriving.Read()
-
-			if envelope == nil {
-				return
-			}
-
-			if len(envelope.Impulses) == 0 {
-				if !yield(op.Carrier(envelope)) {
-					return
-				}
-
-				continue
-			}
-
-			if _, err := op.inner.Learn(envelope.Impulses[len(envelope.Impulses)-1]); err != nil {
-				op.Error(err)
-
-				return
-			}
-
-			if !yield(op.Carrier(envelope)) {
-				return
-			}
-		}
-	}
+	return errors.Join(errs...)
 }

@@ -126,6 +126,7 @@ type excursionWindow struct {
 	captures []EnvelopeRef
 	anchor   EnvelopeRef
 	extremum EnvelopeRef
+	kind     EpisodeKind
 }
 
 /*
@@ -181,6 +182,7 @@ func (tape *Tape) window(
 		captures: index.CapturesAround(symbol, from, through),
 		anchor:   from,
 		extremum: through,
+		kind:     move.Kind,
 	}
 }
 
@@ -304,24 +306,30 @@ func (tape *Tape) frames(
 		if !stored || len(measurements) == 0 {
 			continue
 		}
-		stampMoment(measurements, momentAt(candidate, window.anchor, window.extremum))
+		stampMoment(measurements, momentAt(candidate, window.anchor, window.extremum, window.kind))
 		held = append(held, measurements)
 	}
 
 	return held
 }
 
-func momentAt(candidate, anchor, extremum EnvelopeRef) string {
+func momentAt(candidate, anchor, extremum EnvelopeRef, kind EpisodeKind) string {
+	suffix := "_long"
+
+	if kind == EpisodeDownwardExcursion {
+		suffix = "_short"
+	}
+
 	if causalCmp(candidate, anchor) < 0 {
-		return "enter"
+		return "enter" + suffix
 	}
 
 	if causalCmp(candidate, extremum) < 0 {
-		return "hold"
+		return "hold" + suffix
 	}
 
 	if causalCmp(candidate, extremum) == 0 {
-		return "exit"
+		return "exit" + suffix
 	}
 
 	return "wait"

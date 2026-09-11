@@ -34,13 +34,26 @@ type Impulse struct {
 
 /* Impulse copies the current activation sequence without rebuilding regions. */
 func (grid *Space) Impulse(label string, at, from time.Time) (Impulse, error) {
-	regions, version, err := grid.Regions(label)
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	contextLabel := label
+
+	if contextLabel == "" {
+		contextLabel = grid.UpdatedLabel
+	}
+
+	if contextLabel == "" {
+		return Impulse{At: at, From: from, Ready: false}, nil
+	}
+	regions, version, err := grid.regionsLocked(contextLabel)
 
 	if err != nil {
 		return Impulse{}, err
 	}
+
 	return Impulse{
-		Label: label, At: at, From: from, Version: version,
+		Label: contextLabel, At: at, From: from, Version: version,
 		Ready: grid.Formed, Regions: slices.Clone(regions),
 		Moment: grid.moment, Grade: grid.grade, Graded: grid.graded,
 	}, nil

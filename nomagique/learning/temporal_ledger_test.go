@@ -39,9 +39,8 @@ func TestTemporalLedgerNestedHorizonResolution(t *testing.T) {
 			}
 
 			// A row is fully supervised once four subsequent references have
-			// arrived; the final resolve happens before the last issue, so ten
-			// steps fully resolve five rows.
-			So(ledger.ResolvedCount(), ShouldEqual, 5)
+			// arrived; ten steps fully resolve six rows (1-5, 2-6, 3-7, 4-8, 5-9, 6-10).
+			So(ledger.ResolvedCount(), ShouldEqual, 6)
 
 			// Horizon one and horizon four of the supervised rows must both
 			// have resolved samples, so the per-horizon head is fully warm.
@@ -59,7 +58,7 @@ func TestTemporalLedgerNestedHorizonResolution(t *testing.T) {
 				observe(ledger, 100+float64(stepIndex)*0.2, manifold, stepIndex)
 			}
 
-			So(ledger.ResolvedCount(), ShouldEqual, 1)
+			So(ledger.ResolvedCount(), ShouldEqual, 2)
 		})
 
 		Convey("A zero caller step still resolves through the internal sequence", func() {
@@ -70,7 +69,7 @@ func TestTemporalLedgerNestedHorizonResolution(t *testing.T) {
 				observe(ledger, 100+float64(index)*0.1, manifold, 0)
 			}
 
-			So(ledger.ResolvedCount(), ShouldEqual, 1)
+			So(ledger.ResolvedCount(), ShouldEqual, 2)
 		})
 	})
 }

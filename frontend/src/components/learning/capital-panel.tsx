@@ -12,13 +12,19 @@ export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
 	*/
 	const member = view?.agents?.[0];
 	const positions = member?.positions ?? [];
+	const isTrading = member?.status === "trading";
+
 	return (
 		<Section fit="content">
 			<Section.Header
-				title="Consolidated model account"
-				meta="Independent simulated wallet · agent 1"
+				title="Main Agent Capital & Economics"
+				meta={
+					isTrading
+						? "Paper/Real Execution Wallet · Main Agent"
+						: "Simulated Forward Testing Wallet · Main Agent (Policy)"
+				}
 			/>
-			<Section.Body className="p-3 space-y-3">
+			<Section.Body className="space-y-3 p-3">
 				<Typography.Mono>
 					Cash {member ? String(member.cash) : "unmeasured"} · Equity{" "}
 					{member ? String(member.equity) : "unmeasured"} · P&L{" "}
@@ -28,9 +34,12 @@ export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
 					Fees {member ? String(member.fees) : "unmeasured"} · Return{" "}
 					{member ? basis(member.wealth) : "unmeasured"}
 				</Typography.Mono>
-				<Typography.Mono>
-					Signed historical exercise results train this model. Its own completed
-					decisions measure its performance.
+				<Typography.Mono tone="f3">
+					The Main Agent is the sole owner of capital and execution economics.
+					Parallel precursor learners are decoupled from the wallet, learning
+					directional precursors to upward, downward, and stagnant market movement.
+					Simulated forward testing validates the Main Agent until it proves
+					robustly net-positive before promotion to live paper/real trading.
 				</Typography.Mono>
 				{positions.map((position) => (
 					<Typography.Mono key={String(position.holding?.symbol)}>
@@ -41,7 +50,7 @@ export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
 					</Typography.Mono>
 				))}
 				{member && positions.length === 0 && (
-					<Typography.Mono>No positions.</Typography.Mono>
+					<Typography.Mono>No open positions.</Typography.Mono>
 				)}
 				{!member && (
 					<Typography.Mono>

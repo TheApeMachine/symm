@@ -27,13 +27,18 @@ type RLS struct {
 	dimension int
 	lambda    float64
 	learner   *algo.SquareRootRLS
+	design    []float64
 }
 
 func NewRLS(dimension int, variance, lambda float64) *RLS {
+	design := make([]float64, dimension+1)
+	design[0] = 1
+
 	return &RLS{
 		dimension: dimension,
 		lambda:    lambda,
 		learner:   algo.NewSquareRootRLS(variance),
+		design:    design,
 	}
 }
 
@@ -77,6 +82,33 @@ func (op *RLS) Prepare(sample Sample) (algo.Reading, error) {
 		Design:   design,
 		Target:   sample.Target,
 		Observed: sample.Observed,
+		Lambda:   op.lambda,
+	})
+}
+
+/*
+Predict evaluates the model on a feature vector without updating its weights.
+It reuses the internal design vector to eliminate allocations on hot rollout paths.
+*/
+func (op *RLS) Predict(features []float64) (algo.Reading, error) {
+	if op.dimension <= 0 || len(features) != op.dimension {
+		return algo.Reading{}, fmt.Errorf(
+			"%w: RLS expected %d features, received %d",
+			core.ErrShape,
+			op.dimension,
+			len(features),
+		)
+	}
+
+	if len(op.design) != op.dimension+1 {
+		op.design = make([]float64, op.dimension+1)
+	}
+	op.design[0] = 1
+	copy(op.design[1:], features)
+
+	return op.learner.Step(algo.Query{
+		Design:   op.design,
+		Observed: false,
 		Lambda:   op.lambda,
 	})
 }

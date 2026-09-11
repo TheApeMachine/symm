@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"iter"
@@ -30,6 +31,7 @@ including previously observed values still retained in Values.
 */
 type Space struct {
 	core.Base[[]*data.Measurement[float64], Impulse]
+	mu           sync.RWMutex
 	Rows         []string
 	Columns      [][2]string
 	Values       [][]float64
@@ -106,6 +108,10 @@ func (grid *Space) Next(
 		for arriving := range in {
 			measurements := arriving.Read()
 
+			if len(measurements) == 0 {
+				continue
+			}
+
 			if err := grid.Step(measurements); err != nil {
 				grid.Error(err)
 				return
@@ -152,6 +158,9 @@ func observed(measurements []*data.Measurement[float64]) (time.Time, time.Time) 
 }
 
 func (grid *Space) Step(measurements []*data.Measurement[float64]) error {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
 	label := ""
 
 	for _, measurement := range measurements {
@@ -264,7 +273,7 @@ func (grid *Space) update(row int, measurement *data.Measurement[float64]) error
 	}
 
 	for key, metric := range measurement.Metrics {
-		column := grid.Column(measurement.Source, key)
+		column := grid.columnLocked(measurement.Source, key)
 		previous := grid.Values[row][column]
 		grid.Values[row][column] = metric.Raw
 		grid.Present[row][column] = true
@@ -342,6 +351,13 @@ func (grid *Space) numericFailure(row, column int, raw, previous, dispersion flo
 
 /* Column admits one quantity and extends storage only when the grid grows. */
 func (grid *Space) Column(source, key string) int {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	return grid.columnLocked(source, key)
+}
+
+func (grid *Space) columnLocked(source, key string) int {
 	identity := [2]string{source, key}
 	column, exists := grid.columnIndex[identity]
 
@@ -355,7 +371,6 @@ func (grid *Space) Column(source, key string) int {
 	if grid.graph != nil {
 		grid.graph = nil
 		grid.Formed = false
-		grid.window = newWindow(grid.window.capacity)
 		grid.cursor, grid.moved = -1, false
 	}
 	grid.columnIndex[identity] = column
@@ -376,11 +391,26 @@ func (grid *Space) Column(source, key string) int {
 	return column
 }
 
+/* PreseedColumns allocates storage for known sources and metrics upfront. */
+func (grid *Space) PreseedColumns(sources map[string][]string) {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	for source, keys := range sources {
+		for _, key := range keys {
+			grid.columnLocked(source, key)
+		}
+	}
+}
+
 /*
 Reset clears observation-local baselines between independent historical tapes.
 The affinity calibration, settled coordinates and region membership survive.
 */
 func (grid *Space) Reset() {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
 	// An unfinished calibration bin cannot pair observations from unrelated
 	// tapes. Completed bins still retain their observed relationships.
 	clear(grid.window.open)
@@ -404,6 +434,9 @@ relationship measured over two shared bins is not the claim a relationship
 measured over sixty is. This is how a reader tells those apart.
 */
 func (grid *Space) Support(source, key string) (int, int) {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
 	column, exists := grid.columnIndex[[2]string{source, key}]
 
 	if !exists {
@@ -411,4 +444,87 @@ func (grid *Space) Support(source, key string) (int, int) {
 	}
 
 	return grid.window.support(column), grid.window.capacity
+}
+
+/*
+QuantitySnapshot is a point-in-time capture of one quantity for telemetry.
+*/
+type QuantitySnapshot struct {
+	Source   string
+	Label    string
+	X        float64
+	Y        float64
+	Value    float64
+	Activity float64
+	Quality  float64
+	Present  bool
+}
+
+/*
+MarketSnapshot provides an atomic point-in-time read of all quantities and regions
+for an instrument context without causing data races with concurrent Step calls.
+*/
+func (grid *Space) MarketSnapshot(label string) ([]QuantitySnapshot, []Region, uint64, error) {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	row, exists := grid.rowIndex[label]
+
+	if !exists {
+		return nil, nil, 0, errnie.Error(errnie.Err(errnie.NotFound, "grid: unknown context "+label, nil))
+	}
+
+	quantities := make([]QuantitySnapshot, 0, len(grid.Columns))
+
+	for column, identity := range grid.Columns {
+		coordinate := grid.Coordinates[column]
+		x, y := 0.0, 0.0
+
+		if coordinate != nil {
+			x, y = coordinate[0], coordinate[1]
+		}
+
+		value := 0.0
+
+		if row < len(grid.Values) && column < len(grid.Values[row]) {
+			value = grid.Values[row][column]
+		}
+
+		act := 0.0
+
+		if row < len(grid.activations) && column < len(grid.activations[row]) {
+			act = grid.activations[row][column]
+		}
+
+		qual := 0.0
+
+		if row < len(grid.qualities) && column < len(grid.qualities[row]) {
+			qual = grid.qualities[row][column]
+		}
+
+		present := false
+
+		if row < len(grid.Present) && column < len(grid.Present[row]) {
+			present = grid.Present[row][column]
+		}
+
+		quantities = append(quantities, QuantitySnapshot{
+			Source:   identity[0],
+			Label:    identity[1],
+			X:        x,
+			Y:        y,
+			Value:    value,
+			Activity: act,
+			Quality:  qual,
+			Present:  present,
+		})
+	}
+
+	regions, version, err := grid.regionsLocked(label)
+
+	if err != nil {
+		return quantities, nil, version, err
+	}
+
+	return quantities, regions, version, nil
 }

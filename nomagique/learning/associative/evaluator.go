@@ -3,12 +3,10 @@ package associative
 import (
 	"iter"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
-
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -39,8 +37,51 @@ learner being taught on what it can already recognise of itself.
 Named as the type is because that is what it reads as in a composition: the
 stage is an Evaluator, not a call that makes one.
 */
-func Evaluator(memory ...*store.Retained[*iradix.Tree[[]byte]]) *EvaluatorOp {
-	return &EvaluatorOp{recall: NewRecall(memory...), context: NewContext()}
+func Evaluator(engine ...*cognition.Engine) *EvaluatorOp {
+	return &EvaluatorOp{recall: NewRecall(engine...), context: NewContext()}
+}
+
+/*
+Evaluate judges what the agent answered against what the record named,
+for a single arriving impulse.
+*/
+func (op *EvaluatorOp) Evaluate(impulse grid.Impulse) (cognition.Association, cognition.Evaluation, error) {
+	assoc := op.context.Encode(impulse)
+
+	if len(assoc.Context) == 0 || len(assoc.Class) == 0 {
+		return assoc, cognition.Evaluation{}, nil
+	}
+	reading, err := op.recall.Recall(cognition.Evaluation{
+		Context: assoc.Context,
+		Config:  cognition.DefaultConfig(),
+		Step:    impulse.Version,
+	})
+
+	if err != nil {
+		return assoc, cognition.Evaluation{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"evaluator: recall evaluation failed",
+			err,
+		))
+	}
+
+	if reading.WinnerClass != "" {
+		if reading.WinnerClass == string(assoc.Class) {
+			assoc.Graded = true
+			assoc.Feedback = 1.0
+		}
+
+		if reading.WinnerClass != string(assoc.Class) {
+			assoc.Graded = true
+			assoc.Feedback = 0.5
+
+			if op.recall != nil && op.recall.engine != nil {
+				op.recall.engine.Observe(assoc.Context, []byte(reading.WinnerClass), -reading.Confidence)
+			}
+		}
+	}
+
+	return assoc, reading, nil
 }
 
 func (op *EvaluatorOp) Next(
@@ -50,44 +91,12 @@ func (op *EvaluatorOp) Next(
 		yield func(core.Primitive[cognition.Association, cognition.Association]) bool,
 	) {
 		for arriving := range in {
-			impulse := arriving.Read()
-			assoc := op.context.Encode(impulse)
-
-			// A situation the tape did not name is one there is no answer to
-			// judge. It is carried through as it stands rather than graded
-			// against a moment nobody stated.
-			if len(assoc.Context) == 0 || len(assoc.Class) == 0 {
-				if !yield(op.Carrier(assoc)) {
-					return
-				}
-
-				continue
-			}
-			reading, err := op.recall.Recall(cognition.Evaluation{
-				Context: assoc.Context,
-				Config:  cognition.DefaultConfig(),
-				Step:    impulse.Version,
-			})
+			assoc, _, err := op.Evaluate(arriving.Read())
 
 			if err != nil {
 				op.Error(err)
 
 				return
-			}
-
-			/*
-				What the agent said, against what the record said. A learner
-				with nothing to say yet is not wrong — it is untaught, and the
-				observation teaches it on having been seen. Once it does have
-				an answer, agreeing is what earns reinforcement.
-			*/
-			if reading.WinnerClass != "" {
-				assoc.Graded = true
-				assoc.Feedback = 0
-
-				if reading.WinnerClass == string(assoc.Class) {
-					assoc.Feedback = reading.Confidence
-				}
 			}
 
 			if !yield(op.Carrier(assoc)) {

@@ -217,6 +217,18 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 }
 
 /*
+Has reports whether the instrument is in the cached universe.
+*/
+func (instrument *Instrument) Has(symbol string) bool {
+	if instrument == nil || instrument.cache == nil {
+		return false
+	}
+
+	_, ok := instrument.cache.Load(symbol)
+	return ok
+}
+
+/*
 Pair returns the cached instrument value for the symbol.
 */
 func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {

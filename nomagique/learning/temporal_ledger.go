@@ -50,6 +50,7 @@ type TemporalLedger struct {
 	seq           int64
 	oldest        int64
 	resolvedCount int
+	totalResolved int
 	last          *ResolutionOutcome
 }
 
@@ -86,7 +87,7 @@ func (tl *TemporalLedger) Issue(
 	predictions []float64,
 	horizon int,
 ) {
-	if !finite(reference) || len(features) == 0 {
+	if reference <= 0 || len(features) == 0 {
 		return
 	}
 
@@ -124,9 +125,12 @@ func (tl *TemporalLedger) Resolve(
 	currentStep int64,
 	currentReference float64,
 ) (*ResolutionOutcome, error) {
-	if manifold == nil || !finite(currentReference) || tl.seq == 0 || tl.maxHorizon < 1 {
+	if manifold == nil || currentReference <= 0 || tl.seq == 0 || tl.maxHorizon < 1 {
 		return nil, nil
 	}
+
+	refSeq := tl.seq + 1
+	tl.references[refSeq] = currentReference
 
 	var outcome *ResolutionOutcome
 
@@ -138,7 +142,7 @@ func (tl *TemporalLedger) Resolve(
 
 		// References are stored for every issued sequence; the row can be
 		// supervised up to the horizon whose reference has already arrived.
-		available := tl.seq - item.Seq
+		available := refSeq - item.Seq
 
 		if available > int64(tl.maxHorizon) {
 			available = int64(tl.maxHorizon)
@@ -177,10 +181,11 @@ func (tl *TemporalLedger) Resolve(
 			}
 
 			item.Resolved = horizon
+			tl.totalResolved++
 
-			if horizon == item.Horizon {
+			if outcome == nil || horizon <= outcome.Horizon {
 				outcome = &ResolutionOutcome{
-					Horizon:    item.Horizon,
+					Horizon:    horizon,
 					Prediction: prediction,
 					Target:     target,
 					Error:      target - prediction,
@@ -192,36 +197,39 @@ func (tl *TemporalLedger) Resolve(
 
 		if item.Resolved >= tl.maxHorizon {
 			delete(tl.pending, key)
-			delete(tl.references, key)
 			tl.resolvedCount++
 		}
 	}
 
-	tl.oldest = tl.seq - int64(tl.maxHorizon) + 1
-	if tl.oldest < 1 {
-		tl.oldest = 1
+	for tl.oldest <= tl.seq {
+		if _, found := tl.pending[tl.oldest]; found {
+			break
+		}
+		tl.oldest++
 	}
 
 	return outcome, nil
 }
 
 func (tl *TemporalLedger) prune() {
-	if tl.seq-tl.oldest <= int64(tl.maxHorizon) {
+	if tl.seq <= int64(tl.maxHorizon) {
 		return
 	}
 
 	purgeBelow := tl.seq - int64(tl.maxHorizon)
-
-	for key := tl.oldest; key < purgeBelow; key++ {
-		delete(tl.pending, key)
-		delete(tl.references, key)
+	for key := range tl.references {
+		if key < purgeBelow {
+			delete(tl.references, key)
+		}
 	}
-
-	tl.oldest = purgeBelow
 }
 
 func (tl *TemporalLedger) ResolvedCount() int {
 	return tl.resolvedCount
+}
+
+func (tl *TemporalLedger) TotalResolutions() int {
+	return tl.totalResolved
 }
 
 func (tl *TemporalLedger) LastResolution() *ResolutionOutcome {

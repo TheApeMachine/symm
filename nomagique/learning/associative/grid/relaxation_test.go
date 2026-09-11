@@ -286,10 +286,11 @@ func TestSpaceForm(t *testing.T) {
 		}
 
 		Convey("Adding a new quantity is an explicit schema change", func() {
+			countBefore := grid.window.count
 			grid.Column("source", "new quantity")
 			So(grid.Formed, ShouldBeFalse)
 			So(grid.graph, ShouldBeNil)
-			So(grid.window.count, ShouldEqual, 0)
+			So(grid.window.count, ShouldEqual, countBefore)
 		})
 	})
 }

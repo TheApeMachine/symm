@@ -280,6 +280,7 @@ Directory Structure:
     │   │   ├── associative
     │   │   │   ├── agent.go
     │   │   │   ├── context.go
+    │   │   │   ├── evaluator.go
     │   │   │   ├── grid
     │   │   │   │   ├── affinity.go
     │   │   │   │   ├── condition.go
@@ -288,21 +289,15 @@ Directory Structure:
     │   │   │   │   ├── relaxation.go
     │   │   │   │   ├── space.go
     │   │   │   │   └── window.go
-    │   │   │   ├── prior
-    │   │   │   │   ├── primitive.go
-    │   │   │   │   └── reading.go
-    │   │   │   └── reward
-    │   │   │       ├── ledger.go
-    │   │   │       ├── outcome.go
-    │   │   │       └── primitive.go
+    │   │   │   └── prior
+    │   │   │       ├── primitive.go
+    │   │   │       └── reading.go
     │   │   ├── binary_target.go
     │   │   ├── classifier_weights.go
     │   │   ├── delta_target.go
     │   │   ├── directional_target.go
-    │   │   ├── feedback_tune.go
     │   │   ├── forecast.go
     │   │   ├── identity_target.go
-    │   │   ├── logit_scores.go
     │   │   ├── math.go
     │   │   ├── pace.go
     │   │   ├── pair.go
@@ -525,6 +520,8 @@ Directory Structure:
     ├── store
     │   └── s3.go
     ├── strategy
+    │   ├── agent.go
+    │   ├── main_agent.go
     │   ├── recognition.go
     │   └── training.go
     ├── system
@@ -1157,6 +1154,18 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 	})
 
 	return pairs
+}
+
+/*
+Has reports whether the instrument is in the cached universe.
+*/
+func (instrument *Instrument) Has(symbol string) bool {
+	if instrument == nil || instrument.cache == nil {
+		return false
+	}
+
+	_, ok := instrument.cache.Load(symbol)
+	return ok
 }
 
 /*
@@ -2847,6 +2856,12 @@ storage:
     # Operational retry budget for rejected concurrent catalog commits.
     # Iceberg refreshes and rebases the append; unknown commit outcomes fail.
     commit_retries: 4
+    # Maximum binary payload bytes in one Iceberg snapshot. Larger buffers
+    # become successive snapshots so the REST catalog call and the S3 object
+    # write finish inside Seaweed's idle timeout. This is a catalog transport
+    # bound, not a market horizon. Arrow's 2 GiB Binary offset remains the
+    # representation ceiling inside a snapshot.
+    append_bytes: 16777216
 
 workbench:
   # The Analytical Workbench's DuckDB runs inside this process. An unpivoted
@@ -2861,7 +2876,10 @@ experimental:
 
 runtime:
   workspace:
-    buffer: 64
+    # Disruptor slot count. A power of two, sized as a resource allocation so
+    # the nine observation stages can absorb a ticker/trade/L3 burst without
+    # spinning in TryReserve. It is not a market horizon.
+    buffer: 4096
 
 system:
   data_path: ~/.symm/data
@@ -2947,6 +2965,8 @@ cognitive:
 
 market:
   quote_currency: USD
+  balance: 200 # No, this is not a typo, or test amoutn, this is the exact amount I found in my 
+               # Kraken account, and it is the only money I am willing to trade with.
   instrument:
     excluded:
       - USD 
@@ -3081,6 +3101,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -3428,12 +3449,21 @@ var (
 				},
 			)
 
+			/*
+				One training. Nodes in a stage run concurrently against the
+				same envelope, and the grid writes the measurements it is
+				shown — seven of those on one envelope is a concurrent map
+				write. The tape arrives on a channel because walking the
+				record is a long read against an object store.
+			*/
+			tape := measurements(runtimeCtx, catalog, runID)
+
 			trainer := nmruntime.NewWorkload(
 				runtimeCtx,
 				"trainer",
-				[][]nmruntime.Node[*types.Envelope]{
-					{strategy.NewTraining(catalog, runID, hindsight.DiscoveryPolicy{}, 7)},
-				},
+				[][]nmruntime.Node[*types.Envelope]{{
+					strategy.NewTraining(runtimeCtx, tape, instrument),
+				}},
 			)
 
 			workspace := nmruntime.NewWorkspace(
@@ -3755,6 +3785,127 @@ func initConfig() {
 	system.Cfg = system.NewConfig()
 
 	// Live watching is disabled until an atomic config generation swap exists.
+}
+
+/*
+measurements is the recorded tape a training pipeline is shown: the frames the
+running binary held across every confirmed move the record kept.
+
+The record is walked newest run first. What an instrument did lately describes
+it better than what it did first, and the budget stops the walk part way, so
+which end it starts from decides what is learned from. A run is always read
+whole — stopping mid-run would end a tape at the budget rather than at the
+record — so the budget decides how many runs are opened, never how much of one
+is read.
+
+The run this process is starting is skipped. It has observed nothing yet, it is
+still being written, and its last leg has not retraced, so a pipeline pointed at
+it is shown an empty tape. What there is to learn from is what was captured
+before.
+
+Legs stay separate: the reading after a move's last is not its successor, and a
+composition replaying them as one sequence would learn a join that never
+happened. Each leg becomes one delivery run, which is the boundary the ring
+carries down to the agent.
+*/
+func measurements(
+	ctx context.Context, catalog *tables.Catalog, current hindsight.RunID,
+) *strategy.Tape {
+	tape := strategy.NewTape()
+
+	if catalog == nil {
+		tape.Close()
+
+		return tape
+	}
+
+	go readRecord(ctx, catalog, current, tape)
+
+	return tape
+}
+
+/*
+readRecord walks the record and publishes each run's confirmed moves as it
+recovers them.
+
+Publishing per run rather than at the end is what lets the universes begin on
+the earliest tape recovered instead of waiting for the whole archive. Close
+marks the walk done; fragments still in the queue are not lost.
+*/
+func readRecord(
+	ctx context.Context,
+	catalog *tables.Catalog,
+	current hindsight.RunID,
+	tape *strategy.Tape,
+) {
+	defer tape.Close()
+	policy := hindsight.DefaultDiscoveryPolicy()
+	budget := viper.GetInt("hindsight.rehearsal.observation_budget")
+
+	if budget <= 0 {
+		budget = policy.MinObservations * policy.MaxEpisodesPerSet
+	}
+	tape.SetBudget(uint64(budget))
+	runs, err := catalog.Runs(ctx)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	slices.SortFunc(runs, func(left, right tables.RunRow) int {
+		return right.StartedAt.Compare(left.StartedAt)
+	})
+	published, resident := 0, 0
+
+	for _, run := range runs {
+		if run.ID == string(current) || resident >= budget {
+			continue
+		}
+
+		// Read whole and in capture order. A bounded read is not an option
+		// here: Iceberg plans files in its own order, so a row limit returns an
+		// arbitrary slice of the run rather than its next rows, and a cursor
+		// taken from one skips everything the planner did not reach.
+		observations, _, err := hindsight.ReadObservations(
+			ctx, catalog, hindsight.RunID(run.ID), 0,
+		)
+
+		if err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+		resident += len(observations)
+		tape.AddObservations(uint64(len(observations)))
+		tape.AddRuns(1)
+		recorded := hindsight.Query(
+			hindsight.Excursions, catalog, hindsight.RunID(run.ID), policy,
+		)
+		legs := recorded.MeasurementsFrom(observations)
+
+		if err := recorded.Error(); err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		// Each leg is published on its own. The reading after a move's last is
+		// not its successor, so a leg is the boundary the ring carries down to
+		// the agent, and handing them over one at a time is what lets a
+		// training begin on the first move recovered.
+		for _, leg := range legs {
+			if ctx.Err() != nil {
+				return
+			}
+
+			tape.Publish(leg)
+			published++
+		}
+	}
+
+	errnie.Info(fmt.Sprintf("training: %d recorded moves", published))
 }
 
 const rootLong = `
@@ -5732,9 +5883,8 @@ func (tape *Tape) Measurements() [][][]*data.Measurement[float64] {
 
 /*
 MeasurementsFrom derives the confirmed-move tape from observations already in
-hand. It is the same projection Measurements performs, split out so a bounded
-reader can accumulate pages and re-project them as each page arrives instead
-of waiting for a whole run to decode.
+hand. Discovery runs on those market facts; the numerical frames are then
+read from the precursor witnesses those facts name, in one scan of the run.
 */
 func (tape *Tape) MeasurementsFrom(
 	observations []Observation,
@@ -5766,7 +5916,7 @@ func (tape *Tape) measurements(
 	if len(excursions) == 0 {
 		return nil
 	}
-	payloads, err := tape.payloads(identities(excursions))
+	decoded, err := tape.decode(identities(excursions))
 
 	if err != nil {
 		tape.err = errnie.Error(err)
@@ -5775,8 +5925,8 @@ func (tape *Tape) measurements(
 	}
 	legs := make([][][]*data.Measurement[float64], 0, len(excursions))
 
-	for _, candidates := range excursions {
-		if leg := tape.frames(candidates, payloads); len(leg) > 0 {
+	for _, window := range excursions {
+		if leg := tape.frames(window, decoded); len(leg) > 0 {
 			legs = append(legs, leg)
 		}
 
@@ -5788,18 +5938,26 @@ func (tape *Tape) measurements(
 	return legs
 }
 
+/* excursionWindow is one move's captures plus the equal-length precursor and aftermath. */
+type excursionWindow struct {
+	captures []EnvelopeRef
+	anchor   EnvelopeRef
+	extremum EnvelopeRef
+	kind     EpisodeKind
+}
+
 /*
-excursions is each move's capture window, newest first, before any payload is
-read. Collecting the identities first is what lets the record be opened once
+excursions is each move's capture window, in capture order, before any payload
+is read. Collecting the identities first is what lets the record be opened once
 for the whole tape instead of once per capture.
 */
-func (tape *Tape) excursions(index *RunIndex, live bool) [][]EnvelopeRef {
-	collected := make([][]EnvelopeRef, 0)
+func (tape *Tape) excursions(index *RunIndex, live bool) []excursionWindow {
+	collected := make([]excursionWindow, 0)
 
 	for _, summary := range index.Summaries(tape.policy) {
 		for _, move := range index.Discover(summary.Symbol, tape.policy).Episodes {
-			if candidates := tape.candidates(index, summary.Symbol, move, live); len(candidates) > 0 {
-				collected = append(collected, candidates)
+			if window := tape.window(index, summary.Symbol, move, live); len(window.captures) > 0 {
+				collected = append(collected, window)
 			}
 		}
 	}
@@ -5808,14 +5966,17 @@ func (tape *Tape) excursions(index *RunIndex, live bool) [][]EnvelopeRef {
 }
 
 /*
-candidates is the instrument's own captures at or before one excursion's
-extremum. Historical callers pass live=false and only receive retraced
-(confirmed) moves; the live loader passes true so the current run's developing
-move is learned before its retracement has printed.
+window is the instrument's own captures covering one excursion: the move
+itself, the same length of tape before the anchor (the precursor), and the
+same length after the extremum (the retracement that confirmed it).
+
+Historical callers pass live=false and only receive retraced moves; the live
+loader passes true so the current run's developing move is learned before its
+retracement has printed.
 */
-func (tape *Tape) candidates(
+func (tape *Tape) window(
 	index *RunIndex, symbol string, move Episode, live bool,
-) []EnvelopeRef {
+) excursionWindow {
 	endpoint := ReferencePeak
 
 	switch move.Kind {
@@ -5823,25 +5984,31 @@ func (tape *Tape) candidates(
 	case EpisodeDownwardExcursion:
 		endpoint = ReferenceTrough
 	default:
-		return nil
+		return excursionWindow{}
 	}
-	reached, named := move.Reference(endpoint)
+	anchor, hasAnchor := move.Reference(ReferenceAnchor)
+	extremum, hasExtremum := move.Reference(endpoint)
 
-	if (!live && !move.Confirmed) || !named {
-		return nil
+	if (!live && !move.Confirmed) || !hasAnchor || !hasExtremum {
+		return excursionWindow{}
 	}
+	from := EnvelopeRef{Origin: anchor.Capture, Ordinal: anchor.Ordinal}
+	through := EnvelopeRef{Origin: extremum.Capture, Ordinal: extremum.Ordinal}
 
-	return index.CapturesBefore(symbol, EnvelopeRef{
-		Origin: reached.Capture, Ordinal: reached.Ordinal,
-	}, tape.reach())
+	return excursionWindow{
+		captures: index.CapturesAround(symbol, from, through),
+		anchor:   from,
+		extremum: through,
+		kind:     move.Kind,
+	}
 }
 
-func identities(excursions [][]EnvelopeRef) []tables.EnvelopeRefRow {
+func identities(excursions []excursionWindow) []tables.EnvelopeRefRow {
 	seen := make(map[tables.EnvelopeRefRow]struct{})
 	wanted := make([]tables.EnvelopeRefRow, 0)
 
-	for _, candidates := range excursions {
-		for _, candidate := range candidates {
+	for _, window := range excursions {
+		for _, candidate := range window.captures {
 			identity := envelopeRow(candidate)
 
 			if _, have := seen[identity]; have {
@@ -5864,48 +6031,66 @@ func envelopeRow(ref EnvelopeRef) tables.EnvelopeRefRow {
 }
 
 /*
-payloads is the numerical witness at each requested identity.
+decode reads the numerical witness at each requested identity.
 
-The dedicated tape is the precursor artifact, written at every envelope that
-held measurements. A coordinate that only has a sampled full-state witness
-still yields that state's measurements, because both payloads are EnvelopeState
-with LearningObservations. Missing identities stay missing.
+The dedicated tape is the precursor artifact. A coordinate that only has a
+sampled full-state witness still yields that state's measurements. Payload
+bytes are decoded in the scan and not retained.
 */
-func (tape *Tape) payloads(
+func (tape *Tape) decode(
 	wanted []tables.EnvelopeRefRow,
-) (map[tables.EnvelopeRefRow][]byte, error) {
-	payloads, err := tape.catalog.WitnessPayloads(
+) (map[tables.EnvelopeRefRow][]*data.Measurement[float64], error) {
+	held := make(map[tables.EnvelopeRefRow][]*data.Measurement[float64], len(wanted))
+	err := tape.catalog.EachWitnessPayload(
 		context.Background(), string(tape.run), "precursor", wanted,
+		func(identity tables.EnvelopeRefRow, payload []byte) error {
+			return keepMeasurements(held, identity, payload)
+		},
 	)
 
 	if err != nil {
 		return nil, err
 	}
-	missing := missingIdentities(wanted, payloads)
+	missing := missingIdentities(wanted, held)
 
 	if len(missing) == 0 {
-		return payloads, nil
+		return held, nil
 	}
-	states, err := tape.catalog.WitnessPayloads(
-		context.Background(), string(tape.run), "state", missing,
-	)
 
-	if err != nil {
+	if err := tape.catalog.EachWitnessPayload(
+		context.Background(), string(tape.run), "state", missing,
+		func(identity tables.EnvelopeRefRow, payload []byte) error {
+			return keepMeasurements(held, identity, payload)
+		},
+	); err != nil {
 		return nil, err
 	}
 
-	for identity, payload := range states {
-		if _, have := payloads[identity]; have {
-			continue
-		}
-		payloads[identity] = payload
+	return held, nil
+}
+
+func keepMeasurements(
+	held map[tables.EnvelopeRefRow][]*data.Measurement[float64],
+	identity tables.EnvelopeRefRow,
+	payload []byte,
+) error {
+	measurements, err := types.MeasurementsFromState(payload)
+
+	if err != nil {
+		return err
 	}
 
-	return payloads, nil
+	if len(measurements) == 0 {
+		return nil
+	}
+	held[identity] = measurements
+
+	return nil
 }
 
 func missingIdentities(
-	wanted []tables.EnvelopeRefRow, have map[tables.EnvelopeRefRow][]byte,
+	wanted []tables.EnvelopeRefRow,
+	have map[tables.EnvelopeRefRow][]*data.Measurement[float64],
 ) []tables.EnvelopeRefRow {
 	missing := make([]tables.EnvelopeRefRow, 0)
 
@@ -5920,54 +6105,65 @@ func missingIdentities(
 }
 
 /*
-frames is the readings held across one excursion, walked forwards.
+frames is the readings held across one excursion, in capture order.
 
-CapturesBefore returns newest first, so the walk is reversed to restore capture
-order. An identity the record stored no measurements for contributes no frame.
+An identity the record stored no measurements for contributes no frame. Each
+frame is named with the moment the move itself occupies: the precursor before
+the anchor, the run into the extremum, the extremum, and the aftermath.
 */
 func (tape *Tape) frames(
-	candidates []EnvelopeRef, payloads map[tables.EnvelopeRefRow][]byte,
+	window excursionWindow,
+	decoded map[tables.EnvelopeRefRow][]*data.Measurement[float64],
 ) [][]*data.Measurement[float64] {
-	held := make([][]*data.Measurement[float64], 0, len(candidates))
+	held := make([][]*data.Measurement[float64], 0, len(window.captures))
 
-	for at := len(candidates) - 1; at >= 0; at-- {
-		payload, stored := payloads[envelopeRow(candidates[at])]
+	for _, candidate := range window.captures {
+		measurements, stored := decoded[envelopeRow(candidate)]
 
-		if !stored {
+		if !stored || len(measurements) == 0 {
 			continue
 		}
-		measurements, err := types.MeasurementsFromState(payload)
-
-		if err != nil {
-			tape.err = errnie.Error(err)
-
-			return nil
-		}
-
-		if len(measurements) == 0 {
-			continue
-		}
+		stampMoment(measurements, momentAt(candidate, window.anchor, window.extremum, window.kind))
 		held = append(held, measurements)
 	}
 
 	return held
 }
 
-/* reach is how far back a move's readings are gathered from its extremum. */
-func (tape *Tape) reach() int {
-	if tape.Reach > 0 {
-		return tape.Reach
+func momentAt(candidate, anchor, extremum EnvelopeRef, kind EpisodeKind) string {
+	suffix := "_long"
+
+	if kind == EpisodeDownwardExcursion {
+		suffix = "_short"
 	}
 
-	return DefaultReach
+	if causalCmp(candidate, anchor) < 0 {
+		return "enter" + suffix
+	}
+
+	if causalCmp(candidate, extremum) < 0 {
+		return "hold" + suffix
+	}
+
+	if causalCmp(candidate, extremum) == 0 {
+		return "exit" + suffix
+	}
+
+	return "wait"
 }
 
-/*
-DefaultReach is how many of an instrument's own captures a move gathers when
-none is declared. It is a declared bound on the walk, reported with what it
-produced, not a claim about how long a move lasts.
-*/
-const DefaultReach = 256
+func stampMoment(measurements []*data.Measurement[float64], moment string) {
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if measurement.Provenance == nil {
+			measurement.Provenance = make(map[string]string, 1)
+		}
+		measurement.Provenance["moment"] = moment
+	}
+}
 
 /* Error exposes what the record refused, if anything. */
 func (tape *Tape) Error() error { return tape.err }
@@ -6196,6 +6392,13 @@ enqueue is called with mutex held. The caller has already converted its record
 into a row of value types, so nothing mutable crosses into the queue and the
 persist goroutine never observes a producer's later edits.
 */
+func (session *Session) Failed() bool {
+	session.mutex.Lock()
+	defer session.mutex.Unlock()
+
+	return session.err != nil
+}
+
 func (session *Session) enqueue(family string, row any) error {
 	if session.err != nil {
 		return session.err
@@ -6436,7 +6639,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/types"
@@ -6456,14 +6658,7 @@ func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
 		Ordinal: envelope.CaptureOrdinal,
 	}
 
-	if payload := envelope.EncodePrecursor(); len(payload) > 0 {
-		node.record(hindsight.ArtifactWitness{
-			Envelope: ref, Boundary: "after-logic",
-			Artifact: hindsight.ArtifactID{Kind: "precursor", Identity: string(ref.Origin.Run) + ":" +
-				strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10)},
-			Payload: payload,
-		})
-	}
+	node.recordPrecursor(ref, envelope)
 
 	if !node.shouldWitness(envelope) {
 		return envelope
@@ -6488,6 +6683,26 @@ func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+func (node *Session) recordPrecursor(ref hindsight.EnvelopeRef, envelope *types.Envelope) {
+	switch envelope.TypeID {
+	case types.EnvelopeLevel3, types.EnvelopeManifold:
+		return
+	}
+
+	payload := envelope.EncodePrecursor()
+
+	if len(payload) == 0 {
+		return
+	}
+
+	node.record(hindsight.ArtifactWitness{
+		Envelope: ref, Boundary: "after-logic",
+		Artifact: hindsight.ArtifactID{Kind: "precursor", Identity: string(ref.Origin.Run) + ":" +
+			strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10)},
+		Payload: payload,
+	})
 }
 
 func (node *Session) shouldWitness(envelope *types.Envelope) bool {
@@ -6611,7 +6826,7 @@ func (node *Session) record(witness hindsight.ArtifactWitness) {
 	}
 
 	if err := node.enqueue(tables.Witnesses, row); err != nil {
-		errnie.Error(err)
+		return
 	}
 }
 
@@ -7224,6 +7439,32 @@ func timestamp(builder *array.TimestampBuilder, value time.Time) {
 	builder.Append(arrow.Timestamp(value.UTC().UnixMicro()))
 }
 
+var (
+	ten        = big.NewInt(10)
+	pow10Table = func() [39]*big.Int {
+		var table [39]*big.Int
+
+		for exp := int64(0); exp <= 38; exp++ {
+			table[exp] = new(big.Int).Exp(ten, big.NewInt(exp), nil)
+		}
+
+		return table
+	}()
+)
+
+/*
+pow10 is 10^exp for Iceberg decimal rescale. Exponents that fit the column's
+precision (0 through 38) are the precomputed table; anything else is the same
+identity computed on the spot, never a silent no-op.
+*/
+func pow10(exp int64) *big.Int {
+	if exp >= 0 && exp <= 38 {
+		return pow10Table[exp]
+	}
+
+	return new(big.Int).Exp(ten, big.NewInt(exp), nil)
+}
+
 /*
 money encodes a Kraken decimal into a fixed-scale Iceberg decimal.
 
@@ -7239,17 +7480,15 @@ func money(builder *array.Decimal128Builder, value *decimal.Decimal) {
 		return
 	}
 
-	unscaled := new(big.Int).Set(value.RawBigInt())
 	shift := DecimalScale - value.GetScale()
-
-	if shift < 0 {
-		// Scale exceeds the column's. Divide rather than silently emit a value
-		// that is 10^-shift times too large.
-		unscaled.Quo(unscaled, new(big.Int).Exp(big.NewInt(10), big.NewInt(-shift), nil))
-	}
+	unscaled := new(big.Int).Set(value.RawBigInt())
 
 	if shift > 0 {
-		unscaled.Mul(unscaled, new(big.Int).Exp(big.NewInt(10), big.NewInt(shift), nil))
+		unscaled.Mul(unscaled, pow10(shift))
+	}
+
+	if shift < 0 {
+		unscaled.Quo(unscaled, pow10(-shift))
 	}
 
 	builder.Append(decimal128.FromBigInt(unscaled))
@@ -7273,6 +7512,43 @@ func envelope(builder *array.StructBuilder, ref EnvelopeRefRow) {
 	builder.FieldBuilder(0).(*array.StringBuilder).Append(ref.Run)
 	builder.FieldBuilder(1).(*array.Int64Builder).Append(ref.Sequence)
 	builder.FieldBuilder(2).(*array.Int64Builder).Append(ref.Ordinal)
+}
+
+/*
+span is the next row range whose binary payloads fit in limit bytes and inside
+Arrow Binary's signed 32-bit offsets. A single row larger than the ceiling is
+still one span: a row cannot be split. limit 0 means only the Arrow ceiling.
+*/
+func span(start, count, limit int, payloadSize func(int) int) (int, int, error) {
+	ceiling := math.MaxInt32
+
+	if limit > 0 && limit < ceiling {
+		ceiling = limit
+	}
+
+	end, size := start, 0
+
+	for end < count {
+		length := 0
+
+		if payloadSize != nil {
+			length = payloadSize(end)
+		}
+
+		if length > math.MaxInt32 {
+			return start, 0, errnie.Error(errnie.Err(errnie.Validation,
+				"[iceberg] one payload exceeds Arrow Binary's signed 32-bit offset limit", nil))
+		}
+
+		if size > 0 && length > ceiling-size {
+			break
+		}
+
+		size += length
+		end++
+	}
+
+	return end, size, nil
 }
 
 /*
@@ -7300,26 +7576,12 @@ func records(
 	}()
 
 	for start := 0; start < count; {
-		end, size := start, 0
+		end, _, err := span(start, count, math.MaxInt32, payloadSize)
 
-		for end < count {
-			length := 0
-
-			if payloadSize != nil {
-				length = payloadSize(end)
-			}
-
-			if length > math.MaxInt32 {
-				return nil, errnie.Error(errnie.Err(errnie.Validation,
-					"[iceberg] one payload exceeds Arrow Binary's signed 32-bit offset limit", nil))
-			}
-
-			if length > math.MaxInt32-size {
-				break
-			}
-			size += length
-			end++
+		if err != nil {
+			return nil, err
 		}
+
 		builder.Reserve(end - start)
 		fill(builder, start, end)
 		batches = append(batches, builder.NewRecord())
@@ -7864,6 +8126,7 @@ func (catalog *Catalog) scan(
 			// A column chunk bounds one flat payload, including dictionary
 			// entries. It does not bound a decoded batch of repeated entries.
 			batchSize = min(batchSize, max(1, math.MaxInt32/bound))
+			break
 		}
 	}
 
@@ -7950,6 +8213,15 @@ func bin(column arrow.Array, row int) []byte {
 	}
 
 	return bytes.Clone(column.(*array.Binary).Value(row))
+}
+
+// rawBin borrows the Arrow binary value. Valid only until the batch is released.
+func rawBin(column arrow.Array, row int) []byte {
+	if column.IsNull(row) {
+		return nil
+	}
+
+	return column.(*array.Binary).Value(row)
 }
 
 /*
@@ -8927,7 +9199,9 @@ File: /hindsight/tables/selection.go
 package tables
 
 import (
+	"bytes"
 	"context"
+
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
 	"github.com/theapemachine/errnie"
@@ -9014,8 +9288,29 @@ func (catalog *Catalog) WitnessPayloads(
 ) (map[EnvelopeRefRow][]byte, error) {
 	payloads := make(map[EnvelopeRefRow][]byte, len(wanted))
 
+	if err := catalog.EachWitnessPayload(ctx, run, kind, wanted, func(identity EnvelopeRefRow, payload []byte) error {
+		payloads[identity] = bytes.Clone(payload)
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return payloads, nil
+}
+
+/*
+EachWitnessPayload visits matching witness payloads without retaining them.
+
+The payload slice is borrowed from the Arrow batch and is invalid after visit
+returns. Callers that need the bytes must copy them inside visit.
+*/
+func (catalog *Catalog) EachWitnessPayload(
+	ctx context.Context, run, kind string, wanted []EnvelopeRefRow,
+	visit func(EnvelopeRefRow, []byte) error,
+) error {
 	if len(wanted) == 0 {
-		return payloads, nil
+		return nil
 	}
 	requested := make(map[EnvelopeRefRow]struct{}, len(wanted))
 
@@ -9027,18 +9322,26 @@ func (catalog *Catalog) WitnessPayloads(
 	if kind != "" {
 		filters = append(filters, iceberg.EqualTo(iceberg.Reference("artifact_kind"), kind))
 	}
-	batches, err := catalog.scan(ctx, Witnesses, nil, filters...)
+	batches, err := catalog.scan(ctx, Witnesses, []string{"envelope", "payload"}, filters...)
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	for batch, err := range batches {
 		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] witnesses batch", err))
+			return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] witnesses batch", err))
 		}
-		envelope := batch.Column(1)
-		payload := batch.Column(11)
+		envelope, err := named(batch, "envelope")
+
+		if err != nil {
+			return err
+		}
+		payload, err := named(batch, "payload")
+
+		if err != nil {
+			return err
+		}
 
 		for index := range int(batch.NumRows()) {
 			identity := ref(envelope, index)
@@ -9046,16 +9349,33 @@ func (catalog *Catalog) WitnessPayloads(
 			if _, known := requested[identity]; !known {
 				continue
 			}
-			held := bin(payload, index)
+			held := rawBin(payload, index)
 
 			if len(held) == 0 {
 				continue
 			}
-			payloads[identity] = held
+
+			if err := visit(identity, held); err != nil {
+				return err
+			}
 		}
 	}
 
-	return payloads, nil
+	return nil
+}
+
+func named(batch arrow.RecordBatch, name string) (arrow.Array, error) {
+	for index, field := range batch.Schema().Fields() {
+		if field.Name == name {
+			return batch.Column(index), nil
+		}
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"[iceberg] witnesses column "+name+" missing from projection",
+		nil,
+	))
 }
 
 // CaptureReferences batches exact identity/time joins without copying raw payloads.
@@ -9191,6 +9511,7 @@ import (
 	"sync"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
@@ -9198,26 +9519,33 @@ import (
 Writer accumulates rows per record family and commits them as Iceberg appends.
 
 Every append is a snapshot plus a metadata write, so rows are buffered rather
-than written as they arrive: one commit covers a whole batch across every
-family it touched. Callers decide the cadence; this type only guarantees that
-what it holds is written exactly once and in arrival order within a family.
+than written as they arrive. Callers decide the cadence; this type guarantees
+that a family is cleared only after its rows have been appended, that a
+payload bound keeps each snapshot inside the catalog's HTTP/object timeout,
+and that a family which never reached the catalog is still here afterwards.
 */
 type Writer struct {
 	catalog *Catalog
 
-	mutex     sync.Mutex
-	runs      []RunRow
-	captures  []CaptureRow
-	manifests []ManifestRow
-	witnesses []WitnessRow
-	lifecycle []LifecycleRow
-	decisions []OutcomeRow
-	outcomes  []OutcomeRow
-	gaps      []GapRow
+	mutex       sync.Mutex
+	appendBytes int
+	runs        []RunRow
+	captures    []CaptureRow
+	manifests   []ManifestRow
+	witnesses   []WitnessRow
+	lifecycle   []LifecycleRow
+	decisions   []OutcomeRow
+	outcomes    []OutcomeRow
+	gaps        []GapRow
 }
 
 // NewWriter returns a Writer appending into the given catalog.
-func NewWriter(catalog *Catalog) *Writer { return &Writer{catalog: catalog} }
+func NewWriter(catalog *Catalog) *Writer {
+	return &Writer{
+		catalog:     catalog,
+		appendBytes: viper.GetInt("storage.iceberg.append_bytes"),
+	}
+}
 
 // AddRun buffers one process capture session.
 func (w *Writer) AddRun(row RunRow) {
@@ -9286,97 +9614,127 @@ func (w *Writer) Pending() int {
 }
 
 /*
-Commit appends every buffered family and clears what it wrote.
+Commit appends every buffered family, one family at a time.
 
-The buffers are detached under the lock and written outside it, so producers
-are never blocked on S3. A family that fails leaves the remaining families
-unattempted and its own rows detached. Iceberg retries explicit commit conflicts
-using the table's configured budget. Other failures can have unknown commit
-outcomes; retrying the whole batch here could duplicate successful families.
+A family is detached only for the append, and only the suffix that has not
+been acknowledged is restored. Earlier families that already committed stay
+committed. Iceberg retries explicit commit conflicts using the table's
+configured budget. A timeout or other unknown outcome on a snapshot that was
+already sent is not retried here: repeating it could duplicate that snapshot.
 */
 func (w *Writer) Commit(ctx context.Context) error {
+	if w.appendBytes < 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[iceberg] append_bytes must be nonnegative",
+			nil,
+		))
+	}
+
+	if err := commitFamily(w, ctx, Runs,
+		func() []RunRow { rows := w.runs; w.runs = nil; return rows },
+		func(rows []RunRow) { w.runs = append(rows, w.runs...) },
+		nil, fillRuns,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Captures,
+		func() []CaptureRow { rows := w.captures; w.captures = nil; return rows },
+		func(rows []CaptureRow) { w.captures = append(rows, w.captures...) },
+		func(row CaptureRow) int { return len(row.Payload) },
+		fillCaptures,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Manifests,
+		func() []ManifestRow { rows := w.manifests; w.manifests = nil; return rows },
+		func(rows []ManifestRow) { w.manifests = append(rows, w.manifests...) },
+		nil, fillManifests,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Witnesses,
+		func() []WitnessRow { rows := w.witnesses; w.witnesses = nil; return rows },
+		func(rows []WitnessRow) { w.witnesses = append(rows, w.witnesses...) },
+		func(row WitnessRow) int { return len(row.Payload) },
+		fillWitnesses,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Lifecycle,
+		func() []LifecycleRow { rows := w.lifecycle; w.lifecycle = nil; return rows },
+		func(rows []LifecycleRow) { w.lifecycle = append(rows, w.lifecycle...) },
+		nil, fillLifecycle,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Decisions,
+		func() []OutcomeRow { rows := w.decisions; w.decisions = nil; return rows },
+		func(rows []OutcomeRow) { w.decisions = append(rows, w.decisions...) },
+		nil, fillOutcomes,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Outcomes,
+		func() []OutcomeRow { rows := w.outcomes; w.outcomes = nil; return rows },
+		func(rows []OutcomeRow) { w.outcomes = append(rows, w.outcomes...) },
+		nil, fillOutcomes,
+	); err != nil {
+		return err
+	}
+
+	return commitFamily(w, ctx, Gaps,
+		func() []GapRow { rows := w.gaps; w.gaps = nil; return rows },
+		func(rows []GapRow) { w.gaps = append(rows, w.gaps...) },
+		nil, fillGaps,
+	)
+}
+
+func commitFamily[T any](
+	w *Writer,
+	ctx context.Context,
+	name string,
+	take func() []T,
+	put func([]T),
+	payload func(T) int,
+	fill func(*array.RecordBuilder, []T),
+) error {
 	w.mutex.Lock()
-	runs, captures, manifests := w.runs, w.captures, w.manifests
-	witnesses, lifecycle, outcomes := w.witnesses, w.lifecycle, w.outcomes
-	decisions, gaps := w.decisions, w.gaps
-	w.runs, w.captures, w.manifests = nil, nil, nil
-	w.witnesses, w.lifecycle, w.outcomes = nil, nil, nil
-	w.decisions, w.gaps = nil, nil
+	rows := take()
 	w.mutex.Unlock()
 
-	if len(runs) > 0 {
-		if err := w.append(ctx, Runs, nil, len(runs), func(builder *array.RecordBuilder, start, end int) {
-			fillRuns(builder, runs[start:end])
-		}); err != nil {
-			return err
-		}
+	if len(rows) == 0 {
+		return nil
 	}
 
-	if len(captures) > 0 {
-		if err := w.append(ctx, Captures,
-			func(index int) int { return len(captures[index].Payload) }, len(captures),
-			func(builder *array.RecordBuilder, start, end int) {
-				fillCaptures(builder, captures[start:end])
-			}); err != nil {
-			return err
-		}
+	var sizeOf func(int) int
+
+	if payload != nil {
+		sizeOf = func(index int) int { return payload(rows[index]) }
 	}
 
-	if len(manifests) > 0 {
-		if err := w.append(ctx, Manifests, nil, len(manifests), func(builder *array.RecordBuilder, start, end int) {
-			fillManifests(builder, manifests[start:end])
-		}); err != nil {
-			return err
-		}
+	committed, err := w.append(ctx, name, sizeOf, len(rows), func(builder *array.RecordBuilder, start, end int) {
+		fill(builder, rows[start:end])
+	})
+
+	if committed < len(rows) {
+		w.mutex.Lock()
+		put(rows[committed:])
+		w.mutex.Unlock()
 	}
 
-	if len(witnesses) > 0 {
-		if err := w.append(ctx, Witnesses,
-			func(index int) int { return len(witnesses[index].Payload) }, len(witnesses),
-			func(builder *array.RecordBuilder, start, end int) {
-				fillWitnesses(builder, witnesses[start:end])
-			}); err != nil {
-			return err
-		}
-	}
-
-	if len(lifecycle) > 0 {
-		if err := w.append(ctx, Lifecycle, nil, len(lifecycle), func(builder *array.RecordBuilder, start, end int) {
-			fillLifecycle(builder, lifecycle[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	if len(decisions) > 0 {
-		if err := w.append(ctx, Decisions, nil, len(decisions), func(builder *array.RecordBuilder, start, end int) {
-			fillOutcomes(builder, decisions[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	if len(outcomes) > 0 {
-		if err := w.append(ctx, Outcomes, nil, len(outcomes), func(builder *array.RecordBuilder, start, end int) {
-			fillOutcomes(builder, outcomes[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	if len(gaps) > 0 {
-		if err := w.append(ctx, Gaps, nil, len(gaps), func(builder *array.RecordBuilder, start, end int) {
-			fillGaps(builder, gaps[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return err
 }
 
 /*
-append writes one family's rows as a single Iceberg snapshot.
+append writes one family's rows as successive Iceberg snapshots, each small
+enough for the catalog HTTP call to finish.
 
 The record is built from the loaded table's schema, not from the local schema
 literal. A catalog assigns its own field IDs when it creates a table, and the
@@ -9390,30 +9748,71 @@ func (w *Writer) append(
 	payloadSize func(int) int,
 	count int,
 	fill func(*array.RecordBuilder, int, int),
-) error {
+) (int, error) {
+	committed := 0
+
+	for committed < count {
+		end, _, err := span(committed, count, w.appendBytes, payloadSize)
+
+		if err != nil {
+			return committed, err
+		}
+
+		sent, err := w.appendRange(ctx, name, payloadSize, committed, end, fill)
+
+		if err != nil {
+			if sent {
+				return end, err
+			}
+
+			return committed, err
+		}
+
+		committed = end
+	}
+
+	return committed, nil
+}
+
+func (w *Writer) appendRange(
+	ctx context.Context,
+	name string,
+	payloadSize func(int) int,
+	start, end int,
+	fill func(*array.RecordBuilder, int, int),
+) (bool, error) {
 	loaded, err := w.catalog.Load(ctx, name)
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	reader, err := records(loaded.Schema(), count, payloadSize, fill)
+	count := end - start
+	var sizeOf func(int) int
+
+	if payloadSize != nil {
+		sizeOf = func(index int) int { return payloadSize(start + index) }
+	}
+
+	reader, err := records(loaded.Schema(), count, sizeOf, func(builder *array.RecordBuilder, from, to int) {
+		fill(builder, start+from, start+to)
+	})
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	defer reader.Release()
 
 	if _, err := loaded.Append(ctx, reader, nil); err != nil {
-		return errnie.Error(errnie.Err(
+		return true, errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to append to "+name,
 			err,
 		))
 	}
 
-	return nil
+	return true, nil
 }
 
 ---
@@ -9492,9 +9891,7 @@ type Tape struct {
 	// comparison, so it survives compaction rewriting the underlying files.
 	LastSequence int64
 	// Retrace overrides DefaultRetraceFraction when set in (0, 1).
-	Retrace float64
-	// Reach overrides DefaultReach: how far back a move's readings are gathered.
-	Reach    int
+	Retrace  float64
 	points   map[string]*tapePoint
 	selector Selector
 	catalog  *tables.Catalog
@@ -10074,11 +10471,27 @@ envelope on the same raw capture with a greater ordinal was produced by that
 same capture and is future with respect to the target, never a predecessor.
 */
 func causalAfter(candidate, target EnvelopeRef) bool {
-	if candidate.Origin.Sequence != target.Origin.Sequence {
-		return candidate.Origin.Sequence > target.Origin.Sequence
+	return causalCmp(candidate, target) > 0
+}
+
+func causalCmp(left, right EnvelopeRef) int {
+	if left.Origin.Sequence != right.Origin.Sequence {
+		if left.Origin.Sequence < right.Origin.Sequence {
+			return -1
+		}
+
+		return 1
 	}
 
-	return candidate.Ordinal > target.Ordinal
+	if left.Ordinal < right.Ordinal {
+		return -1
+	}
+
+	if left.Ordinal > right.Ordinal {
+		return 1
+	}
+
+	return 0
 }
 
 /*
@@ -10121,6 +10534,64 @@ func (index *RunIndex) CapturesBefore(
 		if len(refs) >= limit {
 			break
 		}
+	}
+
+	return refs
+}
+
+/*
+CapturesAround returns one instrument's envelopes covering a confirmed move
+and the same length of tape on either side, in capture order.
+
+The lookback and aftermath are the move's own span: as many of the instrument's
+captures as the excursion itself occupied. That is the precursor the move
+emerged from and the retracement that made it observable, not a declared
+reach into quiet tape.
+*/
+func (index *RunIndex) CapturesAround(
+	symbol string,
+	from, through EnvelopeRef,
+) []EnvelopeRef {
+	observations := index.symbols[symbol]
+	start, end := -1, -1
+
+	for position, observation := range observations {
+		ref := EnvelopeRef{
+			Origin:  observation.Capture,
+			Ordinal: observation.Ordinal,
+		}
+
+		if start < 0 && causalCmp(ref, from) >= 0 {
+			start = position
+		}
+
+		if causalCmp(ref, through) <= 0 {
+			end = position
+		}
+	}
+
+	if start < 0 || end < 0 || end < start {
+		return nil
+	}
+	span := end - start + 1
+	fromIdx := start - span
+
+	if fromIdx < 0 {
+		fromIdx = 0
+	}
+	toIdx := end + span
+
+	if toIdx >= len(observations) {
+		toIdx = len(observations) - 1
+	}
+	refs := make([]EnvelopeRef, 0, toIdx-fromIdx+1)
+
+	for position := fromIdx; position <= toIdx; position++ {
+		observation := observations[position]
+		refs = append(refs, EnvelopeRef{
+			Origin:  observation.Capture,
+			Ordinal: observation.Ordinal,
+		})
 	}
 
 	return refs
@@ -18482,10 +18953,26 @@ func (solver *Solver) stepMeasurements(
 			state = solver.symbolState(symbol)
 		}
 
-		if measurement.Symbol() != symbol || !measurement.At.Equal(at) {
-			solver.fail("category: envelope requires one symbol and event time", nil)
+		if measurement.Symbol() != symbol {
+			solver.fail("category: envelope requires one symbol", nil)
 
 			return nil
+		}
+
+		diff := measurement.At.Sub(at)
+
+		if diff < 0 {
+			diff = -diff
+		}
+
+		if diff > 100*time.Millisecond {
+			solver.fail("category: envelope requires consistent event time", nil)
+
+			return nil
+		}
+
+		if measurement.At.After(at) {
+			at = measurement.At
 		}
 	}
 
@@ -18597,10 +19084,13 @@ func (solver *Solver) accumulateLocked(
 			affinity = *sample.Normalized
 		}
 
-		if affinity <= 0 {
-			// A non-positive affinity provides no positive support. It is
-			// still a current reading of the coordinate, so it must not be
-			// left as a stale positive vote; drop the coordinate.
+		if affinity < 0 {
+			affinity = math.Abs(affinity)
+		}
+
+		if affinity == 0 {
+			// Zero affinity provides no positive support. It is still a current reading
+			// of the coordinate, so drop any prior vote.
 			delete(state.coordinates, key)
 
 			continue
@@ -18912,6 +19402,7 @@ import (
 )
 
 type symbolCognitionState struct {
+	mu            sync.RWMutex
 	activeTokens  []string
 	activeRegime  types.Category
 	reading       types.Cognition
@@ -19093,6 +19584,8 @@ func (solver *Solver) processBatch(
 
 	at := categories[0].At
 	state := solver.getSymbolState(symbol)
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
 	// Select the dominant category for this symbol on this observation.
 	dominantCategory := solver.selectDominantCategory(categories)
@@ -19113,6 +19606,35 @@ func (solver *Solver) processBatch(
 	}
 
 	transitionOrdinal := solver.tickCounter.Add(1)
+	consolidating := false
+
+	if transitionOrdinal%128 == 0 {
+		consolidating = true
+		solver.treeMu.Lock()
+		outcome := solver.tree.ExecuteREMSleepConsolidation(0, transitionOrdinal)
+		discrim := solver.tree.ExtractDiscriminativeSymbols(16)
+		solver.treeMu.Unlock()
+
+		solver.remOutcome = outcome
+		solver.remThrough = at
+
+		if solver.remFrom.IsZero() {
+			solver.remFrom = at
+		}
+
+		symbols := make([]types.CognitionSymbol, 0, len(discrim))
+
+		for _, item := range discrim {
+			symbols = append(symbols, types.CognitionSymbol{
+				Symbol: solver.decodeCategoryPath(item.Symbol),
+				Class:  string(item.Class),
+				Score:  item.Score,
+				Purity: item.Purity,
+			})
+		}
+
+		solver.symbols = symbols
+	}
 
 	// 2. Evaluate if appending this category causes a Sequence Break
 	broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
@@ -19353,7 +19875,7 @@ func (solver *Solver) processBatch(
 		// below, so "consolidating" is true only for the reading
 		// published on the very tick that triggered it — every other
 		// tick reports the awake state between passes.
-		REMConsolidating: false,
+		REMConsolidating: consolidating,
 	}
 
 	state.reading = cognition
@@ -19551,42 +20073,15 @@ func (solver *Solver) selectRegime(
 }
 
 func isRegimeCategory(category types.CategoryType) bool {
-	switch category {
-	case types.CategoryTurbulent,
-		types.CategoryOrganicTrend,
-		types.CategoryAggressiveDrive,
-		types.CategoryVolumeStarvation,
-		types.CategoryStochasticBalance:
-		return true
-	default:
-		return false
-	}
+	return category != types.CategoryTypeNone
 }
 
 func regimeName(category types.CategoryType) string {
-	switch category {
-	case types.CategoryTurbulent:
-		return "volatility"
-	case types.CategoryOrganicTrend:
-		return "trend"
-	case types.CategoryAggressiveDrive:
-		return "drive"
-	case types.CategoryVolumeStarvation:
-		return "starved"
-	case types.CategoryStochasticBalance:
-		return "chop"
-	default:
-		return ""
-	}
+	return string(category)
 }
 
 func isRegimeName(name string) bool {
-	switch name {
-	case "volatility", "trend", "drive", "starved", "chop":
-		return true
-	default:
-		return false
-	}
+	return name != "" && name != string(types.CategoryTypeNone)
 }
 
 func (solver *Solver) regimeClasses(
@@ -19908,6 +20403,23 @@ Close cleans up the solver.
 func (solver *Solver) Close() error {
 	solver.cancel()
 	return nil
+}
+
+/*
+Reading returns the freshest cognition reading for a symbol in a thread-safe manner.
+*/
+func (solver *Solver) Reading(symbol string) (types.Cognition, bool) {
+	loaded, found := solver.states.Load(symbol)
+
+	if !found {
+		return types.Cognition{}, false
+	}
+
+	state := loaded.(*symbolCognitionState)
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	return state.reading, state.hasReading
 }
 
 ---
@@ -20487,6 +20999,18 @@ type Solver struct {
 
 	wake chan struct{}
 
+	// dirty names the symbols whose books moved since the last advance. The
+	// Level3 stream is a semaphore per symbol, so a full-market recopy is only
+	// required when that set is empty (a direct Advance, or a wake with no
+	// identity). Production ingress always marks the symbol before waking.
+	dirtyMu sync.Mutex
+	dirty   map[string]struct{}
+
+	// booksHeld is the last copied resting orders per symbol. The advance
+	// goroutine owns it: a dirty symbol is recopied into the same backing
+	// arrays, a quiet symbol is projected from what it already holds.
+	booksHeld map[string]heldBook
+
 	// loaded is the set of ContentIDs the physics domain holds, and dataset is
 	// the projector. Both are touched only by the advance goroutine, which is
 	// the whole point of reading the book instead of a message stream: there is
@@ -20525,6 +21049,14 @@ are the live books themselves, and walking one outside Book's lock is a race.
 type BookSource interface {
 	Books() *sync.Map
 	Book(symbol string, read func(*spotbook.Book))
+}
+
+/*
+heldBook is one symbol's last copied resting orders.
+*/
+type heldBook struct {
+	bids []restingOrder
+	asks []restingOrder
 }
 
 /*
@@ -20569,13 +21101,15 @@ func NewSolver(ctx context.Context) *Solver {
 	dataset := NewDataset()
 
 	solver := &Solver{
-		ctx:     ctx,
-		cancel:  cancel,
-		status:  runtime.NewStatus(),
-		dataset: dataset,
-		forcing: make(map[string]forcingState),
-		loaded:  make(map[int64]struct{}),
-		wake:    make(chan struct{}, 1),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    runtime.NewStatus(),
+		dataset:   dataset,
+		forcing:   make(map[string]forcingState),
+		loaded:    make(map[int64]struct{}),
+		dirty:     make(map[string]struct{}),
+		booksHeld: make(map[string]heldBook),
+		wake:      make(chan struct{}, 1),
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
 			system.Cfg.Manifold.Grid.Y,
@@ -20617,6 +21151,13 @@ costs resolution — more messages fold into one advance — never latency on th
 market pipeline and never an unbounded backlog.
 */
 func (solver *Solver) run() {
+	pause := time.NewTimer(0)
+
+	if !pause.Stop() {
+		<-pause.C
+	}
+	defer pause.Stop()
+
 	for {
 		select {
 		case <-solver.ctx.Done():
@@ -20624,7 +21165,35 @@ func (solver *Solver) run() {
 		case <-solver.wake:
 		}
 
+		started := time.Now()
 		solver.Advance()
+		spent := time.Since(started)
+
+		// A wake that arrived during the step is work still pending. Put it
+		// back and wait the duration the GPU actually occupied so the next
+		// field step cannot start before the previous one finished. An empty
+		// step already saw the books — dropping the extra wake avoids a
+		// tight loop. An idle stream waits on the next semaphore.
+		select {
+		case <-solver.wake:
+			if spent <= 0 {
+				continue
+			}
+
+			select {
+			case solver.wake <- struct{}{}:
+			default:
+			}
+
+			pause.Reset(spent)
+
+			select {
+			case <-solver.ctx.Done():
+				return
+			case <-pause.C:
+			}
+		default:
+		}
 	}
 }
 
@@ -20699,12 +21268,14 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		// itself. Every message between two advances collapses into the one
 		// book state the next advance sees, which is what makes a field far
 		// slower than the firehose feeding it a non-problem.
+		solver.markDirty(envelope.Symbol())
+
 		select {
 		case solver.wake <- struct{}{}:
 		default:
 		}
 
-		envelope.Manifold = solver.Reading()
+		envelope.Manifold = solver.liveReading()
 
 		return envelope
 	}
@@ -20782,6 +21353,29 @@ only creates something that can disagree with it.
 The venue's lock is held for the copy of each symbol's orders and released
 before they are projected, so a book writer never waits on the projection math.
 */
+func (solver *Solver) markDirty(symbol string) {
+	if symbol == "" {
+		return
+	}
+
+	solver.dirtyMu.Lock()
+
+	if solver.dirty == nil {
+		solver.dirty = make(map[string]struct{})
+	}
+	solver.dirty[symbol] = struct{}{}
+	solver.dirtyMu.Unlock()
+}
+
+func (solver *Solver) takeDirty() map[string]struct{} {
+	solver.dirtyMu.Lock()
+	held := solver.dirty
+	solver.dirty = make(map[string]struct{})
+	solver.dirtyMu.Unlock()
+
+	return held
+}
+
 func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 	if solver.books == nil {
 		return nil, nil
@@ -20795,24 +21389,36 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		return nil, nil
 	}
 
+	if solver.booksHeld == nil {
+		solver.booksHeld = make(map[string]heldBook)
+	}
+	dirty := solver.takeDirty()
+	refresh := len(dirty) == 0
+	present := make(map[string]struct{})
+
 	symbols.Range(func(key, _ any) bool {
 		symbol, ok := key.(string)
 
 		if !ok || symbol == "" {
 			return true
 		}
-
+		present[symbol] = struct{}{}
 		solver.forcingMu.RLock()
 		forcing := solver.latestForcing(symbol)
 		solver.forcingMu.RUnlock()
+		held := solver.booksHeld[symbol]
+		_, moved := dirty[symbol]
 
-		bids, asks := solver.readBook(symbol)
+		if refresh || moved || (len(held.bids) == 0 && len(held.asks) == 0) {
+			held.bids, held.asks = solver.readBook(symbol, held.bids, held.asks)
+			solver.booksHeld[symbol] = held
+		}
 
-		if len(bids) == 0 && len(asks) == 0 {
+		if len(held.bids) == 0 && len(held.asks) == 0 {
 			return true
 		}
 
-		for state := range solver.dataset.Step(symbol, bids, asks, forcing) {
+		for state := range solver.dataset.Step(symbol, held.bids, held.asks, forcing) {
 			if state == nil || state.N != 1 {
 				sensorium.StatePool.Put(state)
 				continue
@@ -20824,6 +21430,14 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 
 		return true
 	})
+
+	for symbol := range solver.booksHeld {
+		if _, still := present[symbol]; still {
+			continue
+		}
+
+		delete(solver.booksHeld, symbol)
+	}
 
 	if solver.dataset.Error() != nil {
 		for _, state := range states {
@@ -20855,7 +21469,9 @@ readBook copies one symbol's resting orders out from under the venue's read
 lock. Only the identity, price and size cross out: the projection runs on the
 copy, never inside the callback.
 */
-func (solver *Solver) readBook(symbol string) (bids, asks []restingOrder) {
+func (solver *Solver) readBook(symbol string, bids, asks []restingOrder) ([]restingOrder, []restingOrder) {
+	bids = bids[:0]
+	asks = asks[:0]
 	solver.books.Book(symbol, func(managed *spotbook.Book) {
 		if managed == nil {
 			return
@@ -20960,7 +21576,6 @@ func collectStates(states []*sensorium.State) *sensorium.State {
 		batch.Vel[index*3+2] = state.Vel[2]
 		batch.Clamped[index] = state.Clamped[0]
 		batch.Dark[index] = state.Dark[0]
-
 		sensorium.StatePool.Put(state)
 	}
 
@@ -21066,6 +21681,25 @@ func (solver *Solver) Reading() *State {
 }
 
 /*
+liveReading is the scalar field an L3 envelope may carry: version, time, and
+the producer reading. Particle arrays and Eulerian grids stay on the advance
+snapshot. Attaching them to every Level3 message is what packed the Iceberg
+state witness with the whole book on every tick.
+*/
+func (solver *Solver) liveReading() *State {
+	held := solver.reading.Load()
+
+	if held == nil {
+		return nil
+	}
+
+	return &State{
+		At: held.At, Version: held.Version,
+		Reading: held.Reading, Modes: held.Modes,
+	}
+}
+
+/*
 publish materializes the resident particles and fields into an envelope of their
 own and hands it to the viewer. The snapshot is only taken when a viewer is
 attached and its transport is ready for another frame, so a run nobody is
@@ -21106,7 +21740,7 @@ func (solver *Solver) Crystallize(
 		return nil, nil
 	}
 
-	bids, asks := solver.readBook(symbol)
+	bids, asks := solver.readBook(symbol, nil, nil)
 	states := make([]*sensorium.State, 0, len(bids)+len(asks))
 
 	for state := range solver.dataset.StepClamped(symbol, bids, asks, forcing) {
@@ -21755,9 +22389,7 @@ squares averages out.
 */
 func (solver *Solver) directionalTarget(symbolName string) learning.TargetTransform {
 	return func(current float64, past float64) (float64, bool) {
-		if math.IsNaN(current) || math.IsInf(current, 0) ||
-			math.IsNaN(past) || math.IsInf(past, 0) ||
-			current <= 0 || past <= 0 {
+		if current <= 0 || past <= 0 {
 			return 0, false
 		}
 
@@ -25657,21 +26289,30 @@ const maxCandidates = 16
 type classAccumulator struct {
 	names  [][]byte
 	logits []types.Scalar
+	counts []uint64
+	orders []int
 	count  int
 }
 
-func (acc *classAccumulator) add(name []byte, logP types.Scalar) {
+func (acc *classAccumulator) add(name []byte, logP types.Scalar, count uint64, order int) {
 	for i := 0; i < acc.count; i++ {
 		if bytes.Equal(acc.names[i], name) {
-			acc.logits[i] += logP
+			if order > acc.orders[i] || (order == acc.orders[i] && logP > acc.logits[i]) {
+				acc.logits[i] = logP
+				acc.counts[i] = count
+				acc.orders[i] = order
+			}
 			return
 		}
 	}
 
 	acc.names = append(acc.names, name)
 	acc.logits = append(acc.logits, logP)
+	acc.counts = append(acc.counts, count)
+	acc.orders = append(acc.orders, order)
 	acc.count++
 }
+
 
 type Engine struct {
 	cfg         Config
@@ -25688,6 +26329,11 @@ func NewEngine(cfg Config) *Engine {
 
 	e.root.Store(iradix.New[[]byte]())
 	return e
+}
+
+/* Root is the current immutable trie. Observe publishes the next one. */
+func (e *Engine) Root() *iradix.Tree[[]byte] {
+	return e.root.Load()
 }
 
 /*
@@ -25763,7 +26409,9 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 	// -------------------------------------------------------------
 	var names [maxCandidates][]byte
 	var logits [maxCandidates]types.Scalar
-	acc := classAccumulator{names: names[:0], logits: logits[:0]}
+	var counts [maxCandidates]uint64
+	var orders [maxCandidates]int
+	acc := classAccumulator{names: names[:0], logits: logits[:0], counts: counts[:0], orders: orders[:0]}
 	it := root.Root().Iterator()
 	basinPrefix := []byte("b/")
 	it.SeekPrefix(basinPrefix)
@@ -25784,8 +26432,8 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 			// Dirichlet pseudo-count prior: P = (Count + α) / (Total + α*K)
 			denom := float64(state.Count) + e.cfg.DirichletAlpha*float64(maxCandidates)
 			smoothedP := (float64(state.Count)*state.Probability + e.cfg.DirichletAlpha) / denom
-			logP := types.Scalar(math.Log(smoothedP) * float64(order))
-			acc.add(class, logP)
+			logP := types.Scalar(math.Log(smoothedP))
+			acc.add(class, logP, state.Count, order)
 		}
 	}
 
@@ -25803,13 +26451,32 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 		// Lift to unnormalized positive densities for EvidenceShare
 		densities := make([]types.Scalar, acc.count)
 		for i := 0; i < acc.count; i++ {
-			densities[i] = types.Scalar(math.Exp(float64(acc.logits[i] - maxLogit)))
+			density := math.Exp(float64(acc.logits[i] - maxLogit))
+			densities[i] = types.Scalar(density * float64(acc.orders[i]) / float64(e.cfg.MaxBackoffOrder))
+		}
+
+		unobservedCount := maxCandidates - acc.count
+
+		if unobservedCount > 0 {
+			baseDenom := float64(acc.counts[0]) + e.cfg.DirichletAlpha*float64(maxCandidates)
+			unseenSmoothed := e.cfg.DirichletAlpha / baseDenom
+			unseenLogit := types.Scalar(math.Log(unseenSmoothed))
+			unseenDensity := types.Scalar(
+				math.Exp(float64(unseenLogit-maxLogit)) / float64(e.cfg.MaxBackoffOrder),
+			)
+
+			for range unobservedCount {
+				densities = append(densities, unseenDensity)
+			}
 		}
 
 		// Use Nomagique's canonical Argmax reduction
 		winnerIdx, _, hasWinner := probability.Argmax(densities)
 		if hasWinner {
-			eval.WinnerClass = string(acc.names[winnerIdx])
+			if winnerIdx < acc.count {
+				eval.WinnerClass = string(acc.names[winnerIdx])
+				eval.Support = acc.counts[winnerIdx]
+			}
 			// Use Nomagique's canonical EvidenceShare reduction
 			eval.Confidence = float64(probability.EvidenceShare(densities, winnerIdx))
 
@@ -25817,28 +26484,32 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 			eval.Ambiguity = float64(probability.ShannonAmbiguity(densities))
 
 			// Contrast: Calculate log-odds divergence against runner-up
-			if acc.count > 1 {
-				runnerUpIdx := -1
-				var secondBest types.Scalar = -1.0
-				for i := 0; i < acc.count; i++ {
-					if i == winnerIdx {
-						continue
-					}
-					if densities[i] > secondBest {
-						secondBest = densities[i]
-						runnerUpIdx = i
-					}
+			runnerUpIdx := -1
+			var secondBest types.Scalar = -1.0
+			for i := 0; i < len(densities); i++ {
+				if i == winnerIdx {
+					continue
 				}
-				if runnerUpIdx >= 0 {
+				if densities[i] > secondBest {
+					secondBest = densities[i]
+					runnerUpIdx = i
+				}
+			}
+			if runnerUpIdx >= 0 {
+				if runnerUpIdx < acc.count {
 					eval.RunnerUp = string(acc.names[runnerUpIdx])
-					runnerUpShare := float64(probability.EvidenceShare(densities, runnerUpIdx))
-					if runnerUpShare > 0 {
-						eval.Contrast = math.Log2(eval.Confidence / runnerUpShare)
-					}
+				}
+				if runnerUpIdx >= acc.count {
+					eval.RunnerUp = "prior"
+				}
+				runnerUpShare := float64(probability.EvidenceShare(densities, runnerUpIdx))
+				if runnerUpShare > 0 && eval.Confidence > 0 {
+					eval.Contrast = math.Log2(eval.Confidence / runnerUpShare)
 				}
 			}
 		}
 	}
+
 
 	// -------------------------------------------------------------
 	// 2. Surprisal & Sequence-Break Detection
@@ -26104,14 +26775,34 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 		)
 	}
 
+	unobservedCount := maxCandidates - len(classes)
+
+	if unobservedCount > 0 {
+		// Prior density for each unobserved candidate in the Dirichlet hypothesis space.
+		// Smoothed prior mass ensures single observations do not claim 100% certainty.
+		baseDenom := float64(counted[0]) + config.DirichletAlpha*maxCandidates
+		unseenSmoothed := config.DirichletAlpha / baseDenom
+		unseenLogit := types.Scalar(math.Log(unseenSmoothed))
+		unseenDensity := types.Scalar(
+			math.Exp(float64(unseenLogit-largest)) / float64(config.MaxBackoffOrder),
+		)
+
+		for range unobservedCount {
+			densities = append(densities, unseenDensity)
+		}
+	}
+
 	winner, _, chosen := probability.Argmax(densities)
 
 	if !chosen {
 		return held, nil
 	}
 
-	held.WinnerClass = string(classes[winner])
-	held.Support = counted[winner]
+	if winner < len(classes) {
+		held.WinnerClass = string(classes[winner])
+		held.Support = counted[winner]
+	}
+
 	held.Confidence = float64(probability.EvidenceShare(densities, winner))
 	held.Ambiguity = float64(probability.ShannonAmbiguity(densities))
 	runnerUp, best := -1, types.Scalar(-1)
@@ -26123,7 +26814,13 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 	}
 
 	if runnerUp >= 0 {
-		held.RunnerUp = string(classes[runnerUp])
+		if runnerUp < len(classes) {
+			held.RunnerUp = string(classes[runnerUp])
+		}
+
+		if runnerUp >= len(classes) {
+			held.RunnerUp = "prior"
+		}
 		opposing := float64(probability.EvidenceShare(densities, runnerUp))
 
 		if opposing > 0 && held.Confidence > 0 {
@@ -26133,6 +26830,7 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 
 	return held, nil
 }
+
 
 ---
 
@@ -36144,45 +36842,48 @@ import (
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 Agent owns one learner: the regions it is shown become the sequence it
-recognises, and what it recognises is written into a memory that is its own.
+recognises, and what it recognises is written into the cognition engine that
+is its memory.
 */
 type Agent struct {
-	core.Base[grid.Impulse, *iradix.Tree[[]byte]]
-	memory  *store.Retained[*iradix.Tree[[]byte]]
+	core.Base[cognition.Association, *iradix.Tree[[]byte]]
+	engine  *cognition.Engine
 	context *Context
-	observe *cognition.Observe
-	recall  *cognition.Evaluate
 }
 
-func NewAgent(memory *store.Retained[*iradix.Tree[[]byte]]) *Agent {
-	if memory == nil {
-		memory = NewMemory()
+/*
+NewAgent owns an engine of its own, or continues one it is given.
+
+A composition declares its agent before it has a memory to hand it, and an
+agent with nothing behind it is a learner that has not learned yet — which is
+where every learner starts.
+*/
+func NewAgent(engine ...*cognition.Engine) *Agent {
+	held := cognition.NewEngine(cognition.DefaultConfig())
+
+	if len(engine) > 0 && engine[0] != nil {
+		held = engine[0]
 	}
 
-	return &Agent{
-		memory:  memory,
-		context: NewContext(),
-		observe: cognition.NewObserve(),
-		recall:  cognition.NewEvaluate(),
-	}
+	return &Agent{engine: held, context: NewContext()}
 }
 
-func NewMemory() *store.Retained[*iradix.Tree[[]byte]] {
-	return store.NewRetained(iradix.New[[]byte]())
-}
+/* Engine is the trie this agent writes and reads. */
+func (op *Agent) Engine() *cognition.Engine { return op.engine }
+
+/* Tree is the current immutable snapshot of what has been learned. */
+func (op *Agent) Tree() *iradix.Tree[[]byte] { return op.engine.Root() }
 
 func (op *Agent) Next(
-	in iter.Seq[core.Primitive[grid.Impulse, grid.Impulse]],
+	in iter.Seq[core.Primitive[cognition.Association, cognition.Association]],
 ) iter.Seq[core.Primitive[*iradix.Tree[[]byte], *iradix.Tree[[]byte]]] {
 	return func(yield func(core.Primitive[*iradix.Tree[[]byte], *iradix.Tree[[]byte]]) bool) {
 		for arriving := range in {
-			tree, err := op.Learn(arriving.Read())
+			tree, err := op.LearnAssociation(arriving.Read())
 
 			if err != nil {
 				op.Error(err)
@@ -36196,32 +36897,28 @@ func (op *Agent) Next(
 	}
 }
 
+func (op *Agent) LearnAssociation(assoc cognition.Association) (*iradix.Tree[[]byte], error) {
+	if len(assoc.Context) == 0 {
+		return op.engine.Root(), nil
+	}
+
+	if assoc.Graded {
+		op.engine.Observe(assoc.Context, assoc.Class, assoc.Feedback)
+	}
+
+	if !assoc.Graded {
+		op.engine.Observe(assoc.Context, assoc.Class)
+	}
+
+	return op.engine.Root(), nil
+}
+
 func (op *Agent) Learn(impulse grid.Impulse) (*iradix.Tree[[]byte], error) {
-	assoc := op.context.Encode(impulse)
-	write, err := op.observe.Record(cognition.ObserveInput{
-		Tree:        op.memory.Read(),
-		Association: assoc,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	tree, err := transport.Evaluate(store.NewRadix(op.memory.Read()), transport.Values(op.observe.Map(write)))
-
-	if err != nil {
-		return nil, err
-	}
-
-	op.memory.Carrier(tree)
-	return tree, nil
+	return op.LearnAssociation(op.context.Encode(impulse))
 }
 
 func (op *Agent) Recall(evaluation cognition.Evaluation) (cognition.Evaluation, error) {
-	return op.recall.Recall(cognition.EvaluateInput{
-		Tree:       op.memory.Read(),
-		Evaluation: evaluation,
-	})
+	return op.engine.Evaluate(evaluation.Context), nil
 }
 
 /*
@@ -36230,16 +36927,23 @@ without changing anything.
 */
 type Recall struct {
 	core.Base[cognition.Evaluation, cognition.Evaluation]
-	memory   *store.Retained[*iradix.Tree[[]byte]]
-	evaluate *cognition.Evaluate
+	engine *cognition.Engine
 }
 
-func NewRecall(memory *store.Retained[*iradix.Tree[[]byte]]) *Recall {
-	if memory == nil {
-		memory = NewMemory()
+func NewRecall(engine ...*cognition.Engine) *Recall {
+	held := cognition.NewEngine(cognition.DefaultConfig())
+
+	if len(engine) > 0 && engine[0] != nil {
+		held = engine[0]
 	}
 
-	return &Recall{memory: memory, evaluate: cognition.NewEvaluate()}
+	return &Recall{engine: held}
+}
+
+func (op *Recall) Recall(
+	evaluation cognition.Evaluation,
+) (cognition.Evaluation, error) {
+	return op.engine.Evaluate(evaluation.Context), nil
 }
 
 func (op *Recall) Next(
@@ -36247,10 +36951,7 @@ func (op *Recall) Next(
 ) iter.Seq[core.Primitive[cognition.Evaluation, cognition.Evaluation]] {
 	return func(yield func(core.Primitive[cognition.Evaluation, cognition.Evaluation]) bool) {
 		for arriving := range in {
-			reading, err := op.evaluate.Recall(cognition.EvaluateInput{
-				Tree:       op.memory.Read(),
-				Evaluation: arriving.Read(),
-			})
+			reading, err := op.Recall(arriving.Read())
 
 			if err != nil {
 				op.Error(err)
@@ -36331,6 +37032,111 @@ func (op *Context) Encode(impulse grid.Impulse) cognition.Association {
 	}
 
 	return assoc
+}
+
+---
+
+---
+File: /nomagique/learning/associative/evaluator.go
+---
+
+package associative
+
+import (
+	"iter"
+
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/errnie"
+)
+
+/*
+Evaluator judges what the agent answered against what the record named.
+
+An impulse carries both: the regions the tape lit up, and the moment the tape
+itself says that observation was. So the question and its answer are already in
+hand — the agent is asked what it recognises before anything is written, and
+what it is taught is graded by whether it named the moment the record did.
+
+That grade is the whole difference between storing and learning. A learner
+written to unconditionally strengthens whatever it saw most; one written to on
+its own answer strengthens what it got right and stops reinforcing what it did
+not, which is what makes the sequence it holds a precursor rather than a
+frequency count.
+*/
+type EvaluatorOp struct {
+	core.Base[grid.Impulse, cognition.Association]
+	recall  *Recall
+	context *Context
+}
+
+/*
+Evaluator judges against the memory it is given, which is the same one the
+agent it follows is writing. Given none it judges against its own, which is a
+learner being taught on what it can already recognise of itself.
+
+Named as the type is because that is what it reads as in a composition: the
+stage is an Evaluator, not a call that makes one.
+*/
+func Evaluator(engine ...*cognition.Engine) *EvaluatorOp {
+	return &EvaluatorOp{recall: NewRecall(engine...), context: NewContext()}
+}
+
+/*
+Evaluate judges what the agent answered against what the record named,
+for a single arriving impulse.
+*/
+func (op *EvaluatorOp) Evaluate(impulse grid.Impulse) (cognition.Association, cognition.Evaluation, error) {
+	assoc := op.context.Encode(impulse)
+
+	if len(assoc.Context) == 0 || len(assoc.Class) == 0 {
+		return assoc, cognition.Evaluation{}, nil
+	}
+	reading, err := op.recall.Recall(cognition.Evaluation{
+		Context: assoc.Context,
+		Config:  cognition.DefaultConfig(),
+		Step:    impulse.Version,
+	})
+
+	if err != nil {
+		return assoc, cognition.Evaluation{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"evaluator: recall evaluation failed",
+			err,
+		))
+	}
+
+	if reading.WinnerClass != "" {
+		if reading.WinnerClass == string(assoc.Class) {
+			assoc.Graded = true
+			assoc.Feedback = reading.Confidence
+		}
+	}
+
+	return assoc, reading, nil
+}
+
+func (op *EvaluatorOp) Next(
+	in iter.Seq[core.Primitive[grid.Impulse, grid.Impulse]],
+) iter.Seq[core.Primitive[cognition.Association, cognition.Association]] {
+	return func(
+		yield func(core.Primitive[cognition.Association, cognition.Association]) bool,
+	) {
+		for arriving := range in {
+			assoc, _, err := op.Evaluate(arriving.Read())
+
+			if err != nil {
+				op.Error(err)
+
+				return
+			}
+
+			if !yield(op.Carrier(assoc)) {
+				return
+			}
+		}
+	}
 }
 
 ---
@@ -36568,13 +37374,26 @@ type Impulse struct {
 
 /* Impulse copies the current activation sequence without rebuilding regions. */
 func (grid *Space) Impulse(label string, at, from time.Time) (Impulse, error) {
-	regions, version, err := grid.Regions(label)
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	contextLabel := label
+
+	if contextLabel == "" {
+		contextLabel = grid.UpdatedLabel
+	}
+
+	if contextLabel == "" {
+		return Impulse{At: at, From: from, Ready: false}, nil
+	}
+	regions, version, err := grid.regionsLocked(contextLabel)
 
 	if err != nil {
 		return Impulse{}, err
 	}
+
 	return Impulse{
-		Label: label, At: at, From: from, Version: version,
+		Label: contextLabel, At: at, From: from, Version: version,
 		Ready: grid.Formed, Regions: slices.Clone(regions),
 		Moment: grid.moment, Grade: grid.grade, Graded: grid.graded,
 	}, nil
@@ -36631,8 +37450,9 @@ func (regions *regions) form(grid *Space) {
 		regions.membership[column] = column
 	}
 	scores := make([]float64, len(grid.Columns))
+	const maxFormIterations = 100
 
-	for {
+	for iteration := 0; iteration < maxFormIterations; iteration++ {
 		moved := false
 
 		for column := range regions.membership {
@@ -36682,12 +37502,15 @@ func (regions *regions) form(grid *Space) {
 
 /* Activity exposes borrowed quality-conditioned values for one context. */
 func (grid *Space) Activity(label string) ([]float64, []float64, error) {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
 	row, exists := grid.rowIndex[label]
 
 	if !exists {
 		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "grid: unknown context "+label, nil))
 	}
-	return grid.activations[row], grid.qualities[row], nil
+	return slices.Clone(grid.activations[row]), slices.Clone(grid.qualities[row]), nil
 }
 
 /*
@@ -36696,6 +37519,13 @@ and membership survive missing or quiet readings. The returned active sequence
 is borrowed storage; Impulse makes the immutable event-owned copy.
 */
 func (grid *Space) Regions(label string) ([]Region, uint64, error) {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	return grid.regionsLocked(label)
+}
+
+func (grid *Space) regionsLocked(label string) ([]Region, uint64, error) {
 	row, exists := grid.rowIndex[label]
 
 	if !exists {
@@ -36713,6 +37543,13 @@ func (grid *Space) Regions(label string) ([]Region, uint64, error) {
 	}
 
 	for column, community := range regions.membership {
+		if community < 0 || community >= len(regions.output) {
+			return nil, 0, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"grid: region membership does not match the formed partition",
+				nil,
+			))
+		}
 		region := &regions.output[community]
 		region.Members++
 
@@ -36958,6 +37795,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"iter"
@@ -36984,6 +37822,7 @@ including previously observed values still retained in Values.
 */
 type Space struct {
 	core.Base[[]*data.Measurement[float64], Impulse]
+	mu           sync.RWMutex
 	Rows         []string
 	Columns      [][2]string
 	Values       [][]float64
@@ -37060,6 +37899,10 @@ func (grid *Space) Next(
 		for arriving := range in {
 			measurements := arriving.Read()
 
+			if len(measurements) == 0 {
+				continue
+			}
+
 			if err := grid.Step(measurements); err != nil {
 				grid.Error(err)
 				return
@@ -37106,6 +37949,9 @@ func observed(measurements []*data.Measurement[float64]) (time.Time, time.Time) 
 }
 
 func (grid *Space) Step(measurements []*data.Measurement[float64]) error {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
 	label := ""
 
 	for _, measurement := range measurements {
@@ -37218,7 +38064,7 @@ func (grid *Space) update(row int, measurement *data.Measurement[float64]) error
 	}
 
 	for key, metric := range measurement.Metrics {
-		column := grid.Column(measurement.Source, key)
+		column := grid.columnLocked(measurement.Source, key)
 		previous := grid.Values[row][column]
 		grid.Values[row][column] = metric.Raw
 		grid.Present[row][column] = true
@@ -37296,6 +38142,13 @@ func (grid *Space) numericFailure(row, column int, raw, previous, dispersion flo
 
 /* Column admits one quantity and extends storage only when the grid grows. */
 func (grid *Space) Column(source, key string) int {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	return grid.columnLocked(source, key)
+}
+
+func (grid *Space) columnLocked(source, key string) int {
 	identity := [2]string{source, key}
 	column, exists := grid.columnIndex[identity]
 
@@ -37309,7 +38162,6 @@ func (grid *Space) Column(source, key string) int {
 	if grid.graph != nil {
 		grid.graph = nil
 		grid.Formed = false
-		grid.window = newWindow(grid.window.capacity)
 		grid.cursor, grid.moved = -1, false
 	}
 	grid.columnIndex[identity] = column
@@ -37330,11 +38182,26 @@ func (grid *Space) Column(source, key string) int {
 	return column
 }
 
+/* PreseedColumns allocates storage for known sources and metrics upfront. */
+func (grid *Space) PreseedColumns(sources map[string][]string) {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	for source, keys := range sources {
+		for _, key := range keys {
+			grid.columnLocked(source, key)
+		}
+	}
+}
+
 /*
 Reset clears observation-local baselines between independent historical tapes.
 The affinity calibration, settled coordinates and region membership survive.
 */
 func (grid *Space) Reset() {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
 	// An unfinished calibration bin cannot pair observations from unrelated
 	// tapes. Completed bins still retain their observed relationships.
 	clear(grid.window.open)
@@ -37358,6 +38225,9 @@ relationship measured over two shared bins is not the claim a relationship
 measured over sixty is. This is how a reader tells those apart.
 */
 func (grid *Space) Support(source, key string) (int, int) {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
 	column, exists := grid.columnIndex[[2]string{source, key}]
 
 	if !exists {
@@ -37365,6 +38235,89 @@ func (grid *Space) Support(source, key string) (int, int) {
 	}
 
 	return grid.window.support(column), grid.window.capacity
+}
+
+/*
+QuantitySnapshot is a point-in-time capture of one quantity for telemetry.
+*/
+type QuantitySnapshot struct {
+	Source   string
+	Label    string
+	X        float64
+	Y        float64
+	Value    float64
+	Activity float64
+	Quality  float64
+	Present  bool
+}
+
+/*
+MarketSnapshot provides an atomic point-in-time read of all quantities and regions
+for an instrument context without causing data races with concurrent Step calls.
+*/
+func (grid *Space) MarketSnapshot(label string) ([]QuantitySnapshot, []Region, uint64, error) {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	row, exists := grid.rowIndex[label]
+
+	if !exists {
+		return nil, nil, 0, errnie.Error(errnie.Err(errnie.NotFound, "grid: unknown context "+label, nil))
+	}
+
+	quantities := make([]QuantitySnapshot, 0, len(grid.Columns))
+
+	for column, identity := range grid.Columns {
+		coordinate := grid.Coordinates[column]
+		x, y := 0.0, 0.0
+
+		if coordinate != nil {
+			x, y = coordinate[0], coordinate[1]
+		}
+
+		value := 0.0
+
+		if row < len(grid.Values) && column < len(grid.Values[row]) {
+			value = grid.Values[row][column]
+		}
+
+		act := 0.0
+
+		if row < len(grid.activations) && column < len(grid.activations[row]) {
+			act = grid.activations[row][column]
+		}
+
+		qual := 0.0
+
+		if row < len(grid.qualities) && column < len(grid.qualities[row]) {
+			qual = grid.qualities[row][column]
+		}
+
+		present := false
+
+		if row < len(grid.Present) && column < len(grid.Present[row]) {
+			present = grid.Present[row][column]
+		}
+
+		quantities = append(quantities, QuantitySnapshot{
+			Source:   identity[0],
+			Label:    identity[1],
+			X:        x,
+			Y:        y,
+			Value:    value,
+			Activity: act,
+			Quality:  qual,
+			Present:  present,
+		})
+	}
+
+	regions, version, err := grid.regionsLocked(label)
+
+	if err != nil {
+		return quantities, nil, version, err
+	}
+
+	return quantities, regions, version, nil
 }
 
 ---
@@ -37770,162 +38723,6 @@ func (reading Reading) SamplingVariance() float64 {
 	}
 
 	return variance
-}
-
----
-
----
-File: /nomagique/learning/associative/reward/ledger.go
----
-
-package reward
-
-import (
-	"fmt"
-
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-/*
-Ledger retains the initial and latest objective marks and their measured
-outcome. It owns cumulative differences and elapsed-time rates without retaining
-evaluation graphs. Producer timestamps retain their monotonic clock component
-for ordering and intervals; output timestamps preserve the producer's wall time.
-The caller serializes Measure.
-*/
-type Ledger struct {
-	initial Mark
-	last    Mark
-	outcome Outcome
-}
-
-/*
-Measure accepts identified objective marks in producer order. Identical
-redelivery is idempotent; rewritten or regressed marks cannot mutate evidence.
-A same-instant newer version contributes reward without inventing elapsed time.
-*/
-func (ledger *Ledger) Measure(mark Mark) (Outcome, error) {
-	if mark.Version == 0 || mark.Version < ledger.last.Version ||
-		(ledger.last.Version != 0 && mark.At.Before(ledger.last.At)) {
-		return Outcome{}, fmt.Errorf("%w: reward mark regressed or has no version: mark=%+v last=%+v", core.ErrDomain, mark, ledger.last)
-	}
-
-	if mark.Version == ledger.last.Version {
-		if !mark.At.Equal(ledger.last.At) || mark.Value != ledger.last.Value {
-			return Outcome{}, fmt.Errorf("%w: reward mark was rewritten: mark=%+v last=%+v", core.ErrDomain, mark, ledger.last)
-		}
-
-		return ledger.outcome, nil
-	}
-
-	through := mark
-	through.At = through.At.UTC()
-	outcome := Outcome{From: through, Through: through}
-
-	if ledger.last.Version == 0 {
-		ledger.initial, ledger.last, ledger.outcome = mark, mark, outcome
-		return outcome, nil
-	}
-
-	outcome.From = ledger.outcome.Through
-	outcome.Elapsed = mark.At.Sub(ledger.last.At)
-	outcome.TotalElapsed = mark.At.Sub(ledger.initial.At)
-	outcome.Reward = mark.Value - ledger.last.Value
-	outcome.TotalReward = mark.Value - ledger.initial.Value
-	outcome.PriorRate = ledger.outcome.Rate
-	outcome.HasPriorRate = ledger.outcome.HasRate
-	outcome.HasRate = outcome.TotalElapsed > 0
-	outcome.Transitions = ledger.outcome.Transitions + 1
-
-	if outcome.HasRate {
-		outcome.Rate = outcome.TotalReward / outcome.TotalElapsed.Seconds()
-	}
-
-	if outcome.HasPriorRate {
-		outcome.Differential = outcome.Reward - outcome.PriorRate*outcome.Elapsed.Seconds()
-	}
-
-	ledger.last, ledger.outcome = mark, outcome
-	return outcome, nil
-}
-
----
-
----
-File: /nomagique/learning/associative/reward/outcome.go
----
-
-package reward
-
-import "time"
-
-/* Mark is the serialized identity/value of one measured objective. */
-type Mark struct {
-	At      time.Time
-	Version uint64
-	Value   float64
-}
-
-/* Outcome is a Go projection; Ledger exclusively owns numerical accounting. */
-type Outcome struct {
-	From         Mark
-	Through      Mark
-	Elapsed      time.Duration
-	Reward       float64
-	TotalElapsed time.Duration
-	TotalReward  float64
-	PriorRate    float64
-	Rate         float64
-	Differential float64
-	HasPriorRate bool
-	HasRate      bool
-	Transitions  uint64
-}
-
----
-
----
-File: /nomagique/learning/associative/reward/primitive.go
----
-
-package reward
-
-import (
-	"iter"
-
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-/*
-Primitive adapts marks to the canonical typed objective ledger. The typed
-ledger owns all accounting.
-*/
-type Primitive struct {
-	core.Base[Mark, Outcome]
-	ledger Ledger
-}
-
-func New() *Primitive {
-	return &Primitive{}
-}
-
-func (op *Primitive) Next(
-	in iter.Seq[core.Primitive[Mark, Mark]],
-) iter.Seq[core.Primitive[Outcome, Outcome]] {
-	return func(yield func(core.Primitive[Outcome, Outcome]) bool) {
-		for arriving := range in {
-			outcome, err := op.ledger.Measure(arriving.Read())
-
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(op.Carrier(outcome)) {
-				return
-			}
-		}
-	}
 }
 
 ---
@@ -38425,105 +39222,6 @@ func (op *DirectionalTarget) Next(
 ---
 
 ---
-File: /nomagique/learning/feedback_tune.go
----
-
-package learning
-
-import (
-	"fmt"
-	"math"
-)
-
-/*
-FeedbackTuner applies top-down prediction feedback to a surprise threshold and
-classifier weights exactly once per newer sample set for a matching member.
-
-Tuning rates derive from the current sample count and forecast scale.
-*/
-type FeedbackTuner struct {
-	lastSamples int
-}
-
-/*
-NewFeedbackTuner creates a tuner with no prior application history.
-*/
-func NewFeedbackTuner() *FeedbackTuner {
-	return &FeedbackTuner{}
-}
-
-/*
-Apply adjusts threshold and logits when feedback arrives for a newer sample window.
-*/
-func (tuner *FeedbackTuner) Apply(
-	member string,
-	feedbackMember string,
-	samples int,
-	mse float64,
-	scale float64,
-	bias float64,
-	weights *ClassifierWeights,
-) (applied bool, err error) {
-	if samples <= 0 {
-		return false, nil
-	}
-
-	if feedbackMember != member {
-		return false, nil
-	}
-
-	if samples <= tuner.lastSamples {
-		return false, nil
-	}
-
-	if weights == nil {
-		return false, fmt.Errorf("learning: FeedbackTuner requires weights")
-	}
-
-	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return false, fmt.Errorf("learning: FeedbackTuner scale must be finite and positive")
-	}
-
-	tuner.lastSamples = samples
-
-	mseGain := 1.0 / float64(samples)
-	adjustedThreshold := weights.Threshold
-
-	if mse > 0 {
-		adjustedThreshold += mse * mseGain
-	}
-
-	thresholdSpread := mse
-
-	if thresholdSpread <= 0 {
-		thresholdSpread = scale / float64(samples)
-	}
-
-	weights.Threshold = clamp(
-		adjustedThreshold,
-		weights.Threshold/(1.0+thresholdSpread),
-		weights.Threshold*(1.0+thresholdSpread),
-	)
-
-	learningRate := scale / float64(samples)
-	adjustment := bias * learningRate
-
-	for outputKey, featureWeights := range weights.termWeights {
-		for featureKey, weight := range featureWeights {
-			weights.termWeights[outputKey][featureKey] = weight + adjustment
-		}
-	}
-
-	if err := weights.clamp(); err != nil {
-		return false, err
-	}
-
-	return true, nil
-}
-
----
-
----
 File: /nomagique/learning/forecast.go
 ---
 
@@ -38787,105 +39485,6 @@ func (op *IdentityTarget) Next(
 			}
 		}
 	}
-}
-
----
-
----
-File: /nomagique/learning/logit_scores.go
----
-
-package learning
-
-import "github.com/theapemachine/errnie"
-
-/*
-LogitScoresConfig configures typed feature-to-logit scoring.
-*/
-type LogitScoresConfig struct {
-	Weights   ClassifierWeightsConfig
-	Threshold float64
-	Scales    map[string]float64
-}
-
-/*
-LogitScoresInput carries named feature values.
-*/
-type LogitScoresInput struct {
-	Features map[string]float64
-}
-
-/*
-LogitScoresOutput carries scored logits in configured order.
-*/
-type LogitScoresOutput struct {
-	Outputs []string
-	Scores  []float64
-	ByName  map[string]float64
-}
-
-/*
-LogitScores maps typed feature values to classifier logits.
-*/
-type LogitScores struct {
-	config  LogitScoresConfig
-	weights ClassifierWeights
-}
-
-/*
-NewLogitScores returns a typed classifier logit calculator.
-*/
-func NewLogitScores(config LogitScoresConfig) (*LogitScores, error) {
-	weights, err := NewClassifierWeights(
-		config.Weights,
-		config.Threshold,
-		config.Scales,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &LogitScores{
-		config:  config,
-		weights: weights,
-	}, nil
-}
-
-/*
-Measure returns configured logits for the input features.
-*/
-func (logitScores *LogitScores) Measure(input LogitScoresInput) (LogitScoresOutput, error) {
-	if logitScores == nil {
-		return LogitScoresOutput{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logit-scores: config required",
-			nil,
-		))
-	}
-
-	for key, value := range input.Features {
-		if !finite(value) {
-			return LogitScoresOutput{}, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logit-scores: feature must be finite",
-				nil,
-			).With("feature", key))
-		}
-	}
-
-	scores := logitScores.weights.Scores(input.Features)
-	byName := make(map[string]float64, len(scores))
-
-	for index, output := range logitScores.weights.outputs {
-		byName[output] = scores[index]
-	}
-
-	return LogitScoresOutput{
-		Outputs: append([]string(nil), logitScores.weights.outputs...),
-		Scores:  scores,
-		ByName:  byName,
-	}, nil
 }
 
 ---
@@ -39209,7 +39808,6 @@ package learning
 import (
 	"errors"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
 )
 
 /*
@@ -39298,32 +39896,6 @@ type ResonanceDynamics struct {
 }
 
 /*
-pendingPrediction is one observation's full forecast vector awaiting the
-outcomes that will score it.
-
-The head holds an independent model per horizon, so one observation issues a
-whole curve at once: predictions[h-1] is what the horizon-h model said would
-happen h steps after this observation. Each entry is scored separately, as and
-when that many steps have actually elapsed, so a single observation keeps
-resolving for as long as its furthest horizon.
-
-The reference and the readout at issue time are retained because the target is
-a transform over the change from then to now, and the model must be trained on
-the features it actually saw when it committed.
-*/
-type pendingPrediction struct {
-	predictions []float64
-	reference   float64
-	features    []float64
-	step        int64
-
-	// resolved marks which horizons have already been scored, so an
-	// observation that stays pending across many steps never trains the same
-	// horizon twice.
-	resolved []bool
-}
-
-/*
 PredictiveCoder learns to forecast a transform of a reference series from a
 feature vector, by settling a resonance manifold over the features and
 training its supervised head against outcomes that actually arrived.
@@ -39343,11 +39915,9 @@ type PredictiveCoder struct {
 	alpha    float64
 	learn    bool
 
-	horizon  int
-	pending  []pendingPrediction
-	free     []pendingPrediction
-	resolved int
-	last     *Resolution
+	horizon int
+	ledger  *TemporalLedger
+	last    *Resolution
 }
 
 /*
@@ -39376,9 +39946,12 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		coder.horizon = 1
 	}
 
+	coder.ledger = NewTemporalLedger(coder.horizon, coder.target)
+
 	if coder.alpha == 0 {
 		coder.alpha = 0.03
 	}
+
 	if coder.pace == nil {
 		coder.pace = NewPace(PaceConfig{
 			Rest: coder.alpha, Lower: 0.005, Upper: 0.150,
@@ -39423,8 +39996,20 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 		)
 	}
 
-	if err := coder.manifold.Settle(input.Features, true); err != nil {
-		return PredictiveOutput{}, err
+	if coder.learn {
+		if err := coder.manifold.Settle(input.Features, false); err != nil {
+			return PredictiveOutput{}, err
+		}
+
+		if err := coder.manifold.Learn(nil); err != nil {
+			return PredictiveOutput{}, err
+		}
+	}
+
+	if !coder.learn {
+		if err := coder.manifold.Settle(input.Features, true); err != nil {
+			return PredictiveOutput{}, err
+		}
 	}
 
 	// The pace controller reads how badly the manifold is reconstructing its
@@ -39442,165 +40027,33 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 		}
 	}
 
-	if input.HasReference {
-		coder.resolve(input)
-	}
-
-	coder.issue(input)
-
-	return coder.read(), nil
-}
-
-/*
-resolve scores each pending observation at every horizon whose outcome has
-now arrived.
-
-The head holds an independent model per horizon, so horizon h is trained only
-with the forecast row h issued, judged against what actually happened h steps
-later. A row therefore only ever learns from outcomes at its own distance:
-row 300 learns from 300-step-ahead moves, never from a next-tick move
-relabelled as a long one.
-
-An observation is retained until its furthest horizon has elapsed, so one
-observation keeps teaching the curve for as long as it has unresolved rows.
-A target the transform declares undefined is not a lesson; that horizon is
-marked resolved and skipped rather than taught wrongly.
-*/
-func (coder *PredictiveCoder) resolve(input PredictiveInput) {
-	if coder.target == nil || len(coder.pending) == 0 {
-		return
-	}
-
-	retained := coder.pending[:0]
-
-	for _, pending := range coder.pending {
-		elapsed := int(input.Step - pending.step)
-
-		// The outcome for horizon `elapsed` is exactly this observation, so
-		// that is the only new row this step can settle for this pending.
-		if elapsed >= 1 && elapsed <= len(pending.resolved) &&
-			!pending.resolved[elapsed-1] {
-			coder.score(input, pending, elapsed)
-			pending.resolved[elapsed-1] = true
-		}
-
-		// Retain only while some horizon can still be reached.
-		if elapsed < len(pending.resolved) {
-			retained = append(retained, pending)
-
-			continue
-		}
-
-		coder.recycle(pending)
-	}
-
-	coder.pending = retained
-}
-
-/*
-score trains one horizon row against the outcome that just arrived and records
-the resolution.
-*/
-func (coder *PredictiveCoder) score(
-	input PredictiveInput,
-	pending pendingPrediction,
-	horizon int,
-) {
-	target, defined := coder.target(input.Reference, pending.reference)
-
-	if !defined {
-		return
-	}
-
-	prediction := pending.predictions[horizon-1]
-
-	if coder.learn {
-		// The row is trained on the readout it actually saw when it committed,
-		// never on the current one.
-		_ = coder.manifold.ObserveTask(
-			horizon,
-			pending.features,
-			prediction,
-			target,
-		)
-	}
-
-	coder.resolved++
-
-	// LastResolution reports the decision just settled. Several observations
-	// can settle in one step, at different horizons; the nearest horizon is the
-	// most recently committed decision, so it is the one a consumer scoring
-	// "what did the head just get right" needs to see.
-	if coder.last == nil || horizon <= coder.last.Horizon {
-		coder.last = &Resolution{
-			Prediction: prediction,
-			Target:     target,
-			Error:      target - prediction,
-			Horizon:    horizon,
-			Step:       pending.step,
-		}
-	}
-}
-
-/*
-issue records this observation's whole forecast curve so every horizon can be
-scored as its outcome arrives.
-
-An observation with no usable reference cannot anchor a target, so nothing is
-issued against it.
-*/
-func (coder *PredictiveCoder) issue(input PredictiveInput) {
-	if !input.HasReference {
-		return
-	}
-
-	predictions := coder.manifold.TaskPrediction()
-
-	if len(predictions) == 0 {
-		return
-	}
-
-	readout := coder.manifold.ReadoutVector()
-	pending := coder.take(len(predictions), len(readout))
-
-	copy(pending.predictions, predictions)
-	copy(pending.features, readout)
-
-	pending.reference = input.Reference
-	pending.step = input.Step
-
-	coder.pending = append(coder.pending, pending)
-}
-
-/*
-take returns a pending slot sized for this observation, reusing a recycled one
-when possible. A coder tracking hundreds of horizons across hundreds of symbols
-issues a curve every tick, so these buffers must not be reallocated per step.
-*/
-func (coder *PredictiveCoder) take(horizons int, readout int) pendingPrediction {
-	if count := len(coder.free); count > 0 {
-		pending := coder.free[count-1]
-		coder.free = coder.free[:count-1]
-
-		if len(pending.predictions) == horizons && len(pending.features) == readout {
-			for index := range pending.resolved {
-				pending.resolved[index] = false
+	if input.HasReference && input.Reference > 0 {
+		if coder.learn {
+			outcome, err := coder.ledger.Resolve(coder.manifold, input.Step, input.Reference)
+			if err != nil {
+				return PredictiveOutput{}, err
 			}
 
-			return pending
+			if outcome != nil {
+				coder.last = &Resolution{
+					Prediction: outcome.Prediction,
+					Target:     outcome.Target,
+					Error:      outcome.Error,
+					Horizon:    outcome.Horizon,
+					Step:       outcome.Step,
+				}
+			}
+		}
+
+		predictions := coder.manifold.TaskPrediction()
+		readout := coder.manifold.ReadoutVector()
+
+		if len(predictions) > 0 && len(readout) > 0 {
+			coder.ledger.Issue(input.Step, input.Reference, readout, predictions, coder.horizon)
 		}
 	}
 
-	return pendingPrediction{
-		predictions: make([]float64, horizons),
-		features:    make([]float64, readout),
-		resolved:    make([]bool, horizons),
-	}
-}
-
-// recycle returns a fully resolved slot to the free list for reuse.
-func (coder *PredictiveCoder) recycle(pending pendingPrediction) {
-	coder.free = append(coder.free, pending)
+	return coder.read(), nil
 }
 
 /*
@@ -39609,7 +40062,7 @@ far ahead it is actually supported, and the manifold's own dynamics.
 */
 func (coder *PredictiveCoder) read() PredictiveOutput {
 	output := PredictiveOutput{
-		ResolvedSteps:  coder.resolved,
+		ResolvedSteps:  coder.ledger.TotalResolutions(),
 		Readout:        coder.manifold.ReadoutVector(),
 		LastResolution: coder.last,
 	}
@@ -39670,15 +40123,20 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 		output.Dynamics.Alpha = coder.alpha
 	}
 
-	if math.IsNaN(output.Confidence) || math.IsInf(output.Confidence, 0) {
-		output.Confidence = 0
-	}
-
 	return output
 }
 
 // ResolvedSteps returns how many predictions have been scored against outcomes.
-func (coder *PredictiveCoder) ResolvedSteps() int { return coder.resolved }
+func (coder *PredictiveCoder) ResolvedSteps() int { return coder.ledger.TotalResolutions() }
+
+// PendingCount returns how many observations are currently awaiting outcome resolution.
+func (coder *PredictiveCoder) PendingCount() int {
+	if coder.ledger == nil {
+		return 0
+	}
+
+	return len(coder.ledger.pending)
+}
 
 ---
 
@@ -39806,6 +40264,7 @@ type ResonanceConfig struct {
 	WeightDecay float64
 	GradClip    float64
 	StateClip   float64
+	LambdaRLS   float64
 
 	ReadoutMode ReadoutMode
 }
@@ -39876,6 +40335,7 @@ func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
 		WeightDecay: alpha * 1e-3,
 		GradClip:    gradClip,
 		StateClip:   stateClip,
+		LambdaRLS:   0.99,
 		ReadoutMode: ReadoutAll,
 	}
 }
@@ -40122,8 +40582,13 @@ func newResonanceManifoldReadout(
 		denseFill(taskPrecision, 1.0)
 		denseFill(taskSkill, 1.0)
 
+		lambda := cfg.LambdaRLS
+		if lambda <= 0 || lambda > 1.0 {
+			lambda = 0.99
+		}
+
 		for rowIndex := range taskRows {
-			learner := NewRLS(readoutDim, 1.0, 1.0)
+			learner := NewRLS(readoutDim, 1.0, lambda)
 			taskLearners[rowIndex] = learner
 		}
 	}
@@ -41679,13 +42144,18 @@ type RLS struct {
 	dimension int
 	lambda    float64
 	learner   *algo.SquareRootRLS
+	design    []float64
 }
 
 func NewRLS(dimension int, variance, lambda float64) *RLS {
+	design := make([]float64, dimension+1)
+	design[0] = 1
+
 	return &RLS{
 		dimension: dimension,
 		lambda:    lambda,
 		learner:   algo.NewSquareRootRLS(variance),
+		design:    design,
 	}
 }
 
@@ -41729,6 +42199,33 @@ func (op *RLS) Prepare(sample Sample) (algo.Reading, error) {
 		Design:   design,
 		Target:   sample.Target,
 		Observed: sample.Observed,
+		Lambda:   op.lambda,
+	})
+}
+
+/*
+Predict evaluates the model on a feature vector without updating its weights.
+It reuses the internal design vector to eliminate allocations on hot rollout paths.
+*/
+func (op *RLS) Predict(features []float64) (algo.Reading, error) {
+	if op.dimension <= 0 || len(features) != op.dimension {
+		return algo.Reading{}, fmt.Errorf(
+			"%w: RLS expected %d features, received %d",
+			core.ErrShape,
+			op.dimension,
+			len(features),
+		)
+	}
+
+	if len(op.design) != op.dimension+1 {
+		op.design = make([]float64, op.dimension+1)
+	}
+	op.design[0] = 1
+	copy(op.design[1:], features)
+
+	return op.learner.Step(algo.Query{
+		Design:   op.design,
+		Observed: false,
 		Lambda:   op.lambda,
 	})
 }
@@ -42050,7 +42547,6 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /* RLSOutput is a wire projection, not a parallel learner or execution interface. */
@@ -42063,9 +42559,8 @@ type RLSOutput struct {
 	Reset            bool
 }
 
-/* taskForecast deliberately omits target: querying cannot train the head. */
 func taskForecast(learner *RLS, features []float64) (RLSOutput, error) {
-	reading, err := transport.Evaluate(learner, transport.Values(Sample{Features: features}))
+	reading, err := learner.Predict(features)
 
 	if err != nil {
 		return RLSOutput{}, err
@@ -42152,6 +42647,7 @@ type TemporalLedger struct {
 	seq           int64
 	oldest        int64
 	resolvedCount int
+	totalResolved int
 	last          *ResolutionOutcome
 }
 
@@ -42188,7 +42684,7 @@ func (tl *TemporalLedger) Issue(
 	predictions []float64,
 	horizon int,
 ) {
-	if !finite(reference) || len(features) == 0 {
+	if reference <= 0 || len(features) == 0 {
 		return
 	}
 
@@ -42226,9 +42722,12 @@ func (tl *TemporalLedger) Resolve(
 	currentStep int64,
 	currentReference float64,
 ) (*ResolutionOutcome, error) {
-	if manifold == nil || !finite(currentReference) || tl.seq == 0 || tl.maxHorizon < 1 {
+	if manifold == nil || currentReference <= 0 || tl.seq == 0 || tl.maxHorizon < 1 {
 		return nil, nil
 	}
+
+	refSeq := tl.seq + 1
+	tl.references[refSeq] = currentReference
 
 	var outcome *ResolutionOutcome
 
@@ -42240,7 +42739,7 @@ func (tl *TemporalLedger) Resolve(
 
 		// References are stored for every issued sequence; the row can be
 		// supervised up to the horizon whose reference has already arrived.
-		available := tl.seq - item.Seq
+		available := refSeq - item.Seq
 
 		if available > int64(tl.maxHorizon) {
 			available = int64(tl.maxHorizon)
@@ -42279,10 +42778,11 @@ func (tl *TemporalLedger) Resolve(
 			}
 
 			item.Resolved = horizon
+			tl.totalResolved++
 
-			if horizon == item.Horizon {
+			if outcome == nil || horizon <= outcome.Horizon {
 				outcome = &ResolutionOutcome{
-					Horizon:    item.Horizon,
+					Horizon:    horizon,
 					Prediction: prediction,
 					Target:     target,
 					Error:      target - prediction,
@@ -42294,36 +42794,39 @@ func (tl *TemporalLedger) Resolve(
 
 		if item.Resolved >= tl.maxHorizon {
 			delete(tl.pending, key)
-			delete(tl.references, key)
 			tl.resolvedCount++
 		}
 	}
 
-	tl.oldest = tl.seq - int64(tl.maxHorizon) + 1
-	if tl.oldest < 1 {
-		tl.oldest = 1
+	for tl.oldest <= tl.seq {
+		if _, found := tl.pending[tl.oldest]; found {
+			break
+		}
+		tl.oldest++
 	}
 
 	return outcome, nil
 }
 
 func (tl *TemporalLedger) prune() {
-	if tl.seq-tl.oldest <= int64(tl.maxHorizon) {
+	if tl.seq <= int64(tl.maxHorizon) {
 		return
 	}
 
 	purgeBelow := tl.seq - int64(tl.maxHorizon)
-
-	for key := tl.oldest; key < purgeBelow; key++ {
-		delete(tl.pending, key)
-		delete(tl.references, key)
+	for key := range tl.references {
+		if key < purgeBelow {
+			delete(tl.references, key)
+		}
 	}
-
-	tl.oldest = purgeBelow
 }
 
 func (tl *TemporalLedger) ResolvedCount() int {
 	return tl.resolvedCount
+}
+
+func (tl *TemporalLedger) TotalResolutions() int {
+	return tl.totalResolved
 }
 
 func (tl *TemporalLedger) LastResolution() *ResolutionOutcome {
@@ -42579,14 +43082,22 @@ func NewFinite[U core.Floating]() *Finite[U] {
 	return &Finite[U]{}
 }
 
+/*
+Holds is the predicate without a streaming run: one value in, one answer out.
+Hot-path callers that only need the boolean must not wrap it in Evaluate.
+*/
+func (op *Finite[U]) Holds(value U) bool {
+	number := float64(value)
+
+	return !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
 func (op *Finite[U]) Next(
 	in iter.Seq[core.Primitive[U, U]],
 ) iter.Seq[core.Primitive[bool, bool]] {
 	return func(yield func(core.Primitive[bool, bool]) bool) {
 		for arriving := range in {
-			value := float64(arriving.Read())
-
-			if !yield(op.Carrier(!math.IsNaN(value) && !math.IsInf(value, 0))) {
+			if !yield(op.Carrier(op.Holds(arriving.Read()))) {
 				return
 			}
 		}
@@ -43950,20 +44461,86 @@ package nomagique
 
 import (
 	"iter"
+	"reflect"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Number threads a run through stages of one type. Heterogeneous composition is
-nested Next calls.
+Number threads a run through the stages it is named with.
+
+Stages carry their own types in their own signatures, and Go's generics are
+invariant, so unlike stages cannot be named together while those types are
+still visible. Each stage is asked for its own Next and handed the run the
+stage before it produced; the types meet where the values do rather than where
+the composition is written.
 */
-func Number[T any](
-	in iter.Seq[core.Primitive[T, T]],
-	stages ...core.Primitive[T, T],
-) iter.Seq[core.Primitive[T, T]] {
-	return transport.Pipe(in, stages...)
+func Number(stages ...any) func() iter.Seq[core.Primitive[any, any]] {
+	return func() iter.Seq[core.Primitive[any, any]] {
+		var run reflect.Value
+
+		for _, stage := range stages {
+			next := reflect.ValueOf(stage).MethodByName("Next")
+
+			if !next.IsValid() || next.Type().NumIn() != 1 {
+				continue
+			}
+			in := run
+
+			// A stage at the head has nothing upstream, and a stage whose run
+			// is of another shape is being handed something it cannot read: in
+			// both the honest argument is the empty run its own Next declares.
+			// That run is an iterator that yields nothing, not a nil function.
+			if !in.IsValid() || in.Type() != next.Type().In(0) {
+				in = emptyRun(next.Type().In(0))
+			}
+			run = next.Call([]reflect.Value{in})[0]
+		}
+
+		return widen(run)
+	}
+}
+
+func emptyRun(seqType reflect.Type) reflect.Value {
+	return reflect.MakeFunc(seqType, func([]reflect.Value) []reflect.Value {
+		return nil
+	})
+}
+
+/*
+widen reads whatever the last stage produced as the run a caller can range.
+
+The composition's own type cannot name the last stage's, so what comes back is
+read through the shape every stage shares: a value that answers Read.
+*/
+func widen(run reflect.Value) iter.Seq[core.Primitive[any, any]] {
+	return func(yield func(core.Primitive[any, any]) bool) {
+		if !run.IsValid() || run.IsZero() {
+			return
+		}
+		carrier := &core.Carrier[any]{}
+		stop := false
+
+		run.Call([]reflect.Value{reflect.MakeFunc(
+			reflect.FuncOf(
+				[]reflect.Type{run.Type().In(0).In(0)},
+				[]reflect.Type{reflect.TypeOf(true)},
+				false,
+			),
+			func(args []reflect.Value) []reflect.Value {
+				if stop {
+					return []reflect.Value{reflect.ValueOf(false)}
+				}
+				held := args[0].MethodByName("Read").Call(nil)[0]
+
+				if !yield(carrier.Carrier(held.Interface()).(core.Primitive[any, any])) {
+					stop = true
+				}
+
+				return []reflect.Value{reflect.ValueOf(!stop)}
+			},
+		)})
+	}
 }
 
 ---
@@ -45736,3 +46313,177 @@ __device__ __forceinline__ float qnan_f() {
 //
 // IMPORTANT:
 // - This is for debugging/instrumentation only; it must not change physics.
+// - When dbg_cap==0, logging is a no-op (zero overhead except the branch).
+#define DBG_WORDS_PER_EVENT 6u
+__device__ __forceinline__ void dbg_log(
+    unsigned* dbg_head,
+    uint* dbg_words,
+    uint dbg_cap,
+    uint tag,
+    uint gid,
+    float a,
+    float b,
+    float c,
+    float d
+) {
+    if (dbg_cap == 0u) return;
+    uint idx = atomicAdd(dbg_head, 1u);
+    if (idx >= dbg_cap) return;
+    uint base = idx * DBG_WORDS_PER_EVENT;
+    dbg_words[base + 0u] = tag;
+    dbg_words[base + 1u] = gid;
+    dbg_words[base + 2u] = __float_as_uint(a);
+    dbg_words[base + 3u] = __float_as_uint(b);
+    dbg_words[base + 4u] = __float_as_uint(c);
+    dbg_words[base + 5u] = __float_as_uint(d);
+}
+
+// -----------------------------------------------------------------------------
+// Parameter structs
+// -----------------------------------------------------------------------------
+// Host/device POD layouts have one declaration in ../bridge.h.
+
+// =============================================================================
+// Adaptive Thermodynamics: Fast reduction for global energy statistics
+// =============================================================================
+// We use a 2-pass reduction to compute:
+//   mean_abs = mean(|x|), mean = mean(x), std = std(x)
+// entirely on-GPU, so downstream kernels can do adaptive renormalization without
+// CPU sync or "magic number" damping.
+//
+// Output format (single float4 in `out_stats`):
+//   x: mean_abs
+//   y: mean
+//   z: std
+//   w: count (as float)
+//
+// NOTE: Host must dispatch pass1 with exactly 256 threads/threadgroup and
+//       num_threadgroups = ceil(N / 256).
+// -----------------------------------------------------------------------------
+
+// Fixed block size required by these reduction kernels.
+constexpr uint kReduceThreads = 256;
+
+__global__ void reduce_float_stats_pass1(
+    const float* x,
+    float* group_stats,
+    uint  N
+) {
+    const uint tid = threadIdx.x;
+    const uint tg_id = blockIdx.x;
+
+    uint idx = tg_id * kReduceThreads + tid;
+    float v = (idx < N) ? x[idx] : 0.0f;
+    float4 acc = make_float4(fabsf(v), v, v * v, (idx < N) ? 1.0f : 0.0f);
+
+    __shared__ float4 scratch[kReduceThreads];
+    scratch[tid] = acc;
+    __syncthreads();
+
+    // Parallel reduction in shared memory.
+    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
+        if (tid < offset) {
+            scratch[tid] += scratch[tid + offset];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        group_stats[tg_id * 4 + 0] = scratch[0].x;
+        group_stats[tg_id * 4 + 1] = scratch[0].y;
+        group_stats[tg_id * 4 + 2] = scratch[0].z;
+        group_stats[tg_id * 4 + 3] = scratch[0].w;
+    }
+}
+
+__global__ void reduce_float_stats_finalize(
+    const float* group_stats,
+    float* out_stats,
+    uint  num_groups
+) {
+    const uint tid = threadIdx.x;
+
+    // One threadgroup (kReduceThreads) reduces all group_stats.
+    float4 acc = make_float4(0.0f);
+    for (uint i = tid; i < num_groups; i += kReduceThreads) {
+        float sum_abs = group_stats[i * 4 + 0];
+        float sum = group_stats[i * 4 + 1];
+        float sum_sq = group_stats[i * 4 + 2];
+        float count = group_stats[i * 4 + 3];
+        acc += make_float4(sum_abs, sum, sum_sq, count);
+    }
+
+    __shared__ float4 scratch[kReduceThreads];
+    scratch[tid] = acc;
+    __syncthreads();
+
+    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
+        if (tid < offset) {
+            scratch[tid] += scratch[tid + offset];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        float sum_abs = scratch[0].x;
+        float sum = scratch[0].y;
+        float sum_sq = scratch[0].z;
+        float count = scratch[0].w;
+
+        // [CHOICE] reduction empty-case semantics
+        // [FORMULA] if count<=0: mean_abs=mean=std=0, count=0
+        // [REASON] removes numerical clamp; makes empty reduction explicit
+        if (!(count > 0.0f)) {
+            out_stats[0] = 0.0f;
+            out_stats[1] = 0.0f;
+            out_stats[2] = 0.0f;
+            out_stats[3] = 0.0f;
+            return;
+        }
+
+        float mean_abs = sum_abs / count;
+        float mean = sum / count;
+        // [CHOICE] non-negative variance
+        // [FORMULA] var = max(E[x^2] - E[x]^2, 0)
+        // [REASON] rounding can produce tiny negative; project back to ℝ_{\ge 0}
+        float var = (sum_sq / count) - mean * mean;
+        float std = sqrtf(max(var, 0.0f));
+
+        out_stats[0] = mean_abs;
+        out_stats[1] = mean;
+        out_stats[2] = std;
+        out_stats[3] = count;
+    }
+}
+
+// =============================================================================
+// Stochastic helpers (hash + Box-Muller for N(0,1))
+// =============================================================================
+__device__ __forceinline__ uint hash_u32(uint x) {
+    // PCG-inspired mix (fast, decent avalanche)
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+__device__ __forceinline__ float u01_from_u32(uint x) {
+    // [CHOICE] uniform random in (0, 1] without eps-clamps
+    // [FORMULA] u = (m + 1) / 2^24, where m ∈ [0, 2^24-1]
+    // [REASON] avoids u=0 exactly (Box-Muller needs logf(u))
+    // [NOTES] allows u=1, which yields r=0 in Box-Muller (benign).
+    uint m = (x & 0x00FFFFFFu);
+    return (float)(m + 1u) * (1.0f / 16777216.0f);
+}
+
+__device__ __forceinline__ float2 box_muller(float u1, float u2) {
+    float r = sqrtf(-2.0f * logf(u1));
+    float t = 2.0f * 3.14159265358979323846f * u2;
+    return make_float2(r * cosf(t), r * sinf(t));
+}
+
+__device__ __forceinline__ float3 randn3(uint seed, uint idx) {
+    // Deterministic per-(seed, idx) 3D standard normal.
+    // Uses 6 uniforms derived from a ha

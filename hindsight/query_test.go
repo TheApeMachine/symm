@@ -76,7 +76,7 @@ func TestTapeMeasurementsFrom(t *testing.T) {
 		So(len(legs[0]), ShouldBeGreaterThan, 0)
 		So(len(legs[0][0]), ShouldBeGreaterThan, 0)
 		So(legs[0][0][0].Metrics["level"].Raw, ShouldNotEqual, 999)
-		So(legs[0][0][0].Provenance["moment"], ShouldBeIn, "enter", "hold", "exit", "wait")
+		So(legs[0][0][0].Provenance["moment"], ShouldBeIn, "enter_long", "enter_short", "hold_long", "hold_short", "exit_long", "exit_short", "wait")
 
 		found := false
 

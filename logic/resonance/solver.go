@@ -311,9 +311,7 @@ squares averages out.
 */
 func (solver *Solver) directionalTarget(symbolName string) learning.TargetTransform {
 	return func(current float64, past float64) (float64, bool) {
-		if math.IsNaN(current) || math.IsInf(current, 0) ||
-			math.IsNaN(past) || math.IsInf(past, 0) ||
-			current <= 0 || past <= 0 {
+		if current <= 0 || past <= 0 {
 			return 0, false
 		}
 

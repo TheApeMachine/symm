@@ -43,8 +43,9 @@ func (regions *regions) form(grid *Space) {
 		regions.membership[column] = column
 	}
 	scores := make([]float64, len(grid.Columns))
+	const maxFormIterations = 100
 
-	for {
+	for iteration := 0; iteration < maxFormIterations; iteration++ {
 		moved := false
 
 		for column := range regions.membership {
@@ -94,12 +95,15 @@ func (regions *regions) form(grid *Space) {
 
 /* Activity exposes borrowed quality-conditioned values for one context. */
 func (grid *Space) Activity(label string) ([]float64, []float64, error) {
+	grid.mu.RLock()
+	defer grid.mu.RUnlock()
+
 	row, exists := grid.rowIndex[label]
 
 	if !exists {
 		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "grid: unknown context "+label, nil))
 	}
-	return grid.activations[row], grid.qualities[row], nil
+	return slices.Clone(grid.activations[row]), slices.Clone(grid.qualities[row]), nil
 }
 
 /*
@@ -108,6 +112,13 @@ and membership survive missing or quiet readings. The returned active sequence
 is borrowed storage; Impulse makes the immutable event-owned copy.
 */
 func (grid *Space) Regions(label string) ([]Region, uint64, error) {
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	return grid.regionsLocked(label)
+}
+
+func (grid *Space) regionsLocked(label string) ([]Region, uint64, error) {
 	row, exists := grid.rowIndex[label]
 
 	if !exists {
@@ -178,22 +189,29 @@ func (regions *regions) active() []Region {
 		}
 		return 0
 	})
-	total, leading, best := 0.0, 0.0, 0.0
-	keep := len(regions.output)
+	if len(regions.output) <= 1 {
+		return regions.output
+	}
+	total := 0.0
 
 	for _, region := range regions.output {
 		total += region.Strength
 	}
 
-	for index := 1; index < len(regions.output); index++ {
-		leading += regions.output[index-1].Strength
-		left, right := float64(index), float64(len(regions.output)-index)
-		difference := leading/left - (total-leading)/right
-		between := left * right * difference * difference
+	if total <= 0 {
+		return regions.output
+	}
+	accum := 0.0
+	keep := 0
 
-		if between > best {
-			best, keep = between, index
+	for _, region := range regions.output {
+		accum += region.Strength
+		keep++
+
+		if accum >= 0.80*total {
+			break
 		}
 	}
+
 	return regions.output[:keep]
 }

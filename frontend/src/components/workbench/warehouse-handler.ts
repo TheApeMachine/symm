@@ -56,6 +56,9 @@ reads the result, so the empty answer has to be shaped like a result.
 */
 const rowless = { toArray: () => [], schema: { fields: [] } };
 
+const sanitizeSql = (sql: string): string =>
+	sql.replace(/\bSELECT\s+FROM\b/gi, "SELECT NULL FROM");
+
 /*
 warehouse is the connection the handler is given. `query` is used for the
 metadata statements, whose few rows it reads as Arrow; `useUnsafe` is used for
@@ -65,7 +68,7 @@ sends, so those bytes are never decoded on the way through.
 */
 const warehouse = {
 	async query(sql: string) {
-		const ipc = await runWarehouseStatement(sql);
+		const ipc = await runWarehouseStatement(sanitizeSql(sql));
 
 		return ipc.byteLength === 0 ? rowless : tableFromIPC(ipc);
 	},
@@ -77,7 +80,7 @@ const warehouse = {
 		) => Promise<Uint8Array>,
 	) {
 		return callback(
-			{ runQuery: (_conn, sql) => runWarehouseStatement(sql) },
+			{ runQuery: (_conn, sql) => runWarehouseStatement(sanitizeSql(sql)) },
 			null,
 		);
 	},

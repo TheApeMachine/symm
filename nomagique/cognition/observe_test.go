@@ -72,8 +72,8 @@ func TestObserveLearnsAPrecursor(t *testing.T) {
 		t.Fatalf("expected one link per class, received %d: %v", len(found), found)
 	}
 
-	entered := found["b/enter/A\x00B\x00C"]
-	waited := found["b/wait/A\x00B\x00C"]
+	entered := found["b/A\x00B\x00C/enter"]
+	waited := found["b/A\x00B\x00C/wait"]
 
 	if entered.Count != 5 {
 		t.Fatalf("expected five observations of the precursor, received %d", entered.Count)
@@ -86,7 +86,7 @@ func TestObserveLearnsAPrecursor(t *testing.T) {
 	smoothed := func(weight cognition.PackedWeight) float64 {
 		alpha := config.DirichletAlpha
 		return (float64(weight.Count)*weight.Probability + alpha) /
-			(float64(weight.Count) + alpha*16)
+			(float64(weight.Count) + alpha*7)
 	}
 
 	if smoothed(entered) <= smoothed(waited) {
@@ -161,3 +161,76 @@ func TestEvaluateRecallsAPrecursor(t *testing.T) {
 		t.Fatalf("expected no association, received %q", foreign.WinnerClass)
 	}
 }
+
+func TestEvaluateUncertaintyOnSparseEvidence(t *testing.T) {
+	config := cognition.DefaultConfig()
+	radix := store.NewRadix(iradix.New[[]byte]())
+	recall := cognition.NewEvaluate()
+
+	observe := func(step uint64, context, class string) {
+		t.Helper()
+		learn(t, radix, cognition.Association{
+			Context:   []byte(context),
+			Class:     []byte(class),
+			Step:      step,
+			Retention: config.DecayFactor(),
+		})
+	}
+
+	// Single observation: N = 1
+	observe(1, "CTX1", "enter_long")
+
+	reading, err := recall.Recall(cognition.EvaluateInput{
+		Tree: radix.Read(),
+		Evaluation: cognition.Evaluation{
+			Context: []byte("CTX1"), Config: config, Step: 1,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if reading.WinnerClass != "enter_long" {
+		t.Fatalf("expected winner to be enter_long, got %q", reading.WinnerClass)
+	}
+
+	if reading.Confidence >= 0.90 {
+		t.Fatalf("confidence on N=1 must express uncertainty, but got %v (near 100%%)", reading.Confidence)
+	}
+
+	if reading.Confidence <= 0 {
+		t.Fatalf("expected positive confidence on N=1, got %v", reading.Confidence)
+	}
+
+	if reading.Support != 1 {
+		t.Fatalf("expected support to be 1, got %d", reading.Support)
+	}
+
+	if reading.RunnerUp != "prior" {
+		t.Fatalf("expected runner-up on single class match to be prior, got %q", reading.RunnerUp)
+	}
+
+	// Many observations: N = 20
+	for step := uint64(2); step <= 20; step++ {
+		observe(step, "CTX2", "enter_long")
+	}
+
+	matureReading, err := recall.Recall(cognition.EvaluateInput{
+		Tree: radix.Read(),
+		Evaluation: cognition.Evaluation{
+			Context: []byte("CTX2"), Config: config, Step: 20,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if matureReading.Confidence <= reading.Confidence {
+		t.Fatalf("expected mature confidence (%v) > single observation confidence (%v)", matureReading.Confidence, reading.Confidence)
+	}
+
+	if matureReading.Confidence < 0.70 {
+		t.Fatalf("expected mature confidence to be substantial on N=20, got %v", matureReading.Confidence)
+	}
+}
+

@@ -213,7 +213,7 @@ export const useLearning = (symbol: string) => {
 		events,
 		error: !online
 			? "Learning connection offline"
-			: state && !learningStatusHealthy(state.status)
+			: state && !learningStatusHealthy(String(state.status ?? ""))
 				? String(state.status)
 				: "",
 	};
@@ -309,7 +309,7 @@ export const useAgentSkill = () => {
 			: null,
 		error: !online
 			? "Learning connection offline"
-			: data && !learningStatusHealthy(data.status)
+			: data && !learningStatusHealthy(String(data.status ?? ""))
 				? String(data.status)
 				: "",
 	};
@@ -317,6 +317,8 @@ export const useAgentSkill = () => {
 
 const learningStatusHealthy = (status: string) =>
 	status === "learning" ||
+	status === "trading" ||
+	status === "simulated" ||
 	status === "reading the record" ||
 	status === "no tape" ||
 	status === "forming the impulse map" ||
@@ -389,8 +391,8 @@ export const projectLearning = (
 		columns: points.length,
 		initialCapital: String(member?.initial ?? ""),
 		skill: {
-			mode: "learning",
-			account: "simulated",
+			mode: member?.status === "trading" ? "trading" : "learning",
+			account: member?.status === "trading" ? "paper" : "simulated",
 			since: at,
 			reason: String(state.status),
 			samples: Number(reading?.samples ?? 0n),
@@ -423,31 +425,23 @@ export const projectLearning = (
 			authority: region.authority,
 			members: region.members,
 		})),
-		candidates:
-			member?.last?.symbol !== undefined &&
-			member.last.symbol === market?.symbol
-				? (member.alternatives ?? []).map((choice) => ({
-						kind: String(choice.kind),
-						power: choice.power,
-						reduce: choice.reduce,
-						prior: prior(choice.prior),
-						selected:
-							choice.kind === member.last?.action?.kind &&
-							choice.power === member.last?.action?.power &&
-							choice.reduce === member.last?.action?.reduce,
-					}))
-				: [],
-		influence:
-			member?.last?.symbol !== undefined &&
-			member.last.symbol === market?.symbol
-				? (member.alternatives ?? []).map((choice) => ({
-						token: choice.prior?.depth ?? 0,
-						source: "Context",
-						label: `prefix ${choice.prior?.depth ?? 0}/${choice.prior?.contextLength ?? 0}`,
-						action: `${choice.kind}${choice.reduce ? " ↓" : ""} ·1/${2 ** choice.power}`,
-						prior: prior(choice.prior),
-					}))
-				: [],
+		candidates: (member?.alternatives ?? []).map((choice) => ({
+			kind: String(choice.kind),
+			power: choice.power,
+			reduce: choice.reduce,
+			prior: prior(choice.prior),
+			selected:
+				choice.kind === member?.last?.action?.kind &&
+				choice.power === member?.last?.action?.power &&
+				choice.reduce === member?.last?.action?.reduce,
+		})),
+		influence: (member?.alternatives ?? []).map((choice) => ({
+			token: choice.prior?.depth ?? 0,
+			source: "Precursor",
+			label: choice.kind === "buy" ? "upward consensus" : choice.kind === "sell" ? "downward consensus" : "stagnant consensus",
+			action: `${choice.kind}${choice.reduce ? " ↓" : ""} · 1/${2 ** choice.power}`,
+			prior: prior(choice.prior),
+		})),
 		desk: {
 			settled: Number(state.resolved),
 			traders: agents.map((member) => ({

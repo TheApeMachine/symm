@@ -198,15 +198,16 @@ func TestWarehouseExecuteSession(t *testing.T) {
 			})
 		})
 
-		Convey("When the viewer describes a table", func() {
-			described, err := warehouse.Execute(ctx, "DESCRIBE symmtables.hindsight.decisions")
+		Convey("When a client sends a SELECT without a selection list", func() {
+			stream, err := warehouse.Execute(ctx, "SELECT FROM symmtables.hindsight.decisions")
 
 			So(err, ShouldBeNil)
 
-			rows, _ := rowsOf(t, described)
+			rows, columns := rowsOf(t, stream)
 
-			Convey("Then it receives one row per column", func() {
-				So(rows, ShouldEqual, 5)
+			Convey("Then the query succeeds with a placeholder selection rather than failing parser", func() {
+				So(rows, ShouldEqual, 2)
+				So(len(columns), ShouldEqual, 1)
 			})
 		})
 	})

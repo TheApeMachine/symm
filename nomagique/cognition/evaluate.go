@@ -60,23 +60,26 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 	logits := make([]types.Scalar, 0, maxCandidates)
 	counted := make([]uint64, 0, maxCandidates)
 	orders := make([]int, 0, maxCandidates)
-	basin := []byte("b/")
+	exactPrefix := make([]byte, 2+len(held.Context)+1)
+	exactPrefix[0] = 'b'
+	exactPrefix[1] = '/'
+	copy(exactPrefix[2:], held.Context)
+	exactPrefix[2+len(held.Context)] = '/'
+
 	iterator := input.Tree.Root().Iterator()
-	iterator.SeekPrefix(basin)
+	iterator.SeekPrefix(exactPrefix)
 
 	for key, value, more := iterator.Next(); more; key, value, more = iterator.Next() {
-		class, stored, named := parseBasinKey(key)
+		if !bytes.HasPrefix(key, exactPrefix) {
+			break
+		}
+		class, _, named := parseBasinKey(key)
 
 		if !named {
 			continue
 		}
 
-		order := matchOrder(held.Context, stored, config.MaxBackoffOrder)
-
-		if order == 0 {
-			continue
-		}
-
+		order := config.MaxBackoffOrder
 		weight := DecodeWeight(value).Effective(held.Step, config.DecayFactor())
 		denominator := float64(weight.Count) + config.DirichletAlpha*maxCandidates
 		smoothed := (float64(weight.Count)*weight.Probability + config.DirichletAlpha) / denominator
@@ -111,6 +114,61 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 	}
 
 	if len(classes) == 0 {
+		basin := []byte("b/")
+		fallbackIt := input.Tree.Root().Iterator()
+		fallbackIt.SeekPrefix(basin)
+
+		for key, value, more := fallbackIt.Next(); more; key, value, more = fallbackIt.Next() {
+			if !bytes.HasPrefix(key, basin) {
+				break
+			}
+			class, stored, named := parseBasinKey(key)
+
+			if !named {
+				continue
+			}
+
+			order := matchOrder(held.Context, stored, config.MaxBackoffOrder)
+
+			if order == 0 {
+				continue
+			}
+
+			weight := DecodeWeight(value).Effective(held.Step, config.DecayFactor())
+			denominator := float64(weight.Count) + config.DirichletAlpha*maxCandidates
+			smoothed := (float64(weight.Count)*weight.Probability + config.DirichletAlpha) / denominator
+
+			if smoothed <= 0 {
+				continue
+			}
+
+			logit := types.Scalar(math.Log(smoothed))
+			gathered := false
+
+			for index, existing := range classes {
+				if bytes.Equal(existing, class) {
+					if order > orders[index] ||
+						(order == orders[index] && logit > logits[index]) {
+						orders[index] = order
+						logits[index] = logit
+						counted[index] = weight.Count
+					}
+
+					gathered = true
+					break
+				}
+			}
+
+			if !gathered && len(classes) < maxCandidates {
+				classes = append(classes, bytes.Clone(class))
+				logits = append(logits, logit)
+				counted = append(counted, weight.Count)
+				orders = append(orders, order)
+			}
+		}
+	}
+
+	if len(classes) == 0 {
 		return held, nil
 	}
 
@@ -130,14 +188,34 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 		)
 	}
 
+	unobservedCount := maxCandidates - len(classes)
+
+	if unobservedCount > 0 {
+		// Prior density for each unobserved candidate in the Dirichlet hypothesis space.
+		// Smoothed prior mass ensures single observations do not claim 100% certainty.
+		baseDenom := float64(counted[0]) + config.DirichletAlpha*maxCandidates
+		unseenSmoothed := config.DirichletAlpha / baseDenom
+		unseenLogit := types.Scalar(math.Log(unseenSmoothed))
+		unseenDensity := types.Scalar(
+			math.Exp(float64(unseenLogit-largest)) / float64(config.MaxBackoffOrder),
+		)
+
+		for range unobservedCount {
+			densities = append(densities, unseenDensity)
+		}
+	}
+
 	winner, _, chosen := probability.Argmax(densities)
 
 	if !chosen {
 		return held, nil
 	}
 
-	held.WinnerClass = string(classes[winner])
-	held.Support = counted[winner]
+	if winner < len(classes) {
+		held.WinnerClass = string(classes[winner])
+		held.Support = counted[winner]
+	}
+
 	held.Confidence = float64(probability.EvidenceShare(densities, winner))
 	held.Ambiguity = float64(probability.ShannonAmbiguity(densities))
 	runnerUp, best := -1, types.Scalar(-1)
@@ -149,7 +227,13 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 	}
 
 	if runnerUp >= 0 {
-		held.RunnerUp = string(classes[runnerUp])
+		if runnerUp < len(classes) {
+			held.RunnerUp = string(classes[runnerUp])
+		}
+
+		if runnerUp >= len(classes) {
+			held.RunnerUp = "prior"
+		}
 		opposing := float64(probability.EvidenceShare(densities, runnerUp))
 
 		if opposing > 0 && held.Confidence > 0 {
@@ -159,3 +243,4 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 
 	return held, nil
 }
+

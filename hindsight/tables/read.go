@@ -75,6 +75,7 @@ func (catalog *Catalog) scan(
 			// A column chunk bounds one flat payload, including dictionary
 			// entries. It does not bound a decoded batch of repeated entries.
 			batchSize = min(batchSize, max(1, math.MaxInt32/bound))
+			break
 		}
 	}
 

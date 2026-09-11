@@ -3,7 +3,6 @@ package learning
 import (
 	"errors"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"math"
 )
 
 /*
@@ -92,32 +91,6 @@ type ResonanceDynamics struct {
 }
 
 /*
-pendingPrediction is one observation's full forecast vector awaiting the
-outcomes that will score it.
-
-The head holds an independent model per horizon, so one observation issues a
-whole curve at once: predictions[h-1] is what the horizon-h model said would
-happen h steps after this observation. Each entry is scored separately, as and
-when that many steps have actually elapsed, so a single observation keeps
-resolving for as long as its furthest horizon.
-
-The reference and the readout at issue time are retained because the target is
-a transform over the change from then to now, and the model must be trained on
-the features it actually saw when it committed.
-*/
-type pendingPrediction struct {
-	predictions []float64
-	reference   float64
-	features    []float64
-	step        int64
-
-	// resolved marks which horizons have already been scored, so an
-	// observation that stays pending across many steps never trains the same
-	// horizon twice.
-	resolved []bool
-}
-
-/*
 PredictiveCoder learns to forecast a transform of a reference series from a
 feature vector, by settling a resonance manifold over the features and
 training its supervised head against outcomes that actually arrived.
@@ -137,11 +110,9 @@ type PredictiveCoder struct {
 	alpha    float64
 	learn    bool
 
-	horizon  int
-	pending  []pendingPrediction
-	free     []pendingPrediction
-	resolved int
-	last     *Resolution
+	horizon int
+	ledger  *TemporalLedger
+	last    *Resolution
 }
 
 /*
@@ -170,9 +141,12 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		coder.horizon = 1
 	}
 
+	coder.ledger = NewTemporalLedger(coder.horizon, coder.target)
+
 	if coder.alpha == 0 {
 		coder.alpha = 0.03
 	}
+
 	if coder.pace == nil {
 		coder.pace = NewPace(PaceConfig{
 			Rest: coder.alpha, Lower: 0.005, Upper: 0.150,
@@ -217,8 +191,20 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 		)
 	}
 
-	if err := coder.manifold.Settle(input.Features, true); err != nil {
-		return PredictiveOutput{}, err
+	if coder.learn {
+		if err := coder.manifold.Settle(input.Features, false); err != nil {
+			return PredictiveOutput{}, err
+		}
+
+		if err := coder.manifold.Learn(nil); err != nil {
+			return PredictiveOutput{}, err
+		}
+	}
+
+	if !coder.learn {
+		if err := coder.manifold.Settle(input.Features, true); err != nil {
+			return PredictiveOutput{}, err
+		}
 	}
 
 	// The pace controller reads how badly the manifold is reconstructing its
@@ -236,165 +222,33 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 		}
 	}
 
-	if input.HasReference {
-		coder.resolve(input)
-	}
-
-	coder.issue(input)
-
-	return coder.read(), nil
-}
-
-/*
-resolve scores each pending observation at every horizon whose outcome has
-now arrived.
-
-The head holds an independent model per horizon, so horizon h is trained only
-with the forecast row h issued, judged against what actually happened h steps
-later. A row therefore only ever learns from outcomes at its own distance:
-row 300 learns from 300-step-ahead moves, never from a next-tick move
-relabelled as a long one.
-
-An observation is retained until its furthest horizon has elapsed, so one
-observation keeps teaching the curve for as long as it has unresolved rows.
-A target the transform declares undefined is not a lesson; that horizon is
-marked resolved and skipped rather than taught wrongly.
-*/
-func (coder *PredictiveCoder) resolve(input PredictiveInput) {
-	if coder.target == nil || len(coder.pending) == 0 {
-		return
-	}
-
-	retained := coder.pending[:0]
-
-	for _, pending := range coder.pending {
-		elapsed := int(input.Step - pending.step)
-
-		// The outcome for horizon `elapsed` is exactly this observation, so
-		// that is the only new row this step can settle for this pending.
-		if elapsed >= 1 && elapsed <= len(pending.resolved) &&
-			!pending.resolved[elapsed-1] {
-			coder.score(input, pending, elapsed)
-			pending.resolved[elapsed-1] = true
-		}
-
-		// Retain only while some horizon can still be reached.
-		if elapsed < len(pending.resolved) {
-			retained = append(retained, pending)
-
-			continue
-		}
-
-		coder.recycle(pending)
-	}
-
-	coder.pending = retained
-}
-
-/*
-score trains one horizon row against the outcome that just arrived and records
-the resolution.
-*/
-func (coder *PredictiveCoder) score(
-	input PredictiveInput,
-	pending pendingPrediction,
-	horizon int,
-) {
-	target, defined := coder.target(input.Reference, pending.reference)
-
-	if !defined {
-		return
-	}
-
-	prediction := pending.predictions[horizon-1]
-
-	if coder.learn {
-		// The row is trained on the readout it actually saw when it committed,
-		// never on the current one.
-		_ = coder.manifold.ObserveTask(
-			horizon,
-			pending.features,
-			prediction,
-			target,
-		)
-	}
-
-	coder.resolved++
-
-	// LastResolution reports the decision just settled. Several observations
-	// can settle in one step, at different horizons; the nearest horizon is the
-	// most recently committed decision, so it is the one a consumer scoring
-	// "what did the head just get right" needs to see.
-	if coder.last == nil || horizon <= coder.last.Horizon {
-		coder.last = &Resolution{
-			Prediction: prediction,
-			Target:     target,
-			Error:      target - prediction,
-			Horizon:    horizon,
-			Step:       pending.step,
-		}
-	}
-}
-
-/*
-issue records this observation's whole forecast curve so every horizon can be
-scored as its outcome arrives.
-
-An observation with no usable reference cannot anchor a target, so nothing is
-issued against it.
-*/
-func (coder *PredictiveCoder) issue(input PredictiveInput) {
-	if !input.HasReference {
-		return
-	}
-
-	predictions := coder.manifold.TaskPrediction()
-
-	if len(predictions) == 0 {
-		return
-	}
-
-	readout := coder.manifold.ReadoutVector()
-	pending := coder.take(len(predictions), len(readout))
-
-	copy(pending.predictions, predictions)
-	copy(pending.features, readout)
-
-	pending.reference = input.Reference
-	pending.step = input.Step
-
-	coder.pending = append(coder.pending, pending)
-}
-
-/*
-take returns a pending slot sized for this observation, reusing a recycled one
-when possible. A coder tracking hundreds of horizons across hundreds of symbols
-issues a curve every tick, so these buffers must not be reallocated per step.
-*/
-func (coder *PredictiveCoder) take(horizons int, readout int) pendingPrediction {
-	if count := len(coder.free); count > 0 {
-		pending := coder.free[count-1]
-		coder.free = coder.free[:count-1]
-
-		if len(pending.predictions) == horizons && len(pending.features) == readout {
-			for index := range pending.resolved {
-				pending.resolved[index] = false
+	if input.HasReference && input.Reference > 0 {
+		if coder.learn {
+			outcome, err := coder.ledger.Resolve(coder.manifold, input.Step, input.Reference)
+			if err != nil {
+				return PredictiveOutput{}, err
 			}
 
-			return pending
+			if outcome != nil {
+				coder.last = &Resolution{
+					Prediction: outcome.Prediction,
+					Target:     outcome.Target,
+					Error:      outcome.Error,
+					Horizon:    outcome.Horizon,
+					Step:       outcome.Step,
+				}
+			}
+		}
+
+		predictions := coder.manifold.TaskPrediction()
+		readout := coder.manifold.ReadoutVector()
+
+		if len(predictions) > 0 && len(readout) > 0 {
+			coder.ledger.Issue(input.Step, input.Reference, readout, predictions, coder.horizon)
 		}
 	}
 
-	return pendingPrediction{
-		predictions: make([]float64, horizons),
-		features:    make([]float64, readout),
-		resolved:    make([]bool, horizons),
-	}
-}
-
-// recycle returns a fully resolved slot to the free list for reuse.
-func (coder *PredictiveCoder) recycle(pending pendingPrediction) {
-	coder.free = append(coder.free, pending)
+	return coder.read(), nil
 }
 
 /*
@@ -403,7 +257,7 @@ far ahead it is actually supported, and the manifold's own dynamics.
 */
 func (coder *PredictiveCoder) read() PredictiveOutput {
 	output := PredictiveOutput{
-		ResolvedSteps:  coder.resolved,
+		ResolvedSteps:  coder.ledger.TotalResolutions(),
 		Readout:        coder.manifold.ReadoutVector(),
 		LastResolution: coder.last,
 	}
@@ -464,12 +318,17 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 		output.Dynamics.Alpha = coder.alpha
 	}
 
-	if math.IsNaN(output.Confidence) || math.IsInf(output.Confidence, 0) {
-		output.Confidence = 0
-	}
-
 	return output
 }
 
 // ResolvedSteps returns how many predictions have been scored against outcomes.
-func (coder *PredictiveCoder) ResolvedSteps() int { return coder.resolved }
+func (coder *PredictiveCoder) ResolvedSteps() int { return coder.ledger.TotalResolutions() }
+
+// PendingCount returns how many observations are currently awaiting outcome resolution.
+func (coder *PredictiveCoder) PendingCount() int {
+	if coder.ledger == nil {
+		return 0
+	}
+
+	return len(coder.ledger.pending)
+}

@@ -31,7 +31,6 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -363,17 +362,11 @@ var (
 			)
 
 			/*
-				Seven trainings, declared as one stage.
-
-				Nodes in a stage run concurrently behind the ring's own barrier,
-				and each Training owns everything it writes — its ring, its
-				grid, its agent. They share only the tape they are read from, so
-				nothing between them needs a lock.
-
-				The tape arrives on a channel because walking the record is a
-				long read against an object store. Boot does not wait for it:
-				the trainings are composed over empty rings and fill in as the
-				reader recovers fragments behind them.
+				One training. Nodes in a stage run concurrently against the
+				same envelope, and the grid writes the measurements it is
+				shown — seven of those on one envelope is a concurrent map
+				write. The tape arrives on a channel because walking the
+				record is a long read against an object store.
 			*/
 			tape := measurements(runtimeCtx, catalog, runID)
 
@@ -381,13 +374,7 @@ var (
 				runtimeCtx,
 				"trainer",
 				[][]nmruntime.Node[*types.Envelope]{{
-					strategy.NewTraining(runtimeCtx, tape),
-					strategy.NewTraining(runtimeCtx, tape),
-					strategy.NewTraining(runtimeCtx, tape),
-					strategy.NewTraining(runtimeCtx, tape),
-					strategy.NewTraining(runtimeCtx, tape),
-					strategy.NewTraining(runtimeCtx, tape),
-					strategy.NewTraining(runtimeCtx, tape),
+					strategy.NewTraining(runtimeCtx, tape, instrument),
 				}},
 			)
 
@@ -735,11 +722,11 @@ carries down to the agent.
 */
 func measurements(
 	ctx context.Context, catalog *tables.Catalog, current hindsight.RunID,
-) <-chan [][]*data.Measurement[float64] {
-	tape := make(chan [][]*data.Measurement[float64])
+) *strategy.Tape {
+	tape := strategy.NewTape()
 
 	if catalog == nil {
-		close(tape)
+		tape.Close()
 
 		return tape
 	}
@@ -754,23 +741,23 @@ readRecord walks the record and publishes each run's confirmed moves as it
 recovers them.
 
 Publishing per run rather than at the end is what lets the universes begin on
-the earliest tape recovered instead of waiting for the whole archive. The
-channel is closed when the walk is done, which is how a reader learns there is
-no more tape rather than inferring it from a pause.
+the earliest tape recovered instead of waiting for the whole archive. Close
+marks the walk done; fragments still in the queue are not lost.
 */
 func readRecord(
 	ctx context.Context,
 	catalog *tables.Catalog,
 	current hindsight.RunID,
-	tape chan<- [][]*data.Measurement[float64],
+	tape *strategy.Tape,
 ) {
-	defer close(tape)
+	defer tape.Close()
 	policy := hindsight.DefaultDiscoveryPolicy()
 	budget := viper.GetInt("hindsight.rehearsal.observation_budget")
 
 	if budget <= 0 {
 		budget = policy.MinObservations * policy.MaxEpisodesPerSet
 	}
+	tape.SetBudget(uint64(budget))
 	runs, err := catalog.Runs(ctx)
 
 	if err != nil {
@@ -803,6 +790,8 @@ func readRecord(
 			continue
 		}
 		resident += len(observations)
+		tape.AddObservations(uint64(len(observations)))
+		tape.AddRuns(1)
 		recorded := hindsight.Query(
 			hindsight.Excursions, catalog, hindsight.RunID(run.ID), policy,
 		)
@@ -819,12 +808,12 @@ func readRecord(
 		// the agent, and handing them over one at a time is what lets a
 		// training begin on the first move recovered.
 		for _, leg := range legs {
-			select {
-			case tape <- leg:
-				published++
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return
 			}
+
+			tape.Publish(leg)
+			published++
 		}
 	}
 

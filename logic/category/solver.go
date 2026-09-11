@@ -203,10 +203,29 @@ func (solver *Solver) stepMeasurements(
 			state = solver.symbolState(symbol)
 		}
 
-		if measurement.Symbol() != symbol || !measurement.At.Equal(at) {
-			solver.fail("category: envelope requires one symbol and event time", nil)
+		if measurement.Symbol() != symbol {
+			solver.fail("category: envelope requires one symbol", nil)
 
 			return nil
+		}
+
+		diff := measurement.At.Sub(at)
+
+		if diff < 0 {
+			diff = -diff
+		}
+
+		if diff > 2*time.Second {
+			errnie.Warn(fmt.Sprintf(
+				"[category] dropping measurement with drifted timestamp: %v vs %v",
+				measurement.At, at,
+			))
+
+			continue
+		}
+
+		if measurement.At.After(at) {
+			at = measurement.At
 		}
 	}
 
@@ -318,10 +337,13 @@ func (solver *Solver) accumulateLocked(
 			affinity = *sample.Normalized
 		}
 
-		if affinity <= 0 {
-			// A non-positive affinity provides no positive support. It is
-			// still a current reading of the coordinate, so it must not be
-			// left as a stale positive vote; drop the coordinate.
+		if affinity < 0 {
+			affinity = math.Abs(affinity)
+		}
+
+		if affinity == 0 {
+			// Zero affinity provides no positive support. It is still a current reading
+			// of the coordinate, so drop any prior vote.
 			delete(state.coordinates, key)
 
 			continue

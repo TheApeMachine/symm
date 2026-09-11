@@ -11,26 +11,39 @@ import (
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-const maxCandidates = 16
+const (
+	maxBasinCandidates   = 7  // Canonical precursor moments: enter_long, hold_long, exit_long, enter_short, hold_short, exit_short, wait
+	maxSensoryCandidates = 16 // Sensory transition hypothesis space
+	maxCandidates        = maxBasinCandidates
+)
 
 type classAccumulator struct {
 	names  [][]byte
 	logits []types.Scalar
+	counts []uint64
+	orders []int
 	count  int
 }
 
-func (acc *classAccumulator) add(name []byte, logP types.Scalar) {
+func (acc *classAccumulator) add(name []byte, logP types.Scalar, count uint64, order int) {
 	for i := 0; i < acc.count; i++ {
 		if bytes.Equal(acc.names[i], name) {
-			acc.logits[i] += logP
+			if order > acc.orders[i] || (order == acc.orders[i] && logP > acc.logits[i]) {
+				acc.logits[i] = logP
+				acc.counts[i] = count
+				acc.orders[i] = order
+			}
 			return
 		}
 	}
 
 	acc.names = append(acc.names, name)
 	acc.logits = append(acc.logits, logP)
+	acc.counts = append(acc.counts, count)
+	acc.orders = append(acc.orders, order)
 	acc.count++
 }
+
 
 type Engine struct {
 	cfg         Config
@@ -47,6 +60,11 @@ func NewEngine(cfg Config) *Engine {
 
 	e.root.Store(iradix.New[[]byte]())
 	return e
+}
+
+/* Root is the current immutable trie. Observe publishes the next one. */
+func (e *Engine) Root() *iradix.Tree[[]byte] {
+	return e.root.Load()
 }
 
 /*
@@ -122,29 +140,59 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 	// -------------------------------------------------------------
 	var names [maxCandidates][]byte
 	var logits [maxCandidates]types.Scalar
-	acc := classAccumulator{names: names[:0], logits: logits[:0]}
+	var counts [maxCandidates]uint64
+	var orders [maxCandidates]int
+	acc := classAccumulator{names: names[:0], logits: logits[:0], counts: counts[:0], orders: orders[:0]}
+	// Fast path: direct exact prefix lookup b/<context>/ in O(L) time
+	exactPrefix := make([]byte, 2+len(context)+1)
+	exactPrefix[0] = 'b'
+	exactPrefix[1] = '/'
+	copy(exactPrefix[2:], context)
+	exactPrefix[2+len(context)] = '/'
+
 	it := root.Root().Iterator()
-	basinPrefix := []byte("b/")
-	it.SeekPrefix(basinPrefix)
+	it.SeekPrefix(exactPrefix)
 
 	for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
-		if !bytes.HasPrefix(k, basinPrefix) {
+		if !bytes.HasPrefix(k, exactPrefix) {
 			break
 		}
-		class, basinSeq, valid := parseBasinKey(k)
+		class, _, valid := parseBasinKey(k)
 		if !valid {
 			continue
 		}
 
-		order := matchOrder(context, basinSeq, e.cfg.MaxBackoffOrder)
+		state := DecodeWeight(v).Effective(step, e.decayFactor)
+		denom := float64(state.Count) + e.cfg.DirichletAlpha*float64(maxCandidates)
+		smoothedP := (float64(state.Count)*state.Probability + e.cfg.DirichletAlpha) / denom
+		logP := types.Scalar(math.Log(smoothedP))
+		acc.add(class, logP, state.Count, e.cfg.MaxBackoffOrder)
+	}
 
-		if order > 0 {
-			state := DecodeWeight(v).Effective(step, e.decayFactor)
-			// Dirichlet pseudo-count prior: P = (Count + α) / (Total + α*K)
-			denom := float64(state.Count) + e.cfg.DirichletAlpha*float64(maxCandidates)
-			smoothedP := (float64(state.Count)*state.Probability + e.cfg.DirichletAlpha) / denom
-			logP := types.Scalar(math.Log(smoothedP) * float64(order))
-			acc.add(class, logP)
+	// Fallback: if no exact match, scan basin keys with backoff matchOrder
+	if acc.count == 0 {
+		basinPrefix := []byte("b/")
+		fallbackIt := root.Root().Iterator()
+		fallbackIt.SeekPrefix(basinPrefix)
+
+		for k, v, ok := fallbackIt.Next(); ok; k, v, ok = fallbackIt.Next() {
+			if !bytes.HasPrefix(k, basinPrefix) {
+				break
+			}
+			class, basinSeq, valid := parseBasinKey(k)
+			if !valid {
+				continue
+			}
+
+			order := matchOrder(context, basinSeq, e.cfg.MaxBackoffOrder)
+
+			if order > 0 {
+				state := DecodeWeight(v).Effective(step, e.decayFactor)
+				denom := float64(state.Count) + e.cfg.DirichletAlpha*float64(maxCandidates)
+				smoothedP := (float64(state.Count)*state.Probability + e.cfg.DirichletAlpha) / denom
+				logP := types.Scalar(math.Log(smoothedP))
+				acc.add(class, logP, state.Count, order)
+			}
 		}
 	}
 
@@ -162,13 +210,32 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 		// Lift to unnormalized positive densities for EvidenceShare
 		densities := make([]types.Scalar, acc.count)
 		for i := 0; i < acc.count; i++ {
-			densities[i] = types.Scalar(math.Exp(float64(acc.logits[i] - maxLogit)))
+			density := math.Exp(float64(acc.logits[i] - maxLogit))
+			densities[i] = types.Scalar(density * float64(acc.orders[i]) / float64(e.cfg.MaxBackoffOrder))
+		}
+
+		unobservedCount := maxCandidates - acc.count
+
+		if unobservedCount > 0 {
+			baseDenom := float64(acc.counts[0]) + e.cfg.DirichletAlpha*float64(maxCandidates)
+			unseenSmoothed := e.cfg.DirichletAlpha / baseDenom
+			unseenLogit := types.Scalar(math.Log(unseenSmoothed))
+			unseenDensity := types.Scalar(
+				math.Exp(float64(unseenLogit-maxLogit)) / float64(e.cfg.MaxBackoffOrder),
+			)
+
+			for range unobservedCount {
+				densities = append(densities, unseenDensity)
+			}
 		}
 
 		// Use Nomagique's canonical Argmax reduction
 		winnerIdx, _, hasWinner := probability.Argmax(densities)
 		if hasWinner {
-			eval.WinnerClass = string(acc.names[winnerIdx])
+			if winnerIdx < acc.count {
+				eval.WinnerClass = string(acc.names[winnerIdx])
+				eval.Support = acc.counts[winnerIdx]
+			}
 			// Use Nomagique's canonical EvidenceShare reduction
 			eval.Confidence = float64(probability.EvidenceShare(densities, winnerIdx))
 
@@ -176,28 +243,32 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 			eval.Ambiguity = float64(probability.ShannonAmbiguity(densities))
 
 			// Contrast: Calculate log-odds divergence against runner-up
-			if acc.count > 1 {
-				runnerUpIdx := -1
-				var secondBest types.Scalar = -1.0
-				for i := 0; i < acc.count; i++ {
-					if i == winnerIdx {
-						continue
-					}
-					if densities[i] > secondBest {
-						secondBest = densities[i]
-						runnerUpIdx = i
-					}
+			runnerUpIdx := -1
+			var secondBest types.Scalar = -1.0
+			for i := 0; i < len(densities); i++ {
+				if i == winnerIdx {
+					continue
 				}
-				if runnerUpIdx >= 0 {
+				if densities[i] > secondBest {
+					secondBest = densities[i]
+					runnerUpIdx = i
+				}
+			}
+			if runnerUpIdx >= 0 {
+				if runnerUpIdx < acc.count {
 					eval.RunnerUp = string(acc.names[runnerUpIdx])
-					runnerUpShare := float64(probability.EvidenceShare(densities, runnerUpIdx))
-					if runnerUpShare > 0 {
-						eval.Contrast = math.Log2(eval.Confidence / runnerUpShare)
-					}
+				}
+				if runnerUpIdx >= acc.count {
+					eval.RunnerUp = "prior"
+				}
+				runnerUpShare := float64(probability.EvidenceShare(densities, runnerUpIdx))
+				if runnerUpShare > 0 && eval.Confidence > 0 {
+					eval.Contrast = math.Log2(eval.Confidence / runnerUpShare)
 				}
 			}
 		}
 	}
+
 
 	// -------------------------------------------------------------
 	// 2. Surprisal & Sequence-Break Detection
@@ -211,8 +282,8 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 			eval.Surprisal = e.cfg.SurprisalBreakBits
 		}
 	} else {
-		// Unseen transition: surprisal derives from Dirichlet baseline
-		eval.Surprisal = -math.Log2(e.cfg.DirichletAlpha / (1.0 + e.cfg.DirichletAlpha*float64(maxCandidates)))
+		// Unseen transition: surprisal derives from Dirichlet baseline over sensory space
+		eval.Surprisal = -math.Log2(e.cfg.DirichletAlpha / (1.0 + e.cfg.DirichletAlpha*float64(maxSensoryCandidates)))
 	}
 	eval.IsBreak = eval.Surprisal >= e.cfg.SurprisalBreakBits
 
@@ -280,28 +351,29 @@ func (e *Engine) beamSearch(root *iradix.Tree[[]byte], prefix []byte, width, hop
 }
 
 /*
-Suffix/prefix matching order: exact (4), suffix (2), prefix (1)
+Suffix/prefix matching order: exact (4), prefix (2), suffix (1)
+Prefix matches dominant features; suffix matches secondary features.
 */
 func matchOrder(context, target []byte, maxOrder int) int {
 	if bytes.Equal(context, target) {
 		return maxOrder
 	}
-	if bytes.HasSuffix(context, target) {
+	if bytes.HasPrefix(context, target) {
 		return maxOrder / 2
 	}
-	if bytes.HasPrefix(context, target) {
+	if bytes.HasSuffix(context, target) {
 		return 1
 	}
 	return 0
 }
 
 func makeBasinKey(class, context []byte) []byte {
-	buf := make([]byte, 2+len(class)+1+len(context))
+	buf := make([]byte, 2+len(context)+1+len(class))
 	buf[0] = 'b'
 	buf[1] = '/'
-	n := 2 + copy(buf[2:], class)
-	buf[n] = '/'
-	copy(buf[n+1:], context)
+	copy(buf[2:], context)
+	buf[2+len(context)] = '/'
+	copy(buf[3+len(context):], class)
 	return buf
 }
 
@@ -314,13 +386,21 @@ func makeSensoryKey(context []byte) []byte {
 }
 
 func parseBasinKey(k []byte) ([]byte, []byte, bool) {
-	if len(k) < 3 || k[0] != 'b' || k[1] != '/' {
+	if len(k) < 4 || k[0] != 'b' || k[1] != '/' {
 		return nil, nil, false
 	}
 	rem := k[2:]
-	idx := bytes.IndexByte(rem, '/')
-	if idx <= 0 {
+	idx := bytes.LastIndexByte(rem, '/')
+	if idx <= 0 || idx == len(rem)-1 {
 		return nil, nil, false
 	}
-	return rem[:idx], rem[idx+1:], true
+	return rem[idx+1:], rem[:idx], true
+}
+
+func MakeBasinKey(class, context []byte) []byte {
+	return makeBasinKey(class, context)
+}
+
+func ParseBasinKey(k []byte) ([]byte, []byte, bool) {
+	return parseBasinKey(k)
 }

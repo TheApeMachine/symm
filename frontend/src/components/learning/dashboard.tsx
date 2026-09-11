@@ -20,6 +20,7 @@ import { Explain } from "./explain";
 import { action, amount, basis, clock, percent } from "./format";
 import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap } from "./map";
+import { LearningPerformanceBanner } from "./performance-banner";
 import { RecognitionPanel } from "./recognition-panel";
 import { RehearsalPanel } from "./rehearsal-panel";
 import { SkillPanel } from "./skill-panel";
@@ -66,12 +67,12 @@ type Tab =
 	| "wallets";
 
 const TABS: Array<{ key: Tab; label: string }> = [
-	{ key: "decision", label: "Decision" },
+	{ key: "decision", label: "Main agent decision" },
 	{ key: "recognition", label: "Precursor recognition" },
-	{ key: "capital", label: "Consolidated account" },
-	{ key: "influence", label: "Discovery" },
+	{ key: "capital", label: "Main agent economics" },
+	{ key: "influence", label: "Precursor discovery" },
 	{ key: "forward", label: "Forward test" },
-	{ key: "wallets", label: "Wallets" },
+	{ key: "wallets", label: "Agent channels" },
 ];
 
 export const LearningDashboard = () => {
@@ -93,6 +94,7 @@ export const LearningDashboard = () => {
 			/>
 			{error && <Alert>{error} · Last successful state remains visible.</Alert>}
 			<RehearsalPanel view={view} />
+			<LearningPerformanceBanner view={view} />
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
 				<Section className="w-52 shrink-0 border-(--line) border-r max-lg:h-36 max-lg:w-full">
 					<Section.Header

@@ -29,6 +29,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -67,7 +68,9 @@ type Column struct {
 New constructs the engine without connecting.
 */
 func New() *Warehouse {
-	viper.SetDefault("workbench.memory_limit", "2GB")
+	viper.SetDefault("workbench.memory_limit", "4GB")
+	viper.SetDefault("workbench.max_temp_directory_size", "10GB")
+	viper.SetDefault("workbench.threads", 4)
 
 	return &Warehouse{}
 }
@@ -216,7 +219,11 @@ func (warehouse *Warehouse) boot(uri, location, catalog string) []string {
 		fmt.Sprintf("SET GLOBAL memory_limit=%s", literal(
 			viper.GetString("workbench.memory_limit"),
 		)),
-		"SET GLOBAL max_temp_directory_size='0B'",
+		fmt.Sprintf("SET GLOBAL max_temp_directory_size=%s", literal(
+			viper.GetString("workbench.max_temp_directory_size"),
+		)),
+		fmt.Sprintf("SET GLOBAL threads=%d", viper.GetInt("workbench.threads")),
+		"SET GLOBAL preserve_insertion_order=false",
 		// The viewer orders an unpivoted view by a row identity, and an
 		// Iceberg table has none to offer: its rows have no order the catalog
 		// guarantees, so the handler asks for `ORDER BY NULL` instead. DuckDB
@@ -316,6 +323,16 @@ func (warehouse *Warehouse) session(ctx context.Context) (*sql.Conn, error) {
 	return conn, nil
 }
 
+var selectWithoutSelection = regexp.MustCompile(`(?i)\bSELECT\s+FROM\b`)
+
+/*
+sanitizeStatement repairs common client template anomalies such as a SELECT clause
+emitted without a selection list (e.g. `SELECT FROM ...`), replacing with `SELECT NULL FROM ...`.
+*/
+func sanitizeStatement(statement string) string {
+	return selectWithoutSelection.ReplaceAllString(statement, "SELECT NULL FROM")
+}
+
 /*
 Execute runs one statement and returns its result as an Apache Arrow IPC
 stream. A statement that produces no rows — the viewer materializing or
@@ -325,6 +342,8 @@ to_arrow_ipc emits the stream in pieces: a schema message followed by one
 message per record batch, which concatenate into the stream the viewer reads.
 */
 func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]byte, error) {
+	statement = sanitizeStatement(statement)
+
 	conn, err := warehouse.session(ctx)
 
 	if err != nil {
@@ -344,7 +363,7 @@ func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]by
 		if _, err := conn.ExecContext(ctx, statement); err != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"workbench: execute statement",
+				"workbench: execute statement: "+statement,
 				err,
 			))
 		}
@@ -389,7 +408,7 @@ func (warehouse *Warehouse) selects(
 	if err != nil {
 		return false, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"workbench: prepare statement",
+			"workbench: prepare statement: "+statement,
 			err,
 		))
 	}

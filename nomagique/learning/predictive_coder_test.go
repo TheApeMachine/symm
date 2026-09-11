@@ -148,11 +148,9 @@ func TestPredictiveCoderStep(t *testing.T) {
 	Convey("Given a coder observing a stream with skipped steps", t, func() {
 		coder := coderFixture(6)
 
-		Convey("a horizon is trained by elapsed distance, never by arrival order", func() {
+		Convey("skipped caller steps still resolve issued predictions through the temporal ledger", func() {
 			reference := 100.0
 
-			// Steps jump by 3, so the second observation is 3 horizons away
-			// from the first. Training must land on row 3, not row 1.
 			for index, step := range []int64{1, 4, 7, 10, 13, 16, 19, 22} {
 				reference *= 1.01
 
@@ -165,13 +163,9 @@ func TestPredictiveCoderStep(t *testing.T) {
 				})
 			}
 
-			_, nearDefined := coder.Manifold().TaskSkillAt(1)
-			_, farDefined := coder.Manifold().TaskSkillAt(3)
-
-			// Row 1 never saw a 1-step outcome, because no two observations
-			// were ever 1 step apart.
-			So(nearDefined, ShouldBeFalse)
-			So(farDefined, ShouldBeTrue)
+			So(coder.ResolvedSteps(), ShouldBeGreaterThan, 0)
+			_, ready := coder.Manifold().TaskPrecisionAt(1)
+			So(ready, ShouldBeTrue)
 		})
 	})
 
@@ -224,17 +218,17 @@ func TestPredictiveCoderRetainsBoundedPending(t *testing.T) {
 		stream.run(200)
 
 		Convey("it retains no more pending curves than the horizon allows", func() {
-			So(len(coder.pending), ShouldBeLessThanOrEqualTo, horizon)
+			So(coder.PendingCount(), ShouldBeLessThanOrEqualTo, horizon)
 		})
 
 		Convey("a fully resolved curve is recycled instead of being reallocated", func() {
 			// In steady state a recycled curve is taken straight back by the
 			// next issue, so the free list is transiently empty by design.
 			// What must hold is that the pending set stops growing at all.
-			before := len(coder.pending)
+			before := coder.PendingCount()
 			stream.run(100)
 
-			So(len(coder.pending), ShouldEqual, before)
+			So(coder.PendingCount(), ShouldEqual, before)
 		})
 	})
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /* RLSOutput is a wire projection, not a parallel learner or execution interface. */
@@ -17,9 +16,8 @@ type RLSOutput struct {
 	Reset            bool
 }
 
-/* taskForecast deliberately omits target: querying cannot train the head. */
 func taskForecast(learner *RLS, features []float64) (RLSOutput, error) {
-	reading, err := transport.Evaluate(learner, transport.Values(Sample{Features: features}))
+	reading, err := learner.Predict(features)
 
 	if err != nil {
 		return RLSOutput{}, err

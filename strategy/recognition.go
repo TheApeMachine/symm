@@ -3,6 +3,7 @@ package strategy
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -10,9 +11,8 @@ import (
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -59,16 +59,23 @@ State reads what the grid is showing and what every learner currently holds,
 without disturbing any of them.
 */
 func (training *Training) State() *Recognition {
+	training.mu.Lock()
 	at := time.Now().UTC().UnixNano()
 	held := training.snapshot()
+	frames := training.seen.Load()
+	training.mu.Unlock()
+
+	rec := held.state(at, frames)
 
 	if held.fragments == 0 && held.loading {
-		return &Recognition{state: &telemetry.LearningStateT{
-			AtNs: at, Status: "reading the record",
-		}}
+		rec.state.Status = "reading the record"
+
+		if rec.state.Rehearsal != nil {
+			rec.state.Rehearsal.Status = "reading the record"
+		}
 	}
 
-	return held.state(at, training.seen.Load())
+	return rec
 }
 
 /* state is what one mounted tape and its learners currently amount to. */
@@ -86,10 +93,26 @@ func (held *replay) state(at int64, frames uint64) *Recognition {
 	learners := make([]*telemetry.LearningLearnerT, 0, len(held.memories))
 
 	for index, memory := range held.memories {
-		held := learner(index, memory)
-		state.Agents = append(state.Agents, held.agent)
-		state.Decisions += uint64(held.links)
-		learners = append(learners, held.held)
+		var individual *Agent
+
+		if index < len(held.cohort) {
+			individual = held.cohort[index]
+		}
+		learned := learner(index, memory, individual)
+
+		if index == 0 && held.mainAgent != nil {
+			mainTel := held.mainAgent.AgentTelemetry()
+			state.Agents = append(state.Agents, mainTel)
+		}
+
+		if index > 0 || held.mainAgent == nil {
+			learned.agent.Id = int32(index)
+			learned.agent.Status = "learning"
+			state.Agents = append(state.Agents, learned.agent)
+		}
+
+		state.Decisions += uint64(learned.links)
+		learners = append(learners, learned.held)
 	}
 	state.Recognition = held.recognised(at, frames, learners)
 	state.Rehearsal = held.rehearsal(frames, learners)
@@ -107,19 +130,60 @@ are populated.
 func (held *replay) rehearsal(
 	frames uint64, learners []*telemetry.LearningLearnerT,
 ) *telemetry.LearningRehearsalT {
+	var profitable, declining, quiet uint64
+
+	for _, leg := range held.tape {
+		if len(leg) < 2 {
+			quiet++
+			continue
+		}
+		valStart, okStart := frameValue(leg[0])
+		valEnd, okEnd := frameValue(leg[len(leg)-1])
+
+		if !okStart || !okEnd {
+			quiet++
+			continue
+		}
+
+		if valEnd > valStart {
+			profitable++
+		}
+
+		if valEnd < valStart {
+			declining++
+		}
+
+		if valEnd == valStart {
+			quiet++
+		}
+	}
+
+	observations := held.observations
+
+	if observations == 0 && held.fragments > 0 {
+		observations = frames
+	}
+	runs := int32(held.runs)
+
+	if runs == 0 && held.fragments > 0 {
+		runs = 1
+	}
+
 	rehearsal := &telemetry.LearningRehearsalT{
 		Status:       held.status(),
 		Workers:      int32(len(learners)),
 		Episodes:     uint64(held.fragments),
 		Trained:      uint64(held.fragments),
-		Observations: frames,
-		Budget:       uint64(max(held.fragments, 1)),
-		Runs:         1,
+		Profitable:   profitable,
+		Declining:    declining,
+		Quiet:        quiet,
+		Observations: observations,
+		Budget:       held.budget,
+		Runs:         runs,
 		Tracks:       make([]*telemetry.LearningTrackT, 0, len(learners)),
 	}
-	steps, symbol, entry, exit := held.tapeSteps()
-
 	for index, learner := range learners {
+		steps, symbol, entry, exit := held.tapeSteps(index)
 		rehearsal.Tracks = append(
 			rehearsal.Tracks, learnerTrack(index, learner, steps, symbol, entry, exit, frames),
 		)
@@ -128,14 +192,14 @@ func (held *replay) rehearsal(
 	return rehearsal
 }
 
-/* tapeSteps projects the first mounted fragment into one scalar per frame. */
-func (held *replay) tapeSteps() (
+/* tapeSteps projects a mounted fragment into one scalar per frame. */
+func (held *replay) tapeSteps(index int) (
 	[]*telemetry.LearningStepT, string, int32, int32,
 ) {
 	if len(held.tape) == 0 {
 		return nil, "", -1, -1
 	}
-	leg := held.tape[0]
+	leg := held.tape[index%len(held.tape)]
 	steps := make([]*telemetry.LearningStepT, 0, len(leg))
 	symbol := ""
 	entry, exit := int32(-1), int32(-1)
@@ -148,11 +212,11 @@ func (held *replay) tapeSteps() (
 		}
 		moment := frameMoment(frame)
 
-		if moment == "enter" && entry < 0 {
+		if (moment == "enter" || moment == "enter_long" || moment == "enter_short") && entry < 0 {
 			entry = int32(index)
 		}
 
-		if moment == "exit" {
+		if moment == "exit" || moment == "exit_long" || moment == "exit_short" {
 			exit = int32(index)
 		}
 		at := int64(0)
@@ -253,19 +317,19 @@ func momentIndex(moment string, entry, exit, length int32) int32 {
 	}
 
 	switch moment {
-	case "enter":
+	case "enter", "enter_long", "enter_short":
 		if entry >= 0 {
 			return entry
 		}
 
 		return length / 3
-	case "exit":
+	case "exit", "exit_long", "exit_short":
 		if exit >= 0 {
 			return exit
 		}
 
 		return 2 * length / 3
-	case "hold":
+	case "hold", "hold_long", "hold_short":
 		return length / 2
 	}
 
@@ -274,8 +338,12 @@ func momentIndex(moment string, entry, exit, length int32) int32 {
 
 /* status is what the learning path is waiting on, in its own words. */
 func (held *replay) status() string {
-	if held.fragments == 0 {
-		return "no tape"
+	if held.mainAgent != nil && held.mainAgent.Status() == "trading" {
+		return "trading"
+	}
+
+	if held.loading && held.fragments == 0 {
+		return "reading the record"
 	}
 
 	if !held.space.Formed {
@@ -294,38 +362,32 @@ func (held *replay) markets(at int64) []*telemetry.LearningDevelopmentT {
 	space := held.space
 	markets := make([]*telemetry.LearningDevelopmentT, 0, len(space.Rows))
 
-	for row, symbol := range space.Rows {
+	for _, symbol := range space.Rows {
 		development := &telemetry.LearningDevelopmentT{
 			Symbol: symbol,
 			AtNs:   at,
 			FromNs: at,
 			Status: held.status(),
 		}
-		activity, quality, err := space.Activity(symbol)
+		quantities, regions, version, err := space.MarketSnapshot(symbol)
 
 		if err != nil {
 			continue
 		}
 
-		for column, identity := range space.Columns {
-			coordinate := space.Coordinates[column]
+		for _, q := range quantities {
 			development.Quantities = append(
 				development.Quantities, &telemetry.LearningQuantityT{
-					Source:   identity[0],
-					Label:    identity[1],
-					X:        coordinate[0],
-					Y:        coordinate[1],
-					Value:    space.Values[row][column],
-					Activity: activity[column],
-					Quality:  quality[column],
-					Present:  space.Present[row][column],
+					Source:   q.Source,
+					Label:    q.Label,
+					X:        q.X,
+					Y:        q.Y,
+					Value:    q.Value,
+					Activity: q.Activity,
+					Quality:  q.Quality,
+					Present:  q.Present,
 				},
 			)
-		}
-		regions, version, err := space.Regions(symbol)
-
-		if err != nil {
-			continue
 		}
 		development.Decisions = version
 
@@ -412,7 +474,11 @@ The questions are the learner's own stored sequences, so what comes back is the
 learner being asked about something it has actually seen rather than about a
 situation invented to make it look decisive.
 */
-func learner(index int, memory *store.Retained[*iradix.Tree[[]byte]]) reading {
+func learner(
+	index int,
+	memory *store.Retained[*iradix.Tree[[]byte]],
+	individual *Agent,
+) reading {
 	answer := reading{
 		agent: &telemetry.LearningAgentT{Id: int32(index), Status: "recognising"},
 		held:  &telemetry.LearningLearnerT{Id: int32(index)},
@@ -427,20 +493,24 @@ func learner(index int, memory *store.Retained[*iradix.Tree[[]byte]]) reading {
 	answer.links = int32(tree.Len())
 	answer.held.Links = answer.links
 	answer.agent.Decisions = uint64(answer.links)
+	answer.agent.Reading = &telemetry.LearningPriorT{
+		Defined:  answer.links > 0,
+		Samples:  uint64(answer.links),
+		Support:  float64(answer.links),
+		Maturity: float64(answer.links) / 100.0,
+	}
 	counted := map[string]int32{}
 	order := make([]string, 0, 4)
-	sequences := map[string][]byte{}
 
-	// The memory is read at the moment it was last written. An unrelated clock
-	// either applies no decay, so the link seen most often long ago wins every
-	// situation, or so much that every link collapses onto the prior and the
-	// reading becomes a tie between things the learner does distinguish.
 	step := uint64(0)
 	iterator := tree.Root().Iterator()
 	iterator.SeekPrefix([]byte("b/"))
 
 	for key, value, more := iterator.Next(); more; key, value, more = iterator.Next() {
-		moment, sequence, named := bytes.Cut(key[2:], []byte("/"))
+		if !bytes.HasPrefix(key, []byte("b/")) {
+			break
+		}
+		class, _, named := cognition.ParseBasinKey(key)
 
 		if !named {
 			continue
@@ -449,19 +519,10 @@ func learner(index int, memory *store.Retained[*iradix.Tree[[]byte]]) reading {
 		if written := cognition.DecodeWeight(value).WriteStep; written > step {
 			step = written
 		}
-		name := string(moment)
+		name := string(class)
 
 		if _, seen := counted[name]; !seen {
 			order = append(order, name)
-		}
-
-		// The most specific situation the moment was learned in. A situation of
-		// one region is one several moments genuinely share — the same region
-		// lights up entering, holding and exiting — so asking about it is
-		// asking a question the tape never answered, and the reading would say
-		// more about which moment was seen most than about recognition.
-		if len(sequence) > len(sequences[name]) {
-			sequences[name] = bytes.Clone(sequence)
 		}
 		counted[name]++
 	}
@@ -470,29 +531,150 @@ func learner(index int, memory *store.Retained[*iradix.Tree[[]byte]]) reading {
 		answer.held.Moments = append(answer.held.Moments, &telemetry.LearningMomentT{
 			Name: name, Links: counted[name],
 		})
-		given := ask(tree, name, sequences[name], step)
+	}
 
-		if given == nil {
-			continue
-		}
-		answer.held.Answers = append(answer.held.Answers, given)
+	if individual != nil {
+		answer.held.Answers = individual.Answers()
+	}
 
-		// The dashboard reads the leading answer as the learner's last call, so
-		// the strongest one it currently gives stands there rather than nothing.
-		if answer.agent.Last == nil || given.Confidence > answer.agent.Last.Tape {
-			answer.agent.Last = &telemetry.LearningDecisionT{
-				Id:      uint64(index),
-				Agent:   int32(index),
-				Symbol:  "",
-				Context: named(sequences[name]),
-				Action:  &telemetry.LearningActionT{Kind: given.Answered},
-				Tape:    given.Confidence,
-				HasTape: true,
-			}
+	if len(answer.held.Answers) > 0 {
+		last := answer.held.Answers[len(answer.held.Answers)-1]
+		answer.agent.Last = &telemetry.LearningDecisionT{
+			Id:      uint64(index),
+			Agent:   int32(index),
+			Symbol:  "",
+			Action:  &telemetry.LearningActionT{Kind: last.Answered},
+			Tape:    last.Confidence,
+			HasTape: true,
 		}
 	}
 
+	if answer.links > 0 {
+		branches := make([]*telemetry.CognitionBranchT, 0, 256)
+		branches = append(branches, &telemetry.CognitionBranchT{
+			Id:          0,
+			ParentId:    -1,
+			Token:       "•",
+			Prefix:      "",
+			Key:         "",
+			Depth:       0,
+			Probability: 1.0,
+			Count:       uint64(answer.links),
+		})
+
+		nodeByKey := make(map[string]int64, 256)
+		it := tree.Root().Iterator()
+		it.SeekPrefix([]byte("b/"))
+
+		for key, value, more := it.Next(); more && len(branches) < 256; key, value, more = it.Next() {
+			if !bytes.HasPrefix(key, []byte("b/")) {
+				break
+			}
+			class, sequence, named := cognition.ParseBasinKey(key)
+
+			if !named || len(sequence) == 0 {
+				continue
+			}
+
+			weight := cognition.DecodeWeight(value)
+			parentID := int64(0)
+			prefix := ""
+			depth := int64(1)
+
+			for at := 0; at+8 <= len(sequence) && len(branches) < 256; at += 8 {
+				tokenVal := binary.BigEndian.Uint64(sequence[at : at+8])
+				token := formatRegionToken(tokenVal)
+				pathKey := prefix + "/" + token
+
+				if prefix == "" {
+					prefix = token
+				}
+
+				if prefix != token {
+					prefix = prefix + " → " + token
+				}
+
+				nodeID, exists := nodeByKey[pathKey]
+
+				if !exists {
+					nodeID = int64(len(branches))
+					nodeByKey[pathKey] = nodeID
+					branches = append(branches, &telemetry.CognitionBranchT{
+						Id:          nodeID,
+						ParentId:    parentID,
+						Token:       token,
+						Prefix:      prefix,
+						Key:         pathKey,
+						Depth:       depth,
+						Probability: 1.0,
+						Count:       weight.Count,
+					})
+				}
+				parentID = nodeID
+				depth++
+			}
+
+			if len(branches) < 256 {
+				actionToken := string(class)
+				actionPathKey := prefix + "/action:" + actionToken
+				actionPrefix := prefix + " → " + actionToken
+
+				prob := weight.Probability
+
+				if prob <= 0 && counted[actionToken] > 0 {
+					prob = float64(weight.Count) / float64(counted[actionToken])
+				}
+
+				leafID, exists := nodeByKey[actionPathKey]
+
+				if !exists {
+					leafID = int64(len(branches))
+					nodeByKey[actionPathKey] = leafID
+					branches = append(branches, &telemetry.CognitionBranchT{
+						Id:          leafID,
+						ParentId:    parentID,
+						Token:       actionToken,
+						Prefix:      actionPrefix,
+						Key:         actionPathKey,
+						Depth:       depth,
+						Probability: prob,
+						Count:       weight.Count,
+					})
+				}
+			}
+		}
+		answer.held.Branches = branches
+	}
+
 	return answer
+}
+
+/* formatRegionToken formats a condition token into human-readable region and ternary directions. */
+func formatRegionToken(tokenVal uint64) string {
+	regionID := grid.ConditionQuantity(tokenVal)
+	levelState := tokenVal & 0x3
+	changeState := (tokenVal >> 2) & 0x3
+
+	levelStr := "="
+
+	if levelState == 1 {
+		levelStr = "+"
+	}
+
+	if levelState == 2 {
+		levelStr = "-"
+	}
+	changeStr := "—"
+
+	if changeState == 1 {
+		changeStr = "▲"
+	}
+
+	if changeState == 2 {
+		changeStr = "▼"
+	}
+
+	return fmt.Sprintf("R%d %s%s", regionID, levelStr, changeStr)
 }
 
 /* named lists the regions a stored sequence is made of, in their own order. */
@@ -508,35 +690,4 @@ func named(sequence []byte) []string {
 	return regions
 }
 
-/*
-ask puts one stored sequence back to the memory that holds it and reports what
-came back, read at the clock the learner has actually reached.
 
-Reading at zero would apply no decay at all, so a link observed a great many
-times long ago outweighs a recent one no matter what either was graded — the
-reading would be a count, not a belief. A winner at zero contrast is a tie rather than a decision, and it is
-reported as it stands rather than dressed up as one.
-*/
-func ask(
-	tree *iradix.Tree[[]byte], moment string, sequence []byte, step uint64,
-) *telemetry.LearningAnswerT {
-	if len(sequence) == 0 {
-		return nil
-	}
-	given, err := transport.Evaluate(associative.NewRecall(store.NewRetained(tree)), transport.Values(cognition.Evaluation{
-		Context: sequence, Config: cognition.DefaultConfig(), Step: step,
-	}))
-	if err != nil {
-		return nil
-	}
-
-	return &telemetry.LearningAnswerT{
-		Asked:      moment,
-		Answered:   given.WinnerClass,
-		RunnerUp:   given.RunnerUp,
-		Confidence: given.Confidence,
-		Contrast:   given.Contrast,
-		Ambiguity:  given.Ambiguity,
-		Support:    given.Support,
-	}
-}

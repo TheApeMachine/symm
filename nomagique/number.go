@@ -31,14 +31,21 @@ func Number(stages ...any) func() iter.Seq[core.Primitive[any, any]] {
 			// A stage at the head has nothing upstream, and a stage whose run
 			// is of another shape is being handed something it cannot read: in
 			// both the honest argument is the empty run its own Next declares.
+			// That run is an iterator that yields nothing, not a nil function.
 			if !in.IsValid() || in.Type() != next.Type().In(0) {
-				in = reflect.Zero(next.Type().In(0))
+				in = emptyRun(next.Type().In(0))
 			}
 			run = next.Call([]reflect.Value{in})[0]
 		}
 
 		return widen(run)
 	}
+}
+
+func emptyRun(seqType reflect.Type) reflect.Value {
+	return reflect.MakeFunc(seqType, func([]reflect.Value) []reflect.Value {
+		return nil
+	})
 }
 
 /*

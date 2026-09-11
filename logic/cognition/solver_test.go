@@ -103,3 +103,41 @@ func TestSolverProcessBatch(t *testing.T) {
 		})
 	})
 }
+
+func TestSolverREMConsolidationAndCategoryCoverage(t *testing.T) {
+	Convey("Given a Cognition Solver", t, func() {
+		solver := NewSolver(t.Context())
+		solver.maxSeqLen = 2
+
+		Convey("When 128 transitions occur across non-legacy categories", func() {
+			rows := map[string]types.Cognition{}
+			categories := []types.CategoryType{
+				types.VerticalIgnition,
+				types.CoiledCompression,
+				types.RiskOnSurge,
+				types.LiquidityVacuum,
+			}
+
+			for tick := 0; tick < 128; tick++ {
+				cat := categories[tick%len(categories)]
+				err := solver.processBatch("BTC/USD", []types.Category{{
+					At:         time.Unix(int64(tick+1), 0),
+					Symbol:     "BTC/USD",
+					Type:       cat,
+					Confidence: 0.9,
+					Strength:   0.8,
+				}}, 0.5, rows)
+				So(err, ShouldBeNil)
+			}
+
+			Convey("REM consolidation runs on the 128th tick", func() {
+				reading, found := solver.Reading("BTC/USD")
+				So(found, ShouldBeTrue)
+				So(reading.REMConsolidating, ShouldBeTrue)
+				So(solver.tickCounter.Load(), ShouldEqual, uint64(128))
+				So(reading.Winner, ShouldNotBeBlank)
+			})
+		})
+	})
+}
+

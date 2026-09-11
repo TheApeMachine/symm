@@ -7,57 +7,48 @@ import (
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 Agent owns one learner: the regions it is shown become the sequence it
-recognises, and what it recognises is written into a memory that is its own.
+recognises, and what it recognises is written into the cognition engine that
+is its memory.
 */
 type Agent struct {
-	core.Base[grid.Impulse, *iradix.Tree[[]byte]]
-	memory  *store.Retained[*iradix.Tree[[]byte]]
+	core.Base[cognition.Association, *iradix.Tree[[]byte]]
+	engine  *cognition.Engine
 	context *Context
-	observe *cognition.Observe
-	recall  *cognition.Evaluate
 }
 
 /*
-NewAgent owns a memory of its own, or continues one it is given.
+NewAgent owns an engine of its own, or continues one it is given.
 
 A composition declares its agent before it has a memory to hand it, and an
 agent with nothing behind it is a learner that has not learned yet — which is
 where every learner starts.
 */
-func NewAgent(memory ...*store.Retained[*iradix.Tree[[]byte]]) *Agent {
-	held := NewMemory()
+func NewAgent(engine ...*cognition.Engine) *Agent {
+	held := cognition.NewEngine(cognition.DefaultConfig())
 
-	if len(memory) > 0 && memory[0] != nil {
-		held = memory[0]
+	if len(engine) > 0 && engine[0] != nil {
+		held = engine[0]
 	}
 
-	return &Agent{
-		memory:  held,
-		context: NewContext(),
-		observe: cognition.NewObserve(),
-		recall:  cognition.NewEvaluate(),
-	}
+	return &Agent{engine: held, context: NewContext()}
 }
 
-/* Memory is what this agent has learned, readable without disturbing it. */
-func (op *Agent) Memory() *store.Retained[*iradix.Tree[[]byte]] { return op.memory }
+/* Engine is the trie this agent writes and reads. */
+func (op *Agent) Engine() *cognition.Engine { return op.engine }
 
-func NewMemory() *store.Retained[*iradix.Tree[[]byte]] {
-	return store.NewRetained(iradix.New[[]byte]())
-}
+/* Tree is the current immutable snapshot of what has been learned. */
+func (op *Agent) Tree() *iradix.Tree[[]byte] { return op.engine.Root() }
 
 func (op *Agent) Next(
-	in iter.Seq[core.Primitive[grid.Impulse, grid.Impulse]],
+	in iter.Seq[core.Primitive[cognition.Association, cognition.Association]],
 ) iter.Seq[core.Primitive[*iradix.Tree[[]byte], *iradix.Tree[[]byte]]] {
 	return func(yield func(core.Primitive[*iradix.Tree[[]byte], *iradix.Tree[[]byte]]) bool) {
 		for arriving := range in {
-			tree, err := op.Learn(arriving.Read())
+			tree, err := op.LearnAssociation(arriving.Read())
 
 			if err != nil {
 				op.Error(err)
@@ -71,32 +62,28 @@ func (op *Agent) Next(
 	}
 }
 
+func (op *Agent) LearnAssociation(assoc cognition.Association) (*iradix.Tree[[]byte], error) {
+	if len(assoc.Context) == 0 {
+		return op.engine.Root(), nil
+	}
+
+	if assoc.Graded {
+		op.engine.Observe(assoc.Context, assoc.Class, assoc.Feedback)
+	}
+
+	if !assoc.Graded {
+		op.engine.Observe(assoc.Context, assoc.Class)
+	}
+
+	return op.engine.Root(), nil
+}
+
 func (op *Agent) Learn(impulse grid.Impulse) (*iradix.Tree[[]byte], error) {
-	assoc := op.context.Encode(impulse)
-	write, err := op.observe.Record(cognition.ObserveInput{
-		Tree:        op.memory.Read(),
-		Association: assoc,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	tree, err := transport.Evaluate(store.NewRadix(op.memory.Read()), transport.Values(op.observe.Map(write)))
-
-	if err != nil {
-		return nil, err
-	}
-
-	op.memory.Carrier(tree)
-	return tree, nil
+	return op.LearnAssociation(op.context.Encode(impulse))
 }
 
 func (op *Agent) Recall(evaluation cognition.Evaluation) (cognition.Evaluation, error) {
-	return op.recall.Recall(cognition.EvaluateInput{
-		Tree:       op.memory.Read(),
-		Evaluation: evaluation,
-	})
+	return op.engine.Evaluate(evaluation.Context), nil
 }
 
 /*
@@ -105,31 +92,23 @@ without changing anything.
 */
 type Recall struct {
 	core.Base[cognition.Evaluation, cognition.Evaluation]
-	memory   *store.Retained[*iradix.Tree[[]byte]]
-	evaluate *cognition.Evaluate
+	engine *cognition.Engine
 }
 
-func NewRecall(memory ...*store.Retained[*iradix.Tree[[]byte]]) *Recall {
-	held := NewMemory()
+func NewRecall(engine ...*cognition.Engine) *Recall {
+	held := cognition.NewEngine(cognition.DefaultConfig())
 
-	if len(memory) > 0 && memory[0] != nil {
-		held = memory[0]
+	if len(engine) > 0 && engine[0] != nil {
+		held = engine[0]
 	}
 
-	return &Recall{memory: held, evaluate: cognition.NewEvaluate()}
+	return &Recall{engine: held}
 }
 
-/*
-Recall answers one question directly, for a caller composing around this rather
-than threading a run through it.
-*/
 func (op *Recall) Recall(
 	evaluation cognition.Evaluation,
 ) (cognition.Evaluation, error) {
-	return op.evaluate.Recall(cognition.EvaluateInput{
-		Tree:       op.memory.Read(),
-		Evaluation: evaluation,
-	})
+	return op.engine.Evaluate(evaluation.Context), nil
 }
 
 func (op *Recall) Next(
@@ -137,10 +116,7 @@ func (op *Recall) Next(
 ) iter.Seq[core.Primitive[cognition.Evaluation, cognition.Evaluation]] {
 	return func(yield func(core.Primitive[cognition.Evaluation, cognition.Evaluation]) bool) {
 		for arriving := range in {
-			reading, err := op.evaluate.Recall(cognition.EvaluateInput{
-				Tree:       op.memory.Read(),
-				Evaluation: arriving.Read(),
-			})
+			reading, err := op.Recall(arriving.Read())
 
 			if err != nil {
 				op.Error(err)

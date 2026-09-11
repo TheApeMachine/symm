@@ -58,6 +58,7 @@ type ResonanceConfig struct {
 	WeightDecay float64
 	GradClip    float64
 	StateClip   float64
+	LambdaRLS   float64
 
 	ReadoutMode ReadoutMode
 }
@@ -128,6 +129,7 @@ func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
 		WeightDecay: alpha * 1e-3,
 		GradClip:    gradClip,
 		StateClip:   stateClip,
+		LambdaRLS:   0.99,
 		ReadoutMode: ReadoutAll,
 	}
 }
@@ -374,8 +376,13 @@ func newResonanceManifoldReadout(
 		denseFill(taskPrecision, 1.0)
 		denseFill(taskSkill, 1.0)
 
+		lambda := cfg.LambdaRLS
+		if lambda <= 0 || lambda > 1.0 {
+			lambda = 0.99
+		}
+
 		for rowIndex := range taskRows {
-			learner := NewRLS(readoutDim, 1.0, 1.0)
+			learner := NewRLS(readoutDim, 1.0, lambda)
 			taskLearners[rowIndex] = learner
 		}
 	}
@@ -650,7 +657,14 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 	// 1. Generative weights update
 	for layerIndex, weightMatrix := range rm.generativeWeights {
 		localSignal := rm.workspace.localSignal[layerIndex]
-		denseApplyOneMinusSquareInto(localSignal, predictions[layerIndex])
+		if layerIndex == 0 {
+			for i := 0; i < localSignal.Len(); i++ {
+				localSignal.SetVec(i, 1.0)
+			}
+		}
+		if layerIndex > 0 {
+			denseApplyOneMinusSquareInto(localSignal, predictions[layerIndex])
+		}
 		precision := rm.precisionFor(layerIndex)
 		localSignal.MulElemVec(localSignal, layerErrors[layerIndex])
 		localSignal.MulElemVec(localSignal, precision)
@@ -854,7 +868,7 @@ func (rm *ResonanceManifold) PredictionEnergy() float64 {
 func (rm *ResonanceManifold) ReconstructionError() float64 {
 	reconstruction := rm.workspace.reconPred
 	reconstruction.MulVec(rm.generativeWeights[0], rm.latentStates[1])
-	denseApplyTanhInPlace(reconstruction)
+	// Layer 0 is linear (continuous unbounded z-scores)
 
 	diff := rm.workspace.reconDiff
 	diff.SubVec(rm.latentStates[0], reconstruction)
@@ -1158,11 +1172,19 @@ func (rm *ResonanceManifold) stateGradients(
 		}
 
 		belowSignal := rm.workspace.belowSignal[layerIndex-1]
-		denseApplyOneMinusSquareInto(belowSignal, predictions[layerIndex-1])
+		if layerIndex-1 == 0 {
+			for i := 0; i < belowSignal.Len(); i++ {
+				belowSignal.SetVec(i, 1.0)
+			}
+		}
+		if layerIndex-1 > 0 {
+			denseApplyOneMinusSquareInto(belowSignal, predictions[layerIndex-1])
+		}
 		if rm.cfg.UsePrecision {
 			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
 			belowSignal.MulElemVec(belowSignal, rm.precisionFor(layerIndex-1))
-		} else {
+		}
+		if !rm.cfg.UsePrecision {
 			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
 		}
 
@@ -1455,7 +1477,9 @@ func (rm *ResonanceManifold) predictAdjacentLayers() ([]*mat.VecDense, []*mat.Ve
 	for layerIndex := 0; layerIndex < len(rm.generativeWeights); layerIndex++ {
 		prediction := rm.workspace.predictions[layerIndex]
 		prediction.MulVec(rm.generativeWeights[layerIndex], rm.latentStates[layerIndex+1])
-		denseApplyTanhInPlace(prediction)
+		if layerIndex > 0 {
+			denseApplyTanhInPlace(prediction)
+		}
 
 		layerError := rm.workspace.errors[layerIndex]
 		layerError.SubVec(rm.latentStates[layerIndex], prediction)

@@ -23,6 +23,7 @@ export const TrieModal = ({
 	onClose: () => void;
 }) => {
 	const canvas = useRef<HTMLCanvasElement>(null);
+	const rosterRef = useRef(new CortexLeafRoster());
 	const branches = learner?.branches ?? [];
 
 	useEffect(() => {
@@ -39,12 +40,26 @@ export const TrieModal = ({
 
 		const paint = () => {
 			const box = surface.getBoundingClientRect();
+			if (box.width <= 0 || box.height <= 0) {
+				return;
+			}
 			const ratio = window.devicePixelRatio || 1;
 			surface.width = Math.max(1, Math.floor(box.width * ratio));
 			surface.height = Math.max(1, Math.floor(box.height * ratio));
 			context.setTransform(ratio, 0, 0, ratio, 0, 0);
 
+			const beams = (learner?.answers ?? [])
+				.filter((ans): ans is NonNullable<typeof ans> => Boolean(ans?.asked))
+				.map((ans) => ({
+					sequence: String(ans.asked),
+					key: String(ans.asked),
+					score: ans.confidence ?? 0,
+				}));
+
 			const tree = cortexTreeFromReading({
+				beamWidth: 5,
+				maxHops: 8,
+				nodeCount: branches.length,
 				branches: branches.map((branch) => ({
 					id: Number(branch?.id ?? 0),
 					parentId: Number(branch?.parentId ?? -1),
@@ -55,7 +70,7 @@ export const TrieModal = ({
 					probability: branch?.probability ?? 0,
 					count: Number(branch?.count ?? 0),
 				})),
-				beams: [],
+				beams,
 			});
 
 			if (tree) {
@@ -64,7 +79,7 @@ export const TrieModal = ({
 					box.width,
 					box.height,
 					tree,
-					new CortexLeafRoster(),
+					rosterRef.current,
 				);
 			}
 		};
@@ -88,12 +103,11 @@ export const TrieModal = ({
 			<Modal.Header>
 				<div>
 					<Typography.Label size="m" tone="f2">
-						Learner {(learner?.id ?? 0) + 1} · what it holds
+						Shared Precursor Memory · Learner {(learner?.id ?? 0) + 1} View
 					</Typography.Label>
 					<Typography.Mono size="s" tone="f4" className="mt-0.5 block">
 						{Number(learner?.links ?? 0).toLocaleString()} learned situations ·{" "}
-						{branches.length} nodes drawn · edge = how often the sequence ran
-						into that moment
+						{branches.length} nodes drawn · shared memory across parallel cohort
 					</Typography.Mono>
 				</div>
 				<Modal.Close onClick={onClose} />

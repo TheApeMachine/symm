@@ -17,22 +17,22 @@ export const ForwardPanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
 			title="Forward evaluation"
-			meta={`${view?.resolved ?? 0} completed decisions`}
+			meta={`${view?.resolved ?? 0} completed evaluations`}
 		/>
 		<DecisionRing view={view} />
 		<TraderQuality view={view} />
 		<Section.Body className="space-y-2 p-3">
 			{view?.agents?.map((member) => (
 				<Typography.Mono key={member.id}>
-					Agent {member.id + 1} · {String(member.reading?.samples ?? 0n)} graded
-					· {String(member.wins)} positive · {String(member.losses)} negative ·{" "}
-					{String(member.pending)} pending
+					{member.id === 0
+						? `Main Agent (Policy Trader) · ${String(member.reading?.samples ?? 0n)} simulated trades graded · ${String(member.wins)} profitable · ${String(member.losses)} unprofitable · ${String(member.pending)} pending fills`
+						: `Precursor Learner ${member.id + 1} · ${String(member.reading?.samples ?? 0n)} precursor movements graded · ${String(member.wins)} accurate · ${String(member.losses)} inaccurate · ${String(member.pending)} pending`}
 				</Typography.Mono>
 			))}
-			<Typography.Mono>
-				Each decision retains its issue-time context and economics until the
-				durable tape can evaluate it. Wallet changes and elapsed time supply
-				interim feedback.
+			<Typography.Mono tone="f4">
+				The Main Agent executes forward-test trades evaluated against live market economics and fees.
+				Parallel precursor learners are decoupled from economics, evaluated purely on anticipating
+				upward, downward, and stagnant market movement.
 			</Typography.Mono>
 		</Section.Body>
 	</Section>
@@ -107,8 +107,8 @@ completed here, which is exactly why exploration reaches for it.
 export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
-			title="Feasible actions at this impulse"
-			meta={`${view?.candidates?.length ?? 0} candidates · policy lane context`}
+			title="Main agent action evaluation at current impulse"
+			meta={`${view?.candidates?.length ?? 0} candidates · evaluated against precursor consensus`}
 		/>
 		<Section.Body className="overflow-x-auto">
 			<table className="w-full text-left font-mono text-xs">
@@ -238,19 +238,18 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 };
 
 /*
-DeskPanel is the parallel trader population the shared memory is consolidated
-from. Each trader owns a wallet and makes its own choices on the same
-development; the tape later settles which of them read it right. This is the
-"multiple agents, one model" surface: the wallets are separate, the memory they
-write into is not.
+DeskPanel presents the Main Agent alongside the parallel precursor learners.
+The Main Agent owns the execution wallet, carrying simulated economics and forward-testing
+returns. Parallel learners are decoupled from economics, dedicating their compute entirely
+to identifying precursors to upward, downward, and stagnant market movements.
 */
 export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
-			title="Parallel traders"
+			title="Main Agent & Parallel Precursor Learners"
 			meta={
 				view?.desk
-					? `${view.desk.traders.length} wallets · ${view.desk.settled} verdicts settled · completed tape evaluations`
+					? `1 execution wallet (Main Agent) · ${Math.max(0, view.desk.traders.length - 1)} decoupled learners · ${view.desk.settled} verdicts settled`
 					: "Awaiting the desk"
 			}
 		/>
@@ -259,8 +258,9 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 				<thead className="text-(--f4)">
 					<tr>
 						{[
-							"Trader",
-							"Wealth",
+							"Agent / Learner",
+							"Role",
+							"Wealth (Return)",
 							"Quality",
 							"Decisions",
 							"Fills",
@@ -275,34 +275,54 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 					</tr>
 				</thead>
 				<tbody>
-					{view?.desk?.traders.map((trader) => (
-						<tr key={trader.id} className="border-(--line) border-t">
-							<td className="p-3">
-								<Typography.Mono tone="accent">
-									trader {trader.id + 1}
-								</Typography.Mono>
-							</td>
-							<td
-								className={`p-3 ${trader.wealth < 0 ? "text-error" : "text-success"}`}
-							>
-								{trader.observed > 0 || trader.fills > 0
-									? basis(trader.wealth)
-									: "unvalued"}
-							</td>
-							<td className="p-3">
-								{trader.observed > 0 ? basis(trader.quality) : "—"}
-							</td>
-							<td className="p-3">{trader.decisions}</td>
-							<td className="p-3">{trader.fills}</td>
-							<td className="p-3">{trader.graded}</td>
-							<td className="p-3">{trader.open}</td>
-							<td className="p-3">{trader.holding}</td>
-						</tr>
-					))}
+					{view?.desk?.traders.map((trader) => {
+						const isMain = trader.id === 0;
+						return (
+							<tr key={trader.id} className="border-(--line) border-t">
+								<td className="p-3">
+									<Typography.Mono tone="accent">
+										{isMain
+											? "Agent 1 (Main Agent)"
+											: `Agent ${trader.id + 1} (Precursor Learner)`}
+									</Typography.Mono>
+								</td>
+								<td className="p-3">
+									<Typography.Mono tone={isMain ? "f1" : "f3"}>
+										{isMain
+											? "Forward Test Trader (Policy)"
+											: "Precursor Learner (Decoupled)"}
+									</Typography.Mono>
+								</td>
+								<td
+									className={`p-3 ${
+										!isMain
+											? "text-(--f3)"
+											: trader.wealth < 0
+												? "text-error"
+												: "text-success"
+									}`}
+								>
+									{isMain
+										? trader.observed > 0 || trader.fills > 0
+											? basis(trader.wealth)
+											: "unvalued"
+										: "— (decoupled)"}
+								</td>
+								<td className="p-3">
+									{trader.observed > 0 ? basis(trader.quality) : "—"}
+								</td>
+								<td className="p-3">{trader.decisions}</td>
+								<td className="p-3">{isMain ? trader.fills : "0"}</td>
+								<td className="p-3">{trader.graded}</td>
+								<td className="p-3">{trader.open}</td>
+								<td className="p-3">{isMain ? trader.holding : "none"}</td>
+							</tr>
+						);
+					})}
 					{!view?.desk?.traders.length && (
 						<tr>
-							<td className="p-3 text-(--f3)" colSpan={8}>
-								No traders have been woken by the market yet.
+							<td className="p-3 text-(--f3)" colSpan={9}>
+								No traders or learners have been woken by the market yet.
 							</td>
 						</tr>
 					)}
@@ -310,23 +330,19 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 			</table>
 		</Section.Body>
 		<Typography.Mono className="px-3 pb-3 text-(--f4)">
-			Wealth is the trader's own wallet marked against the current executable
-			book. Quality only moves when the tape settles a decision, so the two can
-			disagree while a position is still open. Trader 1 follows the shared
-			memory; the others spread across the rest of what is feasible so every
-			move is tried by somebody.
+			The Main Agent (Agent 1) carries execution capital, testing simulated trades against the live book. Parallel learners (Agents 2+) are decoupled from economics, dedicating their compute entirely to identifying causal precursors to upward, downward, and stagnant price movement. When the Main Agent demonstrates robust net-positive edge, it is promoted to live paper or real execution.
 		</Typography.Mono>
 	</Section>
 );
 
-/* LanePanel keeps every cloned account's economics separate and legible. */
+/* LanePanel keeps the Main Agent's execution wallet separate from the decoupled precursor learner channels. */
 export const LanePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
-			title="Independent wallets"
+			title="Execution Lanes & Channels"
 			meta={
 				view
-					? `${view.initialCapital} starting cash in each lane`
+					? `Lane 1: Main Agent Wallet ($${view.initialCapital || "10,000"}) · Lanes 2+: Decoupled Precursor Learners`
 					: "Awaiting account economics"
 			}
 		/>
@@ -337,6 +353,7 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 					<tr>
 						{[
 							"Lane",
+							"Role",
 							"Action",
 							"Cash",
 							"Selected-symbol quantity",
@@ -352,43 +369,65 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 					</tr>
 				</thead>
 				<tbody>
-					{view?.lanes?.map((lane) => (
-						<tr key={lane.lane} className="border-(--line) border-t">
-							<td className="p-3">
-								<Flex.Row align="center" gap={4}>
-									<Typography.Mono tone="accent">
-										{lane.mode} {lane.lane + 1}
+					{view?.lanes?.map((lane) => {
+						const isMain = lane.lane === 0;
+						return (
+							<tr key={lane.lane} className="border-(--line) border-t">
+								<td className="p-3">
+									<Flex.Row align="center" gap={4}>
+										<Typography.Mono tone="accent">
+											{isMain
+												? "Lane 1 (Main Agent Policy)"
+												: `Lane ${lane.lane + 1} (Precursor Learner)`}
+										</Typography.Mono>
+									</Flex.Row>
+								</td>
+								<td className="p-3">
+									<Typography.Mono tone={isMain ? "f1" : "f3"}>
+										{isMain ? "Forward Test Wallet" : "Decoupled Channel"}
 									</Typography.Mono>
-								</Flex.Row>
-							</td>
-							<td className="p-3">
-								{action(
-									lane.action.kind,
-									lane.action.power,
-									lane.action.reduce,
-								)}
-							</td>
-							<td className="p-3">{amount(Number(lane.cash))}</td>
-							<td className="p-3">{amount(Number(lane.quantity))}</td>
-							<td className="p-3">{amount(Number(lane.fees))}</td>
-							<td
-								className={`p-3 ${lane.profit < 0 ? "text-error" : "text-success"}`}
-							>
-								{amount(lane.profit)}
-							</td>
-							<td className="p-3">{lane.fills}</td>
-							<td className="p-3">
-								{lane.resolved} / {lane.unresolved}
-							</td>
-						</tr>
-					))}
+								</td>
+								<td className="p-3">
+									{isMain
+										? action(
+												lane.action.kind,
+												lane.action.power,
+												lane.action.reduce,
+											)
+										: "precursor evaluation"}
+								</td>
+								<td className="p-3">
+									{isMain ? amount(Number(lane.cash)) : "—"}
+								</td>
+								<td className="p-3">
+									{isMain ? amount(Number(lane.quantity)) : "—"}
+								</td>
+								<td className="p-3">
+									{isMain ? amount(Number(lane.fees)) : "—"}
+								</td>
+								<td
+									className={`p-3 ${
+										!isMain
+											? "text-(--f3)"
+											: lane.profit < 0
+												? "text-error"
+												: "text-success"
+									}`}
+								>
+									{isMain ? amount(lane.profit) : "—"}
+								</td>
+								<td className="p-3">{isMain ? lane.fills : "0"}</td>
+								<td className="p-3">
+									{lane.resolved} / {lane.unresolved}
+								</td>
+							</tr>
+						);
+					})}
 				</tbody>
 			</table>
 		</Section.Body>
 		<Typography.Mono className="px-3 pb-3 text-(--f4)">
-			P&L includes entry fees and liquidation at displayed bids, including exit
-			fees. Each agent retains its own capital and positions. Positive completed
-			exploration experience also trains the consolidated agent.
+			The Main Agent exclusively manages Lane 1 with simulated execution capital, fees, and positions. Lanes 2+ represent parallel statistical learners decoupled from capital, exploring precursor spaces across multi-dimensional order book features.
 		</Typography.Mono>
 	</Section>
 );

@@ -164,6 +164,8 @@ func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, t
 		if !accumulator.initializeRLS() {
 			return
 		}
+
+		return
 	}
 
 	denominator := 1.0
