@@ -260,6 +260,7 @@ type actionCandidate struct {
 func selectLegalAction(
 	legal []Action,
 	candidates []cognition.ClassCandidate,
+	isLive bool,
 	rng *rand.Rand,
 ) (Action, float64, float64, uint64) {
 	if len(legal) == 0 {
@@ -292,10 +293,10 @@ func selectLegalAction(
 	}
 
 	// Case 1: Fresh or unseen context. No legal action has evidence in cognitive memory.
-	// In live mode (rng == nil), default to ActionWait until empirical evidence exists.
-	// In rehearsal exploration (rng != nil), explore among currently legal actions with symmetric uniform sampling.
+	// In live mode (isLive == true or rng == nil), strictly default to ActionWait.
+	// In rehearsal exploration (!isLive and rng != nil), explore among currently legal actions with symmetric uniform sampling.
 	if supportedCount == 0 {
-		if rng == nil {
+		if isLive || rng == nil {
 			return ActionWait, 0, 0, 0
 		}
 
@@ -309,8 +310,8 @@ func selectLegalAction(
 	}
 
 	// Case 2: Some actions have been observed, but an alternative legal action remains unseen.
-	// If the observed action produced low/inhibited evidence (<= 0.5), explore the unseen alternative.
-	if supportedCount < len(legal) {
+	// Only rehearsal exploration (!isLive) explores the unseen alternative when observed action has low evidence share.
+	if !isLive && supportedCount < len(legal) {
 		for _, stat := range stats {
 			if stat.support > 0 && stat.share <= 0.5 {
 				for _, unsupp := range stats {
@@ -366,8 +367,13 @@ func (agent *Agent) ChooseAction(
 	}
 
 	evaluation := agent.learner.Engine().Evaluate(sequence)
+
+	if evaluation.IsBreak {
+		agent.context.Reset()
+	}
+
 	legal := LegalActions(holding)
-	action, confidence, contrast, support := selectLegalAction(legal, evaluation.Candidates, agent.rng)
+	action, confidence, contrast, support := selectLegalAction(legal, evaluation.Candidates, agent.isLive, agent.rng)
 
 	agent.recordAnswer(&telemetry.LearningAnswerT{
 		Asked:      "action",
@@ -456,6 +462,7 @@ func (agent *Agent) RehearseChild() (int, error) {
 	// 3. Configure objective evaluation parameters
 	agent.evaluator.SetAnchorIndex(replay.AnchorIndex)
 	agent.evaluator.SetSurfaces(replay.Surfaces)
+	agent.evaluator.SetPrices(replay.Prices)
 	agent.evaluator.SetPrice(agent.price)
 
 	holding := false

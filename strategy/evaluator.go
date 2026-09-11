@@ -36,6 +36,7 @@ type FragmentEvaluator struct {
 	price       *broker.Price
 	anchorIndex int
 	surfaces    []*types.ExecutionSurface
+	prices      []float64
 }
 
 /*
@@ -86,10 +87,16 @@ func (evaluator *FragmentEvaluator) SetSurfaces(surfaces []*types.ExecutionSurfa
 	evaluator.surfaces = surfaces
 }
 
+/* SetPrices configures factual market prices for the fragment. */
+func (evaluator *FragmentEvaluator) SetPrices(prices []float64) {
+	evaluator.prices = prices
+}
+
 /* Reset clears fragment-local boundary state. */
 func (evaluator *FragmentEvaluator) Reset() {
 	evaluator.anchorIndex = -1
 	evaluator.surfaces = nil
+	evaluator.prices = nil
 }
 
 /*
@@ -390,17 +397,55 @@ func frameOrSurfacePrice(
 			return surf.BestAsk.Float64(), true
 		}
 
-		if !isAsk && surf.BestBid != nil && surf.BestBid.Float64() > 0 {
-			return surf.BestBid.Float64(), true
-		}
+		if !isAsk {
+			if !surf.FullyExecutable {
+				if surf.SellableQty != nil && surf.SellableQty.Sign() > 0 && surf.ExecutableQty != nil {
+					ratio := surf.ExecutableQty.Div(surf.SellableQty).Float64()
 
-		if !isAsk && surf.ExecutableVWAP != nil && surf.ExecutableVWAP.Float64() > 0 {
-			return surf.ExecutableVWAP.Float64(), true
-		}
+					if surf.ExecutableVWAP != nil && surf.ExecutableVWAP.Float64() > 0 {
+						return surf.ExecutableVWAP.Float64() * ratio, true
+					}
 
-		if surf.ExecutableValue != nil && surf.ExecutableValue.Float64() > 0 {
-			return surf.ExecutableValue.Float64(), true
+					if surf.ExecutableValue != nil && surf.ExecutableValue.Float64() > 0 {
+						return surf.ExecutableValue.Float64() * ratio, true
+					}
+
+					if surf.BestBid != nil && surf.BestBid.Float64() > 0 {
+						return surf.BestBid.Float64() * ratio, true
+					}
+				}
+
+				if surf.ExecutableValue != nil && surf.ExecutableValue.Float64() > 0 {
+					return surf.ExecutableValue.Float64(), true
+				}
+
+				if surf.ExecutableVWAP != nil && surf.ExecutableVWAP.Float64() > 0 {
+					return surf.ExecutableVWAP.Float64(), true
+				}
+
+				return 0, false
+			}
+
+			if surf.ExecutableVWAP != nil && surf.ExecutableVWAP.Float64() > 0 {
+				return surf.ExecutableVWAP.Float64(), true
+			}
+
+			if surf.ExecutableValue != nil && surf.ExecutableValue.Float64() > 0 {
+				if surf.SellableQty != nil && surf.SellableQty.Sign() > 0 {
+					return surf.ExecutableValue.Div(surf.SellableQty).Float64(), true
+				}
+
+				return surf.ExecutableValue.Float64(), true
+			}
+
+			if surf.BestBid != nil && surf.BestBid.Float64() > 0 {
+				return surf.BestBid.Float64(), true
+			}
 		}
+	}
+
+	if evaluator != nil && evaluator.prices != nil && index >= 0 && index < len(evaluator.prices) && evaluator.prices[index] > 0 {
+		return evaluator.prices[index], true
 	}
 
 	if index >= 0 && index < len(fragment) {

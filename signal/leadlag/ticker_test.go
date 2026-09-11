@@ -117,8 +117,8 @@ func TestTickerStep(t *testing.T) {
 			So(last.Metrics["lag_search_resolution_seconds"].Raw, ShouldAlmostEqual, 1.0, 1e-9)
 			So(last.Metrics, ShouldContainKey, "lag_search_span")
 
-			So(last.Metrics["reference_return_count"].Raw, ShouldEqual, 5.0)
-			So(last.Metrics["measured_return_count"].Raw, ShouldEqual, 5.0)
+			So(last.Metrics["reference_return_count"].Raw, ShouldEqual, 6.0)
+			So(last.Metrics["measured_return_count"].Raw, ShouldEqual, 6.0)
 			So(last.Metrics, ShouldContainKey, "overlap_pair_count")
 			So(last.Metrics, ShouldContainKey, "effective_sample_count")
 			So(last.Metrics["search_count"].Raw, ShouldBeGreaterThan, 0.0)

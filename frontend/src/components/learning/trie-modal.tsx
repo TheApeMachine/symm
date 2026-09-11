@@ -89,7 +89,7 @@ export const TrieModal = ({
 		observer.observe(surface);
 
 		return () => observer.disconnect();
-	}, [open, branches]);
+	}, [open, branches, learner?.answers]);
 
 	return (
 		<Modal

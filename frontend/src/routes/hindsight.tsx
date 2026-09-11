@@ -185,7 +185,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [failed]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -204,7 +204,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [failed]);
 
 	useEffect(() => {
 		if (run === null) return;
@@ -248,7 +248,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run]);
+	}, [run, failed]);
 
 	// The overview is the whole run for the selected instrument. It is also what
 	// answers "which instrument?" on first load: with no symbol declared, the hub
@@ -284,7 +284,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, symbol, coordinate, axis]);
+	}, [run, symbol, coordinate, axis, failed]);
 
 	// The detail view is the same projection at the plotted window's resolution.
 	// With no window it is the overview at full resolution.
@@ -315,7 +315,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, symbol, coordinate, axis, viewport]);
+	}, [run, symbol, coordinate, axis, viewport, failed]);
 
 	// Everything below the timeline is addressed by the playhead's exact capture
 	// identity: the neighbouring raw frames, the envelopes this frame produced,
@@ -366,7 +366,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, symbol, playhead]);
+	}, [run, symbol, playhead, failed]);
 
 	const positions = useMemo<Position[]>(
 		() => buildPositions(lifecycle),
@@ -404,7 +404,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, marks]);
+	}, [run, marks, failed]);
 
 	/*
 		Resident resolution is per (run, symbol, mark): the walk is over the
@@ -437,7 +437,7 @@ const HindsightRoute = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [run, symbol, marks]);
+	}, [run, symbol, marks, failed]);
 
 	const runMeta = useMemo(
 		() => runs.find((entry) => entry.id === run) ?? null,

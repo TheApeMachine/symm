@@ -2,9 +2,7 @@ package hindsight
 
 import (
 	"context"
-	"slices"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -345,7 +343,7 @@ func (tape *Tape) fragment(
 	decoded map[tables.EnvelopeRefRow][]*data.Measurement[float64],
 ) types.ReplayFragment {
 	held := make([][]*data.Measurement[float64], 0, len(window.captures))
-	surfaces := make([]*types.ExecutionSurface, 0, len(window.captures))
+	prices := make([]float64, 0, len(window.captures))
 	anchorIdx := -1
 	extremumIdx := -1
 
@@ -356,20 +354,14 @@ func (tape *Tape) fragment(
 			continue
 		}
 
-		var surface *types.ExecutionSurface
+		priceVal := 0.0
 
 		if index != nil {
 			observation, hasObs := index.ObservationAt(window.symbol, candidate)
 
 			if hasObs {
-				priceVal, hasPrice := extractObsPrice(observation)
-
-				if hasPrice {
-					measurements = ensurePriceMeasurement(measurements, observation, priceVal)
-				}
-
-				if observation.HasBid && observation.Bid > 0 {
-					surface = buildObsSurface(observation)
+				if p, ok := extractObsPrice(observation); ok {
+					priceVal = p
 				}
 			}
 		}
@@ -383,12 +375,12 @@ func (tape *Tape) fragment(
 		}
 
 		held = append(held, measurements)
-		surfaces = append(surfaces, surface)
+		prices = append(prices, priceVal)
 	}
 
 	return types.ReplayFragment{
 		Frames:        held,
-		Surfaces:      surfaces,
+		Prices:        prices,
 		Symbol:        window.symbol,
 		AnchorIndex:   anchorIdx,
 		ExtremumIndex: extremumIdx,
@@ -409,51 +401,6 @@ func extractObsPrice(observation Observation) (float64, bool) {
 	}
 
 	return 0, false
-}
-
-func ensurePriceMeasurement(
-	measurements []*data.Measurement[float64],
-	observation Observation,
-	priceVal float64,
-) []*data.Measurement[float64] {
-	for _, meas := range measurements {
-		if meas != nil && (meas.Source == "price" || meas.Source == "ticker" || meas.Label == "price" || meas.Label == "last") {
-			return measurements
-		}
-	}
-
-	priceMeas := data.NewMeasurement[float64](
-		string(observation.Capture.Run),
-		observation.Symbol,
-		"price",
-		observation.At(),
-		observation.VenueAt,
-	)
-	priceMeas.PutMetric(data.Metric[float64]{Label: "price", Raw: priceVal})
-	priceMeas.PutMetric(data.Metric[float64]{Label: "last", Raw: priceVal})
-
-	return append(slices.Clone(measurements), priceMeas)
-}
-
-func buildObsSurface(observation Observation) *types.ExecutionSurface {
-	bestBid := decimal.NewFromFloat64(observation.Bid)
-	execVal := bestBid
-
-	surface := &types.ExecutionSurface{
-		Symbol:          observation.Symbol,
-		At:              observation.At(),
-		BestBid:         bestBid,
-		ExecutableValue: execVal,
-		BookComplete:    true,
-		FullyExecutable: true,
-	}
-
-	if observation.HasAsk && observation.Ask > 0 {
-		bestAsk := decimal.NewFromFloat64(observation.Ask)
-		surface.BestAsk = bestAsk
-	}
-
-	return surface
 }
 
 /* Error exposes what the record refused, if anything. */

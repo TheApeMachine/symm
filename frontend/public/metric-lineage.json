@@ -2339,28 +2339,6 @@
       "kernelOnly": false
     },
     {
-      "id": "price/last",
-      "source": "price",
-      "metric": "last",
-      "package": "github.com/theapemachine/symm/hindsight",
-      "file": "hindsight/query.go",
-      "line": 433,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "price/price",
-      "source": "price",
-      "metric": "price",
-      "package": "github.com/theapemachine/symm/hindsight",
-      "file": "hindsight/query.go",
-      "line": 432,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
       "id": "pumpdump/best_ask",
       "source": "pumpdump",
       "metric": "best_ask",
@@ -5969,8 +5947,8 @@
     }
   ],
   "summary": {
-    "totalProducers": 308,
-    "deadProducers": 120,
+    "totalProducers": 306,
+    "deadProducers": 118,
     "referencedProducers": 188,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,

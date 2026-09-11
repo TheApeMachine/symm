@@ -247,6 +247,18 @@ func (agent *MainAgent) canEnter(decision ActionDecision) bool {
 	return true
 }
 
+func (agent *MainAgent) canExit(decision ActionDecision) bool {
+	if decision.Action != ActionExit {
+		return false
+	}
+
+	if decision.Support == 0 {
+		return false
+	}
+
+	return true
+}
+
 /*
 IsHolding reports whether a position is currently held for the symbol.
 */
@@ -327,8 +339,8 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 				}
 			}
 
-			// Exit when learner's policy chooses EXIT
-			if !shouldExit && decision.Action == ActionExit {
+			// Exit when learner's policy chooses EXIT with empirical support
+			if !shouldExit && agent.canExit(decision) {
 				shouldExit = true
 			}
 
@@ -554,19 +566,63 @@ func (agent *MainAgent) exitLong(
 	if qty == nil || qty.Sign() <= 0 || cost == nil || cost.Sign() <= 0 {
 		return
 	}
-	proceeds := price.Mul(qty)
-	feeRate := agent.feeRate(symbol)
 
-	if feeRate == nil {
-		return
+	var proceeds *decimal.Decimal
+	var exitFee *decimal.Decimal
+	var exitPrice *decimal.Decimal
+
+	if agent.price != nil {
+		if surface, err := agent.price.Surface(symbol, qty, now); err == nil && surface != nil && surface.FullyExecutable {
+			proceeds = surface.Gross
+
+			if surface.ExecutableValue != nil {
+				exitFee = surface.Gross.Sub(surface.ExecutableValue)
+			}
+
+			if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
+				exitPrice = surface.ExecutableVWAP
+			}
+		}
 	}
 
-	exitFee := proceeds.Mul(feeRate)
+	if proceeds == nil {
+		if agent.price != nil {
+			return
+		}
+
+		feeRate := agent.feeRate(symbol)
+
+		if feeRate == nil {
+			return
+		}
+
+		proceeds = price.Mul(qty)
+		exitFee = proceeds.Mul(feeRate)
+		exitPrice = price
+	}
+
+	if exitPrice == nil {
+		exitPrice = price
+	}
+
+	if exitFee == nil {
+		feeRate := agent.feeRate(symbol)
+
+		if feeRate != nil {
+			exitFee = proceeds.Mul(feeRate)
+		}
+
+		if exitFee == nil {
+			exitFee = decimal.NewFromInt64(0)
+		}
+	}
+
 	entryFee := holding.EntryFee
 
 	if entryFee == nil {
 		entryFee = decimal.NewFromInt64(0)
 	}
+
 	netProfit := proceeds.Sub(cost).Sub(exitFee).Sub(entryFee)
 
 	agent.cash = agent.cash.Add(proceeds).Sub(exitFee)
@@ -592,6 +648,7 @@ func (agent *MainAgent) exitLong(
 	}
 
 	entryPrice := holding.EntryPrice
+
 	if entryPrice == nil || entryPrice.Sign() <= 0 {
 		entryPrice = agent.lastPrice[symbol]
 	}
@@ -599,7 +656,7 @@ func (agent *MainAgent) exitLong(
 	agent.recordOutcome(TradeOutcome{
 		Symbol:     symbol,
 		EntryPrice: entryPrice,
-		ExitPrice:  price,
+		ExitPrice:  exitPrice,
 		Quantity:   qty,
 		Profit:     netProfit,
 		ReturnBp:   returnBp,

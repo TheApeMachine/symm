@@ -56,8 +56,10 @@ export const Sparkline = ({
 			viewBox={`0 0 ${width} ${height}`}
 			className={cn("h-4.5 w-full overflow-visible", className)}
 			preserveAspectRatio="none"
+			aria-label={props["aria-label"] ?? "Sparkline"}
 			{...props}
 		>
+			<title>{props["aria-label"] ?? "Sparkline"}</title>
 			<path
 				data-k={dataKey}
 				d={pathD}

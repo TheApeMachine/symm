@@ -312,8 +312,17 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{
 						system.NewTraced("signal.correlation", correlation.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
+							tick := price.Tick(symbol)
+
+							if tick == nil {
+								return nil, nil
+							}
+							return tick.Bid, tick.Ask
+						})),
 						system.NewTraced("signal.depthflow", depthflow.NewSignal(runtimeCtx)),
 						system.NewTraced("signal.derivatives", derivativesSolver),
+						system.NewTraced("signal.hawkes", hawkes.NewSignal(runtimeCtx)),
 						system.NewTraced("signal.leadlag", leadlag.NewSignal(runtimeCtx)),
 						system.NewTraced("signal.liquidity", liquidity.NewSignal(runtimeCtx)),
 						system.NewTraced("signal.morphology", morphology.NewSignal(runtimeCtx)),
@@ -321,24 +330,12 @@ var (
 						system.NewTraced("signal.sentiment", sentiment.NewSignal(runtimeCtx)),
 						system.NewTraced("signal.toxicity", toxicitySolver),
 					},
-					{system.NewTraced("logic.resonance", resonanceSolver)},
+					{
+						system.NewTraced("logic.resonance", resonanceSolver),
+						system.NewTraced("logic.manifold", manifoldSolver),
+					},
 				},
 			)
-
-			flow := nmruntime.NewWorkload(runtimeCtx, "flow", [][]nmruntime.Node[*types.Envelope]{
-				{
-					system.NewTraced("signal.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
-						tick := price.Tick(symbol)
-
-						if tick == nil {
-							return nil, nil
-						}
-						return tick.Bid, tick.Ask
-					})),
-					system.NewTraced("signal.hawkes", hawkes.NewSignal(runtimeCtx)),
-				},
-				{system.NewTraced("logic.manifold", manifoldSolver)},
-			})
 
 			classification := nmruntime.NewWorkload(
 				runtimeCtx,
@@ -355,7 +352,7 @@ var (
 				runtimeCtx,
 				"observations",
 				[][]nmruntime.Node[*types.Envelope]{
-					{signals, flow},
+					{signals},
 					{classification},
 					{rawCapture},
 				},

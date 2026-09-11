@@ -90,7 +90,7 @@ func TestMainAgent(t *testing.T) {
 	Convey("Given a MainAgent operating with an associative cognition engine", t, func() {
 		initialCash := decimal.NewFromInt64(1000)
 		engine := cognition.NewEngine(cognition.DefaultConfig())
-		priceSvc, _ := testExecutablePrice()
+		priceSvc, books := testExecutablePrice()
 		mainAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, engine)
 
 		So(mainAgent.ID(), ShouldEqual, 0)
@@ -131,6 +131,7 @@ func TestMainAgent(t *testing.T) {
 
 			Convey("When the price rises and position is marked to market", func() {
 				price55k := decimal.NewFromInt64(55000)
+				books.SetTouch("BTC/USD", decimal.NewFromInt64(54990), decimal.NewFromInt64(10), decimal.NewFromInt64(55000), decimal.NewFromInt64(10))
 				envelopeHigher := &types.Envelope{
 					TickerData: kraken.TickerData{
 						Symbol: "BTC/USD",

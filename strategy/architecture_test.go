@@ -328,6 +328,7 @@ func TestArchitectureProperties(t *testing.T) {
 			actionBull, shareBull, contrastBull, suppBull := selectLegalAction(
 				[]Action{ActionEnter, ActionWait},
 				evalBull.Candidates,
+				true,
 				rng,
 			)
 			So(actionBull, ShouldEqual, ActionEnter)
@@ -338,6 +339,7 @@ func TestArchitectureProperties(t *testing.T) {
 			actionBear, shareBear, contrastBear, suppBear := selectLegalAction(
 				[]Action{ActionEnter, ActionWait},
 				evalBear.Candidates,
+				true,
 				rng,
 			)
 			So(actionBear, ShouldEqual, ActionWait)
@@ -554,12 +556,12 @@ func TestArchitectureProperties(t *testing.T) {
 			fragments := tape.ReplayFragmentsFrom(series)
 			So(len(fragments), ShouldBeGreaterThan, 0)
 
-			// Real fragment carries execution surfaces and price measurements with ZERO manual injection
+			// Real fragment carries objective prices from observation with ZERO manual injection
+			// Surfaces are NOT fabricated when depth was not recorded
 			frag := fragments[0]
-			So(len(frag.Surfaces), ShouldBeGreaterThan, 0)
-			So(frag.Surfaces[0].BestBid, ShouldNotBeNil)
-			So(frag.Surfaces[0].BestAsk, ShouldNotBeNil)
-			So(frag.Surfaces[0].ExecutableValue, ShouldNotBeNil)
+			So(len(frag.Prices), ShouldBeGreaterThan, 0)
+			So(frag.Prices[0], ShouldBeGreaterThan, 0)
+			So(len(frag.Surfaces), ShouldEqual, 0)
 
 			engine := cognition.NewEngine(cognition.DefaultConfig())
 			agent := NewAgent(10, false, engine, 16, rand.New(rand.NewSource(12345)))
@@ -680,14 +682,14 @@ func TestArchitectureProperties(t *testing.T) {
 
 			// Deep book: tight spread (ask 100.10 at entry, bid 119.90 at peak)
 			evalDeep.SetSurfaces([]*types.ExecutionSurface{
-				{BestAsk: decimal.NewFromFloat64(100.10), BestBid: decimal.NewFromFloat64(100.00)},
-				{BestAsk: decimal.NewFromFloat64(120.00), BestBid: decimal.NewFromFloat64(119.90)},
+				{BestAsk: decimal.NewFromFloat64(100.10), BestBid: decimal.NewFromFloat64(100.00), FullyExecutable: true},
+				{BestAsk: decimal.NewFromFloat64(120.00), BestBid: decimal.NewFromFloat64(119.90), FullyExecutable: true},
 			})
 
 			// Thin/wide book: wide spread (ask 115.00 at entry, bid 105.00 at peak)
 			evalThin.SetSurfaces([]*types.ExecutionSurface{
-				{BestAsk: decimal.NewFromFloat64(115.00), BestBid: decimal.NewFromFloat64(95.00)},
-				{BestAsk: decimal.NewFromFloat64(125.00), BestBid: decimal.NewFromFloat64(105.00)},
+				{BestAsk: decimal.NewFromFloat64(115.00), BestBid: decimal.NewFromFloat64(95.00), FullyExecutable: true},
+				{BestAsk: decimal.NewFromFloat64(125.00), BestBid: decimal.NewFromFloat64(105.00), FullyExecutable: true},
 			})
 
 			outcomeDeep, err := evalDeep.EvaluateEntry(chartFrames, 0)
@@ -818,6 +820,232 @@ func TestArchitectureProperties(t *testing.T) {
 			eval := engine.Evaluate(liveSeq)
 			So(eval.Support, ShouldBeGreaterThan, 0)
 			So(eval.WinnerClass, ShouldEqual, "ENTER")
+		})
+
+		Convey("19. Execution surface depth collapse: identical best-bid price with collapsed depth reinforces EXIT and punishes WAIT", func() {
+			feeRate := 0.001
+			evaluator := NewFragmentEvaluator(&feeRate)
+
+			now := time.Now().UTC()
+			makeFlowFrame := func(step int) []*data.Measurement[float64] {
+				at := now.Add(time.Duration(step) * time.Second)
+				mFlow := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, at)
+				mFlow.PutMetric(data.Metric[float64]{Label: "level", Raw: 100.0})
+				return []*data.Measurement[float64]{mFlow}
+			}
+
+			fragment := [][]*data.Measurement[float64]{
+				makeFlowFrame(0),
+				makeFlowFrame(1),
+			}
+
+			evaluator.SetPrices([]float64{100.0, 100.0})
+
+			// Frame 0 has full depth (ExecutableQty = 1.0, SellableQty = 1.0, FullyExecutable = true)
+			// Frame 1 has collapsed depth: best bid is still 100.0, but book bids evaporated (ExecutableQty = 0.0, SellableQty = 1.0, FullyExecutable = false)
+			qtyOne := decimal.NewFromFloat64(1.0)
+			qtyZero := decimal.NewFromFloat64(0.0)
+			bidPrice := decimal.NewFromFloat64(100.0)
+
+			surface0 := &types.ExecutionSurface{
+				BestBid:         bidPrice,
+				BestAsk:         bidPrice,
+				SellableQty:     qtyOne,
+				ExecutableQty:   qtyOne,
+				FullyExecutable: true,
+			}
+			surface1 := &types.ExecutionSurface{
+				BestBid:         bidPrice,
+				BestAsk:         bidPrice,
+				SellableQty:     qtyOne,
+				ExecutableQty:   qtyZero,
+				FullyExecutable: false,
+			}
+			evaluator.SetSurfaces([]*types.ExecutionSurface{surface0, surface1})
+
+			// Holding entered at index 0
+			// Exiting at frame 0 protects capital before liquidity collapse
+			exitOutcome, err := evaluator.EvaluateExit(fragment, 0, 0)
+			So(err, ShouldBeNil)
+			So(exitOutcome.Correctness, ShouldBeGreaterThan, 0)
+			So(exitOutcome.Reinforcement, ShouldBeGreaterThan, 0)
+
+			// Waiting at frame 0 into frame 1 suffers liquidity collapse and is punished
+			waitOutcome, err := evaluator.EvaluateWait(fragment, 0, true, 0)
+			So(err, ShouldBeNil)
+			So(waitOutcome.Correctness, ShouldBeLessThan, 0)
+			So(waitOutcome.Reinforcement, ShouldBeLessThan, 0)
+		})
+
+		Convey("20. Rehearsal frame schema purity: frames contain zero synthetic price measurements and mirror live envelopes", func() {
+			series := make([]hindsight.Observation, 0, 400)
+			now := time.Now().UTC()
+			seq := uint64(0)
+			addRamp := func(startPrice, endPrice float64, steps int) {
+				for idx := 0; idx < steps; idx++ {
+					fraction := float64(idx) / float64(steps)
+					priceVal := startPrice + (endPrice-startPrice)*fraction
+					at := now.Add(time.Duration(seq) * time.Second)
+					series = append(series, hindsight.Observation{
+						Capture:    hindsight.CaptureIdentity{Run: "schema-test", Sequence: types.CaptureSequence(seq)},
+						Ordinal:    1,
+						ReceivedAt: at,
+						VenueAt:    at,
+						Symbol:     "BTC/USD",
+						HasBid:     true,
+						Bid:        priceVal - 0.05,
+						HasAsk:     true,
+						Ask:        priceVal + 0.05,
+						HasLast:    true,
+						Last:       priceVal,
+					})
+					seq++
+				}
+			}
+			addRamp(100, 100, 100)
+			addRamp(100, 120, 100)
+			addRamp(120, 100, 100)
+			addRamp(100, 105, 100)
+
+			catalog := tablestest.New(t)
+			writer := tables.NewWriter(catalog)
+
+			for _, obs := range series {
+				identity := tables.EnvelopeRefRow{
+					Run:      "schema-test",
+					Sequence: int64(obs.Capture.Sequence),
+					Ordinal:  1,
+				}
+				env := &types.Envelope{Key: "BTC/USD"}
+				measurement := data.NewMeasurement[float64]("flow", "BTC/USD", "cvd", obs.At(), obs.At())
+				measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: obs.Bid})
+				env.CVD = measurement
+				writer.AddWitness(tables.WitnessRow{
+					Run: identity.Run, Envelope: identity, ArtifactKind: "precursor",
+					Boundary: "after-logic", Payload: env.EncodePrecursor(),
+				})
+			}
+			So(writer.Commit(t.Context()), ShouldBeNil)
+
+			tape := hindsight.Query(hindsight.Excursions, catalog, "schema-test", hindsight.DefaultDiscoveryPolicy())
+			fragments := tape.ReplayFragmentsFrom(series)
+			So(len(fragments), ShouldBeGreaterThan, 0)
+
+			for _, frag := range fragments {
+				// Factual prices are carried out-of-band in Prices slice
+				So(len(frag.Prices), ShouldEqual, len(frag.Frames))
+
+				// Invariant: ZERO synthetic "price" measurements injected into rehearsal Frames
+				for _, frame := range frag.Frames {
+					for _, meas := range frame {
+						So(meas.Source, ShouldNotEqual, "price")
+						So(meas.Label, ShouldNotEqual, "price")
+						So(meas.Source, ShouldEqual, "cvd")
+					}
+				}
+			}
+		})
+
+		Convey("21. Live vs rehearsal action selection: unseen context deterministically produces WAIT for live agent, but explores for rehearsal", func() {
+			engine := cognition.NewEngine(cognition.DefaultConfig())
+			now := time.Now().UTC()
+
+			// 1. Live agent (isLive = true)
+			liveAgent := NewAgent(1, true, engine, 16)
+			formAgentSpace(liveAgent, now)
+
+			meas := data.NewMeasurement[float64]("m", "BTC/USD", "flow", now, now)
+			meas.PutMetric(data.Metric[float64]{Label: "level", Raw: 42.0})
+			impulse, err := liveAgent.Step([]*data.Measurement[float64]{meas}, "BTC/USD")
+			So(err, ShouldBeNil)
+
+			// In holding state with empty/unseen cognition:
+			// Live agent MUST deterministically produce ActionWait 100% of the time (never random liquidation)
+			for idx := 0; idx < 50; idx++ {
+				action, _, _, _, support := liveAgent.ChooseAction(impulse, true)
+				So(action, ShouldEqual, ActionWait)
+				So(support, ShouldEqual, 0)
+			}
+
+			// 2. Rehearsal worker (isLive = false with RNG)
+			rng := rand.New(rand.NewSource(99999))
+			rehearsalAgent := NewAgent(2, false, engine, 16, rng)
+			formAgentSpace(rehearsalAgent, now)
+
+			rehearsalImpulse, err := rehearsalAgent.Step([]*data.Measurement[float64]{meas}, "BTC/USD")
+			So(err, ShouldBeNil)
+
+			exitCount := 0
+			waitCount := 0
+			for idx := 0; idx < 100; idx++ {
+				action, _, _, _, support := rehearsalAgent.ChooseAction(rehearsalImpulse, true)
+				So(support, ShouldEqual, 0)
+
+				if action == ActionExit {
+					exitCount++
+				}
+
+				if action == ActionWait {
+					waitCount++
+				}
+			}
+
+			// Rehearsal explores both legal actions when holding on unseen context
+			So(exitCount, ShouldBeGreaterThan, 0)
+			So(waitCount, ShouldBeGreaterThan, 0)
+			So(exitCount+waitCount, ShouldEqual, 100)
+		})
+
+		Convey("22. MainAgent exitLong requires Price.Surface full-lot liquidity; zero fill if book bids cannot fill qty", func() {
+			initialCash := decimal.NewFromInt64(1000)
+			engine := cognition.NewEngine(cognition.DefaultConfig())
+			priceSvc, books := testExecutablePrice()
+			mainAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, engine)
+
+			// Setup an open position: 10 BTC
+			posQty := decimal.NewFromInt64(10)
+			entryPrice := decimal.NewFromInt64(50000)
+			mainAgent.positions["BTC/USD"] = &types.Holding{
+				Symbol:     "BTC/USD",
+				Qty:        posQty,
+				EntryPrice: entryPrice,
+				PnL:        decimal.NewFromInt64(0),
+			}
+			mainAgent.posQuantities["BTC/USD"] = posQty
+			mainAgent.posCosts["BTC/USD"] = decimal.NewFromInt64(500000)
+
+			now := time.Now().UTC()
+			env := &types.Envelope{
+				Key: "BTC/USD",
+				TickerData: kraken.TickerData{
+					Last: entryPrice,
+					Bid:  decimal.NewFromInt64(55000),
+					Ask:  decimal.NewFromInt64(55010),
+				},
+			}
+
+			// Case 1: Book only has 5 BTC on bid (less than posQty of 10 BTC) -> FullyExecutable = false
+			books.SetTouch("BTC/USD", decimal.NewFromInt64(55000), decimal.NewFromInt64(5), decimal.NewFromInt64(55010), decimal.NewFromInt64(10))
+
+			// Attempt exit
+			mainAgent.exitLong(env, "BTC/USD", decimal.NewFromInt64(55000), now)
+
+			// Position must NOT be filled: zero fill, position retained
+			So(mainAgent.fills, ShouldEqual, 0)
+			So(mainAgent.positions["BTC/USD"], ShouldNotBeNil)
+			So(mainAgent.posQuantities["BTC/USD"], ShouldNotBeNil)
+			So(mainAgent.posQuantities["BTC/USD"].Cmp(posQty), ShouldEqual, 0)
+
+			// Case 2: Book now has full-lot liquidity (15 BTC on bid >= 10 BTC) -> FullyExecutable = true
+			books.SetTouch("BTC/USD", decimal.NewFromInt64(55000), decimal.NewFromInt64(15), decimal.NewFromInt64(55010), decimal.NewFromInt64(10))
+
+			mainAgent.exitLong(env, "BTC/USD", decimal.NewFromInt64(55000), now)
+
+			// Position is successfully liquidated
+			So(mainAgent.fills, ShouldEqual, 1)
+			So(mainAgent.positions["BTC/USD"], ShouldBeNil)
+			So(mainAgent.posQuantities["BTC/USD"], ShouldBeNil)
+			So(mainAgent.cash.Cmp(initialCash), ShouldBeGreaterThan, 0)
 		})
 	})
 }

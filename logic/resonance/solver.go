@@ -3,12 +3,13 @@ package resonance
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/adaptive"
 	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/adaptive"
 
 	"github.com/theapemachine/errnie"
 
@@ -16,16 +17,59 @@ import (
 
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
+type symbolSensoryState struct {
+	mu       sync.Mutex
+	features [11]float64
+}
+
 /*
-Solver runs one feature detector per symbol over the standardized measurement
-stream. The detector owns the entire predictive loop — settling, learning,
-and the overcomplete sparse representation — so the solver is only the loop:
-readings in, features shaped, output stored on the symbol.
+Solver orchestrates Predictive Coding across the multi-sensory microstructure stream.
+
+PREDICTIVE CODING PHILOSOPHY:
+Predictive Coding (grounded in the Free Energy Principle and hierarchical predictive
+processing; Friston 2005, Rao & Ballard 1999) does NOT predict future price. Expecting
+a neural manifold to divine directional price outcomes from microstructure metrics is a
+crystal-ball fallacy.
+
+Instead, the generative manifold learns the internal structure and joint continuous
+co-activation patterns across 11 orthogonal sensory channels.
+SURPRISE IS A BREAK IN THE COMMON FLOW:
+Top-down expectations continuously predict bottom-up sensory arrivals. When the market
+moves in typical concerted flow (e.g. aggressive buying accompanied by order book replenishment,
+spread narrowing, and volume cascade), top-down generative predictions cancel incoming sensory
+evidence, resulting in minimal prediction error (low Free Energy / low surprise).
+
+Surprise surges when the expected multi-sensory co-activation pattern breaks:
+for instance, when aggressive taker flow violently accelerates (A = 0.9) while limit book depth
+retreats (B = 0.1) and adverse selection toxicity spikes (C = 0.8) contrary to historical co-occurrence.
+This un-cancelled prediction error across the hierarchical manifold IS Surprise. It signals
+structural regime rupture, liquidity absorption, iceberg execution, or market dislocation.
+
+THE 11 CANONICAL HEADLINE FEATURES (ORTHOGONAL MICROSTRUCTURE DIMENSIONS):
+Resonance ingests exactly one defensible, scale-free headline metric from each of the 11 signal
+families, capturing independent microstructural facets without high cross-collinearity:
+ 0. Correlation (relative_return_energy): Focal asset return variance relative to cohort average (volatility excitation).
+ 1. LeadLag     (best_lag_correlation): Peak cross-correlation with leading peer (information transmission latency).
+ 2. Liquidity   (relative_spread): Top-of-book bid-ask spread divided by midpoint (instantaneous immediacy cost).
+ 3. Sentiment   (advance_fraction): Cross-sectional universe breadth (fraction of advancing assets; systemic consensus).
+ 4. CVD         (signed_net_fraction): Aggressor flow ratio: net notional divided by gross notional in [-1, 1] (taker flow).
+ 5. DepthFlow   (observed_notional_imbalance): Mutation activity imbalance in [-1, 1] (maker queue injection vs pull).
+ 6. Morphology  (book_shape_distance): Wasserstein-1 distance between folded bid/ask depth distributions (book geometry).
+ 7. Hawkes      (excitation_fraction:buy): Endogenous self-exciting arrival cascade share (momentum feedback / clustering).
+ 8. PumpDump    (spread_ratio): Relative spread expansion ratio against its adaptive baseline (volume-clock velocity).
+ 9. Toxicity    (net_withdrawal_fraction:bid): Maker cancellation/retreat rate (defensive flee from adverse selection).
+ 10. Derivatives (basis): Futures price basis relative to index (institutional leverage / funding pressure).
+
+ADAPTIVE STANDARDIZATION:
+Each feature channel is standardized causally through nomagique's adaptive.Baseline (backed
+by adaptive.Window). Starting with span 1 on observation #1, each channel normalizes into
+empirical z-scores without static windows, hardcoded sigmas, or arbitrary magic constants.
 */
 type Solver struct {
 	ctx           context.Context
@@ -125,16 +169,42 @@ func (solver *Solver) Status() types.Status {
 }
 
 /*
-Step advances the symbol's predictive coder over this envelope's ticker
-observation and writes the resulting artifact back onto the envelope. An
-envelope carrying no TickerData (e.g. a Trade or Level3 envelope) is a no-op.
+Step advances the symbol's predictive coder over the canonical 11-dimensional
+microstructure sensory features carried on this envelope and writes the
+resulting artifact back onto the envelope.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope.TypeID != types.EnvelopeTicker {
+	if envelope == nil {
+		return nil
+	}
+
+	symbol := envelope.Symbol()
+
+	if symbol == "" {
 		return envelope
 	}
 
-	envelope.Resonance = solver.StepTicker(envelope.TickerData)
+	at := extractTimestamp(envelope)
+	midpoint := extractMidpoint(envelope)
+
+	loadedState, _ := solver.states.LoadOrStore(symbol, &symbolSensoryState{})
+	sensoryState := loadedState.(*symbolSensoryState)
+
+	measurements := envelope.SignalMeasurements()
+
+	sensoryState.mu.Lock()
+
+	for index, measurement := range measurements {
+		if val, ok := extractHeadlineMetric(index, measurement); ok {
+			sensoryState.features[index] = val
+		}
+	}
+
+	features := make([]float64, 11)
+	copy(features, sensoryState.features[:])
+	sensoryState.mu.Unlock()
+
+	envelope.Resonance = solver.Update(symbol, at, features, midpoint)
 
 	if envelope.Resonance == nil {
 		return envelope
@@ -146,7 +216,7 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 	// The observer has synchronously consumed the live manifold while this
 	// handler owns it. Downstream rings retain the scalar artifact, never the
-	// mutable coder that the next ticker step will advance.
+	// mutable coder that the next step will advance.
 	envelope.Resonance.Manifold = nil
 
 	return envelope
@@ -159,23 +229,16 @@ func (solver *Solver) SetObserver(observer func(*types.Envelope)) {
 
 // StepTicker advances one symbol's predictive coder over one ticker observation and returns the resulting artifact.
 func (solver *Solver) StepTicker(ticker kraken.TickerData) *types.ResonanceArtifact {
-	return solver.Update(
-		ticker.Symbol,
-		ticker.Timestamp,
-		[]float64{
-			ticker.Ask.Float64(),
-			ticker.Bid.Float64(),
-			ticker.AskQty,
-			ticker.BidQty,
-			ticker.Change.Float64(),
-			ticker.ChangePct,
-			ticker.High.Float64(),
-			ticker.Low.Float64(),
-			ticker.Last.Float64(),
-			ticker.Volume,
-			ticker.Vwap,
-		},
-	)
+	envelope := types.NewEnvelope(types.EnvelopeTicker)
+	envelope.TickerData = ticker
+
+	result := solver.Step(envelope)
+
+	if result == nil {
+		return nil
+	}
+
+	return result.Resonance
 }
 
 /*
@@ -196,13 +259,16 @@ func (solver *Solver) Update(
 	symbolName string,
 	at time.Time,
 	features []float64,
+	midpoint float64,
 ) *types.ResonanceArtifact {
-	midpoint := midpointOrLast(features)
-
 	priorMidpoint := 0.0
 
 	if prior, found := solver.references.Load(symbolName); found {
 		priorMidpoint, _ = prior.(float64)
+	}
+
+	if midpoint <= 0 && priorMidpoint > 0 {
+		midpoint = priorMidpoint
 	}
 
 	// Observe this step's log return so the directional target can require a
@@ -213,6 +279,7 @@ func (solver *Solver) Update(
 	}
 
 	detector, found := solver.detectors.Load(symbolName)
+
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch:   []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
@@ -280,24 +347,122 @@ func (solver *Solver) Update(
 	return solver.publishReturns(symbolName, at, coder, out)
 }
 
-/*
-midpointOrLast extracts an honest reference price from the standardized feature
-row. The ticker feature layout is [Ask, Bid, AskQty, BidQty, Change, ChangePct,
-High, Low, Last, Volume, Vwap]. The midpoint of the live touch is preferred;
-when that is not available the last traded price is used as the reference.
-*/
-func midpointOrLast(features []float64) float64 {
-	if len(features) >= 9 {
-		if features[0] > 0 && features[1] > 0 {
-			return (features[0] + features[1]) / 2
-		}
+func extractMidpoint(envelope *types.Envelope) float64 {
+	if envelope == nil {
+		return 0
+	}
 
-		if features[8] > 0 {
-			return features[8]
+	if envelope.TickerData.Bid != nil && envelope.TickerData.Ask != nil &&
+		envelope.TickerData.Bid.Sign() > 0 && envelope.TickerData.Ask.Sign() > 0 {
+		return (envelope.TickerData.Bid.Float64() + envelope.TickerData.Ask.Float64()) / 2
+	}
+
+	if envelope.TradeData.Price.Sign() > 0 {
+		return envelope.TradeData.Price.Float64()
+	}
+
+	if envelope.TickerData.Last != nil && envelope.TickerData.Last.Sign() > 0 {
+		return envelope.TickerData.Last.Float64()
+	}
+
+	if envelope.FuturesTickerData.Last != nil && envelope.FuturesTickerData.Last.Sign() > 0 {
+		return envelope.FuturesTickerData.Last.Float64()
+	}
+
+	if envelope.FuturesTradeData.Price.Sign() > 0 {
+		return envelope.FuturesTradeData.Price.Float64()
+	}
+
+	if envelope.Liquidity != nil && envelope.Liquidity.Metrics != nil {
+		if metric, found := envelope.Liquidity.Metrics["midpoint"]; found && metric.Raw > 0 {
+			return metric.Raw
+		}
+	}
+
+	if envelope.PumpDump != nil && envelope.PumpDump.Metrics != nil {
+		if metric, found := envelope.PumpDump.Metrics["midpoint"]; found && metric.Raw > 0 {
+			return metric.Raw
 		}
 	}
 
 	return 0
+}
+
+func extractTimestamp(envelope *types.Envelope) time.Time {
+	if envelope == nil {
+		return time.Now()
+	}
+
+	if !envelope.TickerData.Timestamp.IsZero() {
+		return envelope.TickerData.Timestamp
+	}
+
+	if !envelope.TradeData.Timestamp.IsZero() {
+		return envelope.TradeData.Timestamp
+	}
+
+	if !envelope.Level3Data.Timestamp.IsZero() {
+		return envelope.Level3Data.Timestamp
+	}
+
+	if !envelope.FuturesTickerData.Timestamp.IsZero() {
+		return envelope.FuturesTickerData.Timestamp
+	}
+
+	if !envelope.FuturesTradeData.Timestamp.IsZero() {
+		return envelope.FuturesTradeData.Timestamp
+	}
+
+	measurements := envelope.SignalMeasurements()
+
+	for _, measurement := range measurements {
+		if measurement != nil && !measurement.At.IsZero() {
+			return measurement.At
+		}
+	}
+
+	return time.Now()
+}
+
+func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (float64, bool) {
+	if measurement == nil || measurement.Err != nil || len(measurement.Metrics) == 0 {
+		return 0, false
+	}
+
+	var candidates []string
+
+	switch index {
+	case 0: // Correlation
+		candidates = []string{"relative_return_energy", "cohort_signed_correlation", "signed_correlation"}
+	case 1: // LeadLag
+		candidates = []string{"best_lag_correlation", "contemporaneous_correlation", "absolute_correlation_gain"}
+	case 2: // Liquidity
+		candidates = []string{"relative_spread", "touch_notional_imbalance", "spread"}
+	case 3: // Sentiment
+		candidates = []string{"advance_fraction", "breadth", "median_return"}
+	case 4: // CVD
+		candidates = []string{"signed_net_fraction", "signed_count_fraction", "cumulative_volume_delta"}
+	case 5: // DepthFlow
+		candidates = []string{"observed_notional_imbalance", "mutation_activity_imbalance"}
+	case 6: // Morphology
+		candidates = []string{"book_shape_distance", "book_shape_ks", "morphology_change"}
+	case 7: // Hawkes
+		candidates = []string{"excitation_fraction:buy", "event_fraction:buy", "conditional_intensity:buy"}
+	case 8: // PumpDump
+		candidates = []string{"spread_ratio", "relative_spread", "notional_rate_ratio", "spread_zscore"}
+	case 9: // Toxicity
+		candidates = []string{"net_withdrawal_fraction:bid", "retreat_fraction:bid", "net_withdrawn_quantity:bid"}
+	case 10: // Derivatives
+		candidates = []string{"basis", "liquidation_signed_fraction", "log_basis"}
+	}
+
+	for _, label := range candidates {
+		if metric, found := measurement.Metrics[label]; found {
+			return metric.Raw, true
+		}
+	}
+
+	return 0, false
 }
 
 /*
@@ -400,7 +565,11 @@ func newFeatureScorer(width int) *featureScorer {
 /* Score drains one causal observation per independently owned feature graph. */
 func (scorer *featureScorer) Score(features []float64) ([]float64, error) {
 	if len(features) != len(scorer.pipelines) {
-		return nil, fmt.Errorf("resonance: feature width changed")
+		return nil, errnie.Error(errnie.Err(
+			errnie.BadRequest,
+			"resonance: feature width changed",
+			nil,
+		))
 	}
 	for index, value := range features {
 		scorer.standardized[index] = scorer.pipelines[index].Observe(value).ZScore
@@ -486,7 +655,9 @@ func (solver *Solver) publishReturns(
 		if forecast.Ready {
 			if forecast.Value > 0 {
 				call = 1
-			} else if forecast.Value < 0 {
+			}
+
+			if forecast.Value < 0 {
 				call = -1
 			}
 		}

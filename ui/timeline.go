@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -113,52 +112,7 @@ func (hub *Hub) resident(
 	target hindsight.EnvelopeRef,
 	budget int,
 ) ([]*data.Measurement[float64], error) {
-	held := make(map[string]*data.Measurement[float64])
-	order := make([]string, 0)
-
-	for _, capture := range index.CapturesBefore(symbol, target, budget) {
-		payload, stored, err := hub.store.ReadStatePayload(
-			string(capture.Origin.Run),
-			uint64(capture.Origin.Sequence),
-			capture.Ordinal,
-		)
-
-		if err != nil {
-			return nil, err
-		}
-
-		if !stored {
-			continue
-		}
-		measurements, err := types.MeasurementsFromState(payload)
-
-		if err != nil {
-			return nil, err
-		}
-
-		for _, measurement := range measurements {
-			if measurement == nil {
-				continue
-			}
-			// Captures arrive newest first, so the first value seen for a
-			// quantity is the one that was resident. An older capture carrying
-			// the same quantity is what it replaced, never what it held.
-			quantity := measurement.Source + "\x00" + measurement.ID
-
-			if _, carried := held[quantity]; carried {
-				continue
-			}
-			held[quantity] = measurement
-			order = append(order, quantity)
-		}
-	}
-	reading := make([]*data.Measurement[float64], 0, len(order))
-
-	for _, quantity := range order {
-		reading = append(reading, held[quantity])
-	}
-
-	return reading, nil
+	return hindsight.Resident(hub.store, index, symbol, target, budget)
 }
 
 /*

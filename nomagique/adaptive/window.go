@@ -30,7 +30,7 @@ type WindowReading struct {
 }
 
 func NewWindow() *Window {
-	return &Window{capacity: 2}
+	return &Window{capacity: 0}
 }
 
 func (op *Window) Next(
@@ -73,7 +73,7 @@ func (op *Window) Observe(value float64) WindowReading {
 		bound := shift.Bound()
 
 		if math.Abs(op.recent.Mean-op.all.Mean) > bound {
-			capacity := math.Max(2, math.Floor(op.capacity*0.5))
+			capacity := math.Max(1, math.Floor(op.capacity*0.5))
 			reading.ShedRatio = capacity / op.capacity
 			op.capacity = capacity
 			op.all.Shed(reading.ShedRatio)

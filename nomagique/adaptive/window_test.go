@@ -34,7 +34,7 @@ func TestWindowObserve(t *testing.T) {
 
 		for index := range 100 {
 			reading := window.Observe(7)
-			So(reading.Capacity, ShouldEqual, index+3)
+			So(reading.Capacity, ShouldEqual, index+1)
 			So(reading.ShedRatio, ShouldEqual, 1)
 		}
 

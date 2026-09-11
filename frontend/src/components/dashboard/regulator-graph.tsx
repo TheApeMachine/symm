@@ -361,7 +361,8 @@ export const RegulatorPredictiveCoding = () => {
 					<span className="text-[10px] uppercase tracking-wider text-(--f4)">
 						Recent Surprisal Trend
 					</span>
-					<svg width={300} height={40} className="overflow-visible">
+					<svg width={300} height={40} className="overflow-visible" aria-label="Recent Surprisal Trend">
+						<title>Recent Surprisal Trend</title>
 						<path
 							data-k="regulator-sparkline"
 							d=""

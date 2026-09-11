@@ -206,18 +206,24 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 		}
 
 		prefixes, suffixes := backoffCandidates(context, maxSteps)
+		var keyBuf [512]byte
 
 		// Check suffixes (temporal Markov order reduction: keeping most recent tokens)
 		for _, sub := range suffixes {
-			if _, exists := root.Get(makeSensoryKey(sub)); exists {
-				if searchSubPrefix(root, sub, step, e.decayFactor, e.cfg.DirichletAlpha, 1, &acc) {
-					break
-				}
-			}
-		}
+			var sensoryKey []byte
 
-		if acc.count == 0 {
-			for _, sub := range suffixes {
+			if 2+len(sub) <= len(keyBuf) {
+				keyBuf[0] = 's'
+				keyBuf[1] = '/'
+				copy(keyBuf[2:], sub)
+				sensoryKey = keyBuf[:2+len(sub)]
+			}
+
+			if sensoryKey == nil {
+				sensoryKey = makeSensoryKey(sub)
+			}
+
+			if _, exists := root.Get(sensoryKey); exists {
 				if searchSubPrefix(root, sub, step, e.decayFactor, e.cfg.DirichletAlpha, 1, &acc) {
 					break
 				}

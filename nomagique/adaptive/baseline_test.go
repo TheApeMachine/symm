@@ -26,6 +26,18 @@ func TestBaselineNext(t *testing.T) {
 }
 
 func TestBaselineObserve(t *testing.T) {
+	Convey("A baseline starts with span 1 and expands adaptively", t, func() {
+		baseline := adaptive.NewBaseline(adaptive.NewWindow())
+		firstReading := baseline.Observe(42.0)
+		So(firstReading.Baseline, ShouldEqual, 42.0)
+		So(firstReading.Span, ShouldEqual, 1)
+		So(firstReading.HasPrior, ShouldBeFalse)
+
+		secondReading := baseline.Observe(44.0)
+		So(secondReading.Span, ShouldEqual, 2)
+		So(secondReading.HasPrior, ShouldBeTrue)
+	})
+
 	Convey("Independent cells retain independent fixed-field state", t, func() {
 		first := adaptive.NewBaseline(adaptive.NewWindow())
 		second := adaptive.NewBaseline(adaptive.NewWindow())
@@ -40,6 +52,7 @@ func TestBaselineObserve(t *testing.T) {
 		So(first.Reading.Dispersion, ShouldAlmostEqual, second.Reading.Dispersion)
 		So(first.Reading.Residual, ShouldAlmostEqual, second.Reading.Residual)
 		So(first.Reading.Maturity, ShouldEqual, 0.75)
+		So(first.Reading.Span, ShouldEqual, 4)
 
 		allocations := testing.AllocsPerRun(100, func() { first.Observe(5) })
 		So(allocations, ShouldEqual, 0)

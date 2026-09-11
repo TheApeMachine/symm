@@ -15,26 +15,25 @@ skinparam conditionStyle diamond
 start
 
 
-partition #FFFFFF "**Symm**" {
+partition #FFFFFF "**Symm System Architecture**" {
 
     ' ============================================================
-    ' TRANSPORT / INFRASTRUCTURE
+    ' TRANSPORT / INGRESS & INFRASTRUCTURE
     '
     ' Three Kraken websocket transports publish into the runtime.
-    ' The public and private sessions run against the simulator;
-    ' raw wire frames are captured byte-for-byte before any stage
-    ' reads them.
+    ' Raw wire frames are captured byte-for-byte before any stage
+    ' reads them. Authoritative broker owners manage market facts.
     ' ============================================================
 
     partition #E3F2FD "**Ingress & Infrastructure**" {
 
         fork
 
-            :public websocket\nticker / trade / book; <<input>>
+            :public websocket\nticker / trade / book L2; <<input>>
 
         fork again
 
-            :private websocket\nlevel3 / executions; <<input>>
+            :private websocket\nlevel3 / own executions; <<input>>
 
         fork again
 
@@ -42,298 +41,321 @@ partition #FFFFFF "**Symm**" {
 
         end fork
 
-        :Record raw capture\nbyte-for-byte per stream; <<save>>
+        :Record raw wire capture\nbyte-for-byte per stream; <<save>>
 
-        :Broker owners\nInstrument / Price / Balance; <<load>>
+        fork
 
-        :Seed instrument universe\nand restore learner state; <<procedure>>
+            :Broker authoritative owners\nInstrument / Price / Balance; <<load>>
+
+        fork again
+
+            :Hindsight catalog storage\nIceberg tables / Envelope witnesses; <<save>>
+
+        end fork
+
+        :Seed instrument universe\nand initialize shared cognition engine; <<procedure>>
     }
 
 
     ' ============================================================
     ' WORKSPACE RING
     '
-    ' The workspace is a single Disruptor ring whose stages are
-    ' nested Workloads. Nodes in one stage run concurrently and a
-    ' barrier completes the stage before the next stage advances.
+    ' The workspace is a Disruptor ring whose stages are nested
+    ' concurrent workloads executed behind stage barriers.
     '
-    '   stage1  observations   (signals+flow, classification, capture witness)
-    '   stage2  grid           (impulse map)
-    '   stage3  agents         (live learner + rehearsal)
-    '   stage4  ui sink        (dashboard consumer)
+    '   stage1  observations   (signals + flow + classification + capture witness)
+    '   stage2  grid & context (spatial impulse map + streaming temporal context)
+    '   stage3  dual-track     (live canary & regulator + background rehearsal)
+    '   stage4  ui & hindsight (realtime telemetry + historical causal query)
     ' ============================================================
 
-    partition #F2F2F2 "**Workspace ring**" {
+    partition #F2F2F2 "**Workspace Ring**" {
 
         ' ----------------------------------------------------
         ' WORKSPACE STAGE 1 — OBSERVATIONS
-        '
-        ' The signals and flow workloads each run on their own
-        ' ring and complete before classification runs.
         ' ----------------------------------------------------
 
         partition #FFFFFF "**stage1 — observations**" {
 
-            fork
+                partition #C8E6C9 "**Workload: signals**" {
 
-            partition #C8E6C9 "**Workload: signals**" {
+                    partition #E8F5E9 "**stage1 (canonical microstructure signals)**" {
 
-                partition #E8F5E9 "**stage1**" {
+                        fork
+                            :correlation;
+                        fork again
+                            :cvd\n(cumulative volume delta);
+                        fork again
+                            :depthflow;
+                        fork again
+                            :derivatives;
+                        fork again
+                            :hawkes\n(self-exciting arrival intensity);
+                        fork again
+                            :leadlag;
+                        fork again
+                            :liquidity;
+                        fork again
+                            :morphology;
+                        fork again
+                            :pumpdump;
+                        fork again
+                            :sentiment;
+                        fork again
+                            :toxicity;
+                        end fork
+                    }
 
-                    fork
+                    partition #E8F5E9 "**stage2 (resonance & manifold)**" {
 
-                        :correlation;
-
-                    fork again
-
-                        :depthflow;
-
-                    fork again
-
-                        :derivatives;
-
-                    fork again
-
-                        :leadlag;
-
-                    fork again
-
-                        :liquidity;
-
-                    fork again
-
-                        :morphology;
-
-                    fork again
-
-                        :pumpdump;
-
-                    fork again
-
-                        :sentiment;
-
-                    fork again
-
-                        :toxicity;
-
-                    end fork
+                        fork
+                            :resonance dynamics\n& frequency projection;
+                        fork again
+                            :manifold\n(hydrodynamic flow field);
+                        end fork
+                    }
                 }
-
-                partition #E8F5E9 "**stage2**" {
-
-                    :resonance;
-                }
-            }
-
-
-            fork again
-
-            partition #B2DFDB "**Workload: flow**" {
-
-                partition #E0F2F1 "**stage1**" {
-
-                    fork
-
-                        :cvd;
-
-                    fork again
-
-                        :hawkes;
-
-                    end fork
-                }
-
-                partition #E0F2F1 "**stage2**" {
-
-                    :manifold;
-                }
-            }
-
-            end fork
 
             partition #FFE0B2 "**Workload: classification**" {
 
                 partition #FFF3E0 "**stage1**" {
-
                     :category;
                 }
 
                 partition #FFF3E0 "**stage2**" {
-
-                    :cognition;
+                    :cognition beam\n& predictive class distribution;
                 }
             }
 
             partition #CFD8DC "**Capture witness**" {
 
-                :recording.Session.Step\npersist observation; <<save>>
+                :recording.Session.Step\npersist observation & precursor witness; <<save>>
             }
         }
 
 
         ' ----------------------------------------------------
-        ' WORKSPACE STAGE 2 — GRID / IMPULSE MAP
-        '
-        ' learner.Grid (logic/impulse.Solver) groups the completed
-        ' measurements by label and steps the associative grid.
-        ' Regions replace individual metrics as the agent's
-        ' effective impulse units.
+        ' WORKSPACE STAGE 2 — GRID & TEMPORAL CONTEXT
         ' ----------------------------------------------------
 
-        partition #FFFFFF "**stage2 — grid**" {
+        partition #FFFFFF "**stage2 — grid & temporal context**" {
 
-            partition #E1BEE7 "**Impulse Map**" {
+            partition #E1BEE7 "**Impulse Map & Spatial Communities**" {
 
-                :Receive completed\nobservations; <<input>>
+                :Receive completed observations\n(pure metrics from stage 1); <<input>>
 
-                :Group measurements by label\nand advance each grid space; <<task>>
+                :Group measurements by symbol\nand advance grid.Space; <<task>>
 
                 fork
-
-                    :Affinity field\n(directional / sign / magnitude / phase); <<procedure>>
-
+                    :Directional affinity\n(co-movement slope); <<procedure>>
                 fork again
-
-                    :Maturity + SNR\nnode strength; <<procedure>>
-
+                    :Continuity affinity\n(persistence over time); <<procedure>>
                 fork again
-
-                    :Sparsify\nretain top-k affinities per metric; <<procedure>>
-
+                    :Quantum affinity\n(discrete step concordance); <<procedure>>
+                fork again
+                    :Phase affinity\n(lead/lag synchronization); <<procedure>>
                 end fork
 
-                :Fuse affinity channels\nD + C + Q + optional P; <<procedure>>
+                :Compute node strength\n(Mahalanobis SNR + sample maturity); <<procedure>>
 
-                :Preserve relationship sign\nDirect / Inverse / Inconsistent; <<procedure>>
+                :Build signed sympathy graph\n(attractive communities vs repulsive boundaries); <<procedure>>
 
-                if (Relationship stable?) then (yes)
+                :Reconcile communities\nwith repulsive boundary pressure; <<procedure>>
 
-                    :Convert similarity to\nattractive affinity; <<procedure>>
+                :Calculate region activation strength\n(SNR-weighted Otsu threshold); <<procedure>>
+
+                :Emit grid.Impulse\n(active regions + Ready gate); <<output>>
+            }
+
+            partition #EDE7F6 "**Streaming Temporal Context**" {
+
+                :Ingest active Region set into associative.Context; <<input>>
+
+                :Append step regions to history buffer; <<task>>
+
+                :Cap history to streaming sliding window\n(const maxHistory = 128 steps); <<procedure>>
+
+                if (Sequence break detected in evaluation?) then (yes)
+
+                    :Reset temporal context history\n(prevent stale cross-regime memory); <<procedure>>
 
                 else (no)
 
-                    :Convert instability to\nrepulsive affinity; <<procedure>>
+                    :Retain sliding history window; <<procedure>>
 
                 endif
 
-                :Apply asymmetric influence\nweak -> strong movement; <<procedure>>
-
-                :Build sparse signed\nsympathy graph; <<task>>
-
-                fork
-
-                    :Extract positive\nattraction graph; <<task>>
-
-                    :Detect sympathetic\ncommunities / regions; <<procedure>>
-
-                fork again
-
-                    :Extract repulsive\nrelationships; <<task>>
-
-                    :Apply repulsion as\nregion boundary pressure; <<procedure>>
-
-                end fork
-
-                :Reconcile communities\nwith repulsive boundaries; <<procedure>>
-
-                :Form Impulse Map\nregions; <<task>>
-
-                :Aggregate member impulses\nweighted by SNR + Maturity; <<procedure>>
-
-                :Calculate region\nactivation strength; <<procedure>>
-
-                switch (Activation method)
-
-                    case (SNR-weighted Otsu)
-
-                        :Apply SNR-weighted\nOtsu threshold; <<procedure>>
-
-                    case (Water table)
-
-                        :Apply topological\nwater-table split; <<procedure>>
-
-                    case (Mean + stddev)
-
-                        :Apply mean plus\nstandard deviation; <<procedure>>
-
-                endswitch
-
-                :Rank active regions\nstrongest to weakest; <<procedure>>
-
-                :Impulses\n(region sequence); <<output>>
+                :Serialize Markov sensory sequence\n(R_t-k -> ... -> R_t-1 -> R_t); <<output>>
             }
         }
 
 
         ' ----------------------------------------------------
-        ' WORKSPACE STAGE 3 — AGENTS
-        '
-        ' The live learner and the rehearsal replay workload run
-        ' concurrently behind one barrier. The agent workload is
-        ' gated by learner.Ready so invalid market data never
-        ' becomes an idle choice or a learning sample.
+        ' WORKSPACE STAGE 3 — DUAL-TRACK LEARNING & EXECUTION
         ' ----------------------------------------------------
 
-        partition #FFFFFF "**stage3 — agents**" {
+        partition #FFFFFF "**stage3 — agents & dual-track learning**" {
 
             fork
 
                 ' ------------------------------------------------
-                ' LIVE LEARNER (trader 0, forward canary)
+                ' LIVE EXECUTION TRACK (Canary Agent 0 + MainAgent)
                 ' ------------------------------------------------
 
-                partition #FFCDD2 "**Workload: agent**" {
+                partition #FFCDD2 "**Live Execution Track**" {
 
-                    partition #FFEBEE "**stage1**" {
+                    if (Gated by impulse.Ready?) then (ready)
 
-                        partition #FFFFFF "**Live Learner**" {
+                        :Evaluate streaming context\nagainst shared cognition trie; <<procedure>>
 
-                            :Gate on learner.Ready\nbook + fees + ready impulse; <<input>>
+                        :Enumerate legal actions\nFlat -> {ENTER, WAIT}\nHolding -> {EXIT, WAIT}; <<procedure>>
 
-                            :Serialize live clock\nAt / Version; <<task>>
+                        if (Unseen context / Support == 0?) then (yes)
 
-                            :Step associative agent\nwith ready impulses; <<procedure>>
+                            :Deterministic ActionWait\n(zero gambling on live capital); <<procedure>>
 
-                            :Enumerate feasible actions\nwait / hold / enter / scale / exit; <<procedure>>
+                        else (empirical support exists)
 
-                            :Select decision\nfrom cognition engine; <<procedure>>
+                            :Select legal action with\nhighest evidence share; <<procedure>>
 
-                            :Execute through position regulator\nand write decision; <<procedure>>
+                        endif
 
-                            :Mark positions and\ncompute wallet objective; <<procedure>>
+                        :Emit ActionDecision\n(action, confidence, contrast, support); <<task>>
 
-                            :Resolve durable legs\ninto evaluations + outcomes; <<procedure>>
+                        partition #FFEBEE "**MainAgent Execution Regulator**" {
 
-                            :Persist checkpoint\nwhen interval fires; <<save>>
+                            if (Holding open position?) then (holding)
+
+                                if (Decision == EXIT and Support > 0?) then (exit trigger)
+
+                                    :Query Price.Surface(symbol, qty)\nfor authoritative visible bid depth; <<load>>
+
+                                    if (Surface.FullyExecutable?) then (full lot executable)
+
+                                        :Liquidate position at ExecutableVWAP\n(realize PnL and record actual exit fees); <<procedure>>
+
+                                    else (insufficient depth)
+
+                                        :Refuse fill (zero fill)\nprevent synthetic liquidation; <<procedure>>
+
+                                    endif
+
+                                else (continue holding)
+
+                                    :Mark position to market\nupdate unrealized PnL; <<procedure>>
+
+                                endif
+
+                            else (flat)
+
+                                if (canEnter: Decision == ENTER and Support > 0 and Status != learning?) then (enter qualified)
+
+                                    :Query Price.Affordable and visible book ask depth; <<load>>
+
+                                    if (Sufficient ask liquidity?) then (yes)
+
+                                        :Open long position on book\n(deduct cash and record entry fees); <<procedure>>
+
+                                    else (thin book)
+
+                                        :Refuse entry (zero fill)\navoid adverse slippage; <<procedure>>
+
+                                    endif
+
+                                else (wait)
+
+                                    :Scan for qualified precursor opportunities; <<procedure>>
+
+                                endif
+
+                            endif
+
+                            :Update portfolio return statistics\n(mean return, variance, trade samples); <<procedure>>
+
+                            if (Samples >= 10 and Mean - 2*StdErr > 0?) then (robust edge)
+
+                                :Promote to trading status; <<procedure>>
+
+                            else (negative / unproven edge)
+
+                                :Maintain simulated / learning status\n(gate live capital entry); <<procedure>>
+
+                            endif
                         }
-                    }
+
+                    else (forming)
+
+                        :Emit ActionWait\nwhile impulse space calibrates; <<procedure>>
+
+                    endif
                 }
 
             fork again
 
                 ' ------------------------------------------------
-                ' REHEARSAL WORKERS (historical replay)
-                '
-                ' Only present when the trader population > 1.
-                ' Workers replay balanced historical episodes
-                ' instead of opening another live wallet.
+                ' BACKGROUND REHEARSAL TRACK (Worker Pool 1..N)
                 ' ------------------------------------------------
 
-                partition #C5CAE9 "**Workload: rehearsal**" {
+                partition #C5CAE9 "**Background Rehearsal Track**" {
 
-                    partition #E8EAF6 "**stage1**" {
+                    :Dedicated background loop\n(runs every 25ms in parallel goroutine); <<task>>
 
-                        partition #FFFFFF "**Rehearsal Workers**" {
+                    :Hindsight Discovery:\nScan market tape for confirmed excursion episodes; <<load>>
 
-                            :Discover replayable\nhistorical episodes; <<load>>
+                    :Single-owner reader (hindsight.Resident):\nExtract actual captured precursor measurements; <<load>>
 
-                            :Replay balanced episodes\nthrough worker traders; <<procedure>>
+                    :Construct ReplayFragment:\nPure frames + out-of-band Prices & Surfaces; <<procedure>>
 
-                            :Grade decisions against\nconfirmed legs; <<procedure>>
+                    :Mount fragment into rehearsal worker; <<procedure>>
 
-                            :Write outcomes\nfor every resolved decision; <<save>>
-                        }
+                    :Step historical frames through\nworker perception grid; <<procedure>>
+
+                    :Enumerate legal actions\nFlat -> {ENTER, WAIT}\nHolding -> {EXIT, WAIT}; <<procedure>>
+
+                    if (Unseen context / Support == 0?) then (yes)
+
+                        :Uniform random exploration\n(symmetric uniform sampling with RNG); <<procedure>>
+
+                    else (seen context)
+
+                        if (Observed action has low share <= 0.5?) then (unseen alternative)
+
+                            :Explore unobserved alternative action; <<procedure>>
+
+                        else (high share)
+
+                            :Follow empirical policy leader; <<procedure>>
+
+                        endif
+
+                    endif
+
+                    partition #D1C4E9 "**Post-Hoc Fragment Evaluator**" {
+
+                        :Score chosen action against\nobjective downstream reality; <<procedure>>
+
+                        switch (Evaluated action)
+
+                            case (ENTER)
+
+                                :Evaluate entry correctness:\nDid move clear round-trip fees?\nWas cheaper entry available later?; <<procedure>>
+
+                            case (EXIT)
+
+                                :Evaluate exit correctness:\nDid exit protect before price drop or\nbid depth collapse (!FullyExecutable)?; <<procedure>>
+
+                            case (WAIT)
+
+                                :Counterfactual evaluation:\nScore opportunity cost or avoided loss\nrelative to taking alternative action; <<procedure>>
+
+                        endswitch
+
+                        :Compute signed reinforcement [-1, 1]\n(positive reinforces, negative inhibits); <<procedure>>
                     }
+
+                    :sharedEngine.Observe(sequence, action, reinforcement)\nUpdate shared cognition model directly; <<save>>
+
+                    :Reinforced policy immediately available\nto live canary agent and all workers; <<output>>
                 }
 
             end fork
@@ -341,16 +363,48 @@ partition #FFFFFF "**Symm**" {
 
 
         ' ----------------------------------------------------
-        ' WORKSPACE STAGE 4 — UI SINK
-        '
-        ' A non-blocking channel handoff keeps the dashboard from
-        ' running on the ring. The hub owns its own goroutine and
-        ' consumes frames at its own rate.
+        ' WORKSPACE STAGE 4 — UI SINK & HINDSIGHT SERVICES
         ' ----------------------------------------------------
 
-        partition #FFFFFF "**stage4 — ui sink**" {
+        partition #FFFFFF "**stage4 — ui sink & hindsight services**" {
 
-            :Offer frame to ui.Hub\n(drop when full); <<output>>
+            fork
+
+                partition #ECEFF1 "**Real-Time Dashboard Streaming**" {
+
+                    :Non-blocking handoff to ui.Hub; <<procedure>>
+
+                    fork
+
+                        :WebSocket feed\n(telemetry, decisions, positions, trie modal); <<output>>
+
+                    fork again
+
+                        :WebRTC data channel\n(chunked fluid manifold state); <<output>>
+
+                    end fork
+                }
+
+            fork again
+
+                partition #CFD8DC "**Hindsight Historical API Services**" {
+
+                    fork
+
+                        :GET /hindsight/timeline\n(runs, episodes, regime shifts, excursions); <<output>>
+
+                    fork again
+
+                        :GET /hindsight/resident\n(causal backwards capture walk to resident metrics); <<output>>
+
+                    fork again
+
+                        :GET /hindsight/inspection\n(causal DAG links & precursor envelope payloads); <<output>>
+
+                    end fork
+                }
+
+            end fork
         }
     }
 }

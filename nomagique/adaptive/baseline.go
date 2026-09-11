@@ -23,8 +23,8 @@ BaselineReading fixes causal scores and the post-observation moments.
 */
 type BaselineReading struct {
 	equation.MomentReading
-	HasPrior                                                                bool
-	Baseline, PriorVariance, ScoreScale, Residual, ZScore, Maturity, Retain float64
+	HasPrior                                                                      bool
+	Baseline, PriorVariance, ScoreScale, Residual, ZScore, Maturity, Retain, Span float64
 }
 
 func NewBaseline(window *Window) *Baseline {
@@ -50,6 +50,7 @@ func (op *Baseline) Observe(value float64) BaselineReading {
 	reading := BaselineReading{MomentReading: op.moments.Update(value)}
 	window := op.window.Observe(value)
 	reading.Retain = window.ShedRatio
+	reading.Span = window.Capacity
 	op.moments.Shed(reading.Retain)
 	reading.Summarize(op.moments)
 	reading.HasPrior = reading.Prior.Count > 0

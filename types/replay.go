@@ -10,6 +10,7 @@ it is NEVER leaked into the learner's observation context.
 */
 type ReplayFragment struct {
 	Frames        [][]*data.Measurement[float64]
+	Prices        []float64
 	Surfaces      []*ExecutionSurface
 	Symbol        string
 	AnchorIndex   int

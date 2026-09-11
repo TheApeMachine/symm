@@ -89,6 +89,12 @@ func (op *Context) Sequence(impulse grid.Impulse) []byte {
 
 		op.history = append(op.history, stepRegions)
 		op.lastVersion = impulse.Version
+
+		const maxHistory = 128
+
+		if len(op.history) > maxHistory {
+			op.history = op.history[len(op.history)-maxHistory:]
+		}
 	}
 
 	return op.encodeHistoryLocked()
