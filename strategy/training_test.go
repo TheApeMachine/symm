@@ -27,7 +27,15 @@ func TestTrainingStep(t *testing.T) {
 			"1", "BTC/USD", "cvd", time.Now().UTC(), time.Time{},
 		)
 		measurement.PutMetric(data.Metric[float64]{Label: "signed", Raw: 1.5})
-		tape.Publish([][]*data.Measurement[float64]{{measurement}})
+		measurement2 := data.NewMeasurement[float64](
+			"2", "BTC/USD", "cvd", time.Now().UTC(), time.Time{},
+		)
+		measurement2.PutMetric(data.Metric[float64]{Label: "signed", Raw: 1.8})
+		tape.Publish(types.ReplayFragment{
+			Frames:      [][]*data.Measurement[float64]{{measurement}, {measurement2}},
+			Symbol:      "BTC/USD",
+			AnchorIndex: 1,
+		})
 		tape.Close()
 		training := NewTraining(context.Background(), tape)
 		envelope := &types.Envelope{}
@@ -84,12 +92,16 @@ func TestTrainingStep(t *testing.T) {
 		measurementB := data.NewMeasurement[float64]("2", "BTC/USD", "cvd", time.Now().UTC(), time.Time{})
 		measurementB.PutMetric(data.Metric[float64]{Label: "signed", Raw: 2.0})
 
-		fragment := [][]*data.Measurement[float64]{
-			{measurementA},
-			{measurementB},
+		fragment := types.ReplayFragment{
+			Frames: [][]*data.Measurement[float64]{
+				{measurementA},
+				{measurementB},
+			},
+			Symbol:      "BTC/USD",
+			AnchorIndex: 1,
 		}
 
-		agent.IngestFragment(fragment, 0)
+		agent.IngestReplay(fragment, 0)
 		So(agent.ring.Len(), ShouldEqual, 1)
 		So(agent.ring.ChildLen(), ShouldEqual, 2)
 

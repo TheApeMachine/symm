@@ -2,6 +2,7 @@ package cognition
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math"
 	"sort"
 	"sync"
@@ -425,6 +426,47 @@ func searchSubPrefix(root *iradix.Tree[[]byte], sub []byte, step uint64, decayFa
 func backoffCandidates(context []byte, maxSteps int) (prefixes [][]byte, suffixes [][]byte) {
 	if len(context) <= 1 || maxSteps <= 0 {
 		return nil, nil
+	}
+
+	// 1. Structural length-framed timesteps: each frame is [count uint32 (4B)][count * 8B tokens].
+	// Valid framed context starts at 0, repeatedly reads 4 bytes count, and advances 4 + count*8 bytes.
+	if len(context) >= 12 {
+		offset := 0
+		var frameOffsets []int
+		for offset < len(context) {
+			if offset+4 > len(context) {
+				frameOffsets = nil
+				break
+			}
+			count := binary.BigEndian.Uint32(context[offset : offset+4])
+
+			if count == 0 {
+				frameOffsets = nil
+				break
+			}
+
+			frameSize := 4 + int(count)*8
+
+			if offset+frameSize > len(context) {
+				frameOffsets = nil
+				break
+			}
+
+			frameOffsets = append(frameOffsets, offset)
+			offset += frameSize
+		}
+
+		if offset == len(context) && len(frameOffsets) > 1 {
+			steps := min(len(frameOffsets)-1, maxSteps)
+
+			for step := 1; step <= steps; step++ {
+				suffixes = append(suffixes, context[frameOffsets[step]:])
+				endIdx := frameOffsets[len(frameOffsets)-step]
+				prefixes = append(prefixes, context[:endIdx])
+			}
+
+			return prefixes, suffixes
+		}
 	}
 
 	if len(context)%8 == 0 && len(context) > 8 {

@@ -472,7 +472,7 @@ func (agent *MainAgent) enterLong(
 		feeRate := agent.feeRate(symbol)
 
 		if feeRate == nil {
-			feeRate = decimal.NewFromFloat64(0.001)
+			return
 		}
 
 		notional = allocatedCash
@@ -568,7 +568,7 @@ func (agent *MainAgent) exitLong(
 	feeRate := agent.feeRate(symbol)
 
 	if feeRate == nil {
-		feeRate = decimal.NewFromFloat64(0.001)
+		return
 	}
 
 	exitFee := proceeds.Mul(feeRate)

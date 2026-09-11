@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -34,6 +35,7 @@ type FragmentEvaluator struct {
 	feeRate     *float64
 	price       *broker.Price
 	anchorIndex int
+	surfaces    []*types.ExecutionSurface
 }
 
 /*
@@ -54,46 +56,40 @@ func NewFragmentEvaluator(feeRate *float64, price ...*broker.Price) *FragmentEva
 	}
 }
 
-/*
-SetFeeRate configures the canonical fee rate for economic qualification.
-*/
+/* SetFeeRate configures a fee rate for economic qualification. */
 func (evaluator *FragmentEvaluator) SetFeeRate(rate float64) {
 	evaluator.feeRate = &rate
 }
 
-/*
-FeeRate returns the configured canonical fee rate, if set.
-*/
+/* FeeRate returns the configured fee rate, if set. */
 func (evaluator *FragmentEvaluator) FeeRate() *float64 {
 	return evaluator.feeRate
 }
 
-/*
-SetPrice configures the canonical broker.Price owner.
-*/
+/* SetPrice configures the canonical broker.Price owner. */
 func (evaluator *FragmentEvaluator) SetPrice(price *broker.Price) {
 	evaluator.price = price
 }
 
-/*
-Price returns the configured canonical broker.Price owner.
-*/
+/* Price returns the configured canonical broker.Price owner. */
 func (evaluator *FragmentEvaluator) Price() *broker.Price {
 	return evaluator.price
 }
 
-/*
-SetAnchorIndex sets the objective event boundary B for the current fragment.
-*/
+/* SetAnchorIndex sets the objective event boundary B for the current fragment. */
 func (evaluator *FragmentEvaluator) SetAnchorIndex(anchorIndex int) {
 	evaluator.anchorIndex = anchorIndex
 }
 
-/*
-Reset clears fragment-local boundary state.
-*/
+/* SetSurfaces configures captured execution surfaces for the fragment. */
+func (evaluator *FragmentEvaluator) SetSurfaces(surfaces []*types.ExecutionSurface) {
+	evaluator.surfaces = surfaces
+}
+
+/* Reset clears fragment-local boundary state. */
 func (evaluator *FragmentEvaluator) Reset() {
 	evaluator.anchorIndex = -1
+	evaluator.surfaces = nil
 }
 
 /*
@@ -101,23 +97,15 @@ EvaluateEntry scores an ENTER action chosen at decisionIdx within a fragment.
 The fragment continues from decisionIdx+1 onward.
 
 Correctness: Was entering justified by what subsequently became an upward-moving
-leg whose realizable move cleared actual economic friction?
+leg whose realizable move cleared authoritative economic friction?
 
-Timing: Closeness to the precursor maturation boundary (anchor B). Premature
-entry during early precursor buildup is penalized, teaching the learner to WAIT.
+Timing: Fraction of feasible excursion move captured relative to the best feasible
+entry price available during precursor development.
 */
 func (evaluator *FragmentEvaluator) EvaluateEntry(
 	fragment [][]*data.Measurement[float64],
 	decisionIdx int,
 ) (ActionOutcome, error) {
-	if evaluator.feeRate == nil && evaluator.price == nil {
-		return ActionOutcome{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"evaluator: fee rate and price unavailable, cannot evaluate entry",
-			nil,
-		))
-	}
-
 	outcome := ActionOutcome{Action: ActionEnter}
 
 	if decisionIdx < 0 || decisionIdx >= len(fragment) {
@@ -126,8 +114,41 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 
 	entryValue, hasEntry := framePrice(fragment[decisionIdx])
 
-	if !hasEntry || entryValue == 0 {
-		return outcome, nil
+	if !hasEntry || entryValue <= 0 {
+		return ActionOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"evaluator: genuine market price unavailable in frame",
+			nil,
+		))
+	}
+
+	symbol := ""
+	for _, m := range fragment[decisionIdx] {
+		if m != nil && m.Label != "" && m.Label != "price" && m.Label != "last" && m.Label != "close" {
+			symbol = m.Label
+			break
+		}
+	}
+
+	roundTrip := 0.0
+
+	if evaluator.price != nil && symbol != "" {
+		fee := evaluator.price.FeeIfAvailable(symbol)
+		if fee != nil && fee.Fee != nil {
+			roundTrip = fee.Fee.Float64() * 0.02
+		}
+	}
+
+	if roundTrip <= 0 && evaluator.feeRate != nil {
+		roundTrip = *evaluator.feeRate * 2.0
+	}
+
+	if roundTrip <= 0 {
+		return ActionOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"evaluator: fee rate and price unavailable, cannot evaluate entry",
+			nil,
+		))
 	}
 
 	maxValue := entryValue
@@ -147,33 +168,6 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 	}
 
 	move := (maxValue - entryValue) / entryValue
-	roundTrip := 0.0
-
-	if evaluator.feeRate != nil {
-		roundTrip = *evaluator.feeRate * 2.0
-	}
-
-	if roundTrip <= 0 && evaluator.price != nil {
-		symbol := ""
-
-		if len(fragment[decisionIdx]) > 0 {
-			symbol = fragment[decisionIdx][0].Label
-		}
-
-		fee := evaluator.price.FeeIfAvailable(symbol)
-
-		if fee != nil && fee.Fee != nil {
-			roundTrip = fee.Fee.Float64() * 0.02
-		}
-	}
-
-	if roundTrip <= 0 {
-		return ActionOutcome{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"evaluator: round trip fee unavailable for entry evaluation",
-			nil,
-		))
-	}
 
 	if move <= roundTrip {
 		outcome.Correctness = -1.0
@@ -185,34 +179,20 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 	margin := move - roundTrip
 	outcome.Correctness = clamp(margin/roundTrip, 0.1, 1.0)
 
-	if evaluator.anchorIndex >= 0 {
-		if decisionIdx <= evaluator.anchorIndex {
-			precursorSpan := float64(evaluator.anchorIndex)
-			outcome.Timing = clamp(1.0-(float64(evaluator.anchorIndex-decisionIdx)/math.Max(1, precursorSpan)), 0, 1)
-		}
-
-		if decisionIdx > evaluator.anchorIndex {
-			legSpan := float64(len(fragment) - evaluator.anchorIndex)
-			outcome.Timing = clamp(1.0-(float64(decisionIdx-evaluator.anchorIndex)/math.Max(1, legSpan)), 0, 1)
+	// Economic timing: evaluate entry relative to the best feasible entry price
+	minEntry := entryValue
+	for idx := 0; idx <= maxIdx; idx++ {
+		if val, defined := framePrice(fragment[idx]); defined && val > 0 && val < minEntry {
+			minEntry = val
 		}
 	}
 
-	if evaluator.anchorIndex < 0 {
-		remaining := len(fragment) - decisionIdx - 1
-		legLength := maxIdx - decisionIdx
-
-		if remaining > 0 && legLength > 0 {
-			outcome.Timing = clamp(1.0-float64(legLength)/float64(remaining), 0, 1)
-		}
+	maxFeasibleMove := (maxValue - minEntry) / minEntry
+	if maxFeasibleMove > 0 {
+		outcome.Timing = clamp(move/maxFeasibleMove, 0, 1)
 	}
 
-	if outcome.Timing >= 0.5 {
-		outcome.Reinforcement = outcome.Correctness * outcome.Timing
-	}
-
-	if outcome.Timing < 0.5 {
-		outcome.Reinforcement = outcome.Correctness * (2.0*outcome.Timing - 1.0)
-	}
+	outcome.Reinforcement = outcome.Correctness * math.Max(0.1, outcome.Timing)
 
 	return outcome, nil
 }
@@ -221,10 +201,11 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 EvaluateExit scores an EXIT action chosen at decisionIdx within a fragment
 while the learner was holding a position entered at entryIdx.
 
-Correctness: Was EXIT preferable to continuing to hold? Based on realizable
-outcome against executable bid liquidity, not proximity to the chart maximum.
+Correctness: Was EXIT preferable to continuing to hold? Judged against realizable
+liquidation proceeds on executable bid liquidity when surfaces are available,
+or genuine price paths otherwise. Exiting before bid evaporation preserves realizable proceeds.
 
-Timing: Was the exit made before value or liquidity deteriorated?
+Timing: Fraction of peak realizable proceeds captured above entry basis.
 */
 func (evaluator *FragmentEvaluator) EvaluateExit(
 	fragment [][]*data.Measurement[float64],
@@ -237,9 +218,52 @@ func (evaluator *FragmentEvaluator) EvaluateExit(
 		return outcome, nil
 	}
 
+	// 1. Authoritative evaluation against captured execution surfaces
+	if evaluator.surfaces != nil && decisionIdx < len(evaluator.surfaces) && evaluator.surfaces[decisionIdx] != nil {
+		currSurface := evaluator.surfaces[decisionIdx]
+		if currSurface.ExecutableValue != nil && currSurface.ExecutableValue.Float64() > 0 {
+			exitRealizable := currSurface.ExecutableValue.Float64()
+			worstLater := exitRealizable
+			bestLater := exitRealizable
+
+			for idx := decisionIdx + 1; idx < len(evaluator.surfaces); idx++ {
+				surf := evaluator.surfaces[idx]
+				if surf == nil || surf.ExecutableValue == nil {
+					continue
+				}
+				val := surf.ExecutableValue.Float64()
+				if val < worstLater {
+					worstLater = val
+				}
+				if val > bestLater {
+					bestLater = val
+				}
+			}
+
+			// If subsequent liquidity evaporated or price collapsed below exit realization:
+			// EXIT successfully protected realizable liquidation capital before the pull.
+			if worstLater < exitRealizable {
+				protection := (exitRealizable - worstLater) / exitRealizable
+				outcome.Correctness = clamp(protection, 0.1, 1.0)
+				outcome.Timing = 1.0
+				outcome.Reinforcement = outcome.Correctness
+				return outcome, nil
+			}
+
+			// If bids remained deep and realizable proceeds continued to rise:
+			// EXIT was premature, holding would have realized more proceeds.
+			missed := (bestLater - exitRealizable) / exitRealizable
+			outcome.Correctness = -clamp(missed, 0.1, 1.0)
+			outcome.Timing = clamp(exitRealizable/bestLater, 0, 1)
+			outcome.Reinforcement = outcome.Correctness
+			return outcome, nil
+		}
+	}
+
+	// 2. Fallback to genuine frame prices when execution surfaces are not provided
 	exitValue, hasExit := framePrice(fragment[decisionIdx])
 
-	if !hasExit || exitValue == 0 {
+	if !hasExit || exitValue <= 0 {
 		return outcome, nil
 	}
 
@@ -254,11 +278,11 @@ func (evaluator *FragmentEvaluator) EvaluateExit(
 	postExitMove := (endValue - exitValue) / exitValue
 
 	if postExitMove <= 0 {
-		outcome.Correctness = clamp(1.0+postExitMove*10.0, 0.5, 1.0)
+		outcome.Correctness = clamp(-postExitMove, 0.1, 1.0)
 	}
 
 	if postExitMove > 0 {
-		outcome.Correctness = clamp(-postExitMove*5.0, -1.0, 0.0)
+		outcome.Correctness = -clamp(postExitMove, 0.1, 1.0)
 	}
 
 	peakValue := exitValue
@@ -297,10 +321,11 @@ func (evaluator *FragmentEvaluator) EvaluateExit(
 EvaluateWait scores a WAIT action against what would have happened had the
 learner taken the alternative action.
 
-When flat (alternative is ENTER): If entering would have been premature,
-WAIT gets positive reinforcement. If entering was mature, WAIT gets penalized.
+When flat (alternative is ENTER): If entering would have been profitable,
+WAIT gets negative feedback (missed opportunity). If entering would have lost,
+WAIT gets positive feedback (avoided loss).
 
-When holding (alternative is EXIT): If exiting was correct (price fell afterward),
+When holding (alternative is EXIT): If exiting was correct (liquidity evaporated or price fell),
 WAIT gets negative feedback. If holding captured continued gains, WAIT gets positive feedback.
 */
 func (evaluator *FragmentEvaluator) EvaluateWait(
@@ -320,14 +345,7 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 
 		outcome.Correctness = -enterOutcome.Correctness
 		outcome.Timing = 1.0 - enterOutcome.Timing
-
-		if enterOutcome.Timing < 0.5 {
-			outcome.Reinforcement = clamp(1.0-2.0*enterOutcome.Timing, 0.1, 1.0)
-		}
-
-		if enterOutcome.Timing >= 0.5 {
-			outcome.Reinforcement = -enterOutcome.Reinforcement
-		}
+		outcome.Reinforcement = -enterOutcome.Reinforcement
 
 		return outcome, nil
 	}
@@ -345,15 +363,15 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 	return outcome, nil
 }
 
-/* framePrice extracts genuine price data from a frame. */
+/* framePrice extracts genuine market price data from an authoritative price measurement. */
 func framePrice(frame []*data.Measurement[float64]) (float64, bool) {
 	for _, measurement := range frame {
 		if measurement == nil || len(measurement.Metrics) == 0 {
 			continue
 		}
 
-		if measurement.Source == "price" || measurement.Source == "ticker" || measurement.Source == "sentiment" {
-			for _, key := range []string{"last", "close", "raw", "price", "value"} {
+		if measurement.Source == "price" || measurement.Source == "ticker" || measurement.Source == "trade" {
+			for _, key := range []string{"last", "close", "price"} {
 				if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
 					return metric.Raw, true
 				}
@@ -361,25 +379,11 @@ func framePrice(frame []*data.Measurement[float64]) (float64, bool) {
 		}
 
 		if measurement.Label == "price" || measurement.Label == "last" || measurement.Label == "close" {
-			for _, metric := range measurement.Metrics {
-				if metric.Raw > 0 {
+			for _, key := range []string{"last", "close", "price", "raw"} {
+				if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
 					return metric.Raw, true
 				}
 			}
-		}
-	}
-
-	for _, measurement := range frame {
-		if measurement == nil {
-			continue
-		}
-
-		if metric, ok := measurement.Metrics["raw"]; ok && metric.Raw > 0 {
-			return metric.Raw, true
-		}
-
-		if metric, ok := measurement.Metrics["price"]; ok && metric.Raw > 0 {
-			return metric.Raw, true
 		}
 	}
 

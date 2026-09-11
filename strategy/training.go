@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -41,32 +40,8 @@ func NewTape() *Tape {
 	return &Tape{queue: lf.NewQueue[types.ReplayFragment]()}
 }
 
-func (tape *Tape) Publish(leg any) {
-	switch v := leg.(type) {
-	case types.ReplayFragment:
-		tape.queue.Enqueue(v)
-	case [][]*data.Measurement[float64]:
-		symbol := ""
-
-		for _, frame := range v {
-			for _, measurement := range frame {
-				if measurement != nil && measurement.Label != "" {
-					symbol = measurement.Label
-					break
-				}
-			}
-
-			if symbol != "" {
-				break
-			}
-		}
-
-		tape.queue.Enqueue(types.ReplayFragment{
-			Frames:      v,
-			Symbol:      symbol,
-			AnchorIndex: max(1, len(v)/2),
-		})
-	}
+func (tape *Tape) Publish(fragment types.ReplayFragment) {
+	tape.queue.Enqueue(fragment)
 }
 
 func (tape *Tape) PublishFragment(fragment types.ReplayFragment) {
@@ -188,23 +163,6 @@ func NewTraining(
 
 		if prc != nil {
 			agents[idx].SetPrice(prc)
-
-			symbol := ""
-
-			if inst != nil {
-				symbols := inst.Symbols()
-
-				if len(symbols) > 0 {
-					symbol = symbols[0]
-				}
-			}
-
-			fee := prc.FeeIfAvailable(symbol)
-
-			if fee != nil && fee.Fee != nil {
-				rate := fee.Fee.Float64()
-				agents[idx].SetFeeRate(rate * 0.01)
-			}
 		}
 	}
 

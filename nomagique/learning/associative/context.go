@@ -11,32 +11,23 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 )
 
-const defaultContextDepth = 4
-
 /*
 Context turns the temporal trajectory of region sets into the sequence an agent recognises:
-R_{t-3} -> R_{t-2} -> R_{t-1} -> R_t.
+R_0 -> R_1 -> ... -> R_t.
 It carries no trading semantics: region token sequences are addresses in the
-cognitive memory trie.
+cognitive memory trie. Each timestep set is structurally framed with its region count
+to preserve temporal set boundaries without delimiter collisions.
 */
 type Context struct {
 	core.Base[grid.Impulse, cognition.Association]
 	mu          sync.RWMutex
-	depth       int
 	history     [][]grid.Region
 	lastVersion uint64
 }
 
-func NewContext(depth ...int) *Context {
-	windowDepth := defaultContextDepth
-
-	if len(depth) > 0 && depth[0] > 0 {
-		windowDepth = depth[0]
-	}
-
+func NewContext() *Context {
 	return &Context{
-		depth:   windowDepth,
-		history: make([][]grid.Region, 0, windowDepth),
+		history: make([][]grid.Region, 0, 16),
 	}
 }
 
@@ -47,14 +38,6 @@ func (op *Context) Reset() {
 
 	op.history = op.history[:0]
 	op.lastVersion = 0
-}
-
-/* Depth returns the maximum number of temporal steps retained. */
-func (op *Context) Depth() int {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
-
-	return op.depth
 }
 
 /* HistoryLen returns the current number of temporal steps accumulated. */
@@ -79,7 +62,8 @@ func (op *Context) Next(
 
 /*
 Sequence encodes the temporal trajectory of active impulse regions into a binary token sequence.
-R_{t-k} -> ... -> R_t.
+Each timestep set is length-framed with uint32 count: [count (4B)][token1 (8B)]...[tokenK (8B)].
+This structurally prevents collisions between e.g. [r1, r2] -> [r3] and [r1] -> [r2, r3].
 */
 func (op *Context) Sequence(impulse grid.Impulse) []byte {
 	op.mu.Lock()
@@ -104,11 +88,6 @@ func (op *Context) Sequence(impulse grid.Impulse) []byte {
 		})
 
 		op.history = append(op.history, stepRegions)
-
-		if len(op.history) > op.depth {
-			op.history = op.history[len(op.history)-op.depth:]
-		}
-
 		op.lastVersion = impulse.Version
 	}
 
@@ -120,20 +99,29 @@ func (op *Context) encodeHistoryLocked() []byte {
 		return nil
 	}
 
-	totalTokens := 0
-
+	totalBytes := 0
 	for _, step := range op.history {
-		totalTokens += len(step)
+		if len(step) > 0 {
+			totalBytes += 4 + len(step)*8
+		}
 	}
 
-	if totalTokens == 0 {
+	if totalBytes == 0 {
 		return nil
 	}
 
-	sequence := make([]byte, 0, totalTokens*8)
+	sequence := make([]byte, 0, totalBytes)
+	var countBuf [4]byte
 	var token [8]byte
 
 	for _, step := range op.history {
+		if len(step) == 0 {
+			continue
+		}
+
+		binary.BigEndian.PutUint32(countBuf[:], uint32(len(step)))
+		sequence = append(sequence, countBuf[:]...)
+
 		for _, region := range step {
 			binary.BigEndian.PutUint64(token[:], region.Condition)
 			sequence = append(sequence, token[:]...)

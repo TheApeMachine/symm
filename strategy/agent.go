@@ -225,39 +225,6 @@ func (agent *Agent) IngestReplay(fragment types.ReplayFragment, slot int) {
 	agent.ring.WriteAt(child, slot)
 }
 
-/*
-IngestFragment wraps one tape fragment as a child ring and inserts it into
-the parent ring at the specified slot.
-*/
-func (agent *Agent) IngestFragment(fragment [][]*data.Measurement[float64], slot int) {
-	if len(fragment) == 0 {
-		return
-	}
-
-	symbol := ""
-
-	for _, frame := range fragment {
-		for _, measurement := range frame {
-			if measurement != nil && measurement.Label != "" {
-				symbol = measurement.Label
-				break
-			}
-		}
-
-		if symbol != "" {
-			break
-		}
-	}
-
-	anchor := max(1, len(fragment)/2)
-
-	agent.IngestReplay(types.ReplayFragment{
-		Frames:      fragment,
-		Symbol:      symbol,
-		AnchorIndex: anchor,
-	}, slot)
-}
-
 type actionCandidate struct {
 	action   Action
 	share    float64
@@ -385,11 +352,20 @@ func (agent *Agent) ChooseAction(
 	return action, sequence, confidence, contrast, support
 }
 
+type rehearsalTransition struct {
+	context  []byte
+	action   Action
+	frameIdx int
+	holding  bool
+	entryIdx int
+}
+
 /*
 RehearseChild plays out the current child sequence starting from a random
-point within the precursor (A < B), steps perception on each frame, chooses legal
-actions, evaluates their executable consequence and timing, and reinforces the
-temporal-context / action pair in cognitive memory.
+point within the precursor (0 <= A < B). During rollout, all decisions are made
+strictly using the policy as it existed prior to this replay. Evaluator judgments
+and reinforcement are applied post-hoc once the rollout completes, eliminating
+intra-fragment hindsight leakage.
 */
 func (agent *Agent) RehearseChild() (int, error) {
 	agent.mu.Lock()
@@ -403,25 +379,22 @@ func (agent *Agent) RehearseChild() (int, error) {
 		}
 	}
 
-	if len(replay.Frames) == 0 && agent.ring != nil && agent.ring.Len() > 0 {
-		frames := agent.ring.CurrentChildValues()
-		replay = types.ReplayFragment{
-			Frames:      frames,
-			AnchorIndex: max(1, len(frames)/2),
-		}
-	}
-
 	childLen := len(replay.Frames)
 
 	if childLen <= 0 {
 		return 0, nil
 	}
 
-	// 1. Constrain A to strictly precursor development: 0 <= A < B
+	// 1. Constrain A to strictly precursor development: 0 <= A < B.
+	// Factual anchor B must be valid; missing anchor is an explicit error, never a fallback.
 	anchorIdx := replay.AnchorIndex
 
 	if anchorIdx <= 0 || anchorIdx >= childLen {
-		anchorIdx = max(1, childLen-1)
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rehearsal: invalid or missing anchor index B in replay fragment",
+			nil,
+		))
 	}
 
 	offset := 0
@@ -436,14 +409,17 @@ func (agent *Agent) RehearseChild() (int, error) {
 
 	// 3. Configure objective evaluation parameters
 	agent.evaluator.SetAnchorIndex(replay.AnchorIndex)
+	agent.evaluator.SetSurfaces(replay.Surfaces)
 	agent.evaluator.SetPrice(agent.price)
 
 	holding := false
 	entryIdx := -1
 	exitIdx := -1
 	stepped := 0
-	marks := make([]*telemetry.LearningMarkT, 0, childLen-offset)
 
+	transitions := make([]rehearsalTransition, 0, childLen-offset)
+
+	// Phase 1: Forward rollout using current policy. No in-rollout hindsight mutation.
 	for frameIdx := offset; frameIdx < childLen; frameIdx++ {
 		measurements := replay.Frames[frameIdx]
 
@@ -455,7 +431,7 @@ func (agent *Agent) RehearseChild() (int, error) {
 
 		if symbol == "" {
 			for _, measurement := range measurements {
-				if measurement != nil && measurement.Label != "" {
+				if measurement != nil && measurement.Label != "" && measurement.Label != "price" && measurement.Label != "last" {
 					symbol = measurement.Label
 					break
 				}
@@ -484,46 +460,54 @@ func (agent *Agent) RehearseChild() (int, error) {
 			continue
 		}
 
+		transitions = append(transitions, rehearsalTransition{
+			context:  context,
+			action:   action,
+			frameIdx: frameIdx,
+			holding:  holding,
+			entryIdx: entryIdx,
+		})
+
+		if action == ActionEnter {
+			holding = true
+			entryIdx = frameIdx
+		}
+
+		if action == ActionExit {
+			holding = false
+			exitIdx = frameIdx
+		}
+	}
+
+	// Phase 2: Post-hoc evaluation and reinforcement after episode has played out.
+	marks := make([]*telemetry.LearningMarkT, 0, len(transitions))
+
+	for _, tr := range transitions {
 		var outcome ActionOutcome
 		var evalErr error
 
-		switch action {
+		switch tr.action {
 		case ActionEnter:
-			outcome, evalErr = agent.evaluator.EvaluateEntry(replay.Frames, frameIdx)
-
-			if evalErr != nil {
-				return stepped, errnie.Error(evalErr)
-			}
-
-			holding = true
-			entryIdx = frameIdx
+			outcome, evalErr = agent.evaluator.EvaluateEntry(replay.Frames, tr.frameIdx)
 		case ActionExit:
-			outcome, evalErr = agent.evaluator.EvaluateExit(replay.Frames, frameIdx, entryIdx)
-
-			if evalErr != nil {
-				return stepped, errnie.Error(evalErr)
-			}
-
-			holding = false
-			exitIdx = frameIdx
+			outcome, evalErr = agent.evaluator.EvaluateExit(replay.Frames, tr.frameIdx, tr.entryIdx)
 		case ActionWait:
-			outcome, evalErr = agent.evaluator.EvaluateWait(replay.Frames, frameIdx, holding, entryIdx)
-
-			if evalErr != nil {
-				return stepped, errnie.Error(evalErr)
-			}
+			outcome, evalErr = agent.evaluator.EvaluateWait(replay.Frames, tr.frameIdx, tr.holding, tr.entryIdx)
 		}
 
-		// Write the timing-modulated reinforcement to shared cognitive memory
-		agent.learner.Engine().Observe(context, []byte(action), outcome.Reinforcement)
+		if evalErr != nil {
+			return stepped, errnie.Error(evalErr)
+		}
+
+		agent.learner.Engine().Observe(tr.context, []byte(tr.action), outcome.Reinforcement)
 
 		marks = append(marks, &telemetry.LearningMarkT{
 			Id:      uint64(len(marks)),
-			Index:   int32(frameIdx),
-			Kind:    string(action),
+			Index:   int32(tr.frameIdx),
+			Kind:    string(tr.action),
 			Value:   outcome.Reinforcement,
 			Graded:  true,
-			Reduce:  holding,
+			Reduce:  tr.holding,
 			Verdict: fmt.Sprintf("c=%.2f t=%.2f r=%.2f", outcome.Correctness, outcome.Timing, outcome.Reinforcement),
 		})
 	}
