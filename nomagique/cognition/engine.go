@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
@@ -44,12 +45,12 @@ func (acc *classAccumulator) add(name []byte, logP types.Scalar, count uint64, o
 	acc.count++
 }
 
-
 type Engine struct {
 	cfg         Config
 	root        atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter atomic.Uint64
 	decayFactor float64
+	classCounts sync.Map
 }
 
 func NewEngine(cfg Config) *Engine {
@@ -60,6 +61,26 @@ func NewEngine(cfg Config) *Engine {
 
 	e.root.Store(iradix.New[[]byte]())
 	return e
+}
+
+func (e *Engine) ClassCounts() map[string]int32 {
+	res := make(map[string]int32)
+	e.classCounts.Range(func(key, value any) bool {
+		if k, ok := key.(string); ok {
+			if cnt, ok := value.(*atomic.Int32); ok {
+				res[k] = cnt.Load()
+			}
+		}
+		return true
+	})
+	return res
+}
+
+func (e *Engine) incrementClass(class string) {
+	val, _ := e.classCounts.LoadOrStore(class, &atomic.Int32{})
+	if cnt, ok := val.(*atomic.Int32); ok {
+		cnt.Add(1)
+	}
 }
 
 /* Root is the current immutable trie. Observe publishes the next one. */
@@ -89,6 +110,8 @@ func (e *Engine) Observe(context []byte, class []byte, feedback ...float64) {
 		step := e.stepCounter.Add(1)
 		txn := oldRoot.Txn()
 
+		isNew := false
+
 		// A zero grade observes the context without reinforcing an action.
 		if len(class) > 0 && (len(feedback) == 0 || feedback[0] != 0) {
 			weight := PackedWeight{Probability: 1, WriteStep: step}
@@ -97,9 +120,11 @@ func (e *Engine) Observe(context []byte, class []byte, feedback ...float64) {
 				weight.Probability = 0.5 // Neutral between reinforcement and inhibition.
 			}
 
-			if existing, found := oldRoot.Get(basinKey); found {
+			existing, found := oldRoot.Get(basinKey)
+			if found {
 				weight = DecodeWeight(existing).Effective(step, e.decayFactor)
 			}
+			isNew = !found
 			weight.Count++
 			weight.WriteStep = step
 			weight.Reinforce(feedback...)
@@ -119,6 +144,9 @@ func (e *Engine) Observe(context []byte, class []byte, feedback ...float64) {
 
 		newRoot := txn.Commit()
 		if e.root.CompareAndSwap(oldRoot, newRoot) {
+			if isNew {
+				e.incrementClass(string(class))
+			}
 			break
 		}
 	}
@@ -169,29 +197,29 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 		acc.add(class, logP, state.Count, e.cfg.MaxBackoffOrder)
 	}
 
-	// Fallback: if no exact match, scan basin keys with backoff matchOrder
+	// Fallback: if no exact match, use prefix and suffix backoff via direct SeekPrefix
 	if acc.count == 0 {
-		basinPrefix := []byte("b/")
-		fallbackIt := root.Root().Iterator()
-		fallbackIt.SeekPrefix(basinPrefix)
+		maxSteps := e.cfg.MaxBackoffOrder
+		if maxSteps <= 0 {
+			maxSteps = 4
+		}
 
-		for k, v, ok := fallbackIt.Next(); ok; k, v, ok = fallbackIt.Next() {
-			if !bytes.HasPrefix(k, basinPrefix) {
+		prefixes, suffixes := backoffCandidates(context, maxSteps)
+
+		// Check suffixes (temporal Markov order reduction: keeping most recent tokens)
+		for _, sub := range suffixes {
+			if searchSubPrefix(root, sub, step, e.decayFactor, e.cfg.DirichletAlpha, 1, &acc) {
 				break
 			}
-			class, basinSeq, valid := parseBasinKey(k)
-			if !valid {
-				continue
-			}
+		}
 
-			order := matchOrder(context, basinSeq, e.cfg.MaxBackoffOrder)
-
-			if order > 0 {
-				state := DecodeWeight(v).Effective(step, e.decayFactor)
-				denom := float64(state.Count) + e.cfg.DirichletAlpha*float64(maxCandidates)
-				smoothedP := (float64(state.Count)*state.Probability + e.cfg.DirichletAlpha) / denom
-				logP := types.Scalar(math.Log(smoothedP))
-				acc.add(class, logP, state.Count, order)
+		// Check prefixes if no suffix matched
+		if acc.count == 0 {
+			order := max(1, e.cfg.MaxBackoffOrder/2)
+			for _, sub := range prefixes {
+				if searchSubPrefix(root, sub, step, e.decayFactor, e.cfg.DirichletAlpha, order, &acc) {
+					break
+				}
 			}
 		}
 	}
@@ -348,6 +376,95 @@ func (e *Engine) beamSearch(root *iradix.Tree[[]byte], prefix []byte, width, hop
 	}
 
 	return currentPaths
+}
+
+func searchSubPrefix(root *iradix.Tree[[]byte], sub []byte, step uint64, decayFactor float64, alpha float64, order int, acc *classAccumulator) bool {
+	if len(sub) == 0 {
+		return false
+	}
+	prefixBuf := make([]byte, 2+len(sub)+1)
+	prefixBuf[0] = 'b'
+	prefixBuf[1] = '/'
+	copy(prefixBuf[2:], sub)
+	prefixBuf[2+len(sub)] = '/'
+
+	it := root.Root().Iterator()
+	it.SeekPrefix(prefixBuf)
+	found := false
+
+	for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
+		if !bytes.HasPrefix(k, prefixBuf) {
+			break
+		}
+		class, _, valid := parseBasinKey(k)
+		if !valid {
+			continue
+		}
+
+		state := DecodeWeight(v).Effective(step, decayFactor)
+		denom := float64(state.Count) + alpha*float64(maxCandidates)
+		smoothedP := (float64(state.Count)*state.Probability + alpha) / denom
+		logP := types.Scalar(math.Log(smoothedP))
+		acc.add(class, logP, state.Count, order)
+		found = true
+	}
+	return found
+}
+
+func backoffCandidates(context []byte, maxSteps int) (prefixes [][]byte, suffixes [][]byte) {
+	if len(context) <= 1 || maxSteps <= 0 {
+		return nil, nil
+	}
+
+	if len(context)%8 == 0 && len(context) > 8 {
+		tokens := len(context) / 8
+		steps := min(tokens-1, maxSteps)
+		for s := 1; s <= steps; s++ {
+			suffixes = append(suffixes, context[s*8:])
+			prefixes = append(prefixes, context[:len(context)-s*8])
+		}
+		return prefixes, suffixes
+	}
+
+	delim := byte(0)
+	hasDelim := false
+	if bytes.IndexByte(context, 0) >= 0 {
+		delim = 0
+		hasDelim = true
+	} else if bytes.IndexByte(context, '/') >= 0 {
+		delim = '/'
+		hasDelim = true
+	}
+
+	if hasDelim {
+		var splits []int
+		for i, b := range context {
+			if b == delim {
+				splits = append(splits, i)
+			}
+		}
+		if len(splits) > 0 {
+			for _, idx := range splits {
+				if idx+1 < len(context) {
+					suffixes = append(suffixes, context[idx+1:])
+				}
+			}
+			for i := len(splits) - 1; i >= 0; i-- {
+				idx := splits[i]
+				if idx > 0 {
+					prefixes = append(prefixes, context[:idx])
+				}
+			}
+			return prefixes, suffixes
+		}
+	}
+
+	half := len(context) / 2
+	if half > 0 {
+		prefixes = append(prefixes, context[:half])
+		suffixes = append(suffixes, context[half:])
+	}
+	return prefixes, suffixes
 }
 
 /*

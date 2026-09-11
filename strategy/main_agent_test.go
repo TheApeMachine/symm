@@ -7,13 +7,15 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestMainAgent(t *testing.T) {
 	Convey("Given a freshly initialized MainAgent", t, func() {
 		initialCash := decimal.NewFromInt64(10000)
-		mainAgent := NewMainAgent(initialCash, "paper")
+		engine := cognition.NewEngine(cognition.DefaultConfig())
+		mainAgent := NewMainAgent(initialCash, "paper", engine)
 
 		So(mainAgent.ID(), ShouldEqual, 0)
 		So(mainAgent.Status(), ShouldEqual, "simulated")
@@ -40,8 +42,9 @@ func TestMainAgent(t *testing.T) {
 				Contrast:   2.4,
 				Support:    12,
 			}
+			entryCtx := []byte("entry_precursor_pattern_123")
 
-			mainAgent.Step(envelope, consensus)
+			mainAgent.Step(envelope, consensus, entryCtx)
 
 			So(mainAgent.fills, ShouldEqual, 1)
 			So(mainAgent.decisions, ShouldEqual, 1)
@@ -90,6 +93,10 @@ func TestMainAgent(t *testing.T) {
 					So(mainAgent.realized.Sign(), ShouldBeGreaterThan, 0)
 					So(len(mainAgent.outcomes), ShouldEqual, 1)
 					So(mainAgent.outcomes[0].ReturnBp, ShouldBeGreaterThan, 0)
+
+					evaluation := engine.Evaluate(entryCtx)
+					So(evaluation.WinnerClass, ShouldEqual, "enter_long")
+					So(evaluation.Confidence, ShouldBeGreaterThan, 0.5)
 				})
 			})
 		})

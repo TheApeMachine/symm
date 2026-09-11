@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"bytes"
 	"math"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -57,6 +59,12 @@ type MainAgent struct {
 	status        string // "simulated" or "trading"
 	targetAccount string // "paper" or "real"
 	instrument    *broker.Instrument
+	price         *broker.Price
+	engine        *cognition.Engine
+
+	symbolPhase    map[string]string
+	symbolMaturity map[string]int
+	entryContexts  map[string][]byte
 
 	initial    *decimal.Decimal
 	cash       *decimal.Decimal
@@ -86,9 +94,9 @@ type MainAgent struct {
 	alternatives []*telemetry.LearningActionT
 }
 
-func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, instrument ...*broker.Instrument) *MainAgent {
+func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...any) *MainAgent {
 	if initialCash == nil || initialCash.Sign() <= 0 {
-		balance := int64(10000)
+		balance := int64(200)
 
 		if system.Cfg != nil && system.Cfg.Market != nil && system.Cfg.Market.Balance > 0 {
 			balance = int64(system.Cfg.Market.Balance)
@@ -106,29 +114,43 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, instrument
 	}
 
 	var inst *broker.Instrument
+	var prc *broker.Price
+	var eng *cognition.Engine
 
-	if len(instrument) > 0 {
-		inst = instrument[0]
+	for _, dep := range deps {
+		switch v := dep.(type) {
+		case *broker.Instrument:
+			inst = v
+		case *broker.Price:
+			prc = v
+		case *cognition.Engine:
+			eng = v
+		}
 	}
 
 	zero := decimal.NewFromInt64(0)
 
 	return &MainAgent{
-		id:            0,
-		status:        "simulated",
-		targetAccount: targetAccount,
-		instrument:    inst,
-		initial:       initialCash,
-		cash:          initialCash,
-		equity:        initialCash,
-		fees:          zero,
-		profit:        zero,
-		realized:      zero,
-		unrealized:    zero,
-		positions:     make(map[string]*types.Holding),
-		posQuantities: make(map[string]*decimal.Decimal),
-		posCosts:      make(map[string]*decimal.Decimal),
-		lastPrice:     make(map[string]*decimal.Decimal),
+		id:             0,
+		status:         "simulated",
+		targetAccount:  targetAccount,
+		instrument:     inst,
+		price:          prc,
+		engine:         eng,
+		initial:        initialCash,
+		cash:           initialCash,
+		equity:         initialCash,
+		fees:           zero,
+		profit:         zero,
+		realized:       zero,
+		unrealized:     zero,
+		positions:      make(map[string]*types.Holding),
+		posQuantities:  make(map[string]*decimal.Decimal),
+		posCosts:       make(map[string]*decimal.Decimal),
+		lastPrice:      make(map[string]*decimal.Decimal),
+		symbolPhase:    make(map[string]string),
+		symbolMaturity: make(map[string]int),
+		entryContexts:  make(map[string][]byte),
 	}
 }
 
@@ -137,6 +159,31 @@ func (agent *MainAgent) SetInstrument(instrument *broker.Instrument) {
 	defer agent.mu.Unlock()
 
 	agent.instrument = instrument
+}
+
+func (agent *MainAgent) SetPrice(price *broker.Price) {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+
+	agent.price = price
+}
+
+func (agent *MainAgent) SetEngine(engine *cognition.Engine) {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+
+	agent.engine = engine
+}
+
+func (agent *MainAgent) feeRate(symbol string) *decimal.Decimal {
+	if agent.price != nil {
+		if fee := agent.price.FeeIfAvailable(symbol); fee != nil && fee.Fee != nil {
+			percentMultiplier := decimal.NewFromFloat64(0.01)
+			return fee.Fee.Mul(percentMultiplier)
+		}
+	}
+
+	return decimal.NewFromFloat64(0.008)
 }
 
 func (agent *MainAgent) ID() int {
@@ -167,6 +214,13 @@ func (agent *MainAgent) TargetAccount() string {
 	return agent.targetAccount
 }
 
+func (agent *MainAgent) Graded() uint64 {
+	agent.mu.RLock()
+	defer agent.mu.RUnlock()
+
+	return agent.wins + agent.losses
+}
+
 func (agent *MainAgent) canEnter(consensus PrecursorConsensus) bool {
 	if consensus.Action != "enter_long" {
 		return false
@@ -192,7 +246,7 @@ func (agent *MainAgent) canEnter(consensus PrecursorConsensus) bool {
 Step evaluates the precursor consensus, manages simulated positions, and
 executes forward-testing trades.
 */
-func (agent *MainAgent) Step(envelope *types.Envelope, consensus PrecursorConsensus) {
+func (agent *MainAgent) Step(envelope *types.Envelope, consensus PrecursorConsensus, precursorContext ...[]byte) {
 	if envelope == nil {
 		return
 	}
@@ -216,69 +270,126 @@ func (agent *MainAgent) Step(envelope *types.Envelope, consensus PrecursorConsen
 	}
 
 	currentPrice := agent.extractPrice(envelope, symbol)
-
-	if currentPrice == nil || currentPrice.Sign() <= 0 {
-		return
-	}
-	agent.lastPrice[symbol] = currentPrice
-
-	// 1. Mark existing open positions to market
-	agent.markPositions()
-
-	// 2. Score candidate actions against precursor consensus
-	agent.buildCandidates(symbol, consensus)
-
-	// 3. Evaluate trading action
 	now := time.Now().UTC()
 	holding := agent.positions[symbol]
 
+	if currentPrice != nil && currentPrice.Sign() > 0 {
+		agent.lastPrice[symbol] = currentPrice
+
+		// 1. Mark existing open positions to market
+		agent.markPositions()
+
+		// 2. Score candidate actions against precursor consensus
+		agent.buildCandidates(symbol, consensus)
+
+		// 3. Evaluate trading action
+		if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
+			if consensus.Action == "enter_long" {
+				agent.symbolMaturity[symbol]++
+			}
+			if consensus.Action != "enter_long" {
+				agent.symbolMaturity[symbol] = 0
+			}
+			agent.symbolPhase[symbol] = consensus.Action
+
+			// No position open: enter only when precursor model has developed positive skill/edge
+			if len(agent.positions) < maxConcurrentPositions && agent.canEnter(consensus) {
+				agent.enterLong(envelope, symbol, currentPrice, consensus, now, precursorContext...)
+			}
+		}
+
+		if holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
+			// Position open: manage excursion holding and exit
+			cost := agent.posCosts[symbol]
+			qty := agent.posQuantities[symbol]
+			shouldExit := false
+
+			// Check economic bounds using authoritative exchange fees
+			if cost != nil && cost.Sign() > 0 && qty != nil && qty.Sign() > 0 {
+				marketValue := currentPrice.Mul(qty)
+				pnl := marketValue.Sub(cost)
+				retBp := pnl.SetScale(decimal.DefaultScale).Div(cost).Mul(decimal.NewFromInt64(10000)).Float64()
+
+				roundTripBp := agent.feeRate(symbol).Mul(decimal.NewFromInt64(20000)).Float64()
+
+				// Take profit: excursion moved enough to clear fees and capture gains (+40 bp margin)
+				if retBp >= roundTripBp+40.0 {
+					shouldExit = true
+				}
+
+				// Stop loss: adverse excursion exceeded risk boundary
+				if retBp <= -roundTripBp {
+					shouldExit = true
+				}
+			}
+
+			// Exit when learners predict an exit action or downward reversal
+			if !shouldExit {
+				if consensus.Action == "exit_long" || consensus.Action == "enter_short" {
+					shouldExit = true
+				}
+			}
+
+			if shouldExit {
+				agent.exitLong(envelope, symbol, currentPrice, now)
+			}
+		}
+
+		// 4. Update overall portfolio valuation
+		agent.updateValuation()
+
+		// 5. Evaluate robustness threshold for paper/live promotion
+		agent.evaluateRobustness()
+	}
+
+	// 6. Ensure continuous decision round telemetry on every evaluation step
+	if envelope.StrategyRound == nil {
+		agent.attachContinuousDecision(envelope, symbol, currentPrice, consensus, holding, now)
+	}
+}
+
+func (agent *MainAgent) attachContinuousDecision(
+	envelope *types.Envelope,
+	symbol string,
+	price *decimal.Decimal,
+	consensus PrecursorConsensus,
+	holding *types.Holding,
+	now time.Time,
+) {
+	action := types.ActionHold
+	outcome := "hold"
+	reason := "holding open position"
+
 	if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
-		// No position open: enter only when precursor model has developed positive skill/edge
-		if len(agent.positions) < maxConcurrentPositions && agent.canEnter(consensus) {
-			agent.enterLong(envelope, symbol, currentPrice, consensus, now)
+		action = types.ActionNothing
+		outcome = "wait"
+		reason = consensus.Action
+
+		if reason == "" {
+			reason = "scanning for precursor opportunity"
 		}
 	}
 
-	if holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
-		// Position open: manage excursion holding and exit
-		cost := agent.posCosts[symbol]
-		qty := agent.posQuantities[symbol]
-		shouldExit := false
-
-		// Check economic bounds: profit target and risk stop loss
-		if cost != nil && cost.Sign() > 0 && qty != nil && qty.Sign() > 0 {
-			marketValue := currentPrice.Mul(qty)
-			pnl := marketValue.Sub(cost)
-			retBp := pnl.SetScale(decimal.DefaultScale).Div(cost).Mul(decimal.NewFromInt64(10000)).Float64()
-
-			// Take profit: excursion moved enough to clear fees (52 bp) and capture gains (+80 bp)
-			if retBp >= 80.0 {
-				shouldExit = true
-			}
-
-			// Stop loss: adverse excursion exceeded risk tolerance (-100 bp)
-			if retBp <= -100.0 {
-				shouldExit = true
-			}
-		}
-
-		// Exit when learners predict an exit action or downward reversal
-		if !shouldExit {
-			if consensus.Action == "exit_long" || consensus.Action == "enter_short" {
-				shouldExit = true
-			}
-		}
-
-		if shouldExit {
-			agent.exitLong(envelope, symbol, currentPrice, now)
-		}
+	decision := &types.Decision{
+		ID:               uuid.NewString(),
+		Action:           action,
+		Symbol:           symbol,
+		At:               now,
+		Direction:        0.0,
+		ReferencePrice:   price,
+		Confidence:       consensus.Confidence,
+		AvailableCapital: agent.cash,
+		OpenPositions:    len(agent.positions),
+		Cause:            "precursor_consensus",
+		Reason:           reason,
 	}
 
-	// 4. Update overall portfolio valuation
-	agent.updateValuation()
-
-	// 5. Evaluate robustness threshold for paper/live promotion
-	agent.evaluateRobustness()
+	envelope.StrategyRound = &types.StrategyRound{
+		Symbol:    symbol,
+		Evaluated: true,
+		Outcome:   outcome,
+		Decisions: []*types.Decision{decision},
+	}
 }
 
 func (agent *MainAgent) extractPrice(envelope *types.Envelope, symbol string) *decimal.Decimal {
@@ -327,6 +438,7 @@ func (agent *MainAgent) enterLong(
 	price *decimal.Decimal,
 	consensus PrecursorConsensus,
 	now time.Time,
+	precursorContext ...[]byte,
 ) {
 	// Allocate 10% of current cash per entry
 	allocationFraction := decimal.NewFromFloat64(0.10)
@@ -359,7 +471,7 @@ func (agent *MainAgent) enterLong(
 	if notional.Cmp(decimal.NewFromInt64(10)) < 0 {
 		notional = decimal.NewFromInt64(10)
 	}
-	feeRate := decimal.NewFromFloat64(0.0026) // 0.26% venue fee
+	feeRate := agent.feeRate(symbol)
 	fee := notional.Mul(feeRate)
 	totalCost := notional.Add(fee)
 
@@ -400,6 +512,10 @@ func (agent *MainAgent) enterLong(
 	agent.positions[symbol] = holding
 	agent.posQuantities[symbol] = quantity
 	agent.posCosts[symbol] = notional
+
+	if len(precursorContext) > 0 && len(precursorContext[0]) > 0 {
+		agent.entryContexts[symbol] = bytes.Clone(precursorContext[0])
+	}
 
 	if envelope != nil {
 		decision := &types.Decision{
@@ -459,7 +575,7 @@ func (agent *MainAgent) exitLong(
 		return
 	}
 	proceeds := price.Mul(qty)
-	feeRate := decimal.NewFromFloat64(0.0026)
+	feeRate := agent.feeRate(symbol)
 	exitFee := proceeds.Mul(feeRate)
 	entryFee := holding.EntryFee
 
@@ -506,6 +622,24 @@ func (agent *MainAgent) exitLong(
 		ExitAt:     now,
 	}, returnBp)
 
+	// Forward-testing feedback into the cognitive attractor trie:
+	if entryContext, hasContext := agent.entryContexts[symbol]; hasContext && len(entryContext) > 0 && agent.engine != nil {
+		roundTripBp := agent.feeRate(symbol).Mul(decimal.NewFromInt64(20000)).Float64()
+		feedback := -1.0
+
+		if netProfit.Sign() > 0 {
+			hurdle := roundTripBp + 40.0
+			feedback = math.Min(1.0, returnBp/hurdle)
+
+			if feedback <= 0 {
+				feedback = 0.5
+			}
+		}
+
+		agent.engine.Observe(entryContext, []byte("enter_long"), feedback)
+	}
+
+	delete(agent.entryContexts, symbol)
 	delete(agent.positions, symbol)
 	delete(agent.posQuantities, symbol)
 	delete(agent.posCosts, symbol)

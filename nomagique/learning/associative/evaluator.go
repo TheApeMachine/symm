@@ -69,6 +69,10 @@ func (op *EvaluatorOp) Evaluate(impulse grid.Impulse) (cognition.Association, co
 		if reading.WinnerClass == string(assoc.Class) {
 			assoc.Graded = true
 			assoc.Feedback = 1.0
+
+			if impulse.Graded && impulse.Grade > 0 {
+				assoc.Feedback = impulse.Grade
+			}
 		}
 
 		if reading.WinnerClass != string(assoc.Class) {

@@ -33,6 +33,9 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 	const situations = view?.decisions ?? 0;
 	const hottest = view?.regions?.[0];
 	const isTrading = skill?.mode === "trading";
+	const policyLane = view?.lanes?.find((lane) => lane.mode === "policy");
+	const profit = policyLane?.profit ?? 0;
+	const totalGraded = (skill?.wins ?? 0) + (skill?.losses ?? 0);
 
 	return (
 		<>
@@ -51,25 +54,48 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 					note="Forward testing outcomes evaluated against the live book. Positive edge indicates readiness for paper trading."
 					tone={skill?.defined && skill.mean > 0 ? "accent" : "f1"}
 				/>
-				<Reading
-					label="Simulated outcomes"
-					value={
-						skill?.defined
+				<Flex.Column className="gap-1 border-(--line) border-b p-3">
+					<Flex.Row justify="between" align="center">
+						<Typography.Label size="s" tone="f4" weight="normal">
+							Simulated outcomes
+						</Typography.Label>
+						{totalGraded > 0 && (
+							<Typography.Mono size="s" tone="f3">
+								{skill?.wins ?? 0}W · {skill?.losses ?? 0}L
+							</Typography.Mono>
+						)}
+					</Flex.Row>
+					<Typography.Mono size="lg" tone="f1">
+						{skill?.defined
 							? `${skill.wins} profitable · ${skill.losses} unprofitable`
-							: "evaluating"
-					}
-					note="Simulated trade executions evaluated with venue fees and mark-to-market accounting."
-				/>
+							: "evaluating"}
+					</Typography.Mono>
+					{totalGraded > 0 ? (
+						<div className="flex h-1.5 w-full overflow-hidden rounded-[2px] bg-(--line)">
+							<div
+								style={{
+									width: `${((skill?.wins ?? 0) / totalGraded) * 100}%`,
+									background: "var(--up)",
+								}}
+							/>
+							<div
+								style={{
+									width: `${((skill?.losses ?? 0) / totalGraded) * 100}%`,
+									background: "var(--error)",
+								}}
+							/>
+						</div>
+					) : (
+						<Typography.Mono size="s" tone="f4">
+							Simulated trade executions evaluated with venue fees and mark-to-market accounting.
+						</Typography.Mono>
+					)}
+				</Flex.Column>
 				<Reading
 					label="Main agent wallet P&L"
-					value={
-						view?.lanes?.find((lane) => lane.mode === "policy")
-							? amount(
-									view.lanes.find((lane) => lane.mode === "policy")?.profit ?? 0,
-								)
-							: "unmeasured"
-					}
+					value={policyLane ? amount(profit) : "unmeasured"}
 					note="Net profit in the Main Agent's execution wallet, including maker/taker fees."
+					tone={profit > 0 ? "accent" : "f1"}
 				/>
 			</Section>
 
@@ -82,11 +108,25 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 							: "waiting for recognition"
 					}
 				/>
-				<Reading
-					label="Learned situations"
-					value={situations > 0 ? situations.toLocaleString() : "none yet"}
-					note="Associations stored across every parallel learner. Pure directional precursor discovery."
-				/>
+				<Flex.Column className="gap-1 border-(--line) border-b p-3">
+					<Typography.Label size="s" tone="f4" weight="normal">
+						Learned situations
+					</Typography.Label>
+					<Typography.Mono size="lg" tone="accent" className="font-bold">
+						{situations > 0 ? situations.toLocaleString() : "none yet"}
+					</Typography.Mono>
+					<div className="h-1.5 w-full overflow-hidden rounded-[2px] bg-(--line)">
+						<div
+							className="h-full bg-(--acc) transition-all duration-300"
+							style={{
+								width: `${Math.min(100, Math.max(5, (situations / 100000) * 100))}%`,
+							}}
+						/>
+					</div>
+					<Typography.Mono size="s" tone="f4">
+						Associations stored across every parallel learner. Pure directional precursor discovery.
+					</Typography.Mono>
+				</Flex.Column>
 				<Reading
 					label="Hottest region"
 					value={

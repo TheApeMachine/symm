@@ -108,3 +108,111 @@ func (op *Ring[T]) Next(
 		op.parent = op.parent.Next()
 	}
 }
+
+/*
+Len returns the number of elements in the parent ring.
+*/
+func (op *Ring[T]) Len() int {
+	if op.parent == nil {
+		return 0
+	}
+
+	return op.parent.Len()
+}
+
+/*
+ChildLen returns the length of the child ring at the current parent position.
+*/
+func (op *Ring[T]) ChildLen() int {
+	if op.parent == nil {
+		return 0
+	}
+
+	child, held := op.parent.Value.(*container.Ring)
+
+	if !held || child == nil {
+		return 0
+	}
+
+	return child.Len()
+}
+
+/*
+WriteAt inserts one value into the parent ring at an offset slot relative
+to the current element.
+*/
+func (op *Ring[T]) WriteAt(value any, slot int) {
+	held := container.New(1)
+
+	if child, nested := value.(interface{ Held() *container.Ring }); nested {
+		held.Value = child.Held()
+	}
+
+	if held.Value == nil {
+		held.Value = value
+	}
+
+	if op.parent == nil {
+		op.parent = held
+
+		return
+	}
+
+	target := op.parent.Move(slot)
+	target.Link(held)
+}
+
+/*
+NextOffset plays the current child sequence starting from a specified offset.
+When that child is spent, the parent advances to the next child and loops.
+*/
+func (op *Ring[T]) NextOffset(
+	_ iter.Seq[core.Primitive[T, T]],
+	offset int,
+) iter.Seq[core.Primitive[T, T]] {
+	return func(yield func(core.Primitive[T, T]) bool) {
+		if op.parent == nil {
+			return
+		}
+
+		child, held := op.parent.Value.(*container.Ring)
+
+		if !held || child == nil {
+			return
+		}
+
+		childLen := child.Len()
+
+		if childLen == 0 {
+			op.parent = op.parent.Next()
+
+			return
+		}
+
+		if offset < 0 {
+			offset = 0
+		}
+
+		if offset >= childLen {
+			offset = childLen - 1
+		}
+
+		op.child = child.Move(offset)
+		op.played = offset
+
+		for op.played < childLen {
+			value, ok := op.child.Value.(T)
+			op.child, op.played = op.child.Next(), op.played + 1
+
+			if !ok {
+				return
+			}
+
+			if !yield(op.Carrier(value)) {
+				return
+			}
+		}
+
+		op.parent = op.parent.Next()
+	}
+}

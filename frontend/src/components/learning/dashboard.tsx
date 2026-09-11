@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Alert } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Tabs } from "#/components/ui/tabs";
@@ -96,37 +95,6 @@ export const LearningDashboard = () => {
 			<RehearsalPanel view={view} />
 			<LearningPerformanceBanner view={view} />
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
-				<Section className="w-52 shrink-0 border-(--line) border-r max-lg:h-36 max-lg:w-full">
-					<Section.Header
-						title="Universe"
-						meta={`${view?.universe?.length ?? 0} keys`}
-					/>
-					<Section.Body className="p-2">
-						{!view?.universe?.length && (
-							<Typography.Mono>
-								{view?.status || "Waiting for tape"}
-							</Typography.Mono>
-						)}
-						{view?.universe?.map((entry) => (
-							<Button
-								key={entry.symbol}
-								shape="block"
-								variant={view.symbol === entry.symbol ? "solid" : "quiet"}
-								tone="accent"
-								onClick={() => setSymbol(entry.symbol)}
-								aria-pressed={view.symbol === entry.symbol}
-								className="mb-0.5 justify-between py-1"
-								title={`${entry.present} quantities present · ${entry.regions} hot regions`}
-							>
-								{entry.symbol}
-								<Typography.Mono size="s" tone="f4">
-									{entry.present}
-								</Typography.Mono>
-							</Button>
-						))}
-					</Section.Body>
-				</Section>
-
 				<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-auto">
 					{/*
 						The mode badge and the horizon line sit in the header rather than

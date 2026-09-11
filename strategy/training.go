@@ -3,8 +3,10 @@ package strategy
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/errnie"
@@ -120,7 +122,7 @@ It instantiates the full cohort of agents according to configuration.
 func NewTraining(
 	ctx context.Context,
 	tape *Tape,
-	instrument ...*broker.Instrument,
+	deps ...any,
 ) *Training {
 	count := 8
 
@@ -128,17 +130,24 @@ func NewTraining(
 		count = system.Cfg.Learning.Traders
 	}
 
+	sharedEngine := cognition.NewEngine(cognition.DefaultConfig())
 	agents := make([]*Agent, count)
 
 	for idx := 0; idx < count; idx++ {
 		isLive := (idx == 0)
-		engine := cognition.NewEngine(cognition.DefaultConfig())
-		agents[idx] = NewAgent(idx, isLive, engine, 64)
+		agents[idx] = NewAgent(idx, isLive, sharedEngine, 64)
 	}
-	var inst *broker.Instrument
 
-	if len(instrument) > 0 {
-		inst = instrument[0]
+	var inst *broker.Instrument
+	var prc *broker.Price
+
+	for _, dep := range deps {
+		switch v := dep.(type) {
+		case *broker.Instrument:
+			inst = v
+		case *broker.Price:
+			prc = v
+		}
 	}
 
 	training := &Training{
@@ -146,9 +155,11 @@ func NewTraining(
 		space:  agents[0].Space(),
 		agent:  agents[0].learner,
 		agents: agents,
-		main:   NewMainAgent(nil, "", inst),
+		main:   NewMainAgent(nil, "", inst, prc, sharedEngine),
 		System: runtime.NewSystem(ctx, "training"),
 	}
+
+	go training.rehearseLoop()
 
 	return training
 }
@@ -161,8 +172,6 @@ the grid and the agent. Learning is stamped on the clock so the dashboard can
 read it; the measurements never are.
 */
 func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
-	training.mu.Lock()
-	defer training.mu.Unlock()
 	training.mount()
 
 	if envelope != nil {
@@ -192,7 +201,8 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 
 					if training.main != nil {
 						consensus := training.consensus(impulse)
-						training.main.Step(envelope, consensus)
+						seq := PrecursorSequence(impulse)
+						training.main.Step(envelope, consensus, seq)
 					}
 				}
 			}
@@ -204,46 +214,75 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 }
 
 /*
-mount takes up whatever the reader has recovered since the last step.
-
-It distributes incoming fragments across the rehearsal workers.
+mount takes up fragments recovered by the tape reader, appends them to legs,
+and randomly inserts them into the parent ring slots of the rehearsal workers.
 */
 func (training *Training) mount() {
 	if training.tape == nil {
 		return
 	}
 
-	for count := 0; count < 2; count++ {
+	rehearsalWorkers := training.agents
+
+	if len(training.agents) > 1 {
+		rehearsalWorkers = training.agents[1:]
+	}
+
+	for count := 0; count < 4; count++ {
 		fragment, ok := training.tape.take()
 
 		if !ok {
 			return
 		}
+
+		training.mu.Lock()
 		training.legs = append(training.legs, fragment)
+		training.mu.Unlock()
 
-		// Distribute replay across rehearsal workers (or all agents if single-agent)
-		rehearsalWorkers := training.agents
+		for _, worker := range rehearsalWorkers {
+			randSlot := 0
 
-		if len(training.agents) > 1 {
-			rehearsalWorkers = training.agents[1:]
-		}
-		worker := rehearsalWorkers[(len(training.legs)-1)%len(rehearsalWorkers)]
-
-		for _, measurements := range fragment {
-			symbol := ""
-
-			for _, measurement := range measurements {
-				if measurement != nil && measurement.Label != "" {
-					symbol = measurement.Label
-					break
-				}
+			if worker.ring != nil && worker.ring.Len() > 0 {
+				randSlot = rand.Intn(worker.ring.Len())
 			}
 
-			if symbol != "" {
-				if _, err := worker.Step(measurements, symbol); err != nil {
+			worker.IngestFragment(fragment, randSlot)
+
+			if worker.Space().UpdatedLabel == "" {
+				if _, err := worker.RehearseChild(); err != nil {
 					errnie.Error(err)
 				}
 			}
+		}
+	}
+}
+
+func (training *Training) rehearseLoop() {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-training.Context().Done():
+			return
+		case <-ticker.C:
+			training.rehearseCycle()
+		}
+	}
+}
+
+func (training *Training) rehearseCycle() {
+	training.mount()
+
+	rehearsalWorkers := training.agents
+
+	if len(training.agents) > 1 {
+		rehearsalWorkers = training.agents[1:]
+	}
+
+	for _, worker := range rehearsalWorkers {
+		if _, err := worker.RehearseChild(); err != nil {
+			errnie.Error(err)
 		}
 	}
 }

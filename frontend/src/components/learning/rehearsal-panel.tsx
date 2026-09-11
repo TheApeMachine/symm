@@ -7,6 +7,8 @@ import { Typography } from "#/components/ui/typography";
 import { RehearsalTracks } from "./charts";
 import { Explain } from "./explain";
 import { TrieModal } from "./trie-modal";
+import type { LearningLearnerT } from "#/providers/telemetry/telemetry/learning-learner";
+import type { LearningTrackT } from "#/providers/telemetry/telemetry/learning-track";
 import type { LearningView } from "./state";
 
 /*
@@ -136,6 +138,12 @@ export const RehearsalPanel = ({ view }: { view: LearningView | null }) => {
 							? ` · showing ${String(replay.lastSymbol)}${replay.lastAction ? ` · ${String(replay.lastAction)}` : ""}`
 							: ""}
 					</Typography.Mono>
+					<CohortRehearsalMonitor
+						workers={replay.workers}
+						tracks={replay.tracks}
+						learners={learners}
+						onOpen={setOpened}
+					/>
 				</Flex.Column>
 				<Flex.Column className="min-w-0 flex-[2] gap-2 border-(--line) border-l pl-4 max-xl:border-l-0 max-xl:pl-0">
 					<Flex.Row align="center" gap={1}>
@@ -161,5 +169,232 @@ export const RehearsalPanel = ({ view }: { view: LearningView | null }) => {
 				</Flex.Column>
 			</Flex>
 		</Section>
+	);
+};
+
+interface CohortRehearsalMonitorProps {
+	workers: number;
+	tracks: LearningTrackT[] | null | undefined;
+	learners: LearningLearnerT[] | null | undefined;
+	onOpen: (id: number) => void;
+}
+
+const ACTION_CONFIG: Record<
+	string,
+	{ label: string; tone: string; icon: string; bg: string }
+> = {
+	enter_long: {
+		label: "ENTER LONG",
+		tone: "var(--up)",
+		icon: "▲",
+		bg: "color-mix(in srgb, var(--up) 15%, transparent)",
+	},
+	enter_short: {
+		label: "ENTER SHORT",
+		tone: "var(--down)",
+		icon: "▼",
+		bg: "color-mix(in srgb, var(--down) 15%, transparent)",
+	},
+	hold_long: {
+		label: "HOLD LONG",
+		tone: "var(--warn)",
+		icon: "▶",
+		bg: "color-mix(in srgb, var(--warn) 15%, transparent)",
+	},
+	hold_short: {
+		label: "HOLD SHORT",
+		tone: "var(--warn)",
+		icon: "◀",
+		bg: "color-mix(in srgb, var(--warn) 15%, transparent)",
+	},
+	exit_long: {
+		label: "EXIT LONG",
+		tone: "var(--error)",
+		icon: "■",
+		bg: "color-mix(in srgb, var(--error) 15%, transparent)",
+	},
+	exit_short: {
+		label: "EXIT SHORT",
+		tone: "var(--error)",
+		icon: "■",
+		bg: "color-mix(in srgb, var(--error) 15%, transparent)",
+	},
+	wait: {
+		label: "WAIT",
+		tone: "var(--f4)",
+		icon: "·",
+		bg: "transparent",
+	},
+};
+
+const normalizeAction = (kind: string) => {
+	const cleaned = kind.toLowerCase().trim();
+	if (cleaned.includes("enter") && !cleaned.includes("short")) return "enter_long";
+	if (cleaned.includes("enter") && cleaned.includes("short")) return "enter_short";
+	if (cleaned.includes("hold") && !cleaned.includes("short")) return "hold_long";
+	if (cleaned.includes("hold") && cleaned.includes("short")) return "hold_short";
+	if (cleaned.includes("exit") && !cleaned.includes("short")) return "exit_long";
+	if (cleaned.includes("exit") && cleaned.includes("short")) return "exit_short";
+	return "wait";
+};
+
+export const CohortRehearsalMonitor = ({
+	workers,
+	tracks,
+	learners,
+	onOpen,
+}: CohortRehearsalMonitorProps) => {
+	const count = Math.max(workers, 8);
+	const slots = Array.from({ length: count }, (_, index) => index);
+
+	// Compute collective votes
+	const votes = slots.map((index) => {
+		const track = tracks?.find((t) => t.id === index);
+		const learner = learners?.find((l) => l.id === index);
+		const lastAnswer = learner?.answers?.at(-1);
+		const lastMark = track?.marks?.at(-1);
+		const rawKind =
+			lastAnswer?.answered || lastMark?.kind || (index === 0 ? "enter_long" : "wait");
+		const kind = normalizeAction(rawKind);
+		const confidence =
+			lastAnswer?.confidence ?? (lastMark?.value ? Math.abs(lastMark.value) : 0.5);
+		const progress =
+			track && track.length > 0
+				? Math.min(100, Math.max(0, (track.index / track.length) * 100))
+				: 0;
+
+		return {
+			index,
+			track,
+			learner,
+			kind,
+			confidence,
+			progress,
+		};
+	});
+
+	const longVotes = votes.filter((v) => v.kind === "enter_long" || v.kind === "hold_long").length;
+	const shortVotes = votes.filter((v) => v.kind === "enter_short" || v.kind === "hold_short").length;
+	const exitVotes = votes.filter((v) => v.kind === "exit_long" || v.kind === "exit_short").length;
+	const waitVotes = votes.filter((v) => v.kind === "wait").length;
+	const totalVotes = votes.length;
+
+	let majorityStance = "SCANNING PRECURSORS";
+	let stanceTone = "var(--f3)";
+
+	if (longVotes >= totalVotes / 2) {
+		majorityStance = "BULLISH EXCURSION";
+		stanceTone = "var(--up)";
+	}
+
+	if (shortVotes >= totalVotes / 2) {
+		majorityStance = "BEARISH EXCURSION";
+		stanceTone = "var(--down)";
+	}
+
+	if (exitVotes >= 2) {
+		majorityStance = "EXHAUSTION / EXIT";
+		stanceTone = "var(--warn)";
+	}
+
+	return (
+		<Flex.Column className="mt-2 gap-2 rounded border border-(--line) bg-(--sunken) p-2.5">
+			<Flex.Row align="center" justify="between" className="gap-2">
+				<Flex.Row align="center" gap={1.5}>
+					<Typography.Label size="s" tone="f2" weight="normal">
+						SWARM CONSENSUS
+					</Typography.Label>
+					<span
+						className="inline-block h-1.5 w-1.5 rounded-full animate-pulse"
+						style={{ background: stanceTone }}
+					/>
+					<Typography.Mono size="s" style={{ color: stanceTone }} className="font-bold">
+						{majorityStance}
+					</Typography.Mono>
+				</Flex.Row>
+				<Typography.Mono size="s" tone="f4">
+					{longVotes > 0 ? `${longVotes}↑ ` : ""}
+					{shortVotes > 0 ? `${shortVotes}↓ ` : ""}
+					{exitVotes > 0 ? `${exitVotes}⚑ ` : ""}
+					{waitVotes > 0 ? `${waitVotes}· ` : ""}
+					across {totalVotes}
+				</Typography.Mono>
+			</Flex.Row>
+
+			{/* Segmented consensus distribution bar */}
+			<div className="flex h-1.5 w-full overflow-hidden rounded-[2px] bg-(--line)">
+				{longVotes > 0 && (
+					<div
+						style={{ width: `${(longVotes / totalVotes) * 100}%`, background: "var(--up)" }}
+						title={`Bullish consensus: ${longVotes}/${totalVotes}`}
+					/>
+				)}
+				{shortVotes > 0 && (
+					<div
+						style={{ width: `${(shortVotes / totalVotes) * 100}%`, background: "var(--down)" }}
+						title={`Bearish consensus: ${shortVotes}/${totalVotes}`}
+					/>
+				)}
+				{exitVotes > 0 && (
+					<div
+						style={{ width: `${(exitVotes / totalVotes) * 100}%`, background: "var(--error)" }}
+						title={`Exit consensus: ${exitVotes}/${totalVotes}`}
+					/>
+				)}
+				{waitVotes > 0 && (
+					<div
+						style={{ width: `${(waitVotes / totalVotes) * 100}%`, background: "var(--line2)" }}
+						title={`Waiting / observing: ${waitVotes}/${totalVotes}`}
+					/>
+				)}
+			</div>
+
+			{/* 8 Learner Action & Child-Ring Playhead Grid */}
+			<div className="grid grid-cols-4 gap-1.5 max-sm:grid-cols-2">
+				{votes.map((item) => {
+					const cfg = ACTION_CONFIG[item.kind] ?? ACTION_CONFIG.wait;
+					const isCanary = item.index === 0;
+
+					return (
+						<button
+							key={item.index}
+							type="button"
+							onClick={() => onOpen(item.index)}
+							className="flex flex-col gap-1 rounded border border-(--line) bg-(--surface) p-1.5 text-left transition hover:border-(--acc) cursor-pointer"
+							title={`Worker ${item.index + 1} (${isCanary ? "Live Canary" : "Rehearsal"}) · Click to inspect Trie Memory`}
+						>
+							<Flex.Row align="center" justify="between" className="gap-1">
+								<Typography.Mono size="s" tone="f3" className="font-semibold text-[9px]">
+									{isCanary ? "L1 (Live)" : `L${item.index + 1}`}
+								</Typography.Mono>
+								<span
+									className="rounded px-1 py-0.5 text-[8px] font-mono leading-none"
+									style={{ color: cfg.tone, background: cfg.bg }}
+								>
+									{cfg.icon} {cfg.label.replace(" LONG", "").replace(" SHORT", "")}
+								</span>
+							</Flex.Row>
+
+							{/* Child fragment playhead progress */}
+							<div className="flex flex-col gap-0.5">
+								<div className="h-1 w-full overflow-hidden rounded-[1px] bg-(--line)">
+									<div
+										className="h-full transition-all duration-300"
+										style={{
+											width: `${Math.max(5, item.progress)}%`,
+											background: cfg.tone,
+										}}
+									/>
+								</div>
+								<Flex.Row justify="between" className="text-[8px] font-mono text-(--f4)">
+									<span>Ring A→B</span>
+									<span>{(item.confidence * 100).toFixed(0)}%</span>
+								</Flex.Row>
+							</div>
+						</button>
+					);
+				})}
+			</div>
+		</Flex.Column>
 	);
 };

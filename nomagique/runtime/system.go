@@ -33,6 +33,7 @@ func NewSystem(
 }
 
 func (system *System) Name() string           { return system.name }
+func (system *System) Context() context.Context { return system.ctx }
 func (system *System) Transition(stage Stage) { system.status.Transition(stage) }
 func (system *System) Status() Stage          { return system.status.Current() }
 func (system *System) Error(...error) error   { return system.err }

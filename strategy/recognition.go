@@ -114,6 +114,18 @@ func (held *replay) state(at int64, frames uint64) *Recognition {
 		state.Decisions += uint64(learned.links)
 		learners = append(learners, learned.held)
 	}
+
+	var totalResolved uint64
+
+	if held.fragments > 0 {
+		totalResolved = uint64(held.fragments)
+	}
+
+	if held.mainAgent != nil {
+		totalResolved += held.mainAgent.Graded()
+	}
+	state.Resolved = totalResolved
+
 	state.Recognition = held.recognised(at, frames, learners)
 	state.Rehearsal = held.rehearsal(frames, learners)
 
@@ -502,29 +514,37 @@ func learner(
 	counted := map[string]int32{}
 	order := make([]string, 0, 4)
 
-	step := uint64(0)
-	iterator := tree.Root().Iterator()
-	iterator.SeekPrefix([]byte("b/"))
-
-	for key, value, more := iterator.Next(); more; key, value, more = iterator.Next() {
-		if !bytes.HasPrefix(key, []byte("b/")) {
-			break
-		}
-		class, _, named := cognition.ParseBasinKey(key)
-
-		if !named {
-			continue
-		}
-
-		if written := cognition.DecodeWeight(value).WriteStep; written > step {
-			step = written
-		}
-		name := string(class)
-
-		if _, seen := counted[name]; !seen {
+	if individual != nil && individual.Engine() != nil {
+		classCounts := individual.Engine().ClassCounts()
+		for name, count := range classCounts {
+			counted[name] = count
 			order = append(order, name)
 		}
-		counted[name]++
+	} else {
+		step := uint64(0)
+		iterator := tree.Root().Iterator()
+		iterator.SeekPrefix([]byte("b/"))
+
+		for key, value, more := iterator.Next(); more; key, value, more = iterator.Next() {
+			if !bytes.HasPrefix(key, []byte("b/")) {
+				break
+			}
+			class, _, named := cognition.ParseBasinKey(key)
+
+			if !named {
+				continue
+			}
+
+			if written := cognition.DecodeWeight(value).WriteStep; written > step {
+				step = written
+			}
+			name := string(class)
+
+			if _, seen := counted[name]; !seen {
+				order = append(order, name)
+			}
+			counted[name]++
+		}
 	}
 
 	for _, name := range order {

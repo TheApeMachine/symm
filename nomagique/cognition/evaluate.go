@@ -114,56 +114,25 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 	}
 
 	if len(classes) == 0 {
-		basin := []byte("b/")
-		fallbackIt := input.Tree.Root().Iterator()
-		fallbackIt.SeekPrefix(basin)
+		maxSteps := config.MaxBackoffOrder
+		if maxSteps <= 0 {
+			maxSteps = 4
+		}
 
-		for key, value, more := fallbackIt.Next(); more; key, value, more = fallbackIt.Next() {
-			if !bytes.HasPrefix(key, basin) {
+		prefixes, suffixes := backoffCandidates(held.Context, maxSteps)
+
+		for _, sub := range suffixes {
+			if recallSubPrefix(input.Tree, sub, held.Step, config, 1, &classes, &logits, &counted, &orders) {
 				break
 			}
-			class, stored, named := parseBasinKey(key)
+		}
 
-			if !named {
-				continue
-			}
-
-			order := matchOrder(held.Context, stored, config.MaxBackoffOrder)
-
-			if order == 0 {
-				continue
-			}
-
-			weight := DecodeWeight(value).Effective(held.Step, config.DecayFactor())
-			denominator := float64(weight.Count) + config.DirichletAlpha*maxCandidates
-			smoothed := (float64(weight.Count)*weight.Probability + config.DirichletAlpha) / denominator
-
-			if smoothed <= 0 {
-				continue
-			}
-
-			logit := types.Scalar(math.Log(smoothed))
-			gathered := false
-
-			for index, existing := range classes {
-				if bytes.Equal(existing, class) {
-					if order > orders[index] ||
-						(order == orders[index] && logit > logits[index]) {
-						orders[index] = order
-						logits[index] = logit
-						counted[index] = weight.Count
-					}
-
-					gathered = true
+		if len(classes) == 0 {
+			order := max(1, config.MaxBackoffOrder/2)
+			for _, sub := range prefixes {
+				if recallSubPrefix(input.Tree, sub, held.Step, config, order, &classes, &logits, &counted, &orders) {
 					break
 				}
-			}
-
-			if !gathered && len(classes) < maxCandidates {
-				classes = append(classes, bytes.Clone(class))
-				logits = append(logits, logit)
-				counted = append(counted, weight.Count)
-				orders = append(orders, order)
 			}
 		}
 	}
@@ -243,4 +212,72 @@ func (op *Evaluate) Recall(input EvaluateInput) (Evaluation, error) {
 
 	return held, nil
 }
+
+func recallSubPrefix(
+	tree *iradix.Tree[[]byte],
+	sub []byte,
+	step uint64,
+	config Config,
+	order int,
+	classes *[][]byte,
+	logits *[]types.Scalar,
+	counted *[]uint64,
+	orders *[]int,
+) bool {
+	if len(sub) == 0 {
+		return false
+	}
+	prefixBuf := make([]byte, 2+len(sub)+1)
+	prefixBuf[0] = 'b'
+	prefixBuf[1] = '/'
+	copy(prefixBuf[2:], sub)
+	prefixBuf[2+len(sub)] = '/'
+
+	it := tree.Root().Iterator()
+	it.SeekPrefix(prefixBuf)
+	found := false
+
+	for key, value, more := it.Next(); more; key, value, more = it.Next() {
+		if !bytes.HasPrefix(key, prefixBuf) {
+			break
+		}
+		class, _, named := parseBasinKey(key)
+		if !named {
+			continue
+		}
+
+		weight := DecodeWeight(value).Effective(step, config.DecayFactor())
+		denominator := float64(weight.Count) + config.DirichletAlpha*maxCandidates
+		smoothed := (float64(weight.Count)*weight.Probability + config.DirichletAlpha) / denominator
+		if smoothed <= 0 {
+			continue
+		}
+
+		logit := types.Scalar(math.Log(smoothed))
+		gathered := false
+
+		for index, existing := range *classes {
+			if bytes.Equal(existing, class) {
+				if order > (*orders)[index] ||
+					(order == (*orders)[index] && logit > (*logits)[index]) {
+					(*orders)[index] = order
+					(*logits)[index] = logit
+					(*counted)[index] = weight.Count
+				}
+				gathered = true
+				break
+			}
+		}
+
+		if !gathered && len(*classes) < maxCandidates {
+			*classes = append(*classes, bytes.Clone(class))
+			*logits = append(*logits, logit)
+			*counted = append(*counted, weight.Count)
+			*orders = append(*orders, order)
+		}
+		found = true
+	}
+	return found
+}
+
 

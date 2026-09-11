@@ -538,14 +538,25 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 	const span = first && last ? (last.at - first.at) / 1000 : 0;
 	const rate =
 		span > 0 && last ? ((last.trained - first.trained) / span) * 60 : null;
-	const peak = Math.max(...samples.map((sample) => sample.trained), 1);
+
+	const drawSamples =
+		samples.length >= 2
+			? samples
+			: trained > 0
+				? [
+						{ at: performance.now() - 1000, trained },
+						{ at: performance.now(), trained },
+					]
+				: samples;
+
+	const peak = Math.max(...drawSamples.map((sample) => sample.trained), 1);
 
 	const width = 520;
 	const height = 150;
-	const path = samples
+	const path = drawSamples
 		.map((sample, index) => {
-			const x = (index / Math.max(samples.length - 1, 1)) * width;
-			const y = height - (sample.trained / peak) * (height - 8);
+			const x = (index / Math.max(drawSamples.length - 1, 1)) * width;
+			const y = height - (sample.trained / peak) * (height - 12);
 
 			return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
 		})
@@ -574,8 +585,45 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 				</Flex.Column>
 			</Flex.Row>
 
-			<div className="relative h-36 w-full overflow-hidden rounded bg-(--sunken) border border-(--line)">
-				{samples.length < 2 ? (
+			{/* Visual Learning Metrics Triple-Stat Grid */}
+			<div className="grid grid-cols-3 gap-2">
+				<div className="rounded border border-(--line) bg-(--sunken) p-2">
+					<Typography.Mono size="s" tone="f4" className="text-[9px]">
+						LEARNED SITUATIONS
+					</Typography.Mono>
+					<Typography.Mono size="lg" tone="accent" className="font-bold">
+						{(view?.decisions ?? 0).toLocaleString()}
+					</Typography.Mono>
+					<Typography.Mono size="s" tone="f4" className="text-[9px]">
+						Trie associations in memory
+					</Typography.Mono>
+				</div>
+				<div className="rounded border border-(--line) bg-(--sunken) p-2">
+					<Typography.Mono size="s" tone="f4" className="text-[9px]">
+						HISTORICAL MOVES
+					</Typography.Mono>
+					<Typography.Mono size="lg" tone="f1" className="font-bold">
+						{trained.toLocaleString()}
+					</Typography.Mono>
+					<Typography.Mono size="s" tone="f4" className="text-[9px]">
+						Excursions evaluated
+					</Typography.Mono>
+				</div>
+				<div className="rounded border border-(--line) bg-(--sunken) p-2">
+					<Typography.Mono size="s" tone="f4" className="text-[9px]">
+						PROCESSED FRAMES
+					</Typography.Mono>
+					<Typography.Mono size="lg" tone="f1" className="font-bold">
+						{(view?.steps ?? 0).toLocaleString()}
+					</Typography.Mono>
+					<Typography.Mono size="s" tone="f4" className="text-[9px]">
+						Market tape observations
+					</Typography.Mono>
+				</div>
+			</div>
+
+			<div className="relative h-32 w-full overflow-hidden rounded bg-(--sunken) border border-(--line)">
+				{drawSamples.length < 2 && trained === 0 ? (
 					<span className="absolute inset-0 flex items-center justify-center font-mono text-[10px] text-(--f4)">
 						Watching. The line appears as soon as the count changes.
 					</span>
@@ -588,12 +636,41 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 						aria-label="Confirmed moves the agent has learned from"
 					>
 						<title>Confirmed moves the agent has learned from</title>
+						<defs>
+							<linearGradient id="learningProgressGrad" x1="0" y1="0" x2="0" y2="1">
+								<stop offset="0%" stopColor="var(--acc)" stopOpacity="0.35" />
+								<stop offset="100%" stopColor="var(--acc)" stopOpacity="0.03" />
+							</linearGradient>
+						</defs>
+						<line
+							x1="0"
+							y1={height * 0.25}
+							x2={width}
+							y2={height * 0.25}
+							stroke="var(--line)"
+							strokeDasharray="3,3"
+						/>
+						<line
+							x1="0"
+							y1={height * 0.5}
+							x2={width}
+							y2={height * 0.5}
+							stroke="var(--line)"
+							strokeDasharray="3,3"
+						/>
+						<line
+							x1="0"
+							y1={height * 0.75}
+							x2={width}
+							y2={height * 0.75}
+							stroke="var(--line)"
+							strokeDasharray="3,3"
+						/>
 						<path
 							d={`${path} L ${width} ${height} L 0 ${height} Z`}
-							fill="var(--acc)"
-							opacity="0.15"
+							fill="url(#learningProgressGrad)"
 						/>
-						<path d={path} fill="none" stroke="var(--acc)" strokeWidth="2" />
+						<path d={path} fill="none" stroke="var(--acc)" strokeWidth="2.5" />
 					</svg>
 				)}
 			</div>

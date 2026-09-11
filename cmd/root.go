@@ -374,7 +374,7 @@ var (
 				runtimeCtx,
 				"trainer",
 				[][]nmruntime.Node[*types.Envelope]{{
-					strategy.NewTraining(runtimeCtx, tape, instrument),
+					strategy.NewTraining(runtimeCtx, tape, instrument, price),
 				}},
 			)
 

@@ -65,3 +65,32 @@ func TestRingWrite(t *testing.T) {
 		})
 	})
 }
+
+func TestRingOffsetAndSlot(t *testing.T) {
+	Convey("Ring plays from an offset position between start and end", t, func() {
+		child := func(values ...float64) *Ring[float64] {
+			held := NewRing[float64]()
+
+			for _, value := range values {
+				held.Write(value)
+			}
+
+			return held
+		}
+
+		parent := NewRing[float64]()
+		parent.Write(child(10, 20, 30, 40, 50).Held())
+		parent.WriteAt(child(100, 200, 300).Held(), 1)
+
+		So(parent.Len(), ShouldEqual, 2)
+		So(parent.ChildLen(), ShouldEqual, 5)
+
+		op := NewRingOver[float64](parent.Held())
+
+		Convey("Plays from offset, advances parent to next child, and loops", func() {
+			So(tests.CollectSeq(op.NextOffset(nil, 2)), ShouldResemble, []float64{30, 40, 50})
+			So(tests.CollectSeq(op.NextOffset(nil, 1)), ShouldResemble, []float64{200, 300})
+			So(tests.CollectSeq(op.NextOffset(nil, 0)), ShouldResemble, []float64{10, 20, 30, 40, 50})
+		})
+	})
+}
