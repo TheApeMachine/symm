@@ -1,4 +1,3 @@
-
 // Helper for integer wrapping
 inline int wrap_i32(int v, int dim) {
     int r = v % dim;

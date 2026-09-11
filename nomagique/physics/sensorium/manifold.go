@@ -55,7 +55,13 @@ func (e *Engine) Close() {
 }
 
 func (e *Engine) Synchronize() {
-	C.manifold_synchronize(e.ctx)
+	if e == nil || e.ctx == nil {
+		panic("sensorium: closed Metal engine")
+	}
+	if !bool(C.manifold_synchronize_checked(e.ctx)) {
+		panic("sensorium Metal: " + C.GoString(C.manifold_last_error(e.ctx)))
+	}
+	runtime.KeepAlive(e)
 }
 
 // ----------------------------------------------------------------------------
@@ -273,6 +279,7 @@ func (e *Engine) CoherenceGPEStep(
 	dt, hbarEff, massEff, gInteraction, energyDecay, chemPot, invDomega2 float32,
 	rngSeed uint32, anchorEps, metricCoupling float32,
 	metabolicRate, gateWidthMin, gateWidthMax, offenderWeightFloor, spatialSigma float32,
+	geometry ...*Buffer,
 ) {
 	domainX := float32(e.GridSize[0]) * e.Spacing
 	domainY := float32(e.GridSize[1]) * e.Spacing
@@ -312,14 +319,21 @@ func (e *Engine) CoherenceGPEStep(
 		extra = extraPotential.cBuf
 	}
 
-	C.manifold_coherence_gpe_step(
+	var metric *C.ManifoldBuffer
+	if len(geometry) > 1 {
+		panic("one metric-volume buffer expected")
+	}
+	if len(geometry) == 1 && geometry[0] != nil {
+		metric = geometry[0].cBuf
+	}
+	C.manifold_coherence_gpe_step_geometry(
 		e.ctx,
 		oscPhase.cBuf, oscOmega.cBuf, oscAmp.cBuf,
 		carrierReal.cBuf, carrierImag.cBuf, carrierOmega.cBuf, carrierGateWidth.cBuf,
 		kineticReal.cBuf, kineticImag.cBuf,
 		carrierAnchorIdx.cBuf, carrierAnchorWeight.cBuf,
 		accums.cBuf, numCarriersSnapshot.cBuf, particlePos.cBuf,
-		prm, gp, extra,
+		prm, gp, extra, metric,
 	)
 }
 
@@ -444,4 +458,19 @@ func (e *Engine) CoherenceUpdateOscillatorPhases(
 		C.int64_t(numBins),
 		particlePos.cBuf,
 	)
+}
+
+// ExclusiveScanU32 dispatches a complete hierarchical GPU scan. out has n+1 words.
+func (e *Engine) ExclusiveScanU32(in, out *Buffer, n int) error {
+	if e == nil || e.ctx == nil || in == nil || out == nil || n < 0 {
+		return fmt.Errorf("sensorium: invalid exclusive scan arguments")
+	}
+	ok := C.manifold_exclusive_scan_u32(e.ctx, in.cBuf, out.cBuf, C.int64_t(n))
+	runtime.KeepAlive(e)
+	runtime.KeepAlive(in)
+	runtime.KeepAlive(out)
+	if !bool(ok) {
+		return fmt.Errorf("sensorium scan: %s", C.GoString(C.manifold_last_error(e.ctx)))
+	}
+	return nil
 }

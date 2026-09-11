@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../shared/coherence_runtime.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -96,7 +97,7 @@ extern "C"
         float hbar_eff;
         float mass_eff;
         float g_interaction;
-        float energy_decay;
+        float energy_decay; /* legacy ABI name: amplitude gamma; norm decays exp(-2*gamma*dt) */
         float chemical_potential;
         float inv_domega2;
         uint32_t anchors;
@@ -434,6 +435,11 @@ extern "C"
         ManifoldBuffer *out,
         int64_t n);
 
+    // Complete hierarchical exclusive scan. out requires (n+1) u32 values;
+    // out[n] is the total. Distinct in/out buffers; total must fit uint32_t.
+    bool manifold_exclusive_scan_u32(ManifoldContext*, ManifoldBuffer* in,
+                                      ManifoldBuffer* out, int64_t n);
+
     // ----------------------------------------------------------------------------
     // 7. Coherence ω-Binning & Lattice Dynamics (GPE)
     // ----------------------------------------------------------------------------
@@ -516,6 +522,27 @@ extern "C"
         GPEParams gp,
         ManifoldBuffer *extra_potential);
 
+    // Canonical z=sqrt(sqrt(g))*psi. Null metric is flat; null V is zero.
+    void manifold_coherence_gpe_step_geometry(
+        ManifoldContext *ctx,
+        ManifoldBuffer *osc_phase,
+        ManifoldBuffer *osc_omega,
+        ManifoldBuffer *osc_amp,
+        ManifoldBuffer *carrier_real,
+        ManifoldBuffer *carrier_imag,
+        ManifoldBuffer *carrier_omega,
+        ManifoldBuffer *carrier_gate_width,
+        ManifoldBuffer *kinetic_real,
+        ManifoldBuffer *kinetic_imag,
+        ManifoldBuffer *carrier_anchor_idx,
+        ManifoldBuffer *carrier_anchor_weight,
+        ManifoldBuffer *accums,
+        ManifoldBuffer *num_carriers_snapshot,
+        ManifoldBuffer *particle_pos,
+        SpectralModeParams prm,
+        GPEParams gp,
+        ManifoldBuffer *extra_potential, ManifoldBuffer *metric_volume);
+
     void manifold_coherence_update_oscillator_phases(
         ManifoldContext *ctx,
         ManifoldBuffer *osc_phase,
@@ -563,4 +590,8 @@ extern "C"
 }
 #endif
 
+#include "../shared/physics_v2_api.h"
+
 #endif // MANIFOLD_BRIDGE_H
+
+#include "../shared/coupled_api.h"

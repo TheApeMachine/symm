@@ -1,4 +1,4 @@
-//go:build !darwin || !cgo
+//go:build !cgo || (!darwin && (!linux || !cuda))
 
 package sensorium
 
@@ -123,6 +123,7 @@ func (engine *Engine) CoherenceGPEStep(
 	dt, hbarEff, massEff, gInteraction, energyDecay, chemPot, invDomega2 float32,
 	rngSeed uint32, anchorEps, metricCoupling float32,
 	metabolicRate, gateWidthMin, gateWidthMax, offenderWeightFloor, spatialSigma float32,
+	geometry ...*Buffer,
 ) {
 	errnie.Error(errnie.Err(errnie.Internal, "sensorium: CoherenceGPEStep requires an initialized Darwin Metal engine", nil))
 }
@@ -170,4 +171,8 @@ func (engine *Engine) CoherenceUpdateOscillatorPhases(
 	spatialSigma, metabolicRate, offenderWeightFloor float32,
 ) {
 	errnie.Error(errnie.Err(errnie.Internal, "sensorium: CoherenceUpdateOscillatorPhases requires an initialized Darwin Metal engine", nil))
+}
+
+func (engine *Engine) ExclusiveScanU32(in, out *Buffer, n int) error {
+	return errnie.Error(errnie.Err(errnie.Internal, "sensorium: exclusive scan requires a GPU backend", nil))
 }

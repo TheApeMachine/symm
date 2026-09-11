@@ -4,60 +4,161 @@ import (
 	"fmt"
 	"math"
 	"sort"
-
-	"github.com/theapemachine/errnie"
 )
 
+// step is one transactional macro interval. Every active operator is called with
+// the SAME accepted float32 substep; rejected substeps restore all reservoirs,
+// phases, RNG state, fields, and source counters before retrying.
 func (fluid *workspace) step() (Reading, error) {
-	fluid.scatterParticles()
-
-	if err := fluid.gasRK2(); err != nil {
-		return Reading{}, err
-	}
-
 	if fluid.particles == 0 {
-		fluid.psiRe.Zero()
-		fluid.psiIm.Zero()
-		return fluid.observe(), nil
+		return Reading{}, fmt.Errorf("sensorium: empty material domain; no coupled trajectory advanced")
 	}
-
-	if err := fluid.gatherParticles(); err != nil {
+	if err := fluid.validateInputs(); err != nil {
 		return Reading{}, err
 	}
+	rollback := fluid.snapshotPhysics()
+	request := fluid.rates.deltaT
+	defer func() { fluid.rates.deltaT = request }()
+	_, _, e, _, _ := fluid.particleTotals()
+	initialMatter := fluid.materialTotal() + e
+	injected := initialMatter
+	if fluid.hasLastParticleEnergy {
+		injected -= fluid.lastParticleEnergy
+	}
+	priorGravity := fluid.health.Sources.GravityFieldEnergy
+	fluid.health = PhysicsHealth{UnresolvedCoupling: true}
+	fluid.health.Sources.GravityFieldEnergy = priorGravity
+	fluid.health.Sources.ExogenousParticleEnergy = injected
+	h, err := advanceCoupled(request, fluid.physics, fluid.snapshotPhysics, fluid.stabilityLimit, func(dt float32) error {
+		fluid.rates.deltaT = float64(dt)
+		if fluid.physics.Contacts.Enabled {
+			if err := fluid.contactKick(.5 * dt); err != nil {
+				return err
+			}
+			if err := fluid.depositDual(); err != nil {
+				return err
+			}
+		}
+		if err := fluid.gasDual(dt); err != nil {
+			return err
+		}
 
-	if err := fluid.planckExchange(); err != nil {
+		if err := fluid.gatherDual(dt); err != nil {
+			return err
+		}
+		if err := fluid.contactKick(.5 * dt); err != nil {
+			return err
+		}
+		if err := fluid.planckExchange(); err != nil {
+			return err
+		}
+		fluid.seedModeAnchors()
+		if err := fluid.waveStep(); err != nil {
+			return err
+		}
+		fluid.projectSpatialWave()
+		if err := fluid.gatherPilotWave(); err != nil {
+			return err
+		}
+		return fluid.measureHealth()
+	})
+	if err != nil {
+		rollback()
 		return Reading{}, err
 	}
-
-	// 1. Seed particle anchors into the ω-frequency lattice
-	fluid.seedModeAnchors()
-
-	// 2. Step the Gross-Pitaevskii Equation across the spectral heads
-	//    and pull particle oscillator phases towards resonant modes (Kuramoto sync)
-	fluid.waveStep()
-
-	// 3. Project the coherent mode amplitudes Ψ_k into the 3D spatial field Ψ(x)
-	fluid.projectSpatialWave()
-	fluid.gatherPilotWave()
-
-	return fluid.observe(), nil
+	// Retain the stability limits measured on the last attempted state.
+	limits := fluid.health.Integrator
+	h.HyperbolicDT = limits.HyperbolicDT
+	h.ViscousDT = limits.ViscousDT
+	h.ThermalDT = limits.ThermalDT
+	h.ParticleDT = limits.ParticleDT
+	h.PhaseDT = limits.PhaseDT
+	h.CombinedDT = limits.CombinedDT
+	h.ContactDT = limits.ContactDT
+	fluid.physicalTime += h.AcceptedDT
+	h.Time = fluid.physicalTime
+	fluid.health.Integrator = h
+	_, _, e, _, _ = fluid.particleTotals()
+	ledger := &fluid.health.Sources
+	accounted := ledger.PICDepositEnergyResidual + ledger.GravityWork + ledger.GasEnergyResidual + ledger.PICRemapEnergy + ledger.PlanckRoundoff - ledger.CouplingHeatExport + ledger.PilotWork + ledger.CoherenceMechanicalWork + ledger.ContactMaterialWork + ledger.GravityRemapWork
+	ledger.ParticleBalanceResidual = fluid.materialTotal() + e - initialMatter - accounted - ledger.MaterialRoundoff
+	reading := fluid.observe()
+	if !reading.IsFinite() {
+		rollback()
+		return Reading{}, fmt.Errorf("nonfinite committed physical diagnostic")
+	}
+	_, _, e, _, _ = fluid.particleTotals()
+	fluid.lastParticleEnergy = fluid.materialTotal() + e
+	fluid.hasLastParticleEnergy = true
+	return reading, nil
 }
 
-/*
-gatherPilotWave advects active particles with the projected probability current.
-The density and mass regularizers are the numerical floors specified in the
-Manifold Physics Inference & Integration directive, Task 2.1.
-*/
-func (fluid *workspace) gatherPilotWave() {
-	const densityFloor, massFloor = 1e-8, 1e-6
-	fluid.engine.PilotWaveGather(
-		fluid.pos, fluid.mass, fluid.posOut, fluid.velOut,
-		fluid.psiRe, fluid.psiIm, fluid.particles,
-		float32(fluid.rates.deltaT), float32(hbarEff), densityFloor, massFloor,
-	)
+// The grid momentum and State.Vel represent TOTAL material transport velocity.
+// PilotVel stores the previously imposed, externally prescribed drift component.
+// Applying only new-old avoids re-adding a constant guidance velocity each frame.
+// Its exact kinetic work is ledgered; no backreaction on Psi is implied.
+func (fluid *workspace) gatherPilotWave() error {
+	n := fluid.particles
+	p := fluid.hydroParams(float32(fluid.rates.deltaT))
+	if err := fluid.engine.PilotCheckedTime(fluid.pos, fluid.mass, fluid.pilotPrevious, fluid.psiStartRe, fluid.psiStartIm, fluid.psiRe, fluid.psiIm, fluid.posOut, fluid.velOut, fluid.pilotReport, fluid.particleStatus, n, p, float32(fluid.physics.Units.Hbar), float32(fluid.physics.PilotTolerance), float32(fluid.physics.ParticleCells)); err != nil {
+		return err
+	}
 	fluid.engine.Synchronize()
-	copy(fluid.pos.Float32Slice()[:fluid.particles*3], fluid.posOut.Float32Slice()[:fluid.particles*3])
-	copy(fluid.vel.Float32Slice()[:fluid.particles*3], fluid.velOut.Float32Slice()[:fluid.particles*3])
+	x, v, guide, old, m, report := fluid.pos.Float32Slice(), fluid.vel.Float32Slice(), fluid.velOut.Float32Slice(), fluid.pilotPrevious.Float32Slice(), fluid.mass.Float32Slice(), fluid.pilotReport.Float32Slice()
+	h := PilotHealth{MinDensity: math.MaxFloat64}
+	density := make([]float64, n)
+	for i := 0; i < n; i++ {
+		var work, speed2 float64
+		for a := 0; a < 3; a++ {
+			j := 3*i + a
+			before := float64(v[j])
+			next := float32(before + float64(guide[j]) - float64(old[j]))
+			if !finite(float64(next)) {
+				return &CoupledStepError{"pilot velocity", i, true, "nonfinite candidate"}
+			}
+			work += .5 * float64(m[i]) * (float64(next) - before) * (float64(next) + before)
+			v[j] = next
+			old[j] = guide[j]
+			speed2 += float64(guide[j]) * float64(guide[j])
+		}
+		if err := fluid.materialWork(i, work); err != nil {
+			return err
+		}
+		fluid.health.Sources.PilotWork += work
+		d, e, cells := float64(report[4*i]), float64(report[4*i+1]), float64(report[4*i+2])
+		density[i] = d
+		h.MinDensity = math.Min(h.MinDensity, d)
+		h.IntegrationErrorMax = math.Max(h.IntegrationErrorMax, e)
+		h.SpeedRMS += speed2
+		h.SpeedMax = math.Max(h.SpeedMax, math.Sqrt(speed2))
+		h.DisplacementRMS += cells * cells
+		h.DisplacementMax = math.Max(h.DisplacementMax, cells)
+	}
+	copy(x, fluid.posOut.Float32Slice())
+	if n > 0 {
+		h.SpeedRMS = math.Sqrt(h.SpeedRMS / float64(n))
+		h.DisplacementRMS = math.Sqrt(h.DisplacementRMS / float64(n))
+		sort.Float64s(density)
+		h.DensityP01 = sampleQuantile(density, .01)
+		h.DensityP10 = sampleQuantile(density, .1)
+		h.DensityMedian = sampleQuantile(density, .5)
+	} else {
+		h.MinDensity = 0
+	}
+	fluid.health.Pilot = h
+	return nil
+}
+
+func sampleQuantile(sorted []float64, q float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	x := q * float64(len(sorted)-1)
+	i := int(math.Floor(x))
+	if i+1 == len(sorted) {
+		return sorted[i]
+	}
+	return sorted[i] + (x-float64(i))*(sorted[i+1]-sorted[i])
 }
 
 /*
@@ -71,6 +172,10 @@ func (fluid *workspace) projectSpatialWave() {
 		return
 	}
 
+	if fluid.waveProjectionReady {
+		copy(fluid.psiStartRe.UInt32Slice(), fluid.psiRe.UInt32Slice())
+		copy(fluid.psiStartIm.UInt32Slice(), fluid.psiIm.UInt32Slice())
+	}
 	fluid.psiRe.Zero()
 	fluid.psiIm.Zero()
 
@@ -85,6 +190,13 @@ func (fluid *workspace) projectSpatialWave() {
 		modeAnchors,
 	)
 	fluid.engine.Synchronize()
+	if !fluid.waveProjectionReady {
+		// First projection is an initial condition, not an interpolation from
+		// a fictitious zero wave (where guidance is undefined).
+		copy(fluid.psiStartRe.UInt32Slice(), fluid.psiRe.UInt32Slice())
+		copy(fluid.psiStartIm.UInt32Slice(), fluid.psiIm.UInt32Slice())
+		fluid.waveProjectionReady = true
+	}
 }
 
 func wrapIndex(index, extent int) int {
@@ -186,269 +298,38 @@ func (fluid *workspace) seedModeAnchors() {
 	}
 }
 
-func (fluid *workspace) scatterParticles() {
-	fluid.engine.ClearField(fluid.rho)
-	fluid.engine.ClearField(fluid.mom)
-	fluid.engine.ClearField(fluid.energy)
-
-	if fluid.particles == 0 {
-		return
-	}
-
-	engine := fluid.engine
-	engine.ScatterComputeCellIdx(fluid.pos, fluid.cellIdx)
-	fluid.cellCounts.Zero()
-	engine.ScatterCountCells(fluid.cellIdx, fluid.cellCounts)
-	engine.Synchronize()
-	exclusiveScanU32(fluid.cellCounts.UInt32Slice(), fluid.cellStarts.UInt32Slice())
-	fluid.cellOffsets.Zero()
-
-	engine.ScatterReorderParticles(
-		fluid.pos,
-		fluid.vel,
-		fluid.mass,
-		fluid.heat,
-		fluid.oscEnergy,
-		fluid.cellIdx,
-		fluid.cellStarts,
-		fluid.cellOffsets,
-		fluid.sortedPos,
-		fluid.sortedVel,
-		fluid.sortedMass,
-		fluid.sortedHeat,
-		fluid.sortedEnergy,
-		fluid.originalIdx,
-	)
-	engine.ScatterSorted(
-		fluid.sortedPos,
-		fluid.sortedVel,
-		fluid.sortedMass,
-		fluid.sortedHeat,
-		fluid.sortedEnergy,
-		fluid.rho,
-		fluid.mom,
-		fluid.energy,
-		fluid.particles,
-	)
-	engine.Synchronize()
-}
-
-/*
-gasRK2 advances the Eulerian grid one RK2 step with adaptive Δt halving.
-
-This mirrors the Python reference (thermodynamics.py _run_gas_rk2): when the
-Metal shader detects inadmissible cells (tag 0x13, 0x12, etc.) it poisons the
-output with NaN and logs the event. The host detects the rejection by checking
-the debug event counter, halves dt, and retries — standard RK2 step rejection,
-not a clamp or fallback. The input buffers (rho, mom, energy) are read-only in
-both stages, so retrying is safe.
-
-Rejection attempts are silent: drainDebug is only called on the final failure
-path so the error log contains the actual fatal event rather than a wall of
-expected transient rejections.
-*/
-func (fluid *workspace) gasRK2() error {
-	delta := float32(fluid.rates.deltaT)
-	maxHalvings := 10
-
-	for halvings := 0; ; halvings++ {
-		// Clear the debug event buffer before each attempt so a retry does
-		// not re-read stale rejection events from a prior attempt.
-		fluid.dbgHead.UInt32Slice()[0] = 0
-
-		fluid.dispatchGasStageOne(delta)
-		fluid.dispatchGasStageTwo(delta)
-
-		// Check the debug counter directly — if zero, no inadmissible cells
-		// were logged and the step is accepted. This avoids calling drainDebug
-		// (which logs via errnie.Error) on every transient retry.
-		if fluid.dbgHead.UInt32Slice()[0] == 0 {
-			break
-		}
-
-		if halvings >= maxHalvings {
-			// Drain the final failure's debug buffer so the error message
-			// contains the actual cell and tag that failed.
-			_ = fluid.drainDebug()
-
-			return fmt.Errorf(
-				"gas RK2 failed after %d dt halvings (dt=%.6g)", maxHalvings, delta,
-			)
-		}
-
-		// Reset the counter (already done at loop top) and retry with half dt.
-		delta *= 0.5
-	}
-
-	fluid.acceptGasStep()
-
-	return nil
-}
-
-func (fluid *workspace) dispatchGasStageOne(delta float32) {
-	fluid.engine.GasRK2Stage1(
-		fluid.rho,
-		fluid.mom,
-		fluid.energy,
-		fluid.rho1, fluid.mom1, fluid.energy1,
-		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
-		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
-		delta,
-		float32(fluid.domain.Gamma),
-		float32(fluid.domain.CV),
-		float32(fluid.domain.RhoMin),
-		float32(fluid.domain.PMin),
-		float32(fluid.domain.Mu),
-		float32(fluid.domain.KThermal),
-	)
-	fluid.engine.Synchronize()
-}
-
-func (fluid *workspace) dispatchGasStageTwo(delta float32) {
-	fluid.engine.GasRK2Stage2(
-		fluid.rho, fluid.mom, fluid.energy,
-		fluid.rho1, fluid.mom1, fluid.energy1,
-		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
-		fluid.rho2, fluid.mom2, fluid.energy2,
-		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
-		delta,
-		float32(fluid.domain.Gamma),
-		float32(fluid.domain.CV),
-		float32(fluid.domain.RhoMin),
-		float32(fluid.domain.PMin),
-		float32(fluid.domain.Mu),
-		float32(fluid.domain.KThermal),
-	)
-	fluid.engine.Synchronize()
-}
-
-func (fluid *workspace) acceptGasStep() {
-	copy(fluid.rho.Float32Slice(), fluid.rho2.Float32Slice())
-	copy(fluid.mom.Float32Slice(), fluid.mom2.Float32Slice())
-	copy(fluid.energy.Float32Slice(), fluid.energy2.Float32Slice())
-}
-
-func (fluid *workspace) gatherParticles() error {
-	dt := float32(fluid.rates.deltaT)
-	fluid.engine.PICGatherUpdate(
-		fluid.pos, fluid.mass, fluid.posOut, fluid.velOut, fluid.heatOut,
-		fluid.rho, fluid.mom, fluid.energy, fluid.gravity,
-		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
-		dt,
-		float32(fluid.domain.Gamma),
-		float32(fluid.domain.RSpecific),
-		float32(fluid.domain.CV),
-		float32(fluid.domain.RhoMin),
-		float32(fluid.domain.PMin),
-		0,
-	)
-	fluid.engine.Synchronize()
-
-	if err := fluid.drainDebug(); err != nil {
-		return err
-	}
-
-	copy(fluid.pos.Float32Slice(), fluid.posOut.Float32Slice())
-	copy(fluid.vel.Float32Slice(), fluid.velOut.Float32Slice())
-	copy(fluid.heat.Float32Slice(), fluid.heatOut.Float32Slice())
-
-	return nil
-}
-
 func (fluid *workspace) planckExchange() error {
-	dt := fluid.rates.deltaT
-	cv := fluid.domain.CV
-	kappa := fluid.domain.KThermal
-	radius := 0.5 * fluid.domain.GridSpacing()
-	heat := fluid.heat.Float32Slice()
-	energy := fluid.oscEnergy.Float32Slice()
-	omega := fluid.omega.Float32Slice()
-	mass := fluid.mass.Float32Slice()
-	amp := fluid.amp.Float32Slice()
-
-	for index := 0; index < fluid.particles; index++ {
-		particleMass := float64(mass[index])
-		thermal := float64(heat[index])
-		osc := float64(energy[index])
-		freq := float64(omega[index])
-
-		if math.IsNaN(thermal) || thermal < 0 {
-			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("sensorium: invalid thermal energy %v for particle %d", thermal, index), nil))
+	q, e, w, m, a := fluid.heat.Float32Slice(), fluid.oscEnergy.Float32Slice(), fluid.omega.Float32Slice(), fluid.mass.Float32Slice(), fluid.amp.Float32Slice()
+	for i := 0; i < fluid.particles; i++ {
+		q1, e1, residual, err := PlanckTransfer(float64(q[i]), float64(e[i]), float64(m[i]), float64(w[i]), fluid.domain.CV,
+			fluid.domain.KThermal, .5*fluid.domain.GridSpacing(), fluid.rates.deltaT, fluid.physics.Units)
+		if err != nil {
+			return &CoupledStepError{"Planck exchange", i, false, err.Error()}
 		}
-
-		if math.IsNaN(osc) || osc < 0 {
-			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("sensorium: invalid oscillator energy %v for particle %d", osc, index), nil))
+		fluid.health.Sources.PlanckToOscillator += float64(e1) - float64(e[i])
+		fluid.health.Sources.PlanckRoundoff += residual
+		if err := fluid.materialWork(i, float64(q1)-float64(q[i])); err != nil {
+			return err
 		}
-
-		denom := particleMass * cv
-		temperature := 0.0
-
-		if denom > 0 {
-			temperature = thermal / denom
-		}
-
-		eq := planckEnergy(math.Abs(freq), temperature)
-		alpha := 0.0
-
-		if kappa > 0 && radius > 0 && denom > 0 {
-			tau := denom / (4 * math.Pi * kappa * radius)
-			alpha = 1 - math.Exp(-dt/tau)
-		}
-
-		delta := alpha * (eq - osc)
-
-		if delta > thermal {
-			delta = thermal
-		}
-		if -delta > osc {
-			delta = -osc
-		}
-
-		nextHeat := float32(thermal - delta)
-		nextOsc := float32(osc + delta)
-		if nextHeat < 0 || math.IsNaN(float64(nextHeat)) {
-			nextHeat = 0
-		}
-		if nextOsc < 0 || math.IsNaN(float64(nextOsc)) {
-			nextOsc = 0
-		}
-
-		heat[index] = nextHeat
-		energy[index] = nextOsc
-		amp[index] = float32(math.Sqrt(float64(nextOsc)))
+		q[i] = q1
+		e[i] = e1
+		a[i] = float32(math.Sqrt(float64(e1)))
 	}
-
 	return nil
 }
 
-func planckEnergy(omega, temperature float64) float64 {
-	if temperature <= 0 || omega == 0 {
-		return 0
-	}
+func isPositiveFinite(value float64) bool { return value > 0 && finite(value) }
 
-	ratio := omega / temperature
-
-	if ratio < 1e-4 {
-		return temperature
-	}
-
-	if ratio > 50 {
-		return omega * math.Exp(-ratio)
-	}
-
-	return omega / (math.Exp(ratio) - 1)
-}
-
-func isPositiveFinite(value float64) bool {
-	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-func (fluid *workspace) waveStep() {
+func (fluid *workspace) waveStep() error {
 	dt := float32(fluid.rates.deltaT)
 	modes := int(fluid.domain.MaxModes)
-	sigma := fluid.spatialSigma()
-	weightFloor := float32(math.Sqrt(1.0 / float64(uint32(1)<<23)))
-	anchorEps := weightFloor
+	sigma, err := fluid.spatialSigma()
+	if err != nil {
+		return err
+	}
+	// No unbounded truncation of weak couplings or normalized drive.
+	weightFloor := float32(0)
+	anchorEps := float32(math.Sqrt(1.0 / float64(uint32(1)<<23)))
 	gateMin := float32(fluid.domain.linewidthMin())
 	gateMax := float32(fluid.domain.linewidthMax())
 	fluid.writeCouplingAmp()
@@ -457,6 +338,26 @@ func (fluid *workspace) waveStep() {
 	headHeat := fluid.headHeat.Float32Slice()
 	headPhase := fluid.headPhase.Float32Slice()
 	budget := 1 / float32(spectralHeads)
+	originalHeat := append([]float32(nil), heat[:fluid.particles]...)
+	spent := make([]float64, fluid.particles)
+	fluid.health.Wave = WaveHealth{}
+	fluid.reciprocalForce.Zero()
+	effective := fluid.reciprocalAmplitude.Float32Slice()
+	amplitudes := fluid.couplingAmp.Float32Slice()
+	for i := 0; i < fluid.particles; i++ {
+		// Same float32 operation order as mc_coupling_budget. This does not
+		// debit heat a second time; it freezes the interaction's coefficient.
+		required := ((float32(fluid.rates.metabolicRate) * dt) * amplitudes[i]) * amplitudes[i]
+		available := originalHeat[i] * budget
+		if !finite(float64(required)) || required < 0 {
+			return &CoupledStepError{"reciprocal coefficient", i, false, "invalid budget"}
+		}
+		fraction := float32(1)
+		if required > 0 {
+			fraction = min(required, available) / required
+		}
+		effective[i] = amplitudes[i] * float32(math.Sqrt(float64(fraction)))
+	}
 
 	// Step each spectral head independently under the GPE
 	for head := 0; head < spectralHeads; head++ {
@@ -464,7 +365,7 @@ func (fluid *workspace) waveStep() {
 		fluid.accums.Zero()
 
 		for particle := 0; particle < fluid.particles; particle++ {
-			headHeat[particle] = heat[particle] * budget
+			headHeat[particle] = originalHeat[particle] * budget
 			headPhase[particle] = float32(wrapPhase(float64(phase[particle]) + offset))
 		}
 
@@ -483,6 +384,11 @@ func (fluid *workspace) waveStep() {
 			float32(sigma),
 		)
 
+		fluid.engine.Synchronize()
+		oldReal := append([]float32(nil), fluid.psiRealHeads[head].Float32Slice()[:modes]...)
+		oldImag := append([]float32(nil), fluid.psiImagHeads[head].Float32Slice()[:modes]...)
+		copy(fluid.reciprocalOldRe.Float32Slice(), oldReal)
+		copy(fluid.reciprocalOldIm.Float32Slice(), oldImag)
 		fluid.engine.CoherenceGPEStep(
 			fluid.headPhase, fluid.omega, fluid.couplingAmp,
 			fluid.psiRealHeads[head], fluid.psiImagHeads[head],
@@ -490,10 +396,10 @@ func (fluid *workspace) waveStep() {
 			fluid.kineticReal, fluid.kineticImag,
 			fluid.anchorIdx, fluid.anchorWeight, fluid.accums,
 			fluid.numCarriers, fluid.pos,
-			nil,
+			fluid.spectralPotential,
 			fluid.particles, modes,
 			dt,
-			float32(hbarEff), float32(massEff),
+			float32(fluid.physics.Units.Hbar), float32(massEff),
 			float32(fluid.rates.gInteraction),
 			float32(fluid.rates.energyDecay),
 			0,
@@ -503,13 +409,46 @@ func (fluid *workspace) waveStep() {
 			0,
 			float32(fluid.rates.metabolicRate),
 			gateMin, gateMax, weightFloor, float32(sigma),
+			fluid.spectralMetric,
 		)
 
 		fluid.engine.Synchronize()
 
+		if err := fluid.engine.ReadWaveLedger(fluid.waveLedger, modes); err != nil {
+			return err
+		}
+		if err := fluid.engine.ReciprocalHead(fluid.pos, fluid.coherencePosition, fluid.reciprocalAmplitude, fluid.omega, fluid.omegaLattice, fluid.gateWidth, fluid.anchorIdx, fluid.anchorWeight, fluid.reciprocalOldRe, fluid.reciprocalOldIm, fluid.waveLedger, fluid.reciprocalForce, fluid.reciprocalPotential, fluid.reciprocalStatus, fluid.particles, modes, modeAnchors, float32(sigma), float32(fluid.domain.binWidth()), fluid.hydroParams(dt)); err != nil {
+			return err
+		}
+		if err := fluid.accountWaveHead(head, oldReal, oldImag); err != nil {
+			return err
+		}
+		for i := 0; i < fluid.particles; i++ {
+			supplied := float64(originalHeat[i] * budget)
+			remaining := float64(headHeat[i])
+			if !finite(remaining) || remaining < 0 || remaining > supplied {
+				return &CoupledStepError{"coherence heat budget", i, false, fmt.Sprintf("budget=%g remaining=%g", supplied, remaining)}
+			}
+			spent[i] += supplied - remaining
+		}
 		fluid.rngSeed++
 	}
 
+	for i := 0; i < fluid.particles; i++ {
+		remaining, err := debitHeadBudget(originalHeat[i], spent[i])
+		if err != nil {
+			return &CoupledStepError{"head reconciliation", i, false, err.Error()}
+		}
+		fluid.health.Sources.CouplingHeatExport += float64(originalHeat[i]) - float64(remaining)
+		if err := fluid.materialWork(i, float64(remaining)-float64(heat[i])); err != nil {
+			return err
+		}
+		heat[i] = remaining
+	}
+	if err := fluid.applyCoherenceImpulse(dt); err != nil {
+		return err
+	}
+	copy(fluid.coherencePosition.Float32Slice(), fluid.pos.Float32Slice())
 	// 1. Average across all spectral heads into psiModeReal & psiModeImag
 	fluid.meanHeads()
 
@@ -530,93 +469,67 @@ func (fluid *workspace) waveStep() {
 		weightFloor,
 	)
 	fluid.engine.Synchronize()
+	for i, value := range phase[:fluid.particles] {
+		if !finite(float64(value)) {
+			return &CoupledStepError{"phase synchronization", i, true, "nonfinite phase"}
+		}
+	}
+	if err := fluid.engine.ReadPhaseLedger(fluid.phaseLedger, fluid.particles); err != nil {
+		return err
+	}
+	return fluid.accountPhase()
 }
 
+// Canonical oscillator coordinate: A=sqrt(Eosc). There is no unexplained
+// inverse-square-root frequency reweighting of an already normalized amplitude.
 func (fluid *workspace) writeCouplingAmp() {
-	omega := fluid.omega.Float32Slice()
-	amp := fluid.amp.Float32Slice()
-	out := fluid.couplingAmp.Float32Slice()
-	omegaMin := omega[0]
-
-	for _, value := range omega {
-		if value < omegaMin {
-			omegaMin = value
-		}
-	}
-
-	floor := float32(fluid.domain.binWidth())
-
-	if floor == 0 {
-		floor = float32(fluid.domain.OmegaMin)
-	}
-
-	var mean float32
-
-	for index, value := range omega {
-		rel := value - omegaMin + floor
-
-		if rel < floor {
-			rel = floor
-		}
-
-		weight := float32(1 / math.Sqrt(float64(rel)))
-		out[index] = weight
-		mean += weight
-	}
-
-	mean /= float32(len(omega))
-
-	for index := range out {
-		out[index] = amp[index] * out[index] / mean
-	}
+	copy(fluid.couplingAmp.Float32Slice()[:fluid.particles], fluid.amp.Float32Slice()[:fluid.particles])
 }
 
-func (fluid *workspace) spatialSigma() float64 {
-	sigmaMax := 0.5 * min(fluid.domain.DomainX, fluid.domain.DomainY, fluid.domain.DomainZ)
-	sigmaMin := fluid.domain.GridSpacing()
-	cv := fluid.domain.CV
-
-	if fluid.particles == 0 || !(cv > 0) {
-		return sigmaMax
+// The normalized free-particle thermal density matrix is exp(-r^2/(4*sigma^2)),
+// sigma^2=hbar^2/(2*m*kB*T). The native overlap periodizes that heat kernel;
+// there is NO grid-spacing or half-box clamp. Mean m,T define an explicit
+// homogeneous effective bath, not a per-particle microscopic derivation.
+func (fluid *workspace) spatialSigma() (float64, error) {
+	if fluid.particles == 0 {
+		return 0, nil
 	}
-
-	heat := fluid.heat.Float32Slice()
-	mass := fluid.mass.Float32Slice()
-	var tempSum, massSum float64
-	var counted int
-
-	for index := 0; index < fluid.particles; index++ {
-		if mass[index] <= 0 {
-			continue
+	q, m := fluid.heat.Float32Slice(), fluid.mass.Float32Slice()
+	ts, ms := 0.0, 0.0
+	for i := 0; i < fluid.particles; i++ {
+		if !isPositiveFinite(float64(m[i])) || !finite(float64(q[i])) || q[i] < 0 {
+			return 0, fmt.Errorf("invalid thermal coherence sample %d", i)
 		}
-
-		tempSum += float64(heat[index]) / (float64(mass[index]) * cv)
-		massSum += float64(mass[index])
-		counted++
+		ts += float64(q[i]) / (float64(m[i]) * fluid.domain.CV)
+		ms += float64(m[i])
 	}
-
-	if counted == 0 {
-		return sigmaMax
+	tm, mm := ts/float64(fluid.particles), ms/float64(fluid.particles)
+	if !finite(tm) || !isPositiveFinite(mm) {
+		return 0, fmt.Errorf("nonfinite effective thermal bath")
 	}
-
-	tempMean := tempSum / float64(counted)
-	massMean := massSum / float64(counted)
-
-	// A determined (non-zero, finite) mean temperature is what makes sigma a
-	// length. Zero mean temperature means the field has no thermal length scale
-	// yet, so it saturates the coupling range instead of dividing by zero.
-	if !isPositiveFinite(tempMean) {
-		return sigmaMax
+	raw, used := 0.0, 0.0
+	uniform := tm == 0
+	if tm > 0 {
+		raw = fluid.physics.Units.Hbar / math.Sqrt(2*mm*fluid.physics.Units.Boltzmann*tm)
+		if !isPositiveFinite(raw) {
+			return 0, fmt.Errorf("invalid thermal coherence scale")
+		}
+		// For sigma>=every box extent the first nonconstant Fourier coefficient
+		// is < exp(-4*pi^2), far below float32 resolution. 0 explicitly denotes
+		// this uniform limit in the kernel; it never denotes a density floor.
+		uniform = raw >= max(fluid.domain.DomainX, fluid.domain.DomainY, fluid.domain.DomainZ)
+		if !uniform {
+			used = float64(float32(raw))
+			if !isPositiveFinite(used) {
+				return 0, fmt.Errorf("thermal coherence scale is not representable in float32")
+			}
+		}
 	}
-
-	denom := massMean * tempMean
-
-	if !isPositiveFinite(denom) {
-		return sigmaMax
-	}
-
-	sigma := math.Sqrt(2*math.Pi) / math.Sqrt(denom)
-	return math.Min(sigmaMax, math.Max(sigmaMin, sigma))
+	fluid.health.SpatialSigmaRaw = raw
+	fluid.health.SpatialSigmaUsed = used
+	fluid.health.SigmaUnderResolved = tm > 0 && raw < fluid.domain.GridSpacing()
+	fluid.health.SigmaUniformLimit = uniform
+	return used, nil
 }
 
 func (fluid *workspace) observe() Reading {
@@ -724,6 +637,7 @@ func (fluid *workspace) observe() Reading {
 
 	modes := float64(fluid.domain.MaxModes * spectralHeads)
 	return Reading{
+		Health:           fluid.health,
 		GuidanceSpeed:    math.Sqrt(speed2 / count),
 		Divergence:       divAbs / count,
 		PressureGradNorm: math.Sqrt(press2 / count),
@@ -778,13 +692,4 @@ func wrapPhase(phase float64) float64 {
 	}
 
 	return wrapped
-}
-
-func exclusiveScanU32(counts, starts []uint32) {
-	var total uint32
-
-	for index, count := range counts {
-		starts[index] = total
-		total += count
-	}
 }

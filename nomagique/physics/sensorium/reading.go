@@ -6,6 +6,7 @@ import "math"
 Reading is one observational snapshot of the resident gas and ω-field.
 */
 type Reading struct {
+	Health           PhysicsHealth
 	Divergence       float64
 	GuidanceSpeed    float64
 	CoherenceMag2    float64
@@ -15,7 +16,7 @@ type Reading struct {
 }
 
 func (reading Reading) IsFinite() bool {
-	return finite(reading.Divergence) &&
+	return reading.Health.IsFinite() && finite(reading.Divergence) &&
 		finite(reading.GuidanceSpeed) &&
 		finite(reading.CoherenceMag2) &&
 		finite(reading.PressureGradNorm) &&

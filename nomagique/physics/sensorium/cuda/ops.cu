@@ -1,4 +1,5 @@
 #include "kernels.cuh"
+#include "coupled_kernels.cuh"
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -6,6 +7,9 @@
 #include <initializer_list>
 #include <limits>
 #include <new>
+#include "../shared/radix2_math.h"
+#include "../shared/scan_plan.h"
+#include <algorithm>
 
 namespace kernels = sensorium::kernels;
 using uint = unsigned;
@@ -25,6 +29,10 @@ struct ManifoldContext {
     char error[512]{};
     float* scratch = nullptr;
     size_t scratch_bytes = 0;
+    float* wave_ledger = nullptr;
+    size_t wave_ledger_bytes = 0;
+    unsigned wave_ledger_modes = 0;
+    float* phase_ledger=nullptr;size_t phase_ledger_bytes=0;unsigned phase_ledger_particles=0;
 
     void fail(const char* message) {
         if (!error[0]) std::snprintf(error, sizeof(error), "%s", message);
@@ -57,10 +65,28 @@ struct ManifoldContext {
         scratch_bytes = bytes;
         return scratch;
     }
+    float* ensure_wave_ledger(size_t bytes) {
+        if (bytes<=wave_ledger_bytes) return wave_ledger;
+        if (!synchronize()) return nullptr;
+        if (wave_ledger && !record(cudaFree(wave_ledger),"free wave ledger")) return nullptr;
+        wave_ledger=nullptr;wave_ledger_bytes=0;wave_ledger_modes=0;
+        if (!record(cudaMalloc(reinterpret_cast<void**>(&wave_ledger),bytes),"allocate wave ledger")) return nullptr;
+        wave_ledger_bytes=bytes; return wave_ledger;
+    }
+    float* ensure_phase_ledger(size_t bytes){
+        if(bytes<=phase_ledger_bytes)return phase_ledger;
+        if(!synchronize())return nullptr;
+        if(phase_ledger&&!record(cudaFree(phase_ledger),"free phase ledger"))return nullptr;
+        phase_ledger=nullptr;phase_ledger_bytes=0;phase_ledger_particles=0;
+        if(!record(cudaMalloc(reinterpret_cast<void**>(&phase_ledger),bytes),"allocate phase ledger"))return nullptr;
+        phase_ledger_bytes=bytes;return phase_ledger;
+    }
     ~ManifoldContext() {
         cudaSetDevice(device);
         if (stream) cudaStreamSynchronize(stream);
         if (scratch) cudaFree(scratch);
+        if (wave_ledger) cudaFree(wave_ledger);
+        if (phase_ledger) cudaFree(phase_ledger);
         if (stream) cudaStreamDestroy(stream);
     }
 };
@@ -362,9 +388,9 @@ void manifold_scatter_sorted(
         ptr<const float>(mass),
         ptr<const float>(heat),
         ptr<const float>(energy),
-        ptr<unsigned>(rho_field),
-        ptr<unsigned>(mom_field),
-        ptr<unsigned>(E_field),
+        ptr<float>(rho_field),
+        ptr<float>(mom_field),
+        ptr<float>(E_field),
         prm
     );
     ctx->launch_status(cudaGetLastError(), "scatter_sorted");
@@ -460,8 +486,8 @@ void manifold_project_modes_to_spatial_psi(
         ptr<const uint>(mode_anchor_idx),
         ptr<const float>(mode_anchor_weight),
         ptr<const float>(particle_pos),
-        ptr<unsigned>(psi_re_field),
-        ptr<unsigned>(psi_im_field),
+        ptr<float>(psi_re_field),
+        ptr<float>(psi_im_field),
         p
     );
     ctx->launch_status(cudaGetLastError(), "project_modes_to_spatial_psi");
@@ -482,10 +508,20 @@ void manifold_pic_gather_pilot_wave(
     float domain_x, float domain_y, float domain_z,
     float hbar_eff, float eps_denom, float mass_min
 ) {
-    if (ctx && (num_particles < 0 || uint64_t(num_particles) > UINT32_MAX)) { ctx->fail("count outside source uint32 range"); return; }
-    if (!ready(ctx, {pos_in, mass, pos_out, vel_out, psi_re, psi_im})) return;
-    if (!valid_grid(ctx, gx, gy, gz, grid_spacing)) return;
-    if (num_particles == 0) return;
+    if(!ready(ctx,{pos_in,mass,pos_out,vel_out,psi_re,psi_im}))return;
+    if(num_particles<0||uint64_t(num_particles)>UINT32_MAX/3u||gx<=0||gy<=0||gz<=0||uint64_t(gx)>UINT32_MAX||uint64_t(gy)>UINT32_MAX||uint64_t(gz)>UINT32_MAX||
+       uint64_t(gx)*uint64_t(gy)>UINT32_MAX/uint64_t(gz)||!std::isfinite(grid_spacing)||grid_spacing<=0||
+       !std::isfinite(dt)||dt<0||!std::isfinite(hbar_eff)||hbar_eff<=0||!std::isfinite(eps_denom)||eps_denom<0||!std::isfinite(mass_min)||mass_min<=0||
+       !std::isfinite(domain_x)||domain_x<=0||!std::isfinite(domain_y)||domain_y<=0||!std::isfinite(domain_z)||domain_z<=0) {ctx->fail("invalid pilot dimensions/parameters");return;}
+    const double dx=grid_spacing;
+    if(std::abs(double(domain_x)-double(gx)*dx)>8e-7*domain_x || std::abs(double(domain_y)-double(gy)*dx)>8e-7*domain_y ||
+       std::abs(double(domain_z)-double(gz)*dx)>8e-7*domain_z) {ctx->fail("pilot domain differs from periodic field extent");return;}
+    uint64_t np=uint64_t(num_particles),cells=uint64_t(gx)*uint64_t(gy)*uint64_t(gz);
+    if(pos_in->size_bytes<np*12||mass->size_bytes<np*4||pos_out->size_bytes<np*12||vel_out->size_bytes<np*12||psi_re->size_bytes<cells*4||psi_im->size_bytes<cells*4) {ctx->fail("undersized pilot buffer");return;}
+    ManifoldBuffer* inputs[]={pos_in,mass,psi_re,psi_im};
+    for(auto b:inputs)if(b->data==pos_out->data||b->data==vel_out->data){ctx->fail("pilot writable/input alias");return;}
+    if(pos_out->data==vel_out->data){ctx->fail("pilot writable alias");return;}
+    if(num_particles==0)return;
     PilotWaveParams p = {
         (uint32_t)num_particles, (uint32_t)gx, (uint32_t)gy, (uint32_t)gz,
         grid_spacing, 1.0f / grid_spacing, dt,
@@ -718,6 +754,32 @@ void manifold_particle_interactions(
 // ----------------------------------------------------------------------------
 // 6. Generic Parallel Exclusive Scan (u32)
 // ----------------------------------------------------------------------------
+bool manifold_exclusive_scan_u32(ManifoldContext* ctx,ManifoldBuffer* in,ManifoldBuffer* out,int64_t n) {
+    if(!ready(ctx,{in,out})) return false;
+    if(n<0 || uint64_t(n)>UINT32_MAX || in->data==out->data ||
+       in->size_bytes<uint64_t(n)*4 || out->size_bytes<(uint64_t(n)+1)*4) {
+        ctx->fail("exclusive scan requires disjoint n-input and n+1-output buffers");return false;
+    }
+    uint32_t len=uint32_t(n);ManifoldScanPlan plan;
+    if(!plan.make(len)) {ctx->fail("scan plan overflow");return false;}
+    auto* work=plan.words ? reinterpret_cast<unsigned*>(ctx->reduction_scratch(plan.words*4)) : nullptr;
+    if(plan.words && !work) return false;
+    for(unsigned l=0;l<plan.count;l++) {
+        const auto& a=plan.level[l];
+        auto* src=l ? work+plan.level[l-1].sums : ptr<const unsigned>(in);
+        auto* dst=l ? work+plan.level[l-1].prefix : ptr<unsigned>(out);
+        kernels::exclusive_scan_u32_pass1<<<a.groups,256,256*sizeof(unsigned),ctx->stream>>>(src,dst,work+a.sums,a.n);
+        ctx->launch_status(cudaGetLastError(),"exclusive_scan_u32_pass1");if(ctx->error[0])return false;
+    }
+    for(int l=int(plan.count)-2;l>=0;--l) {
+        const auto& a=plan.level[l];auto* dst=l ? work+plan.level[l-1].prefix : ptr<unsigned>(out);
+        kernels::exclusive_scan_u32_add_block_offsets<<<a.groups,256,0,ctx->stream>>>(dst,work+a.prefix,a.n);
+        ctx->launch_status(cudaGetLastError(),"exclusive_scan_u32_add_block_offsets");if(ctx->error[0])return false;
+    }
+    kernels::exclusive_scan_u32_finalize_total<<<1,1,0,ctx->stream>>>(ptr<const unsigned>(in),ptr<unsigned>(out),len);
+    ctx->launch_status(cudaGetLastError(),"exclusive_scan_u32_finalize_total");return !ctx->error[0];
+}
+
 void manifold_exclusive_scan_u32_pass1(
     ManifoldContext* ctx,
     ManifoldBuffer* in,
@@ -891,9 +953,22 @@ void manifold_coherence_accumulate_forces(
     float domain_x, float domain_y, float domain_z,
     float spatial_sigma
 ) {
-    if (ctx && (num_osc < 0 || uint64_t(num_osc) > UINT32_MAX || max_carriers < 0 || uint64_t(max_carriers) > UINT32_MAX || num_bins < 0 || uint64_t(num_bins) > UINT32_MAX)) { ctx->fail("count outside source uint32 range"); return; }
-    if (!ready(ctx, {osc_phase, osc_omega, osc_amp, particle_pos, carrier_omega, carrier_gate_width, carrier_anchor_idx, carrier_anchor_weight, accums, bin_starts, carrier_binned_idx, bin_params, particle_heat, num_carriers_snapshot})) return;
-    if (num_osc == 0 || max_carriers == 0) return;
+    if(!ready(ctx,{osc_phase,osc_omega,osc_amp,particle_pos,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,accums,bin_starts,carrier_binned_idx,bin_params,particle_heat,num_carriers_snapshot}))return;
+    // Bound every uint-indexed stride BEFORE dispatch; capacity is not inferred
+    // from the requested count and a malformed snapshot cannot enlarge it.
+    if(num_osc<0 || uint64_t(num_osc)>UINT32_MAX/6u || max_carriers<0 || uint64_t(max_carriers)>UINT32_MAX/8u || num_bins<0 || uint64_t(num_bins)>UINT32_MAX ||
+       !std::isfinite(dt)||dt<0||!std::isfinite(metabolic_rate)||metabolic_rate<0||
+       !std::isfinite(gate_width_min)||gate_width_min<=0||!std::isfinite(gate_width_max)||gate_width_max<gate_width_min||
+       !std::isfinite(offender_weight_floor)||offender_weight_floor<0||!std::isfinite(spatial_sigma)||spatial_sigma<0||
+       !std::isfinite(domain_x)||domain_x<=0||!std::isfinite(domain_y)||domain_y<=0||!std::isfinite(domain_z)||domain_z<=0) {ctx->fail("invalid coherence dimensions/parameters");return;}
+    uint64_t n=uint64_t(num_osc),m=uint64_t(max_carriers);
+    if(osc_phase->size_bytes<n*4 || osc_omega->size_bytes<n*4 || osc_amp->size_bytes<n*4 || particle_pos->size_bytes<n*12 || particle_heat->size_bytes<n*4 ||
+       carrier_omega->size_bytes<m*4 || carrier_gate_width->size_bytes<m*4 || carrier_anchor_idx->size_bytes<m*32 || carrier_anchor_weight->size_bytes<m*32 ||
+       accums->size_bytes<m*32 || num_carriers_snapshot->size_bytes<4) {ctx->fail("undersized coherence buffer");return;}
+    ManifoldBuffer* inputs[]={osc_phase,osc_omega,osc_amp,particle_pos,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,num_carriers_snapshot};
+    for(auto b:inputs)if(b->data==accums->data||b->data==particle_heat->data){ctx->fail("coherence writable/input alias");return;}
+    if(accums->data==particle_heat->data){ctx->fail("coherence writable alias");return;}
+    if(num_osc==0 || max_carriers==0)return;
     SpectralModeParams prm = {};
     prm.num_osc = (uint32_t)num_osc;
     prm.max_carriers = (uint32_t)max_carriers;
@@ -908,7 +983,9 @@ void manifold_coherence_accumulate_forces(
     prm.metabolic_rate = metabolic_rate;
 
     uint32_t nb = (uint32_t)num_bins;
-    kernels::coherence_accumulate_forces<<<blocks(num_osc), kBlockSize, 256 * 32, ctx->stream>>>(
+    const size_t shared_bytes = std::min<size_t>(max_carriers, MANIFOLD_LOCAL_CARRIER_CAPACITY) * sizeof(kernels::TGCarrierAccum);
+    if (accums->size_bytes < uint64_t(max_carriers)*sizeof(CarrierAccumulators)) {ctx->fail("undersized carrier accumulator buffer");return;}
+    kernels::coherence_accumulate_forces<<<blocks(num_osc), kBlockSize, shared_bytes, ctx->stream>>>(
         ptr<const float>(osc_phase),
         ptr<const float>(osc_omega),
         ptr<const float>(osc_amp),
@@ -927,6 +1004,85 @@ void manifold_coherence_accumulate_forces(
         ptr<float>(particle_heat)
     );
     ctx->launch_status(cudaGetLastError(), "coherence_accumulate_forces");
+}
+
+void manifold_coherence_gpe_step_geometry(
+    ManifoldContext* ctx,
+    ManifoldBuffer* osc_phase,
+    ManifoldBuffer* osc_omega,
+    ManifoldBuffer* osc_amp,
+    ManifoldBuffer* carrier_real,
+    ManifoldBuffer* carrier_imag,
+    ManifoldBuffer* carrier_omega,
+    ManifoldBuffer* carrier_gate_width,
+    ManifoldBuffer* kinetic_real,
+    ManifoldBuffer* kinetic_imag,
+    ManifoldBuffer* carrier_anchor_idx,
+    ManifoldBuffer* carrier_anchor_weight,
+    ManifoldBuffer* accums,
+    ManifoldBuffer* num_carriers_snapshot,
+    ManifoldBuffer* particle_pos,
+    SpectralModeParams prm,
+    GPEParams gp,
+    ManifoldBuffer* extra_potential,
+    ManifoldBuffer* metric_volume
+) {
+    // Preserve the public API but eliminate the four separate device passes.
+    (void)osc_phase;(void)osc_omega;(void)osc_amp;(void)carrier_omega;
+    (void)carrier_gate_width;(void)carrier_anchor_idx;(void)carrier_anchor_weight;(void)particle_pos;
+    if (!ready(ctx,{carrier_real,carrier_imag,kinetic_real,kinetic_imag,accums,num_carriers_snapshot})) return;
+    if(gp.metric_coupling!=0) {ctx->fail("legacy scalar metric_coupling cannot specify a metric; supply positive metric_volume");return;}
+    if (!prm.max_carriers) return;
+    const uint32_t count=mr_workspace_bound(prm.max_carriers);
+    const size_t bytes=size_t(count)*sizeof(MRComplex);
+    const uint64_t state_bytes=uint64_t(prm.max_carriers)*sizeof(float);
+    if (!count || carrier_real->size_bytes<state_bytes || carrier_imag->size_bytes<state_bytes ||
+        kinetic_real->size_bytes<state_bytes || kinetic_imag->size_bytes<state_bytes ||
+        accums->size_bytes<uint64_t(prm.max_carriers)*sizeof(CarrierAccumulators) || num_carriers_snapshot->size_bytes<4) {
+        ctx->fail("invalid FFT capacity or undersized state/work buffers");return;
+    }
+    uint32_t geometry_flags=(extra_potential?1u:0u)|(metric_volume?2u:0u);
+    ManifoldBuffer* optional[]={extra_potential,metric_volume};
+    for(unsigned k=0;k<2;++k)if(optional[k]) {
+        if(!ready(ctx,{optional[k]}) || optional[k]->size_bytes<state_bytes) {ctx->fail("undersized spectral geometry");return;}
+        ManifoldBuffer* writable[]={carrier_real,carrier_imag,kinetic_real,kinetic_imag,accums,num_carriers_snapshot};
+        for(auto b:writable)if(b->data==optional[k]->data) {ctx->fail("spectral geometry aliases state/work");return;}
+    }
+    if(geometry_flags) {
+        if(!manifold_synchronize_checked(ctx))return;
+        for(unsigned k=0;k<2;++k)if(optional[k]) {
+            const float* v=static_cast<const float*>(manifold_get_buffer_pointer(optional[k]));
+            if(!v){ctx->fail("spectral geometry readback unavailable");return;}
+            for(unsigned j=0;j<prm.max_carriers;++j)if(!std::isfinite(v[j])||(k==1&&!(v[j]>0))) {ctx->fail("invalid scalar potential or nonpositive metric volume");return;}
+        }
+    }
+    ManifoldBuffer* all[]={carrier_real,carrier_imag,kinetic_real,kinetic_imag,accums,num_carriers_snapshot};
+    for(unsigned i=0;i<6;i++) for(unsigned j=i+1;j<6;j++) if(all[i]->data==all[j]->data) {
+        ctx->fail("FFT state, accumulator and snapshot buffers must not alias");return;
+    }
+    float* ledger=ctx->ensure_wave_ledger(state_bytes*6);if(!ledger)return;
+    ctx->wave_ledger_modes=prm.max_carriers;
+    int shared_limit=0;
+    if (!ctx->record(cudaDeviceGetAttribute(&shared_limit,cudaDevAttrMaxSharedMemoryPerBlock,ctx->device),"query shared memory")) return;
+    cudaFuncAttributes attr{};
+    if (bytes<=size_t(shared_limit)) {
+        if (!ctx->record(cudaFuncGetAttributes(&attr,kernels::coherence_gpe_fft_fused),"query FFT kernel")) return;
+        if(bytes+attr.sharedSizeBytes>size_t(shared_limit)) {ctx->fail("FFT static plus dynamic shared memory exceeds device limit");return;}
+        unsigned threads=std::min(256,attr.maxThreadsPerBlock);
+        if(!threads) {ctx->fail("FFT kernel supports no threads");return;}
+        kernels::coherence_gpe_fft_fused<<<1,threads,bytes,ctx->stream>>>(
+            ptr<float>(carrier_real),ptr<float>(carrier_imag),ptr<CarrierAccumulators>(accums),
+            ptr<const uint>(num_carriers_snapshot),prm,gp,ptr<float>(kinetic_real),ptr<float>(kinetic_imag),count,ledger,ptr<const float>(extra_potential),ptr<const float>(metric_volume),geometry_flags);
+    } else {
+        if (!ctx->record(cudaFuncGetAttributes(&attr,kernels::coherence_gpe_fft_fused_global),"query global FFT kernel")) return;
+        void* work=ctx->reduction_scratch(bytes);if(!work)return;
+        unsigned threads=std::min(256,attr.maxThreadsPerBlock);
+        if(!threads) {ctx->fail("FFT kernel supports no threads");return;}
+        kernels::coherence_gpe_fft_fused_global<<<1,threads,0,ctx->stream>>>(
+            ptr<float>(carrier_real),ptr<float>(carrier_imag),ptr<CarrierAccumulators>(accums),
+            ptr<const uint>(num_carriers_snapshot),prm,gp,ptr<float>(kinetic_real),ptr<float>(kinetic_imag),count,work,ledger,ptr<const float>(extra_potential),ptr<const float>(metric_volume),geometry_flags);
+    }
+    ctx->launch_status(cudaGetLastError(),"coherence_gpe_fft_fused");
 }
 
 void manifold_coherence_gpe_step(
@@ -949,74 +1105,7 @@ void manifold_coherence_gpe_step(
     GPEParams gp,
     ManifoldBuffer* extra_potential
 ) {
-    if (!ready(ctx, {osc_phase, osc_omega, osc_amp, carrier_real, carrier_imag, carrier_omega, carrier_gate_width, kinetic_real, kinetic_imag, carrier_anchor_idx, carrier_anchor_weight, accums, num_carriers_snapshot, particle_pos})) return;
-    (void)extra_potential; // Reserved in supplied host; supplied shader has no such input.
-    (void)gp.metric_coupling; // Same reserved host field; deliberately no invented physics.
-    if (prm.max_carriers == 0) return;
-
-    {
-        kernels::coherence_gpe_step<<<blocks(prm.max_carriers), kBlockSize, 0, ctx->stream>>>(
-            ptr<const float>(osc_phase),
-            ptr<const float>(osc_omega),
-            ptr<const float>(osc_amp),
-            ptr<float>(carrier_real),
-            ptr<float>(carrier_imag),
-            ptr<const float>(carrier_omega),
-            ptr<const float>(carrier_gate_width),
-            ptr<uint>(carrier_anchor_idx),
-            ptr<float>(carrier_anchor_weight),
-            ptr<CarrierAccumulators>(accums),
-            ptr<const uint>(num_carriers_snapshot),
-            ptr<const float>(particle_pos),
-            prm,
-            gp
-        );
-        ctx->launch_status(cudaGetLastError(), "coherence_gpe_step");
-        // Same-stream launches provide the inter-kernel dependency.
-    }
-
-    if (gp.mass_eff > 0.0f && gp.inv_domega2 > 0.0f) {
-        const uint32_t max_modes = prm.max_carriers;
-
-        {
-            kernels::coherence_gpe_kinetic_dft<<<blocks(prm.max_carriers), kBlockSize, 0, ctx->stream>>>(
-                ptr<const float>(carrier_real),
-                ptr<const float>(carrier_imag),
-                ptr<float>(kinetic_real),
-                ptr<float>(kinetic_imag),
-                ptr<const uint>(num_carriers_snapshot),
-                max_modes,
-                gp
-            );
-            ctx->launch_status(cudaGetLastError(), "coherence_gpe_kinetic_dft");
-            // Same-stream launches provide the inter-kernel dependency.
-        }
-
-        {
-            kernels::coherence_gpe_kinetic_idft<<<blocks(prm.max_carriers), kBlockSize, 0, ctx->stream>>>(
-                ptr<const float>(kinetic_real),
-                ptr<const float>(kinetic_imag),
-                ptr<float>(carrier_real),
-                ptr<float>(carrier_imag),
-                ptr<const uint>(num_carriers_snapshot),
-                max_modes
-            );
-            ctx->launch_status(cudaGetLastError(), "coherence_gpe_kinetic_idft");
-            // Same-stream launches provide the inter-kernel dependency.
-        }
-    }
-
-    {
-        kernels::coherence_gpe_finish<<<blocks(prm.max_carriers), kBlockSize, 0, ctx->stream>>>(
-            ptr<float>(carrier_real),
-            ptr<float>(carrier_imag),
-            ptr<CarrierAccumulators>(accums),
-            ptr<const uint>(num_carriers_snapshot),
-            prm,
-            gp
-        );
-        ctx->launch_status(cudaGetLastError(), "coherence_gpe_finish");
-    }
+    manifold_coherence_gpe_step_geometry(ctx,osc_phase,osc_omega,osc_amp,carrier_real,carrier_imag,carrier_omega,carrier_gate_width,kinetic_real,kinetic_imag,carrier_anchor_idx,carrier_anchor_weight,accums,num_carriers_snapshot,particle_pos,prm,gp,extra_potential,nullptr);
 }
 
 void manifold_coherence_update_oscillator_phases(
@@ -1038,10 +1127,21 @@ void manifold_coherence_update_oscillator_phases(
     int64_t num_bins,
     ManifoldBuffer* particle_pos
 ) {
-    if (ctx && (num_bins < 0 || uint64_t(num_bins) > UINT32_MAX)) { ctx->fail("count outside source uint32 range"); return; }
-    if (!ready(ctx, {osc_phase, osc_omega, osc_amp, carrier_real, carrier_imag, carrier_omega, carrier_gate_width, carrier_anchor_idx, carrier_anchor_weight, num_carriers_snapshot, bin_starts, carrier_binned_idx, bin_params, particle_pos})) return;
-    if (prm.num_osc == 0 || prm.max_carriers == 0) return;
+    if(!ready(ctx,{osc_phase,osc_omega,osc_amp,carrier_real,carrier_imag,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,num_carriers_snapshot,bin_starts,carrier_binned_idx,bin_params,particle_pos}))return;
+    if(prm.num_osc>UINT32_MAX/6u || prm.max_carriers>UINT32_MAX/8u || num_bins<0 || uint64_t(num_bins)>UINT32_MAX ||
+       !std::isfinite(prm.dt)||prm.dt<0||!std::isfinite(prm.coupling_scale)||prm.coupling_scale<0||
+       !std::isfinite(prm.spatial_sigma)||prm.spatial_sigma<0||!std::isfinite(prm.domain_x)||prm.domain_x<=0||
+       !std::isfinite(prm.domain_y)||prm.domain_y<=0||!std::isfinite(prm.domain_z)||prm.domain_z<=0) {ctx->fail("invalid phase dimensions/parameters");return;}
+    uint64_t n=prm.num_osc,m=prm.max_carriers;
+    if(osc_phase->size_bytes<n*4||osc_omega->size_bytes<n*4||osc_amp->size_bytes<n*4||particle_pos->size_bytes<n*12||
+       carrier_real->size_bytes<m*4||carrier_imag->size_bytes<m*4||carrier_omega->size_bytes<m*4||carrier_gate_width->size_bytes<m*4||
+       carrier_anchor_idx->size_bytes<m*32||carrier_anchor_weight->size_bytes<m*32||num_carriers_snapshot->size_bytes<4) {ctx->fail("undersized phase buffer");return;}
+    ManifoldBuffer* inputs[]={osc_omega,osc_amp,particle_pos,carrier_real,carrier_imag,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,num_carriers_snapshot};
+    for(auto b:inputs)if(b->data==osc_phase->data){ctx->fail("phase writable/input alias");return;}
+    if(prm.num_osc==0)return;
     uint32_t nb = (uint32_t)num_bins;
+    float* ledger=ctx->ensure_phase_ledger(uint64_t(prm.num_osc)*24);if(!ledger)return;
+    ctx->phase_ledger_particles=prm.num_osc;
     kernels::coherence_update_oscillator_phases<<<blocks(prm.num_osc), kBlockSize, 0, ctx->stream>>>(
         ptr<float>(osc_phase),
         ptr<const float>(osc_omega),
@@ -1058,7 +1158,7 @@ void manifold_coherence_update_oscillator_phases(
         ptr<const uint>(carrier_binned_idx),
         ptr<const CoherenceBinParams>(bin_params),
         nb,
-        ptr<const float>(particle_pos)
+        ptr<const float>(particle_pos),ledger
     );
     ctx->launch_status(cudaGetLastError(), "coherence_update_oscillator_phases");
 }
@@ -1125,3 +1225,23 @@ void manifold_generate_particles(
 
 
 } // extern "C"
+
+#include "physics_v2_cuda_host.inc"
+
+#include "coupled_cuda_host.inc"
+
+extern "C" bool manifold_coherence_copy_ledger(ManifoldContext* ctx,ManifoldBuffer* out,unsigned n) {
+    if(!ready(ctx,{out}) || !ctx->synchronize())return false;
+    const size_t bytes=size_t(n)*6*sizeof(float);
+    if(n>ctx->wave_ledger_modes || out->size_bytes<bytes || bytes>ctx->wave_ledger_bytes) {ctx->fail("wave ledger read exceeds completed storage");return false;}
+    if(!bytes)return true;
+    ctx->launch_status(cudaMemcpyAsync(out->data,ctx->wave_ledger,bytes,cudaMemcpyDeviceToDevice,ctx->stream),"copy wave ledger");
+    return ctx->synchronize();
+}
+
+extern "C" bool manifold_phase_copy_ledger(ManifoldContext* ctx,ManifoldBuffer* out,unsigned n){
+    if(!ready(ctx,{out})||!ctx->synchronize())return false;size_t bytes=size_t(n)*24;
+    if(n>ctx->phase_ledger_particles||out->size_bytes<bytes||bytes>ctx->phase_ledger_bytes){ctx->fail("phase ledger bounds");return false;}
+    if(!bytes)return true;
+    ctx->launch_status(cudaMemcpyAsync(out->data,ctx->phase_ledger,bytes,cudaMemcpyDeviceToDevice,ctx->stream),"copy phase ledger");return ctx->synchronize();
+}

@@ -69,6 +69,38 @@ appendState folds one single-particle State into an accumulated batch, growing
 the accumulator's columns in place.
 */
 func appendState(accumulated, state *State) {
+	// Preserve the new coupling coordinates through loader batches. Empty legacy
+	// metadata has the declared zero-initialized migration; partial arrays are an
+	// invalid state, not permission to erase already integrated components.
+	state.ensureCoherencePosition()
+	accumulated.ensureCoherencePosition()
+	accumulated.CoherencePosition = append(accumulated.CoherencePosition, state.CoherencePosition...)
+	if len(state.PilotVel) != 0 && len(state.PilotVel) != 3*state.N {
+		panic("sensorium: partial PilotVel metadata")
+	}
+	if len(state.PhasePotential) != 0 && len(state.PhasePotential) != state.N {
+		panic("sensorium: partial PhasePotential metadata")
+	}
+	if len(accumulated.PilotVel) == 0 && accumulated.N > 0 {
+		accumulated.PilotVel = make([]float32, 3*accumulated.N)
+	}
+	if len(accumulated.PhasePotential) == 0 && accumulated.N > 0 {
+		accumulated.PhasePotential = make([]float32, accumulated.N)
+	}
+	if len(state.PilotVel) == 0 {
+		accumulated.PilotVel = append(accumulated.PilotVel, make([]float32, 3*state.N)...)
+	} else {
+		accumulated.PilotVel = append(accumulated.PilotVel, state.PilotVel...)
+	}
+	if len(state.PhasePotential) == 0 {
+		accumulated.PhasePotential = append(accumulated.PhasePotential, make([]float32, state.N)...)
+	} else {
+		accumulated.PhasePotential = append(accumulated.PhasePotential, state.PhasePotential...)
+	}
+
+	accumulated.ensureMaterialEnergy()
+	state.ensureMaterialEnergy()
+	accumulated.MaterialEnergy = append(accumulated.MaterialEnergy, state.MaterialEnergy...)
 	accumulated.N += state.N
 	accumulated.Bytes = append(accumulated.Bytes, state.Bytes...)
 	accumulated.Seqs = append(accumulated.Seqs, state.Seqs...)

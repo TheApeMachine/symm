@@ -5,6 +5,11 @@
 #include <mutex>
 #include <unordered_map>
 #include <string>
+#include <cstring>
+#include <algorithm>
+#include <initializer_list>
+#include "shared/radix2_math.h"
+#include "shared/scan_plan.h"
 
 constexpr NSUInteger kThreadsPerThreadgroup = 256;
 
@@ -22,6 +27,22 @@ struct ManifoldContext {
     
     std::unordered_map<std::string, id<MTLComputePipelineState>> pipelines;
     std::mutex mtx;
+    std::string error;
+    id<MTLBuffer> wave_ledger = nil;
+    unsigned wave_ledger_modes = 0;
+    id<MTLBuffer> phase_ledger=nil;unsigned phase_ledger_particles=0;
+    id<MTLBuffer> runtime_scratch = nil;
+    NSUInteger runtime_scratch_bytes=0;
+    void fail(const char* message) {if(error.empty()) {error=message;NSLog(@"[Manifold] %s",message);}}
+    id<MTLBuffer> scratch(NSUInteger bytes) {
+        if(bytes<=runtime_scratch_bytes) return runtime_scratch;
+        // Keep all previously encoded consumers valid before replacing storage.
+        commit_and_wait();if(!error.empty())return nil;
+        runtime_scratch=[device newBufferWithLength:bytes options:MTLResourceStorageModePrivate];
+        runtime_scratch_bytes=runtime_scratch?bytes:0;
+        if(!runtime_scratch) fail("failed to allocate runtime GPU scratch");
+        return runtime_scratch;
+    }
 
     id<MTLComputePipelineState> get_pipeline(const char* fn_name) {
         std::lock_guard<std::mutex> lock(mtx);
@@ -35,14 +56,14 @@ struct ManifoldContext {
         id<MTLFunction> fn = [library newFunctionWithName:ns_name];
         if (!fn) {
             NSLog(@"[Manifold] Function '%s' not found in metallib", fn_name);
-            return nil;
+            fail("Metal kernel missing from metallib");return nil;
         }
 
         NSError* err = nil;
         id<MTLComputePipelineState> pso = [device newComputePipelineStateWithFunction:fn error:&err];
         if (!pso) {
             NSLog(@"[Manifold] Failed to build pipeline '%s': %@", fn_name, err.localizedDescription);
-            return nil;
+            fail("Metal pipeline creation failed");return nil;
         }
         pipelines[key] = pso;
         return pso;
@@ -64,6 +85,7 @@ struct ManifoldContext {
             if (current_command_buffer) {
                 [current_command_buffer commit];
                 [current_command_buffer waitUntilCompleted];
+                if(current_command_buffer.status==MTLCommandBufferStatusError) fail(current_command_buffer.error.localizedDescription.UTF8String);
                 current_command_buffer = nil;
             }
         }
@@ -78,7 +100,7 @@ struct KernelDispatch {
     KernelDispatch(ManifoldContext* c, const char* name) : ctx(c) {
         ctx->begin_compute();
         pso = ctx->get_pipeline(name);
-        [ctx->current_encoder setComputePipelineState:pso];
+        if(pso && ctx->error.empty()) [ctx->current_encoder setComputePipelineState:pso];
     }
 
     inline void set_buffer(ManifoldBuffer* buf, NSUInteger idx) {
@@ -97,13 +119,16 @@ struct KernelDispatch {
     }
 
     inline void dispatch_1d(int64_t n_threads) {
-        if (n_threads <= 0) return;
+        if (n_threads <= 0 || !pso || !ctx->error.empty()) return;
+        if(kThreadsPerThreadgroup>pso.maxTotalThreadsPerThreadgroup) {ctx->fail("threadgroup exceeds pipeline limit");return;}
         NSUInteger num_groups = (n_threads + kThreadsPerThreadgroup - 1) / kThreadsPerThreadgroup;
         [ctx->current_encoder dispatchThreadgroups:MTLSizeMake(num_groups, 1, 1)
                             threadsPerThreadgroup:MTLSizeMake(kThreadsPerThreadgroup, 1, 1)];
     }
 
     inline void dispatch_groups(NSUInteger num_groups, NSUInteger tg_threads = kThreadsPerThreadgroup) {
+        if(!pso || !ctx->error.empty() || !num_groups)return;
+        if(tg_threads>pso.maxTotalThreadsPerThreadgroup) {ctx->fail("threadgroup exceeds pipeline limit");return;}
         [ctx->current_encoder dispatchThreadgroups:MTLSizeMake(num_groups, 1, 1)
                             threadsPerThreadgroup:MTLSizeMake(tg_threads, 1, 1)];
     }
@@ -113,11 +138,22 @@ struct KernelDispatch {
     }
 };
 
+static bool runtime_ready(ManifoldContext* ctx,std::initializer_list<ManifoldBuffer*> buffers) {
+    if(!ctx || !ctx->error.empty())return false;
+    for(auto* b:buffers) if(!b || !b->mtl_buffer) {ctx->fail("missing Metal buffer");return false;}
+    return true;
+}
+
 extern "C" {
 
 ManifoldContext* manifold_create_context(const char* metallib_path) {
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     if (!device) return nullptr;
+    // Metal 4.1 language selection does not remove GPU-family restrictions.
+    // This macOS backend uses native ulong device min/max (Apple8+) and float atomics.
+    if(![device supportsFamily:MTLGPUFamilyApple8]) {
+        NSLog(@"[Manifold] Native packed offender min/max requires Apple8+ on macOS");return nullptr;
+    }
 
     id<MTLCommandQueue> queue = [device newCommandQueue];
     NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:metallib_path]];
@@ -143,6 +179,10 @@ void manifold_destroy_context(ManifoldContext* ctx) {
     delete ctx;
 }
 
+bool manifold_synchronize_checked(ManifoldContext* ctx) {
+    if(!ctx)return false;ctx->commit_and_wait();return ctx->error.empty();
+}
+const char* manifold_last_error(ManifoldContext* ctx) {return ctx?ctx->error.c_str():"Metal context is null";}
 void manifold_synchronize(ManifoldContext* ctx) {
     if (!ctx) return;
     ctx->commit_and_wait();
@@ -192,7 +232,9 @@ void manifold_clear_field(ManifoldContext* ctx, ManifoldBuffer* field) {
     KernelDispatch k(ctx, "clear_field");
     k.set_buffer(field, 0);
     k.set_bytes(n, 1);
+    k.buffer_barrier();
     k.dispatch_1d(n);
+    k.buffer_barrier();
 }
 
 void manifold_thermo_reduce_energy_stats(ManifoldContext* ctx, ManifoldBuffer* x, ManifoldBuffer* out_stats) {
@@ -243,7 +285,9 @@ void manifold_scatter_compute_cell_idx(
     k.set_buffer(particle_pos, 0);
     k.set_buffer(particle_cell_idx, 1);
     k.set_bytes(prm, 2);
+    k.buffer_barrier();
     k.dispatch_1d(n);
+    k.buffer_barrier();
 }
 
 void manifold_scatter_count_cells(
@@ -264,7 +308,9 @@ void manifold_scatter_count_cells(
     k.set_buffer(particle_cell_idx, 0);
     k.set_buffer(cell_counts, 1);
     k.set_bytes(prm, 2);
+    k.buffer_barrier();
     k.dispatch_1d(n);
+    k.buffer_barrier();
 }
 
 void manifold_scatter_reorder_particles(
@@ -309,7 +355,9 @@ void manifold_scatter_reorder_particles(
     k.set_buffer(energy_out, 12);
     k.set_buffer(sorted_original_idx, 13);
     k.set_bytes(prm, 14);
+    k.buffer_barrier();
     k.dispatch_1d(n);
+    k.buffer_barrier();
 }
 
 void manifold_scatter_sorted(
@@ -342,7 +390,9 @@ void manifold_scatter_sorted(
     k.set_buffer(mom_field, 6);
     k.set_buffer(E_field, 7);
     k.set_bytes(prm, 8);
+    k.buffer_barrier();
     k.dispatch_1d(n);
+    k.buffer_barrier();
 }
 
 void manifold_pic_gather_update_particles(
@@ -447,7 +497,20 @@ void manifold_pic_gather_pilot_wave(
     float domain_x, float domain_y, float domain_z,
     float hbar_eff, float eps_denom, float mass_min
 ) {
-    if (num_particles == 0) return;
+    if(!runtime_ready(ctx,{pos_in,mass,pos_out,vel_out,psi_re,psi_im}))return;
+    if(num_particles<0||uint64_t(num_particles)>UINT32_MAX/3u||gx<=0||gy<=0||gz<=0||uint64_t(gx)>UINT32_MAX||uint64_t(gy)>UINT32_MAX||uint64_t(gz)>UINT32_MAX||
+       uint64_t(gx)*uint64_t(gy)>UINT32_MAX/uint64_t(gz)||!std::isfinite(grid_spacing)||grid_spacing<=0||
+       !std::isfinite(dt)||dt<0||!std::isfinite(hbar_eff)||hbar_eff<=0||!std::isfinite(eps_denom)||eps_denom<0||!std::isfinite(mass_min)||mass_min<=0||
+       !std::isfinite(domain_x)||domain_x<=0||!std::isfinite(domain_y)||domain_y<=0||!std::isfinite(domain_z)||domain_z<=0) {ctx->fail("invalid pilot dimensions/parameters");return;}
+    const double dx=grid_spacing;
+    if(std::abs(double(domain_x)-double(gx)*dx)>8e-7*domain_x || std::abs(double(domain_y)-double(gy)*dx)>8e-7*domain_y ||
+       std::abs(double(domain_z)-double(gz)*dx)>8e-7*domain_z) {ctx->fail("pilot domain differs from periodic field extent");return;}
+    uint64_t np=uint64_t(num_particles),cells=uint64_t(gx)*uint64_t(gy)*uint64_t(gz);
+    if(pos_in->size_bytes<np*12||mass->size_bytes<np*4||pos_out->size_bytes<np*12||vel_out->size_bytes<np*12||psi_re->size_bytes<cells*4||psi_im->size_bytes<cells*4) {ctx->fail("undersized pilot buffer");return;}
+    ManifoldBuffer* inputs[]={pos_in,mass,psi_re,psi_im};
+    for(auto b:inputs)if(b->mtl_buffer==pos_out->mtl_buffer||b->mtl_buffer==vel_out->mtl_buffer){ctx->fail("pilot writable/input alias");return;}
+    if(pos_out->mtl_buffer==vel_out->mtl_buffer){ctx->fail("pilot writable alias");return;}
+    if(num_particles==0)return;
     PilotWaveParams p = {
         (uint32_t)num_particles, (uint32_t)gx, (uint32_t)gy, (uint32_t)gz,
         grid_spacing, 1.0f / grid_spacing, dt,
@@ -658,6 +721,31 @@ void manifold_particle_interactions(
 // ----------------------------------------------------------------------------
 // 6. Generic Parallel Exclusive Scan (u32)
 // ----------------------------------------------------------------------------
+bool manifold_exclusive_scan_u32(ManifoldContext* ctx,ManifoldBuffer* in,ManifoldBuffer* out,int64_t n) {
+    if(!runtime_ready(ctx,{in,out}))return false;
+    if(n<0 || uint64_t(n)>UINT32_MAX || in->mtl_buffer==out->mtl_buffer ||
+       in->size_bytes<uint64_t(n)*4 || out->size_bytes<(uint64_t(n)+1)*4) {
+        ctx->fail("exclusive scan requires disjoint n-input and n+1-output buffers");return false;
+    }
+    uint32_t len=uint32_t(n);ManifoldScanPlan plan;if(!plan.make(len)){ctx->fail("scan plan overflow");return false;}
+    id<MTLBuffer> work=plan.words?ctx->scratch(plan.words*4):nil;if(plan.words&&!work)return false;
+    for(unsigned l=0;l<plan.count;l++) {
+        const auto& a=plan.level[l];KernelDispatch k(ctx,"exclusive_scan_u32_pass1");k.buffer_barrier();
+        [ctx->current_encoder setBuffer:(l?work:in->mtl_buffer) offset:(l?plan.level[l-1].sums*4:0) atIndex:0];
+        [ctx->current_encoder setBuffer:(l?work:out->mtl_buffer) offset:(l?plan.level[l-1].prefix*4:0) atIndex:1];
+        [ctx->current_encoder setBuffer:work offset:a.sums*4 atIndex:2];
+        k.set_bytes(a.n,3);k.set_threadgroup_memory(256*sizeof(uint32_t),0);k.dispatch_groups(a.groups,256);k.buffer_barrier();
+    }
+    for(int l=int(plan.count)-2;l>=0;--l) {
+        const auto& a=plan.level[l];KernelDispatch k(ctx,"exclusive_scan_u32_add_block_offsets");
+        [ctx->current_encoder setBuffer:(l?work:out->mtl_buffer) offset:(l?plan.level[l-1].prefix*4:0) atIndex:0];
+        [ctx->current_encoder setBuffer:work offset:a.prefix*4 atIndex:1];k.set_bytes(a.n,2);
+        k.dispatch_groups(a.groups,256);k.buffer_barrier();
+    }
+    KernelDispatch k(ctx,"exclusive_scan_u32_finalize_total");k.set_buffer(in,0);k.set_buffer(out,1);k.set_bytes(len,2);
+    k.dispatch_groups(1,1);k.buffer_barrier();return ctx->error.empty();
+}
+
 void manifold_exclusive_scan_u32_pass1(
     ManifoldContext* ctx,
     ManifoldBuffer* in,
@@ -813,7 +901,22 @@ void manifold_coherence_accumulate_forces(
     float domain_x, float domain_y, float domain_z,
     float spatial_sigma
 ) {
-    if (num_osc == 0 || max_carriers == 0) return;
+    if(!runtime_ready(ctx,{osc_phase,osc_omega,osc_amp,particle_pos,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,accums,bin_starts,carrier_binned_idx,bin_params,particle_heat,num_carriers_snapshot}))return;
+    // Bound every uint-indexed stride BEFORE dispatch; capacity is not inferred
+    // from the requested count and a malformed snapshot cannot enlarge it.
+    if(num_osc<0 || uint64_t(num_osc)>UINT32_MAX/6u || max_carriers<0 || uint64_t(max_carriers)>UINT32_MAX/8u || num_bins<0 || uint64_t(num_bins)>UINT32_MAX ||
+       !std::isfinite(dt)||dt<0||!std::isfinite(metabolic_rate)||metabolic_rate<0||
+       !std::isfinite(gate_width_min)||gate_width_min<=0||!std::isfinite(gate_width_max)||gate_width_max<gate_width_min||
+       !std::isfinite(offender_weight_floor)||offender_weight_floor<0||!std::isfinite(spatial_sigma)||spatial_sigma<0||
+       !std::isfinite(domain_x)||domain_x<=0||!std::isfinite(domain_y)||domain_y<=0||!std::isfinite(domain_z)||domain_z<=0) {ctx->fail("invalid coherence dimensions/parameters");return;}
+    uint64_t n=uint64_t(num_osc),m=uint64_t(max_carriers);
+    if(osc_phase->size_bytes<n*4 || osc_omega->size_bytes<n*4 || osc_amp->size_bytes<n*4 || particle_pos->size_bytes<n*12 || particle_heat->size_bytes<n*4 ||
+       carrier_omega->size_bytes<m*4 || carrier_gate_width->size_bytes<m*4 || carrier_anchor_idx->size_bytes<m*32 || carrier_anchor_weight->size_bytes<m*32 ||
+       accums->size_bytes<m*32 || num_carriers_snapshot->size_bytes<4) {ctx->fail("undersized coherence buffer");return;}
+    ManifoldBuffer* inputs[]={osc_phase,osc_omega,osc_amp,particle_pos,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,num_carriers_snapshot};
+    for(auto b:inputs)if(b->mtl_buffer==accums->mtl_buffer||b->mtl_buffer==particle_heat->mtl_buffer){ctx->fail("coherence writable/input alias");return;}
+    if(accums->mtl_buffer==particle_heat->mtl_buffer){ctx->fail("coherence writable alias");return;}
+    if(num_osc==0 || max_carriers==0)return;
     SpectralModeParams prm = {};
     prm.num_osc = (uint32_t)num_osc;
     prm.max_carriers = (uint32_t)max_carriers;
@@ -845,8 +948,89 @@ void manifold_coherence_accumulate_forces(
     uint32_t nb = (uint32_t)num_bins;
     k.set_bytes(nb, 14);
     k.set_buffer(particle_heat, 15);
-    k.set_threadgroup_memory(256 * 32, 0);
+    const NSUInteger shared_bytes=std::min<NSUInteger>(max_carriers,MANIFOLD_LOCAL_CARRIER_CAPACITY)*sizeof(ManifoldLocalCarrierAccumulator);
+    if(!k.pso || shared_bytes+k.pso.staticThreadgroupMemoryLength>ctx->device.maxThreadgroupMemoryLength) {ctx->fail("coherence local memory exceeds device limit");return;}
+    k.set_threadgroup_memory((shared_bytes+15)&~NSUInteger(15), 0);
+    k.buffer_barrier();
     k.dispatch_1d(num_osc);
+    k.buffer_barrier();
+}
+
+void manifold_coherence_gpe_step_geometry(
+    ManifoldContext* ctx,
+    ManifoldBuffer* osc_phase,
+    ManifoldBuffer* osc_omega,
+    ManifoldBuffer* osc_amp,
+    ManifoldBuffer* carrier_real,
+    ManifoldBuffer* carrier_imag,
+    ManifoldBuffer* carrier_omega,
+    ManifoldBuffer* carrier_gate_width,
+    ManifoldBuffer* kinetic_real,
+    ManifoldBuffer* kinetic_imag,
+    ManifoldBuffer* carrier_anchor_idx,
+    ManifoldBuffer* carrier_anchor_weight,
+    ManifoldBuffer* accums,
+    ManifoldBuffer* num_carriers_snapshot,
+    ManifoldBuffer* particle_pos,
+    SpectralModeParams prm,
+    GPEParams gp,
+    ManifoldBuffer* extra_potential,
+    ManifoldBuffer* metric_volume
+) {
+    (void)osc_phase;(void)osc_omega;(void)osc_amp;(void)carrier_omega;
+    (void)carrier_gate_width;(void)carrier_anchor_idx;(void)carrier_anchor_weight;(void)particle_pos;
+    if(!runtime_ready(ctx,{carrier_real,carrier_imag,kinetic_real,kinetic_imag,accums,num_carriers_snapshot}))return;
+    if(gp.metric_coupling!=0) {ctx->fail("legacy scalar metric_coupling cannot specify a metric; supply positive metric_volume");return;}
+    if(!prm.max_carriers)return;
+    uint32_t count=mr_workspace_bound(prm.max_carriers);
+    NSUInteger bytes=NSUInteger(count)*sizeof(MRComplex);
+    uint64_t state_bytes=uint64_t(prm.max_carriers)*sizeof(float);
+    if(!count || carrier_real->size_bytes<state_bytes || carrier_imag->size_bytes<state_bytes ||
+       kinetic_real->size_bytes<state_bytes || kinetic_imag->size_bytes<state_bytes ||
+       accums->size_bytes<uint64_t(prm.max_carriers)*sizeof(ManifoldCarrierAccumulator) || num_carriers_snapshot->size_bytes<4) {
+        ctx->fail("invalid FFT capacity or undersized state/work buffers");return;
+    }
+    uint32_t geometry_flags=(extra_potential?1u:0u)|(metric_volume?2u:0u);
+    ManifoldBuffer* optional[]={extra_potential,metric_volume};
+    for(unsigned k=0;k<2;++k)if(optional[k]) {
+        if(!runtime_ready(ctx,{optional[k]}) || optional[k]->size_bytes<state_bytes) {ctx->fail("undersized spectral geometry");return;}
+        ManifoldBuffer* writable[]={carrier_real,carrier_imag,kinetic_real,kinetic_imag,accums,num_carriers_snapshot};
+        for(auto b:writable)if(b->mtl_buffer==optional[k]->mtl_buffer) {ctx->fail("spectral geometry aliases state/work");return;}
+    }
+    if(geometry_flags) {
+        if(!manifold_synchronize_checked(ctx))return;
+        for(unsigned k=0;k<2;++k)if(optional[k]) {
+            const float* v=static_cast<const float*>(manifold_get_buffer_pointer(optional[k]));
+            if(!v){ctx->fail("spectral geometry readback unavailable");return;}
+            for(unsigned j=0;j<prm.max_carriers;++j)if(!std::isfinite(v[j])||(k==1&&!(v[j]>0))) {ctx->fail("invalid scalar potential or nonpositive metric volume");return;}
+        }
+    }
+    ManifoldBuffer* all[]={carrier_real,carrier_imag,kinetic_real,kinetic_imag,accums,num_carriers_snapshot};
+    for(unsigned i=0;i<6;i++)for(unsigned j=i+1;j<6;j++)if(all[i]->mtl_buffer==all[j]->mtl_buffer) {ctx->fail("FFT buffers must not alias");return;}
+    if(!ctx->wave_ledger || ctx->wave_ledger.length<state_bytes*6) {
+        ctx->commit_and_wait();if(!ctx->error.empty())return;
+        ctx->wave_ledger=[ctx->device newBufferWithLength:state_bytes*6 options:MTLResourceStorageModeShared];
+        if(!ctx->wave_ledger) {ctx->fail("allocate wave ledger");return;}
+    }
+    ctx->wave_ledger_modes=prm.max_carriers;
+    NSUInteger shared_bytes=(bytes+15)&~NSUInteger(15);
+    id<MTLComputePipelineState> fast=ctx->get_pipeline("coherence_gpe_fft_fused");
+    if(!fast)return;
+    bool local=shared_bytes+fast.staticThreadgroupMemoryLength<=ctx->device.maxThreadgroupMemoryLength;
+    id<MTLBuffer> work=local ? nil : ctx->scratch(bytes);if(!local && !work)return;
+    KernelDispatch k(ctx,local?"coherence_gpe_fft_fused":"coherence_gpe_fft_fused_global");if(!k.pso)return;
+    k.buffer_barrier();
+    k.set_buffer(carrier_real,0);k.set_buffer(carrier_imag,1);k.set_buffer(accums,2);
+    k.set_buffer(num_carriers_snapshot,3);k.set_bytes(prm,4);k.set_bytes(gp,5);
+    k.set_buffer(kinetic_real,6);k.set_buffer(kinetic_imag,7);k.set_bytes(count,8);
+    [ctx->current_encoder setBuffer:ctx->wave_ledger offset:0 atIndex:10];
+    // Always bind legal buffers. Flags prevent reads of these unused aliases.
+    k.set_buffer(extra_potential?extra_potential:carrier_real,11);
+    k.set_buffer(metric_volume?metric_volume:carrier_real,12);k.set_bytes(geometry_flags,13);
+    if(local)k.set_threadgroup_memory(shared_bytes,0);
+    else [ctx->current_encoder setBuffer:work offset:0 atIndex:9];
+    NSUInteger threads=std::min<NSUInteger>(256,k.pso.maxTotalThreadsPerThreadgroup);
+    k.dispatch_groups(1,threads);k.buffer_barrier();
 }
 
 void manifold_coherence_gpe_step(
@@ -869,72 +1053,7 @@ void manifold_coherence_gpe_step(
     GPEParams gp,
     ManifoldBuffer* extra_potential
 ) {
-    if (prm.max_carriers == 0) return;
-
-    {
-        KernelDispatch local(ctx, "coherence_gpe_step");
-        local.set_buffer(osc_phase, 0);
-        local.set_buffer(osc_omega, 1);
-        local.set_buffer(osc_amp, 2);
-        local.set_buffer(carrier_real, 3);
-        local.set_buffer(carrier_imag, 4);
-        local.set_buffer(carrier_omega, 5);
-        local.set_buffer(carrier_gate_width, 6);
-        local.set_buffer(carrier_anchor_idx, 7);
-        local.set_buffer(carrier_anchor_weight, 8);
-        local.set_buffer(accums, 9);
-        local.set_buffer(num_carriers_snapshot, 10);
-        local.set_buffer(particle_pos, 11);
-        local.set_bytes(prm, 12);
-        local.set_bytes(gp, 13);
-
-        if (extra_potential && extra_potential->mtl_buffer) {
-            local.set_buffer(extra_potential, 14);
-        }
-
-        local.dispatch_1d(prm.max_carriers);
-        local.buffer_barrier();
-    }
-
-    if (gp.mass_eff > 0.0f && gp.inv_domega2 > 0.0f) {
-        const uint32_t max_modes = prm.max_carriers;
-
-        {
-            KernelDispatch transform(ctx, "coherence_gpe_kinetic_dft");
-            transform.set_buffer(carrier_real, 0);
-            transform.set_buffer(carrier_imag, 1);
-            transform.set_buffer(kinetic_real, 2);
-            transform.set_buffer(kinetic_imag, 3);
-            transform.set_buffer(num_carriers_snapshot, 4);
-            transform.set_bytes(max_modes, 5);
-            transform.set_bytes(gp, 6);
-            transform.dispatch_1d(prm.max_carriers);
-            transform.buffer_barrier();
-        }
-
-        {
-            KernelDispatch inverse(ctx, "coherence_gpe_kinetic_idft");
-            inverse.set_buffer(kinetic_real, 0);
-            inverse.set_buffer(kinetic_imag, 1);
-            inverse.set_buffer(carrier_real, 2);
-            inverse.set_buffer(carrier_imag, 3);
-            inverse.set_buffer(num_carriers_snapshot, 4);
-            inverse.set_bytes(max_modes, 5);
-            inverse.dispatch_1d(prm.max_carriers);
-            inverse.buffer_barrier();
-        }
-    }
-
-    {
-        KernelDispatch finish(ctx, "coherence_gpe_finish");
-        finish.set_buffer(carrier_real, 0);
-        finish.set_buffer(carrier_imag, 1);
-        finish.set_buffer(accums, 2);
-        finish.set_buffer(num_carriers_snapshot, 3);
-        finish.set_bytes(prm, 4);
-        finish.set_bytes(gp, 5);
-        finish.dispatch_1d(prm.max_carriers);
-    }
+    manifold_coherence_gpe_step_geometry(ctx,osc_phase,osc_omega,osc_amp,carrier_real,carrier_imag,carrier_omega,carrier_gate_width,kinetic_real,kinetic_imag,carrier_anchor_idx,carrier_anchor_weight,accums,num_carriers_snapshot,particle_pos,prm,gp,extra_potential,nullptr);
 }
 
 void manifold_coherence_update_oscillator_phases(
@@ -956,7 +1075,25 @@ void manifold_coherence_update_oscillator_phases(
     int64_t num_bins,
     ManifoldBuffer* particle_pos
 ) {
-    if (prm.num_osc == 0 || prm.max_carriers == 0) return;
+    if(!runtime_ready(ctx,{osc_phase,osc_omega,osc_amp,carrier_real,carrier_imag,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,num_carriers_snapshot,bin_starts,carrier_binned_idx,bin_params,particle_pos}))return;
+    if(prm.num_osc>UINT32_MAX/6u || prm.max_carriers>UINT32_MAX/8u || num_bins<0 || uint64_t(num_bins)>UINT32_MAX ||
+       !std::isfinite(prm.dt)||prm.dt<0||!std::isfinite(prm.coupling_scale)||prm.coupling_scale<0||
+       !std::isfinite(prm.spatial_sigma)||prm.spatial_sigma<0||!std::isfinite(prm.domain_x)||prm.domain_x<=0||
+       !std::isfinite(prm.domain_y)||prm.domain_y<=0||!std::isfinite(prm.domain_z)||prm.domain_z<=0) {ctx->fail("invalid phase dimensions/parameters");return;}
+    uint64_t n=prm.num_osc,m=prm.max_carriers;
+    if(osc_phase->size_bytes<n*4||osc_omega->size_bytes<n*4||osc_amp->size_bytes<n*4||particle_pos->size_bytes<n*12||
+       carrier_real->size_bytes<m*4||carrier_imag->size_bytes<m*4||carrier_omega->size_bytes<m*4||carrier_gate_width->size_bytes<m*4||
+       carrier_anchor_idx->size_bytes<m*32||carrier_anchor_weight->size_bytes<m*32||num_carriers_snapshot->size_bytes<4) {ctx->fail("undersized phase buffer");return;}
+    ManifoldBuffer* inputs[]={osc_omega,osc_amp,particle_pos,carrier_real,carrier_imag,carrier_omega,carrier_gate_width,carrier_anchor_idx,carrier_anchor_weight,num_carriers_snapshot};
+    for(auto b:inputs)if(b->mtl_buffer==osc_phase->mtl_buffer){ctx->fail("phase writable/input alias");return;}
+    if(prm.num_osc==0)return;
+    uint64_t ledger_bytes=uint64_t(prm.num_osc)*24;
+    if(!ctx->phase_ledger||ctx->phase_ledger.length<ledger_bytes){
+        ctx->commit_and_wait();if(!ctx->error.empty())return;
+        ctx->phase_ledger=[ctx->device newBufferWithLength:ledger_bytes options:MTLResourceStorageModeShared];
+        if(!ctx->phase_ledger){ctx->fail("allocate phase ledger");return;}
+    }
+    ctx->phase_ledger_particles=prm.num_osc;
     KernelDispatch k(ctx, "coherence_update_oscillator_phases");
     k.set_buffer(osc_phase, 0);
     k.set_buffer(osc_omega, 1);
@@ -975,6 +1112,7 @@ void manifold_coherence_update_oscillator_phases(
     uint32_t nb = (uint32_t)num_bins;
     k.set_bytes(nb, 14);
     k.set_buffer(particle_pos, 15);
+    [ctx->current_encoder setBuffer:ctx->phase_ledger offset:0 atIndex:16];
     k.dispatch_1d(prm.num_osc);
 }
 
@@ -1036,3 +1174,19 @@ void manifold_generate_particles(
 }
 
 } // extern "C"
+
+extern "C" bool manifold_coherence_copy_ledger(ManifoldContext* ctx,ManifoldBuffer* out,unsigned n) {
+    if(!runtime_ready(ctx,{out}))return false;
+    ctx->commit_and_wait();if(!ctx->error.empty())return false;
+    const size_t bytes=size_t(n)*6*sizeof(float);
+    if(n>ctx->wave_ledger_modes || out->size_bytes<bytes || (bytes && (!ctx->wave_ledger || ctx->wave_ledger.length<bytes))) {ctx->fail("wave ledger read exceeds completed storage");return false;}
+    if(bytes)memcpy(out->mtl_buffer.contents,ctx->wave_ledger.contents,bytes);
+    return true;
+}
+
+extern "C" bool manifold_phase_copy_ledger(ManifoldContext* ctx,ManifoldBuffer* out,unsigned n){
+    if(!runtime_ready(ctx,{out}))return false;ctx->commit_and_wait();if(!ctx->error.empty())return false;
+    size_t bytes=size_t(n)*24;
+    if(n>ctx->phase_ledger_particles||out->size_bytes<bytes||(bytes&&(!ctx->phase_ledger||ctx->phase_ledger.length<bytes))){ctx->fail("phase ledger bounds");return false;}
+    if(bytes)memcpy(out->mtl_buffer.contents,ctx->phase_ledger.contents,bytes);return true;
+}

@@ -1,7 +1,7 @@
 #pragma once
 #include <cuda_runtime.h>
 #include <cstdint>
-#include "../bridge.h"
+#include "bridge.h"
 
 // Only scalar POD structs cross the C/Go boundary. CUDA float3 is private to
 // device arithmetic; no Metal/CUDA float3 ABI equivalence is assumed.
@@ -27,29 +27,26 @@ struct SpectralBinParams {
     float omega_min;
     float inv_bin_width;
 };
-struct CarrierAccumulators {
+struct alignas(8) CarrierAccumulators {
     float force_r;
     float force_i;
     float w_sum;
     float w_omega_sum;
     float w_omega2_sum;
     float w_amp_sum;
-    unsigned offender_score; 
-    unsigned offender_idx;   
+    unsigned long long packed_offender;
 };
 struct TGCarrierAccum {
-    unsigned force_r;      
-    unsigned force_i;      
-    unsigned w_sum;        
-    unsigned w_omega_sum;  
-    unsigned w_omega2_sum; 
-    unsigned w_amp_sum;    
-    unsigned offender_score;
-    unsigned offender_idx;
+    float force_r;
+    float force_i;
+    float w_sum;
+    float w_omega_sum;
+    float w_omega2_sum;
+    float w_amp_sum;
 };
 using CoherenceBinParams = SpectralBinParams;
 static_assert(sizeof(CarrierAccumulators) == 32);
-static_assert(sizeof(TGCarrierAccum) == 32);
+static_assert(sizeof(TGCarrierAccum) == 24);
 static_assert(sizeof(SpectralBinParams) == 8);
 
 __global__ void reduce_float_stats_pass1(
@@ -90,12 +87,6 @@ __global__ void spatial_hash_assign(
 __global__ void spatial_hash_prefix_sum(
     const uint* cell_counts,
     uint* cell_starts,
-    uint  num_cells
-);
-
-__global__ void spatial_hash_prefix_sum_parallel(
-    uint* cell_counts,
-    uint* block_sums,
     uint  num_cells
 );
 
@@ -183,17 +174,7 @@ __global__ void scatter_count_cells(
     SortScatterParams  p
 );
 
-__global__ void scatter_prefix_sum_upsweep(
-    uint* data,
-    uint  stride,
-    uint  n
-);
 
-__global__ void scatter_prefix_sum_downsweep(
-    uint* data,
-    uint  stride,
-    uint  n
-);
 
 __global__ void scatter_reorder_particles(
     const float* particle_pos_in,
@@ -219,9 +200,9 @@ __global__ void scatter_sorted(
     const float* particle_mass,
     const float* particle_heat,
     const float* particle_energy,
-    unsigned* rho_field,
-    unsigned* mom_field,
-    unsigned* E_field,
+    float* rho_field,
+    float* mom_field,
+    float* E_field,
     SortScatterParams  p
 );
 
@@ -282,8 +263,8 @@ __global__ void project_modes_to_spatial_psi(
     const uint*  mode_anchor_idx,
     const float* mode_anchor_weight,
     const float* particle_pos,
-    unsigned* psi_re_field,
-    unsigned* psi_im_field,
+    float* psi_re_field,
+    float* psi_im_field,
     ModeProjectParams  p
 );
 
@@ -316,50 +297,9 @@ __global__ void coherence_accumulate_forces(
     float* particle_heat
 );
 
-__global__ void coherence_gpe_step(
-    const float* osc_phase,
-    const float* osc_omega,
-    const float* osc_amp,
-    float* mode_real,
-    float* mode_imag,
-    const float* mode_omega,
-    const float* mode_gate_width,
-    uint* mode_anchor_idx,
-    float* mode_anchor_weight,
-    CarrierAccumulators* accums,
-    const uint* num_modes_in,
-    const float* particle_pos,
-    CoherenceModeParams  p,
-    GPEParams  gp
-);
 
-__global__ void coherence_gpe_kinetic_dft(
-    const float* mode_real,
-    const float* mode_imag,
-    float* transformed_real,
-    float* transformed_imag,
-    const uint* num_modes_in,
-    uint  max_modes,
-    GPEParams  gp
-);
 
-__global__ void coherence_gpe_kinetic_idft(
-    const float* transformed_real,
-    const float* transformed_imag,
-    float* mode_real,
-    float* mode_imag,
-    const uint* num_modes_in,
-    uint  max_modes
-);
 
-__global__ void coherence_gpe_finish(
-    float* mode_real,
-    float* mode_imag,
-    CarrierAccumulators* accums,
-    const uint* num_modes_in,
-    CoherenceModeParams  p,
-    GPEParams  gp
-);
 
 __global__ void coherence_update_oscillator_phases(
     float* particle_phase,
@@ -377,7 +317,8 @@ __global__ void coherence_update_oscillator_phases(
     const uint* carrier_binned_idx,
     const CoherenceBinParams* bin_p,
     uint  num_bins,
-    const float* particle_pos
+    const float* particle_pos,
+    float* phase_ledger
 );
 
 __global__ void generate_particle_positions(
@@ -399,5 +340,7 @@ __global__ void initialize_particle_properties(
     float  center_y,
     float  center_z
 );
+
+#include "coherence_fft_kernels.cuh"
 
 } // namespace sensorium::kernels

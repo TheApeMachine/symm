@@ -12,8 +12,6 @@ import (
 
 var metalLanguageCandidates = []string{
 	"metal4.1",
-	"metal4.0",
-	"metal3.0",
 }
 
 func main() {
@@ -192,6 +190,7 @@ func (generator *Generator) MetalArgs(source string) []string {
 		"macosx",
 		"metal",
 		"-std=" + generator.metalStd,
+		"-I", generator.packageDir,
 	}
 
 	if generator.needsStrictFP(source) {

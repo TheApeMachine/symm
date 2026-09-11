@@ -61,10 +61,10 @@ func newWorkspaceGrid(gx, gy, gz int) workspaceGrid {
 	rSpecific := gamma - 1
 	modes := derivedModes(maximumAxis)
 
-	// CFL acoustic limit for 64³ grid: dt <= 0.18 * dx
+	// Initial macro request only; state-dependent stability is owned by the coupled controller.
 	deltaT := 0.18 * spacing
-	if deltaT > 0.003 {
-		deltaT = 0.003
+	if deltaT > dtMax {
+		deltaT = dtMax
 	}
 
 	return workspaceGrid{
@@ -82,7 +82,7 @@ func newWorkspaceGrid(gx, gy, gz int) workspaceGrid {
 		RhoMin:    floorDensity,
 		PMin:      floorPressure,
 		Mu:        gridViscosity,
-		KThermal:  1e-4,
+		KThermal:  gridViscosity * gamma / airPrandtl,
 		OmegaMin:  -4,
 		OmegaMax:  4,
 	}
@@ -98,7 +98,7 @@ func (grid workspaceGrid) CellCount() int {
 
 func (grid workspaceGrid) binWidth() float64 {
 	if grid.MaxModes < 2 {
-		return 0
+		return grid.OmegaMax - grid.OmegaMin // one quadrature cell spans the declared interval
 	}
 
 	return (grid.OmegaMax - grid.OmegaMin) / float64(grid.MaxModes-1)
@@ -138,12 +138,31 @@ func (grid workspaceGrid) invDomega2() float64 {
 workspace is the Metal buffer owner: scatter → gas RK2 → gather → GPE.
 */
 type workspace struct {
-	engine           *Engine
-	domain           workspaceGrid
-	particles        int
-	particleCapacity int
-	rngSeed          uint32
-	rates            stepRates
+	spectralPotential, spectralMetric *Buffer
+	waveProjectionReady               bool
+	psiStartRe, psiStartIm            *Buffer
+
+	coherencePosition, reciprocalForce, reciprocalAmplitude, reciprocalStatus *Buffer
+	reciprocalOldRe, reciprocalOldIm, reciprocalPotential                     *Buffer
+
+	engine                                                                                         *Engine
+	domain                                                                                         workspaceGrid
+	particles                                                                                      int
+	particleCapacity                                                                               int
+	rngSeed                                                                                        uint32
+	rates                                                                                          stepRates
+	physics                                                                                        PhysicsControls
+	health                                                                                         PhysicsHealth
+	physicalTime                                                                                   float64
+	lastParticleEnergy                                                                             float64
+	hasLastParticleEnergy                                                                          bool
+	previousPotential                                                                              []float32
+	lastPhaseRate                                                                                  float64
+	phasePrior, phaseLedger                                                                        *Buffer
+	gravityFluxBase, gravityPrior, gravityKickWork, materialEnergy, materialEnergyOut, remapReport *Buffer
+	hydro, hydroOut, hydroWork1, hydroWork2, hydroStatus, hydroDiagnostics                         *Buffer
+	acceleration, poissonState, poissonScratch                                                     *Buffer
+	pilotPrevious, pilotReport, contactReport, particleStatus, waveLedger                          *Buffer
 
 	rho, mom, energy                    *Buffer
 	rho1, mom1, energy1                 *Buffer
@@ -195,6 +214,7 @@ func newWorkspace(gx, gy, gz int) (*workspace, error) {
 		engine:  engine,
 		domain:  grid,
 		rngSeed: 1,
+		physics: defaultPhysicsControls(),
 		rates: stepRates{
 			deltaT:        grid.DeltaT,
 			energyDecay:   0.8,
@@ -247,9 +267,29 @@ func (fluid *workspace) allocateGrid() {
 	fluid.k1Mom = fluid.gpu(cells * 3 * 4)
 	fluid.k1Energy = fluid.gpu(cells * 4)
 	fluid.gravity = fluid.gpu(cells * 4)
+	fluid.hydro = fluid.gpu(cells * 24)
+	fluid.hydroOut = fluid.gpu(cells * 24)
+	fluid.hydroWork1 = fluid.gpu(cells * 24)
+	fluid.hydroWork2 = fluid.gpu(cells * 24)
+	fluid.hydroStatus = fluid.gpu(cells * 4)
+	fluid.hydroDiagnostics = fluid.gpu(cells * 32)
+	fluid.acceleration = fluid.gpu(cells * 12)
+	fluid.poissonState = fluid.gpu(cells * 8)
+	// Per-line Bluestein scratch is provisioned by the native Poisson host.
+	fluid.waveLedger = fluid.gpu(modes * 6 * 4)
+	fluid.reciprocalOldRe = fluid.gpu(modes * 4)
+	fluid.reciprocalOldIm = fluid.gpu(modes * 4)
+	fluid.reciprocalPotential = fluid.gpu(modes * 4)
+	fluid.remapReport = fluid.gpu(48)
+	fluid.gravityFluxBase = fluid.gpu(cells * 24)
+	fluid.gravityPrior = fluid.gpu(cells * 4)
+	fluid.gravityKickWork = fluid.gpu(cells * 4)
+	fluid.previousPotential = make([]float32, int(modes)*spectralHeads)
 	fluid.cellCounts = fluid.gpu(cells * 4)
-	fluid.cellStarts = fluid.gpu(cells * 4)
+	fluid.cellStarts = fluid.gpu((cells + 1) * 4)
 	fluid.cellOffsets = fluid.gpu(cells * 4)
+	fluid.psiStartRe = fluid.gpu(cells * 4)
+	fluid.psiStartIm = fluid.gpu(cells * 4)
 	fluid.psiRe = fluid.gpu(cells * 4)
 	fluid.psiIm = fluid.gpu(cells * 4)
 	fluid.dbgHead = fluid.gpu(4)
@@ -322,8 +362,16 @@ func (fluid *workspace) loadState(state *State) {
 	fluid.particles = state.N
 	copy(fluid.pos.Float32Slice(), state.Pos)
 	copy(fluid.vel.Float32Slice(), state.Vel)
+	state.ensureCoherencePosition()
+	copy(fluid.coherencePosition.Float32Slice(), state.CoherencePosition)
+	fluid.pilotPrevious.Zero()
+	copy(fluid.pilotPrevious.Float32Slice(), state.PilotVel)
+	fluid.phasePrior.Zero()
+	copy(fluid.phasePrior.Float32Slice(), state.PhasePotential)
 	copy(fluid.mass.Float32Slice(), state.Mass)
 	copy(fluid.heat.Float32Slice(), state.Heat)
+	state.ensureMaterialEnergy()
+	copy(fluid.materialEnergy.Float32Slice(), state.MaterialEnergy)
 	copy(fluid.oscEnergy.Float32Slice(), state.Energy)
 	copy(fluid.phase.Float32Slice(), state.Phase)
 	copy(fluid.omega.Float32Slice(), state.Omega)
@@ -331,10 +379,6 @@ func (fluid *workspace) loadState(state *State) {
 
 	for index := 0; index < state.N; index++ {
 		energy := state.Energy[index]
-
-		if energy < 0 {
-			energy = 0
-		}
 
 		amp[index] = float32(math.Sqrt(float64(energy)))
 		state.Amp[index] = amp[index]
@@ -360,8 +404,22 @@ func (fluid *workspace) storeState(state *State) {
 	fluid.engine.Synchronize()
 	copy(state.Pos, fluid.pos.Float32Slice())
 	copy(state.Vel, fluid.vel.Float32Slice())
+	state.ensureCoherencePosition()
+	copy(state.CoherencePosition, fluid.coherencePosition.Float32Slice())
+	if len(state.PilotVel) != state.N*3 {
+		state.PilotVel = make([]float32, state.N*3)
+	}
+	copy(state.PilotVel, fluid.pilotPrevious.Float32Slice())
+	if len(state.PhasePotential) != state.N {
+		state.PhasePotential = make([]float32, state.N)
+	}
+	copy(state.PhasePotential, fluid.phasePrior.Float32Slice())
 	copy(state.Mass, fluid.mass.Float32Slice())
 	copy(state.Heat, fluid.heat.Float32Slice())
+	if len(state.MaterialEnergy) != state.N {
+		state.MaterialEnergy = make([]float32, state.N)
+	}
+	copy(state.MaterialEnergy, fluid.materialEnergy.Float32Slice())
 	copy(state.Energy, fluid.oscEnergy.Float32Slice())
 	copy(state.Phase, fluid.phase.Float32Slice())
 	copy(state.Omega, fluid.omega.Float32Slice())
@@ -423,10 +481,16 @@ func (fluid *workspace) allocateParticles(count int) {
 	fluid.particleCapacity = capacity
 
 	particleCount := uint64(capacity)
+	fluid.coherencePosition = fluid.gpu(particleCount * 12)
+	fluid.reciprocalForce = fluid.gpu(particleCount * 12)
+	fluid.reciprocalAmplitude = fluid.gpu(particleCount * 4)
+	fluid.reciprocalStatus = fluid.gpu(uint64(max(capacity, fluid.domain.MaxModes)) * 4)
 	fluid.pos = fluid.gpu(particleCount * 3 * 4)
 	fluid.vel = fluid.gpu(particleCount * 3 * 4)
 	fluid.mass = fluid.gpu(particleCount * 4)
 	fluid.heat = fluid.gpu(particleCount * 4)
+	fluid.materialEnergy = fluid.gpu(particleCount * 4)
+	fluid.materialEnergyOut = fluid.gpu(particleCount * 4)
 	fluid.oscEnergy = fluid.gpu(particleCount * 4)
 	fluid.phase = fluid.gpu(particleCount * 4)
 	fluid.omega = fluid.gpu(particleCount * 4)
@@ -444,14 +508,21 @@ func (fluid *workspace) allocateParticles(count int) {
 	fluid.headPhase = fluid.gpu(particleCount * 4)
 	fluid.headHeat = fluid.gpu(particleCount * 4)
 	fluid.couplingAmp = fluid.gpu(particleCount * 4)
+	fluid.pilotPrevious = fluid.gpu(particleCount * 3 * 4)
+	fluid.pilotReport = fluid.gpu(particleCount * 4 * 4)
+	fluid.contactReport = fluid.gpu(particleCount * 7 * 4)
+	fluid.phasePrior = fluid.gpu(particleCount * 4)
+	fluid.phaseLedger = fluid.gpu(particleCount * 6 * 4)
+	fluid.particleStatus = fluid.gpu(particleCount * 4)
 }
 
 func (fluid *workspace) closeParticles() {
 	fluid.particleCapacity = 0
 
 	for _, buffer := range []*Buffer{
-		fluid.headPhase, fluid.headHeat, fluid.couplingAmp,
-		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy,
+		fluid.coherencePosition, fluid.reciprocalForce, fluid.reciprocalAmplitude, fluid.reciprocalStatus,
+		fluid.headPhase, fluid.headHeat, fluid.couplingAmp, fluid.pilotPrevious, fluid.pilotReport, fluid.contactReport, fluid.particleStatus, fluid.phasePrior, fluid.phaseLedger,
+		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy, fluid.materialEnergy, fluid.materialEnergyOut,
 		fluid.phase, fluid.omega, fluid.amp,
 		fluid.posOut, fluid.velOut, fluid.heatOut,
 		fluid.cellIdx, fluid.originalIdx,
@@ -463,13 +534,25 @@ func (fluid *workspace) closeParticles() {
 		}
 	}
 
+	fluid.coherencePosition = nil
+	fluid.reciprocalForce = nil
+	fluid.reciprocalAmplitude = nil
+	fluid.reciprocalStatus = nil
 	fluid.headPhase = nil
 	fluid.headHeat = nil
 	fluid.couplingAmp = nil
+	fluid.pilotPrevious = nil
+	fluid.pilotReport = nil
+	fluid.contactReport = nil
+	fluid.phasePrior = nil
+	fluid.phaseLedger = nil
+	fluid.particleStatus = nil
 	fluid.pos = nil
 	fluid.vel = nil
 	fluid.mass = nil
 	fluid.heat = nil
+	fluid.materialEnergy = nil
+	fluid.materialEnergyOut = nil
 	fluid.oscEnergy = nil
 	fluid.phase = nil
 	fluid.omega = nil
@@ -488,13 +571,15 @@ func (fluid *workspace) closeParticles() {
 
 func (fluid *workspace) allBuffers() []*Buffer {
 	buffers := []*Buffer{
+		fluid.spectralPotential, fluid.spectralMetric,
+		fluid.reciprocalOldRe, fluid.reciprocalOldIm, fluid.reciprocalPotential,
 		fluid.rho, fluid.mom, fluid.energy,
 		fluid.rho1, fluid.mom1, fluid.energy1,
 		fluid.rho2, fluid.mom2, fluid.energy2,
 		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
-		fluid.gravity,
+		fluid.gravity, fluid.hydro, fluid.hydroOut, fluid.hydroWork1, fluid.hydroWork2, fluid.hydroStatus, fluid.hydroDiagnostics, fluid.acceleration, fluid.poissonState, fluid.poissonScratch, fluid.waveLedger, fluid.remapReport, fluid.gravityFluxBase, fluid.gravityPrior, fluid.gravityKickWork,
 		fluid.cellCounts, fluid.cellStarts, fluid.cellOffsets,
-		fluid.psiRe, fluid.psiIm,
+		fluid.psiRe, fluid.psiIm, fluid.psiStartRe, fluid.psiStartIm,
 		fluid.dbgHead, fluid.dbgWords,
 		fluid.omegaLattice, fluid.gateWidth,
 		fluid.accums, fluid.numCarriers,
@@ -502,8 +587,9 @@ func (fluid *workspace) allBuffers() []*Buffer {
 		fluid.psiModeReal, fluid.psiModeImag,
 		fluid.kineticReal, fluid.kineticImag,
 		fluid.binStarts, fluid.binnedIdx, fluid.binParams,
-		fluid.headPhase, fluid.headHeat, fluid.couplingAmp,
-		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy,
+		fluid.coherencePosition, fluid.reciprocalForce, fluid.reciprocalAmplitude, fluid.reciprocalStatus,
+		fluid.headPhase, fluid.headHeat, fluid.couplingAmp, fluid.pilotPrevious, fluid.pilotReport, fluid.contactReport, fluid.particleStatus, fluid.phasePrior, fluid.phaseLedger,
+		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy, fluid.materialEnergy, fluid.materialEnergyOut,
 		fluid.phase, fluid.omega, fluid.amp,
 		fluid.posOut, fluid.velOut, fluid.heatOut,
 		fluid.cellIdx, fluid.originalIdx,

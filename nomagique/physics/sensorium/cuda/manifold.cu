@@ -1,26 +1,21 @@
+// Physics integration note: the v2 host API below supplies a persistent total+auxiliary
+// energy solver, a compliant Hertz material solver, and a spatial Hamiltonian wave solver.
+// Legacy entry points remain for ABI compatibility; they do NOT automatically use v2.
+// See COUPLED_INTEGRATION.md before mixing legacy and v2 state updates.
 // CUDA port of the attached manifold.metal. See PORT_NOTES.md before changing physics.
 #include "kernels.cuh"
+#include "../shared/coupled_core.h"
 #include "vector_math.cuh"
 
 namespace sensorium::kernels {
 
-// CUDA atomics on the source's uint-encoded float slots. Integer comparisons
-// make the CAS loop terminate even when a diagnostic NaN is accumulated.
+// Snapshot helpers retained for existing global-key and FFT-accumulator readers.
+// Post-barrier shared float sums below use ordinary loads, not these RMW helpers.
 __device__ __forceinline__ unsigned atomic_read(const unsigned* p) {
-    return atomicCAS(const_cast<unsigned*>(p), 0u, 0u);
+    return atomicAdd(const_cast<unsigned*>(p), 0u);
 }
 __device__ __forceinline__ float atomic_read(const float* p) {
-    return __uint_as_float(atomicCAS(
-        reinterpret_cast<unsigned*>(const_cast<float*>(p)), 0u, 0u));
-}
-__device__ __forceinline__ void atomic_add_bits(unsigned* p, float value) {
-    unsigned old = atomic_read(p);
-    for (;;) {
-        unsigned assumed = old;
-        unsigned next = __float_as_uint(__fadd_rn(__uint_as_float(assumed), value));
-        old = atomicCAS(p, assumed, next);
-        if (old == assumed) return;
-    }
+    return atomicAdd(const_cast<float*>(p), 0.0f);
 }
 
 
@@ -354,7 +349,7 @@ __device__ __forceinline__ float sample_field_trilinear(
     return c0 * (1.0f - fx) + c1 * fx;
 }
 
-// Compute gradient of a 3D field at a position (central differences)
+// Exact analytic gradient of the periodic trilinear interpolant
 __device__ __forceinline__ float3 sample_gradient_trilinear(
     const float* field,
     uint3 base_idx,
@@ -366,9 +361,8 @@ __device__ __forceinline__ float3 sample_gradient_trilinear(
     uint stride_y = grid_dims.z;
     uint stride_x = grid_dims.y * grid_dims.z;
     
-    // Sample at offset positions for gradient
-    // We approximate gradient using the interpolated values at slightly offset positions
-    // For efficiency, we use the corner values to estimate gradient
+    // Differentiate the eight-corner interpolant analytically. No displaced
+    // sampling is used; its continuum accuracy follows the interpolation error.
     
     // Periodic corner sampling (same as sample_field_trilinear)
     uint x0 = base_idx.x;
@@ -499,12 +493,12 @@ __global__ void particle_interactions(
         particle_pos[gid * 3 + 2]
     );
     float3 vel_i = make_float3(
-        particle_vel[gid * 3 + 0],
-        particle_vel[gid * 3 + 1],
-        particle_vel[gid * 3 + 2]
+        particle_vel_in[gid * 3 + 0],
+        particle_vel_in[gid * 3 + 1],
+        particle_vel_in[gid * 3 + 2]
     );
     float mass_i = particle_mass[gid];
-    float heat_i = particle_heat[gid];
+    float heat_i = particle_heat_in[gid];
     // Note: particle_excitation is read-only intrinsic property, not needed for collisions
 
     // [CHOICE] collision kernel invariants (fail loudly)
@@ -589,8 +583,8 @@ __global__ void particle_interactions(
                 float J = (1.0f + e) * m_eff * (-v_n);
                 
                 // Impulse on particle i: Δv_i = J/m_i * n
-                // We divide by 2 because we process each pair twice (once for i, once for j)
-                impulse_total += (n * J / mass_i) * 0.5f;
+                // Each thread updates ONLY its own particle: apply the full own-side impulse.
+                impulse_total += n * J / mass_i;
                 
                 // -------------------------------------------------
                 // ENERGY CONSERVATION: KE_lost becomes heat
@@ -602,13 +596,8 @@ __global__ void particle_interactions(
                 heat_delta += ke_lost * 0.5f;  // Half to each particle
             }
             
-            // -------------------------------------------------
-            // HERTZIAN CONTACT FORCE (prevents interpenetration)
-            // -------------------------------------------------
-            // F = (4/3) * E* * sqrtf(R*) * δ^(3/2) for Hertzian contact
-            // Simplified: F ≈ E * δ for small overlaps (linear spring)
-            float contact_force = p.young_modulus * overlap;
-            impulse_total += n * contact_force * p.dt / mass_i;
+            // No penalty spring after a hard-sphere restitution impulse.
+            // Compliant material contact uses manifold_contact_step_v2.
             
             // -------------------------------------------------
             // HEAT CONDUCTION ON CONTACT (Fourier's law)
@@ -752,57 +741,8 @@ __global__ void spatial_hash_prefix_sum(
     cell_starts[num_cells] = running_sum;  // Total particle count
 }
 
-// Parallel Blelloch-style prefix sum for larger grids
-// This uses threadgroup-local reductions for better scaling
-__global__ void spatial_hash_prefix_sum_parallel(
-    uint* cell_counts,
-    uint* block_sums,
-    uint  num_cells
-) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
-    const uint tid = threadIdx.x;
-    const uint tg_size = blockDim.x;
-    extern __shared__ unsigned char dynamic_shared[];
-    uint* shared = reinterpret_cast<uint*>(dynamic_shared);
-
-    // Load into shared memory
-    uint idx = gid;
-    shared[tid] = (idx < num_cells) ? cell_counts[idx] : 0;
-    __syncthreads();
-    
-    // Up-sweep (reduce) phase
-    for (uint stride = 1; stride < tg_size; stride *= 2) {
-        uint ai = (tid + 1) * stride * 2 - 1;
-        if (ai < tg_size) {
-            shared[ai] += shared[ai - stride];
-        }
-        __syncthreads();
-    }
-    
-    // Store block sum and clear last element
-    if (tid == tg_size - 1) {
-        uint block_idx = gid / tg_size;
-        block_sums[block_idx] = shared[tid];
-        shared[tid] = 0;
-    }
-    __syncthreads();
-    
-    // Down-sweep phase
-    for (uint stride = tg_size / 2; stride > 0; stride /= 2) {
-        uint ai = (tid + 1) * stride * 2 - 1;
-        if (ai < tg_size) {
-            uint t = shared[ai - stride];
-            shared[ai - stride] = shared[ai];
-            shared[ai] += t;
-        }
-        __syncthreads();
-    }
-    
-    // Write back exclusive prefix sum
-    if (idx < num_cells) {
-        cell_counts[idx] = shared[tid];
-    }
-}
+// Parallel callers must use the complete host-orchestrated
+// manifold_exclusive_scan_u32 API (block scans plus inter-block offsets).
 
 // -----------------------------------------------------------------------------
 // Generic kernel: u32 exclusive scan (parallel, block-hierarchical)
@@ -825,36 +765,9 @@ __global__ void exclusive_scan_u32_pass1(
     extern __shared__ unsigned char dynamic_shared[];
     uint* shared = reinterpret_cast<uint*>(dynamic_shared);
 
-    uint idx = tg_id * tg_size + tid;
-    shared[tid] = (idx < n) ? in[idx] : 0u;
-    __syncthreads();
-
-    // Up-sweep
-    for (uint stride = 1; stride < tg_size; stride <<= 1) {
-        uint ai = ((tid + 1u) * stride * 2u) - 1u;
-        if (ai < tg_size) shared[ai] += shared[ai - stride];
-        __syncthreads();
-    }
-
-    uint total = shared[tg_size - 1u];
-    if (tid == tg_size - 1u) {
-        block_sums[tg_id] = total;
-        shared[tg_size - 1u] = 0u; // exclusive
-    }
-    __syncthreads();
-
-    // Down-sweep
-    for (uint stride = tg_size >> 1; stride > 0; stride >>= 1) {
-        uint ai = ((tid + 1u) * stride * 2u) - 1u;
-        if (ai < tg_size) {
-            uint t = shared[ai - stride];
-            shared[ai - stride] = shared[ai];
-            shared[ai] += t;
-        }
-        __syncthreads();
-    }
-
-    if (idx < n) out[idx] = shared[tid];
+#define MS_SCAN_BARRIER() __syncthreads()
+#include "../shared/exclusive_scan_block.inc"
+#undef MS_SCAN_BARRIER
 }
 
 // Pass 2/3 helper: add scanned block offsets to per-block scan output.
@@ -944,9 +857,7 @@ __device__ __forceinline__ float ordered_u32_to_float(uint key) {
     return __uint_as_float(u);
 }
 
-// Prototypes (definitions appear later in file).
-
-
+// Finite active-frequency reduction; initialize min to UINT_MAX and max to 0.
 __global__ void coherence_reduce_omega_minmax_keys(
     const float* carrier_omega,
     const uint* num_carriers_in,
@@ -1067,12 +978,12 @@ __global__ void spatial_hash_collisions(
         particle_pos[gid * 3 + 2]
     );
     float3 vel_i = make_float3(
-        particle_vel[gid * 3 + 0],
-        particle_vel[gid * 3 + 1],
-        particle_vel[gid * 3 + 2]
+        particle_vel_in[gid * 3 + 0],
+        particle_vel_in[gid * 3 + 1],
+        particle_vel_in[gid * 3 + 2]
     );
     float mass_i = particle_mass[gid];
-    float heat_i = particle_heat[gid];
+    float heat_i = particle_heat_in[gid];
     // Note: particle_excitation is read-only intrinsic property, not needed for collisions
 
     // Collision kernel invariants (fail loudly). See particle_interactions for rationale.
@@ -1176,7 +1087,7 @@ __global__ void spatial_hash_collisions(
                         float e = p.restitution;
                         float m_eff = (mass_i * mass_j) / (mass_i + mass_j);
                         float J = (1.0f + e) * m_eff * (-v_n);
-                        impulse_total += (n * J / mass_i) * 0.5f;
+                        impulse_total += n * J / mass_i;
                         
                         // Energy conservation
                         float ke_lost = 0.5f * m_eff * v_n * v_n * (1.0f - e * e);
@@ -1184,8 +1095,8 @@ __global__ void spatial_hash_collisions(
                     }
                     
                     // HERTZIAN CONTACT FORCE
-                    float contact_force = p.young_modulus * overlap;
-                    impulse_total += n * contact_force * p.dt / mass_i;
+
+                    // No additional spring impulse: use the compliant v2 contact API.
                     
                     // HEAT CONDUCTION
                     // Temperature consistency: T = Q / (m * c_v)
@@ -1218,21 +1129,7 @@ __global__ void spatial_hash_collisions(
 }
 
 // -----------------------------------------------------------------------------
-// Helper: Atomic Float Add for Threadgroup Memory (CAS Loop)
-// -----------------------------------------------------------------------------
-// Metal doesn't have native atomic float in threadgroup memory on all hardware.
-// We emulate it using compare-and-swap on uint, interpreting the bits as float.
-
-
-// -----------------------------------------------------------------------------
-// Helper: Atomic Float Add for Device Memory (CAS Loop)
-// -----------------------------------------------------------------------------
-// Some Metal toolchains/hardware exhibit inconsistent behavior for `float`
-// in memory. We use a CAS loop on `unsigned` holding float bits.
-
-
-// Note: float in threadgroup memory has inconsistent toolchain support.
-// Use atomic_add_bits (with unsigned and bitcasting) instead.
+// Native typed float atomics; no integer-bit CAS emulation.
 
 // =============================================================================
 // SORT-BASED SCATTER (Deterministic, No Hash Collisions)
@@ -1247,7 +1144,7 @@ __global__ void spatial_hash_collisions(
 // Pipeline:
 // 1. scatter_compute_cell_idx: Compute primary cell for each particle
 // 2. scatter_count_cells: Count particles per cell (atomic)
-// 3. scatter_prefix_sum: Compute cell_starts from cell_counts
+// 3. manifold_exclusive_scan_u32: Compute exclusive cell starts and total
 // 4. scatter_reorder: Move particles to sorted positions
 // 5. scatter_sorted: Process sorted particles (main scatter)
 
@@ -1315,34 +1212,7 @@ __global__ void scatter_count_cells(
     atomicAdd(&cell_counts[cell], 1u);
 }
 
-// Step 3: Prefix sum (Blelloch-style, two-phase)
-// Phase A: Up-sweep (reduce)
-__global__ void scatter_prefix_sum_upsweep(
-    uint* data,
-    uint  stride,
-    uint  n
-) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    uint idx = (gid + 1) * stride * 2 - 1;
-    if (idx < n) {
-        data[idx] += data[idx - stride];
-    }
-}
-
-// Phase B: Down-sweep
-__global__ void scatter_prefix_sum_downsweep(
-    uint* data,
-    uint  stride,
-    uint  n
-) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    uint idx = (gid + 1) * stride * 2 - 1;
-    if (idx + stride < n) {
-        data[idx + stride] += data[idx];
-    }
-}
+// Step 3: manifold_exclusive_scan_u32 uses the hierarchical exclusive scan.
 
 // Step 4: Reorder particles to sorted positions
 __global__ void scatter_reorder_particles(
@@ -1394,9 +1264,9 @@ __global__ void scatter_sorted(
     const float* particle_mass,
     const float* particle_heat,
     const float* particle_energy,
-    unsigned* rho_field,
-    unsigned* mom_field,
-    unsigned* E_field,
+    float* rho_field,
+    float* mom_field,
+    float* E_field,
     SortScatterParams  p
 ) {
     const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1470,12 +1340,12 @@ __global__ void scatter_sorted(
     for (uint c = 0; c < 8; c++) {
         float w = weights[c] * inv_vol;
         uint idx = idxs[c];
-        atomic_add_bits(&rho_field[idx], mass * w);
-        atomic_add_bits(&E_field[idx], e_int * w);
+        atomicAdd(&rho_field[idx], mass * w);
+        atomicAdd(&E_field[idx], e_int * w);
         uint mbase = idx * 3u;
-        atomic_add_bits(&mom_field[mbase + 0u], (mass * vel.x) * w);
-        atomic_add_bits(&mom_field[mbase + 1u], (mass * vel.y) * w);
-        atomic_add_bits(&mom_field[mbase + 2u], (mass * vel.z) * w);
+        atomicAdd(&mom_field[mbase + 0u], (mass * vel.x) * w);
+        atomicAdd(&mom_field[mbase + 1u], (mass * vel.y) * w);
+        atomicAdd(&mom_field[mbase + 2u], (mass * vel.z) * w);
     }
 }
 
@@ -1813,37 +1683,37 @@ __device__ __forceinline__ void gas_rhs_cell(
         inviscid_flux_dir(0u, Uxm, u_xm, p_xm),
         inviscid_flux_dir(0u, Uc,  u_c,  p_c),
         Uxm, Uc,
-        max(sp_xm, sp_c)
+        max(fabs(u_xm.x) + c_xm, fabs(u_c.x) + c_c)
     );
     F5 Fx_p = rusanov_flux(
         inviscid_flux_dir(0u, Uc,  u_c,  p_c),
         inviscid_flux_dir(0u, Uxp, u_xp, p_xp),
         Uc, Uxp,
-        max(sp_c, sp_xp)
+        max(fabs(u_xp.x) + c_xp, fabs(u_c.x) + c_c)
     );
     F5 Fy_m = rusanov_flux(
         inviscid_flux_dir(1u, Uym, u_ym, p_ym),
         inviscid_flux_dir(1u, Uc,  u_c,  p_c),
         Uym, Uc,
-        max(sp_ym, sp_c)
+        max(fabs(u_ym.y) + c_ym, fabs(u_c.y) + c_c)
     );
     F5 Fy_p = rusanov_flux(
         inviscid_flux_dir(1u, Uc,  u_c,  p_c),
         inviscid_flux_dir(1u, Uyp, u_yp, p_yp),
         Uc, Uyp,
-        max(sp_c, sp_yp)
+        max(fabs(u_yp.y) + c_yp, fabs(u_c.y) + c_c)
     );
     F5 Fz_m = rusanov_flux(
         inviscid_flux_dir(2u, Uzm, u_zm, p_zm),
         inviscid_flux_dir(2u, Uc,  u_c,  p_c),
         Uzm, Uc,
-        max(sp_zm, sp_c)
+        max(fabs(u_zm.z) + c_zm, fabs(u_c.z) + c_c)
     );
     F5 Fz_p = rusanov_flux(
         inviscid_flux_dir(2u, Uc,  u_c,  p_c),
         inviscid_flux_dir(2u, Uzp, u_zp, p_zp),
         Uc, Uzp,
-        max(sp_c, sp_zp)
+        max(fabs(u_zp.z) + c_zp, fabs(u_c.z) + c_c)
     );
 
     // Conservative divergences for rho and mom; internal energy gets an extra pressure-work source.
@@ -2289,9 +2159,9 @@ __global__ void pic_gather_update_particles(
 }
 
 // -----------------------------------------------------------------------------
-// Helper: Atomic Max for Threadgroup/Device Memory (CAS Loop)
+// Native Integer Min/Max Atomics
 // -----------------------------------------------------------------------------
-// Replaces atomic_max_explicit which may not be supported for all types/spaces.
+// Device packed offender keys use ulong max; no threadgroup ulong is required.
 
 
 // -----------------------------------------------------------------------------
@@ -2352,14 +2222,7 @@ __device__ __forceinline__ Complex c_i_mul(Complex a) { return {-a.i, a.r}; } //
 
 
 __device__ __forceinline__ float resonance_from_freq(float omega_i, float omega_k, float gate_width) {
-    float d = omega_i - omega_k;
-    // [CHOICE] resonance / linewidth kernel (physics-derived)
-    // [FORMULA] R(Δω) = γ^2 / (Δω^2 + γ^2), with γ = gate_width > 0
-    // [REASON] Lorentzian response from finite coherence time / damping (no Gaussian heuristic)
-    // [NOTES] host enforces gate_width_min>0; kernel clamps gate_width into [min,max].
-    if (!(gate_width > 0.0f)) return qnan_f();
-    float g2 = gate_width * gate_width;
-    return g2 / (d * d + g2);
+    return mc_resonance(omega_i,omega_k,gate_width);
 }
 
 // -----------------------------------------------------------------------------
@@ -2378,8 +2241,8 @@ __global__ void project_modes_to_spatial_psi(
     const uint*  mode_anchor_idx,
     const float* mode_anchor_weight,
     const float* particle_pos,
-    unsigned* psi_re_field,
-    unsigned* psi_im_field,
+    float* psi_re_field,
+    float* psi_im_field,
     ModeProjectParams  p
 ) {
     const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2467,29 +2330,29 @@ __global__ void project_modes_to_spatial_psi(
     float w011 = wx0 * wy1 * wz1;
     float w111 = wx1 * wy1 * wz1;
 
-    atomic_add_bits(&psi_re_field[i000], re * w000);
-    atomic_add_bits(&psi_im_field[i000], im * w000);
+    atomicAdd(&psi_re_field[i000], re * w000);
+    atomicAdd(&psi_im_field[i000], im * w000);
 
-    atomic_add_bits(&psi_re_field[i100], re * w100);
-    atomic_add_bits(&psi_im_field[i100], im * w100);
+    atomicAdd(&psi_re_field[i100], re * w100);
+    atomicAdd(&psi_im_field[i100], im * w100);
 
-    atomic_add_bits(&psi_re_field[i010], re * w010);
-    atomic_add_bits(&psi_im_field[i010], im * w010);
+    atomicAdd(&psi_re_field[i010], re * w010);
+    atomicAdd(&psi_im_field[i010], im * w010);
 
-    atomic_add_bits(&psi_re_field[i110], re * w110);
-    atomic_add_bits(&psi_im_field[i110], im * w110);
+    atomicAdd(&psi_re_field[i110], re * w110);
+    atomicAdd(&psi_im_field[i110], im * w110);
 
-    atomic_add_bits(&psi_re_field[i001], re * w001);
-    atomic_add_bits(&psi_im_field[i001], im * w001);
+    atomicAdd(&psi_re_field[i001], re * w001);
+    atomicAdd(&psi_im_field[i001], im * w001);
 
-    atomic_add_bits(&psi_re_field[i101], re * w101);
-    atomic_add_bits(&psi_im_field[i101], im * w101);
+    atomicAdd(&psi_re_field[i101], re * w101);
+    atomicAdd(&psi_im_field[i101], im * w101);
 
-    atomic_add_bits(&psi_re_field[i011], re * w011);
-    atomic_add_bits(&psi_im_field[i011], im * w011);
+    atomicAdd(&psi_re_field[i011], re * w011);
+    atomicAdd(&psi_im_field[i011], im * w011);
 
-    atomic_add_bits(&psi_re_field[i111], re * w111);
-    atomic_add_bits(&psi_im_field[i111], im * w111);
+    atomicAdd(&psi_re_field[i111], re * w111);
+    atomicAdd(&psi_im_field[i111], im * w111);
 
 }
 
@@ -2513,11 +2376,24 @@ __global__ void pic_gather_update_particles_pilot_wave(
 
     if (gid >= p.num_particles) return;
 
+    bool valid = p.grid_x>0u && p.grid_y>0u && p.grid_z>0u &&
+        isfinite(p.grid_spacing) && p.grid_spacing>0.0f && isfinite(p.inv_grid_spacing) && p.inv_grid_spacing>0.0f &&
+        isfinite(p.dt) && p.dt>=0.0f && isfinite(p.hbar_eff) && p.hbar_eff>0.0f &&
+        isfinite(p.eps_denom) && p.eps_denom>=0.0f && isfinite(p.mass_min) && p.mass_min>0.0f &&
+        isfinite(p.domain_x) && p.domain_x>0.0f && isfinite(p.domain_y) && p.domain_y>0.0f && isfinite(p.domain_z) && p.domain_z>0.0f &&
+        isfinite(particle_mass[gid]) && particle_mass[gid]>0.0f;
+    for(uint a=0;a<3u;++a) valid = valid && isfinite(particle_pos_in[3u*gid+a]);
+    if(!valid) {
+        for(uint a=0;a<3u;++a){particle_pos_out[3u*gid+a]=qnan_f();particle_vel_out[3u*gid+a]=qnan_f();}
+        return;
+    }
     float3 pos = make_float3(
         particle_pos_in[gid * 3 + 0],
         particle_pos_in[gid * 3 + 1],
         particle_pos_in[gid * 3 + 2]
     );
+
+    pos.x=mc_wrap(pos.x,p.domain_x);pos.y=mc_wrap(pos.y,p.domain_y);pos.z=mc_wrap(pos.z,p.domain_z);
 
     float psi_re = sample_trilinear(psi_re_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
     float psi_im = sample_trilinear(psi_im_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
@@ -2569,13 +2445,12 @@ __device__ __forceinline__ float spatial_overlap_from_anchors(
     uint mode_k,
     const SpectralModeParams& p
 ) {
-    // [CHOICE] real-space overlap integral proxy (Gaussian wavepackets)
+    // Normalized periodic free-particle thermal kernel at the declared bath scale.
     // [FORMULA] O = Σ_a w_a expf(-|Δx|^2/(4σ_x^2)) / Σ_a w_a
     // [REASON] overlap of localized wavefunctions (anchors represent carrier support)
     // [NOTES] σ_x is physics-derived from thermal de Broglie coherence length.
     float sigma = p.spatial_sigma;
-    if (!(sigma > 0.0f)) return 0.0f;
-    float inv_4s2 = 1.0f / (4.0f * sigma * sigma);
+    if (!isfinite(sigma) || sigma<0) return qnan_f();
     float sum_w = 0.0f;
     float sum_ov = 0.0f;
     float3 domain = make_float3(p.domain_x, p.domain_y, p.domain_z);
@@ -2583,52 +2458,17 @@ __device__ __forceinline__ float spatial_overlap_from_anchors(
     for (uint a = 0; a < MODE_ANCHORS; a++) {
         uint idx = anchor_idx[base + a];
         if (idx == 0xFFFFFFFFu) continue;
+        if (idx>=p.num_osc) return qnan_f();
         float w = anchor_weight[base + a];
-        if (!(w > 0.0f)) continue;
+        if(!isfinite(w)||w<0)return qnan_f();
+        if(w==0)continue;
         float3 pos_a = make_float3(
             particle_pos[idx * 3 + 0],
             particle_pos[idx * 3 + 1],
             particle_pos[idx * 3 + 2]
         );
         float3 d = min_image_delta(pos_i - pos_a, domain);
-        float r2 = dot(d, d);
-        float ov = expf(-r2 * inv_4s2);
-        sum_w += w;
-        sum_ov += w * ov;
-    }
-    if (!(sum_w > 0.0f)) return 0.0f;
-    return sum_ov / sum_w;
-}
-
-__device__ __forceinline__ float spatial_overlap_from_anchors_simple(
-    float3 pos_i,
-    const float* particle_pos,          // N*3
-    const uint* anchor_idx,             // maxM * MODE_ANCHORS
-    const float* anchor_weight,         // maxM * MODE_ANCHORS
-    uint mode_k,
-    float3 domain,
-    float spatial_sigma
-) {
-    // Same semantics as spatial_overlap_from_anchors(), but without SpectralCarrierParams.
-    float sigma = spatial_sigma;
-    if (!(sigma > 0.0f)) return 0.0f;
-    float inv_4s2 = 1.0f / (4.0f * sigma * sigma);
-    float sum_w = 0.0f;
-    float sum_ov = 0.0f;
-    uint base = mode_k * MODE_ANCHORS;
-    for (uint a = 0; a < MODE_ANCHORS; a++) {
-        uint idx = anchor_idx[base + a];
-        if (idx == 0xFFFFFFFFu) continue;
-        float w = anchor_weight[base + a];
-        if (!(w > 0.0f)) continue;
-        float3 pos_a = make_float3(
-            particle_pos[idx * 3 + 0],
-            particle_pos[idx * 3 + 1],
-            particle_pos[idx * 3 + 2]
-        );
-        float3 d = min_image_delta(pos_i - pos_a, domain);
-        float r2 = dot(d, d);
-        float ov = expf(-r2 * inv_4s2);
+        float ov=mc_periodic_gaussian(d.x,domain.x,sigma)*mc_periodic_gaussian(d.y,domain.y,sigma)*mc_periodic_gaussian(d.z,domain.z,sigma);
         sum_w += w;
         sum_ov += w * ov;
     }
@@ -2644,14 +2484,12 @@ __device__ __forceinline__ float spatial_overlap_from_anchors_simple(
 // 1. Each threadgroup maintains local carrier accumulators in shared memory
 // 2. Threads accumulate to threadgroup memory (fast local atomics)
 // 3. After barrier, one flush to global per carrier per threadgroup //
-// Memory layout: max_carriers * 6 floats + 2 uints per threadgroup // For 64 carriers: 64 * 8 * 4 = 2KB threadgroup memory (well within limits)
+// Memory layout: min(max_carriers,256) * 6 float atomics per threadgroup // For 64 carriers: 64 * 6 * 4 = 1536 bytes of threadgroup memory
 
 constexpr uint kMaxCarriersForTG = 256u;  // Max carriers for threadgroup reduction
 
 
-// Threadgroup-local accumulator using unsigned for floats (stored as bit patterns)
-// Metal's float in threadgroup memory has inconsistent support across toolchains.
-// We use unsigned and bitcast floats via __float_as_uint/__uint_as_float for portability.
+// Threadgroup-local records hold six native floating-point accumulators.
 
 
 __global__ void coherence_accumulate_forces(
@@ -2675,11 +2513,11 @@ __global__ void coherence_accumulate_forces(
     const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
     const uint tid = threadIdx.x;
     const uint tg_size = blockDim.x;
-    extern __shared__ unsigned char dynamic_shared[];
-    TGCarrierAccum* tg_accums = reinterpret_cast<TGCarrierAccum*>(dynamic_shared);
+    extern __shared__ TGCarrierAccum tg_accums[];
 
     uint num_carriers = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
-    uint capacity = min(p.max_carriers, kMaxCarriersForTG);
+    uint capacity = p.max_carriers;
+    bool local_accum = num_carriers <= kMaxCarriersForTG;
     if (num_carriers > capacity) {
         // Fail loudly rather than silently clamping counts (would mask host/kernel mismatch).
         if (gid == 0u && capacity > 0u) {
@@ -2694,56 +2532,33 @@ __global__ void coherence_accumulate_forces(
         return;
     }
 
-    // Phase 1: Initialize threadgroup accumulators (store 0.0f as uint bits)
-    uint zero_bits = __float_as_uint(0.0f);
-    for (uint k = tid; k < num_carriers; k += tg_size) {
-        atomicExch(&tg_accums[k].force_r, zero_bits);
-        atomicExch(&tg_accums[k].force_i, zero_bits);
-        atomicExch(&tg_accums[k].w_sum, zero_bits);
-        atomicExch(&tg_accums[k].w_omega_sum, zero_bits);
-        atomicExch(&tg_accums[k].w_omega2_sum, zero_bits);
-        atomicExch(&tg_accums[k].w_amp_sum, zero_bits);
-        atomicExch(&tg_accums[k].offender_score, 0u);
-        atomicExch(&tg_accums[k].offender_idx, 0xFFFFFFFFu);
+    // Phase 1: Initialize native threadgroup float accumulators
+    float zero_value = 0.0f;
+    for (uint k = tid; local_accum && k < num_carriers; k += tg_size) {
+        atomicExch(&tg_accums[k].force_r, zero_value);
+        atomicExch(&tg_accums[k].force_i, zero_value);
+        atomicExch(&tg_accums[k].w_sum, zero_value);
+        atomicExch(&tg_accums[k].w_omega_sum, zero_value);
+        atomicExch(&tg_accums[k].w_omega2_sum, zero_value);
+        atomicExch(&tg_accums[k].w_amp_sum, zero_value);
     }
     __syncthreads();
 
     // Phase 2: Accumulate to threadgroup memory
-    if (gid < p.num_osc && num_carriers > 0u && num_bins > 0u) {
+    if (gid < p.num_osc && num_carriers > 0u) {
         float omega_i = osc_omega[gid];
         float amp_i = osc_amp[gid];
         float phi_i = osc_phase[gid];
 
-        // -----------------------------------------------------------------
-        // Homeostasis: heat → work budget for coupling to Ψ(ω)
-        // -----------------------------------------------------------------
-        // Heat Q is the entropic energy store. Coupling to the coherence field is
-        // "work" that consumes Q. If the particle can't afford the work, coupling
-        // browns out proportionally (coupling_factor ∈ [0,1]).
-        float Q = particle_heat[gid];
-        // [FIX] work must scale with energy, not amplitude:
-        // - In the host, extensive quantities (heat, oscillator energy) are normalized ~1/N.
-        // - amp_i = sqrtf(E_i) would make work_required scale like sqrtf(1/N), while Q scales 1/N,
-        //   so large-N runs would always brown out and Ψ(ω) would stay dark.
-        // [FORMULA] W_req = metabolic_rate * E_i * dt  with E_i = amp_i^2
-        float E_i = amp_i * amp_i;
-        float work_required = p.metabolic_rate * E_i * p.dt;
-        float coupling_factor = 1.0f;
-        float work_done = 0.0f;
-        if (work_required > 1e-8f) {
-            if (Q >= work_required) {
-                work_done = work_required;
-                coupling_factor = 1.0f;
-            } else {
-                work_done = Q;
-                coupling_factor = Q / work_required;
-            }
-        }
-        // Pay for work (cooling term).
-        particle_heat[gid] = Q - work_done;
-        // If coupling_factor is the fraction of required energy paid, amplitude should
-        // scale as sqrtf(f) so that field energy ∝ |Ψ|^2 scales linearly with paid work.
-        float eff_amp = amp_i * sqrtf(max(0.0f, coupling_factor));
+        // Explicit open-system coupling heat export. This is not asserted to
+        // equal the independently measured Hamiltonian work of the field drive.
+        MFCouplingBudget budget=mc_coupling_budget(particle_heat[gid],amp_i,p.metabolic_rate,p.dt);
+        if(budget.status || !isfinite(phi_i) || !isfinite(omega_i) ||
+           !isfinite(particle_pos[3*gid]) || !isfinite(particle_pos[3*gid+1]) || !isfinite(particle_pos[3*gid+2])) {
+            particle_heat[gid]=qnan_f();
+        } else {
+        particle_heat[gid]=budget.heat;
+        float eff_amp=budget.effective_amp;
         float3 pos_i = make_float3(
             particle_pos[gid * 3 + 0],
             particle_pos[gid * 3 + 1],
@@ -2753,61 +2568,59 @@ __global__ void coherence_accumulate_forces(
         float zr = eff_amp * cosf(phi_i);
         float zi = eff_amp * sinf(phi_i);
 
-        // [CHOICE] bin neighborhood radius
-        // [FORMULA] radius = 2 bins guarantees covering |Δω|<=R_max when bin_width>=R_max
-        const int rad = 2;
-        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-        int bin_i = (int)floor_value(fbin);
-        int b0 = bin_i - rad;
-        int b1 = bin_i + rad;
-
-        for (int b = b0; b <= b1; b++) {
-            if (b < 0 || b >= (int)num_bins) continue;
-            uint start = bin_starts[(uint)b];
-            uint end = bin_starts[(uint)b + 1u];
-            for (uint j = start; j < end; j++) {
-                uint k = carrier_binned_idx[j];
-                if (k >= num_carriers) continue;
-
+        // A Lorentzian has nonzero tails: evaluate every active mode. Sparse
+        // approximation needs an explicit error bound before reintroduction.
+        for(uint k=0;k<num_carriers;++k) {
                 float omega_k = carrier_omega[k];
                 float gate_w = carrier_gate_width[k];
                 float r = resonance_from_freq(omega_i, omega_k, gate_w);
                 float s = spatial_overlap_from_anchors(pos_i, particle_pos, carrier_anchor_idx, carrier_anchor_w, k, p);
                 float w = (r * s) * eff_amp;
-                if (w <= p.offender_weight_floor) continue;
+                // The attribution threshold must never truncate the physical sums.
+                if (w == 0.0f) continue;
 
-                // Accumulate to threadgroup memory (much faster than global atomics)
-                // Use CAS-based atomic add with uint bits for portability
-                TGCarrierAccum& tg_acc = tg_accums[k];
-                atomic_add_bits(&tg_acc.force_r, w * zr);
-                atomic_add_bits(&tg_acc.force_i, w * zi);
-                atomic_add_bits(&tg_acc.w_sum, w);
-                atomic_add_bits(&tg_acc.w_omega_sum, w * omega_i);
-                atomic_add_bits(&tg_acc.w_omega2_sum, w * omega_i * omega_i);
-                atomic_add_bits(&tg_acc.w_amp_sum, w * eff_amp);
-
-                uint score_bits = __float_as_uint(w);
-                atomicMax(&tg_acc.offender_score, score_bits);
-                if (atomic_read(&tg_acc.offender_score) == score_bits) {
-                    atomicExch(&tg_acc.offender_idx, gid);
+                if (local_accum) {
+                    TGCarrierAccum& tg_acc = tg_accums[k];
+                    atomicAdd(&tg_acc.force_r, w * zr);
+                    atomicAdd(&tg_acc.force_i, w * zi);
+                    atomicAdd(&tg_acc.w_sum, w);
+                    atomicAdd(&tg_acc.w_omega_sum, w * omega_i);
+                    atomicAdd(&tg_acc.w_omega2_sum, w * omega_i * omega_i);
+                    atomicAdd(&tg_acc.w_amp_sum, w * eff_amp);
+                } else {
+                    atomicAdd(&accums[k].force_r, w * zr);
+                    atomicAdd(&accums[k].force_i, w * zi);
+                    atomicAdd(&accums[k].w_sum, w);
+                    atomicAdd(&accums[k].w_omega_sum, w * omega_i);
+                    atomicAdd(&accums[k].w_omega2_sum, w * omega_i * omega_i);
+                    atomicAdd(&accums[k].w_amp_sum, w * eff_amp);
                 }
-            }
+
+                // Single device-space transaction; smaller particle index wins ties.
+                if (isfinite(w) && w > p.offender_weight_floor) {
+                    unsigned long long key = (static_cast<unsigned long long>(float_to_ordered_u32(w)) << 32) | static_cast<unsigned long long>(~gid);
+                    atomicMax(&accums[k].packed_offender, key);
+                }
         }
     }
+    } // valid particle budget
     __syncthreads();
 
     // Phase 3: Flush threadgroup accumulators to global (one atomic per carrier per threadgroup)
-    for (uint k = tid; k < num_carriers; k += tg_size) {
+    for (uint k = tid; local_accum && k < num_carriers; k += tg_size) {
         TGCarrierAccum& tg_acc = tg_accums[k];
         CarrierAccumulators& g_acc = accums[k];
 
-        // Load from threadgroup unsigned and bitcast to float
-        float fr = __uint_as_float(atomic_read(&tg_acc.force_r));
-        float fi = __uint_as_float(atomic_read(&tg_acc.force_i));
-        float ws = __uint_as_float(atomic_read(&tg_acc.w_sum));
-        float wos = __uint_as_float(atomic_read(&tg_acc.w_omega_sum));
-        float wo2s = __uint_as_float(atomic_read(&tg_acc.w_omega2_sum));
-        float was = __uint_as_float(atomic_read(&tg_acc.w_amp_sum));
+        // The unconditional __syncthreads() above completes every local sum.
+        // No lane writes tg_accums after that barrier; each carrier is owned by
+        // one flushing lane. Ordinary shared loads are therefore sufficient.
+        // Global sums still need atomicAdd: other blocks may flush concurrently.
+        float fr = tg_acc.force_r;
+        float fi = tg_acc.force_i;
+        float ws = tg_acc.w_sum;
+        float wos = tg_acc.w_omega_sum;
+        float wo2s = tg_acc.w_omega2_sum;
+        float was = tg_acc.w_amp_sum;
 
         // Only flush if there's something to add
         if (fr != 0.0f) atomicAdd(&g_acc.force_r, fr);
@@ -2817,15 +2630,8 @@ __global__ void coherence_accumulate_forces(
         if (wo2s != 0.0f) atomicAdd(&g_acc.w_omega2_sum, wo2s);
         if (was != 0.0f) atomicAdd(&g_acc.w_amp_sum, was);
 
-        // Offender: use max across threadgroups
-        uint tg_score = atomic_read(&tg_acc.offender_score);
-        if (tg_score > 0u) {
-            atomicMax(&g_acc.offender_score, tg_score);
-            uint tg_idx = atomic_read(&tg_acc.offender_idx);
-            if (atomic_read(&g_acc.offender_score) == tg_score) {
-                atomicExch(&g_acc.offender_idx, tg_idx);
-            }
-        }
+        // Offender keys were published atomically during accumulation.
+
     }
 }
 
@@ -2840,222 +2646,13 @@ __global__ void coherence_accumulate_forces(
 // - Kinetic/tunneling via a 1D Laplacian on the ω lattice
 // - Optional dissipation for settling
 //
-__global__ void coherence_gpe_step(
-    const float* osc_phase,
-    const float* osc_omega,
-    const float* osc_amp,
-    float* mode_real,
-    float* mode_imag,
-    const float* mode_omega,
-    const float* mode_gate_width,
-    uint* mode_anchor_idx,
-    float* mode_anchor_weight,
-    CarrierAccumulators* accums,
-    const uint* num_modes_in,
-    const float* particle_pos,
-    CoherenceModeParams  p,
-    GPEParams  gp
-) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
-    if (current > p.max_carriers) {
-        // Fail loudly rather than silently clamping (host/kernel mismatch).
-        if (gid == 0u && p.max_carriers > 0u) {
-            mode_real[0] = qnan_f();
-            mode_imag[0] = qnan_f();
-        }
-        return;
-    }
-    if (gid >= current) return;
 
-    // --- load Ψ_k ---
-    Complex psi = {mode_real[gid], mode_imag[gid]};
+// The fused radix-2/Bluestein update preserves the periodic second-difference
+// Laplacian. A single block owns each lattice; no global barrier is assumed.
 
-    // --- local potential from observations ---
-    CarrierAccumulators& acc = accums[gid];
-    float w_sum = atomic_read(&acc.w_sum);
-    float V_ext = -w_sum;
 
-    // First half of the local potential/nonlinear evolution. The kinetic
-    // propagator runs in separate Fourier kernels between this half and the
-    // matching finish kernel.
-    float hbar = gp.hbar_eff;
-    if (!(hbar > 0.0f)) {
-        mode_real[gid] = qnan_f();
-        mode_imag[gid] = qnan_f();
-        return;
-    }
-
-    float half_dt = 0.5f * gp.dt;
-
-    // half-step at k
-    {
-        float density = c_mag2(psi);
-        float H_local = V_ext + (gp.g_interaction * density) - gp.chemical_potential;
-        float theta = -(H_local * half_dt) / hbar;
-        psi = c_mul(psi, c_exp_i(theta));
-    }
-
-    mode_real[gid] = psi.r;
-    mode_imag[gid] = psi.i;
-}
-
-// The paper's split-step update applies the periodic discrete Laplacian
-// exactly in Fourier space. The spectral lattice is small, so a direct DFT
-// keeps that contract without introducing a second FFT dependency. Each
-// output owns one Fourier coefficient and therefore needs no atomics.
-__global__ void coherence_gpe_kinetic_dft(
-    const float* mode_real,
-    const float* mode_imag,
-    float* transformed_real,
-    float* transformed_imag,
-    const uint* num_modes_in,
-    uint  max_modes,
-    GPEParams  gp
-) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
-    if (current > max_modes) {
-        if (gid == 0u && max_modes > 0u) {
-            transformed_real[0] = qnan_f();
-            transformed_imag[0] = qnan_f();
-        }
-        return;
-    }
-
-    if (gid >= current || !(gp.hbar_eff > 0.0f) ||
-        !(gp.mass_eff > 0.0f) || !(gp.inv_domega2 > 0.0f)) {
-        return;
-    }
-
-    Complex coefficient = {0.0f, 0.0f};
-    float count = float(current);
-
-    for (uint mode = 0u; mode < current; mode++) {
-        uint phase_index = (gid * mode) % current;
-        float angle = -2.0f * 3.14159265358979323846f * float(phase_index) / count;
-        Complex sample = {mode_real[mode], mode_imag[mode]};
-        coefficient = c_add(coefficient, c_mul(sample, c_exp_i(angle)));
-    }
-
-    float lattice_angle = 3.14159265358979323846f * float(gid) / count;
-    float eigenvalue = -4.0f * sinf(lattice_angle) * sinf(lattice_angle) *
-        gp.inv_domega2;
-    float phase = (gp.hbar_eff / (2.0f * gp.mass_eff)) * eigenvalue * gp.dt;
-    coefficient = c_mul(coefficient, c_exp_i(phase));
-    transformed_real[gid] = coefficient.r;
-    transformed_imag[gid] = coefficient.i;
-}
-
-__global__ void coherence_gpe_kinetic_idft(
-    const float* transformed_real,
-    const float* transformed_imag,
-    float* mode_real,
-    float* mode_imag,
-    const uint* num_modes_in,
-    uint  max_modes
-) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
-    if (current > max_modes) {
-        if (gid == 0u && max_modes > 0u) {
-            mode_real[0] = qnan_f();
-            mode_imag[0] = qnan_f();
-        }
-        return;
-    }
-
-    if (gid >= current) return;
-
-    Complex sample = {0.0f, 0.0f};
-    float count = float(current);
-
-    for (uint frequency = 0u; frequency < current; frequency++) {
-        uint phase_index = (frequency * gid) % current;
-        float angle = 2.0f * 3.14159265358979323846f * float(phase_index) / count;
-        Complex coefficient = {
-            transformed_real[frequency],
-            transformed_imag[frequency],
-        };
-        sample = c_add(sample, c_mul(coefficient, c_exp_i(angle)));
-    }
-
-    sample = c_scale(sample, 1.0f / count);
-    mode_real[gid] = sample.r;
-    mode_imag[gid] = sample.i;
-}
-
-__global__ void coherence_gpe_finish(
-    float* mode_real,
-    float* mode_imag,
-    CarrierAccumulators* accums,
-    const uint* num_modes_in,
-    CoherenceModeParams  p,
-    GPEParams  gp
-) {
-    const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
-    if (current > p.max_carriers) {
-        if (gid == 0u && p.max_carriers > 0u) {
-            mode_real[0] = qnan_f();
-            mode_imag[0] = qnan_f();
-        }
-        return;
-    }
-
-    if (gid >= current) return;
-
-    float hbar = gp.hbar_eff;
-    if (!(hbar > 0.0f)) {
-        mode_real[gid] = qnan_f();
-        mode_imag[gid] = qnan_f();
-        return;
-    }
-
-    Complex psi = {mode_real[gid], mode_imag[gid]};
-    CarrierAccumulators& acc = accums[gid];
-    float w_sum = atomic_read(&acc.w_sum);
-    float V_ext = -w_sum;
-    float half_dt = 0.5f * gp.dt;
-
-    // second half-step at k (recompute density after kinetic)
-    {
-        float density = c_mag2(psi);
-        float H_local = V_ext + (gp.g_interaction * density) - gp.chemical_potential;
-        float theta = -(H_local * half_dt) / hbar;
-        psi = c_mul(psi, c_exp_i(theta));
-    }
-
-    // The coherent drive is the normalized oscillator phasor mass in this
-    // ω-bin. It is applied after the conservative split, alongside the open
-    // system's measured exponential damping.
-    float fr = atomic_read(&acc.force_r);
-    float fi = atomic_read(&acc.force_i);
-    float was = atomic_read(&acc.w_amp_sum);
-    float denom_drive = (was > p.offender_weight_floor) ? was : 0.0f;
-    Complex drive = {0.0f, 0.0f};
-
-    if (denom_drive > 0.0f && isfinite(fr) && isfinite(fi)) {
-        drive = c_scale(Complex{fr, fi}, 1.0f / denom_drive);
-    }
-
-    // Open-system terms (explicit, no hidden clamps):
-    // - linear damping (energy_decay): prevents unbounded growth under sustained drive
-    // - additive drive from oscillator superposition
-    if (gp.energy_decay > 0.0f) {
-        float damp = expf(-gp.energy_decay * gp.dt);
-        psi = c_scale(psi, damp);
-    }
-    psi = c_add(psi, c_scale(drive, gp.dt));
-
-    // --- write back Ψ_k ---
-    mode_real[gid] = psi.r;
-    mode_imag[gid] = psi.i;
-}
+#include "coherence_fft_cuda.inc"
 
 __global__ void coherence_update_oscillator_phases(
     float* particle_phase,
@@ -3073,7 +2670,8 @@ __global__ void coherence_update_oscillator_phases(
     const uint* carrier_binned_idx,
     const CoherenceBinParams* bin_p,
     uint  num_bins,
-    const float* particle_pos
+    const float* particle_pos,
+    float* phase_ledger
 ) {
     const uint gid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -3081,6 +2679,7 @@ __global__ void coherence_update_oscillator_phases(
     uint num_carriers = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
     if (num_carriers > p.max_carriers) {
         particle_phase[gid] = qnan_f();
+        for(uint j=0;j<6u;++j)phase_ledger[6u*gid+j]=qnan_f();
         return;
     }
 
@@ -3093,23 +2692,15 @@ __global__ void coherence_update_oscillator_phases(
         particle_pos[gid * 3 + 2]
     );
 
+    if(!isfinite(phi)||!isfinite(omega_i)||!isfinite(amp_i)||amp_i<0.0f||
+       !isfinite(pos_i.x)||!isfinite(pos_i.y)||!isfinite(pos_i.z)){
+        particle_phase[gid]=qnan_f();for(uint j=0;j<6u;++j)phase_ledger[6u*gid+j]=qnan_f();return;
+    }
+
     // Torque from resonance potential:
     //   θ̇_i += Σ_k T_ik (A_i R_k) sinf(ψ_k - θ_i)
-    float torque = 0.0f;
-    const int rad = 2;
-    if (num_carriers > 0u && num_bins > 0u) {
-        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-        int bin_i = (int)floor_value(fbin);
-        int b0 = bin_i - rad;
-        int b1 = bin_i + rad;
-        for (int b = b0; b <= b1; b++) {
-            if (b < 0 || b >= (int)num_bins) continue;
-            uint start = bin_starts[(uint)b];
-            uint end = bin_starts[(uint)b + 1u];
-            for (uint jj = start; jj < end; jj++) {
-                uint k = carrier_binned_idx[jj];
-                if (k >= num_carriers) continue;
-
+    float field_real=0.0f,field_imag=0.0f;
+    for(uint k=0;k<num_carriers;++k) {
                 float omega_k = mode_omega[k];
                 float gate_w = mode_gate_width[k];
                 float r = resonance_from_freq(omega_i, omega_k, gate_w);
@@ -3117,19 +2708,13 @@ __global__ void coherence_update_oscillator_phases(
                 float t = r * s;
                 float cr = mode_real[k];
                 float ci = mode_imag[k];
-                float psi = atan2f(ci, cr);
-                float R = sqrtf(cr * cr + ci * ci);
-                torque += t * (amp_i * R) * sinf(psi - phi);
-            }
-        }
+                field_real+=t*amp_i*cr;field_imag+=t*amp_i*ci;
     }
 
-    float dphi = omega_i + p.coupling_scale * torque;
-    phi += dphi * p.dt;
-
-    // Wrap phase to [0, 2π)
-    phi = phi - 2.0f * 3.14159265358979323846f * floor_value(phi / (2.0f * 3.14159265358979323846f));
-    particle_phase[gid] = phi;
+    MFPhaseFlow flow=mc_phase_flow(phi,omega_i,p.coupling_scale*field_real,p.coupling_scale*field_imag,p.dt);
+    particle_phase[gid]=flow.status?qnan_f():flow.phase;
+    float values[6]={flow.u0,flow.u1,flow.u2,flow.u3,flow.rate,flow.phase};
+    for(uint j=0;j<6;++j)phase_ledger[6*gid+j]=flow.status?qnan_f():values[j];
 }
 
 // =============================================================================
@@ -3274,3 +2859,8 @@ __global__ void initialize_particle_properties(
 }
 
 } // namespace sensorium::kernels
+
+// Physics ABI v2 implementations.
+#include "physics_v2_cuda.inc"
+
+#include "coupled_cuda.inc"
