@@ -233,4 +233,3 @@ func TestEvaluateUncertaintyOnSparseEvidence(t *testing.T) {
 		t.Fatalf("expected mature confidence to be substantial on N=20, got %v", matureReading.Confidence)
 	}
 }
-

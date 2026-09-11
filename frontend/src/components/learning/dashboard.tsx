@@ -75,7 +75,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 ];
 
 export const LearningDashboard = () => {
-	const [symbol, setSymbol] = useState("");
+	const [symbol] = useState("");
 	const [tab, setTab] = useState<Tab>("recognition");
 	const { view, events, error } = useLearning(symbol);
 

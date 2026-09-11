@@ -246,7 +246,7 @@ func (op *Ring[T]) NextOffset(
 
 		for op.played < childLen {
 			value, ok := op.child.Value.(T)
-			op.child, op.played = op.child.Next(), op.played + 1
+			op.child, op.played = op.child.Next(), op.played+1
 
 			if !ok {
 				return
@@ -259,4 +259,21 @@ func (op *Ring[T]) NextOffset(
 
 		op.parent = op.parent.Next()
 	}
+}
+
+/*
+CurrentValue returns the value at the current parent position, if present.
+*/
+func (op *Ring[T]) CurrentValue() (T, bool) {
+	var zero T
+
+	if op.parent == nil {
+		return zero, false
+	}
+
+	if val, ok := op.parent.Value.(T); ok {
+		return val, true
+	}
+
+	return zero, false
 }

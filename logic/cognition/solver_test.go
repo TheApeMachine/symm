@@ -140,4 +140,3 @@ func TestSolverREMConsolidationAndCategoryCoverage(t *testing.T) {
 		})
 	})
 }
-

@@ -76,6 +76,16 @@ func (tape *Tape) MeasurementsFrom(
 }
 
 /*
+ReplayFragmentsFrom derives confirmed-move replay fragments with objective
+boundary metadata (anchor index B and extremum index) preserved for replay.
+*/
+func (tape *Tape) ReplayFragmentsFrom(
+	observations []Observation,
+) []types.ReplayFragment {
+	return tape.fragments(observations, false)
+}
+
+/*
 MeasurementsLive derives the same tape but admits the run's final, not yet
 retraced excursion. The hindsight page shows the live run's developing move
 immediately; the learning loader does the same so the grid and learner lanes
@@ -87,9 +97,33 @@ func (tape *Tape) MeasurementsLive(
 	return tape.measurements(observations, true)
 }
 
+/*
+ReplayFragmentsLive derives developing replay fragments for live runs.
+*/
+func (tape *Tape) ReplayFragmentsLive(
+	observations []Observation,
+) []types.ReplayFragment {
+	return tape.fragments(observations, true)
+}
+
 func (tape *Tape) measurements(
 	observations []Observation, live bool,
 ) [][][]*data.Measurement[float64] {
+	fragments := tape.fragments(observations, live)
+	legs := make([][][]*data.Measurement[float64], 0, len(fragments))
+
+	for _, fragment := range fragments {
+		if len(fragment.Frames) > 0 {
+			legs = append(legs, fragment.Frames)
+		}
+	}
+
+	return legs
+}
+
+func (tape *Tape) fragments(
+	observations []Observation, live bool,
+) []types.ReplayFragment {
 	if tape.catalog == nil || tape.selector != Excursions {
 		return nil
 	}
@@ -106,11 +140,11 @@ func (tape *Tape) measurements(
 
 		return nil
 	}
-	legs := make([][][]*data.Measurement[float64], 0, len(excursions))
+	fragments := make([]types.ReplayFragment, 0, len(excursions))
 
 	for _, window := range excursions {
-		if leg := tape.frames(window, decoded); len(leg) > 0 {
-			legs = append(legs, leg)
+		if fragment := tape.fragment(window, decoded); len(fragment.Frames) > 0 {
+			fragments = append(fragments, fragment)
 		}
 
 		if tape.err != nil {
@@ -118,11 +152,12 @@ func (tape *Tape) measurements(
 		}
 	}
 
-	return legs
+	return fragments
 }
 
 /* excursionWindow is one move's captures plus the equal-length precursor and aftermath. */
 type excursionWindow struct {
+	symbol    string
 	captures  []EnvelopeRef
 	anchor    EnvelopeRef
 	extremum  EnvelopeRef
@@ -181,6 +216,7 @@ func (tape *Tape) window(
 	through := EnvelopeRef{Origin: extremum.Capture, Ordinal: extremum.Ordinal}
 
 	return excursionWindow{
+		symbol:    symbol,
 		captures:  index.CapturesAround(symbol, from, through),
 		anchor:    from,
 		extremum:  through,
@@ -292,17 +328,20 @@ func missingIdentities(
 }
 
 /*
-frames is the readings held across one excursion, in capture order.
+fragment is the readings held across one excursion with factual boundary metadata.
 
 An identity the record stored no measurements for contributes no frame.
 Frames are produced without semantic action labels: what the learner
 should do is the learner's decision, not something the record pre-writes.
+The anchor and extremum indices are factual replay boundaries.
 */
-func (tape *Tape) frames(
+func (tape *Tape) fragment(
 	window excursionWindow,
 	decoded map[tables.EnvelopeRefRow][]*data.Measurement[float64],
-) [][]*data.Measurement[float64] {
+) types.ReplayFragment {
 	held := make([][]*data.Measurement[float64], 0, len(window.captures))
+	anchorIdx := -1
+	extremumIdx := -1
 
 	for _, candidate := range window.captures {
 		measurements, stored := decoded[envelopeRow(candidate)]
@@ -311,10 +350,23 @@ func (tape *Tape) frames(
 			continue
 		}
 
+		if candidate == window.anchor && anchorIdx < 0 {
+			anchorIdx = len(held)
+		}
+
+		if candidate == window.extremum && extremumIdx < 0 {
+			extremumIdx = len(held)
+		}
+
 		held = append(held, measurements)
 	}
 
-	return held
+	return types.ReplayFragment{
+		Frames:        held,
+		Symbol:        window.symbol,
+		AnchorIndex:   anchorIdx,
+		ExtremumIndex: extremumIdx,
+	}
 }
 
 /* Error exposes what the record refused, if anything. */

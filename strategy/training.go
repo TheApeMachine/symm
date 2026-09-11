@@ -30,7 +30,7 @@ block one of them. The queue is the same shape capture already uses: enqueue
 never waits, dequeue is empty or a fragment.
 */
 type Tape struct {
-	queue        *lf.Queue[[][]*data.Measurement[float64]]
+	queue        *lf.Queue[types.ReplayFragment]
 	done         atomic.Bool
 	runs         atomic.Uint64
 	observations atomic.Uint64
@@ -38,18 +38,46 @@ type Tape struct {
 }
 
 func NewTape() *Tape {
-	return &Tape{queue: lf.NewQueue[[][]*data.Measurement[float64]]()}
+	return &Tape{queue: lf.NewQueue[types.ReplayFragment]()}
 }
 
-func (tape *Tape) Publish(leg [][]*data.Measurement[float64]) {
-	tape.queue.Enqueue(leg)
+func (tape *Tape) Publish(leg any) {
+	switch v := leg.(type) {
+	case types.ReplayFragment:
+		tape.queue.Enqueue(v)
+	case [][]*data.Measurement[float64]:
+		symbol := ""
+
+		for _, frame := range v {
+			for _, measurement := range frame {
+				if measurement != nil && measurement.Label != "" {
+					symbol = measurement.Label
+					break
+				}
+			}
+
+			if symbol != "" {
+				break
+			}
+		}
+
+		tape.queue.Enqueue(types.ReplayFragment{
+			Frames:      v,
+			Symbol:      symbol,
+			AnchorIndex: max(1, len(v)/2),
+		})
+	}
+}
+
+func (tape *Tape) PublishFragment(fragment types.ReplayFragment) {
+	tape.queue.Enqueue(fragment)
 }
 
 func (tape *Tape) Close() {
 	tape.done.Store(true)
 }
 
-func (tape *Tape) take() ([][]*data.Measurement[float64], bool) {
+func (tape *Tape) take() (types.ReplayFragment, bool) {
 	return tape.queue.Dequeue()
 }
 
@@ -96,7 +124,7 @@ type Training struct {
 	agent  *associative.Agent
 	agents []*Agent
 	main   *MainAgent
-	legs   [][][]*data.Measurement[float64]
+	legs   []types.ReplayFragment
 	seen   atomic.Uint64
 }
 
@@ -108,7 +136,7 @@ type replay struct {
 	cohort       []*Agent
 	mainAgent    *MainAgent
 	fragments    int
-	tape         [][][]*data.Measurement[float64]
+	tape         []types.ReplayFragment
 	loading      bool
 	runs         uint64
 	observations uint64
@@ -159,7 +187,19 @@ func NewTraining(
 		agents[idx] = NewAgent(idx, isLive, sharedEngine, 64, agentRNG)
 
 		if prc != nil {
-			fee := prc.FeeIfAvailable("")
+			agents[idx].SetPrice(prc)
+
+			symbol := ""
+
+			if inst != nil {
+				symbols := inst.Symbols()
+
+				if len(symbols) > 0 {
+					symbol = symbols[0]
+				}
+			}
+
+			fee := prc.FeeIfAvailable(symbol)
 
 			if fee != nil && fee.Fee != nil {
 				rate := fee.Fee.Float64()
@@ -270,7 +310,7 @@ func (training *Training) mount() {
 				randSlot = rand.Intn(worker.ring.Len())
 			}
 
-			worker.IngestFragment(fragment, randSlot)
+			worker.IngestReplay(fragment, randSlot)
 
 			if worker.Space().UpdatedLabel == "" {
 				if _, err := worker.RehearseChild(); err != nil {
@@ -310,7 +350,6 @@ func (training *Training) rehearseCycle() {
 		}
 	}
 }
-
 
 func (training *Training) snapshot() *replay {
 	memories := make([]*store.Retained[*iradix.Tree[[]byte]], len(training.agents))

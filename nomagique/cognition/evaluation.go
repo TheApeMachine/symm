@@ -6,6 +6,14 @@ type LookaheadPath struct {
 	Score    float64
 }
 
+// ClassCandidate carries evidence recalled for one specific action or category class.
+type ClassCandidate struct {
+	Name        string
+	Probability float64
+	Support     uint64
+	Order       int
+}
+
 /*
 Evaluation is the full information-theoretic readout of an evaluated context.
 */
@@ -26,6 +34,7 @@ type Evaluation struct {
 	RunnerUp    string
 	Confidence  float64
 	Contrast    float64 // Difference in bits between winner and runner-up
+	Candidates  []ClassCandidate
 
 	// Information Content & Uncertainty
 	Surprisal float64 // -log2 P of the context transition

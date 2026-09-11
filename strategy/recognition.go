@@ -145,12 +145,13 @@ func (held *replay) rehearsal(
 	var profitable, declining, quiet uint64
 
 	for _, leg := range held.tape {
-		if len(leg) < 2 {
+		if len(leg.Frames) < 2 {
 			quiet++
 			continue
 		}
-		valStart, okStart := frameValue(leg[0])
-		valEnd, okEnd := frameValue(leg[len(leg)-1])
+
+		valStart, okStart := frameValue(leg.Frames[0])
+		valEnd, okEnd := frameValue(leg.Frames[len(leg.Frames)-1])
 
 		if !okStart || !okEnd {
 			quiet++
@@ -175,6 +176,7 @@ func (held *replay) rehearsal(
 	if observations == 0 && held.fragments > 0 {
 		observations = frames
 	}
+
 	runs := int32(held.runs)
 
 	if runs == 0 && held.fragments > 0 {
@@ -194,10 +196,17 @@ func (held *replay) rehearsal(
 		Runs:         runs,
 		Tracks:       make([]*telemetry.LearningTrackT, 0, len(learners)),
 	}
+
 	for index, learner := range learners {
 		steps, symbol, entry, exit := held.tapeSteps(index)
+		var individual *Agent
+
+		if index < len(held.cohort) {
+			individual = held.cohort[index]
+		}
+
 		rehearsal.Tracks = append(
-			rehearsal.Tracks, learnerTrack(index, learner, steps, symbol, entry, exit, frames),
+			rehearsal.Tracks, learnerTrack(index, individual, learner, steps, symbol, entry, exit, frames),
 		)
 	}
 
@@ -211,12 +220,25 @@ func (held *replay) tapeSteps(index int) (
 	if len(held.tape) == 0 {
 		return nil, "", -1, -1
 	}
+
 	leg := held.tape[index%len(held.tape)]
-	steps := make([]*telemetry.LearningStepT, 0, len(leg))
-	symbol := ""
+	steps := make([]*telemetry.LearningStepT, 0, len(leg.Frames))
+	symbol := leg.Symbol
 	entry, exit := int32(-1), int32(-1)
 
-	for _, frame := range leg {
+	if index < len(held.cohort) && held.cohort[index] != nil {
+		worker := held.cohort[index]
+
+		if worker.LastEntry() >= 0 {
+			entry = int32(worker.LastEntry())
+		}
+
+		if worker.LastExit() >= 0 {
+			exit = int32(worker.LastExit())
+		}
+	}
+
+	for _, frame := range leg.Frames {
 		value, defined := frameValue(frame)
 
 		if symbol == "" && len(frame) > 0 {
@@ -258,9 +280,10 @@ func frameValue(frame []*data.Measurement[float64]) (float64, bool) {
 	return 0, false
 }
 
-/* learnerTrack builds one lane and the arrows that learner's memory holds. */
+/* learnerTrack builds one lane and the factual causal marks recorded by the worker. */
 func learnerTrack(
 	index int,
+	individual *Agent,
 	learner *telemetry.LearningLearnerT,
 	steps []*telemetry.LearningStepT,
 	symbol string,
@@ -270,20 +293,22 @@ func learnerTrack(
 	length := int32(len(steps))
 	playhead := int32(0)
 
-	if length > 0 {
+	if individual != nil && individual.LastOffset() >= 0 {
+		playhead = int32(individual.LastOffset())
+	}
+
+	if playhead == 0 && length > 0 {
 		playhead = int32(frames % uint64(length))
 	}
-	marks := make([]*telemetry.LearningMarkT, 0, len(learner.Answers))
 
-	for mark, answer := range learner.Answers {
-		marks = append(marks, &telemetry.LearningMarkT{
-			Id:      uint64(mark),
-			Index:   momentIndex(answer.Asked, entry, exit, length),
-			Kind:    answer.Answered,
-			Value:   answer.Confidence,
-			Graded:  answer.Confidence > 0,
-			Verdict: answer.Answered,
-		})
+	var marks []*telemetry.LearningMarkT
+
+	if individual != nil && len(individual.LastMarks()) > 0 {
+		marks = individual.LastMarks()
+	}
+
+	if marks == nil {
+		marks = make([]*telemetry.LearningMarkT, 0)
 	}
 
 	return &telemetry.LearningTrackT{
@@ -298,30 +323,6 @@ func learnerTrack(
 		Exit:   exit,
 		Queued: max(length-1, 0),
 	}
-}
-
-/* momentIndex places an action answer on the lane it describes. */
-func momentIndex(action string, entry, exit, length int32) int32 {
-	if length <= 0 {
-		return 0
-	}
-
-	switch action {
-	case "enter":
-		if entry >= 0 {
-			return entry
-		}
-
-		return length / 3
-	case "exit":
-		if exit >= 0 {
-			return exit
-		}
-
-		return 2 * length / 3
-	}
-
-	return 0
 }
 
 /* status is what the learning path is waiting on, in its own words. */
@@ -685,5 +686,3 @@ func named(sequence []byte) []string {
 
 	return regions
 }
-
-

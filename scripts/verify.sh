@@ -11,7 +11,7 @@ else
 fi
 
 AVAILABLE_MODULES=()
-for mod in "$ROOT/../datura" "$ROOT/../nomagique" "$ROOT"; do
+for mod in "$ROOT/../datura" "$ROOT"; do
 	if [[ -f "$mod/go.mod" ]]; then
 		AVAILABLE_MODULES+=("$mod")
 	fi

@@ -295,8 +295,19 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 				}
 			}
 		}
-	}
 
+		eval.Candidates = make([]ClassCandidate, acc.count)
+
+		for i := 0; i < acc.count; i++ {
+			share := float64(probability.EvidenceShare(densities, i))
+			eval.Candidates[i] = ClassCandidate{
+				Name:        string(acc.names[i]),
+				Probability: share,
+				Support:     acc.counts[i],
+				Order:       acc.orders[i],
+			}
+		}
+	}
 
 	// -------------------------------------------------------------
 	// 2. Surprisal & Sequence-Break Detection

@@ -225,8 +225,9 @@ export const CohortRehearsalMonitor = ({
 		const learner = learners?.find((l) => l.id === index);
 		const lastAnswer = learner?.answers?.at(-1);
 		const lastMark = track?.marks?.at(-1);
-		const rawKind =
-			lastAnswer?.answered || lastMark?.kind || (index === 0 ? "enter" : "wait");
+		const rawKind = String(
+			lastAnswer?.answered || lastMark?.kind || (index === 0 ? "enter" : "wait"),
+		);
 		const kind = normalizeAction(rawKind);
 		const confidence =
 			lastAnswer?.confidence ?? (lastMark?.value ? Math.abs(lastMark.value) : 0.5);
@@ -264,7 +265,7 @@ export const CohortRehearsalMonitor = ({
 	return (
 		<Flex.Column className="mt-2 gap-2 rounded border border-(--line) bg-(--sunken) p-2.5">
 			<Flex.Row align="center" justify="between" className="gap-2">
-				<Flex.Row align="center" gap={1.5}>
+				<Flex.Row align="center" gap={2}>
 					<Typography.Label size="s" tone="f2" weight="normal">
 						REHEARSAL WORKERS
 					</Typography.Label>

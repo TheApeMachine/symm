@@ -103,9 +103,9 @@ func TestMainAgent(t *testing.T) {
 					So(len(mainAgent.outcomes), ShouldEqual, 1)
 					So(mainAgent.outcomes[0].ReturnBp, ShouldBeGreaterThan, 0)
 
+					// Forward-testing does not pollute shared cognition; only rehearsal workers reinforce memory
 					evaluation := engine.Evaluate(entryCtx)
-					So(evaluation.WinnerClass, ShouldEqual, string(ActionEnter))
-					So(evaluation.Confidence, ShouldBeGreaterThan, 0.5)
+					So(evaluation.Support, ShouldEqual, 0)
 				})
 			})
 		})

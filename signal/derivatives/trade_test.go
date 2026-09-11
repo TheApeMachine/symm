@@ -239,7 +239,6 @@ func BenchmarkTradeStep(b *testing.B) {
 		futuresTrade("PF_XBTUSD", 105, 1, "buy", "trade", at.Add(20*time.Second)),
 	}
 	b.ReportAllocs()
-	
 
 	for index := 0; b.Loop(); index++ {
 		for _, original := range sequence {

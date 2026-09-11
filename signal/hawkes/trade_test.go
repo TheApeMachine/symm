@@ -677,7 +677,6 @@ func BenchmarkTradeStep(b *testing.B) {
 	)
 
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		measurement := entity.Step(observation)

@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"bytes"
 	"math"
 	"sync"
 	"time"
@@ -65,7 +64,6 @@ type MainAgent struct {
 
 	symbolPhase    map[string]string
 	symbolMaturity map[string]int
-	entryContexts  map[string][]byte
 
 	initial    *decimal.Decimal
 	cash       *decimal.Decimal
@@ -151,7 +149,6 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...an
 		lastPrice:      make(map[string]*decimal.Decimal),
 		symbolPhase:    make(map[string]string),
 		symbolMaturity: make(map[string]int),
-		entryContexts:  make(map[string][]byte),
 	}
 }
 
@@ -191,14 +188,15 @@ func (agent *MainAgent) ID() int {
 	return agent.id
 }
 
-func (agent *MainAgent) Status() string {
-	agent.mu.RLock()
-	defer agent.mu.RUnlock()
-
+func (agent *MainAgent) statusLocked() string {
 	samples := agent.wins + agent.losses
 
-	if agent.status == "simulated" && samples >= 20 {
-		stdErr := math.Sqrt(agent.variance / float64(samples))
+	if agent.status == "simulated" && samples > 0 {
+		stdErr := 0.0
+
+		if samples > 1 {
+			stdErr = math.Sqrt(agent.variance / float64(samples))
+		}
 
 		if agent.meanReturn+2*stdErr < 0 {
 			return "learning"
@@ -206,6 +204,13 @@ func (agent *MainAgent) Status() string {
 	}
 
 	return agent.status
+}
+
+func (agent *MainAgent) Status() string {
+	agent.mu.RLock()
+	defer agent.mu.RUnlock()
+
+	return agent.statusLocked()
 }
 
 func (agent *MainAgent) TargetAccount() string {
@@ -227,17 +232,12 @@ func (agent *MainAgent) canEnter(decision ActionDecision) bool {
 		return false
 	}
 
-	if decision.Contrast <= 0 || decision.Support <= 1 {
+	if agent.cash == nil || agent.cash.Sign() <= 0 {
 		return false
 	}
-	samples := agent.wins + agent.losses
 
-	if samples >= 20 {
-		stdErr := math.Sqrt(agent.variance / float64(samples))
-
-		if agent.meanReturn+2*stdErr < 0 {
-			return false
-		}
+	if agent.statusLocked() == "learning" {
+		return false
 	}
 
 	return true
@@ -449,63 +449,45 @@ func (agent *MainAgent) enterLong(
 	decision ActionDecision,
 	now time.Time,
 ) {
-	// Allocate available cash across max concurrent position slots
-	notional := agent.cash.Div(decimal.NewFromInt64(maxConcurrentPositions))
+	allocatedCash := agent.cash.Div(decimal.NewFromInt64(maxConcurrentPositions))
 
-	// Validate position viability against venue facts via Instrument
-	if agent.instrument != nil && agent.instrument.Has(symbol) {
-		pair := agent.instrument.Pair(symbol)
+	var quantity *decimal.Decimal
+	var notional *decimal.Decimal
+	var fee *decimal.Decimal
+	var totalCost *decimal.Decimal
 
-		// Venue status check: must be online to trade
-		if pair.Status != "" && pair.Status != "online" {
-			return
-		}
+	if agent.price != nil {
+		if affordable, err := agent.price.Affordable(symbol, allocatedCash, price); err == nil && affordable != nil && affordable.Sign() > 0 {
+			quantity = affordable
 
-		// Venue minimum order cost (CostMin)
-		if pair.CostMin != nil && pair.CostMin.Sign() > 0 && notional.Cmp(pair.CostMin) < 0 {
-			notional = pair.CostMin
-		}
-
-		// Venue minimum order quantity (QtyMin)
-		if pair.QtyMin != nil && pair.QtyMin.Sign() > 0 {
-			minQtyNotional := pair.QtyMin.Mul(price)
-
-			if notional.Cmp(minQtyNotional) < 0 {
-				notional = minQtyNotional
+			if entryCost, err := agent.price.EntryCost(symbol, quantity); err == nil && entryCost != nil && entryCost.Total != nil {
+				notional = entryCost.GrossNotional
+				fee = entryCost.EntryFee
+				totalCost = entryCost.Total
 			}
 		}
 	}
 
-	if notional.Cmp(decimal.NewFromInt64(10)) < 0 {
-		notional = decimal.NewFromInt64(10)
-	}
-	feeRate := agent.feeRate(symbol)
+	if quantity == nil || notional == nil || totalCost == nil {
+		feeRate := agent.feeRate(symbol)
 
-	if feeRate == nil {
-		return
-	}
-	fee := notional.Mul(feeRate)
-	totalCost := notional.Add(fee)
-
-	if agent.cash.Cmp(totalCost) < 0 {
-		return
-	}
-	quantity := notional.SetScale(decimal.DefaultScale).Div(price)
-
-	if agent.instrument != nil && agent.instrument.Has(symbol) {
-		pair := agent.instrument.Pair(symbol)
-
-		if pair.QtyPrecision > 0 {
-			quantity = quantity.SetScale(int64(pair.QtyPrecision))
+		if feeRate == nil {
+			feeRate = decimal.NewFromFloat64(0.001)
 		}
 
-		if pair.QtyMin != nil && quantity.Cmp(pair.QtyMin) < 0 {
+		notional = allocatedCash
+		fee = notional.Mul(feeRate)
+		totalCost = notional.Add(fee)
+
+		if agent.cash.Cmp(totalCost) < 0 {
 			return
 		}
-	}
 
-	if quantity.Sign() <= 0 {
-		return
+		quantity = notional.SetScale(decimal.DefaultScale).Div(price)
+
+		if quantity.Sign() <= 0 {
+			return
+		}
 	}
 
 	agent.cash = agent.cash.Sub(totalCost)
@@ -524,10 +506,6 @@ func (agent *MainAgent) enterLong(
 	agent.positions[symbol] = holding
 	agent.posQuantities[symbol] = quantity
 	agent.posCosts[symbol] = notional
-
-	if len(decision.Context) > 0 {
-		agent.entryContexts[symbol] = bytes.Clone(decision.Context)
-	}
 
 	if envelope != nil {
 		decisionRecord := &types.Decision{
@@ -588,6 +566,11 @@ func (agent *MainAgent) exitLong(
 	}
 	proceeds := price.Mul(qty)
 	feeRate := agent.feeRate(symbol)
+
+	if feeRate == nil {
+		feeRate = decimal.NewFromFloat64(0.001)
+	}
+
 	exitFee := proceeds.Mul(feeRate)
 	entryFee := holding.EntryFee
 
@@ -634,23 +617,6 @@ func (agent *MainAgent) exitLong(
 		ExitAt:     now,
 	}, returnBp)
 
-	// Forward-testing feedback into the cognitive attractor trie:
-	if entryContext, hasContext := agent.entryContexts[symbol]; hasContext && len(entryContext) > 0 && agent.engine != nil {
-		fee := agent.feeRate(symbol)
-		feedback := -1.0
-
-		if fee != nil {
-			roundTripBp := fee.Mul(decimal.NewFromInt64(20000)).Float64()
-
-			if returnBp > roundTripBp {
-				feedback = math.Min(1.0, (returnBp-roundTripBp)/roundTripBp)
-			}
-		}
-
-		agent.engine.Observe(entryContext, []byte(ActionEnter), feedback)
-	}
-
-	delete(agent.entryContexts, symbol)
 	delete(agent.positions, symbol)
 	delete(agent.posQuantities, symbol)
 	delete(agent.posCosts, symbol)

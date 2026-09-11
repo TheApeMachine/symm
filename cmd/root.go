@@ -795,7 +795,7 @@ func readRecord(
 		recorded := hindsight.Query(
 			hindsight.Excursions, catalog, hindsight.RunID(run.ID), policy,
 		)
-		legs := recorded.MeasurementsFrom(observations)
+		fragments := recorded.ReplayFragmentsFrom(observations)
 
 		if err := recorded.Error(); err != nil {
 			errnie.Error(err)
@@ -803,16 +803,13 @@ func readRecord(
 			continue
 		}
 
-		// Each leg is published on its own. The reading after a move's last is
-		// not its successor, so a leg is the boundary the ring carries down to
-		// the agent, and handing them over one at a time is what lets a
-		// training begin on the first move recovered.
-		for _, leg := range legs {
+		// Each fragment is published on its own carrying objective anchor boundary B.
+		for _, fragment := range fragments {
 			if ctx.Err() != nil {
 				return
 			}
 
-			tape.Publish(leg)
+			tape.PublishFragment(fragment)
 			published++
 		}
 	}

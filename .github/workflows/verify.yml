@@ -23,13 +23,6 @@ jobs:
           path: datura
           ref: v1.2.11
 
-      - name: Checkout nomagique
-        uses: actions/checkout@v4
-        with:
-          repository: theapemachine/nomagique
-          path: nomagique
-          ref: master
-
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -37,7 +30,6 @@ jobs:
           cache-dependency-path: |
             symm/go.sum
             datura/go.sum
-            nomagique/go.sum
 
       - name: Check Go Format
         working-directory: symm
@@ -58,13 +50,6 @@ jobs:
           path: datura
           ref: v1.2.11
 
-      - name: Checkout nomagique
-        uses: actions/checkout@v4
-        with:
-          repository: theapemachine/nomagique
-          path: nomagique
-          ref: master
-
       - name: Checkout errnie
         uses: actions/checkout@v4
         with:
@@ -93,7 +78,6 @@ jobs:
           cache-dependency-path: |
             symm/go.sum
             datura/go.sum
-            nomagique/go.sum
 
       - name: Run Go Unit Tests
         working-directory: symm
@@ -114,13 +98,6 @@ jobs:
           path: datura
           ref: v1.2.11
 
-      - name: Checkout nomagique
-        uses: actions/checkout@v4
-        with:
-          repository: theapemachine/nomagique
-          path: nomagique
-          ref: master
-
       - name: Checkout errnie
         uses: actions/checkout@v4
         with:
@@ -149,7 +126,6 @@ jobs:
           cache-dependency-path: |
             symm/go.sum
             datura/go.sum
-            nomagique/go.sum
 
       - name: Run Go Race Tests
         working-directory: symm
