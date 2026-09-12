@@ -8,6 +8,7 @@ import { Typography } from "#/components/ui/typography";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { sendPositionExit } from "#/providers/websocket";
+import { cn } from "@/lib/utils";
 
 const formatValue = (value: unknown, digits: number): string =>
 	typeof value === "number"
@@ -18,6 +19,9 @@ const formatValue = (value: unknown, digits: number): string =>
 			? Number(value).toFixed(digits)
 			: String(value ?? "—");
 
+const pnlTone = (value: number): "up" | "down" | "f3" =>
+	value > 0 ? "up" : value < 0 ? "down" : "f3";
+
 const positionObject = new Position();
 const holdingObject = new Holding();
 
@@ -25,6 +29,7 @@ type PositionCardData = {
 	symbol: string;
 	status: string;
 	pnl: string;
+	pnlValue: number;
 	entryPrice: string;
 	mark: string;
 	returnPct: string;
@@ -53,10 +58,19 @@ export const Positions = () => {
 				continue;
 			}
 
+			const rawPnl = currentHolding.pnl();
+			const pnlNum =
+				typeof rawPnl === "number"
+					? rawPnl
+					: typeof rawPnl === "string" && Number.isFinite(Number(rawPnl))
+						? Number(rawPnl)
+						: 0;
+
 			currentPositions.push({
 				symbol: currentSymbol,
 				status: positionStatus,
 				pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
+				pnlValue: pnlNum,
 				entryPrice: formatValue(currentHolding.entryPrice(), 6),
 				mark: formatValue(currentHolding.mark(), 6),
 				returnPct: `${formatValue(currentHolding.returnPct(), 2)}%`,
@@ -108,65 +122,87 @@ export const Positions = () => {
 
 	return (
 		<List className="min-h-0 flex-1 p-1.5">
-			{positions.map((pos) => (
-				// biome-ignore lint/a11y/useSemanticElements: a <button> can't legally nest the EXIT <button>.
-				<div
-					role="button"
-					tabIndex={0}
-					data-pos={pos.symbol}
-					data-position-card
-					key={pos.symbol}
-					onClick={() => terminalStore.actions.openThesis(pos.symbol)}
-					onKeyDown={(event) => {
-						if (event.key === "Enter" || event.key === " ") {
-							event.preventDefault();
-							terminalStore.actions.openThesis(pos.symbol);
-						}
-					}}
-					title="Inspect this lot"
-					className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
-				>
-					<Flex.Column className="gap-0">
-						<Flex.Row className="items-center justify-between gap-2">
-							<Flex.Row className="min-w-0 items-center gap-1.5">
-								<Typography.Span className="font-semibold text-[11.5px] text-(--f1)">
-									{pos.symbol}
-								</Typography.Span>
-								<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
-									{pos.status}
-								</Typography.Span>
-							</Flex.Row>
-							<Flex.Row className="items-center gap-1.5">
-								<Typography.Span className="text-right font-semibold text-[11.5px] text-(--pnl)">
-									{pos.pnl}
-								</Typography.Span>
-								<button
-									type="button"
-									disabled={pendingExits.has(pos.symbol)}
-									onClick={(event) => {
-										event.preventDefault();
-										event.stopPropagation();
-										requestExit(pos.symbol);
-									}}
-									title="Exit this position immediately"
-									className="rounded-xs border border-(--down) px-1.5 py-px text-[8px] font-semibold text-(--down) uppercase tracking-wide hover:bg-[color-mix(in_srgb,var(--down)_12%,transparent)] disabled:cursor-wait disabled:opacity-60"
-								>
-									{pendingExits.has(pos.symbol) ? "EXITING" : "EXIT"}
-								</button>
-							</Flex.Row>
-						</Flex.Row>
-
-						<Flex.Row className="mt-0.75 items-center justify-between gap-3 text-[9.5px] text-(--f4)">
-							<Typography.Span>
-								entry {pos.entryPrice} / mark {pos.mark}
-							</Typography.Span>
-							<Typography.Span className="text-(--pnl)">
-								{pos.returnPct}
-							</Typography.Span>
-						</Flex.Row>
-					</Flex.Column>
+			{positions.length === 0 ? (
+				<div className="px-3 py-6 text-center font-mono text-[11px] text-(--f4)">
+					no open positions
 				</div>
-			))}
+			) : (
+				positions.map((pos) => {
+					const tone = pnlTone(pos.pnlValue);
+					return (
+						// biome-ignore lint/a11y/useSemanticElements: a <button> can't legally nest the EXIT <button>.
+						<div
+							role="button"
+							tabIndex={0}
+							data-pos={pos.symbol}
+							data-position-card
+							key={pos.symbol}
+							onClick={() => terminalStore.actions.openThesis(pos.symbol)}
+							onKeyDown={(event) => {
+								if (event.key === "Enter" || event.key === " ") {
+									event.preventDefault();
+									terminalStore.actions.openThesis(pos.symbol);
+								}
+							}}
+							title="Inspect this lot"
+							className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
+						>
+							<Flex.Column className="gap-0">
+								<Flex.Row className="items-center justify-between gap-2">
+									<Flex.Row className="min-w-0 items-center gap-1.5">
+										<Typography.Span className="font-semibold text-[11.5px] text-(--f1)">
+											{pos.symbol}
+										</Typography.Span>
+										<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
+											{pos.status}
+										</Typography.Span>
+									</Flex.Row>
+									<Flex.Row className="items-center gap-1.5">
+										<Typography.Span
+											className={cn(
+												"text-right font-semibold text-[11.5px]",
+												tone === "up" && "text-(--up)",
+												tone === "down" && "text-(--down)",
+												tone === "f3" && "text-(--f2)",
+											)}
+										>
+											{pos.pnl}
+										</Typography.Span>
+										<button
+											type="button"
+											disabled={pendingExits.has(pos.symbol)}
+											onClick={(event) => {
+												event.preventDefault();
+												event.stopPropagation();
+												requestExit(pos.symbol);
+											}}
+											title="Exit this position immediately"
+											className="rounded-xs border border-(--down) px-1.5 py-px text-[8px] font-semibold text-(--down) uppercase tracking-wide hover:bg-[color-mix(in_srgb,var(--down)_12%,transparent)] disabled:cursor-wait disabled:opacity-60"
+										>
+											{pendingExits.has(pos.symbol) ? "EXITING" : "EXIT"}
+										</button>
+									</Flex.Row>
+								</Flex.Row>
+
+								<Flex.Row className="mt-0.75 items-center justify-between gap-3 text-[9.5px] text-(--f4)">
+									<Typography.Span>
+										entry {pos.entryPrice} / mark {pos.mark}
+									</Typography.Span>
+									<Typography.Span
+										className={cn(
+											tone === "up" && "text-(--up)",
+											tone === "down" && "text-(--down)",
+											tone === "f3" && "text-(--f2)",
+										)}
+									>
+										{pos.returnPct}
+									</Typography.Span>
+								</Flex.Row>
+							</Flex.Column>
+						</div>
+					);
+				})
+			)}
 		</List>
 	);
 };

@@ -175,9 +175,11 @@ export const JournalSurface = () => {
 		};
 
 		loadHistory();
+		const interval = setInterval(loadHistory, 10_000);
 
 		return () => {
 			cancelled = true;
+			clearInterval(interval);
 		};
 	}, []);
 

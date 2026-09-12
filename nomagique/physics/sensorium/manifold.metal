@@ -2659,15 +2659,16 @@ inline float spatial_overlap_from_anchors(
 
 constant uint kMaxCarriersForTG = 256u;  // Max carriers for threadgroup reduction
 
-// Record is 32 bytes, 8-byte aligned; the last eight bytes are ONE atomic key.
-struct CarrierAccumulators {
+// Record is 32 bytes, 8-byte aligned; the last eight bytes match uint64_t packed_offender.
+struct alignas(8) CarrierAccumulators {
     atomic_float force_r;
     atomic_float force_i;
     atomic_float w_sum;
     atomic_float w_omega_sum;
     atomic_float w_omega2_sum;
     atomic_float w_amp_sum;
-    atomic_ulong packed_offender;
+    atomic_uint offender_idx_inv;
+    atomic_uint offender_score;
 };
 
 // Six native float atomics per local carrier; offender publication is a
@@ -2796,10 +2797,16 @@ kernel void coherence_accumulate_forces(
                     atomic_fetch_add_explicit(&accums[k].w_amp_sum, w * eff_amp, memory_order_relaxed);
                 }
 
-                // One atomic transaction owns score AND index. Smaller index wins ties.
+                // Smaller index wins ties via CAS on score.
                 if (isfinite(w) && w > p.offender_weight_floor) {
-                    ulong key = (ulong(float_to_ordered_u32(w)) << 32) | ulong(~gid);
-                    atomic_fetch_max_explicit(&accums[k].packed_offender, key, memory_order_relaxed);
+                    uint score_u32 = float_to_ordered_u32(w);
+                    uint prev_score = atomic_load_explicit(&accums[k].offender_score, memory_order_relaxed);
+                    while (score_u32 > prev_score) {
+                        if (atomic_compare_exchange_weak_explicit(&accums[k].offender_score, &prev_score, score_u32, memory_order_relaxed, memory_order_relaxed)) {
+                            atomic_store_explicit(&accums[k].offender_idx_inv, ~gid, memory_order_relaxed);
+                            break;
+                        }
+                    }
                 }
         }
     }

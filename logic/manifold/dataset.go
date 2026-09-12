@@ -187,6 +187,10 @@ func (dataset *Dataset) step(
 				energy := orderEnergy(quantityDeviation, excitation)
 
 				state.N = 1
+				state.MaterialEnergy = nil
+				state.CoherencePosition = nil
+				clear(state.PilotVel)
+				clear(state.PhasePotential)
 				state.Bytes[0] = int64(token)
 				state.Seqs[0] = int64(rank)
 				state.TokenIDs[0] = int64(token)
@@ -201,11 +205,9 @@ func (dataset *Dataset) step(
 				// made the field a map of order COUNT and steered every order
 				// identically regardless of size.
 				state.Mass[0] = energy
-				// Initialize with cold but non-zero heat (1e-4 of oscillator energy).
-				// heat=1.0 caused "Gas state invalid" and "Infinite Velocity" shocks,
-				// while exact zero leaves the gas cell at absolute zero where numerical
-				// flux advection produces negative internal energy.
-				state.Heat[0] = energy * 1e-4
+				// Equipartition thermal energy initializes the fluid parcel in thermodynamic
+				// balance with its oscillator energy, avoiding vacuum shock or immediate depletion.
+				state.Heat[0] = 0.5 * energy
 				state.Amp[0] = float32(math.Sqrt(float64(energy)))
 				state.Pos[0] = float32(positionX)
 				state.Pos[1] = float32(positionY)

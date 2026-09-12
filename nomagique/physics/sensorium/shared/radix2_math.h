@@ -76,7 +76,7 @@ MR_FN float mr_kinetic_phase(unsigned k,unsigned n,float inv_domega2,float hbar,
 }
 MR_FN float mr_nan() {
 #if defined(__METAL_VERSION__)
-    return metal::as_type<float>(0x7fc00000u);
+    return as_type<float>(0x7fc00000u);
 #elif defined(__CUDA_ARCH__)
     return __uint_as_float(0x7fc00000u);
 #else

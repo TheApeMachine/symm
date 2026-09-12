@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/workbench"
@@ -40,6 +41,7 @@ arrive over the same socket and are handled directly by the connection's
 handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
+	physics          sensorium.PhysicsMonitor
 	ctx              context.Context
 	cancel           context.CancelFunc
 	err              error
@@ -50,6 +52,7 @@ type Hub struct {
 	store            *tables.Catalog
 	warehouse        *workbench.Warehouse
 	tradeStore       TradeJournalSource
+	exitHandler      func(symbol string)
 	timelines        *timelineCache
 	fluid            *FluidRTC
 	learningInterval time.Duration
@@ -102,6 +105,8 @@ func NewHub(ctx context.Context) *Hub {
 		},
 		AllowHeaders: []string{"Content-Type"},
 	}))
+
+	hub.registerPhysics()
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -506,7 +511,7 @@ channel is ready for another frame. The manifold advance asks before it
 materializes a snapshot, so an unwatched run never pays for a field readout.
 */
 func (hub *Hub) WantsManifold() bool {
-	return hub.fluid.Wants(types.ManifoldChannel)
+	return hub.fluid.Wants(types.ManifoldChannel) || hub.physics.WantsSnapshot()
 }
 
 /*
@@ -517,6 +522,22 @@ from the ingress path.
 func (hub *Hub) PublishManifold(envelope *types.Envelope) {
 	if envelope == nil || envelope.Manifold == nil {
 		return
+	}
+
+	snapshot, err := sensorium.NewPhysicsSnapshot(
+		envelope.Manifold.Version,
+		envelope.Manifold.At,
+		envelope.Manifold.State.N,
+		envelope.Manifold.Reading,
+	)
+
+	if err == nil {
+		err = hub.physics.Observe(snapshot)
+	}
+
+	if err != nil {
+		hub.physics.Reject(err)
+		errnie.Error(errnie.Err(errnie.Internal, "hub: invalid physical health", err))
 	}
 
 	if err := hub.fluid.Publish(envelope.Manifold); err != nil {
@@ -577,6 +598,17 @@ func (hub *Hub) SetTradeStore(source TradeJournalSource) {
 }
 
 /*
+SetExitHandler attaches the handler for manual position exit commands from the UI.
+*/
+func (hub *Hub) SetExitHandler(handler func(symbol string)) {
+	if hub == nil {
+		return
+	}
+
+	hub.exitHandler = handler
+}
+
+/*
 parseUintQuery parses a uint64 query parameter, returning 0 on absence or
 malformation so a missing selector reads as "no match" rather than crashing the
 handler.
@@ -610,6 +642,9 @@ func (hub *Hub) handleCommand(payload []byte) {
 	case "focus":
 		types.SetFocus(request.Symbol)
 	case "position.exit":
+		if hub.exitHandler != nil && request.Symbol != "" {
+			hub.exitHandler(request.Symbol)
+		}
 	}
 }
 

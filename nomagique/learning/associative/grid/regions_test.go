@@ -84,6 +84,54 @@ func TestSpaceRegions(t *testing.T) {
 			_, _, err := grid.Regions("absent")
 			So(err, ShouldNotBeNil)
 		})
+
+		Convey("Community density normalization resists absorption by larger weak clusters", func() {
+			testGrid := NewSpaceWithWindow(8)
+			testMeasurement := data.NewMeasurement[float64]("", "test", "source", time.Time{}, time.Time{})
+
+			for column := range 6 {
+				testGrid.Column("source", strconv.Itoa(column))
+				testMeasurement.PutMetric(data.Metric[float64]{Label: strconv.Itoa(column), Raw: float64(column)})
+			}
+
+			err := testGrid.Step([]*data.Measurement[float64]{testMeasurement})
+			So(err, ShouldBeNil)
+			copy(testGrid.weights, []float64{1, 1, 1, 1, 1, 1})
+			copy(testGrid.qualities[0], []float64{0.5, 0.5, 0.5, 0.5, 0.5, 0.5})
+
+			testGrid.graph = make([][]affinity, 6)
+
+			for column := range testGrid.graph {
+				testGrid.graph[column] = make([]affinity, 6)
+			}
+
+			// Cluster A: nodes 0, 1, 2, 3 have weak mutual links of 0.2
+			weakReading := affinity{directional: 0.2, consistency: 0.6, magnitude: 0.2, shared: 8}
+
+			for left := 0; left < 4; left++ {
+				for right := left + 1; right < 4; right++ {
+					testGrid.graph[left][right] = weakReading
+					testGrid.graph[right][left] = weakReading
+				}
+			}
+
+			// Node 4 and 5 have a strong mutual link of 0.9
+			strongReading := affinity{directional: 0.9, consistency: 0.9, magnitude: 0.9, shared: 8}
+			testGrid.graph[4][5] = strongReading
+			testGrid.graph[5][4] = strongReading
+
+			// Node 4 also has weak links of 0.2 to all 4 nodes in Cluster A
+			for peer := 0; peer < 4; peer++ {
+				testGrid.graph[4][peer] = weakReading
+				testGrid.graph[peer][4] = weakReading
+			}
+
+			testGrid.regions.form(testGrid)
+
+			// Node 4 must stay in the same community as node 5 because mean affinity (0.9) > weak affinity (0.2)
+			So(testGrid.regions.membership[4], ShouldEqual, testGrid.regions.membership[5])
+			So(testGrid.regions.membership[4], ShouldNotEqual, testGrid.regions.membership[0])
+		})
 	})
 }
 

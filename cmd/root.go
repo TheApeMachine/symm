@@ -67,7 +67,7 @@ var (
 
 	rootCmd = &cobra.Command{
 		Use:   "symm",
-		Short: "S.Y.M.M. is not financial advice.",
+		Short: "S.Y.M.M. is not financial advice, or a toaster.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := pyroscope.Start(pyroscope.Config{
@@ -342,11 +342,15 @@ var (
 			*/
 			tape := measurements(runtimeCtx, catalog, runID)
 
+			training := strategy.NewTraining(runtimeCtx, tape, instrument, price)
+			hub.SetTradeStore(training)
+			hub.SetExitHandler(training.RequestExit)
+
 			trainer := nmruntime.NewWorkload(
 				runtimeCtx,
 				"trainer",
 				[][]nmruntime.Node[*types.Envelope]{{
-					strategy.NewTraining(runtimeCtx, tape, instrument, price),
+					training,
 				}},
 			)
 

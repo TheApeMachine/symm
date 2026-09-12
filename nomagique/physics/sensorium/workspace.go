@@ -2,6 +2,7 @@ package sensorium
 
 import (
 	"math"
+	"slices"
 )
 
 const (
@@ -141,6 +142,7 @@ type workspace struct {
 	spectralPotential, spectralMetric *Buffer
 	waveProjectionReady               bool
 	psiStartRe, psiStartIm            *Buffer
+	contentIDs                        []int64
 
 	coherencePosition, reciprocalForce, reciprocalAmplitude, reciprocalStatus *Buffer
 	reciprocalOldRe, reciprocalOldIm, reciprocalPotential                     *Buffer
@@ -355,9 +357,16 @@ func (fluid *workspace) loadState(state *State) {
 	if state == nil || state.N == 0 {
 		fluid.allocateParticles(0)
 		fluid.particles = 0
+		fluid.contentIDs = nil
+		fluid.waveProjectionReady = false
 		return
 	}
 
+	if fluid.particles != state.N || !slices.Equal(fluid.contentIDs, state.ContentIDs) {
+		fluid.waveProjectionReady = false
+	}
+
+	fluid.contentIDs = append(fluid.contentIDs[:0], state.ContentIDs...)
 	fluid.allocateParticles(state.N)
 	fluid.particles = state.N
 	copy(fluid.pos.Float32Slice(), state.Pos)

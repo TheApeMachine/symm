@@ -136,11 +136,11 @@ MF_FN MFPhaseFlow mc_phase_flow(float theta,float omega,float real,float imag,fl
     float amplitude=scale>0 ? scale*MF_SQRT((real/scale)*(real/scale)+(imag/scale)*(imag/scale)):0;out.rate=mf_abs(omega)+amplitude;
     if(!MF_FINITE(out.rate)){out.status=MF_PHYSICS_BAD_STATE;return out;}
     out.u0=mc_phase_potential(theta,real,imag);
-    float half=mc_wrap(theta+.5f*dt*omega,6.2831853071795864769f);
-    out.u1=mc_phase_potential(half,real,imag);
-    float relaxed=half;
+    float mid_theta=mc_wrap(theta+.5f*dt*omega,6.2831853071795864769f);
+    out.u1=mc_phase_potential(mid_theta,real,imag);
+    float relaxed=mid_theta;
     if(amplitude>0){
-        float target=MC_ATAN2(imag,real),delta=MC_ATAN2(MF_SIN(half-target),MF_COS(half-target));
+        float target=MC_ATAN2(imag,real),delta=MC_ATAN2(MF_SIN(mid_theta-target),MF_COS(mid_theta-target));
         relaxed=target+2*MC_ATAN2(MR_EXP(-amplitude*dt)*MF_SIN(.5f*delta),MF_COS(.5f*delta));
     }
     out.u2=mc_phase_potential(relaxed,real,imag);

@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/lf"
 )
@@ -164,6 +165,8 @@ func NewTraining(
 		if prc != nil {
 			agents[idx].SetPrice(prc)
 		}
+
+		agents[idx].SetFeeRate(0.008)
 	}
 
 	training := &Training{
@@ -232,6 +235,12 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 			}
 		}
 	}
+
+	if training.main != nil && envelope.Positions == nil {
+		envelope.Positions = training.main.exportPositions()
+		envelope.Equity = training.main.exportEquity()
+	}
+
 	training.seen.Add(1)
 
 	return envelope
@@ -375,4 +384,27 @@ func (training *Training) Error() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+/*
+RecentTrades supplies completed trades in reverse chronological order for the
+Trade Journal surface and GET /trades endpoint.
+*/
+func (training *Training) RecentTrades(limit int) ([]*telemetry.PositionT, error) {
+	if training == nil || training.main == nil {
+		return []*telemetry.PositionT{}, nil
+	}
+
+	return training.main.RecentTrades(limit)
+}
+
+/*
+RequestExit forwards a manual position exit request from the UI to the main agent.
+*/
+func (training *Training) RequestExit(symbol string) {
+	if training == nil || training.main == nil {
+		return
+	}
+
+	training.main.RequestExit(symbol)
 }

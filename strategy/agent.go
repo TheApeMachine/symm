@@ -58,12 +58,8 @@ func NewAgent(
 	learner := associative.NewAgent(engine)
 	var randomSource *rand.Rand
 
-	if len(rng) > 0 && rng[0] != nil {
+	if len(rng) > 0 {
 		randomSource = rng[0]
-	}
-
-	if randomSource == nil {
-		randomSource = rand.New(rand.NewSource(time.Now().UnixNano() + int64(id)))
 	}
 
 	return &Agent{
@@ -310,16 +306,25 @@ func selectLegalAction(
 	}
 
 	// Case 2: Some actions have been observed, but an alternative legal action remains unseen.
-	// Only rehearsal exploration (!isLive) explores the unseen alternative when observed action has low evidence share.
-	if !isLive && supportedCount < len(legal) {
+	// Rehearsal exploration (!isLive and rng != nil) actively explores unobserved alternatives.
+	if !isLive && rng != nil && supportedCount < len(legal) {
+		chosenIndex := 0
+		unseenCount := 0
+		var candidates [2]Action
+
 		for _, stat := range stats {
-			if stat.support > 0 && stat.share <= 0.5 {
-				for _, unsupp := range stats {
-					if unsupp.support == 0 {
-						return unsupp.action, 0.5, 0, 0
-					}
-				}
+			if stat.support == 0 && unseenCount < len(candidates) {
+				candidates[unseenCount] = stat.action
+				unseenCount++
 			}
+		}
+
+		if unseenCount > 1 {
+			chosenIndex = rng.Intn(unseenCount)
+		}
+
+		if unseenCount > 0 {
+			return candidates[chosenIndex], 0.5, 0, 0
 		}
 	}
 
@@ -454,7 +459,7 @@ func (agent *Agent) RehearseChild() (int, error) {
 
 	offset := 0
 
-	if anchorIdx > 1 {
+	if agent.rng != nil && anchorIdx > 1 {
 		offset = agent.rng.Intn(anchorIdx)
 	}
 

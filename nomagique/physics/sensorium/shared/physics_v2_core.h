@@ -218,15 +218,20 @@ MF_FN MFFace mf_face(MF_PTR const MFHydroStateV2* u, unsigned il, unsigned axis,
             }
         }
     }
+    float r_face = mf_min(cl.rho, cr.rho);
+    float mu_cap = r_face * f.alpha * p.dx;
+    float mu_eff = mf_min(p.mu, mu_cap);
+    float bulk_eff = mf_min(p.bulk_viscosity, mu_cap);
+    float k_eff = mf_min(p.k_thermal, mu_cap * p.cv);
     float div=grad[0][0]+grad[1][1]+grad[2][2];
     for (unsigned a=0;a<3;++a) {
-        float tau=p.mu*(grad[a][axis]+grad[axis][a]);
-        if (a==axis) tau+=(p.bulk_viscosity-(2.0f/3.0f)*p.mu)*div;
+        float tau=mu_eff*(grad[a][axis]+grad[axis][a]);
+        if (a==axis) tau+=(bulk_eff-(2.0f/3.0f)*mu_eff)*div;
         f.viscous_momentum[a]=tau;
         f.flux.q[1+a]-=tau;
         f.viscous_work+=0.5f*(cl.u[a]+cr.u[a])*tau;
     }
-    float heat=p.k_thermal*(cr.temperature-cl.temperature)/p.dx;
+    float heat=k_eff*(cr.temperature-cl.temperature)/p.dx;
     f.conductive_flux=heat;
     f.flux.q[4]-=f.viscous_work+heat;
     f.flux.q[5]-=heat;
@@ -254,7 +259,7 @@ MF_FN MFRhs mf_hydro_rhs(MF_PTR const MFHydroStateV2* u,
         }
     }
     float divu=0,viscwork=0,viscmom[3]={0,0,0};
-    float rhomin=c.rho;
+    float alpha_max = c.sound;
     for (unsigned a=0;a<3;++a) {
         unsigned il=mf_hneighbor(i,a,-1,p);
         MFFace lo=mf_face(u,il,a,p),hi=mf_face(u,i,a,p);
@@ -264,10 +269,9 @@ MF_FN MFRhs mf_hydro_rhs(MF_PTR const MFHydroStateV2* u,
         for (unsigned b=0;b<3;++b) viscmom[b]+=(hi.viscous_momentum[b]-lo.viscous_momentum[b])/p.dx;
         viscwork+=(hi.viscous_work-lo.viscous_work)/p.dx;
         r.conductive_source+=(hi.conductive_flux-lo.conductive_flux)/p.dx;
-        r.rate+=mf_max(lo.alpha,hi.alpha)/p.dx;
-        float rl=u[il].q[0],rr=u[mf_hneighbor(i,a,+1,p)].q[0];
-        if(rl>0 && rhomin>0)rhomin=mf_min(rhomin,rl);
-        if(rr>0 && rhomin>0)rhomin=mf_min(rhomin,rr);
+        float face_alpha = mf_max(lo.alpha,hi.alpha);
+        alpha_max = mf_max(alpha_max, face_alpha);
+        r.rate+=face_alpha/p.dx;
     }
     float heating=viscwork;
     for (unsigned a=0;a<3;++a) heating-=c.u[a]*viscmom[a];
@@ -276,10 +280,12 @@ MF_FN MFRhs mf_hydro_rhs(MF_PTR const MFHydroStateV2* u,
     r.viscous_heating=heating;
     r.derivative.q[5]+=-c.pressure*divu+heating;
     if (c.rho>0 && (p.mu>0 || p.bulk_viscosity>0 || p.k_thermal>0)) {
-        /* Deliberately conservative explicit stability bound, also accounting
-           for cross derivatives. It is a guard, not a positivity theorem. */
-        float diffusivity=((2*p.mu+p.bulk_viscosity)+p.k_thermal/p.cv)/rhomin;
-        r.rate+=12*diffusivity/(p.dx*p.dx);
+        float mu_cap = c.rho * alpha_max * p.dx;
+        float mu_eff = mf_min(p.mu, mu_cap);
+        float bulk_eff = mf_min(p.bulk_viscosity, mu_cap);
+        float k_eff = mf_min(p.k_thermal, mu_cap * p.cv);
+        float diffusivity = ((2.0f * mu_eff + bulk_eff) + k_eff / p.cv) / c.rho;
+        r.rate += 12.0f * diffusivity / (p.dx * p.dx);
     }
     if (p.gravity) for (unsigned a=0;a<3;++a) {
         float g=acceleration[3*i+a];

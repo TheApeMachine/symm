@@ -27,8 +27,11 @@ type TradeOutcome struct {
 	Quantity   *decimal.Decimal
 	Profit     *decimal.Decimal
 	ReturnBp   float64
+	EntryFee   *decimal.Decimal
+	ExitFee    *decimal.Decimal
 	EntryAt    time.Time
 	ExitAt     time.Time
+	Decision   *telemetry.DecisionT
 }
 
 /*
@@ -90,6 +93,9 @@ type MainAgent struct {
 	m2Return   float64
 	variance   float64
 
+	recentClosed []*telemetry.PositionT
+	exitRequests map[string]bool
+
 	lastDecision *telemetry.LearningDecisionT
 	alternatives []*telemetry.LearningActionT
 }
@@ -150,7 +156,20 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...an
 		lastPrice:      make(map[string]*decimal.Decimal),
 		symbolPhase:    make(map[string]string),
 		symbolMaturity: make(map[string]int),
+		recentClosed:   make([]*telemetry.PositionT, 0, 50),
+		exitRequests:   make(map[string]bool),
 	}
+}
+
+func (agent *MainAgent) RequestExit(symbol string) {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+
+	if agent.exitRequests == nil {
+		agent.exitRequests = make(map[string]bool)
+	}
+
+	agent.exitRequests[symbol] = true
 }
 
 func (agent *MainAgent) SetInstrument(instrument *broker.Instrument) {
@@ -292,6 +311,8 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 	}
 
 	if symbol == "" {
+		envelope.Positions = agent.exportPositions()
+		envelope.Equity = agent.exportEquity()
 		return
 	}
 
@@ -327,8 +348,13 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 		if holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
 			shouldExit := false
 
+			if agent.exitRequests[symbol] {
+				delete(agent.exitRequests, symbol)
+				shouldExit = true
+			}
+
 			// Check venue status: exit if pair goes offline
-			if agent.instrument != nil && agent.instrument.Has(symbol) {
+			if !shouldExit && agent.instrument != nil && agent.instrument.Has(symbol) {
 				pair := agent.instrument.Pair(symbol)
 
 				if pair.Status != "" && pair.Status != "online" {
@@ -365,6 +391,9 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 	if envelope.StrategyRound == nil {
 		agent.attachContinuousDecision(envelope, symbol, currentPrice, decision, holding, now)
 	}
+
+	envelope.Positions = agent.exportPositions()
+	envelope.Equity = agent.exportEquity()
 }
 
 func (agent *MainAgent) attachContinuousDecision(
@@ -664,6 +693,24 @@ func (agent *MainAgent) exitLong(
 		entryPrice = agent.lastPrice[symbol]
 	}
 
+	entryAtNano := int64(0)
+
+	if holding.EntryAt != nil {
+		entryAtNano = holding.EntryAt.UnixNano()
+	}
+
+	decisionRecord := &telemetry.DecisionT{
+		Id:               uuid.NewString(),
+		Action:           "exit",
+		Symbol:           symbol,
+		At:               now.UnixNano(),
+		Confidence:       1.0,
+		Reason:           "position_exit",
+		OpportunityType:  "precursor",
+		OpportunityPhase: "exit",
+		PredictiveStatus: "closed",
+	}
+
 	agent.recordOutcome(TradeOutcome{
 		Symbol:     symbol,
 		EntryPrice: entryPrice,
@@ -671,9 +718,37 @@ func (agent *MainAgent) exitLong(
 		Quantity:   qty,
 		Profit:     netProfit,
 		ReturnBp:   returnBp,
+		EntryFee:   entryFee,
+		ExitFee:    exitFee,
 		EntryAt:    entryAt,
 		ExitAt:     now,
+		Decision:   decisionRecord,
 	}, returnBp)
+
+	closedPosition := &telemetry.PositionT{
+		Status: "closed",
+		Holding: &telemetry.HoldingT{
+			Symbol:     symbol,
+			Status:     "closed",
+			Qty:        qty.String(),
+			EntryPrice: entryPrice.String(),
+			ExitPrice:  exitPrice.String(),
+			EntryFee:   entryFee.String(),
+			ExitFee:    exitFee.String(),
+			EntryAt:    entryAtNano,
+			ExitAt:     now.UnixNano(),
+			Pnl:        netProfit.String(),
+			ReturnPct:  returnBp / 100.0,
+			Mark:       exitPrice.String(),
+		},
+		Decision: decisionRecord,
+	}
+
+	agent.recentClosed = append(agent.recentClosed, closedPosition)
+
+	if len(agent.recentClosed) > 50 {
+		agent.recentClosed = agent.recentClosed[len(agent.recentClosed)-50:]
+	}
 
 	delete(agent.positions, symbol)
 	delete(agent.posQuantities, symbol)
@@ -848,16 +923,24 @@ func (agent *MainAgent) AgentTelemetry() *telemetry.LearningAgentT {
 			entryAt = holding.EntryAt.UnixNano()
 		}
 
+		markStr := ""
+
+		if holding.Mark != nil {
+			markStr = holding.Mark.String()
+		}
+
 		positions = append(positions, &telemetry.PositionT{
 			Status: "open",
 			Holding: &telemetry.HoldingT{
 				Symbol:     holding.Symbol,
+				Status:     "open",
 				Qty:        holding.Qty.String(),
 				EntryPrice: holding.EntryPrice.String(),
 				EntryAt:    entryAt,
 				EntryFee:   holding.EntryFee.String(),
 				Pnl:        holding.PnL.String(),
 				ReturnPct:  holding.ReturnPct,
+				Mark:       markStr,
 			},
 		})
 	}
@@ -904,4 +987,184 @@ func (agent *MainAgent) AgentTelemetry() *telemetry.LearningAgentT {
 		Reading:      reading,
 		Open:         int32(len(agent.positions)),
 	}
+}
+
+func (agent *MainAgent) exportEquity() *types.EquityReading {
+	return &types.EquityReading{
+		Cash:       agent.cash.String(),
+		Unrealized: agent.unrealized.String(),
+		Equity:     agent.equity.String(),
+		Complete:   true,
+	}
+}
+
+func (agent *MainAgent) exportPositions() []*telemetry.PositionT {
+	positions := make([]*telemetry.PositionT, 0, len(agent.positions)+len(agent.recentClosed))
+
+	for _, holding := range agent.positions {
+		entryAt := int64(0)
+
+		if holding.EntryAt != nil {
+			entryAt = holding.EntryAt.UnixNano()
+		}
+
+		markStr := ""
+
+		if holding.Mark != nil {
+			markStr = holding.Mark.String()
+		}
+
+		entryPriceStr := ""
+
+		if holding.EntryPrice != nil {
+			entryPriceStr = holding.EntryPrice.String()
+		}
+
+		entryFeeStr := "0"
+
+		if holding.EntryFee != nil {
+			entryFeeStr = holding.EntryFee.String()
+		}
+
+		pnlStr := "0"
+
+		if holding.PnL != nil {
+			pnlStr = holding.PnL.String()
+		}
+
+		qtyStr := ""
+
+		if holding.Qty != nil {
+			qtyStr = holding.Qty.String()
+		}
+
+		positions = append(positions, &telemetry.PositionT{
+			Status: "open",
+			Holding: &telemetry.HoldingT{
+				Symbol:     holding.Symbol,
+				Status:     "open",
+				Qty:        qtyStr,
+				EntryPrice: entryPriceStr,
+				EntryAt:    entryAt,
+				EntryFee:   entryFeeStr,
+				Pnl:        pnlStr,
+				ReturnPct:  holding.ReturnPct,
+				Mark:       markStr,
+			},
+			Decision: &telemetry.DecisionT{
+				Id:               uuid.NewString(),
+				Action:           "enter",
+				Symbol:           holding.Symbol,
+				At:               entryAt,
+				Confidence:       1.0,
+				Reason:           "learned_policy",
+				OpportunityType:  "precursor",
+				OpportunityPhase: "enter",
+				PredictiveStatus: "open",
+			},
+		})
+	}
+
+	positions = append(positions, agent.recentClosed...)
+
+	return positions
+}
+
+/*
+RecentTrades supplies completed trades in reverse chronological order for the
+Trade Journal surface and GET /trades endpoint.
+*/
+func (agent *MainAgent) RecentTrades(limit int) ([]*telemetry.PositionT, error) {
+	agent.mu.RLock()
+	defer agent.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 200
+	}
+
+	total := len(agent.outcomes)
+
+	if total == 0 {
+		return []*telemetry.PositionT{}, nil
+	}
+
+	count := min(limit, total)
+	records := make([]*telemetry.PositionT, 0, count)
+
+	for index := total - 1; index >= total-count; index-- {
+		outcome := agent.outcomes[index]
+
+		entryPriceStr := ""
+
+		if outcome.EntryPrice != nil {
+			entryPriceStr = outcome.EntryPrice.String()
+		}
+
+		exitPriceStr := ""
+
+		if outcome.ExitPrice != nil {
+			exitPriceStr = outcome.ExitPrice.String()
+		}
+
+		qtyStr := ""
+
+		if outcome.Quantity != nil {
+			qtyStr = outcome.Quantity.String()
+		}
+
+		pnlStr := "0"
+
+		if outcome.Profit != nil {
+			pnlStr = outcome.Profit.String()
+		}
+
+		entryFeeStr := "0"
+
+		if outcome.EntryFee != nil {
+			entryFeeStr = outcome.EntryFee.String()
+		}
+
+		exitFeeStr := "0"
+
+		if outcome.ExitFee != nil {
+			exitFeeStr = outcome.ExitFee.String()
+		}
+
+		decision := outcome.Decision
+
+		if decision == nil {
+			decision = &telemetry.DecisionT{
+				Id:               uuid.NewString(),
+				Action:           "exit",
+				Symbol:           outcome.Symbol,
+				At:               outcome.ExitAt.UnixNano(),
+				Confidence:       1.0,
+				Reason:           "position_exit",
+				OpportunityType:  "precursor",
+				OpportunityPhase: "exit",
+				PredictiveStatus: "closed",
+			}
+		}
+
+		records = append(records, &telemetry.PositionT{
+			Status: "closed",
+			Holding: &telemetry.HoldingT{
+				Symbol:     outcome.Symbol,
+				Status:     "closed",
+				Qty:        qtyStr,
+				EntryPrice: entryPriceStr,
+				ExitPrice:  exitPriceStr,
+				EntryFee:   entryFeeStr,
+				ExitFee:    exitFeeStr,
+				EntryAt:    outcome.EntryAt.UnixNano(),
+				ExitAt:     outcome.ExitAt.UnixNano(),
+				Pnl:        pnlStr,
+				ReturnPct:  outcome.ReturnBp / 100.0,
+				Mark:       exitPriceStr,
+			},
+			Decision: decision,
+		})
+	}
+
+	return records, nil
 }

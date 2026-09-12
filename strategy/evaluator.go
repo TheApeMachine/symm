@@ -363,12 +363,24 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 	entryVal, hasEntry := frameOrSurfacePrice(evaluator, fragment, entryIdx, true)
 
 	if hasCurrent && hasEntry && currentVal < entryVal {
-		loss := (entryVal - currentVal) / entryVal
-		outcome.Correctness = -clamp(math.Max(0.5, loss*2.0), 0.5, 1.0)
-		outcome.Timing = 0.0
-		outcome.Reinforcement = outcome.Correctness
+		bestLater := currentVal
 
-		return outcome, nil
+		for idx := decisionIdx + 1; idx < len(fragment); idx++ {
+			val, defined := frameOrSurfacePrice(evaluator, fragment, idx, false)
+
+			if defined && val > bestLater {
+				bestLater = val
+			}
+		}
+
+		if bestLater <= currentVal || bestLater <= entryVal {
+			loss := (entryVal - currentVal) / entryVal
+			outcome.Correctness = -clamp(math.Max(0.5, loss*2.0), 0.5, 1.0)
+			outcome.Timing = 0.0
+			outcome.Reinforcement = outcome.Correctness
+
+			return outcome, nil
+		}
 	}
 
 	exitOutcome, err := evaluator.EvaluateExit(fragment, decisionIdx, entryIdx)
@@ -421,6 +433,10 @@ func frameOrSurfacePrice(
 
 				if surf.ExecutableVWAP != nil && surf.ExecutableVWAP.Float64() > 0 {
 					return surf.ExecutableVWAP.Float64(), true
+				}
+
+				if surf.BestBid != nil && surf.BestBid.Float64() > 0 {
+					return surf.BestBid.Float64(), true
 				}
 
 				return 0, false

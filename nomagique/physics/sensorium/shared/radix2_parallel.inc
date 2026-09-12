@@ -8,14 +8,14 @@ MR_IMPL void MR_RADIX(MR_MEM MRComplex* x,unsigned n,int sign,unsigned lane,unsi
     }
     MR_BARRIER();
     for (unsigned len=2;len<=n;len<<=1) {
-        unsigned half=len>>1;
+        unsigned half_len=len>>1;
         for (unsigned butterfly=lane;butterfly<n/2;butterfly+=lanes) {
-            unsigned j=butterfly%half;
-            unsigned a=(butterfly/half)*len+j;
+            unsigned j=butterfly%half_len;
+            unsigned a=(butterfly/half_len)*len+j;
             // Compute bounded-angle twiddles directly; no drifting recurrence.
             MRComplex w=mr_cis(float(sign)*6.28318530717958647692f*(float(j)/float(len)));
-            MRComplex u=x[a],v=mr_mul(w,x[a+half]);
-            x[a]=mr_add(u,v);x[a+half]=mr_sub(u,v);
+            MRComplex u=x[a],v=mr_mul(w,x[a+half_len]);
+            x[a]=mr_add(u,v);x[a+half_len]=mr_sub(u,v);
         }
         MR_BARRIER();
         if (len==n) break; // avoid wrap if used with a maximal power of two

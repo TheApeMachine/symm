@@ -82,10 +82,10 @@ MF_FN MCPilotAdvance mc_pilot_midpoint(MF_PTR const float* re,MF_PTR const float
 MF_FN MCPilotAdvance mc_pilot_checked(MF_PTR const float* re,MF_PTR const float* im,
     MC_LOCAL const float* x,MC_LOCAL const float* prior,float mass,float hbar,float dt,float tolerance,float maxcells,MFHydroParamsV2 p){
     auto full=mc_pilot_midpoint(re,im,x,prior,mass,hbar,dt,p);if(full.status)return full;
-    auto half=mc_pilot_midpoint(re,im,x,prior,mass,hbar,.5f*dt,p);if(half.status)return half;
-    auto out=mc_pilot_midpoint(re,im,half.x,prior,mass,hbar,.5f*dt,p);if(out.status)return out;
+    auto sub1=mc_pilot_midpoint(re,im,x,prior,mass,hbar,.5f*dt,p);if(sub1.status)return sub1;
+    auto out=mc_pilot_midpoint(re,im,sub1.x,prior,mass,hbar,.5f*dt,p);if(out.status)return out;
     float e2=0;for(unsigned a=0;a<3;++a){float d=(out.x[a]-full.x[a])/p.dx;e2+=d*d;}
-    out.error=MF_SQRT(e2)/3;out.pathcells+=half.pathcells;
+    out.error=MF_SQRT(e2)/3;out.pathcells+=sub1.pathcells;
     if(out.error>tolerance||out.pathcells>maxcells){out.status=MF_PHYSICS_CFL;return out;}
     float dims[3]={float(p.nx),float(p.ny),float(p.nz)};for(unsigned a=0;a<3;++a)out.x[a]=mc_wrap(out.x[a],dims[a]*p.dx);
     return out;

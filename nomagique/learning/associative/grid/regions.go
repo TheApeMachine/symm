@@ -38,9 +38,11 @@ market threshold. It finds a local optimum, not a claimed global optimum.
 */
 func (regions *regions) form(grid *Space) {
 	regions.membership = make([]int, len(grid.Columns))
+	counts := make([]int, len(grid.Columns))
 
 	for column := range regions.membership {
 		regions.membership[column] = column
+		counts[column] = 1
 	}
 	scores := make([]float64, len(grid.Columns))
 	const maxFormIterations = 100
@@ -52,23 +54,41 @@ func (regions *regions) form(grid *Space) {
 			clear(scores)
 
 			for peer, reading := range grid.graph[column] {
+				if peer == column {
+					continue
+				}
 				weight := reading.strength() * (grid.weights[column] * grid.weights[peer])
 
 				if !reading.stable() {
 					weight = -weight
 				}
+
 				scores[regions.membership[peer]] += weight
 			}
 			current := regions.membership[column]
+			currentAffinity := 0.0
+
+			if counts[current] > 1 {
+				currentAffinity = scores[current] / float64(counts[current]-1)
+			}
 			best := current
+			bestAffinity := currentAffinity
 
 			for candidate, score := range scores {
-				if score > scores[best] {
+				if candidate == current || counts[candidate] == 0 {
+					continue
+				}
+				candidateAffinity := score / float64(counts[candidate])
+
+				if candidateAffinity > bestAffinity && candidateAffinity > 0 {
 					best = candidate
+					bestAffinity = candidateAffinity
 				}
 			}
 
 			if best != current {
+				counts[current]--
+				counts[best]++
 				regions.membership[column] = best
 				moved = true
 			}
@@ -89,6 +109,7 @@ func (regions *regions) form(grid *Space) {
 			indices[community] = index
 			regions.anchors = append(regions.anchors, column)
 		}
+
 		regions.membership[column] = index
 	}
 }
@@ -189,7 +210,9 @@ func (regions *regions) active() []Region {
 		}
 		return 0
 	})
-	if len(regions.output) <= 1 {
+	count := len(regions.output)
+
+	if count <= 1 {
 		return regions.output
 	}
 	total := 0.0
@@ -201,17 +224,22 @@ func (regions *regions) active() []Region {
 	if total <= 0 {
 		return regions.output
 	}
-	accum := 0.0
-	keep := 0
+	bestCutoff := count
+	maxVariance := 0.0
+	sumFirst := 0.0
 
-	for _, region := range regions.output {
-		accum += region.Strength
-		keep++
+	for cutoff := 1; cutoff < count; cutoff++ {
+		sumFirst += regions.output[cutoff-1].Strength
+		meanFirst := sumFirst / float64(cutoff)
+		meanRest := (total - sumFirst) / float64(count-cutoff)
+		delta := meanFirst - meanRest
+		variance := float64(cutoff*(count-cutoff)) * delta * delta
 
-		if accum >= 0.80*total {
-			break
+		if variance > maxVariance {
+			maxVariance = variance
+			bestCutoff = cutoff
 		}
 	}
 
-	return regions.output[:keep]
+	return regions.output[:bestCutoff]
 }

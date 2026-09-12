@@ -84,10 +84,10 @@ MF_FN MCPilotAdvance mc_pilot_trial_time(MCPilotField field,MC_LOCAL const float
     MC_LOCAL const float* prior,float mass,float hbar,float dt,float t0,float t1,MFHydroParamsV2 p){
     auto full=mc_pilot_midpoint_time(field,x,prior,mass,hbar,dt,t0,t1,p);if(full.status)return full;
     float tm=.5f*(t0+t1);
-    auto half=mc_pilot_midpoint_time(field,x,prior,mass,hbar,.5f*dt,t0,tm,p);if(half.status)return half;
-    auto out=mc_pilot_midpoint_time(field,half.x,prior,mass,hbar,.5f*dt,tm,t1,p);if(out.status)return out;
+    auto sub1=mc_pilot_midpoint_time(field,x,prior,mass,hbar,.5f*dt,t0,tm,p);if(sub1.status)return sub1;
+    auto out=mc_pilot_midpoint_time(field,sub1.x,prior,mass,hbar,.5f*dt,tm,t1,p);if(out.status)return out;
     float e2=0;for(unsigned a=0;a<3;++a){float d=(out.x[a]-full.x[a])/p.dx;e2+=d*d;}
-    out.error=MF_SQRT(e2)/3;out.pathcells+=half.pathcells;
+    out.error=MF_SQRT(e2)/3;out.pathcells+=sub1.pathcells;
     return out;
 }
 MF_FN MCPilotAdvance mc_pilot_checked_time(MCPilotField field,MC_LOCAL const float* x,

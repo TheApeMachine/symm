@@ -203,7 +203,7 @@ func TestDatasetStep(t *testing.T) {
 			// Initialize with cold but non-zero heat (1e-4 of oscillator energy).
 			Convey("and cold but non-zero heat proportional to energy", func() {
 				for _, state := range states {
-					So(state.Heat[0], ShouldAlmostEqual, state.Energy[0]*1e-4, 1e-7)
+					So(state.Heat[0], ShouldAlmostEqual, state.Energy[0]*0.5, 1e-7)
 				}
 			})
 
