@@ -273,16 +273,16 @@ func (api *API) MarkReady() {
 	api.private.MarkReady()
 }
 
-func (api *API) Private() Conn                                     { return api.private }
-func (api *API) Books() *sync.Map                                  { return api.private.Books() }
-func (api *API) Book(symbol string, read func(*book.Book))         { api.private.Book(symbol, read) }
-func (api *API) SubInstrument(callback chan any)                   { api.public.SubInstrument(callback) }
-func (api *API) SubTicker(symbols []string)                        { api.public.SubTicker(symbols) }
-func (api *API) SubL3(symbols []string)                            { api.private.SubL3(symbols) }
-func (api *API) SubTrades(symbols []string)                        { api.public.SubTrades(symbols) }
-func (api *API) UnsubTicker(symbols []string)                      { api.public.UnsubTicker(symbols) }
-func (api *API) UnsubTrades(symbols []string)                      { api.public.UnsubTrades(symbols) }
-func (api *API) UnsubL3(symbols []string)                          { api.private.UnsubL3(symbols) }
+func (api *API) Private() Conn                             { return api.private }
+func (api *API) Books() *sync.Map                          { return api.private.Books() }
+func (api *API) Book(symbol string, read func(*book.Book)) { api.private.Book(symbol, read) }
+func (api *API) SubInstrument(callback chan any)           { api.public.SubInstrument(callback) }
+func (api *API) SubTicker(symbols []string)                { api.public.SubTicker(symbols) }
+func (api *API) SubL3(symbols []string)                    { api.private.SubL3(symbols) }
+func (api *API) SubTrades(symbols []string)                { api.public.SubTrades(symbols) }
+func (api *API) UnsubTicker(symbols []string)              { api.public.UnsubTicker(symbols) }
+func (api *API) UnsubTrades(symbols []string)              { api.public.UnsubTrades(symbols) }
+func (api *API) UnsubL3(symbols []string)                  { api.private.UnsubL3(symbols) }
 func (api *API) Balance() (*kraken.Balance, error) {
 	balance, err := api.private.Balance()
 
@@ -321,6 +321,14 @@ func (api *API) OpenOrders() (spot.OpenOrdersResult, error) {
 
 func (api *API) CancelOrder(request *spot.CancelOrderRequest) (spot.CancelResult, error) {
 	return api.private.CancelOrder(request)
+}
+
+func (api *API) ResetPaper() error {
+	if api == nil {
+		return nil
+	}
+
+	return ResetPaperAccount(api.Context())
 }
 
 func (api *API) SubFuturesTicker(productIDs []string) error {

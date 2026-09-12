@@ -3,50 +3,90 @@ package equation
 import (
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
-AdaptiveZScore uses log-space moments. Non-positive logarithms keep the
-underlying real-domain result; they are not replaced by log(1).
+AdaptiveZScore uses log-space moments to score arriving observations against
+their prior baseline and dispersion.
 */
 type AdaptiveZScore struct {
-	core.Base[float64, CausalResidualResult]
-	moments  core.Primitive[float64, MomentReading]
-	residual *CausalResidual
+	err     error
+	moments statistic.Moments
+	out     statistic.CausalResidualResult
 }
 
-func NewAdaptiveZScore(moments core.Primitive[float64, MomentReading]) *AdaptiveZScore {
-	return &AdaptiveZScore{moments: moments, residual: NewCausalResidual()}
+func NewAdaptiveZScore() core.Primitive {
+	return &AdaptiveZScore{}
 }
 
 func (op *AdaptiveZScore) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[CausalResidualResult, CausalResidualResult]] {
-	return func(yield func(core.Primitive[CausalResidualResult, CausalResidualResult]) bool) {
-		logged := func(yield func(core.Primitive[float64, float64]) bool) {
-			carrier := &core.Carrier[float64]{}
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			val := *(*float64)(arriving)
+			logVal := math.Log(val)
+			priorMean := op.moments.Mean
+			priorCount := op.moments.Count
+			priorM2 := op.moments.M2
 
-			for arriving := range in {
-				if !yield(carrier.Carrier(math.Log(arriving.Read()))) {
-					return
+			reading := op.moments.Update(logVal)
+
+			baseline := val
+
+			if priorCount > 0 {
+				baseline = math.Exp(priorMean)
+			}
+
+			res := statistic.CausalResidualResult{
+				MomentReading: reading,
+				HasPrior:      priorCount > 0,
+				Baseline:      baseline,
+				Residual:      0,
+			}
+
+			if priorCount > 0 {
+				res.Residual = logVal - priorMean
+			}
+
+			if priorCount > 1 {
+				res.PriorVariance = priorM2 / (priorCount - 1)
+			}
+
+			res.ScoreScale = math.Abs(res.Residual)
+
+			if res.PriorVariance > 0 {
+				disp := math.Sqrt(res.PriorVariance)
+
+				if disp > 2.220446049250313e-16 {
+					res.ScoreScale = disp
 				}
 			}
-		}
 
-		for reading := range op.moments.Next(logged) {
-			for result := range op.residual.Next(transport.One(reading)) {
-				reading := result.Read()
-				reading.Baseline = math.Exp(reading.Baseline)
+			if res.ScoreScale > 0 {
+				res.ZScore = res.Residual / res.ScoreScale
+			}
 
-				if !yield(op.Carrier(reading)) {
-					return
-				}
+			op.out = res
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
 			}
 		}
-
-		op.Error(op.moments.Error(), op.residual.Error())
 	}
+}
+
+func (op *AdaptiveZScore) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

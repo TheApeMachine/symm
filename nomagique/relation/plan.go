@@ -1,6 +1,13 @@
 package relation
 
-import "time"
+import (
+	"errors"
+	"iter"
+	"time"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+)
 
 /*
 Selector is a structural coordinate selector. An empty field is a wildcard
@@ -17,9 +24,10 @@ type Selector struct {
 }
 
 /*
-Matches reports whether a coordinate satisfies the selector.
+selectorMatches reports whether a coordinate satisfies the selector. An empty
+field is a wildcard for that identity component.
 */
-func (selector Selector) Matches(coordinate Coordinate) bool {
+func selectorMatches(selector Selector, coordinate Coordinate) bool {
 	if selector.Source != "" && selector.Source != coordinate.Source {
 		return false
 	}
@@ -96,94 +104,8 @@ type RelationPlan struct {
 }
 
 /*
-PairsForSymbol returns the planned pairs applicable to one symbol, or nil
-when the plan's scope excludes it. Cross-product pairs are expanded
-structurally; self-pairs (identical Source and Target coordinates) are
-excluded because Influence requires a positive lag between distinct
-coordinates.
-*/
-func (plan *RelationPlan) PairsForSymbol(symbol string) []PlannedPair {
-	if plan == nil {
-		return nil
-	}
-
-	if plan.Symbol != "" && plan.Symbol != symbol {
-		return nil
-	}
-
-	pairs := make([]PlannedPair, 0, len(plan.Pairs)+len(plan.Sources)*len(plan.Targets))
-	pairs = append(pairs, plan.Pairs...)
-
-	for _, source := range plan.Sources {
-		for _, target := range plan.Targets {
-			if source == target {
-				continue
-			}
-
-			pairs = append(pairs, PlannedPair{Source: source, Target: target})
-		}
-	}
-
-	return pairs
-}
-
-/*
-ResolveControls resolves the plan's control selectors against the stored
-coordinates available for the symbol, returning explicit controls in selector
-order. The boolean reports whether every exact control selector resolved to a
-stored coordinate. A wildcard selector resolves to every matching stored
-coordinate; this is structural availability, not evidence. A missing exact
-control makes the Relation unavailable rather than silently changing the
-model.
-*/
-/*
-ResolveControls resolves the plan's control selectors against the resident
-coordinates available for the symbol, returning explicit controls in selector
-order. The boolean reports whether every exact control selector resolved to a
-registered coordinate. A wildcard selector resolves to every matching
-resident coordinate; this is structural availability, not evidence. A missing
-exact control makes the Relation unavailable rather than silently changing
-the model.
-*/
-func (plan *RelationPlan) ResolveControls(symbol string, store *ObservationStore) ([]Control, bool) {
-	if plan == nil {
-		return nil, true
-	}
-
-	controls := make([]Control, 0, len(plan.Controls))
-
-	for _, selector := range plan.Controls {
-		matched := false
-
-		store.RangeCoordinatesForSymbol(symbol, func(coordinate Coordinate) bool {
-			if plan.Peer != "" && coordinate.Peer != plan.Peer {
-				return true
-			}
-
-			if !selector.Matches(coordinate) {
-				return true
-			}
-
-			controls = append(controls, Control{Coordinate: coordinate, Lag: selector.Lag})
-			matched = true
-			return true
-		})
-
-		// An exact selector (any identity component populated) with no
-		// matching coordinate is a missing control: the Relation is
-		// unavailable rather than silently changing the model.
-		exact := selector.Source != "" || selector.Metric != "" || selector.Side != ""
-
-		if !matched && exact {
-			return nil, false
-		}
-	}
-
-	return controls, true
-}
-
-/*
-CompiledCandidate represents a pre-resolved (Source, Target, Controls, Lag) candidate pair.
+CompiledCandidate represents a pre-resolved (Source, Target, Controls, Lag)
+candidate pair.
 */
 type CompiledCandidate struct {
 	Plan             *RelationPlan
@@ -195,14 +117,85 @@ type CompiledCandidate struct {
 }
 
 /*
-CompilePlansForSymbol precompiles the relation candidates across all active plans
-for a symbol against the store's resident coordinates.
+CompileRequest asks the planner to precompile the relation candidates across
+all active plans for one symbol. Coordinates are the symbol's resident
+coordinates in canonical order; the planner resolves selectors against them
+structurally, never against evidence.
 */
-func CompilePlansForSymbol(
+type CompileRequest struct {
+	Plans       []*RelationPlan
+	Symbol      string
+	Epoch       uint64
+	Coordinates []Coordinate
+}
+
+/*
+CompileResult is the compiled candidates of one request.
+*/
+type CompileResult struct {
+	Candidates []CompiledCandidate
+}
+
+/*
+Planner compiles RelationPlans into explicit candidates. Eligibility is
+structural only: symbol scope, peer scope, explicit pairs, and exact
+controls, resolved against the resident coordinates supplied per request.
+*/
+type Planner struct {
+	err error
+	out CompileResult
+}
+
+/*
+NewPlanner creates a Planner primitive.
+*/
+func NewPlanner() core.Primitive {
+	return &Planner{}
+}
+
+/*
+Next receives *CompileRequest payloads and yields a *CompileResult with the
+compiled candidates for each.
+*/
+func (op *Planner) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			request := (*CompileRequest)(arriving)
+			op.out = CompileResult{
+				Candidates: compileCandidates(
+					request.Plans, request.Symbol, request.Epoch, request.Coordinates,
+				),
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *Planner) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+compileCandidates precompiles the relation candidates across all active plans
+for one symbol against the symbol's resident coordinates.
+*/
+func compileCandidates(
 	plans []*RelationPlan,
 	symbol string,
 	epoch uint64,
-	store *ObservationStore,
+	coordinates []Coordinate,
 ) []CompiledCandidate {
 	var candidates []CompiledCandidate
 
@@ -211,11 +204,11 @@ func CompilePlansForSymbol(
 			continue
 		}
 
-		controls, controlsComplete := plan.ResolveControls(symbol, store)
+		controls, controlsComplete := resolveControls(plan, coordinates)
 
-		for _, pair := range plan.PairsForSymbol(symbol) {
-			sources := resolveSelectorsForSymbol(pair.Source, symbol, plan.Peer, epoch, store)
-			targets := resolveSelectorsForSymbol(pair.Target, symbol, plan.Peer, epoch, store)
+		for _, pair := range pairsForSymbol(plan, symbol) {
+			sources := resolveSelector(pair.Source, coordinates, plan.Peer, epoch)
+			targets := resolveSelector(pair.Target, coordinates, plan.Peer, epoch)
 
 			for _, source := range sources {
 				for _, target := range targets {
@@ -239,31 +232,101 @@ func CompilePlansForSymbol(
 	return candidates
 }
 
-func resolveSelectorsForSymbol(
+/*
+pairsForSymbol returns the planned pairs applicable to one symbol, or nil
+when the plan's scope excludes it. Cross-product pairs are expanded
+structurally; self-pairs (identical Source and Target selectors) are excluded
+because Influence requires a positive lag between distinct coordinates.
+*/
+func pairsForSymbol(plan *RelationPlan, symbol string) []PlannedPair {
+	if plan.Symbol != "" && plan.Symbol != symbol {
+		return nil
+	}
+
+	pairs := make([]PlannedPair, 0, len(plan.Pairs)+len(plan.Sources)*len(plan.Targets))
+	pairs = append(pairs, plan.Pairs...)
+
+	for _, source := range plan.Sources {
+		for _, target := range plan.Targets {
+			if source == target {
+				continue
+			}
+
+			pairs = append(pairs, PlannedPair{Source: source, Target: target})
+		}
+	}
+
+	return pairs
+}
+
+/*
+resolveControls resolves the plan's control selectors against the resident
+coordinates available for the symbol, returning explicit controls in selector
+order. The boolean reports whether every exact control selector resolved to
+a resident coordinate. A wildcard selector resolves to every matching
+coordinate; this is structural availability, not evidence. A missing exact
+control makes the Relation unavailable rather than silently changing the
+model.
+*/
+func resolveControls(plan *RelationPlan, coordinates []Coordinate) ([]Control, bool) {
+	controls := make([]Control, 0, len(plan.Controls))
+
+	for _, selector := range plan.Controls {
+		matched := false
+
+		for _, coordinate := range coordinates {
+			if plan.Peer != "" && coordinate.Peer != plan.Peer {
+				continue
+			}
+
+			if !selectorMatches(selector.Selector, coordinate) {
+				continue
+			}
+
+			controls = append(controls, Control{Coordinate: coordinate, Lag: selector.Lag})
+			matched = true
+		}
+
+		// An exact selector (any identity component populated) with no
+		// matching coordinate is a missing control: the Relation is
+		// unavailable rather than silently changing the model.
+		exact := selector.Source != "" || selector.Metric != "" || selector.Side != ""
+
+		if !matched && exact {
+			return nil, false
+		}
+	}
+
+	return controls, true
+}
+
+/*
+resolveSelector resolves one selector against the symbol's resident
+coordinates, filtered by model epoch and peer scope.
+*/
+func resolveSelector(
 	selector Selector,
-	symbol string,
+	coordinates []Coordinate,
 	peer string,
 	epoch uint64,
-	store *ObservationStore,
 ) []Coordinate {
 	matches := make([]Coordinate, 0)
 
-	store.RangeCoordinatesForSymbol(symbol, func(coordinate Coordinate) bool {
+	for _, coordinate := range coordinates {
 		if coordinate.Epoch != epoch {
-			return true
+			continue
 		}
 
 		if peer != "" && coordinate.Peer != peer {
-			return true
+			continue
 		}
 
-		if !selector.Matches(coordinate) {
-			return true
+		if !selectorMatches(selector, coordinate) {
+			continue
 		}
 
 		matches = append(matches, coordinate)
-		return true
-	})
+	}
 
 	return matches
 }

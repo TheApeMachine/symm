@@ -1,53 +1,55 @@
 package learning
 
 import (
+	"errors"
 	"iter"
+	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 RatioTarget is the relative change, with an explicit nonzero past domain.
 */
 type RatioTarget struct {
-	core.Base[Observation, float64]
-	finite *logic.Finite[float64]
+	err error
+	out float64
 }
 
-func NewRatioTarget() *RatioTarget {
-	return &RatioTarget{finite: logic.NewFinite[float64]()}
+func NewRatioTarget() core.Primitive {
+	return &RatioTarget{}
 }
 
 func (op *RatioTarget) Next(
-	in iter.Seq[core.Primitive[Observation, Observation]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			sample := arriving.Read()
-			current, err := transport.Evaluate(op.finite, transport.Values(sample.Current))
+			sample := (*Observation)(arriving)
 
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			past, err := transport.Evaluate(op.finite, transport.Values(sample.Past))
-
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !current || !past || sample.Past == 0 {
+			if math.IsNaN(sample.Current) || math.IsNaN(sample.Past) ||
+				math.IsInf(sample.Current, 0) || math.IsInf(sample.Past, 0) ||
+				sample.Past == 0 {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			if !yield(op.Carrier(sample.Current/sample.Past - 1)) {
+			op.out = sample.Current/sample.Past - 1
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *RatioTarget) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

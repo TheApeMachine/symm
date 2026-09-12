@@ -1,7 +1,9 @@
 package store
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -10,21 +12,32 @@ import (
 Second is the trailing member of a pair, and the counterpart of First.
 */
 type Second[T any] struct {
-	core.Base[[2]T, T]
+	err error
+	out T
 }
 
-func NewSecond[T any]() *Second[T] {
+func NewSecond[T any]() core.Primitive {
 	return &Second[T]{}
 }
 
-func (op *Second[T]) Next(
-	in iter.Seq[core.Primitive[[2]T, [2]T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
+func (op *Second[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(arriving.Read()[1])) {
+			op.out = (*[2]T)(arriving)[1]
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Second[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -17,11 +17,11 @@ func TestPipelineObserve(t *testing.T) {
 		Convey("Other markets cannot train this pair's baselines or velocities", func() {
 			other.Observe(pairObservation{Lag: 500, AbsoluteGain: 0.1, Correlation: 0.6}, int64(time.Second))
 			focal.Observe(pairObservation{Lag: 7, AbsoluteGain: -0.2, Correlation: -0.5}, int64(2*time.Second))
-			So(focal.histories[lagHistory].Reading.Baseline, ShouldEqual, 5)
-			So(focal.velocities[lagHistory].Reading.Rate, ShouldEqual, 2)
-			So(focal.velocities[gainHistory].Reading.Rate, ShouldAlmostEqual, -0.3)
-			So(other.histories[lagHistory].Reading.Baseline, ShouldEqual, 500)
-			So(other.velocities[lagHistory].Reading.HasPrior, ShouldBeFalse)
+			So(focal.lag.Baseline, ShouldEqual, 5)
+			So(focal.lagVel.Rate, ShouldEqual, 2)
+			So(focal.gainVel.Rate, ShouldAlmostEqual, -0.3)
+			So(other.lag.Baseline, ShouldEqual, 500)
+			So(other.lagVel.HasPrior, ShouldBeFalse)
 		})
 	})
 }

@@ -1,16 +1,21 @@
 package learning
 
 import (
+	"errors"
 	"fmt"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 Sample is one feature vector and an optional target. A features-only query
-never trains.
+never trains, so prediction and update share one arrival path: the reading
+each arrival yields is the prequential prediction prior to that sample's
+optional update.
 */
 type Sample struct {
 	Features []float64
@@ -23,92 +28,75 @@ RLS supplies an affine intercept and the zero-mean diagonal coefficient prior.
 Prediction is prior to the optional target's update, as owned by SquareRootRLS.
 */
 type RLS struct {
-	core.Base[Sample, algo.Reading]
+	err       error
 	dimension int
 	lambda    float64
-	learner   *algo.SquareRootRLS
-	design    []float64
+	learner   core.Primitive
+	out       algo.Reading
 }
 
-func NewRLS(dimension int, variance, lambda float64) *RLS {
-	design := make([]float64, dimension+1)
-	design[0] = 1
-
+/*
+NewRLS creates an RLS primitive over the given feature dimension, coefficient
+prior variance, and forgetting factor.
+*/
+func NewRLS(dimension int, variance, lambda float64) core.Primitive {
 	return &RLS{
 		dimension: dimension,
 		lambda:    lambda,
 		learner:   algo.NewSquareRootRLS(variance),
-		design:    design,
 	}
 }
 
 func (op *RLS) Next(
-	in iter.Seq[core.Primitive[Sample, Sample]],
-) iter.Seq[core.Primitive[algo.Reading, algo.Reading]] {
-	return func(yield func(core.Primitive[algo.Reading, algo.Reading]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			reading, err := op.Prepare(arriving.Read())
+			sample := (*Sample)(arriving)
 
-			if err != nil {
+			if op.dimension <= 0 || len(sample.Features) != op.dimension {
+				op.Error(fmt.Errorf(
+					"%w: RLS expected %d features, received %d",
+					core.ErrShape,
+					op.dimension,
+					len(sample.Features),
+				))
+				return
+			}
+
+			design := make([]float64, len(sample.Features)+1)
+			design[0] = 1
+			copy(design[1:], sample.Features)
+
+			query := algo.Query{
+				Design:   design,
+				Target:   sample.Target,
+				Observed: sample.Observed,
+				Lambda:   op.lambda,
+			}
+
+			for out := range op.learner.Next(transport.NewValues(query).Next(nil)) {
+				op.out = *(*algo.Reading)(out)
+			}
+
+			if err := op.learner.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			if !yield(op.Carrier(reading)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-/*
-Prepare decodes a feature vector once and prepends the affine intercept.
-*/
-func (op *RLS) Prepare(sample Sample) (algo.Reading, error) {
-	if op.dimension <= 0 || len(sample.Features) != op.dimension {
-		return algo.Reading{}, fmt.Errorf(
-			"%w: RLS expected %d features, received %d",
-			core.ErrShape,
-			op.dimension,
-			len(sample.Features),
-		)
+func (op *RLS) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
 	}
 
-	design := make([]float64, len(sample.Features)+1)
-	design[0] = 1
-	copy(design[1:], sample.Features)
-
-	return op.learner.Step(algo.Query{
-		Design:   design,
-		Target:   sample.Target,
-		Observed: sample.Observed,
-		Lambda:   op.lambda,
-	})
-}
-
-/*
-Predict evaluates the model on a feature vector without updating its weights.
-It reuses the internal design vector to eliminate allocations on hot rollout paths.
-*/
-func (op *RLS) Predict(features []float64) (algo.Reading, error) {
-	if op.dimension <= 0 || len(features) != op.dimension {
-		return algo.Reading{}, fmt.Errorf(
-			"%w: RLS expected %d features, received %d",
-			core.ErrShape,
-			op.dimension,
-			len(features),
-		)
-	}
-
-	if len(op.design) != op.dimension+1 {
-		op.design = make([]float64, op.dimension+1)
-	}
-	op.design[0] = 1
-	copy(op.design[1:], features)
-
-	return op.learner.Step(algo.Query{
-		Design:   op.design,
-		Observed: false,
-		Lambda:   op.lambda,
-	})
+	return op.err
 }

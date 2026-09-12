@@ -5,8 +5,10 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -19,17 +21,17 @@ type seriesFixture struct {
 	step       time.Duration
 }
 
-func buildFixtureStore(fixtures []seriesFixture) *ObservationStore {
+func buildFixtureStore(fixtures []seriesFixture) core.Primitive {
 	store := NewObservationStore(4096)
 
 	for _, fixture := range fixtures {
 		for index, value := range fixture.values {
 			at := fixture.start.Add(time.Duration(index) * fixture.step)
-			store.Append(Observation{
+			driveStore(store, &StoreCommand{Append: &Observation{
 				Coordinate: fixture.coordinate,
 				Raw:        value,
 				At:         at,
-			})
+			}})
 		}
 	}
 
@@ -43,6 +45,56 @@ func fixtureCoordinate(source string, metric string) Coordinate {
 		Metric: metric,
 		Epoch:  1,
 	}
+}
+
+/*
+ringFor queries one coordinate's read-locked ring view from the store.
+*/
+func ringFor(store core.Primitive, coordinate Coordinate) RingView {
+	result := driveStore(store, &StoreCommand{Ring: &RingRequest{Coordinate: coordinate}})
+	return result.Ring
+}
+
+/*
+driveInfluence executes one influence request and returns the single result.
+*/
+func driveInfluence(op core.Primitive, request *InfluenceRequest) *InfluenceResult {
+	var result *InfluenceResult
+
+	for out := range op.Next(singlePointer(unsafe.Pointer(request))) {
+		result = *(**InfluenceResult)(out)
+	}
+
+	return result
+}
+
+/*
+estimateFixture builds the influence request whose history views are taken
+from the fixture store.
+*/
+func estimateFixture(
+	store core.Primitive,
+	source Coordinate,
+	target Coordinate,
+	controls []Control,
+	lag LagDomain,
+) *InfluenceResult {
+	request := &InfluenceRequest{
+		Source:   source,
+		Target:   target,
+		Controls: controls,
+		History: InfluenceHistory{
+			Source: ringFor(store, source),
+			Target: ringFor(store, target),
+		},
+		Lag: lag,
+	}
+
+	for _, control := range controls {
+		request.History.Controls = append(request.History.Controls, ringFor(store, control.Coordinate))
+	}
+
+	return driveInfluence(NewInfluence("test-v1"), request)
 }
 
 func gaussianSequence(random *rand.Rand, count int) []float64 {
@@ -72,15 +124,13 @@ func TestDirectedSystem(t *testing.T) {
 			{coordinate: fixtureCoordinate("target", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
 		})
 
-		estimator := NewInfluenceEstimator("test-v1")
-
 		Convey("X → Y discovers positive prequential gain", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("source", "x"),
-				Target: fixtureCoordinate("target", "y"),
-				Lag:    LagDomain{MinLag: 500 * time.Millisecond, MaxLag: 5 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("source", "x"),
+				fixtureCoordinate("target", "y"),
+				nil,
+				LagDomain{MinLag: 500 * time.Millisecond, MaxLag: 5 * time.Second},
+			)
 			So(result.Defined(), ShouldBeTrue)
 			So(result.PredictiveGain, ShouldNotBeNil)
 			So(*result.PredictiveGain, ShouldBeGreaterThan, 0)
@@ -107,12 +157,12 @@ func TestDirectedSystem(t *testing.T) {
 		})
 
 		Convey("Y → X is not fabricated as symmetric", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("target", "y"),
-				Target: fixtureCoordinate("source", "x"),
-				Lag:    LagDomain{MinLag: 500 * time.Millisecond, MaxLag: 5 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("target", "y"),
+				fixtureCoordinate("source", "x"),
+				nil,
+				LagDomain{MinLag: 500 * time.Millisecond, MaxLag: 5 * time.Second},
+			)
 			So(result.Defined(), ShouldBeTrue)
 			So(result.PredictiveGain, ShouldNotBeNil)
 			So(*result.PredictiveGain, ShouldBeLessThan, 0.3)
@@ -134,15 +184,13 @@ func TestIndependentSystem(t *testing.T) {
 			{coordinate: fixtureCoordinate("b", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
 		})
 
-		estimator := NewInfluenceEstimator("test-v1")
-
 		Convey("the relation remains represented with near-zero gain and coefficient", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("a", "x"),
-				Target: fixtureCoordinate("b", "y"),
-				Lag:    LagDomain{MinLag: time.Second, MaxLag: 3 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("a", "x"),
+				fixtureCoordinate("b", "y"),
+				nil,
+				LagDomain{MinLag: time.Second, MaxLag: 3 * time.Second},
+			)
 			So(result, ShouldNotBeNil)
 
 			Convey("the relation is not deleted", func() {
@@ -181,31 +229,28 @@ func TestMediation(t *testing.T) {
 			{coordinate: fixtureCoordinate("m", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
 		})
 
-		estimator := NewInfluenceEstimator("test-v1")
-
 		Convey("pairwise X → Y appears predictive through the path", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("m", "x"),
-				Target: fixtureCoordinate("m", "y"),
-				Lag:    LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("m", "x"),
+				fixtureCoordinate("m", "y"),
+				nil,
+				LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second},
+			)
 			So(result.Defined(), ShouldBeTrue)
 			So(result.PredictiveGain, ShouldNotBeNil)
 			So(*result.PredictiveGain, ShouldBeGreaterThan, 0.05)
 		})
 
 		Convey("conditional X → Y given M at its path lag loses incremental contribution", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("m", "x"),
-				Target: fixtureCoordinate("m", "y"),
-				Controls: []Control{{
+			result := estimateFixture(store,
+				fixtureCoordinate("m", "x"),
+				fixtureCoordinate("m", "y"),
+				[]Control{{
 					Coordinate: fixtureCoordinate("m", "mediator"),
 					Lag:        time.Second,
 				}},
-				Lag: LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second},
-			})
-			So(err, ShouldBeNil)
+				LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second},
+			)
 			So(result.Defined(), ShouldBeTrue)
 
 			if result.PredictiveGain != nil {
@@ -214,12 +259,12 @@ func TestMediation(t *testing.T) {
 		})
 
 		Convey("M → Y remains measured", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("m", "mediator"),
-				Target: fixtureCoordinate("m", "y"),
-				Lag:    LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("m", "mediator"),
+				fixtureCoordinate("m", "y"),
+				nil,
+				LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second},
+			)
 			So(result.Defined(), ShouldBeTrue)
 			So(result.PredictiveGain, ShouldNotBeNil)
 			So(*result.PredictiveGain, ShouldBeGreaterThan, 0.05)
@@ -244,15 +289,13 @@ func TestFutureLeakage(t *testing.T) {
 			{coordinate: fixtureCoordinate("f", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
 		})
 
-		estimator := NewInfluenceEstimator("test-v1")
-
 		Convey("Influence does not discover the future relationship", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("f", "x"),
-				Target: fixtureCoordinate("f", "y"),
-				Lag:    LagDomain{MinLag: time.Second, MaxLag: 3 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("f", "x"),
+				fixtureCoordinate("f", "y"),
+				nil,
+				LagDomain{MinLag: time.Second, MaxLag: 3 * time.Second},
+			)
 			So(result.Defined(), ShouldBeTrue)
 			So(result.PredictiveGain, ShouldNotBeNil)
 			So(math.Abs(*result.PredictiveGain), ShouldBeLessThan, 0.2)
@@ -281,19 +324,16 @@ func TestRankDeficiency(t *testing.T) {
 			{coordinate: fixtureCoordinate("r", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
 		})
 
-		estimator := NewInfluenceEstimator("test-v1")
-
 		Convey("the fit is undefined with no silent regularization", func() {
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("r", "x"),
-				Target: fixtureCoordinate("r", "y"),
-				Controls: []Control{
+			result := estimateFixture(store,
+				fixtureCoordinate("r", "x"),
+				fixtureCoordinate("r", "y"),
+				[]Control{
 					{Coordinate: fixtureCoordinate("r", "control")},
 					{Coordinate: fixtureCoordinate("r", "control")},
 				},
-				Lag: LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
-			})
-			So(err, ShouldBeNil)
+				LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
+			)
 			So(result, ShouldNotBeNil)
 			So(result.Status, ShouldEqual, FitRankDeficient)
 			So(result.Coefficient, ShouldBeNil)
@@ -323,53 +363,218 @@ func TestZeroVsUnavailable(t *testing.T) {
 		})
 
 		Convey("an observed zero coordinate is retained and distinct from missing", func() {
-			visited := 0
+			result := driveStore(store, &StoreCommand{History: &HistoryRequest{
+				Coordinate: fixtureCoordinate("z", "zero"),
+			}})
 
-			store.RangeHistory(fixtureCoordinate("z", "zero"), func(observation Observation) bool {
+			for _, observation := range result.Observations {
 				So(observation.Raw, ShouldEqual, 0)
-				visited++
-				return true
-			})
+			}
 
-			So(visited, ShouldEqual, count)
+			So(result.Observations, ShouldHaveLength, count)
 		})
 
 		Convey("a missing source coordinate yields no_source_history, not a zero relation", func() {
-			estimator := NewInfluenceEstimator("test-v1")
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("z", "missing"),
-				Target: fixtureCoordinate("z", "y"),
-				Lag:    LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("z", "missing"),
+				fixtureCoordinate("z", "y"),
+				nil,
+				LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
+			)
 			So(result.Status, ShouldEqual, FitNoSourceHistory)
 			So(result.Coefficient, ShouldBeNil)
 			So(result.PredictiveGain, ShouldBeNil)
 		})
 
 		Convey("a missing control makes the relation unavailable, not control-free", func() {
-			estimator := NewInfluenceEstimator("test-v1")
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("z", "x"),
-				Target: fixtureCoordinate("z", "y"),
-				Controls: []Control{{
+			result := estimateFixture(store,
+				fixtureCoordinate("z", "x"),
+				fixtureCoordinate("z", "y"),
+				[]Control{{
 					Coordinate: fixtureCoordinate("z", "missing_control"),
 				}},
-				Lag: LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
-			})
-			So(err, ShouldBeNil)
+				LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
+			)
 			So(result.Status, ShouldEqual, FitControlUnavailable)
 		})
 
 		Convey("a constant zero source is a valid zero-coefficient relation, not deleted", func() {
-			estimator := NewInfluenceEstimator("test-v1")
-			result, err := estimator.Estimate(store, InfluenceRequest{
-				Source: fixtureCoordinate("z", "zero"),
-				Target: fixtureCoordinate("z", "y"),
-				Lag:    LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
-			})
-			So(err, ShouldBeNil)
+			result := estimateFixture(store,
+				fixtureCoordinate("z", "zero"),
+				fixtureCoordinate("z", "y"),
+				nil,
+				LagDomain{MinLag: time.Second, MaxLag: 2 * time.Second},
+			)
 			So(result, ShouldNotBeNil)
+		})
+
+		Convey("an empty version is a domain failure, not a silent default", func() {
+			invalid := NewInfluence("")
+			So(invalid.Error(), ShouldNotBeNil)
+
+			var yielded int
+
+			for range invalid.Next(singlePointer(unsafe.Pointer(&InfluenceRequest{}))) {
+				yielded++
+			}
+
+			So(yielded, ShouldEqual, 0)
+		})
+	})
+}
+
+func TestAlign(t *testing.T) {
+	Convey("Given two resident rings at a one-second cadence", t, func() {
+		random := rand.New(rand.NewSource(5))
+		count := 50
+		x := gaussianSequence(random, count)
+		y := gaussianSequence(random, count)
+
+		store := buildFixtureStore([]seriesFixture{
+			{coordinate: fixtureCoordinate("al", "x"), values: x, start: time.Unix(0, 0), step: time.Second},
+			{coordinate: fixtureCoordinate("al", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
+		})
+
+		request := &AlignRequest{
+			Target: ringFor(store, fixtureCoordinate("al", "y")),
+			Series: []SeriesView{{History: ringFor(store, fixtureCoordinate("al", "x")), Lag: time.Second}},
+		}
+
+		var result *AlignResult
+
+		aligner := NewAlign()
+		for out := range aligner.Next(singlePointer(unsafe.Pointer(request))) {
+			result = (*AlignResult)(out)
+		}
+
+		Convey("the first aligned row pairs Y_t with X_{t-1}", func() {
+			So(result.Rows, ShouldHaveLength, count-1)
+			So(result.Rows[0].Target.Raw, ShouldEqual, y[1])
+			So(result.Rows[0].Predictors[0].Raw, ShouldEqual, x[0])
+		})
+
+		Convey("future observations never enter a row", func() {
+			for index, row := range result.Rows {
+				So(row.Predictors[0].At.Before(row.Target.At), ShouldBeTrue)
+				So(row.Target.Raw, ShouldEqual, y[index+1])
+			}
+		})
+	})
+}
+
+func TestPlanner(t *testing.T) {
+	Convey("Given a plan over resident coordinates", t, func() {
+		coordinates := []Coordinate{
+			fixtureCoordinate("cvd", "signed_net_fraction"),
+			fixtureCoordinate("cvd", "midpoint_log_return"),
+			fixtureCoordinate("hawkes", "arrival_rate"),
+		}
+
+		plan := &RelationPlan{
+			Epoch:   1,
+			Symbol:  "TEST/USD",
+			Sources: []Selector{{Source: "cvd"}},
+			Targets: []Selector{{Source: "cvd"}, {Source: "hawkes"}},
+			Controls: []ControlSelector{
+				{Selector: Selector{Source: "hawkes", Metric: "arrival_rate"}, Lag: time.Second},
+			},
+			Lag: LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second},
+		}
+
+		request := &CompileRequest{
+			Plans:       []*RelationPlan{plan},
+			Symbol:      "TEST/USD",
+			Epoch:       1,
+			Coordinates: coordinates,
+		}
+
+		var result *CompileResult
+
+		planner := NewPlanner()
+		for out := range planner.Next(singlePointer(unsafe.Pointer(request))) {
+			result = (*CompileResult)(out)
+		}
+
+		Convey("cross-product pairs expand with self-pairs excluded", func() {
+			So(result.Candidates, ShouldHaveLength, 2)
+
+			for _, candidate := range result.Candidates {
+				So(candidate.Source, ShouldNotResemble, candidate.Target)
+				So(candidate.Source.Source, ShouldEqual, "cvd")
+			}
+		})
+
+		Convey("exact controls resolve against resident coordinates", func() {
+			for _, candidate := range result.Candidates {
+				So(candidate.ControlsComplete, ShouldBeTrue)
+				So(candidate.Controls, ShouldHaveLength, 1)
+				So(candidate.Controls[0].Coordinate.Metric, ShouldEqual, "arrival_rate")
+				So(candidate.Controls[0].Lag, ShouldEqual, time.Second)
+			}
+		})
+
+		Convey("a foreign epoch compiles nothing", func() {
+			stale := &CompileRequest{
+				Plans:       []*RelationPlan{plan},
+				Symbol:      "TEST/USD",
+				Epoch:       2,
+				Coordinates: coordinates,
+			}
+
+			var staleResult *CompileResult
+
+			for out := range planner.Next(singlePointer(unsafe.Pointer(stale))) {
+				staleResult = (*CompileResult)(out)
+			}
+
+			So(staleResult.Candidates, ShouldBeEmpty)
+		})
+
+		Convey("a symbol outside the plan scope compiles nothing", func() {
+			scoped := &CompileRequest{
+				Plans:       []*RelationPlan{plan},
+				Symbol:      "OTHER/USD",
+				Epoch:       1,
+				Coordinates: coordinates,
+			}
+
+			var scopedResult *CompileResult
+
+			for out := range planner.Next(singlePointer(unsafe.Pointer(scoped))) {
+				scopedResult = (*CompileResult)(out)
+			}
+
+			So(scopedResult.Candidates, ShouldBeEmpty)
+		})
+
+		Convey("a missing exact control is reported incomplete", func() {
+			missingPlan := &RelationPlan{
+				Epoch: 1,
+				Pairs: []PlannedPair{{
+					Source: Selector{Source: "cvd", Metric: "signed_net_fraction"},
+					Target: Selector{Source: "cvd", Metric: "midpoint_log_return"},
+				}},
+				Controls: []ControlSelector{
+					{Selector: Selector{Source: "nope"}},
+				},
+			}
+
+			missing := &CompileRequest{
+				Plans:       []*RelationPlan{missingPlan},
+				Symbol:      "TEST/USD",
+				Epoch:       1,
+				Coordinates: coordinates,
+			}
+
+			var missingResult *CompileResult
+
+			for out := range planner.Next(singlePointer(unsafe.Pointer(missing))) {
+				missingResult = (*CompileResult)(out)
+			}
+
+			So(missingResult.Candidates, ShouldHaveLength, 1)
+			So(missingResult.Candidates[0].ControlsComplete, ShouldBeFalse)
+			So(missingResult.Candidates[0].Controls, ShouldBeEmpty)
 		})
 	})
 }
@@ -377,12 +582,12 @@ func TestZeroVsUnavailable(t *testing.T) {
 var benchmarkEstimateSink FitStatus
 
 /*
-BenchmarkInfluenceEstimate measures the full prequential Estimate path over
-resident ring views: alignment and regression accumulation are fused into a
-single per-lag walk, so no history copy and no aligned-row materialization
-remains in the loop.
+BenchmarkInfluence measures the full prequential estimate path over resident
+ring views: alignment and regression accumulation are fused into a single
+per-lag walk, so no history copy and no aligned-row materialization remains
+in the loop.
 */
-func BenchmarkInfluenceEstimate(b *testing.B) {
+func BenchmarkInfluence(b *testing.B) {
 	random := rand.New(rand.NewSource(42))
 	count := 256
 	x := gaussianSequence(random, count)
@@ -397,22 +602,24 @@ func BenchmarkInfluenceEstimate(b *testing.B) {
 		{coordinate: fixtureCoordinate("z", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
 	})
 
-	estimator := NewInfluenceEstimator("bench-v1")
-	request := InfluenceRequest{
-		Source: fixtureCoordinate("z", "x"),
-		Target: fixtureCoordinate("z", "y"),
-		Lag:    LagDomain{MinLag: time.Second, MaxLag: 10 * time.Second},
-	}
+	estimator := NewInfluence("bench-v1")
+	source := fixtureCoordinate("z", "x")
+	target := fixtureCoordinate("z", "y")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		result, err := estimator.Estimate(store, request)
-
-		if err != nil {
-			b.Fatal(err)
+		request := &InfluenceRequest{
+			Source: source,
+			Target: target,
+			History: InfluenceHistory{
+				Source: ringFor(store, source),
+				Target: ringFor(store, target),
+			},
+			Lag: LagDomain{MinLag: time.Second, MaxLag: 10 * time.Second},
 		}
 
+		result := driveInfluence(estimator, request)
 		benchmarkEstimateSink = result.Status
 	}
 }

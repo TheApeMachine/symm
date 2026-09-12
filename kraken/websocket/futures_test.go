@@ -231,11 +231,9 @@ func TestFuturesLiveMarkReady(t *testing.T) {
 		futures := &FuturesLive{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
-			ingress: map[string]runtime.Ingress[*types.Envelope]{
-				"ticker": &testIngress{
-					status: runtime.NewStatus().Transition(runtime.WAITING),
-				},
+			status: stagedStatus(runtime.BUSY),
+			ingress: map[string]Ingress{
+				"ticker": &testIngress{},
 			},
 		}
 

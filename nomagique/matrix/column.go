@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -10,31 +12,40 @@ import (
 Column arranges a scalar run as an n-by-one matrix.
 */
 type Column struct {
-	core.Base[float64, [][]float64]
+	err error
+	out [][]float64
 }
 
-func NewColumn() *Column {
+func NewColumn() core.Primitive {
 	return &Column{}
 }
 
-func (op *Column) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
-	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+func (op *Column) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		var values []float64
 
 		for arriving := range in {
-			values = append(values, arriving.Read())
+			values = append(values, *(*float64)(arriving))
 		}
 
-		rows := make([][]float64, len(values))
+		op.out = make([][]float64, len(values))
 
 		for index, value := range values {
-			rows[index] = []float64{value}
+			op.out[index] = []float64{value}
 		}
 
-		if !yield(op.Carrier(rows)) {
+		if !yield(unsafe.Pointer(&op.out)) {
 			return
 		}
 	}
+}
+
+func (op *Column) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

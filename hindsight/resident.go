@@ -4,6 +4,7 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/types"
+	"strconv"
 )
 
 /*
@@ -62,7 +63,7 @@ func Resident(
 			// Captures arrive newest first, so the first value seen for a
 			// quantity is the one that was resident. An older capture carrying
 			// the same quantity is what it replaced, never what it held.
-			quantity := measurement.Source + "\x00" + measurement.ID
+			quantity := measurement.Source + "\x00" + strconv.Itoa(measurement.ID)
 
 			if _, carried := held[quantity]; carried {
 				continue

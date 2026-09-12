@@ -1,54 +1,53 @@
 package learning
 
 import (
+	"errors"
 	"iter"
+	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
-
-/*
-Observation is the current reference and the past reference a target may use.
-*/
-type Observation struct {
-	Current float64
-	Past    float64
-}
 
 /*
 IdentityTarget selects the finite current value.
 */
 type IdentityTarget struct {
-	core.Base[Observation, float64]
-	finite *logic.Finite[float64]
+	err error
+	out float64
 }
 
-func NewIdentityTarget() *IdentityTarget {
-	return &IdentityTarget{finite: logic.NewFinite[float64]()}
+func NewIdentityTarget() core.Primitive {
+	return &IdentityTarget{}
 }
 
 func (op *IdentityTarget) Next(
-	in iter.Seq[core.Primitive[Observation, Observation]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value := arriving.Read().Current
-			defined, err := transport.Evaluate(op.finite, transport.Values(value))
+			sample := (*Observation)(arriving)
 
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !defined {
+			if math.IsNaN(sample.Current) || math.IsInf(sample.Current, 0) {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			if !yield(op.Carrier(value)) {
+			op.out = sample.Current
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *IdentityTarget) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -18,47 +20,54 @@ type VectorInput struct {
 Vector multiplies a matrix by a vector and retains the vector result.
 */
 type Vector struct {
-	core.Base[VectorInput, []float64]
-	product Product
+	err error
+	out []float64
 }
 
-func NewVector() *Vector {
+func NewVector() core.Primitive {
 	return &Vector{}
 }
 
-func (op *Vector) Next(
-	in iter.Seq[core.Primitive[VectorInput, VectorInput]],
-) iter.Seq[core.Primitive[[]float64, []float64]] {
-	return func(yield func(core.Primitive[[]float64, []float64]) bool) {
+func (op *Vector) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := arriving.Read()
-			column := make([][]float64, len(input.Vector))
+			input := (*VectorInput)(arriving)
+			op.out = make([]float64, len(input.Matrix))
+			ok := true
 
-			for index, value := range input.Vector {
-				column[index] = []float64{value}
+			for rowIdx, row := range input.Matrix {
+				if len(row) != len(input.Vector) {
+					op.Error(core.ErrShape)
+					ok = false
+					break
+				}
+
+				var sum float64
+
+				for colIdx, val := range row {
+					sum += val * input.Vector[colIdx]
+				}
+
+				op.out[rowIdx] = sum
 			}
 
-			product := op.product.Multiply(input.Matrix, column)
-
-			if op.product.Error() != nil {
-				op.Error(op.product.Error())
+			if !ok {
 				return
 			}
 
-			result := make([]float64, len(product))
-
-			for index, row := range product {
-				if len(row) != 1 {
-					op.Error(core.ErrShape)
-					return
-				}
-
-				result[index] = row[0]
-			}
-
-			if !yield(op.Carrier(result)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Vector) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

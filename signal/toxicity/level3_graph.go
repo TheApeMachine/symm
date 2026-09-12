@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -26,11 +27,11 @@ type Level3Input struct {
 }
 
 type Level3Graph struct {
-	core.Base[Level3Input, data.ProjectionInput]
-	withdrawBid *adaptive.Baseline
-	withdrawAsk *adaptive.Baseline
-	retreatBid  *adaptive.Baseline
-	retreatAsk  *adaptive.Baseline
+	err         error
+	withdrawBid core.Primitive
+	withdrawAsk core.Primitive
+	retreatBid  core.Primitive
+	retreatAsk  core.Primitive
 }
 
 func newLevel3Graph() *Level3Graph {
@@ -43,22 +44,35 @@ func newLevel3Graph() *Level3Graph {
 }
 
 func (op *Level3Graph) Next(
-	in iter.Seq[core.Primitive[Level3Input, Level3Input]],
-) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
-	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(op.observe(arriving.Read()))) {
+			projected := op.observe(*(*Level3Input)(arriving))
+
+			if !yield(unsafe.Pointer(&projected)) {
 				return
 			}
 		}
 	}
 }
 
+func (op *Level3Graph) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
+}
+
 func (op *Level3Graph) observe(input Level3Input) data.ProjectionInput {
-	withdrawBid := op.withdrawBid.Observe(input.WithFracBid)
-	withdrawAsk := op.withdrawAsk.Observe(input.WithFracAsk)
-	retreatBid := op.retreatBid.Observe(input.RetreatFracBid)
-	retreatAsk := op.retreatAsk.Observe(input.RetreatFracAsk)
+	withdrawBid := baselineReading(op.withdrawBid, input.WithFracBid)
+	withdrawAsk := baselineReading(op.withdrawAsk, input.WithFracAsk)
+	retreatBid := baselineReading(op.retreatBid, input.RetreatFracBid)
+	retreatAsk := baselineReading(op.retreatAsk, input.RetreatFracAsk)
 	values := map[string]float64{
 		"curBid": input.CurBid, "curAsk": input.CurAsk,
 		"prevBid": input.PrevBid, "prevAsk": input.PrevAsk,

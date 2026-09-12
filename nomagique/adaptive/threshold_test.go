@@ -7,8 +7,10 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -16,26 +18,19 @@ func TestThresholdNext(t *testing.T) {
 	Convey("Dispersion multipliers follow the configured coefficient", t, func() {
 		for _, policy := range []struct {
 			name string
-			node *adaptive.Threshold
+			node core.Primitive
 			want func(count, variance float64) float64
 		}{
 			{
-				name: "predictive",
-				node: adaptive.NewThreshold(equation.NewWelford(), equation.NewPredictiveInflation()),
-				want: func(count, variance float64) float64 {
-					return math.Sqrt(variance) * math.Sqrt(1+1/count)
-				},
-			},
-			{
 				name: "normal",
-				node: adaptive.NewThreshold(equation.NewWelford(), store.NewConstant[float64, float64](1.482602218505602)),
+				node: adaptive.NewThreshold(statistic.NewEstimator(), store.NewConstant(1.482602218505602)),
 				want: func(count, variance float64) float64 {
 					return math.Sqrt(variance) * 1.482602218505602
 				},
 			},
 			{
 				name: "chebyshev",
-				node: adaptive.NewThreshold(equation.NewWelford(), calculus.NewSqrt[float64]()),
+				node: adaptive.NewThreshold(statistic.NewEstimator(), calculus.NewSqrt()),
 				want: func(count, variance float64) float64 {
 					return math.Sqrt(variance) * math.Sqrt(count)
 				},
@@ -55,9 +50,9 @@ func TestThresholdNext(t *testing.T) {
 						want = policy.want(count, m2/(count-1))
 					}
 
-					got, err := transport.Evaluate(policy.node, transport.Values(value))
-					So(err, ShouldBeNil)
-					So(got, ShouldAlmostEqual, want)
+					out := tests.CollectSeq[float64](policy.node.Next(transport.NewValues(value).Next(nil)))
+					So(policy.node.Error(), ShouldBeNil)
+					So(out[0], ShouldAlmostEqual, want, 1e-12)
 				}
 			})
 		}

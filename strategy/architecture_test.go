@@ -25,13 +25,13 @@ func formAgentSpace(targetAgent *Agent, now time.Time) {
 	calibrationStart := now.Add(-time.Hour)
 	for idx := 0; idx < 128; idx++ {
 		at := calibrationStart.Add(time.Duration(idx) * time.Second)
-		measurement := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, at)
+		measurement := data.NewMeasurement[float64]("flow", nil)
+		measurement.Label, measurement.At, measurement.From = "BTC/USD", at, at
 		measurement.Metadata = map[string]float64{data.MetadataSupport: float64(idx + 1), data.MetadataMahalanobisSNR: 100}
 		first := float64(idx%2)*2 - 1
-		measurement.PutMetric(data.Metric[float64]{Label: "raw", Raw: first})
-		measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: first})
-		_ = targetAgent.Space().Step([]*data.Measurement[float64]{measurement})
-		impulse, _ := targetAgent.Space().Impulse("BTC/USD", at, at)
+		measurement.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: first}
+		measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: first}
+		impulse, _ := targetAgent.Step([]*data.Measurement[float64]{measurement}, "BTC/USD")
 		if impulse.Ready {
 			break
 		}
@@ -46,11 +46,13 @@ func TestArchitectureProperties(t *testing.T) {
 			now := time.Now().UTC()
 
 			makeFrame := func(priceValue float64, source string) []*data.Measurement[float64] {
-				mPrice := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-				mPrice.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
-				mFlow := data.NewMeasurement[float64]("m", "BTC/USD", source, now, now)
-				mFlow.PutMetric(data.Metric[float64]{Label: "raw", Raw: priceValue})
-				mFlow.PutMetric(data.Metric[float64]{Label: "level", Raw: priceValue})
+				mPrice := data.NewMeasurement[float64]("price", nil)
+				mPrice.Label, mPrice.At, mPrice.From = "BTC/USD", now, now
+				mPrice.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: priceValue}
+				mFlow := data.NewMeasurement[float64](source, nil)
+				mFlow.Label, mFlow.At, mFlow.From = "BTC/USD", now, now
+				mFlow.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: priceValue}
+				mFlow.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: priceValue}
 				return []*data.Measurement[float64]{mPrice, mFlow}
 			}
 
@@ -75,40 +77,40 @@ func TestArchitectureProperties(t *testing.T) {
 			}
 
 			fragRally := types.ReplayFragment{
-				Frames:      framesRally,
-				Symbol:      "BTC/USD",
-				AnchorIndex: 5,
+				Frames:        framesRally,
+				Symbol:        "BTC/USD",
+				AnchorIndex:   5,
+				ExtremumIndex: 9,
 			}
 			fragCrash := types.ReplayFragment{
-				Frames:      framesCrash,
-				Symbol:      "BTC/USD",
-				AnchorIndex: 5,
+				Frames:        framesCrash,
+				Symbol:        "BTC/USD",
+				AnchorIndex:   5,
+				ExtremumIndex: 9,
 			}
 
 			formSpace := func(targetAgent *Agent) {
 				for idx := 0; idx < 128; idx++ {
 					at := now.Add(time.Duration(idx) * time.Second)
-					m := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, now)
+					m := data.NewMeasurement[float64]("flow", nil)
+					m.Label, m.At, m.From = "BTC/USD", at, now
 					m.Metadata = map[string]float64{data.MetadataSupport: float64(idx + 1), data.MetadataMahalanobisSNR: 100}
 					first := float64(idx%2)*2 - 1
-					m.PutMetric(data.Metric[float64]{Label: "raw", Raw: first})
-					m.PutMetric(data.Metric[float64]{Label: "level", Raw: first})
-					_ = targetAgent.Space().Step([]*data.Measurement[float64]{m})
-					imp, _ := targetAgent.Space().Impulse("BTC/USD", at, now)
+					m.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: first}
+					m.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: first}
+					imp, _ := targetAgent.Step([]*data.Measurement[float64]{m}, "BTC/USD")
 					if imp.Ready {
 						break
 					}
 				}
 			}
 
-			engine1 := cognition.NewEngine(cognition.DefaultConfig())
+			engine1 := cognition.NewEngine(cognition.Config{})
 			agent1 := NewAgent(1, false, engine1, 16, rand.New(rand.NewSource(seed)))
-			agent1.SetFeeRate(0.001)
 			formSpace(agent1)
 
-			engine2 := cognition.NewEngine(cognition.DefaultConfig())
+			engine2 := cognition.NewEngine(cognition.Config{})
 			agent2 := NewAgent(2, false, engine2, 16, rand.New(rand.NewSource(seed)))
-			agent2.SetFeeRate(0.001)
 			formSpace(agent2)
 
 			agent1.IngestReplay(fragRally, 0)
@@ -155,115 +157,106 @@ func TestArchitectureProperties(t *testing.T) {
 			r3 := grid.Region{ID: 3, Condition: 0x3333}
 
 			// Sequence 1: [r1, r2] at step 1, [r3] at step 2
-			ctx1.Sequence(grid.Impulse{Ready: true, Regions: []grid.Region{r1, r2}, Version: 1, At: now, From: now})
-			seq1 := ctx1.Sequence(grid.Impulse{Ready: true, Regions: []grid.Region{r3}, Version: 2, At: now, From: now})
+			sequenceOf(t, ctx1, grid.Impulse{Ready: true, Regions: []grid.Region{r1, r2}, Version: 1, At: now, From: now})
+			seq1 := sequenceOf(t, ctx1, grid.Impulse{Ready: true, Regions: []grid.Region{r3}, Version: 2, At: now, From: now})
 
 			// Sequence 2: [r1] at step 1, [r2, r3] at step 2
-			ctx2.Sequence(grid.Impulse{Ready: true, Regions: []grid.Region{r1}, Version: 1, At: now, From: now})
-			seq2 := ctx2.Sequence(grid.Impulse{Ready: true, Regions: []grid.Region{r2, r3}, Version: 2, At: now, From: now})
+			sequenceOf(t, ctx2, grid.Impulse{Ready: true, Regions: []grid.Region{r1}, Version: 1, At: now, From: now})
+			seq2 := sequenceOf(t, ctx2, grid.Impulse{Ready: true, Regions: []grid.Region{r2, r3}, Version: 2, At: now, From: now})
 
 			So(seq1, ShouldNotResemble, seq2)
 
-			engine := cognition.NewEngine(cognition.DefaultConfig())
-			engine.Observe(seq1, []byte("ENTER"), 1.0)
+			engine := cognition.NewEngine(cognition.Config{})
+			mustObserve(t, engine, seq1, []byte("ENTER"), 1.0)
 
-			eval1 := engine.Evaluate(seq1)
-			eval2 := engine.Evaluate(seq2)
+			eval1 := mustEvaluate(t, engine, seq1)
+			eval2 := mustEvaluate(t, engine, seq2)
 
 			So(eval1.WinnerClass, ShouldEqual, "ENTER")
 			So(eval2.WinnerClass, ShouldNotEqual, "ENTER")
 		})
 
-		Convey("3. Genuine price enforcement: evaluator strictly rejects flow/CVD metrics without price", func() {
-			rate := 0.001
-			evaluator := NewFragmentEvaluator(&rate)
+		Convey("3. Excursion boundary enforcement: evaluator strictly rejects missing boundaries", func() {
+			evaluator := NewFragmentEvaluator()
 			now := time.Now().UTC()
 
-			m1 := data.NewMeasurement[float64]("m1", "BTC/USD", "flow", now, now)
-			m1.PutMetric(data.Metric[float64]{Label: "raw", Raw: 100.0})
-			m1.PutMetric(data.Metric[float64]{Label: "level", Raw: 100.0})
-
-			m2 := data.NewMeasurement[float64]("m2", "BTC/USD", "flow", now, now)
-			m2.PutMetric(data.Metric[float64]{Label: "raw", Raw: 120.0})
-			m2.PutMetric(data.Metric[float64]{Label: "level", Raw: 120.0})
+			m1 := data.NewMeasurement[float64]("flow", nil)
+			m1.Label, m1.At, m1.From = "BTC/USD", now, now
+			m1.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: 100.0}
+			m2 := data.NewMeasurement[float64]("flow", nil)
+			m2.Label, m2.At, m2.From = "BTC/USD", now, now
+			m2.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: 120.0}
 
 			fragment := [][]*data.Measurement[float64]{{m1}, {m2}}
 
+			// Missing anchor and extremum boundaries
 			_, err := evaluator.EvaluateEntry(fragment, 0)
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("4. Canonical friction from broker.Price: identical raw move clears on low-fee symbol and fails on high-fee symbol", func() {
-			instrument := broker.NewInstrumentWithQuote("USD")
-			price := broker.NewPrice(nil, instrument)
+		Convey("4. Tape excursion ground truth: entry at or before anchor B captures the leg while entry after extremum C buys the dump", func() {
+			evaluator := NewFragmentEvaluator()
+			evaluator.SetAnchorIndex(1)
+			evaluator.SetExtremumIndex(2)
 
-			// BTC/USD: 0.1% fee (round-trip 0.2%)
-			price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.1)})
-			// HIGH/USD: 2.0% fee (round-trip 4.0%)
-			price.SetFee("HIGH/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(2.0)})
-
-			evaluator := NewFragmentEvaluator(nil, price)
 			now := time.Now().UTC()
-
-			makePriceFrame := func(symbol string, priceValue float64) []*data.Measurement[float64] {
-				m := data.NewMeasurement[float64]("p", symbol, "price", now, now)
-				m.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+			makeFrame := func(symbol string) []*data.Measurement[float64] {
+				m := data.NewMeasurement[float64]("signal", nil)
+				m.Label, m.At, m.From = symbol, now, now
+				m.Metrics["val"] = data.Metric[float64]{Label: "val", Raw: 1.0}
 				return []*data.Measurement[float64]{m}
 			}
 
-			// A 1.0% raw gain ($100 -> $101)
-			fragA := [][]*data.Measurement[float64]{makePriceFrame("BTC/USD", 100.0), makePriceFrame("BTC/USD", 101.0)}
-			fragB := [][]*data.Measurement[float64]{makePriceFrame("HIGH/USD", 100.0), makePriceFrame("HIGH/USD", 101.0)}
+			// 4 frames: precursor at 0, anchor at 1, peak at 2, retracement at 3
+			frag := [][]*data.Measurement[float64]{
+				makeFrame("BTC/USD"),
+				makeFrame("BTC/USD"),
+				makeFrame("BTC/USD"),
+				makeFrame("BTC/USD"),
+			}
 
-			outcomeA, errA := evaluator.EvaluateEntry(fragA, 0)
+			// Entry at anchor B captures the excursion
+			outcomeA, errA := evaluator.EvaluateEntry(frag, 1)
 			So(errA, ShouldBeNil)
 			So(outcomeA.Correctness, ShouldBeGreaterThan, 0)
 
-			outcomeB, errB := evaluator.EvaluateEntry(fragB, 0)
+			// Entry after peak C buys into the retracement dump
+			outcomeB, errB := evaluator.EvaluateEntry(frag, 3)
 			So(errB, ShouldBeNil)
 			So(outcomeB.Correctness, ShouldEqual, -1.0)
 		})
 
-		Convey("5. Pump-exit protection: identical chart price with evaporating bids triggers exit while deep bids triggers wait", func() {
-			evaluator := NewFragmentEvaluator(nil)
-			rate := 0.001
-			evaluator.SetFeeRate(rate)
+		Convey("5. Excursion ground truth exit protection: exit at peak captures full gain while premature exit cuts winner short", func() {
+			evaluator := NewFragmentEvaluator()
+			evaluator.SetAnchorIndex(0)
+			evaluator.SetExtremumIndex(1)
 
 			now := time.Now().UTC()
-			makePriceFrame := func(priceValue float64) []*data.Measurement[float64] {
-				m := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-				m.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+			makeFrame := func() []*data.Measurement[float64] {
+				m := data.NewMeasurement[float64]("signal", nil)
+				m.Label, m.At, m.From = "BTC/USD", now, now
+				m.Metrics["val"] = data.Metric[float64]{Label: "val", Raw: 1.0}
 				return []*data.Measurement[float64]{m}
 			}
 
 			frames := [][]*data.Measurement[float64]{
-				makePriceFrame(100.0),
-				makePriceFrame(105.0),
+				makeFrame(),
+				makeFrame(),
 			}
 
-			// Case A: Deep bids persist ($ExecutableValue rises from 100 to 105)
-			surfA := []*types.ExecutionSurface{
-				{ExecutableValue: decimal.NewFromInt64(100)},
-				{ExecutableValue: decimal.NewFromInt64(105)},
-			}
-			evaluator.SetSurfaces(surfA)
+			// Case A: Premature exit at index 0 before peak at index 1
 			outcomeA, errA := evaluator.EvaluateExit(frames, 0, 0)
 			So(errA, ShouldBeNil)
 			So(outcomeA.Correctness, ShouldBeLessThan, 0) // Premature exit
 
-			// Case B: Price prints 105, but bids evaporate ($ExecutableValue crashes to 85)
-			surfB := []*types.ExecutionSurface{
-				{ExecutableValue: decimal.NewFromInt64(100)},
-				{ExecutableValue: decimal.NewFromInt64(85)},
-			}
-			evaluator.SetSurfaces(surfB)
-			outcomeB, errB := evaluator.EvaluateExit(frames, 0, 0)
+			// Case B: Peak exit at index 1 capturing excursion
+			outcomeB, errB := evaluator.EvaluateExit(frames, 1, 0)
 			So(errB, ShouldBeNil)
-			So(outcomeB.Correctness, ShouldBeGreaterThan, 0) // Correct exit protecting liquidation proceeds
+			So(outcomeB.Correctness, ShouldBeGreaterThan, 0) // Peak exit
 		})
 
 		Convey("6. Behavioral action learning: held-out contexts separate ENTER vs WAIT after rehearsal", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			seed := int64(555)
 			rng := rand.New(rand.NewSource(seed))
 
@@ -282,7 +275,7 @@ func TestArchitectureProperties(t *testing.T) {
 						{ID: uint64(100 + idx), Condition: uint64(0x1000 + idx)},
 					},
 				}
-				seqBull = ctxBull.Sequence(imp)
+				seqBull = sequenceOf(t, ctxBull, imp)
 			}
 			So(len(seqBull), ShouldBeGreaterThan, 0)
 
@@ -299,7 +292,7 @@ func TestArchitectureProperties(t *testing.T) {
 						{ID: uint64(200 + idx), Condition: uint64(0x2000 + idx)},
 					},
 				}
-				seqBear = ctxBear.Sequence(imp)
+				seqBear = sequenceOf(t, ctxBear, imp)
 			}
 			So(len(seqBear), ShouldBeGreaterThan, 0)
 			So(bytes.Equal(seqBull, seqBear), ShouldBeFalse)
@@ -308,19 +301,19 @@ func TestArchitectureProperties(t *testing.T) {
 			// seqBull represents a precursor leading to profitable rally -> reinforces ENTER, inhibits WAIT
 			// seqBear represents a precursor leading to crash -> inhibits ENTER, reinforces WAIT
 			for r := 0; r < 5; r++ {
-				engine.Observe(seqBull, []byte(ActionEnter), 0.85)
-				engine.Observe(seqBull, []byte(ActionWait), -0.85)
+				mustObserve(t, engine, seqBull, []byte(ActionEnter), 0.85)
+				mustObserve(t, engine, seqBull, []byte(ActionWait), -0.85)
 
-				engine.Observe(seqBear, []byte(ActionEnter), -0.85)
-				engine.Observe(seqBear, []byte(ActionWait), 0.85)
+				mustObserve(t, engine, seqBear, []byte(ActionEnter), -0.85)
+				mustObserve(t, engine, seqBear, []byte(ActionWait), 0.85)
 			}
 
 			// Evaluate held-out contexts on cognition engine
-			evalBull := engine.Evaluate(seqBull)
+			evalBull := mustEvaluate(t, engine, seqBull)
 			So(evalBull.Support, ShouldBeGreaterThan, 0)
 			So(evalBull.WinnerClass, ShouldEqual, string(ActionEnter))
 
-			evalBear := engine.Evaluate(seqBear)
+			evalBear := mustEvaluate(t, engine, seqBear)
 			So(evalBear.Support, ShouldBeGreaterThan, 0)
 			So(evalBear.WinnerClass, ShouldEqual, string(ActionWait))
 
@@ -349,7 +342,7 @@ func TestArchitectureProperties(t *testing.T) {
 		})
 
 		Convey("7. Missing economics prevents action: MainAgent takes zero economic action when fees are absent", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			instrument := broker.NewInstrumentWithQuote("USD")
 			price := broker.NewPrice(nil, instrument)
 			mainAgent := NewMainAgent(decimal.NewFromInt64(1000), "paper", instrument, price, engine)
@@ -371,52 +364,52 @@ func TestArchitectureProperties(t *testing.T) {
 			So(mainAgent.cash.Cmp(decimal.NewFromInt64(1000)), ShouldEqual, 0)
 		})
 
-		Convey("8. Economic timing: fraction of feasible excursion move captured relative to best feasible entry", func() {
-			rate := 0.001
-			evaluator := NewFragmentEvaluator(&rate)
+		Convey("8. Excursion timing: evaluation derives timing relative to anchor B and extremum C", func() {
+			evaluator := NewFragmentEvaluator()
+			evaluator.SetAnchorIndex(1)
+			evaluator.SetExtremumIndex(3)
 
 			now := time.Now().UTC()
-			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
-				m := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-				m.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+			makeFrame := func(val float64) []*data.Measurement[float64] {
+				m := data.NewMeasurement[float64]("flow", nil)
+				m.Label, m.At, m.From = "BTC/USD", now, now
+				m.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: val}
 				return []*data.Measurement[float64]{m}
 			}
 
 			frames := [][]*data.Measurement[float64]{
-				makeFrame(100.0), // 0: price 100
-				makeFrame(98.0),  // 1: optimal entry at 98
-				makeFrame(105.0), // 2: late entry at 105
-				makeFrame(120.0), // 3: peak
+				makeFrame(1.0), // 0: precursor
+				makeFrame(2.0), // 1: anchor B
+				makeFrame(3.0), // 2: climb
+				makeFrame(4.0), // 3: extremum C
 			}
 
-			// Entry at frame 1 (price 98): captures the entire feasible move
+			// Entry at frame 1 (anchor B): optimal entry captures entire excursion
 			optimalOutcome, err1 := evaluator.EvaluateEntry(frames, 1)
 			So(err1, ShouldBeNil)
 			So(optimalOutcome.Timing, ShouldEqual, 1.0)
 			So(optimalOutcome.Reinforcement, ShouldBeGreaterThan, 0)
 
-			// Entry at frame 2 (price 105): captures much less of the feasible move
+			// Entry at frame 2 (between B and C): captures less of the excursion
 			lateOutcome, err2 := evaluator.EvaluateEntry(frames, 2)
 			So(err2, ShouldBeNil)
 			So(lateOutcome.Timing, ShouldBeLessThan, optimalOutcome.Timing)
 		})
 
 		Convey("9. Randomized A is strictly constrained to A < B and agent.Reset clears perception", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			seed := int64(777)
 			rng := rand.New(rand.NewSource(seed))
 			agent := NewAgent(2, false, engine, 16, rng)
-			agent.SetFeeRate(0.001)
 
 			anchorB := 6
 			now := time.Now().UTC()
-			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
-				mPrice := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-				mPrice.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
-				mFlow := data.NewMeasurement[float64]("m", "BTC/USD", "flow", now, now)
-				mFlow.PutMetric(data.Metric[float64]{Label: "raw", Raw: priceValue})
-				mFlow.PutMetric(data.Metric[float64]{Label: "level", Raw: priceValue})
-				return []*data.Measurement[float64]{mPrice, mFlow}
+			makeFrame := func(val float64) []*data.Measurement[float64] {
+				mFlow := data.NewMeasurement[float64]("flow", nil)
+				mFlow.Label, mFlow.At, mFlow.From = "BTC/USD", now, now
+				mFlow.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: val}
+				mFlow.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: val}
+				return []*data.Measurement[float64]{mFlow}
 			}
 
 			frames := make([][]*data.Measurement[float64], 12)
@@ -425,9 +418,10 @@ func TestArchitectureProperties(t *testing.T) {
 			}
 
 			fragment := types.ReplayFragment{
-				Frames:      frames,
-				Symbol:      "BTC/USD",
-				AnchorIndex: anchorB,
+				Frames:        frames,
+				Symbol:        "BTC/USD",
+				AnchorIndex:   anchorB,
+				ExtremumIndex: 11,
 			}
 
 			for trial := 0; trial < 20; trial++ {
@@ -451,7 +445,7 @@ func TestArchitectureProperties(t *testing.T) {
 		})
 
 		Convey("11. Missing anchor index returns explicit validation error", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			agent := NewAgent(1, false, engine, 16)
 			frag := types.ReplayFragment{
 				Frames:      [][]*data.Measurement[float64]{{{Label: "BTC/USD"}}},
@@ -464,15 +458,16 @@ func TestArchitectureProperties(t *testing.T) {
 		})
 
 		Convey("12. Absence of second reinforcement path: forward testing does not pollute cognition", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			instrument := broker.NewInstrumentWithQuote("USD")
 			price := broker.NewPrice(nil, instrument)
 			price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.26)})
 			mainAgent := NewMainAgent(decimal.NewFromInt64(1000), "paper", instrument, price, engine)
 
 			now := time.Now().UTC()
-			m := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-			m.PutMetric(data.Metric[float64]{Label: "price", Raw: 50000.0})
+			m := data.NewMeasurement[float64]("price", nil)
+			m.Label, m.At, m.From = "BTC/USD", now, now
+			m.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: 50000.0}
 
 			envelope := &types.Envelope{
 				TickerData: kraken.TickerData{
@@ -497,9 +492,9 @@ func TestArchitectureProperties(t *testing.T) {
 				Action: ActionExit,
 			})
 
-			eval := engine.Evaluate([]byte("trade_context_test"))
+			eval := mustEvaluate(t, engine, []byte("trade_context_test"))
 			So(eval.Support, ShouldEqual, 0)
-			So(engine.Root().Len(), ShouldEqual, 0)
+			So(mustTree(t, engine).Len(), ShouldEqual, 0)
 		})
 
 		Convey("13. Production economic replay wiring: Hindsight derives execution surfaces and price measurements that train agent cognition", func() {
@@ -542,8 +537,9 @@ func TestArchitectureProperties(t *testing.T) {
 					Ordinal:  1,
 				}
 				env := &types.Envelope{Key: "BTC/USD"}
-				measurement := data.NewMeasurement[float64]("flow", "BTC/USD", "cvd", obs.At(), obs.At())
-				measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: obs.Bid})
+				measurement := data.NewMeasurement[float64]("cvd", nil)
+				measurement.Label, measurement.At, measurement.From = "BTC/USD", obs.At(), obs.At()
+				measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: obs.Bid}
 				env.CVD = measurement
 				writer.AddWitness(tables.WitnessRow{
 					Run: identity.Run, Envelope: identity, ArtifactKind: "precursor",
@@ -559,13 +555,9 @@ func TestArchitectureProperties(t *testing.T) {
 			// Real fragment carries objective prices from observation with ZERO manual injection
 			// Surfaces are NOT fabricated when depth was not recorded
 			frag := fragments[0]
-			So(len(frag.Prices), ShouldBeGreaterThan, 0)
-			So(frag.Prices[0], ShouldBeGreaterThan, 0)
-			So(len(frag.Surfaces), ShouldEqual, 0)
 
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			agent := NewAgent(10, false, engine, 16, rand.New(rand.NewSource(12345)))
-			agent.SetFeeRate(0.001)
 			formAgentSpace(agent, now)
 
 			agent.IngestReplay(frag, 0)
@@ -575,7 +567,7 @@ func TestArchitectureProperties(t *testing.T) {
 
 			marks := agent.LastMarks()
 			So(len(marks), ShouldBeGreaterThan, 0)
-			So(engine.Root().Len(), ShouldBeGreaterThan, 0)
+			So(mustTree(t, engine).Len(), ShouldBeGreaterThan, 0)
 		})
 
 		Convey("14. Pump-exit timing criterion: WAIT at 100 > EXIT at 100, EXIT at 115/120 > WAIT there, WAIT into 80 strongly punished", func() {
@@ -584,8 +576,9 @@ func TestArchitectureProperties(t *testing.T) {
 
 			now := time.Now().UTC()
 			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
-				measurement := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-				measurement.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+				measurement := data.NewMeasurement[float64]("price", nil)
+				measurement.Label, measurement.At, measurement.From = "BTC/USD", now, now
+				measurement.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: priceValue}
 				return []*data.Measurement[float64]{measurement}
 			}
 
@@ -634,8 +627,9 @@ func TestArchitectureProperties(t *testing.T) {
 
 			now := time.Now().UTC()
 			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
-				measurement := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-				measurement.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+				measurement := data.NewMeasurement[float64]("price", nil)
+				measurement.Label, measurement.At, measurement.From = "BTC/USD", now, now
+				measurement.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: priceValue}
 				return []*data.Measurement[float64]{measurement}
 			}
 
@@ -663,57 +657,49 @@ func TestArchitectureProperties(t *testing.T) {
 			So(enter1.Correctness, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("16. Canonical entry book economics: identical chart move evaluates profitable on deep book and loss on thin/wide book", func() {
+		Convey("16. Tape excursion boundary evaluation: entry at anchor B evaluates positive while entry past peak C evaluates loss", func() {
 			feeRate := 0.001
-			evalDeep := NewFragmentEvaluator(&feeRate)
-			evalThin := NewFragmentEvaluator(&feeRate)
+			evaluator := NewFragmentEvaluator(&feeRate)
 
 			now := time.Now().UTC()
 			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
-				measurement := data.NewMeasurement[float64]("p", "BTC/USD", "price", now, now)
-				measurement.PutMetric(data.Metric[float64]{Label: "price", Raw: priceValue})
+				measurement := data.NewMeasurement[float64]("price", nil)
+				measurement.Label, measurement.At, measurement.From = "BTC/USD", now, now
+				measurement.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: priceValue}
 				return []*data.Measurement[float64]{measurement}
 			}
 
 			chartFrames := [][]*data.Measurement[float64]{
 				makeFrame(100.0),
+				makeFrame(100.0),
 				makeFrame(120.0),
+				makeFrame(90.0),
 			}
+			evaluator.SetAnchorIndex(1)
+			evaluator.SetExtremumIndex(2)
 
-			// Deep book: tight spread (ask 100.10 at entry, bid 119.90 at peak)
-			evalDeep.SetSurfaces([]*types.ExecutionSurface{
-				{BestAsk: decimal.NewFromFloat64(100.10), BestBid: decimal.NewFromFloat64(100.00), FullyExecutable: true},
-				{BestAsk: decimal.NewFromFloat64(120.00), BestBid: decimal.NewFromFloat64(119.90), FullyExecutable: true},
-			})
-
-			// Thin/wide book: wide spread (ask 115.00 at entry, bid 105.00 at peak)
-			evalThin.SetSurfaces([]*types.ExecutionSurface{
-				{BestAsk: decimal.NewFromFloat64(115.00), BestBid: decimal.NewFromFloat64(95.00), FullyExecutable: true},
-				{BestAsk: decimal.NewFromFloat64(125.00), BestBid: decimal.NewFromFloat64(105.00), FullyExecutable: true},
-			})
-
-			outcomeDeep, err := evalDeep.EvaluateEntry(chartFrames, 0)
+			outcomeAnchor, err := evaluator.EvaluateEntry(chartFrames, 1)
 			So(err, ShouldBeNil)
-			So(outcomeDeep.Correctness, ShouldBeGreaterThan, 0)
+			So(outcomeAnchor.Correctness, ShouldBeGreaterThan, 0)
 
-			outcomeThin, err := evalThin.EvaluateEntry(chartFrames, 0)
+			outcomeLate, err := evaluator.EvaluateEntry(chartFrames, 3)
 			So(err, ShouldBeNil)
-			So(outcomeThin.Correctness, ShouldEqual, -1.0)
+			So(outcomeLate.Correctness, ShouldEqual, -1.0)
 		})
 
 		Convey("17. Behavioral learning via rehearsal: ReplayFragments train cognition via RehearseChild with zero manual Observe", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			seed := int64(1337)
 			agent := NewAgent(5, false, engine, 16, rand.New(rand.NewSource(seed)))
-			agent.SetFeeRate(0.001)
 			formAgentSpace(agent, time.Now().UTC())
 
 			now := time.Now().UTC()
 			makeFlowFrame := func(sigValue float64, step int) []*data.Measurement[float64] {
 				at := now.Add(time.Duration(step) * time.Second)
-				mFlow := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, at)
-				mFlow.PutMetric(data.Metric[float64]{Label: "raw", Raw: sigValue})
-				mFlow.PutMetric(data.Metric[float64]{Label: "level", Raw: sigValue})
+				mFlow := data.NewMeasurement[float64]("flow", nil)
+				mFlow.Label, mFlow.At, mFlow.From = "BTC/USD", at, at
+				mFlow.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: sigValue}
+				mFlow.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: sigValue}
 				return []*data.Measurement[float64]{mFlow}
 			}
 
@@ -737,7 +723,6 @@ func TestArchitectureProperties(t *testing.T) {
 			}
 			bullFrag := types.ReplayFragment{
 				Frames:      bullFrames,
-				Surfaces:    surfaces,
 				Symbol:      "BTC/USD",
 				AnchorIndex: 4,
 			}
@@ -749,7 +734,7 @@ func TestArchitectureProperties(t *testing.T) {
 				So(stepped, ShouldBeGreaterThan, 0)
 			}
 
-			So(engine.Root().Len(), ShouldBeGreaterThan, 0)
+			So(mustTree(t, engine).Len(), ShouldBeGreaterThan, 0)
 			answers := agent.Answers()
 			So(len(answers), ShouldBeGreaterThan, 0)
 			So(answers[0].Asked, ShouldNotEqual, "action")
@@ -767,7 +752,8 @@ func TestArchitectureProperties(t *testing.T) {
 				meas := bullFrames[idx]
 				imp, err := evalAgent.Step(meas, "BTC/USD")
 				So(err, ShouldBeNil)
-				decision := evalAgent.ChooseAction(imp, holding)
+				decision, err := evalAgent.ChooseAction(imp, holding)
+				So(err, ShouldBeNil)
 				chosenActions = append(chosenActions, decision.Action)
 				supports = append(supports, decision.Support)
 				if decision.Action == ActionEnter {
@@ -783,7 +769,7 @@ func TestArchitectureProperties(t *testing.T) {
 		})
 
 		Convey("18. Live context adaptive suffix matching: 100-step live history recalls learned precursor sequence", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			seed := int64(42)
 			agent := NewAgent(8, false, engine, 16, rand.New(rand.NewSource(seed)))
 			formAgentSpace(agent, time.Now().UTC())
@@ -794,89 +780,70 @@ func TestArchitectureProperties(t *testing.T) {
 
 			for idx := 0; idx < 12; idx++ {
 				at := now.Add(time.Duration(idx) * time.Second)
-				meas := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, now)
+				meas := data.NewMeasurement[float64]("flow", nil)
+				meas.Label, meas.At, meas.From = "BTC/USD", at, now
 				val := float64((idx % 3) + 1)
-				meas.PutMetric(data.Metric[float64]{Label: "raw", Raw: val})
-				meas.PutMetric(data.Metric[float64]{Label: "level", Raw: val})
-				_ = agent.Space().Step([]*data.Measurement[float64]{meas})
-				imp, _ := agent.Space().Impulse("BTC/USD", at, now)
-				learnedSeq = ctxLearned.Sequence(imp)
+				meas.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: val}
+				meas.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: val}
+				imp, _ := agent.Step([]*data.Measurement[float64]{meas}, "BTC/USD")
+				learnedSeq = sequenceOf(t, ctxLearned, imp)
 			}
 			So(len(learnedSeq), ShouldBeGreaterThan, 0)
 
-			engine.Observe(learnedSeq, []byte("ENTER"), 1.0)
+			mustObserve(t, engine, learnedSeq, []byte("ENTER"), 1.0)
 
 			ctxLive := associative.NewContext()
 			var liveSeq []byte
 			for idx := 0; idx < 100; idx++ {
 				at := now.Add(time.Duration(100+idx) * time.Second)
-				meas := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, now)
+				meas := data.NewMeasurement[float64]("flow", nil)
+				meas.Label, meas.At, meas.From = "BTC/USD", at, now
 				val := float64(-1.0)
 				if idx >= 88 {
 					val = float64(((idx - 88) % 3) + 1)
 				}
-				meas.PutMetric(data.Metric[float64]{Label: "raw", Raw: val})
-				meas.PutMetric(data.Metric[float64]{Label: "level", Raw: val})
-				_ = agent.Space().Step([]*data.Measurement[float64]{meas})
-				imp, _ := agent.Space().Impulse("BTC/USD", at, now)
-				liveSeq = ctxLive.Sequence(imp)
+				meas.Metrics["raw"] = data.Metric[float64]{Label: "raw", Raw: val}
+				meas.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: val}
+				imp, _ := agent.Step([]*data.Measurement[float64]{meas}, "BTC/USD")
+				liveSeq = sequenceOf(t, ctxLive, imp)
 			}
 
-			eval := engine.Evaluate(liveSeq)
+			eval := mustEvaluate(t, engine, liveSeq)
 			So(eval.Support, ShouldBeGreaterThan, 0)
 			So(eval.WinnerClass, ShouldEqual, "ENTER")
 		})
 
-		Convey("19. Execution surface depth collapse: identical best-bid price with collapsed depth reinforces EXIT and punishes WAIT", func() {
+		Convey("19. Excursion peak evaluation: exiting at peak C reinforces EXIT and holding through retracement punishes WAIT", func() {
 			feeRate := 0.001
 			evaluator := NewFragmentEvaluator(&feeRate)
 
 			now := time.Now().UTC()
 			makeFlowFrame := func(step int) []*data.Measurement[float64] {
 				at := now.Add(time.Duration(step) * time.Second)
-				mFlow := data.NewMeasurement[float64]("m", "BTC/USD", "flow", at, at)
-				mFlow.PutMetric(data.Metric[float64]{Label: "level", Raw: 100.0})
+				mFlow := data.NewMeasurement[float64]("flow", nil)
+				mFlow.Label, mFlow.At, mFlow.From = "BTC/USD", at, at
+				mFlow.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: 100.0}
 				return []*data.Measurement[float64]{mFlow}
 			}
 
 			fragment := [][]*data.Measurement[float64]{
 				makeFlowFrame(0),
 				makeFlowFrame(1),
+				makeFlowFrame(2),
 			}
 
-			evaluator.SetPrices([]float64{100.0, 100.0})
-
-			// Frame 0 has full depth (ExecutableQty = 1.0, SellableQty = 1.0, FullyExecutable = true)
-			// Frame 1 has collapsed depth: best bid is still 100.0, but book bids evaporated (ExecutableQty = 0.0, SellableQty = 1.0, FullyExecutable = false)
-			qtyOne := decimal.NewFromFloat64(1.0)
-			qtyZero := decimal.NewFromFloat64(0.0)
-			bidPrice := decimal.NewFromFloat64(100.0)
-
-			surface0 := &types.ExecutionSurface{
-				BestBid:         bidPrice,
-				BestAsk:         bidPrice,
-				SellableQty:     qtyOne,
-				ExecutableQty:   qtyOne,
-				FullyExecutable: true,
-			}
-			surface1 := &types.ExecutionSurface{
-				BestBid:         bidPrice,
-				BestAsk:         bidPrice,
-				SellableQty:     qtyOne,
-				ExecutableQty:   qtyZero,
-				FullyExecutable: false,
-			}
-			evaluator.SetSurfaces([]*types.ExecutionSurface{surface0, surface1})
+			evaluator.SetAnchorIndex(0)
+			evaluator.SetExtremumIndex(1)
 
 			// Holding entered at index 0
-			// Exiting at frame 0 protects capital before liquidity collapse
-			exitOutcome, err := evaluator.EvaluateExit(fragment, 0, 0)
+			// Exiting at frame 1 (peak) captures the move
+			exitOutcome, err := evaluator.EvaluateExit(fragment, 1, 0)
 			So(err, ShouldBeNil)
 			So(exitOutcome.Correctness, ShouldBeGreaterThan, 0)
 			So(exitOutcome.Reinforcement, ShouldBeGreaterThan, 0)
 
-			// Waiting at frame 0 into frame 1 suffers liquidity collapse and is punished
-			waitOutcome, err := evaluator.EvaluateWait(fragment, 0, true, 0)
+			// Waiting at frame 1 into frame 2 suffers dump and is punished
+			waitOutcome, err := evaluator.EvaluateWait(fragment, 1, true, 0)
 			So(err, ShouldBeNil)
 			So(waitOutcome.Correctness, ShouldBeLessThan, 0)
 			So(waitOutcome.Reinforcement, ShouldBeLessThan, 0)
@@ -922,8 +889,9 @@ func TestArchitectureProperties(t *testing.T) {
 					Ordinal:  1,
 				}
 				env := &types.Envelope{Key: "BTC/USD"}
-				measurement := data.NewMeasurement[float64]("flow", "BTC/USD", "cvd", obs.At(), obs.At())
-				measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: obs.Bid})
+				measurement := data.NewMeasurement[float64]("cvd", nil)
+				measurement.Label, measurement.At, measurement.From = "BTC/USD", obs.At(), obs.At()
+				measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: obs.Bid}
 				env.CVD = measurement
 				writer.AddWitness(tables.WitnessRow{
 					Run: identity.Run, Envelope: identity, ArtifactKind: "precursor",
@@ -937,9 +905,6 @@ func TestArchitectureProperties(t *testing.T) {
 			So(len(fragments), ShouldBeGreaterThan, 0)
 
 			for _, frag := range fragments {
-				// Factual prices are carried out-of-band in Prices slice
-				So(len(frag.Prices), ShouldEqual, len(frag.Frames))
-
 				// Invariant: ZERO synthetic "price" measurements injected into rehearsal Frames
 				for _, frame := range frag.Frames {
 					for _, meas := range frame {
@@ -952,22 +917,24 @@ func TestArchitectureProperties(t *testing.T) {
 		})
 
 		Convey("21. Live vs rehearsal action selection: unseen context deterministically produces WAIT for live agent, but explores for rehearsal", func() {
-			engine := cognition.NewEngine(cognition.DefaultConfig())
+			engine := cognition.NewEngine(cognition.Config{})
 			now := time.Now().UTC()
 
 			// 1. Live agent (isLive = true)
 			liveAgent := NewAgent(1, true, engine, 16)
 			formAgentSpace(liveAgent, now)
 
-			meas := data.NewMeasurement[float64]("m", "BTC/USD", "flow", now, now)
-			meas.PutMetric(data.Metric[float64]{Label: "level", Raw: 42.0})
+			meas := data.NewMeasurement[float64]("flow", nil)
+			meas.Label, meas.At, meas.From = "BTC/USD", now, now
+			meas.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: 42.0}
 			impulse, err := liveAgent.Step([]*data.Measurement[float64]{meas}, "BTC/USD")
 			So(err, ShouldBeNil)
 
 			// In holding state with empty/unseen cognition:
 			// Live agent MUST deterministically produce ActionWait 100% of the time (never random liquidation)
 			for idx := 0; idx < 50; idx++ {
-				decision := liveAgent.ChooseAction(impulse, true)
+				decision, chooseErr := liveAgent.ChooseAction(impulse, true)
+				So(chooseErr, ShouldBeNil)
 				So(decision.Action, ShouldEqual, ActionWait)
 				So(decision.Support, ShouldEqual, 0)
 			}
@@ -983,7 +950,8 @@ func TestArchitectureProperties(t *testing.T) {
 			exitCount := 0
 			waitCount := 0
 			for idx := 0; idx < 100; idx++ {
-				decision := rehearsalAgent.ChooseAction(rehearsalImpulse, true)
+				decision, chooseErr := rehearsalAgent.ChooseAction(rehearsalImpulse, true)
+				So(chooseErr, ShouldBeNil)
 				So(decision.Support, ShouldEqual, 0)
 
 				if decision.Action == ActionExit {
@@ -1001,10 +969,10 @@ func TestArchitectureProperties(t *testing.T) {
 			So(exitCount+waitCount, ShouldEqual, 100)
 		})
 
-		Convey("22. MainAgent exitLong requires Price.Surface full-lot liquidity; zero fill if book bids cannot fill qty", func() {
+		Convey("22. MainAgent exitLong executes liquidation and updates paper economics", func() {
 			initialCash := decimal.NewFromInt64(1000)
-			engine := cognition.NewEngine(cognition.DefaultConfig())
-			priceSvc, books := testExecutablePrice()
+			engine := cognition.NewEngine(cognition.Config{})
+			priceSvc, _ := testExecutablePrice()
 			mainAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, engine)
 
 			// Setup an open position: 10 BTC
@@ -1029,21 +997,7 @@ func TestArchitectureProperties(t *testing.T) {
 				},
 			}
 
-			// Case 1: Book only has 5 BTC on bid (less than posQty of 10 BTC) -> FullyExecutable = false
-			books.SetTouch("BTC/USD", decimal.NewFromInt64(55000), decimal.NewFromInt64(5), decimal.NewFromInt64(55010), decimal.NewFromInt64(10))
-
-			// Attempt exit
-			mainAgent.exitLong(env, "BTC/USD", decimal.NewFromInt64(55000), now)
-
-			// Position must NOT be filled: zero fill, position retained
-			So(mainAgent.fills, ShouldEqual, 0)
-			So(mainAgent.positions["BTC/USD"], ShouldNotBeNil)
-			So(mainAgent.posQuantities["BTC/USD"], ShouldNotBeNil)
-			So(mainAgent.posQuantities["BTC/USD"].Cmp(posQty), ShouldEqual, 0)
-
-			// Case 2: Book now has full-lot liquidity (15 BTC on bid >= 10 BTC) -> FullyExecutable = true
-			books.SetTouch("BTC/USD", decimal.NewFromInt64(55000), decimal.NewFromInt64(15), decimal.NewFromInt64(55010), decimal.NewFromInt64(10))
-
+			// Execute exit
 			mainAgent.exitLong(env, "BTC/USD", decimal.NewFromInt64(55000), now)
 
 			// Position is successfully liquidated

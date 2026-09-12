@@ -2,13 +2,13 @@ package equation
 
 import (
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-EvidenceAuthorityInput is a measurement's maturity and SNR facts. Unknown-SNR
-and zero-SNR factors are configuration, not new statistical laws.
+EvidenceAuthorityInput is a measurement's maturity and SNR facts.
 */
 type EvidenceAuthorityInput struct {
 	Estimated  bool
@@ -24,19 +24,20 @@ EvidenceAuthority owns the supplied measurement's maturity/SNR weighting,
 bounded to [0, 1].
 */
 type EvidenceAuthority struct {
-	core.Base[EvidenceAuthorityInput, float64]
+	err error
+	out float64
 }
 
-func NewEvidenceAuthority() *EvidenceAuthority {
+func NewEvidenceAuthority() core.Primitive {
 	return &EvidenceAuthority{}
 }
 
 func (op *EvidenceAuthority) Next(
-	in iter.Seq[core.Primitive[EvidenceAuthorityInput, EvidenceAuthorityInput]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := arriving.Read()
+			input := (*EvidenceAuthorityInput)(arriving)
 			factor := 1.0
 
 			if input.Estimated {
@@ -48,7 +49,7 @@ func (op *EvidenceAuthority) Next(
 			}
 
 			if input.Estimated && input.SNRDefined && input.SNR > 0 {
-				factor = input.SNR / (1 + input.SNR)
+				factor = input.SNR / (1.0 + input.SNR)
 			}
 
 			maturity := input.Maturity
@@ -71,9 +72,22 @@ func (op *EvidenceAuthority) Next(
 				value = 1
 			}
 
-			if !yield(op.Carrier(value)) {
+			op.out = value
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *EvidenceAuthority) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

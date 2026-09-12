@@ -1,13 +1,27 @@
+/*
+Package learning provides streaming learning primitives: recursive least
+squares, an adaptive resonance manifold for hierarchical predictive coding, a
+temporal ledger for delayed target supervision, and a predictive coder that
+orchestrates them.
+
+Everything is a streaming Primitive over an unsafe.Pointer wire. Multi-operation
+owners (the manifold, the ledger, the coder) receive command structs and yield
+plain reading payloads with exported fields only.
+*/
 package learning
 
 import (
 	"errors"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"iter"
 	"math"
 	"math/rand"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
+
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/mat"
 )
@@ -28,9 +42,11 @@ const (
 )
 
 /*
-ResonanceConfig configures multi-timescale, overcomplete predictive coding.
+resonanceConfig configures multi-timescale, overcomplete predictive coding. It
+is derived from the architecture and pace by adaptiveResonanceConfig, never
+hand-tuned at a call site.
 */
-type ResonanceConfig struct {
+type resonanceConfig struct {
 	MaxInferenceSteps  int
 	MinInferenceSteps  int
 	LrState            float64
@@ -64,11 +80,11 @@ type ResonanceConfig struct {
 }
 
 /*
-AdaptiveResonanceConfig derives hyperparameters dynamically from the learning pace,
-physical depth, and layer dimensions, automatically configuring dictionary sparsity
-when expanding overcomplete layers are detected.
+adaptiveResonanceConfig derives hyperparameters dynamically from the learning
+pace, physical depth, and layer dimensions, automatically configuring
+dictionary sparsity when expanding overcomplete layers are detected.
 */
-func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
+func adaptiveResonanceConfig(alpha float64, arch []int) resonanceConfig {
 	depth := len(arch)
 	depthFloat := float64(depth)
 	numLatents := depth - 1
@@ -101,7 +117,7 @@ func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
 		}
 	}
 
-	return ResonanceConfig{
+	return resonanceConfig{
 		MaxInferenceSteps:  depth * 8,
 		MinInferenceSteps:  depth * 2,
 		LrState:            alpha * 10.0,
@@ -135,22 +151,177 @@ func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
 }
 
 /*
+SettleIntent settles the manifold over one input. AdvanceTemporal states
+whether the multi-timescale temporal state also advances, which learning
+forbids until its own update has consumed the current state.
+*/
+type SettleIntent struct {
+	Input           []float64
+	AdvanceTemporal bool
+}
+
+/*
+LearnIntent updates every weight family from the settled state against one
+optional target vector.
+*/
+type LearnIntent struct {
+	Target []float64
+}
+
+/*
+BatchIntent is one full arrival: settle, optionally learn, and report. It
+composes the exact ordering the streaming coder needs — settle with temporal
+advance only when not learning, learn after settling.
+*/
+type BatchIntent struct {
+	Input           []float64
+	Target          []float64
+	Learn           bool
+	AdvanceTemporal bool
+}
+
+/*
+TaskIntent supervises one task-head row from one labeled sample. The row is
+addressed by its forward horizon, one-based: horizon h supervises the
+cumulative move over the next h ticks.
+*/
+type TaskIntent struct {
+	Horizon    int
+	Features   []float64
+	Prediction float64
+	Target     float64
+}
+
+/*
+ResetIntent zeroes the latent state, and optionally every retained precision
+estimate with it.
+*/
+type ResetIntent struct {
+	Precision bool
+}
+
+/*
+AlphaIntent re-derives the configured learning rates from one pace reading.
+*/
+type AlphaIntent struct {
+	Alpha float64
+}
+
+/*
+ReadingIntent asks for the manifold's current reading without mutating it.
+*/
+type ReadingIntent struct{}
+
+/*
+RetentionIntent asks how much latent energy survives an unforced rollout of
+the temporal operators.
+*/
+type RetentionIntent struct {
+	Steps int
+}
+
+/*
+ForecastIntent asks for the supervised head's forecast from the current
+settled readout.
+*/
+type ForecastIntent struct {
+	Steps int
+}
+
+/*
+ManifoldCommand discriminates one manifold operation. Exactly one intent must
+be set; anything else is a shape failure.
+*/
+type ManifoldCommand struct {
+	Settle      *SettleIntent
+	Learn       *LearnIntent
+	Batch       *BatchIntent
+	ObserveTask *TaskIntent
+	Reset       *ResetIntent
+	Alpha       *AlphaIntent
+	Reading     *ReadingIntent
+	Retention   *RetentionIntent
+	Forecast    *ForecastIntent
+}
+
+/*
+RLSOutput is the supervised head's forecast wire projection: the value, its
+scale, and the posterior's readiness. It is a wire payload, not a parallel
+learner or execution interface.
+*/
+type RLSOutput struct {
+	Value            float64
+	Scale            float64
+	DegreesOfFreedom float64
+	Ready            bool
+	Innovation       float64
+	Reset            bool
+}
+
+/*
+ResonanceLayerWire is one layer's settled state and prediction on the wire.
+*/
+type ResonanceLayerWire struct {
+	State      []float64 `json:"state"`
+	Prediction []float64 `json:"prediction"`
+	ErrorNorm  float64   `json:"errorNorm"`
+	Temporal   bool      `json:"temporal"`
+}
+
+/*
+ManifoldReading is the manifold's answer to a command: its settled dynamics,
+its harvested readout, the supervised head's per-row reliability, and, for the
+rollout intents, the requested curves.
+*/
+type ManifoldReading struct {
+	Reconstruction      float64
+	Energy              float64
+	PredictionEnergy    float64
+	ReconstructionError float64
+	EnergyDensity       float64
+	Surprise            float64
+	TemporalError       float64
+	HasTemporalError    bool
+
+	ReadoutDimension int
+	Readout          []float64
+	Latent           []float64
+	TaskPrediction   []float64
+	Layers           []ResonanceLayerWire
+
+	Skill             []float64
+	SkillReady        []bool
+	SkillAverage      float64
+	SkillReadyAvg     bool
+	PrecisionReady    []bool
+	PrecisionAverage  float64
+	PrecisionReadyAvg bool
+	ScaleAverage      float64
+	ScaleReadyAvg     bool
+
+	Forecast  []RLSOutput
+	Retention []float64
+}
+
+/*
 ResonanceManifold executes hierarchical predictive coding with multi-timescale
-operators, sparse overcomplete dictionaries, and innovation feature harvesting.
+operators, sparse overcomplete dictionaries, and innovation feature
+harvesting. It owns every recurrence and answers only through its command
+wire.
 */
 type ResonanceManifold struct {
-	cfg                    ResonanceConfig
+	err                    error
+	cfg                    resonanceConfig
 	arch                   []int
 	targetDim              int
 	taskRows               int
-	perHorizon             bool
 	readoutDim             int
 	generativeWeights      []*mat.Dense
 	recognitionWeights     []*mat.Dense
 	temporalOperators      []*mat.Dense
 	taskWeights            *mat.Dense
 	taskBias               *mat.VecDense
-	taskLearners           []*RLS
+	taskLearners           []core.Primitive
 	latentStates           []*mat.VecDense
 	errorVar               []*mat.VecDense
 	precision              []*mat.VecDense
@@ -168,83 +339,58 @@ type ResonanceManifold struct {
 	taskSkillReady   []bool
 	taskSkill        *mat.VecDense
 
-	workspace             *resonanceWorkspace
-	streamLearn           bool
-	streamAdvanceTemporal bool
-	lastInferenceSteps    int
-	output                float64
+	workspace          *resonanceWorkspace
+	lastInferenceSteps int
+	output             float64
+	out                ManifoldReading
 }
 
 /*
-NewResonanceManifold constructs a multi-layer predictive coding manifold.
-*/
-/*
-NewResonanceManifold constructs a multi-layer predictive coding manifold with a
-single-row supervised task head. It is the compatibility entry point: the task
-head has one row per target dimension, exactly as the original design.
-*/
-func NewResonanceManifold(arch []int, targetDim int, alpha float64) *ResonanceManifold {
-	return newResonanceManifold(arch, targetDim, targetDim, alpha)
-}
-
-/*
-NewResonanceManifoldWithHorizon constructs a multi-layer predictive coding
-manifold whose supervised task head holds one row per forward horizon, so the
-head can be trained on nested cumulative targets (row h predicts the direction
-of the move over the next h ticks). The compatibility constructor keeps a
-single row per target dimension.
-*/
-func NewResonanceManifoldWithHorizon(
-	arch []int,
-	targetDim int,
-	maxHorizon int,
-	alpha float64,
-) *ResonanceManifold {
-	return NewResonanceManifoldWithReadout(
-		arch, targetDim, maxHorizon, alpha, ReadoutAll,
-	)
-}
-
-/*
-NewResonanceManifoldWithReadout builds a per-horizon manifold whose task head
-harvests the named readout.
+NewResonanceManifold constructs a multi-layer predictive coding manifold whose
+supervised task head holds one row per forward horizon, so the head can be
+trained on nested cumulative targets (row h predicts the move over the next h
+ticks) and harvests the named readout.
 
 The readout width sets the size of every horizon's covariance matrix, and that
 matrix is quadratic in the width. ReadoutAll concatenates latents and
 innovations, so it is twice as wide as either alone and therefore four times
 the memory per horizon — a real cost when the head holds hundreds of horizons.
+
+A rejected architecture or pace is recorded as the primitive's error state and
+every stream over it yields nothing.
 */
-func NewResonanceManifoldWithReadout(
+func NewResonanceManifold(
 	arch []int,
 	targetDim int,
 	maxHorizon int,
 	alpha float64,
 	readout ReadoutMode,
-) *ResonanceManifold {
+) core.Primitive {
+	if len(arch) < 2 {
+		return &ResonanceManifold{
+			err: fmt.Errorf(
+				"%w: resonance: architecture must contain at least input and one latent layer",
+				core.ErrShape,
+			),
+		}
+	}
+
+	if alpha <= 0 || alpha > 1 || math.IsNaN(alpha) || math.IsInf(alpha, 0) {
+		return &ResonanceManifold{
+			err: fmt.Errorf(
+				"%w: resonance: alpha must be finite and in (0, 1]",
+				core.ErrDomain,
+			),
+		}
+	}
+
 	rows := maxHorizon
 
 	if rows < 1 {
 		rows = 1
 	}
 
-	manifold := newResonanceManifoldReadout(arch, targetDim, rows, alpha, readout)
-
-	if manifold == nil {
-		return nil
-	}
-
-	manifold.perHorizon = true
-
-	return manifold
-}
-
-func newResonanceManifold(
-	arch []int,
-	targetDim int,
-	taskRows int,
-	alpha float64,
-) *ResonanceManifold {
-	return newResonanceManifoldReadout(arch, targetDim, taskRows, alpha, ReadoutAll)
+	return newResonanceManifoldReadout(arch, targetDim, rows, alpha, readout)
 }
 
 func newResonanceManifoldReadout(
@@ -254,25 +400,7 @@ func newResonanceManifoldReadout(
 	alpha float64,
 	readout ReadoutMode,
 ) *ResonanceManifold {
-	if len(arch) < 2 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: architecture must contain at least input and one latent layer",
-			nil,
-		))
-		return nil
-	}
-
-	if alpha <= 0 || alpha > 1 || math.IsNaN(alpha) || math.IsInf(alpha, 0) {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: alpha must be finite and in (0, 1]",
-			nil,
-		))
-		return nil
-	}
-
-	cfg := AdaptiveResonanceConfig(alpha, arch)
+	cfg := adaptiveResonanceConfig(alpha, arch)
 	cfg.ReadoutMode = readout
 	rng := rand.New(rand.NewSource(42))
 	numLinks := len(arch) - 1
@@ -350,7 +478,7 @@ func newResonanceManifoldReadout(
 
 	var taskWeights *mat.Dense
 	var taskBias *mat.VecDense
-	var taskLearners []*RLS
+	var taskLearners []core.Primitive
 	var taskVar *mat.VecDense
 	var taskScale *mat.VecDense
 	var taskScaleReady []bool
@@ -363,7 +491,7 @@ func newResonanceManifoldReadout(
 	if targetDim > 0 && taskRows > 0 {
 		taskWeights = mat.NewDense(taskRows, readoutDim, nil)
 		taskBias = mat.NewVecDense(taskRows, nil)
-		taskLearners = make([]*RLS, taskRows)
+		taskLearners = make([]core.Primitive, taskRows)
 		taskVar = mat.NewVecDense(taskRows, nil)
 		taskScale = mat.NewVecDense(taskRows, nil)
 		taskScaleReady = make([]bool, taskRows)
@@ -377,52 +505,44 @@ func newResonanceManifoldReadout(
 		denseFill(taskSkill, 1.0)
 
 		lambda := cfg.LambdaRLS
-		if lambda <= 0 || lambda > 1.0 {
-			lambda = 0.99
-		}
 
 		for rowIndex := range taskRows {
-			learner := NewRLS(readoutDim, 1.0, lambda)
-			taskLearners[rowIndex] = learner
+			taskLearners[rowIndex] = NewRLS(readoutDim, 1.0, lambda)
 		}
 	}
 
 	manifold := &ResonanceManifold{
-		cfg:                   cfg,
-		arch:                  arch,
-		targetDim:             targetDim,
-		taskRows:              taskRows,
-		readoutDim:            readoutDim,
-		generativeWeights:     weights,
-		recognitionWeights:    recognition,
-		temporalOperators:     temporalOperators,
-		taskWeights:           taskWeights,
-		taskBias:              taskBias,
-		taskLearners:          taskLearners,
-		latentStates:          latents,
-		errorVar:              errorVar,
-		precision:             precision,
-		temporalVar:           temporalVar,
-		temporalPrecision:     temporalPrecision,
-		taskVar:               taskVar,
-		taskScale:             taskScale,
-		taskScaleReady:        taskScaleReady,
-		taskPrecision:         taskPrecision,
-		taskModelLoss:         taskModelLoss,
-		taskBaselineLoss:      taskBaselineLoss,
-		taskSkillReady:        taskSkillReady,
-		taskSkill:             taskSkill,
-		workspace:             newResonanceWorkspace(arch, taskRows, cfg.ReadoutMode),
-		streamLearn:           true,
-		streamAdvanceTemporal: true,
+		cfg:                cfg,
+		arch:               arch,
+		targetDim:          targetDim,
+		taskRows:           taskRows,
+		readoutDim:         readoutDim,
+		generativeWeights:  weights,
+		recognitionWeights: recognition,
+		temporalOperators:  temporalOperators,
+		taskWeights:        taskWeights,
+		taskBias:           taskBias,
+		taskLearners:       taskLearners,
+		latentStates:       latents,
+		errorVar:           errorVar,
+		precision:          precision,
+		temporalVar:        temporalVar,
+		temporalPrecision:  temporalPrecision,
+		taskVar:            taskVar,
+		taskScale:          taskScale,
+		taskScaleReady:     taskScaleReady,
+		taskPrecision:      taskPrecision,
+		taskModelLoss:      taskModelLoss,
+		taskBaselineLoss:   taskBaselineLoss,
+		taskSkillReady:     taskSkillReady,
+		taskSkill:          taskSkill,
+		workspace:          newResonanceWorkspace(arch, taskRows, cfg.ReadoutMode),
 	}
 
 	for latentIndex := range numLatents {
 		if err := manifold.projectTemporalOperatorNorm(latentIndex); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"resonance: constrain initial temporal weights: "+err.Error(),
-				err,
+			manifold.err = errors.Join(manifold.err, fmt.Errorf(
+				"resonance: constrain initial temporal weights: %w", err,
 			))
 		}
 	}
@@ -430,7 +550,256 @@ func newResonanceManifoldReadout(
 	return manifold
 }
 
-func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
+/*
+Next receives *ManifoldCommand payloads and yields a *ManifoldReading for
+each. Mutating intents answer with the manifold's full settled reading; the
+rollout intents answer with the requested curve. Any invalid intent ends the
+stream with the error recorded.
+*/
+func (rm *ResonanceManifold) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	if rm.err != nil {
+		return func(yield func(unsafe.Pointer) bool) {}
+	}
+
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			command := (*ManifoldCommand)(arriving)
+			reading, err := rm.execute(command)
+
+			if err != nil {
+				rm.Error(err)
+				return
+			}
+
+			rm.out = reading
+
+			if !yield(unsafe.Pointer(&rm.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (rm *ResonanceManifold) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			rm.err = errors.Join(rm.err, err)
+		}
+	}
+
+	return rm.err
+}
+
+/*
+execute dispatches one command to its intent and returns its reading.
+*/
+func (rm *ResonanceManifold) execute(
+	command *ManifoldCommand,
+) (ManifoldReading, error) {
+	intents := 0
+
+	for _, set := range []bool{
+		command.Settle != nil, command.Learn != nil, command.Batch != nil,
+		command.ObserveTask != nil, command.Reset != nil, command.Alpha != nil,
+		command.Reading != nil, command.Retention != nil, command.Forecast != nil,
+	} {
+		if set {
+			intents++
+		}
+	}
+
+	if intents != 1 {
+		return ManifoldReading{}, fmt.Errorf(
+			"%w: resonance: manifold command must set exactly one intent",
+			core.ErrShape,
+		)
+	}
+
+	if command.Settle != nil {
+		return rm.executeSettle(command.Settle)
+	}
+
+	if command.Learn != nil {
+		return rm.executeLearn(command.Learn)
+	}
+
+	if command.Batch != nil {
+		return rm.executeBatch(command.Batch)
+	}
+
+	if command.ObserveTask != nil {
+		return rm.executeTask(command.ObserveTask)
+	}
+
+	if command.Reset != nil {
+		return rm.executeReset(command.Reset)
+	}
+
+	if command.Alpha != nil {
+		return rm.executeAlpha(command.Alpha)
+	}
+
+	if command.Reading != nil {
+		return rm.snapshot(), nil
+	}
+
+	if command.Retention != nil {
+		return rm.executeRetention(command.Retention)
+	}
+
+	return rm.executeForecast(command.Forecast)
+}
+
+func (rm *ResonanceManifold) executeSettle(
+	intent *SettleIntent,
+) (ManifoldReading, error) {
+	if err := rm.settle(intent.Input, intent.AdvanceTemporal); err != nil {
+		return ManifoldReading{}, fmt.Errorf("resonance: settle failed: %w", err)
+	}
+
+	return rm.snapshot(), nil
+}
+
+func (rm *ResonanceManifold) executeLearn(
+	intent *LearnIntent,
+) (ManifoldReading, error) {
+	if err := rm.learn(intent.Target); err != nil {
+		return ManifoldReading{}, err
+	}
+
+	return rm.snapshot(), nil
+}
+
+func (rm *ResonanceManifold) executeBatch(
+	intent *BatchIntent,
+) (ManifoldReading, error) {
+	if len(intent.Input) != rm.arch[0] {
+		return ManifoldReading{}, fmt.Errorf(
+			"%w: resonance: input dimension mismatch",
+			core.ErrShape,
+		)
+	}
+
+	settleAdvanceTemporal := intent.AdvanceTemporal && !intent.Learn
+
+	if err := rm.settle(intent.Input, settleAdvanceTemporal); err != nil {
+		return ManifoldReading{}, fmt.Errorf("resonance: settle failed: %w", err)
+	}
+
+	if intent.Learn {
+		if err := rm.learn(intent.Target); err != nil {
+			return ManifoldReading{}, err
+		}
+	}
+
+	rm.output = rm.reconstructionError()
+
+	return rm.snapshot(), nil
+}
+
+func (rm *ResonanceManifold) executeTask(
+	intent *TaskIntent,
+) (ManifoldReading, error) {
+	if err := rm.observeTask(
+		intent.Horizon,
+		intent.Features,
+		intent.Prediction,
+		intent.Target,
+	); err != nil {
+		return ManifoldReading{}, err
+	}
+
+	return rm.snapshot(), nil
+}
+
+func (rm *ResonanceManifold) executeReset(
+	intent *ResetIntent,
+) (ManifoldReading, error) {
+	rm.resetState(intent.Precision)
+
+	return rm.snapshot(), nil
+}
+
+func (rm *ResonanceManifold) executeAlpha(
+	intent *AlphaIntent,
+) (ManifoldReading, error) {
+	if err := rm.setAlpha(intent.Alpha); err != nil {
+		return ManifoldReading{}, err
+	}
+
+	return rm.snapshot(), nil
+}
+
+func (rm *ResonanceManifold) executeRetention(
+	intent *RetentionIntent,
+) (ManifoldReading, error) {
+	if intent.Steps < 1 {
+		return ManifoldReading{}, fmt.Errorf(
+			"%w: resonance: rollout retention requires a positive step count",
+			core.ErrDomain,
+		)
+	}
+
+	return ManifoldReading{Retention: rm.rolloutRetention(intent.Steps)}, nil
+}
+
+func (rm *ResonanceManifold) executeForecast(
+	intent *ForecastIntent,
+) (ManifoldReading, error) {
+	if intent.Steps < 1 {
+		return ManifoldReading{}, fmt.Errorf(
+			"%w: resonance: task forecast requires a positive step count",
+			core.ErrDomain,
+		)
+	}
+
+	forecast, err := rm.rolloutTaskForecast(intent.Steps)
+
+	if err != nil {
+		return ManifoldReading{}, err
+	}
+
+	return ManifoldReading{Forecast: forecast}, nil
+}
+
+/*
+snapshot assembles the manifold's full reading: settled dynamics, harvested
+readout, latent state, supervised head predictions, wire layers, and the
+per-row and averaged reliability of the task head.
+*/
+func (rm *ResonanceManifold) snapshot() ManifoldReading {
+	reading := ManifoldReading{
+		Reconstruction:      rm.output,
+		ReconstructionError: rm.reconstructionError(),
+		ReadoutDimension:    rm.readoutDim,
+		Readout:             rm.readoutVector(),
+		Latent:              rm.latentState(),
+		TaskPrediction:      rm.taskPrediction(),
+	}
+
+	reading.Energy = rm.energy()
+	reading.PredictionEnergy = rm.predictionEnergy()
+	reading.TemporalError, reading.HasTemporalError = rm.temporalError()
+	reading.Layers, reading.Surprise, reading.EnergyDensity = rm.wireSnapshot()
+
+	if rm.taskRows > 0 {
+		reading.Skill = append([]float64(nil), rm.taskSkill.RawVector().Data...)
+		reading.SkillReady = append([]bool(nil), rm.taskScaleReady...)
+		reading.PrecisionReady = append([]bool(nil), rm.taskScaleReady...)
+		reading.SkillAverage, reading.SkillReadyAvg = rm.taskSkillAverage()
+		reading.PrecisionAverage, reading.PrecisionReadyAvg = rm.taskPrecisionAverage()
+		reading.ScaleAverage, reading.ScaleReadyAvg = rm.taskScaleAverage()
+	}
+
+	return reading
+}
+
+func (rm *ResonanceManifold) resetState(resetPrecision bool) {
 	for _, latent := range rm.latentStates {
 		latent.Zero()
 	}
@@ -463,109 +832,16 @@ func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 	}
 }
 
-func (rm *ResonanceManifold) SetStreamLearn(enabled bool) {
-	rm.streamLearn = enabled
-}
-
-func (rm *ResonanceManifold) SetStreamAdvanceTemporal(enabled bool) {
-	rm.streamAdvanceTemporal = enabled
-}
-
-func (rm *ResonanceManifold) SettleFromBatch(input []float64, target []float64) (float64, error) {
-	return rm.SettleFromBatchOptions(input, target, rm.streamLearn, rm.streamAdvanceTemporal)
-}
-
-func (rm *ResonanceManifold) SettleFromBatchOptions(
-	input []float64,
-	target []float64,
-	learn bool,
-	advanceTemporal bool,
-) (float64, error) {
-	if len(input) != rm.arch[0] {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: input dimension mismatch",
-			errors.New("resonance: input dimension mismatch"),
-		))
-	}
-
-	settleAdvanceTemporal := advanceTemporal && !learn
-	err := rm.Settle(input, settleAdvanceTemporal)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: settle failed",
-			err,
-		))
-	}
-
-	if learn {
-		if err := rm.Learn(target); err != nil {
-			return 0, err
-		}
-	}
-
-	reconstruction := rm.ReconstructionError()
-	rm.output = reconstruction
-
-	return reconstruction, nil
-}
-
-func (rm *ResonanceManifold) ReconstructionOutput() float64 {
-	return rm.output
-}
-
 /*
-ReadoutDimension returns the total dimension of the combined latent + innovation vector.
-*/
-func (rm *ResonanceManifold) ReadoutDimension() int {
-	return rm.readoutDim
-}
-
-/*
-ReadoutVectorInto writes the multi-layer readout [z_1..z_L, e_0..e_{L-1}] directly
-into dst without heap allocation.
-*/
-func (rm *ResonanceManifold) ReadoutVectorInto(dst []float64) int {
-	_, layerErrors := rm.predictAdjacentLayers()
-	offset := 0
-
-	if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutLatents {
-		for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
-			data := rm.latentStates[layerIndex].RawVector().Data
-			copy(dst[offset:offset+len(data)], data)
-			offset += len(data)
-		}
-	}
-
-	if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutInnovations {
-		for linkIndex := range layerErrors {
-			data := layerErrors[linkIndex].RawVector().Data
-			copy(dst[offset:offset+len(data)], data)
-			offset += len(data)
-		}
-	}
-
-	return offset
-}
-
-/*
-ReadoutVector returns a copied slice of the multi-layer representation.
-*/
-func (rm *ResonanceManifold) ReadoutVector() []float64 {
-	vector := make([]float64, rm.readoutDim)
-	rm.ReadoutVectorInto(vector)
-	return vector
-}
-
-/*
-Settle performs generative inference by minimizing precision-weighted prediction
+settle performs generative inference by minimizing precision-weighted prediction
 error, multi-timescale temporal priors, and overcomplete dictionary sparsity.
 */
-func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error {
+func (rm *ResonanceManifold) settle(input []float64, advanceTemporal bool) error {
 	if len(input) != rm.arch[0] {
-		return errors.New("resonance: input dimension mismatch")
+		return fmt.Errorf(
+			"%w: resonance: input dimension mismatch",
+			core.ErrShape,
+		)
 	}
 
 	rm.settleAdvancedTemporal = false
@@ -576,7 +852,7 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 
 	rm.initializeLatents(xCol)
 
-	settledEnergy := rm.Energy()
+	settledEnergy := rm.energy()
 	stableSteps := 0
 
 	for step := 0; step < rm.cfg.MaxInferenceSteps; step++ {
@@ -597,7 +873,7 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 		for halvingIndex := 0; halvingIndex <= halvings; halvingIndex++ {
 			rm.tryStateUpdate(gradients, stepSize)
 			rm.latentStates[0].CopyVec(xCol)
-			candidateEnergy = rm.Energy()
+			candidateEnergy = rm.energy()
 
 			if !rm.cfg.MonotoneStateSteps || candidateEnergy <= math.Nextafter(settledEnergy, math.Inf(1)) {
 				accepted = true
@@ -640,16 +916,24 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 }
 
 /*
-Learn updates generative, recognition, multi-timescale temporal matrices, and
+learn updates generative, recognition, multi-timescale temporal matrices, and
 the downstream multi-layer task head via RLS.
 */
-func (rm *ResonanceManifold) Learn(target []float64) error {
+func (rm *ResonanceManifold) learn(target []float64) error {
 	if rm.settleAdvancedTemporal {
-		return errors.New("resonance: temporal state advanced before learning")
+		return fmt.Errorf(
+			"%w: resonance: temporal state advanced before learning",
+			core.ErrDomain,
+		)
 	}
 
 	if target != nil && len(target) != rm.targetDim {
-		return fmt.Errorf("resonance: target dimension mismatch: expected %d, got %d", rm.targetDim, len(target))
+		return fmt.Errorf(
+			"%w: resonance: target dimension mismatch: expected %d, got %d",
+			core.ErrShape,
+			rm.targetDim,
+			len(target),
+		)
 	}
 
 	predictions, layerErrors := rm.predictAdjacentLayers()
@@ -773,23 +1057,19 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		taskError.SubVec(targetCol, taskPred)
 
 		readoutData := rm.workspace.readoutBuf.RawVector().Data
-		rm.ReadoutVectorInto(readoutData)
+		rm.readoutVectorInto(readoutData)
 		targetData := targetCol.RawVector().Data
 		biasData := rm.taskBias.RawVector().Data
 
 		for rowIndex := range trainedRows {
-			learner := rm.taskLearners[rowIndex]
+			reading, err := rm.taskReading(rowIndex, readoutData, targetData[rowIndex])
 
-			reading, err := transport.Evaluate(learner, transport.Values(Sample{
-				Features: readoutData,
-				Target:   targetData[rowIndex],
-				Observed: true,
-			}))
 			if err != nil {
 				return fmt.Errorf("resonance: task learner update: %w", err)
 			}
 
 			intercept, err := taskCoefficients(reading, rm.taskWeights.RawRowView(rowIndex))
+
 			if err != nil {
 				return fmt.Errorf("resonance: task learner coefficients: %w", err)
 			}
@@ -806,11 +1086,11 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 }
 
 /*
-Energy is the variational free energy combining precision-weighted error,
+energy is the variational free energy combining precision-weighted error,
 multi-timescale temporal priors, $L_2$ decay, and $L_1$ dictionary sparsity.
 */
-func (rm *ResonanceManifold) Energy() float64 {
-	energy := rm.PredictionEnergy()
+func (rm *ResonanceManifold) energy() float64 {
+	energy := rm.predictionEnergy()
 
 	for latentIndex := range rm.temporalOperators {
 		layerIndex := latentIndex + 1
@@ -828,10 +1108,10 @@ func (rm *ResonanceManifold) Energy() float64 {
 }
 
 /*
-PredictionEnergy computes total precision-weighted prediction error across all
+predictionEnergy computes total precision-weighted prediction error across all
 generative links and multi-timescale temporal links.
 */
-func (rm *ResonanceManifold) PredictionEnergy() float64 {
+func (rm *ResonanceManifold) predictionEnergy() float64 {
 	_, layerErrors := rm.predictAdjacentLayers()
 	energy := 0.0
 
@@ -865,7 +1145,7 @@ func (rm *ResonanceManifold) PredictionEnergy() float64 {
 	return energy
 }
 
-func (rm *ResonanceManifold) ReconstructionError() float64 {
+func (rm *ResonanceManifold) reconstructionError() float64 {
 	reconstruction := rm.workspace.reconPred
 	reconstruction.MulVec(rm.generativeWeights[0], rm.latentStates[1])
 	// Layer 0 is linear (continuous unbounded z-scores)
@@ -878,13 +1158,13 @@ func (rm *ResonanceManifold) ReconstructionError() float64 {
 
 func (rm *ResonanceManifold) taskPredictionInto(dst *mat.VecDense) {
 	readoutData := rm.workspace.readoutBuf.RawVector().Data
-	rm.ReadoutVectorInto(readoutData)
+	rm.readoutVectorInto(readoutData)
 
 	dst.MulVec(rm.taskWeights, rm.workspace.readoutBuf)
 	dst.AddVec(dst, rm.taskBias)
 }
 
-func (rm *ResonanceManifold) TaskPrediction() []float64 {
+func (rm *ResonanceManifold) taskPrediction() []float64 {
 	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return nil
 	}
@@ -895,24 +1175,50 @@ func (rm *ResonanceManifold) TaskPrediction() []float64 {
 }
 
 /*
-ObserveTask updates one task-head row from one labeled sample. The row is
-addressed by its forward horizon, one-based: horizon h supervises the
-cumulative move over the next h ticks. The compatibility head keeps one row
-per target dimension, addressed the same way.
+taskReading drives one task-head row's learner with one labeled sample and
+returns its posterior reading.
 */
-func (rm *ResonanceManifold) ObserveTask(
+func (rm *ResonanceManifold) taskReading(
+	rowIndex int,
+	features []float64,
+	target float64,
+) (algo.Reading, error) {
+	evaluation := transport.NewEvaluate(rm.taskLearners[rowIndex])
+	var reading algo.Reading
+
+	for out := range evaluation.Next(transport.NewValues(Sample{
+		Features: features,
+		Target:   target,
+		Observed: true,
+	}).Next(nil)) {
+		reading = *(*algo.Reading)(out)
+	}
+
+	return reading, evaluation.Error()
+}
+
+/*
+observeTask updates one task-head row from one labeled sample. The row is
+addressed by its forward horizon, one-based: horizon h supervises the
+cumulative move over the next h ticks.
+*/
+func (rm *ResonanceManifold) observeTask(
 	horizon int,
 	features []float64,
 	prediction float64,
 	target float64,
 ) error {
 	if rm.taskWeights == nil || rm.taskRows <= 0 {
-		return errors.New("resonance: supervised task head required")
+		return fmt.Errorf(
+			"%w: resonance: supervised task head required",
+			core.ErrShape,
+		)
 	}
 
 	if horizon < 1 || horizon > rm.taskRows {
 		return fmt.Errorf(
-			"resonance: task horizon %d out of range [1, %d]",
+			"%w: resonance: task horizon %d out of range [1, %d]",
+			core.ErrDomain,
 			horizon,
 			rm.taskRows,
 		)
@@ -920,7 +1226,8 @@ func (rm *ResonanceManifold) ObserveTask(
 
 	if len(features) != rm.readoutDim {
 		return fmt.Errorf(
-			"resonance: expected %d task features, got %d",
+			"%w: resonance: expected %d task features, got %d",
+			core.ErrShape,
 			rm.readoutDim,
 			len(features),
 		)
@@ -928,22 +1235,25 @@ func (rm *ResonanceManifold) ObserveTask(
 
 	for index, feature := range features {
 		if !finite(feature) {
-			return fmt.Errorf("resonance: task feature %d must be finite", index)
+			return fmt.Errorf(
+				"%w: resonance: task feature %d must be finite",
+				core.ErrDomain,
+				index,
+			)
 		}
 	}
 
 	if !finite(prediction) || !finite(target) {
-		return fmt.Errorf("resonance: task prediction and target must be finite")
+		return fmt.Errorf(
+			"%w: resonance: task prediction and target must be finite",
+			core.ErrDomain,
+		)
 	}
 
 	rowIndex := horizon - 1
-	learner := rm.taskLearners[rowIndex]
 
-	reading, err := transport.Evaluate(learner, transport.Values(Sample{
-		Features: features,
-		Target:   target,
-		Observed: true,
-	}))
+	reading, err := rm.taskReading(rowIndex, features, target)
+
 	if err != nil {
 		return fmt.Errorf("resonance: task learner update: %w", err)
 	}
@@ -961,7 +1271,7 @@ func (rm *ResonanceManifold) ObserveTask(
 	return nil
 }
 
-func (rm *ResonanceManifold) LatentState() []float64 {
+func (rm *ResonanceManifold) latentState() []float64 {
 	if len(rm.latentStates) == 0 {
 		return nil
 	}
@@ -969,14 +1279,7 @@ func (rm *ResonanceManifold) LatentState() []float64 {
 	return append([]float64(nil), rm.latentStates[len(rm.latentStates)-1].RawVector().Data...)
 }
 
-type ResonanceLayerWire struct {
-	State      []float64 `json:"state"`
-	Prediction []float64 `json:"prediction"`
-	ErrorNorm  float64   `json:"errorNorm"`
-	Temporal   bool      `json:"temporal"`
-}
-
-func (rm *ResonanceManifold) TemporalError() (float64, bool) {
+func (rm *ResonanceManifold) temporalError() (float64, bool) {
 	if !rm.temporalPriorsReady || len(rm.temporalOperators) == 0 {
 		return 0, false
 	}
@@ -986,15 +1289,15 @@ func (rm *ResonanceManifold) TemporalError() (float64, bool) {
 	return denseColNorm(temporalError), true
 }
 
-func (rm *ResonanceManifold) WireSnapshot() (
+func (rm *ResonanceManifold) wireSnapshot() (
 	layers []ResonanceLayerWire,
 	surprise float64,
-	energy float64,
+	energyDensity float64,
 ) {
 	predictions, layerErrors := rm.predictAdjacentLayers()
 	layers = make([]ResonanceLayerWire, len(rm.latentStates))
 	topIndex := len(rm.latentStates) - 1
-	temporalNorm, hasTemporal := rm.TemporalError()
+	temporalNorm, hasTemporal := rm.temporalError()
 
 	for layerIndex := range rm.latentStates {
 		stateMatrix := rm.latentStates[layerIndex]
@@ -1041,50 +1344,11 @@ func (rm *ResonanceManifold) WireSnapshot() (
 	}
 
 	return layers,
-		rm.ReconstructionError() / math.Sqrt(reconstructionDimensions),
-		rm.PredictionEnergy() / float64(predictionDimensions)
+		rm.reconstructionError() / math.Sqrt(reconstructionDimensions),
+		rm.predictionEnergy() / float64(predictionDimensions)
 }
 
-/*
-TaskPrecisionAt reports one task row's precision once its scale is supported by
-resolved samples. The row is addressed by its forward horizon, one-based.
-*/
-func (rm *ResonanceManifold) TaskPrecisionAt(horizon int) (float64, bool) {
-	if rm.taskWeights == nil || rm.taskRows <= 0 ||
-		horizon < 1 || horizon > rm.taskRows {
-		return 0, false
-	}
-
-	rowIndex := horizon - 1
-
-	if !rm.taskScaleReady[rowIndex] {
-		return 0, false
-	}
-
-	return rm.taskPrecision.RawVector().Data[rowIndex], true
-}
-
-/*
-TaskSkillAt reports one task row's prequential skill once it has retained loss
-evidence. The row is addressed by its forward horizon, one-based. Skill above
-one means the row beats the zero-prediction baseline.
-*/
-func (rm *ResonanceManifold) TaskSkillAt(horizon int) (float64, bool) {
-	if rm.taskWeights == nil || rm.taskRows <= 0 ||
-		horizon < 1 || horizon > rm.taskRows {
-		return 0, false
-	}
-
-	rowIndex := horizon - 1
-
-	if !rm.taskSkillReady[rowIndex] {
-		return 0, false
-	}
-
-	return rm.taskSkill.RawVector().Data[rowIndex], true
-}
-
-func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
+func (rm *ResonanceManifold) taskPrecisionAverage() (float64, bool) {
 	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return 0, false
 	}
@@ -1106,7 +1370,7 @@ func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
 	return sum / float64(readyCount), true
 }
 
-func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
+func (rm *ResonanceManifold) taskSkillAverage() (float64, bool) {
 	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return 0, false
 	}
@@ -1128,7 +1392,7 @@ func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
 	return sum / float64(readyCount), true
 }
 
-func (rm *ResonanceManifold) TaskScale() (float64, bool) {
+func (rm *ResonanceManifold) taskScaleAverage() (float64, bool) {
 	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return 0, false
 	}
@@ -1488,12 +1752,15 @@ func (rm *ResonanceManifold) predictAdjacentLayers() ([]*mat.VecDense, []*mat.Ve
 	return rm.workspace.predictions, rm.workspace.errors
 }
 
-func (rm *ResonanceManifold) SetAlpha(alpha float64) error {
+func (rm *ResonanceManifold) setAlpha(alpha float64) error {
 	if alpha <= 0 || alpha > 1 || math.IsNaN(alpha) || math.IsInf(alpha, 0) {
-		return errors.New("resonance: alpha must be finite and in (0, 1]")
+		return fmt.Errorf(
+			"%w: resonance: alpha must be finite and in (0, 1]",
+			core.ErrDomain,
+		)
 	}
 
-	newCfg := AdaptiveResonanceConfig(alpha, rm.arch)
+	newCfg := adaptiveResonanceConfig(alpha, rm.arch)
 	rm.cfg.LrState = newCfg.LrState
 	rm.cfg.LrGenerative = newCfg.LrGenerative
 	rm.cfg.LrTemporal = newCfg.LrTemporal
@@ -1507,7 +1774,40 @@ func (rm *ResonanceManifold) SetAlpha(alpha float64) error {
 	return nil
 }
 
-func (rm *ResonanceManifold) RolloutRetention(steps int) []float64 {
+/*
+readoutVectorInto writes the multi-layer readout [z_1..z_L, e_0..e_{L-1}]
+directly into dst without heap allocation.
+*/
+func (rm *ResonanceManifold) readoutVectorInto(dst []float64) int {
+	_, layerErrors := rm.predictAdjacentLayers()
+	offset := 0
+
+	if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutLatents {
+		for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
+			data := rm.latentStates[layerIndex].RawVector().Data
+			copy(dst[offset:offset+len(data)], data)
+			offset += len(data)
+		}
+	}
+
+	if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutInnovations {
+		for linkIndex := range layerErrors {
+			data := layerErrors[linkIndex].RawVector().Data
+			copy(dst[offset:offset+len(data)], data)
+			offset += len(data)
+		}
+	}
+
+	return offset
+}
+
+func (rm *ResonanceManifold) readoutVector() []float64 {
+	vector := make([]float64, rm.readoutDim)
+	rm.readoutVectorInto(vector)
+	return vector
+}
+
+func (rm *ResonanceManifold) rolloutRetention(steps int) []float64 {
 	if len(rm.temporalOperators) == 0 || steps < 1 {
 		return nil
 	}
@@ -1554,68 +1854,79 @@ func (rm *ResonanceManifold) RolloutRetention(steps int) []float64 {
 }
 
 /*
-RolloutTaskForecast returns one forecast per task row, evaluated at the current
-settled readout. With a per-horizon head, element k is the row for horizon k+1:
-the cumulative directional prediction over the next k+1 ticks from now. Every
-element is the supervised head for its own horizon, so the curve is a genuine
-multi-horizon forecast rather than a trajectory through imagined states. With
-the compatibility head, one row per target dimension is returned per step.
+rolloutTaskForecast returns one forecast per task row, evaluated at the current
+settled readout. Element k is the row for horizon k+1: the cumulative
+directional prediction over the next k+1 ticks from now. Every element is the
+supervised head for its own horizon, so the curve is a genuine multi-horizon
+forecast rather than a trajectory through imagined states. A request beyond
+the head's rows yields the head's rows.
 */
-func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error) {
+func (rm *ResonanceManifold) rolloutTaskForecast(steps int) ([]RLSOutput, error) {
 	if rm.taskWeights == nil || rm.taskRows <= 0 || steps < 1 {
 		return nil, nil
 	}
 
-	readoutData := rm.workspace.readoutBuf.RawVector().Data
-	rm.ReadoutVectorInto(readoutData)
-
-	if rm.perHorizon {
-		if steps > rm.taskRows {
-			steps = rm.taskRows
-		}
-
-		forecast := make([]RLSOutput, steps)
-
-		for horizonIndex := range steps {
-			output, err := taskForecast(rm.taskLearners[horizonIndex], readoutData)
-
-			if err != nil {
-				return nil, fmt.Errorf("resonance: task forecast: %w", err)
-			}
-
-			forecast[horizonIndex] = output
-		}
-
-		return forecast, nil
+	if steps > rm.taskRows {
+		steps = rm.taskRows
 	}
 
-	forecast := make([]RLSOutput, steps*rm.taskRows)
+	readoutData := rm.workspace.readoutBuf.RawVector().Data
+	rm.readoutVectorInto(readoutData)
 
-	for step := range steps {
-		for rowIndex, learner := range rm.taskLearners {
-			output, err := taskForecast(learner, readoutData)
+	forecast := make([]RLSOutput, steps)
 
-			if err != nil {
-				return nil, fmt.Errorf("resonance: task forecast: %w", err)
-			}
+	for horizonIndex := range steps {
+		output, err := taskForecast(rm.taskLearners[horizonIndex], readoutData)
 
-			forecast[step*rm.taskRows+rowIndex] = output
+		if err != nil {
+			return nil, fmt.Errorf("resonance: task forecast: %w", err)
 		}
+
+		forecast[horizonIndex] = output
 	}
 
 	return forecast, nil
 }
 
-func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
-	forecasts, err := rm.RolloutTaskForecast(steps)
-	if err != nil || len(forecasts) == 0 {
-		return nil
+/*
+taskForecast evaluates one task-head row's learner on a feature vector without
+updating its weights.
+*/
+func taskForecast(learner core.Primitive, features []float64) (RLSOutput, error) {
+	evaluation := transport.NewEvaluate(learner)
+	var reading algo.Reading
+
+	for out := range evaluation.Next(transport.NewValues(Sample{
+		Features: features,
+	}).Next(nil)) {
+		reading = *(*algo.Reading)(out)
 	}
 
-	curve := make([]float64, len(forecasts))
-	for index, f := range forecasts {
-		curve[index] = f.Value
+	if err := evaluation.Error(); err != nil {
+		return RLSOutput{}, err
 	}
 
-	return curve
+	return RLSOutput{
+		Value:            reading.Prediction,
+		Scale:            reading.Scale,
+		DegreesOfFreedom: reading.DegreesOfFreedom,
+		Ready:            reading.Ready,
+		Innovation:       reading.Innovation,
+	}, nil
+}
+
+/*
+taskCoefficients projects the posterior into the dense manifold head.
+*/
+func taskCoefficients(reading algo.Reading, destination []float64) (float64, error) {
+	if len(reading.Beta) != len(destination)+1 {
+		return 0, fmt.Errorf(
+			"resonance: coefficient width %d does not match head %d",
+			len(reading.Beta),
+			len(destination),
+		)
+	}
+
+	copy(destination, reading.Beta[1:])
+	return reading.Beta[0], nil
 }

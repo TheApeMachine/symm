@@ -1,93 +1,45 @@
 package equation_test
 
 import (
-	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func last[U any](values []U) U {
-	return values[len(values)-1]
-}
-
-func TestReductions(t *testing.T) {
-	Convey("Stream folds yield a running value whose last observation is the reduction", t, func() {
-		count := tests.CollectSeq(equation.NewCount[float64]().Next(transport.Values(1.0, 2.0, 3.0)))
-		So(last(count), ShouldEqual, 3)
-
-		mean := tests.CollectSeq(equation.NewMean[float64]().Next(transport.Values(1.0, 2.0, 3.0)))
-		So(last(mean), ShouldEqual, 2)
-
-		energy := tests.CollectSeq(equation.NewEnergy[float64]().Next(transport.Values(1.0, 2.0, 3.0)))
-		So(last(energy), ShouldEqual, 14)
-
-		kish := tests.CollectSeq(equation.NewKish[float64]().Next(transport.Values(1.0, 2.0, 3.0)))
-		So(last(kish), ShouldEqual, 36.0/14)
+func TestEvidenceCompositions(t *testing.T) {
+	Convey("ValidPair validates non-zero predicted and actual", t, func() {
+		op := equation.NewValidPair()
+		in1 := equation.ValidPairInput{Predicted: 1.5, Actual: 2.0}
+		in2 := equation.ValidPairInput{Predicted: 0.0, Actual: 2.0}
+		out := tests.CollectSeq[bool](op.Next(transport.NewValues(in1, in2).Next(nil)))
+		So(op.Error(), ShouldBeNil)
+		So(out, ShouldResemble, []bool{true, false})
 	})
-}
 
-func TestMedian(t *testing.T) {
-	Convey("Median averages the two central order statistics of one run", t, func() {
-		for _, c := range []struct {
-			input  []float64
-			wanted float64
-		}{
-			{[]float64{9, 1, 5}, 5},
-			{[]float64{9, 1, 5, 3}, 4},
-			{[]float64{1, 2, math.Inf(1)}, 2},
-		} {
-			out := tests.CollectSeq(equation.NewMedian[float64]().Next(transport.Values(c.input...)))
-			So(len(out), ShouldEqual, 1)
-			So(out[0], ShouldEqual, c.wanted)
+	Convey("EvidenceAuthority weights SNR and maturity", t, func() {
+		op := equation.NewEvidenceAuthority()
+		in := equation.EvidenceAuthorityInput{
+			Estimated:  true,
+			SNRDefined: true,
+			SNR:        3.0,
+			Maturity:   0.8,
+			Zero:       0.0,
+			Unknown:    0.5,
 		}
+		out := tests.CollectSeq[float64](op.Next(transport.NewValues(in).Next(nil)))
+		So(op.Error(), ShouldBeNil)
+		// factor = 3 / (1 + 3) = 0.75. value = 0.8 * 0.75 = 0.6
+		So(out[0], ShouldAlmostEqual, 0.6, 1e-9)
 	})
-}
 
-func TestExpressionBindings(t *testing.T) {
-	Convey("A pairwise difference reads two fields of one arrival", t, func() {
-		node := equation.NewDifference(
-			store.NewGet[string, float64]("a"),
-			store.NewGet[string, float64]("b"),
-		)
-		out := tests.CollectSeq(node.Next(transport.Values(map[string]float64{"a": 10, "b": 3})))
-		So(out[0], ShouldEqual, 7)
-	})
-}
-
-func TestSigmoid(t *testing.T) {
-	Convey("Sigmoid maps each arrival independently", t, func() {
-		out := tests.CollectSeq(equation.NewSigmoid[float64]().Next(transport.Values(0.0, math.Inf(1), math.Inf(-1))))
-		So(out[0], ShouldEqual, 0.5)
-		So(out[1], ShouldEqual, 1)
-		So(out[2], ShouldEqual, 0)
-	})
-}
-
-func TestFisherDomain(t *testing.T) {
-	Convey("Fisher-z p-values follow the formula's domain", t, func() {
-		for _, c := range []struct{ r, n, p float64 }{
-			{0, 103, 1},
-			{1, 103, 0},
-			{-1, 103, 0},
-		} {
-			out := tests.CollectSeq(equation.NewFisher().Next(transport.Values(equation.FisherInput{
-				Correlation: c.r,
-				Support:     c.n,
-			})))
-			So(len(out), ShouldEqual, 1)
-			So(out[0], ShouldAlmostEqual, c.p, 1e-9)
-		}
-	})
-}
-
-func TestNormalize(t *testing.T) {
-	Convey("Normalize divides each arrival by the run total", t, func() {
-		out := tests.CollectSeq(equation.NewNormalize[float64]().Next(transport.Values(1.0, 1.0, 2.0)))
-		So(out, ShouldResemble, []float64{0.25, 0.25, 0.5})
+	Convey("EvidenceShare normalizes and selects element at index", t, func() {
+		op := equation.NewEvidenceShare(1)
+		v := []float64{1.0, 2.0, 1.0} // sum = 4, index 1 is 2.0/4.0 = 0.5
+		out := tests.CollectSeq[float64](op.Next(transport.NewValues(v).Next(nil)))
+		So(op.Error(), ShouldBeNil)
+		So(out[0], ShouldAlmostEqual, 0.5, 1e-9)
 	})
 }

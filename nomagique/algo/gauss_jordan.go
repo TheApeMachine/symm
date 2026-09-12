@@ -1,9 +1,11 @@
 package algo
 
 import (
+	"errors"
 	"fmt"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -18,7 +20,7 @@ type System struct {
 
 /*
 Solution is the reduced right-hand side, or an explicit rank-deficient state.
-A singular system is Defined=false with an empty Solution, not a guess.
+A singular system is Defined=false with an empty Solution.
 */
 type Solution struct {
 	Solution [][]float64
@@ -28,142 +30,143 @@ type Solution struct {
 
 /*
 GaussJordan owns partial-pivot elimination. Tolerance is the absolute pivot
-floor of this solver, a representation bound, not a market threshold.
+floor of this solver.
 */
 type GaussJordan struct {
-	core.Base[System, Solution]
+	err       error
 	tolerance float64
+	out       Solution
 }
 
-func NewGaussJordan(tolerance float64) *GaussJordan {
+func NewGaussJordan(tolerance float64) core.Primitive {
 	return &GaussJordan{tolerance: tolerance}
 }
 
 func (op *GaussJordan) Next(
-	in iter.Seq[core.Primitive[System, System]],
-) iter.Seq[core.Primitive[Solution, Solution]] {
-	return func(yield func(core.Primitive[Solution, Solution]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			solution, err := op.Solve(arriving.Read())
+			system := (*System)(arriving)
+			sol, err := op.solve(*system)
 
 			if err != nil {
-				op.Error(err)
+				op.err = errors.Join(op.err, err)
 				return
 			}
 
-			if !yield(op.Carrier(solution)) {
+			op.out = sol
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
+func (op *GaussJordan) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
 /*
-Solve reduces [Left|Right] in isolation. Inputs are not mutated.
+solve performs row reduction with partial pivoting.
 */
-func (op *GaussJordan) Solve(system System) (Solution, error) {
+func (op *GaussJordan) solve(system System) (Solution, error) {
 	rows := len(system.Left)
 
 	if rows == 0 {
-		return Solution{}, fmt.Errorf("%w: gauss-jordan requires a square left matrix", core.ErrShape)
-	}
-
-	if op.tolerance < 0 {
-		return Solution{}, fmt.Errorf("%w: gauss-jordan tolerance is negative", core.ErrDomain)
-	}
-
-	if len(system.Right) != rows {
-		return Solution{}, fmt.Errorf("%w: gauss-jordan right-hand rows differ", core.ErrShape)
-	}
-
-	width := len(system.Left[0])
-	rightColumns := len(system.Right[0])
-
-	if width != rows {
-		return Solution{}, fmt.Errorf("%w: gauss-jordan left matrix is not square", core.ErrShape)
-	}
-
-	if rightColumns == 0 {
-		return Solution{}, fmt.Errorf("%w: gauss-jordan right-hand side is empty", core.ErrShape)
+		return Solution{Solution: [][]float64{}, Defined: false}, nil
 	}
 
 	for _, row := range system.Left {
-		if len(row) != width {
-			return Solution{}, fmt.Errorf("%w: gauss-jordan left matrix is ragged", core.ErrShape)
+		if len(row) != rows {
+			return Solution{}, fmt.Errorf("%w: Gauss-Jordan left-hand side must be square", core.ErrShape)
 		}
+	}
+
+	if len(system.Right) != rows {
+		return Solution{}, fmt.Errorf("%w: Gauss-Jordan right-hand row count differs from left", core.ErrShape)
+	}
+
+	rightCols := 0
+
+	if rows > 0 {
+		rightCols = len(system.Right[0])
 	}
 
 	for _, row := range system.Right {
-		if len(row) != rightColumns {
-			return Solution{}, fmt.Errorf("%w: gauss-jordan right-hand side is ragged", core.ErrShape)
+		if len(row) != rightCols {
+			return Solution{}, fmt.Errorf("%w: Gauss-Jordan right-hand side is ragged", core.ErrShape)
 		}
 	}
 
-	columns := rows + rightColumns
-	augmented := make([][]float64, rows)
-	storage := make([]float64, rows*columns)
+	// Clone matrices
+	a := make([][]float64, rows)
+	b := make([][]float64, rows)
 
-	for row := range rows {
-		augmented[row] = storage[row*columns : (row+1)*columns]
-		copy(augmented[row], system.Left[row])
-		copy(augmented[row][rows:], system.Right[row])
+	for i := range rows {
+		a[i] = make([]float64, rows)
+		copy(a[i], system.Left[i])
+		b[i] = make([]float64, rightCols)
+		copy(b[i], system.Right[i])
 	}
 
 	rank := 0
 
-	for pivot := 0; pivot < rows; pivot++ {
-		winner := pivot
-		magnitude := math.Abs(augmented[pivot][pivot])
+	for col := 0; col < rows; col++ {
+		pivotRow := col
+		maxVal := math.Abs(a[col][col])
 
-		for row := pivot + 1; row < rows; row++ {
-			candidate := math.Abs(augmented[row][pivot])
+		for r := col + 1; r < rows; r++ {
+			val := math.Abs(a[r][col])
 
-			if candidate > magnitude {
-				winner = row
-				magnitude = candidate
+			if val > maxVal {
+				maxVal = val
+				pivotRow = r
 			}
 		}
 
-		if !(magnitude > op.tolerance) {
-			return Solution{Rank: rank, Defined: false}, nil
+		if maxVal <= op.tolerance {
+			return Solution{Solution: [][]float64{}, Rank: rank, Defined: false}, nil
 		}
 
-		if winner != pivot {
-			augmented[pivot], augmented[winner] = augmented[winner], augmented[pivot]
+		if pivotRow != col {
+			a[col], a[pivotRow] = a[pivotRow], a[col]
+			b[col], b[pivotRow] = b[pivotRow], b[col]
 		}
 
-		scale := 1 / augmented[pivot][pivot]
+		pivot := a[col][col]
 
-		for column := pivot; column < columns; column++ {
-			augmented[pivot][column] *= scale
+		for c := col; c < rows; c++ {
+			a[col][c] /= pivot
 		}
 
-		for row := 0; row < rows; row++ {
-			if row == pivot {
-				continue
-			}
+		for c := 0; c < rightCols; c++ {
+			b[col][c] /= pivot
+		}
 
-			factor := augmented[row][pivot]
+		for r := 0; r < rows; r++ {
+			if r != col {
+				factor := a[r][col]
 
-			if factor == 0 {
-				continue
-			}
+				for c := col; c < rows; c++ {
+					a[r][c] -= factor * a[col][c]
+				}
 
-			for column := pivot; column < columns; column++ {
-				augmented[row][column] -= factor * augmented[pivot][column]
+				for c := 0; c < rightCols; c++ {
+					b[r][c] -= factor * b[col][c]
+				}
 			}
 		}
 
 		rank++
 	}
 
-	solution := make([][]float64, rows)
-	values := make([]float64, rows*rightColumns)
-
-	for row := range rows {
-		solution[row] = values[row*rightColumns : (row+1)*rightColumns]
-		copy(solution[row], augmented[row][rows:])
-	}
-
-	return Solution{Solution: solution, Rank: rank, Defined: true}, nil
+	return Solution{Solution: b, Rank: rank, Defined: true}, nil
 }

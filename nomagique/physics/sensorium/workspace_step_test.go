@@ -355,8 +355,6 @@ func BenchmarkWaveStep(b *testing.B) {
 	}
 }
 
-
-
 func BenchmarkGatherPilotWave(b *testing.B) {
 	fluid, err := newWorkspace(8, 8, 8)
 

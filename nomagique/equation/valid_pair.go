@@ -2,7 +2,7 @@ package equation
 
 import (
 	"iter"
-	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -10,36 +10,45 @@ import (
 /*
 ValidPairInput is a predicted and actual observation.
 */
-type ValidPairInput[U core.Floating] struct {
-	Predicted U
-	Actual    U
+type ValidPairInput struct {
+	Predicted float64
+	Actual    float64
 }
 
 /*
-ValidPair owns the supplied prediction/actual domain: finite, nonzero values.
+ValidPair owns the supplied prediction/actual domain: nonzero values.
 */
-type ValidPair[U core.Floating] struct {
-	core.Base[ValidPairInput[U], bool]
+type ValidPair struct {
+	err error
+	out bool
 }
 
-func NewValidPair[U core.Floating]() *ValidPair[U] {
-	return &ValidPair[U]{}
+func NewValidPair() core.Primitive {
+	return &ValidPair{}
 }
 
-func (op *ValidPair[U]) Next(
-	in iter.Seq[core.Primitive[ValidPairInput[U], ValidPairInput[U]]],
-) iter.Seq[core.Primitive[bool, bool]] {
-	return func(yield func(core.Primitive[bool, bool]) bool) {
+func (op *ValidPair) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := arriving.Read()
-			predicted := float64(input.Predicted)
-			actual := float64(input.Actual)
-			ok := !math.IsNaN(predicted) && !math.IsInf(predicted, 0) && predicted != 0 &&
-				!math.IsNaN(actual) && !math.IsInf(actual, 0) && actual != 0
+			input := (*ValidPairInput)(arriving)
+			op.out = input.Predicted != 0 && input.Actual != 0
 
-			if !yield(op.Carrier(ok)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *ValidPair) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

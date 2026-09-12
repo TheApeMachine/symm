@@ -540,6 +540,10 @@ func (hub *Hub) PublishManifold(envelope *types.Envelope) {
 		errnie.Error(errnie.Err(errnie.Internal, "hub: invalid physical health", err))
 	}
 
+	if !hub.fluid.Wants(types.ManifoldChannel) {
+		return
+	}
+
 	if err := hub.fluid.Publish(envelope.Manifold); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,

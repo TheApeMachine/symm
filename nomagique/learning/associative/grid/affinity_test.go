@@ -12,9 +12,10 @@ import (
 /* publish sends one source's single metric as its own update. */
 func publish(t testing.TB, grid *Space, source string, value float64) {
 	t.Helper()
-	measurement := data.NewMeasurement[float64]("", "context", source, time.Time{}, time.Time{})
-	measurement.PutMetric(data.Metric[float64]{Label: "m", Raw: value})
-	So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+	measurement := data.NewMeasurement[float64](source, nil)
+	measurement.Label, measurement.At, measurement.From = "context", time.Time{}, time.Time{}
+	measurement.Metrics["m"] = data.Metric[float64]{Label: "m", Raw: value}
+	So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 }
 
 /*
@@ -35,15 +36,17 @@ func TestAffinityAcrossSeparateUpdates(t *testing.T) {
 		}
 
 		Convey("Identical movement reads as identical however it arrives", func() {
-			together, apart := NewSpace(), NewSpace()
+			together, apart := NewSpace().(*Space), NewSpace().(*Space)
 
 			for tick := range 120 {
 				value := swing(tick)
-				pair := data.NewMeasurement[float64]("", "context", "alpha", time.Time{}, time.Time{})
-				pair.PutMetric(data.Metric[float64]{Label: "m", Raw: value})
-				other := data.NewMeasurement[float64]("", "context", "beta", time.Time{}, time.Time{})
-				other.PutMetric(data.Metric[float64]{Label: "m", Raw: value})
-				So(together.Step([]*data.Measurement[float64]{pair, other}), ShouldBeNil)
+				pair := data.NewMeasurement[float64]("alpha", nil)
+				pair.Label, pair.At, pair.From = "context", time.Time{}, time.Time{}
+				pair.Metrics["m"] = data.Metric[float64]{Label: "m", Raw: value}
+				other := data.NewMeasurement[float64]("beta", nil)
+				other.Label, other.At, other.From = "context", time.Time{}, time.Time{}
+				other.Metrics["m"] = data.Metric[float64]{Label: "m", Raw: value}
+				So(together.step([]*data.Measurement[float64]{pair, other}), ShouldBeNil)
 
 				// The same two quantities, each on its own update.
 				publish(t, apart, "alpha", value)
@@ -62,7 +65,7 @@ func TestAffinityAcrossSeparateUpdates(t *testing.T) {
 		})
 
 		Convey("Opposite movement reads as inverse, which is still a relationship", func() {
-			grid := NewSpace()
+			grid := NewSpace().(*Space)
 
 			for tick := range 120 {
 				publish(t, grid, "alpha", swing(tick))
@@ -82,7 +85,7 @@ func TestAffinityAcrossSeparateUpdates(t *testing.T) {
 		})
 
 		Convey("A pair that never shared a bin supports no reading at all", func() {
-			grid := NewSpace()
+			grid := NewSpace().(*Space)
 
 			// beta only ever publishes after the window has moved past alpha.
 			for range 120 {
@@ -199,13 +202,14 @@ that made a single-update sketch report unrelated quantities as related and
 identical ones as orthogonal, so it is the arrangement the cost is measured in.
 */
 func BenchmarkSpaceStepFrameTypes(b *testing.B) {
-	grid := NewSpace()
+	grid := NewSpace().(*Space)
 	families := []string{"ticker", "trade", "level3"}
 	build := func(family, label string, tick int) *data.Measurement[float64] {
-		measurement := data.NewMeasurement[float64]("", label, family, time.Time{}, time.Time{})
+		measurement := data.NewMeasurement[float64](family, nil)
+		measurement.Label, measurement.At, measurement.From = label, time.Time{}, time.Time{}
 		for metric := range 290 {
 			value := float64((tick+metric)%7) - 3
-			measurement.PutMetric(data.Metric[float64]{Label: strconv.Itoa(metric), Raw: value})
+			measurement.Metrics[strconv.Itoa(metric)] = data.Metric[float64]{Label: strconv.Itoa(metric), Raw: value}
 		}
 		return measurement
 	}
@@ -216,7 +220,7 @@ func BenchmarkSpaceStepFrameTypes(b *testing.B) {
 	for tick := range 8 {
 		for _, label := range labels {
 			for _, family := range families {
-				if err := grid.Step([]*data.Measurement[float64]{build(family, label, tick)}); err != nil {
+				if err := grid.step([]*data.Measurement[float64]{build(family, label, tick)}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -229,10 +233,10 @@ func BenchmarkSpaceStepFrameTypes(b *testing.B) {
 		tick++
 		family := families[tick%len(families)]
 		label := labels[tick%len(labels)]
-		if err := grid.Step([]*data.Measurement[float64]{build(family, label, tick)}); err != nil {
+		if err := grid.step([]*data.Measurement[float64]{build(family, label, tick)}); err != nil {
 			b.Fatal(err)
 		}
 	}
 	b.StopTimer()
-	b.ReportMetric(float64(len(grid.Columns)), "columns")
+	b.ReportMetric(float64(len(grid.columns)), "columns")
 }

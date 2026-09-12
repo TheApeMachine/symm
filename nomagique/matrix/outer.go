@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -18,37 +20,43 @@ type OuterInput struct {
 Outer owns the outer product left ⊗ right.
 */
 type Outer struct {
-	core.Base[OuterInput, [][]float64]
-	product Product
+	err error
+	out [][]float64
 }
 
-func NewOuter() *Outer {
+func NewOuter() core.Primitive {
 	return &Outer{}
 }
 
-func (op *Outer) Next(
-	in iter.Seq[core.Primitive[OuterInput, OuterInput]],
-) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
-	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+func (op *Outer) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := arriving.Read()
-			column := make([][]float64, len(input.Left))
+			input := (*OuterInput)(arriving)
+			op.out = make([][]float64, len(input.Left))
+			values := make([]float64, len(input.Left)*len(input.Right))
+			width := len(input.Right)
 
-			for index, value := range input.Left {
-				column[index] = []float64{value}
+			for row, lval := range input.Left {
+				op.out[row] = values[row*width : (row+1)*width]
+
+				for col, rval := range input.Right {
+					op.out[row][col] = lval * rval
+				}
 			}
 
-			row := [][]float64{append([]float64(nil), input.Right...)}
-			product := op.product.Multiply(column, row)
-
-			if op.product.Error() != nil {
-				op.Error(op.product.Error())
-				return
-			}
-
-			if !yield(op.Carrier(product)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Outer) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

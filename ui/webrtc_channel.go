@@ -211,7 +211,7 @@ func newFluidChannel(
 		bufferedLimit: bufferedLimit, fail: fail,
 		latestReady: make(chan struct{}, 1),
 	}
-	dataChannel.SetBufferedAmountLowThreshold(bufferedLimit - fluidSegmentSize)
+	dataChannel.SetBufferedAmountLowThreshold(bufferedLimit / 2)
 	dataChannel.OnBufferedAmountLow(func() {
 		select {
 		case channel.drained <- struct{}{}:

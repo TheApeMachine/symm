@@ -2,10 +2,12 @@ package depthflow
 
 import (
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -21,9 +23,9 @@ type DepthInput struct {
 Depth owns the two explicitly configured estimators for one symbol.
 */
 type Depth struct {
-	core.Base[DepthInput, data.ProjectionInput]
-	imbalance *adaptive.Baseline
-	rate      *adaptive.Baseline
+	err       error
+	imbalance core.Primitive
+	rate      core.Primitive
 }
 
 func newDepthGraph() *Depth {
@@ -34,15 +36,28 @@ func newDepthGraph() *Depth {
 }
 
 func (op *Depth) Next(
-	in iter.Seq[core.Primitive[DepthInput, DepthInput]],
-) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
-	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(op.observe(arriving.Read()))) {
+			projected := op.observe(*(*DepthInput)(arriving))
+
+			if !yield(unsafe.Pointer(&projected)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Depth) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }
 
 func (op *Depth) observe(input DepthInput) data.ProjectionInput {
@@ -74,7 +89,7 @@ func (op *Depth) observe(input DepthInput) data.ProjectionInput {
 
 	if observed > 0 {
 		values["observed_notional_imbalance"] = observedDiff / observed
-		reading := op.imbalance.Observe(observedDiff / observed)
+		reading := baselineReading(op.imbalance, observedDiff/observed)
 		putBaseline(values, flags, "imbalance", reading)
 	}
 
@@ -84,7 +99,7 @@ func (op *Depth) observe(input DepthInput) data.ProjectionInput {
 
 	if input.Elapsed > 0 {
 		values["observed_notional_rate"] = observed / input.Elapsed
-		reading := op.rate.Observe(observed / input.Elapsed)
+		reading := baselineReading(op.rate, observed/input.Elapsed)
 		putBaseline(values, flags, "rate", reading)
 	}
 
@@ -137,4 +152,19 @@ func depthProjection() *data.Projection {
 		{Name: data.MetadataNoiseVariance, Path: []string{"imbalance_variance"}, Defined: []string{"imbalance_variance_defined"}},
 	}
 	return p
+}
+
+/*
+baselineReading drives one observation through a Baseline primitive and
+returns its reading.
+*/
+func baselineReading(baseline core.Primitive, value float64) adaptive.BaselineReading {
+	readingEval := transport.NewEvaluate(baseline)
+	var reading adaptive.BaselineReading
+
+	for out := range readingEval.Next(transport.NewValues(value).Next(nil)) {
+		reading = *(*adaptive.BaselineReading)(out)
+	}
+
+	return reading
 }

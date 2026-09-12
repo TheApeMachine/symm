@@ -2,11 +2,11 @@ package correlation
 
 import (
 	"iter"
+	"math"
+	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
@@ -28,78 +28,97 @@ type FisherView struct {
 }
 
 /*
-FisherEstimator transforms admissible scalar correlations before the configured
-causal estimator. The estimator supplies recurrence; this composer keeps no
-second copy.
+FisherEstimator transforms admissible scalar correlations through atanh,
+tracks online moments, and computes causal residuals.
 */
 type FisherEstimator struct {
-	core.Base[float64, FisherView]
-	moments  core.Primitive[float64, equation.MomentReading]
-	residual *equation.CausalResidual
-	atanh    *calculus.Atanh[float64]
-	tanh     *calculus.Tanh[float64]
+	err     error
+	moments statistic.Moments
+	out     FisherView
 }
 
-func NewFisherEstimator(moments core.Primitive[float64, equation.MomentReading]) *FisherEstimator {
-	return &FisherEstimator{
-		moments:  moments,
-		residual: equation.NewCausalResidual(),
-		atanh:    calculus.NewAtanh[float64](),
-		tanh:     calculus.NewTanh[float64](),
-	}
+func NewFisherEstimator() core.Primitive {
+	return &FisherEstimator{}
 }
 
 func (op *FisherEstimator) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[FisherView, FisherView]] {
-	return func(yield func(core.Primitive[FisherView, FisherView]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value := arriving.Read()
+			value := *(*float64)(arriving)
 			view := FisherView{Correlation: value}
 
-			if value > -1 && value < 1 {
-				z, err := transport.Evaluate(op.atanh, transport.Values(value))
+			if value > -1.0 && value < 1.0 {
+				z := math.Atanh(value)
+				priorMean := op.moments.Mean
+				priorCount := op.moments.Count
+				priorM2 := op.moments.M2
 
-				if err != nil {
-					op.Error(err)
-					return
+				reading := op.moments.Update(z)
+
+				baseline := z
+
+				if priorCount > 0 {
+					baseline = priorMean
 				}
 
-				reading, err := transport.Evaluate(op.moments, transport.Values(z))
-
-				if err != nil {
-					op.Error(err)
-					return
+				res := statistic.CausalResidualResult{
+					MomentReading: reading,
+					HasPrior:      priorCount > 0,
+					Baseline:      baseline,
+					Residual:      0,
 				}
 
-				scored, err := transport.Evaluate(op.residual, transport.Values(reading))
-
-				if err != nil {
-					op.Error(err)
-					return
+				if priorCount > 0 {
+					res.Residual = z - priorMean
 				}
 
-				baseline, err := transport.Evaluate(op.tanh, transport.Values(scored.Baseline))
+				if priorCount > 1 {
+					res.PriorVariance = priorM2 / (priorCount - 1)
+				}
 
-				if err != nil {
-					op.Error(err)
-					return
+				res.ScoreScale = math.Abs(res.Residual)
+
+				if res.PriorVariance > 0 {
+					disp := math.Sqrt(res.PriorVariance)
+
+					if disp > 2.220446049250313e-16 {
+						res.ScoreScale = disp
+					}
+				}
+
+				if res.ScoreScale > 0 {
+					res.ZScore = res.Residual / res.ScoreScale
 				}
 
 				view.Defined = true
-				view.Baseline = baseline
-				view.Divergence = scored.Residual
-				view.PriorCount = scored.Prior.Count
-				view.Count = scored.Count
-				view.ZScore = scored.ZScore
-				view.Variance = scored.Variance
-				view.VarianceDefined = scored.VarianceDefined
-				view.HasPrior = scored.HasPrior
+				view.Baseline = math.Tanh(res.Baseline)
+				view.Divergence = res.Residual
+				view.PriorCount = priorCount
+				view.Count = reading.Count
+				view.ZScore = res.ZScore
+				view.Variance = reading.Variance
+				view.VarianceDefined = reading.VarianceDefined
+				view.HasPrior = res.HasPrior
 			}
 
-			if !yield(op.Carrier(view)) {
+			op.out = view
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *FisherEstimator) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

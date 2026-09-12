@@ -1,19 +1,96 @@
 package derivatives
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/types"
 )
 
+/*
+Signal is the derivatives measuring instrument. It composes its market
+entities in its constructor and exposes the canonical signal structure:
+Constructor, Name, Error, Step, Close. It satisfies
+nomagique/runtime.Node[*types.Envelope], dispatching on the envelope's
+TypeID to whichever entity that futures data stream feeds — mirrors
+signal/pumpdump's dispatch shape, but over the futures ticker/trade
+envelope kinds rather than spot ones.
+*/
+type Signal struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+
+	ticker *Ticker
+	trade  *Trade
+}
+
+/*
+NewSignal composes the Ticker (derivative/reference basis and open interest)
+and Trade (liquidation accounting) entities.
+*/
+func NewSignal(ctx context.Context) *Signal {
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &Signal{
+		ctx:    ctx,
+		cancel: cancel,
+		ticker: NewTicker(),
+		trade:  NewTrade(),
+	}
+}
+
+func (signal *Signal) Name() string { return "derivatives" }
+
+func (signal *Signal) Error() error { return signal.err }
+
+func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	if signal.err != nil {
+		errnie.Error(signal.Close())
+		return nil
+	}
+
+	switch envelope.TypeID {
+	case types.EnvelopeFuturesTicker:
+		envelope.Derivatives = signal.StepTicker(envelope.FuturesTickerData)
+	case types.EnvelopeFuturesTrade:
+		envelope.Derivatives = signal.StepTrade(envelope.FuturesTradeData)
+	}
+
+	return envelope
+}
+
+func (signal *Signal) StepTicker(ticker kraken.FuturesTickerData) *data.Measurement[float64] {
+	return signal.ticker.Step(ticker)
+}
+
+func (signal *Signal) StepTrade(trade kraken.FuturesTradeData) *data.Measurement[float64] {
+	return signal.trade.Step(trade)
+}
+
+func (signal *Signal) Close() error {
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	if err := signal.ticker.Close(); err != nil {
+		return err
+	}
+
+	return signal.trade.Close()
+}
+
 type tickerState struct {
-	basisGraph  *adaptive.Baseline
-	growthGraph *adaptive.Baseline
+	basisGraph  core.Primitive
+	growthGraph core.Primitive
 
 	hasPrev   bool
 	prevTime  time.Time
@@ -82,13 +159,21 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 
 	basis := (last - index) / index
 
-	basisReading, err := transport.Evaluate(state.basisGraph, transport.Values(basis))
+	basisReadingEval := transport.NewEvaluate(state.basisGraph)
+	var basisReading adaptive.BaselineReading
+
+	for out := range basisReadingEval.Next(transport.NewValues(basis).Next(nil)) {
+		basisReading = *(*adaptive.BaselineReading)(out)
+	}
+
+	err := basisReadingEval.Error()
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}
 
 	id := fmt.Sprintf("derivatives:%s:%d", point.Symbol, point.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64](id, point.Symbol, "derivatives", point.Timestamp, point.Timestamp)
+	measurement := data.NewMeasurement[float64]("derivatives", nil)
+	measurement.Label, measurement.At, measurement.From = point.Symbol, point.Timestamp, point.Timestamp
 	measurement.Metadata = make(map[string]float64)
 
 	putDerivMetric(measurement, "derivative_price", last, data.UnitRate)
@@ -133,7 +218,14 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 				oiGrowthRate := oiLogChange / dt
 				putDerivMetric(measurement, "open_interest_growth_rate", oiGrowthRate, data.UnitPerSecond)
 
-				growth, err := transport.Evaluate(state.growthGraph, transport.Values(oiGrowthRate))
+				growthEval := transport.NewEvaluate(state.growthGraph)
+				var growth adaptive.BaselineReading
+
+				for out := range growthEval.Next(transport.NewValues(oiGrowthRate).Next(nil)) {
+					growth = *(*adaptive.BaselineReading)(out)
+				}
+
+				err := growthEval.Error()
 				if err != nil {
 					measurement.Err = err
 					return measurement

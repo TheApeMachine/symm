@@ -15,9 +15,9 @@ func coderFixture(horizon int) *PredictiveCoder {
 	return NewPredictiveCoder(PredictiveCoderConfig{
 		CustomArch: []int{3, 6, 3},
 		MaxHorizon: horizon,
-		Target:     DirectionalTransform(0),
+		Target:     NewDirectionalTarget(0),
 		Learn:      true,
-	})
+	}).(*PredictiveCoder)
 }
 
 /*
@@ -42,7 +42,7 @@ func (drive *driver) run(steps int) PredictiveOutput {
 		drive.step++
 		drive.reference *= 1 + 0.01*math.Sin(float64(drive.step))
 
-		out, _ = drive.coder.Step(PredictiveInput{
+		out, _ = drive.coder.step(PredictiveInput{
 			Features: []float64{
 				drive.reference,
 				float64(drive.step),
@@ -72,14 +72,13 @@ func TestPredictiveCoderStep(t *testing.T) {
 		coder := coderFixture(horizon)
 
 		Convey("every horizon row is trained, not only the next tick", func() {
-			drive(coder, 40)
+			out := drive(coder, 40)
 
 			// The whole point of a horizon: a next-tick call is not useful, so
 			// each row must have learned from outcomes at its OWN distance.
 			for step := 1; step <= horizon; step++ {
-				_, defined := coder.Manifold().TaskSkillAt(step)
-
-				So(defined, ShouldBeTrue)
+				So(step <= len(out.Reading.SkillReady), ShouldBeTrue)
+				So(out.Reading.SkillReady[step-1], ShouldBeTrue)
 			}
 		})
 
@@ -126,12 +125,12 @@ func TestPredictiveCoderStep(t *testing.T) {
 		})
 
 		Convey("one observation resolves once per horizon, not once in total", func() {
-			drive(coder, 40)
+			out := drive(coder, 40)
 
 			// 40 steps, each issuing a curve that resolves at every horizon it
 			// survives to reach, must produce far more resolutions than the one
 			// per observation a single-horizon coder would report.
-			So(coder.ResolvedSteps(), ShouldBeGreaterThan, 40)
+			So(out.ResolvedSteps, ShouldBeGreaterThan, 40)
 		})
 
 		Convey("a resolved observation reports the horizon it was scored at", func() {
@@ -154,7 +153,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 			for index, step := range []int64{1, 4, 7, 10, 13, 16, 19, 22} {
 				reference *= 1.01
 
-				coder.Step(PredictiveInput{
+				coder.step(PredictiveInput{
 					Features:     []float64{reference, float64(step), 1},
 					Reference:    reference,
 					HasReference: index > 0,
@@ -163,9 +162,11 @@ func TestPredictiveCoderStep(t *testing.T) {
 				})
 			}
 
-			So(coder.ResolvedSteps(), ShouldBeGreaterThan, 0)
-			_, ready := coder.Manifold().TaskPrecisionAt(1)
-			So(ready, ShouldBeTrue)
+			latest := coder.snapshot()
+			So(latest.ResolvedSteps, ShouldBeGreaterThan, 0)
+
+			manifold := coder.manifold.(*ResonanceManifold)
+			So(manifold.taskScaleReady[0], ShouldBeTrue)
 		})
 	})
 
@@ -173,7 +174,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 		coder := coderFixture(4)
 
 		Convey("nothing is issued or scored against an unanchored observation", func() {
-			out, err := coder.Step(PredictiveInput{
+			out, err := coder.step(PredictiveInput{
 				Features:     []float64{1, 2, 3},
 				Reference:    100,
 				HasReference: false,
@@ -181,7 +182,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 			})
 
 			So(err, ShouldBeNil)
-			So(coder.ResolvedSteps(), ShouldEqual, 0)
+			So(out.ResolvedSteps, ShouldEqual, 0)
 			So(out.LastResolution, ShouldBeNil)
 			So(out.Calibrated, ShouldBeFalse)
 		})
@@ -189,19 +190,52 @@ func TestPredictiveCoderStep(t *testing.T) {
 
 	Convey("Given a misconfigured coder", t, func() {
 		Convey("an absent architecture is refused rather than panicking", func() {
-			coder := NewPredictiveCoder(PredictiveCoderConfig{MaxHorizon: 4})
+			coder := NewPredictiveCoder(PredictiveCoderConfig{MaxHorizon: 4}).(*PredictiveCoder)
 
-			_, err := coder.Step(PredictiveInput{Features: []float64{1}})
+			_, err := coder.step(PredictiveInput{Features: []float64{1}})
 
 			So(err, ShouldNotBeNil)
 		})
 
 		Convey("an empty feature vector is refused", func() {
-			_, err := coderFixture(4).Step(PredictiveInput{})
+			_, err := coderFixture(4).step(PredictiveInput{})
 
 			So(err, ShouldNotBeNil)
 		})
 	})
+}
+
+/*
+snapshot replays the coder's retained state into its current reading fields
+without a new observation, for assertions between steps.
+*/
+func (coder *PredictiveCoder) snapshot() PredictiveOutput {
+	reading, err := coder.manifoldExecute(ManifoldCommand{Reading: &ReadingIntent{}})
+	So(err, ShouldBeNil)
+
+	output := PredictiveOutput{
+		Reading:        &reading,
+		Readout:        reading.Readout,
+		LastResolution: coder.last,
+		ResolvedSteps:  coder.resolved,
+		Pending:        coder.pending,
+	}
+
+	for horizon := 1; horizon <= coder.horizon && horizon <= len(reading.SkillReady); horizon++ {
+		if !reading.SkillReady[horizon-1] {
+			break
+		}
+
+		output.SupportedHorizon = horizon
+
+		if horizon == 1 {
+			output.Confidence = reading.Skill[0]
+		}
+	}
+
+	output.Calibrated = output.SupportedHorizon > 0
+
+	return output
 }
 
 /*
@@ -218,17 +252,16 @@ func TestPredictiveCoderRetainsBoundedPending(t *testing.T) {
 		stream.run(200)
 
 		Convey("it retains no more pending curves than the horizon allows", func() {
-			So(coder.PendingCount(), ShouldBeLessThanOrEqualTo, horizon)
+			So(stream.run(1).Pending, ShouldBeLessThanOrEqualTo, horizon)
 		})
 
-		Convey("a fully resolved curve is recycled instead of being reallocated", func() {
+		Convey("the pending set stops growing in steady state", func() {
 			// In steady state a recycled curve is taken straight back by the
 			// next issue, so the free list is transiently empty by design.
 			// What must hold is that the pending set stops growing at all.
-			before := coder.PendingCount()
-			stream.run(100)
+			before := stream.run(1).Pending
 
-			So(coder.PendingCount(), ShouldEqual, before)
+			So(stream.run(100).Pending, ShouldEqual, before)
 		})
 	})
 }
@@ -248,10 +281,10 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 			return NewPredictiveCoder(PredictiveCoderConfig{
 				CustomArch: []int{3, 6, 3},
 				MaxHorizon: 4,
-				Target:     DirectionalTransform(0),
+				Target:     NewDirectionalTarget(0),
 				Learn:      true,
 				Readout:    mode,
-			})
+			}).(*PredictiveCoder)
 		}
 
 		Convey("every mode settles and forecasts without a dimension mismatch", func() {
@@ -261,7 +294,7 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 				coder := build(mode)
 				out := drive(coder, 20)
 
-				So(coder.Manifold(), ShouldNotBeNil)
+				So(out.Reading, ShouldNotBeNil)
 				So(len(out.Readout), ShouldBeGreaterThan, 0)
 			}
 		})
@@ -270,11 +303,11 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 			wide := build(ReadoutAll)
 			narrow := build(ReadoutLatents)
 
-			drive(wide, 5)
-			drive(narrow, 5)
+			wideOut := drive(wide, 5)
+			narrowOut := drive(narrow, 5)
 
-			So(len(narrow.Manifold().ReadoutVector()), ShouldBeLessThan,
-				len(wide.Manifold().ReadoutVector()))
+			So(narrowOut.Reading.ReadoutDimension, ShouldBeLessThan,
+				wideOut.Reading.ReadoutDimension)
 		})
 
 		Convey("the zero value keeps the widest readout", func() {
@@ -282,15 +315,12 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 			explicit := NewPredictiveCoder(PredictiveCoderConfig{
 				CustomArch: []int{3, 6, 3},
 				MaxHorizon: 4,
-				Target:     DirectionalTransform(0),
+				Target:     NewDirectionalTarget(0),
 				Learn:      true,
-			})
+			}).(*PredictiveCoder)
 
-			drive(defaulted, 5)
-			drive(explicit, 5)
-
-			So(len(explicit.Manifold().ReadoutVector()), ShouldEqual,
-				len(defaulted.Manifold().ReadoutVector()))
+			So(drive(explicit, 5).Reading.ReadoutDimension, ShouldEqual,
+				drive(defaulted, 5).Reading.ReadoutDimension)
 		})
 	})
 }
@@ -306,7 +336,7 @@ func BenchmarkPredictiveCoderStep(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		coder.Step(PredictiveInput{
+		coder.step(PredictiveInput{
 			Features:     features,
 			Reference:    100 + float64(step%7),
 			HasReference: true,

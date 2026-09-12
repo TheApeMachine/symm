@@ -1,8 +1,10 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -11,29 +13,41 @@ import (
 Get owns lookup. Missing keys are explicit failures, never a fabricated zero.
 */
 type Get[K comparable, V any] struct {
-	core.Base[map[K]V, V]
+	err error
 	key K
+	out V
 }
 
-func NewGet[K comparable, V any](key K) *Get[K, V] {
+func NewGet[K comparable, V any](key K) core.Primitive {
 	return &Get[K, V]{key: key}
 }
 
-func (op *Get[K, V]) Next(
-	in iter.Seq[core.Primitive[map[K]V, map[K]V]],
-) iter.Seq[core.Primitive[V, V]] {
-	return func(yield func(core.Primitive[V, V]) bool) {
+func (op *Get[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value, found := arriving.Read()[op.key]
+			m := *(*map[K]V)(arriving)
+			value, found := m[op.key]
 
 			if !found {
 				op.Error(fmt.Errorf("%w: key %v", core.ErrNotHeld, op.key))
-				continue
+				return
 			}
 
-			if !yield(op.Carrier(value)) {
+			op.out = value
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Get[K, V]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

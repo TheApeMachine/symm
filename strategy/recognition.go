@@ -8,11 +8,10 @@ import (
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -84,7 +83,7 @@ func (held *replay) state(at int64, frames uint64) *Recognition {
 		AtNs:     at,
 		Steps:    frames,
 		Status:   held.status(),
-		Restored: held.space.Formed,
+		Restored: spaceState(held.space).Formed,
 		Markets:  held.markets(at),
 	}
 
@@ -335,7 +334,7 @@ func (held *replay) status() string {
 		return "reading the record"
 	}
 
-	if !held.space.Formed {
+	if !spaceState(held.space).Formed {
 		return "forming the impulse map"
 	}
 
@@ -349,22 +348,23 @@ those quantities settled into.
 */
 func (held *replay) markets(at int64) []*telemetry.LearningDevelopmentT {
 	space := held.space
-	markets := make([]*telemetry.LearningDevelopmentT, 0, len(space.Rows))
+	known := spaceState(space).Rows
+	markets := make([]*telemetry.LearningDevelopmentT, 0, len(known))
 
-	for _, symbol := range space.Rows {
+	for _, symbol := range known {
 		development := &telemetry.LearningDevelopmentT{
 			Symbol: symbol,
 			AtNs:   at,
 			FromNs: at,
 			Status: held.status(),
 		}
-		quantities, regions, version, err := space.MarketSnapshot(symbol)
+		snapshot, err := askGrid(space, &grid.Command{Snapshot: &grid.SnapshotQuery{Label: symbol}})
 
 		if err != nil {
 			continue
 		}
 
-		for _, q := range quantities {
+		for _, q := range snapshot.Quantities {
 			development.Quantities = append(
 				development.Quantities, &telemetry.LearningQuantityT{
 					Source:   q.Source,
@@ -378,9 +378,9 @@ func (held *replay) markets(at int64) []*telemetry.LearningDevelopmentT {
 				},
 			)
 		}
-		development.Decisions = version
+		development.Decisions = snapshot.Version
 
-		for _, region := range regions {
+		for _, region := range snapshot.Regions {
 			development.Regions = append(development.Regions, &telemetry.LearningRegionT{
 				Id:        region.ID,
 				Condition: region.Condition,
@@ -417,25 +417,26 @@ func (held *replay) recognised(
 /* layout is the settled map, reported once rather than per instrument. */
 func (held *replay) layout() *telemetry.LearningGridT {
 	space := held.space
-	symbol := space.UpdatedLabel
+	state := spaceState(space)
+	symbol := state.Updated
 	layout := &telemetry.LearningGridT{
 		Symbol:  symbol,
-		Formed:  space.Formed,
-		Columns: int32(len(space.Columns)),
-		Version: space.Version,
+		Formed:  state.Formed,
+		Columns: int32(state.Columns),
+		Version: state.Version,
 	}
 
 	if symbol == "" {
 		return layout
 	}
-	regions, version, err := space.Regions(symbol)
+	measured, err := askGrid(space, &grid.Command{Regions: &grid.RegionsQuery{Label: symbol}})
 
 	if err != nil {
 		return layout
 	}
-	layout.Version = version
+	layout.Version = measured.Version
 
-	for _, region := range regions {
+	for _, region := range measured.Regions {
 		layout.Regions = append(layout.Regions, &telemetry.LearningActiveT{
 			Id:        region.ID,
 			Condition: region.Condition,
@@ -465,14 +466,14 @@ situation invented to make it look decisive.
 */
 func learner(
 	index int,
-	memory *store.Retained[*iradix.Tree[[]byte]],
+	memory core.Primitive,
 	individual *Agent,
 ) reading {
 	answer := reading{
 		agent: &telemetry.LearningAgentT{Id: int32(index), Status: "recognising"},
 		held:  &telemetry.LearningLearnerT{Id: int32(index)},
 	}
-	tree := memory.Read()
+	tree := retainedTree(memory)
 
 	if tree == nil {
 		answer.agent.Status = "empty"
@@ -492,7 +493,11 @@ func learner(
 	order := make([]string, 0, 4)
 
 	if individual != nil && individual.Engine() != nil {
-		classCounts := individual.Engine().ClassCounts()
+		classCounts, err := classCensus(individual.Engine())
+		if err != nil {
+			errnie.Error(errnie.Err(errnie.Internal, "recognition: class census failed", err))
+		}
+
 		for name, count := range classCounts {
 			counted[name] = count
 			order = append(order, name)
@@ -506,13 +511,13 @@ func learner(
 			if !bytes.HasPrefix(key, []byte("b/")) {
 				break
 			}
-			class, _, named := cognition.ParseBasinKey(key)
+			class, _, named := basinOf(key)
 
 			if !named {
 				continue
 			}
 
-			if written := cognition.DecodeWeight(value).WriteStep; written > step {
+			if written := packedWeight(value).WriteStep; written > step {
 				step = written
 			}
 			name := string(class)
@@ -567,13 +572,13 @@ func learner(
 			if !bytes.HasPrefix(key, []byte("b/")) {
 				break
 			}
-			class, sequence, named := cognition.ParseBasinKey(key)
+			class, sequence, named := basinOf(key)
 
 			if !named || len(sequence) == 0 {
 				continue
 			}
 
-			weight := cognition.DecodeWeight(value)
+			weight := packedWeight(value)
 			parentID := int64(0)
 			prefix := ""
 			depth := int64(1)
@@ -648,7 +653,7 @@ func learner(
 
 /* formatRegionToken formats a condition token into human-readable region and ternary directions. */
 func formatRegionToken(tokenVal uint64) string {
-	regionID := grid.ConditionQuantity(tokenVal)
+	regionID := tokenQuantity(tokenVal)
 	levelState := tokenVal & 0x3
 	changeState := (tokenVal >> 2) & 0x3
 

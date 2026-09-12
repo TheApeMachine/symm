@@ -1,256 +1,229 @@
 package causal
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"math"
 	"slices"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/mat"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
+
+/*
+TableInput commands one observational-table evaluation. A non-nil Actual
+requests an abductive counterfactual over Features; a nil Actual requests the
+backdoor interventional expectation of Treatment at Level over Controls. Linear
+selects the affine strategy; otherwise stumps fit the structural model.
+*/
+type TableInput struct {
+	Rows      [][]float64
+	Target    int
+	Treatment int
+	Level     float64
+	Controls  []int
+	Features  []int
+	Actual    []float64
+	Linear    bool
+}
+
+/*
+TableOutput carries the commanded result: the interventional expectation, or
+the abductive counterfactual with its retained noise and bounded audit
+precision derived from reconstruction error.
+*/
+type TableOutput struct {
+	Expectation    float64
+	Counterfactual float64
+	Noise          float64
+	Precision      float64
+}
 
 /*
 Table owns observational rows used for interventional and counterfactual fits.
 Rows are copied at the boundary so search simulations cannot mutate evidence.
+The fitting strategies (affine least squares, stumps) are internal.
 */
 type Table struct {
-	rows       [][]float64
-	target     int
-	minimum    int
-	linear     bool
-	predictors map[string]predictor
+	err     error
+	minimum int
+	out     TableOutput
 }
 
 /*
-NewTable validates and copies observational rows for one target model.
+NewTable creates a table primitive requiring at least minimum observational
+rows per command.
 */
-func NewTable(
-	rows [][]float64,
-	target int,
-	minimum int,
-	linear bool,
-) (*Table, error) {
+func NewTable(minimum int) core.Primitive {
+	return &Table{minimum: minimum}
+}
+
+/*
+Next evaluates each arriving command and yields its result payload.
+*/
+func (op *Table) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			command := (*TableInput)(arriving)
+
+			rows, err := copyRows(command.Rows, command.Target, op.minimum)
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			op.out = TableOutput{}
+
+			if command.Actual != nil {
+				err = op.abduct(rows, command)
+			} else {
+				err = op.standardize(rows, command)
+			}
+
+			if err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *Table) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+standardize estimates E[target | do(treatment=level)] through empirical
+backdoor standardization over the observed control distribution.
+*/
+func (op *Table) standardize(rows [][]float64, command *TableInput) error {
+	features, err := validatedFeatures(
+		len(rows[0]), command.Target, command.Treatment, command.Controls,
+	)
+	if err != nil {
+		return err
+	}
+
+	model, err := fitPredictor(rows, command.Target, features, command.Linear)
+	if err != nil {
+		return err
+	}
+
+	expectation := 0.0
+
+	for _, observation := range rows {
+		expectation += model.predictWithIntervention(
+			observation, command.Treatment, command.Level,
+		)
+	}
+
+	op.out.Expectation = expectation / float64(len(rows))
+	return nil
+}
+
+/*
+abduct performs abduction, intervention, then prediction, retaining the
+factual noise in the counterfactual.
+*/
+func (op *Table) abduct(rows [][]float64, command *TableInput) error {
+	if len(command.Actual) != len(rows[0]) {
+		return fmt.Errorf(
+			"causal: actual row has width %d; expected %d: %w",
+			len(command.Actual), len(rows[0]), core.ErrShape,
+		)
+	}
+
+	features, err := validatedFeatures(
+		len(command.Actual), command.Target, command.Treatment, command.Features,
+	)
+	if err != nil {
+		return err
+	}
+
+	model, err := fitPredictor(rows, command.Target, features, command.Linear)
+	if err != nil {
+		return err
+	}
+
+	factual := model.predict(command.Actual)
+	op.out.Noise = command.Actual[command.Target] - factual
+	op.out.Counterfactual = model.predictWithIntervention(
+		command.Actual, command.Treatment, command.Level,
+	) + op.out.Noise
+	op.out.Precision = 1 / (1 + math.Abs(op.out.Noise))
+	return nil
+}
+
+/*
+copyRows validates one command's evidence and copies it so later search
+simulations cannot mutate it.
+*/
+func copyRows(rows [][]float64, target int, minimum int) ([][]float64, error) {
 	if target < 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: target column must be non-negative",
-			nil,
-		))
+		return nil, fmt.Errorf(
+			"causal: target column must be non-negative: %w", core.ErrDomain,
+		)
 	}
 
 	if minimum < 1 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"causal: minimum rows must be positive",
-			nil,
-		))
+		return nil, fmt.Errorf(
+			"causal: minimum rows must be positive: %w", core.ErrDomain,
+		)
 	}
 
 	if len(rows) < minimum {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("causal: %d observational rows available; need %d", len(rows), minimum),
-			nil,
-		))
+		return nil, fmt.Errorf(
+			"causal: %d observational rows available; need %d: %w",
+			len(rows), minimum, core.ErrDomain,
+		)
 	}
 
 	columnCount := len(rows[0])
 
 	if columnCount == 0 || target >= columnCount {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("causal: target column %d is outside row width %d", target, columnCount),
-			nil,
-		))
+		return nil, fmt.Errorf(
+			"causal: target column %d is outside row width %d: %w",
+			target, columnCount, core.ErrShape,
+		)
 	}
 
 	observations := make([][]float64, len(rows))
 
 	for rowIndex, row := range rows {
 		if len(row) != columnCount {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"causal: row %d has width %d; expected %d",
-					rowIndex, len(row), columnCount,
-				),
-				nil,
-			))
+			return nil, fmt.Errorf(
+				"causal: row %d has width %d; expected %d: %w",
+				rowIndex, len(row), columnCount, core.ErrShape,
+			)
 		}
 
 		observations[rowIndex] = slices.Clone(row)
 	}
 
-	return &Table{
-		rows:       observations,
-		target:     target,
-		minimum:    minimum,
-		linear:     linear,
-		predictors: make(map[string]predictor),
-	}, nil
+	return observations, nil
 }
 
 /*
-Rows returns an isolated copy of the observational evidence.
+validatedFeatures deduplicates the requested explanatory columns with the
+treatment and removes the outcome, refusing an empty remainder.
 */
-func (table *Table) Rows() [][]float64 {
-	rows := make([][]float64, len(table.rows))
-
-	for rowIndex, row := range table.rows {
-		rows[rowIndex] = slices.Clone(row)
-	}
-
-	return rows
-}
-
-/*
-DoExpectation estimates E[target | do(treatment=level)] through empirical
-backdoor standardization over the observed control distribution.
-*/
-func (table *Table) DoExpectation(
-	treatment int,
-	level float64,
-	controls ...int,
-) (float64, error) {
-	features, err := validatedFeatures(
-		len(table.rows[0]), table.target, treatment, controls,
-	)
-
-	if err != nil {
-		return 0, err
-	}
-
-	featuresKey := fmt.Sprint(features)
-	predictor, found := table.predictors[featuresKey]
-
-	if !found {
-		fitted, fitErr := fitPredictor(table.rows, table.target, features, table.linear)
-
-		if fitErr != nil {
-			return 0, fitErr
-		}
-
-		predictor = fitted
-		table.predictors[featuresKey] = predictor
-	}
-
-	expectation := 0.0
-
-	for _, observation := range table.rows {
-		expectation += predictor.PredictWithIntervention(observation, treatment, level)
-	}
-
-	return expectation / float64(len(table.rows)), nil
-}
-
-/*
-AbductiveCounterfactual performs abduction, intervention, then prediction. The
-returned precision is a bounded audit weight derived from reconstruction error.
-*/
-func (table *Table) AbductiveCounterfactual(
-	features []int,
-	actual []float64,
-	treatment int,
-	level float64,
-) (counterfactual float64, noise float64, precision float64, err error) {
-	if len(actual) != len(table.rows[0]) {
-		return 0, 0, 0, fmt.Errorf(
-			"causal: actual row has width %d; expected %d",
-			len(actual), len(table.rows[0]),
-		)
-	}
-
-	validated, err := validatedFeatures(
-		len(actual), table.target, treatment, features,
-	)
-
-	if err != nil {
-		return 0, 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf(
-				"causal: actual row has width %d; expected %d",
-				len(actual), len(table.rows[0]),
-			),
-			nil,
-		))
-	}
-
-	featuresKey := fmt.Sprint(validated)
-	predictor, found := table.predictors[featuresKey]
-
-	if !found {
-		fitted, fitErr := fitPredictor(table.rows, table.target, validated, table.linear)
-
-		if fitErr != nil {
-			return 0, 0, 0, fitErr
-		}
-
-		predictor = fitted
-		table.predictors[featuresKey] = predictor
-	}
-
-	factualPrediction := predictor.Predict(actual)
-	noise = actual[table.target] - factualPrediction
-	counterfactual = predictor.PredictWithIntervention(actual, treatment, level) + noise
-	precision = 1 / (1 + math.Abs(noise))
-
-	return counterfactual, noise, precision, nil
-}
-
-/*
-DoExpectation preserves the old nomagique engine boundary while using Table.
-*/
-func DoExpectation(
-	rows [][]float64,
-	target int,
-	minimum int,
-	treatment int,
-	level float64,
-	controls []int,
-) (float64, error) {
-	table, err := NewTable(rows, target, minimum, true)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.PreconditionFailed,
-			"causal: table construction failed",
-			err,
-		))
-	}
-
-	return table.DoExpectation(treatment, level, controls...)
-}
-
-/*
-AbductiveCounterfactual preserves the old nomagique engine boundary.
-*/
-func AbductiveCounterfactual(
-	rows [][]float64,
-	target int,
-	minimum int,
-	features []int,
-	linear bool,
-	actual []float64,
-	treatment int,
-	level float64,
-) (counterfactual float64, noise float64, err error) {
-	table, err := NewTable(rows, target, minimum, linear)
-
-	if err != nil {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.PreconditionFailed,
-			"causal: table construction failed",
-			err,
-		))
-	}
-
-	counterfactual, noise, _, err = table.AbductiveCounterfactual(
-		features, actual, treatment, level,
-	)
-	return counterfactual, noise, err
-}
-
 func validatedFeatures(
 	columnCount int,
 	target int,
@@ -259,8 +232,8 @@ func validatedFeatures(
 ) ([]int, error) {
 	if treatment < 0 || treatment >= columnCount {
 		return nil, fmt.Errorf(
-			"causal: treatment column %d is outside row width %d",
-			treatment, columnCount,
+			"causal: treatment column %d is outside row width %d: %w",
+			treatment, columnCount, core.ErrShape,
 		)
 	}
 
@@ -270,8 +243,8 @@ func validatedFeatures(
 	for _, feature := range append(slices.Clone(requested), treatment) {
 		if feature < 0 || feature >= columnCount {
 			return nil, fmt.Errorf(
-				"causal: feature column %d is outside row width %d",
-				feature, columnCount,
+				"causal: feature column %d is outside row width %d: %w",
+				feature, columnCount, core.ErrShape,
 			)
 		}
 
@@ -284,15 +257,18 @@ func validatedFeatures(
 	}
 
 	if len(features) == 0 {
-		return nil, fmt.Errorf("causal: no explanatory features remain after validation")
+		return nil, fmt.Errorf(
+			"causal: no explanatory features remain after validation: %w",
+			core.ErrDomain,
+		)
 	}
 
 	return features, nil
 }
 
 type predictor interface {
-	Predict([]float64) float64
-	PredictWithIntervention([]float64, int, float64) float64
+	predict([]float64) float64
+	predictWithIntervention([]float64, int, float64) float64
 }
 
 type linearPredictor struct {
@@ -301,7 +277,7 @@ type linearPredictor struct {
 	features     []int
 }
 
-func (predictor *linearPredictor) Predict(row []float64) float64 {
+func (predictor *linearPredictor) predict(row []float64) float64 {
 	prediction := predictor.intercept
 
 	for featureIndex, column := range predictor.features {
@@ -311,7 +287,7 @@ func (predictor *linearPredictor) Predict(row []float64) float64 {
 	return prediction
 }
 
-func (predictor *linearPredictor) PredictWithIntervention(row []float64, treatment int, level float64) float64 {
+func (predictor *linearPredictor) predictWithIntervention(row []float64, treatment int, level float64) float64 {
 	prediction := predictor.intercept
 
 	for featureIndex, column := range predictor.features {
@@ -339,7 +315,7 @@ type stumpPredictor struct {
 	stumps   []stump
 }
 
-func (predictor *stumpPredictor) Predict(row []float64) float64 {
+func (predictor *stumpPredictor) predict(row []float64) float64 {
 	prediction := predictor.baseline
 
 	for _, decision := range predictor.stumps {
@@ -354,7 +330,7 @@ func (predictor *stumpPredictor) Predict(row []float64) float64 {
 	return prediction
 }
 
-func (predictor *stumpPredictor) PredictWithIntervention(row []float64, treatment int, level float64) float64 {
+func (predictor *stumpPredictor) predictWithIntervention(row []float64, treatment int, level float64) float64 {
 	prediction := predictor.baseline
 
 	for _, decision := range predictor.stumps {

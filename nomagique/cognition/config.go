@@ -1,7 +1,9 @@
 package cognition
 
 /*
-Config declares explicit mathematical bounds for the cognitive engine.
+Config declares the mathematical bounds of the cognitive engine as a plain
+payload. The engine normalizes unset bounds to its declared defaults when it
+is constructed; normalized values are computed inside the primitive.
 */
 type Config struct {
 	// MemoryScale M sets the exponential decay factor: λ = 1 - 1/M.
@@ -24,7 +26,12 @@ type Config struct {
 	SurprisalBreakBits float64
 }
 
-func DefaultConfig() Config {
+/*
+defaultBounds is the declared default configuration. An unset bound is not a
+chosen zero, and reading it as one is how a model comes to claim it decided
+something it was never configured for; the constructor folds these in.
+*/
+func defaultBounds() Config {
 	return Config{
 		MemoryScale:        2000.0, // λ = 1 - 1/2000 = 0.9995
 		DirichletAlpha:     0.5,    // Jeffreys uninformative prior
@@ -36,22 +43,10 @@ func DefaultConfig() Config {
 }
 
 /*
-DecayFactor computes λ = 1 - 1/M.
-*/
-func (c Config) DecayFactor() float64 {
-	if c.MemoryScale <= 1.0 {
-		return 1.0
-	}
-	return 1.0 - (1.0 / c.MemoryScale)
-}
-
-/*
-normalised fills unset bounds from the default. An unset bound is not a chosen
-zero, and reading it as one is how a model comes to claim it decided something
-it was never configured for.
+normalised fills unset bounds from the declared defaults.
 */
 func (c Config) normalised() Config {
-	fallback := DefaultConfig()
+	fallback := defaultBounds()
 
 	if c.MemoryScale == 0 {
 		c.MemoryScale = fallback.MemoryScale
@@ -65,9 +60,28 @@ func (c Config) normalised() Config {
 		c.MaxBackoffOrder = fallback.MaxBackoffOrder
 	}
 
+	if c.BeamWidth <= 0 {
+		c.BeamWidth = fallback.BeamWidth
+	}
+
+	if c.MaxHops <= 0 {
+		c.MaxHops = fallback.MaxHops
+	}
+
 	if c.SurprisalBreakBits <= 0 {
 		c.SurprisalBreakBits = fallback.SurprisalBreakBits
 	}
 
 	return c
+}
+
+/*
+decayFactor computes λ = 1 - 1/M for the memory scale M.
+*/
+func (c Config) decayFactor() float64 {
+	if c.MemoryScale <= 1.0 {
+		return 1.0
+	}
+
+	return 1.0 - (1.0 / c.MemoryScale)
 }

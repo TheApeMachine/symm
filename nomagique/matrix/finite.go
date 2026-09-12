@@ -1,47 +1,60 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 Finite reports whether every coefficient is a finite number.
 */
 type Finite struct {
-	core.Base[[][]float64, bool]
-	finite *logic.Finite[float64]
+	err error
+	out bool
 }
 
-func NewFinite() *Finite {
-	return &Finite{finite: logic.NewFinite[float64]()}
+func NewFinite() core.Primitive {
+	return &Finite{}
 }
 
-func (op *Finite) Next(
-	in iter.Seq[core.Primitive[[][]float64, [][]float64]],
-) iter.Seq[core.Primitive[bool, bool]] {
-	return func(yield func(core.Primitive[bool, bool]) bool) {
+func (op *Finite) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			rows := *(*[][]float64)(arriving)
 			valid := true
 
-			for _, row := range arriving.Read() {
+			for _, row := range rows {
 				for _, value := range row {
-					ok := true
-
-					for decision := range op.finite.Next(transport.Values(value)) {
-						ok = decision.Read()
+					if math.IsNaN(value) || math.IsInf(value, 0) {
+						valid = false
+						break
 					}
+				}
 
-					valid = valid && ok
+				if !valid {
+					break
 				}
 			}
 
-			if !yield(op.Carrier(valid)) {
+			op.out = valid
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Finite) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

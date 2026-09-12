@@ -8,15 +8,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/learning/associative"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -95,11 +94,10 @@ Agents 1..N-1 operate as rehearsal workers practicing on historical tape
 excursions. All agents share the underlying cognition memory trie.
 */
 type Training struct {
-	*runtime.System
+	ctx    context.Context
 	mu     sync.Mutex
 	tape   *Tape
-	space  *grid.Space
-	agent  *associative.Agent
+	space  core.Primitive
 	agents []*Agent
 	main   *MainAgent
 	legs   []types.ReplayFragment
@@ -108,9 +106,8 @@ type Training struct {
 
 /* replay is the dashboard's reading of this pipeline. */
 type replay struct {
-	space        *grid.Space
-	memories     []*store.Retained[*iradix.Tree[[]byte]]
-	learners     []*associative.Agent
+	space        core.Primitive
+	memories     []core.Primitive
 	cohort       []*Agent
 	mainAgent    *MainAgent
 	fragments    int
@@ -140,6 +137,7 @@ func NewTraining(
 	var prc *broker.Price
 	var rng *rand.Rand
 	var bal *broker.Balance
+	var api *websocket.API
 	var initialCash *decimal.Decimal
 
 	for _, dep := range deps {
@@ -150,6 +148,8 @@ func NewTraining(
 			prc = v
 		case *broker.Balance:
 			bal = v
+		case *websocket.API:
+			api = v
 		case *rand.Rand:
 			rng = v
 		case *decimal.Decimal:
@@ -163,11 +163,11 @@ func NewTraining(
 
 	targetAccount := viper.GetString("trading.model")
 
-	if targetAccount == "" {
-		targetAccount = "simulated"
+	if targetAccount == "" || targetAccount == "simulated" {
+		targetAccount = "paper"
 	}
 
-	sharedEngine := cognition.NewEngine(cognition.DefaultConfig())
+	sharedEngine := cognition.NewEngine(cognition.Config{})
 	agents := make([]*Agent, count)
 
 	for idx := 0; idx < count; idx++ {
@@ -179,21 +179,14 @@ func NewTraining(
 		}
 
 		agents[idx] = NewAgent(idx, isLive, sharedEngine, 64, agentRNG)
-
-		if prc != nil {
-			agents[idx].SetPrice(prc)
-		}
-
-		agents[idx].SetFeeRate(0.008)
 	}
 
 	training := &Training{
 		tape:   tape,
 		space:  agents[0].Space(),
-		agent:  agents[0].learner,
 		agents: agents,
-		main:   NewMainAgent(initialCash, targetAccount, inst, prc, sharedEngine),
-		System: runtime.NewSystem(ctx, "training"),
+		main:   NewMainAgent(initialCash, targetAccount, inst, prc, sharedEngine, api, bal),
+		ctx:    ctx,
 	}
 
 	go training.rehearseLoop()
@@ -245,7 +238,13 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 
 						if impulse.Ready {
 							holding := training.main.IsHolding(symbol)
-							decision := training.agents[0].ChooseAction(impulse, holding)
+							decision, err := training.agents[0].ChooseAction(impulse, holding)
+
+							if err != nil {
+								errnie.Error(errnie.Err(errnie.Internal, "training: cognition evaluation failed", err))
+								decision = ActionDecision{Action: ActionWait}
+							}
+
 							training.main.Step(envelope, decision)
 						}
 					}
@@ -297,8 +296,8 @@ func (training *Training) mount() {
 		for _, worker := range rehearsalWorkers {
 			randSlot := 0
 
-			if worker.ring != nil && worker.ring.Len() > 0 {
-				randSlot = rand.Intn(worker.ring.Len())
+			if worker.ring != nil && ringLen[[]*data.Measurement[float64]](worker.ring) > 0 {
+				randSlot = rand.Intn(ringLen[[]*data.Measurement[float64]](worker.ring))
 			}
 
 			worker.IngestReplay(fragment, randSlot)
@@ -318,7 +317,7 @@ func (training *Training) rehearseLoop() {
 
 	for {
 		select {
-		case <-training.Context().Done():
+		case <-training.ctx.Done():
 			return
 		case <-ticker.C:
 			training.rehearseCycle()
@@ -343,18 +342,16 @@ func (training *Training) rehearseCycle() {
 }
 
 func (training *Training) snapshot() *replay {
-	memories := make([]*store.Retained[*iradix.Tree[[]byte]], len(training.agents))
-	learners := make([]*associative.Agent, len(training.agents))
+	memories := make([]core.Primitive, len(training.agents))
 
 	for idx, individual := range training.agents {
 		memories[idx] = store.NewRetained(individual.Tree())
-		learners[idx] = individual.learner
 	}
 	activeSpace := training.space
 
-	if activeSpace.UpdatedLabel == "" && len(training.agents) > 1 {
+	if spaceState(activeSpace).Updated == "" && len(training.agents) > 1 {
 		for _, individual := range training.agents {
-			if individual.Space().UpdatedLabel != "" {
+			if spaceState(individual.Space()).Updated != "" {
 				activeSpace = individual.Space()
 				break
 			}
@@ -378,7 +375,6 @@ func (training *Training) snapshot() *replay {
 	return &replay{
 		space:        activeSpace,
 		memories:     memories,
-		learners:     learners,
 		cohort:       training.agents,
 		mainAgent:    training.main,
 		fragments:    len(training.legs),

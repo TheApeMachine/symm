@@ -1,28 +1,55 @@
 package statistic
 
+import (
+	"errors"
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
 /*
-EffectiveSampleSize returns the Kish effective sample size for a weight
-vector:
-
-	N_eff = (sum w)² / sum(w²)
-
-It is the normative support contract for estimator maturity. A zero-length
-weight vector has effective sample size zero.
+Kish owns (sum w)² / sum(w²), the effective sample size of a weight stream.
 */
-func EffectiveSampleSize(weights []float64) float64 {
-	sum := 0.0
-	sumSquares := 0.0
+type Kish struct {
+	err    error
+	sum    float64
+	energy float64
+	out    float64
+}
 
-	for _, weight := range weights {
-		sum += weight
-		sumSquares += weight * weight
+func NewKish() core.Primitive {
+	return &Kish{}
+}
+
+func (op *Kish) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			val := *(*float64)(arriving)
+			op.sum += val
+			op.energy += val * val
+
+			if op.energy == 0 {
+				op.out = 0
+			} else {
+				op.out = (op.sum * op.sum) / op.energy
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Kish) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
 	}
 
-	if sumSquares == 0 {
-		return 0
-	}
-
-	return sum * sum / sumSquares
+	return op.err
 }
 
 /*
@@ -30,16 +57,40 @@ KishMaturity maps effective sample support to the normative maturity measure:
 
 	Maturity = 0             when N_eff <= 1
 	Maturity = 1 - 1/N_eff   otherwise
-
-Maturity measures effective support. It is not a readiness threshold and it
-does not override identification.
 */
-func KishMaturity(weights []float64) float64 {
-	effective := EffectiveSampleSize(weights)
+type KishMaturity struct {
+	err error
+	out float64
+}
 
-	if effective <= 1 {
-		return 0
+func NewKishMaturity() core.Primitive {
+	return &KishMaturity{}
+}
+
+func (op *KishMaturity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			effective := *(*float64)(arriving)
+
+			if effective <= 1 {
+				op.out = 0
+			} else {
+				op.out = 1 - 1/effective
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *KishMaturity) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
 	}
 
-	return 1 - 1/effective
+	return op.err
 }

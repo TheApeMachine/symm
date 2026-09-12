@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -19,67 +21,76 @@ Product owns matrix multiplication. Coefficients stay in contiguous float64
 storage.
 */
 type Product struct {
-	core.Base[ProductInput, [][]float64]
+	err error
+	out [][]float64
 }
 
-func NewProduct() *Product {
+func NewProduct() core.Primitive {
 	return &Product{}
 }
 
-func (op *Product) Next(
-	in iter.Seq[core.Primitive[ProductInput, ProductInput]],
-) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
-	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+func (op *Product) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			product := op.Multiply(arriving.Read().Left, arriving.Read().Right)
+			input := (*ProductInput)(arriving)
+			width := 0
 
-			if op.Error() != nil {
+			if len(input.Right) > 0 {
+				width = len(input.Right[0])
+			}
+
+			ok := true
+
+			for _, row := range input.Right {
+				if len(row) != width {
+					op.Error(core.ErrShape)
+					ok = false
+					break
+				}
+			}
+
+			if !ok {
 				return
 			}
 
-			if !yield(op.Carrier(product)) {
+			for _, row := range input.Left {
+				if len(row) != len(input.Right) {
+					op.Error(core.ErrShape)
+					ok = false
+					break
+				}
+			}
+
+			if !ok {
+				return
+			}
+
+			op.out = make([][]float64, len(input.Left))
+			values := make([]float64, len(input.Left)*width)
+
+			for row, coefficients := range input.Left {
+				op.out[row] = values[row*width : (row+1)*width]
+
+				for inner, coefficient := range coefficients {
+					for column, value := range input.Right[inner] {
+						op.out[row][column] += coefficient * value
+					}
+				}
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-/*
-Multiply returns a fresh rectangular product without mutating either operand.
-*/
-func (op *Product) Multiply(left, right [][]float64) [][]float64 {
-	width := 0
-
-	if len(right) > 0 {
-		width = len(right[0])
-	}
-
-	for _, row := range right {
-		if len(row) != width {
-			op.Error(core.ErrShape)
-			return nil
+func (op *Product) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
 
-	for _, row := range left {
-		if len(row) != len(right) {
-			op.Error(core.ErrShape)
-			return nil
-		}
-	}
-
-	rows := make([][]float64, len(left))
-	values := make([]float64, len(left)*width)
-
-	for row, coefficients := range left {
-		rows[row] = values[row*width : (row+1)*width]
-
-		for inner, coefficient := range coefficients {
-			for column, value := range right[inner] {
-				rows[row][column] += coefficient * value
-			}
-		}
-	}
-
-	return rows
+	return op.err
 }

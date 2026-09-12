@@ -1,13 +1,12 @@
 package temporal
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -15,54 +14,67 @@ Decay multiplies each arrival by a retention factor. The clock yields elapsed
 time; the shape yields the factor for that elapsed time. A missing clock is
 infinite elapsed time. A missing shape is linear retention, floored at zero.
 */
-type Decay[U core.Floating] struct {
-	core.Base[U, U]
-	clock  core.Primitive[U, U]
-	shape  core.Primitive[U, U]
+type Decay struct {
+	err    error
+	clock  core.Primitive
+	shape  core.Primitive
 	linear bool
+	out    float64
 }
 
-func NewDecay[U core.Floating](clock, shape core.Primitive[U, U]) *Decay[U] {
-	linear := shape == nil
-
-	if clock == nil {
-		clock = store.NewConstant[U, U](U(math.Inf(1)))
+func NewDecay(clock, shape core.Primitive) core.Primitive {
+	return &Decay{
+		clock:  clock,
+		shape:  shape,
+		linear: shape == nil,
 	}
-
-	if shape == nil {
-		shape = calculus.NewMaximum[U](0)
-	}
-
-	return &Decay[U]{clock: clock, shape: shape, linear: linear}
 }
 
-func (op *Decay[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Decay) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value := arriving.Read()
-			elapsed := U(0)
+			value := *(*float64)(arriving)
+			elapsed := math.Inf(1)
 
-			for tick := range op.clock.Next(transport.One(arriving)) {
-				elapsed = tick.Read()
+			if op.clock != nil {
+				clockIn := func(yieldClock func(unsafe.Pointer) bool) {
+					yieldClock(arriving)
+				}
+
+				for tick := range op.clock.Next(clockIn) {
+					elapsed = *(*float64)(tick)
+				}
 			}
 
-			shaped := elapsed
+			factor := elapsed
 
 			if op.linear {
-				shaped = 1 - elapsed
+				factor = math.Max(0, 1-elapsed)
+			} else if op.shape != nil {
+				shapeIn := func(yieldShape func(unsafe.Pointer) bool) {
+					yieldShape(unsafe.Pointer(&elapsed))
+				}
+
+				for out := range op.shape.Next(shapeIn) {
+					factor = *(*float64)(out)
+				}
 			}
 
-			factor := shaped
+			op.out = value * factor
 
-			for out := range op.shape.Next(transport.Values(shaped)) {
-				factor = out.Read()
-			}
-
-			if !yield(op.Carrier(value * factor)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Decay) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

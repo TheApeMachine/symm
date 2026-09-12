@@ -102,7 +102,8 @@ func (l3 *Level3) Step(msg kraken.Level3Data) *data.Measurement[float64] {
 	relativeSpread := spread / midpoint
 
 	id := fmt.Sprintf("pumpdump:%s:%d", msg.Symbol, msg.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64](id, msg.Symbol, "pumpdump", msg.Timestamp, msg.Timestamp)
+	measurement := data.NewMeasurement[float64]("pumpdump", nil)
+	measurement.Label, measurement.At, measurement.From = msg.Symbol, msg.Timestamp, msg.Timestamp
 	measurement.Metadata = make(map[string]float64)
 
 	putPumpDumpMetric(measurement, "best_bid", state.retainedBid, data.UnitRate)

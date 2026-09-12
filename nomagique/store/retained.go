@@ -1,33 +1,49 @@
 package store
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 Retained holds the latest arrival. Configuration supplies the value before the
-first update. Read is the query; Next is the update.
+first update.
 */
 type Retained[T any] struct {
-	core.Base[T, T]
+	err  error
+	held T
 }
 
-func NewRetained[T any](current T) *Retained[T] {
-	op := &Retained[T]{}
-	op.Carrier(current)
-	return op
+func NewRetained[T any](current T) core.Primitive {
+	return &Retained[T]{held: current}
 }
 
-func (op *Retained[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
+func (op *Retained[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			yield(unsafe.Pointer(&op.held))
+			return
+		}
+
 		for arriving := range in {
-			if !yield(op.Carrier(arriving.Read())) {
+			op.held = *(*T)(arriving)
+
+			if !yield(unsafe.Pointer(&op.held)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Retained[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -1,53 +1,54 @@
 package learning
 
 import (
+	"errors"
 	"iter"
+	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 DeltaTarget returns the observed current-minus-past difference.
 */
 type DeltaTarget struct {
-	core.Base[Observation, float64]
-	finite *logic.Finite[float64]
+	err error
+	out float64
 }
 
-func NewDeltaTarget() *DeltaTarget {
-	return &DeltaTarget{finite: logic.NewFinite[float64]()}
+func NewDeltaTarget() core.Primitive {
+	return &DeltaTarget{}
 }
 
 func (op *DeltaTarget) Next(
-	in iter.Seq[core.Primitive[Observation, Observation]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			sample := arriving.Read()
-			current, err := transport.Evaluate(op.finite, transport.Values(sample.Current))
+			sample := (*Observation)(arriving)
 
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			past, err := transport.Evaluate(op.finite, transport.Values(sample.Past))
-
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !current || !past {
+			if math.IsNaN(sample.Current) || math.IsNaN(sample.Past) ||
+				math.IsInf(sample.Current, 0) || math.IsInf(sample.Past, 0) {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			if !yield(op.Carrier(sample.Current - sample.Past)) {
+			op.out = sample.Current - sample.Past
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *DeltaTarget) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -1,71 +1,95 @@
 package adaptive
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 Envelope replaces a value with the inclusive moment interval when the
-estimator has dispersion. Choice of coefficient is topology, not a type switch.
+estimator has dispersion.
 */
 type Envelope struct {
-	core.Base[float64, float64]
-	moments     core.Primitive[float64, equation.MomentReading]
-	coefficient core.Primitive[float64, float64]
-	bound       *equation.Bound[float64]
+	err         error
+	moments     core.Primitive
+	coefficient core.Primitive
+	out         float64
 }
 
 func NewEnvelope(
-	moments core.Primitive[float64, equation.MomentReading],
-	coefficient core.Primitive[float64, float64],
-) *Envelope {
+	moments core.Primitive,
+	coefficient core.Primitive,
+) core.Primitive {
 	return &Envelope{
 		moments:     moments,
 		coefficient: coefficient,
-		bound:       equation.NewBound[float64](),
 	}
 }
 
-func (op *Envelope) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
-		for reading := range op.moments.Next(in) {
-			current := reading.Read()
+func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for readingPtr := range op.moments.Next(in) {
+			current := *(*statistic.MomentReading)(readingPtr)
 			value := current.Value
 
 			if current.Count > 1 && current.Dispersion > 0 {
-				coefficient, err := transport.Evaluate(op.coefficient, transport.Values(current.Count))
+				coeffValEval := transport.NewEvaluate(op.coefficient)
+				var coeffVal float64
+
+				for out := range coeffValEval.Next(transport.NewValues(current.Count).Next(nil)) {
+					coeffVal = *(*float64)(out)
+				}
+
+				err := coeffValEval.Error()
 
 				if err != nil {
-					op.Error(err)
+					op.err = errors.Join(op.err, err)
 					return
 				}
 
-				margin := current.Dispersion * coefficient
-				bounded, err := transport.Evaluate(op.bound, transport.Values(equation.BoundRecord[float64]{
-					Value: value,
-					Lower: current.Mean - margin,
-					Upper: current.Mean + margin,
-				}))
+				margin := current.Dispersion * coeffVal
+				lower := current.Mean - margin
+				upper := current.Mean + margin
 
-				if err != nil {
-					op.Error(err)
-					return
+				if value < lower {
+					value = lower
+				} else if value > upper {
+					value = upper
 				}
-
-				value = bounded
 			}
 
-			if !yield(op.Carrier(value)) {
+			op.out = value
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
-
-		op.Error(op.moments.Error())
 	}
+}
+
+func (op *Envelope) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.moments != nil {
+		if err := op.moments.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.coefficient != nil {
+		if err := op.coefficient.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -14,15 +14,16 @@ import (
 // the second direct; both are sympathetic communities rather than hot cells.
 func regionFixture(t testing.TB) *Space {
 	t.Helper()
-	grid := NewSpaceWithWindow(8)
-	measurement := data.NewMeasurement[float64]("", "first", "source", time.Time{}, time.Time{})
+	grid := NewSpace(8).(*Space)
+	measurement := data.NewMeasurement[float64]("source", nil)
+	measurement.Label, measurement.At, measurement.From = "first", time.Time{}, time.Time{}
 
 	for column := range 4 {
-		grid.Column("source", strconv.Itoa(column))
-		measurement.PutMetric(data.Metric[float64]{Label: strconv.Itoa(column), Raw: float64(column)})
+		grid.column("source", strconv.Itoa(column))
+		measurement.Metrics[strconv.Itoa(column)] = data.Metric[float64]{Label: strconv.Itoa(column), Raw: float64(column)}
 	}
 
-	if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
+	if err := grid.step([]*data.Measurement[float64]{measurement}); err != nil {
 		t.Fatal(err)
 	}
 	copy(grid.weights, []float64{1, 1, 1, 1})
@@ -37,7 +38,7 @@ func regionFixture(t testing.TB) *Space {
 		t.Fatal("fixture has no calibrated pair")
 	}
 	grid.regions.form(grid)
-	grid.Formed = true
+	grid.formed = true
 	return grid
 }
 
@@ -47,17 +48,17 @@ func TestSpaceRegions(t *testing.T) {
 		membership := slices.Clone(grid.regions.membership)
 		So(membership, ShouldResemble, []int{0, 0, 1, 1})
 		copy(grid.activations[0], []float64{2, -2, 1, 1})
-		regions, version, err := grid.Regions("first")
+		regions, version, err := grid.regionsOf("first")
 		So(err, ShouldBeNil)
 		So(version, ShouldEqual, 1)
 		So(regions, ShouldResemble, []Region{{
-			ID: 1, Condition: ConditionToken(1, 0, 2), Change: 2,
+			ID: 1, Condition: mustConditionToken(t, 1, 0, 2), Change: 2,
 			Strength: 8, Authority: 0.5, Members: 2,
 		}})
 
 		Convey("The activation split cannot delete the quieter community", func() {
 			copy(grid.activations[0], []float64{1, -1, 3, 3})
-			regions, _, err := grid.Regions("first")
+			regions, _, err := grid.regionsOf("first")
 			So(err, ShouldBeNil)
 			So(regions, ShouldHaveLength, 1)
 			So(regions[0].ID, ShouldEqual, 3)
@@ -67,34 +68,35 @@ func TestSpaceRegions(t *testing.T) {
 
 		Convey("Quiet and missing observations retain completed formation", func() {
 			clear(grid.activations[0])
-			impulse, err := grid.Impulse("first", time.Now(), time.Time{})
+			impulse, err := grid.impulse("first", time.Now(), time.Time{})
 			So(err, ShouldBeNil)
 			So(impulse.Ready, ShouldBeTrue)
 			So(impulse.Regions, ShouldBeEmpty)
 			grid.activations[0][0] = 5
-			grid.Present[0][0] = false
-			regions, _, err := grid.Regions("first")
+			grid.present[0][0] = false
+			regions, _, err := grid.regionsOf("first")
 			So(err, ShouldBeNil)
 			So(regions, ShouldBeEmpty)
 			So(grid.regions.membership, ShouldResemble, membership)
-			So(grid.Formed, ShouldBeTrue)
+			So(grid.formed, ShouldBeTrue)
 		})
 
 		Convey("An unknown context remains an explicit error", func() {
-			_, _, err := grid.Regions("absent")
+			_, _, err := grid.regionsOf("absent")
 			So(err, ShouldNotBeNil)
 		})
 
 		Convey("Community density normalization resists absorption by larger weak clusters", func() {
-			testGrid := NewSpaceWithWindow(8)
-			testMeasurement := data.NewMeasurement[float64]("", "test", "source", time.Time{}, time.Time{})
+			testGrid := NewSpace(8).(*Space)
+			testMeasurement := data.NewMeasurement[float64]("source", nil)
+			testMeasurement.Label, testMeasurement.At, testMeasurement.From = "test", time.Time{}, time.Time{}
 
 			for column := range 6 {
-				testGrid.Column("source", strconv.Itoa(column))
-				testMeasurement.PutMetric(data.Metric[float64]{Label: strconv.Itoa(column), Raw: float64(column)})
+				testGrid.column("source", strconv.Itoa(column))
+				testMeasurement.Metrics[strconv.Itoa(column)] = data.Metric[float64]{Label: strconv.Itoa(column), Raw: float64(column)}
 			}
 
-			err := testGrid.Step([]*data.Measurement[float64]{testMeasurement})
+			err := testGrid.step([]*data.Measurement[float64]{testMeasurement})
 			So(err, ShouldBeNil)
 			copy(testGrid.weights, []float64{1, 1, 1, 1, 1, 1})
 			copy(testGrid.qualities[0], []float64{0.5, 0.5, 0.5, 0.5, 0.5, 0.5})
@@ -140,8 +142,21 @@ func BenchmarkSpaceRegions(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, _, err := grid.Regions(measurement.Label); err != nil {
+		if _, _, err := grid.regionsOf(measurement.Label); err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+/* mustConditionToken builds one condition token, failing the test if the identity does not fit. */
+func mustConditionToken(t testing.TB, quantity uint64, level, change float64) uint64 {
+	t.Helper()
+
+	token, err := conditionToken(quantity, level, change)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return token
 }

@@ -1,64 +1,85 @@
 package adaptive
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Threshold composes a moment estimator with a dispersion coefficient. The
-coefficient is applied to the estimator's count; a source with no dispersion
-has threshold one.
+Threshold composes a moment estimator with a dispersion coefficient.
+A source with no dispersion has threshold one.
 */
 type Threshold struct {
-	core.Base[float64, float64]
-	moments     core.Primitive[float64, equation.MomentReading]
-	coefficient core.Primitive[float64, float64]
-	threshold   *equation.Threshold[float64]
+	err         error
+	moments     core.Primitive
+	coefficient core.Primitive
+	out         float64
 }
 
 func NewThreshold(
-	moments core.Primitive[float64, equation.MomentReading],
-	coefficient core.Primitive[float64, float64],
-) *Threshold {
+	moments core.Primitive,
+	coefficient core.Primitive,
+) core.Primitive {
 	return &Threshold{
 		moments:     moments,
 		coefficient: coefficient,
-		threshold:   equation.NewThreshold[float64](),
 	}
 }
 
-func (op *Threshold) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
-		for reading := range op.moments.Next(in) {
-			current := reading.Read()
-			coefficient, err := transport.Evaluate(op.coefficient, transport.Values(current.Count))
+func (op *Threshold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for readingPtr := range op.moments.Next(in) {
+			current := *(*statistic.MomentReading)(readingPtr)
+			coeffValEval := transport.NewEvaluate(op.coefficient)
+			var coeffVal float64
+
+			for out := range coeffValEval.Next(transport.NewValues(current.Count).Next(nil)) {
+				coeffVal = *(*float64)(out)
+			}
+
+			err := coeffValEval.Error()
 
 			if err != nil {
-				op.Error(err)
+				op.err = errors.Join(op.err, err)
 				return
 			}
 
-			value, err := transport.Evaluate(op.threshold, transport.Values(equation.ThresholdInput[float64]{
-				Dispersion:  current.Dispersion,
-				Coefficient: coefficient,
-			}))
-
-			if err != nil {
-				op.Error(err)
-				return
+			if current.Dispersion > 0 {
+				op.out = current.Dispersion * coeffVal
+			} else {
+				op.out = 1
 			}
 
-			if !yield(op.Carrier(value)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
-
-		op.Error(op.moments.Error())
 	}
+}
+
+func (op *Threshold) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.moments != nil {
+		if err := op.moments.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.coefficient != nil {
+		if err := op.coefficient.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

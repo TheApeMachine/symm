@@ -1,37 +1,47 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Spread presents collection members as individual yields. Collection shape
-conversion belongs here. A member is handed over as soon as it is read from an
-incoming collection.
-
-Spread is Primitive[[]T, T]: what arrives is a collection, what it hands
-downstream is one member.
+Spread presents collection members as individual yields.
 */
 type Spread[T any] struct {
-	core.Base[[]T, T]
+	err error
+	out T
 }
 
-func NewSpread[T any]() *Spread[T] {
+func NewSpread[T any]() core.Primitive {
 	return &Spread[T]{}
 }
 
-func (op *Spread[T]) Next(
-	in iter.Seq[core.Primitive[[]T, []T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
+func (op *Spread[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for collection := range in {
-			for _, member := range collection.Read() {
-				if !yield(op.Carrier(member)) {
+			slice := *(*[]T)(collection)
+
+			for _, member := range slice {
+				op.out = member
+
+				if !yield(unsafe.Pointer(&op.out)) {
 					return
 				}
 			}
 		}
 	}
+}
+
+func (op *Spread[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

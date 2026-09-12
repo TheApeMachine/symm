@@ -89,12 +89,12 @@ func testExecutablePrice() (*broker.Price, *testBookSource) {
 func TestMainAgent(t *testing.T) {
 	Convey("Given a MainAgent operating with an associative cognition engine", t, func() {
 		initialCash := decimal.NewFromInt64(1000)
-		engine := cognition.NewEngine(cognition.DefaultConfig())
+		engine := cognition.NewEngine(cognition.Config{})
 		priceSvc, books := testExecutablePrice()
 		mainAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, engine)
 
 		So(mainAgent.ID(), ShouldEqual, 0)
-		So(mainAgent.Status(), ShouldEqual, "simulated")
+		So(mainAgent.Status(), ShouldEqual, "paper")
 		So(mainAgent.fills, ShouldEqual, 0)
 		So(mainAgent.decisions, ShouldEqual, 0)
 		So(mainAgent.cash.Cmp(initialCash), ShouldEqual, 0)
@@ -168,7 +168,7 @@ func TestMainAgent(t *testing.T) {
 					So(mainAgent.outcomes[0].ReturnBp, ShouldBeGreaterThan, 0)
 
 					// Forward-testing does not pollute shared cognition; only rehearsal workers reinforce memory
-					evaluation := engine.Evaluate(entryCtx)
+					evaluation := mustEvaluate(t, engine, entryCtx)
 					So(evaluation.Support, ShouldEqual, 0)
 				})
 			})
@@ -285,7 +285,7 @@ func TestMainAgent(t *testing.T) {
 			tradingAgent.evaluateRobustness()
 
 			So(tradingAgent.meanReturn, ShouldBeLessThan, 0)
-			So(tradingAgent.status, ShouldEqual, "simulated")
+			So(tradingAgent.status, ShouldEqual, "paper")
 			So(tradingAgent.Status(), ShouldEqual, "learning")
 
 			// In simulated mode, forward testing continues evaluating high-conviction decisions

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/core"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -96,24 +96,15 @@ var (
 			hub := ui.NewHub(ctx)
 			defer hub.Close()
 
-			// The hub reads the ring rather than running on it: a publisher
-			// mounted as a stage would encode every frame on the ring's own
-			// goroutine at ingress rate. The sink's only obligation is one
-			// channel send, and the hub owns its work on a goroutine of its
-			// own. A full buffer drops, which for a live view is the right
-			// answer — it shows the present, not a backlog.
-			uiSink := nmruntime.NewSink[*types.Envelope](128)
-			hub.Consume(uiSink.Out())
-
 			// Phase 1 — the brokers' transport and account objects, which the
 			// logic stages and the decision path both consume. The workload
 			// maps are built empty here and populated in Phase 2: websocket.New
 			// stores the map by reference and only indexes it when envelopes
 			// flow, so the maps are complete well before instrument.Subscribe
 			// opens the stream.
-			publicIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
-			privateIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
-			futuresIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
+			publicIngress := map[string]websocket.Ingress{}
+			privateIngress := map[string]websocket.Ingress{}
+			futuresIngress := map[string]websocket.Ingress{}
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
@@ -237,9 +228,12 @@ var (
 			resonanceSolver := resonance.NewSolver(ctx, 0)
 			resonanceSolver.SetObserver(hub.PublishResonance)
 
+			marketState := types.NewMarketState()
+
 			manifoldSolver := manifold.NewSolver(ctx, api)
 			defer manifoldSolver.Close()
 
+			manifoldSolver.SetMarketState(marketState)
 			manifoldSolver.SetViewer(hub)
 			manifoldSolver.Start()
 
@@ -263,12 +257,27 @@ var (
 				))
 			}
 
-			signals := nmruntime.NewWorkload(
-				ctx, "signals",
+			tickerRing := newRing(nmruntime.NewWorkspace(
+				ctx, "ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{
-						system.NewTraced("signal.correlation", correlation.NewSignal(ctx)),
-						system.NewTraced("signal.cvd", cvd.NewSignal(ctx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
+						correlation.NewSignal(ctx),
+						leadlag.NewSignal(ctx),
+						liquidity.NewSignal(ctx),
+						sentiment.NewSignal(ctx),
+						pumpdumpSolver,
+					},
+					{
+						resonanceSolver,
+					},
+				},
+			))
+
+			tradeRing := newRing(nmruntime.NewWorkspace(
+				ctx, "trade",
+				[][]nmruntime.Node[*types.Envelope]{
+					{
+						system.NewTraced("trade.cvd", cvd.NewSignal(ctx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
 							tick := price.Tick(symbol)
 
 							if tick == nil {
@@ -276,43 +285,70 @@ var (
 							}
 							return tick.Bid, tick.Ask
 						})),
-						system.NewTraced("signal.depthflow", depthflow.NewSignal(ctx)),
-						system.NewTraced("signal.derivatives", derivativesSolver),
-						system.NewTraced("signal.hawkes", hawkes.NewSignal(ctx)),
-						system.NewTraced("signal.leadlag", leadlag.NewSignal(ctx)),
-						system.NewTraced("signal.liquidity", liquidity.NewSignal(ctx)),
-						system.NewTraced("signal.morphology", morphology.NewSignal(ctx)),
-						system.NewTraced("signal.pumpdump", pumpdumpSolver),
-						system.NewTraced("signal.sentiment", sentiment.NewSignal(ctx)),
-						system.NewTraced("signal.toxicity", toxicitySolver),
-					},
-					{
-						system.NewTraced("logic.resonance", resonanceSolver),
-						system.NewTraced("logic.manifold", manifoldSolver),
+						system.NewTraced("trade.hawkes", hawkes.NewSignal(ctx)),
+						system.NewTraced("trade.toxicity", toxicitySolver),
+						system.NewTraced("trade.pumpdump", pumpdumpSolver),
 					},
 				},
-			)
+			))
 
-			classification := nmruntime.NewWorkload(
+			level3Ring := newRing(nmruntime.NewWorkspace(
+				ctx, "level3",
+				[][]nmruntime.Node[*types.Envelope]{
+					{
+						system.NewTraced("level3.depthflow", depthflow.NewSignal(ctx)),
+						system.NewTraced("level3.morphology", morphology.NewSignal(ctx)),
+						system.NewTraced("level3.toxicity", toxicitySolver),
+						system.NewTraced("level3.pumpdump", pumpdumpSolver),
+					},
+				},
+			))
+
+			futuresRing := newRing(nmruntime.NewWorkspace(
+				ctx, "futures",
+				[][]nmruntime.Node[*types.Envelope]{
+					{
+						system.NewTraced("futures.derivatives", derivativesSolver),
+					},
+				},
+			))
+
+			classificationRing := newRing(nmruntime.NewWorkspace(
 				ctx,
 				"classification",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewTraced("logic.category", categorySolver)},
 					{system.NewTraced("logic.cognition", cognitionSolver)},
 				},
-			)
+			))
 
-			// Category consumes the current envelope's signal measurements. Its ring
-			// follows their join; all numerical output is complete before Grid runs.
-			observations := nmruntime.NewWorkload(
+			// Observations composes the concurrent entity workloads, followed by
+			// manifold/classification and central lock-free market state hydration.
+			// The gated wrappers carry the data-readiness each sub-ring declared:
+			// its nodes only step on the envelope kind they observe.
+			observationsRing := newRing(nmruntime.NewWorkspace(
 				ctx,
 				"observations",
 				[][]nmruntime.Node[*types.Envelope]{
-					{signals},
-					{classification},
+					{
+						&gated{node: tickerRing, accept: func(env *types.Envelope) bool {
+							return env != nil && env.TypeID == types.EnvelopeTicker
+						}},
+						&gated{node: tradeRing, accept: func(env *types.Envelope) bool {
+							return env != nil && env.TypeID == types.EnvelopeTrade
+						}},
+						&gated{node: level3Ring, accept: func(env *types.Envelope) bool {
+							return env != nil && env.TypeID == types.EnvelopeLevel3
+						}},
+						&gated{node: futuresRing, accept: func(env *types.Envelope) bool {
+							return env != nil && (env.TypeID == types.EnvelopeFuturesTicker || env.TypeID == types.EnvelopeFuturesTrade)
+						}},
+					},
+					{system.NewTraced("logic.manifold", manifoldSolver), classificationRing},
+					{system.NewTraced("market.cut", marketState)},
 					{rawCapture},
 				},
-			)
+			))
 
 			// One training. Nodes in a stage run concurrently against the
 			// same envelope, and the grid writes the measurements it is
@@ -321,31 +357,38 @@ var (
 			// record is a long read against an object store.
 			tape := measurements(ctx, catalog, runID)
 
-			training := strategy.NewTraining(ctx, tape, instrument, price, balance)
+			training := strategy.NewTraining(ctx, tape, instrument, price, balance, api)
 			hub.SetTradeStore(training)
 			hub.SetExitHandler(training.RequestExit)
 
-			trainer := nmruntime.NewWorkload(
+			trainerRing := newRing(nmruntime.NewWorkspace(
 				ctx,
 				"trainer",
 				[][]nmruntime.Node[*types.Envelope]{{
 					training,
 				}},
-			)
+			))
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				"workspace",
 				[][]nmruntime.Node[*types.Envelope]{
-					{observations},
-					{trainer},
+					{observationsRing},
+					{trainerRing},
 					{uiSink},
 				},
 			)
+			workspaceRing := newRing(workspace)
 
 			defer func() {
-				if err := workspace.Close(); err != nil {
-					errnie.Error(err)
+				for _, closing := range []core.Primitive{
+					workspace, observationsRing.workspace, trainerRing.workspace,
+					classificationRing.workspace, futuresRing.workspace,
+					level3Ring.workspace, tradeRing.workspace, tickerRing.workspace,
+				} {
+					if err := closeWorkspace(closing); err != nil {
+						errnie.Error(err)
+					}
 				}
 			}()
 
@@ -357,12 +400,12 @@ var (
 				))
 			}
 
-			publicIngress["ticker"] = workspace
-			publicIngress["trade"] = workspace
-			privateIngress["level3"] = workspace
-			privateIngress["executions"] = workspace
-			futuresIngress["ticker"] = workspace
-			futuresIngress["trade"] = workspace
+			publicIngress["ticker"] = workspaceRing
+			publicIngress["trade"] = workspaceRing
+			privateIngress["level3"] = workspaceRing
+			privateIngress["executions"] = workspaceRing
+			futuresIngress["ticker"] = workspaceRing
+			futuresIngress["trade"] = workspaceRing
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
@@ -381,9 +424,7 @@ var (
 				))
 			}
 
-			workspace.Admit()
-
-			if workspace.Status() != nmruntime.READY {
+			if !workspaceRing.Ready() {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
 					"symm: workspace did not reach ready",
@@ -604,128 +645,6 @@ func initConfig() {
 	system.Cfg = system.NewConfig()
 
 	// Live watching is disabled until an atomic config generation swap exists.
-}
-
-/*
-measurements is the recorded tape a training pipeline is shown: the frames the
-running binary held across every confirmed move the record kept.
-
-The record is walked newest run first. What an instrument did lately describes
-it better than what it did first, and the budget stops the walk part way, so
-which end it starts from decides what is learned from. A run is always read
-whole — stopping mid-run would end a tape at the budget rather than at the
-record — so the budget decides how many runs are opened, never how much of one
-is read.
-
-The run this process is starting is skipped. It has observed nothing yet, it is
-still being written, and its last leg has not retraced, so a pipeline pointed at
-it is shown an empty tape. What there is to learn from is what was captured
-before.
-
-Legs stay separate: the reading after a move's last is not its successor, and a
-composition replaying them as one sequence would learn a join that never
-happened. Each leg becomes one delivery run, which is the boundary the ring
-carries down to the agent.
-*/
-func measurements(
-	ctx context.Context, catalog *tables.Catalog, current hindsight.RunID,
-) *strategy.Tape {
-	tape := strategy.NewTape()
-
-	if catalog == nil {
-		tape.Close()
-
-		return tape
-	}
-
-	go readRecord(ctx, catalog, current, tape)
-
-	return tape
-}
-
-/*
-readRecord walks the record and publishes each run's confirmed moves as it
-recovers them.
-
-Publishing per run rather than at the end is what lets the universes begin on
-the earliest tape recovered instead of waiting for the whole archive. Close
-marks the walk done; fragments still in the queue are not lost.
-*/
-func readRecord(
-	ctx context.Context,
-	catalog *tables.Catalog,
-	current hindsight.RunID,
-	tape *strategy.Tape,
-) {
-	defer tape.Close()
-	policy := hindsight.DefaultDiscoveryPolicy()
-	budget := viper.GetInt("hindsight.rehearsal.observation_budget")
-
-	if budget <= 0 {
-		budget = policy.MinObservations * policy.MaxEpisodesPerSet
-	}
-	tape.SetBudget(uint64(budget))
-	runs, err := catalog.Runs(ctx)
-
-	if err != nil {
-		errnie.Error(err)
-
-		return
-	}
-
-	slices.SortFunc(runs, func(left, right tables.RunRow) int {
-		return right.StartedAt.Compare(left.StartedAt)
-	})
-	published, resident := 0, 0
-
-	for _, run := range runs {
-		if run.ID == string(current) || resident >= budget {
-			continue
-		}
-
-		// Read whole and in capture order. A bounded read is not an option
-		// here: Iceberg plans files in its own order, so a row limit returns an
-		// arbitrary slice of the run rather than its next rows, and a cursor
-		// taken from one skips everything the planner did not reach.
-		observations, _, err := hindsight.ReadObservations(
-			ctx, catalog, hindsight.RunID(run.ID), 0,
-		)
-
-		if err != nil {
-			errnie.Error(err)
-
-			continue
-		}
-		resident += len(observations)
-		tape.AddObservations(uint64(len(observations)))
-		tape.AddRuns(1)
-		recorded := hindsight.Query(
-			hindsight.Excursions, catalog, hindsight.RunID(run.ID), policy,
-		)
-		fragments := recorded.ReplayFragmentsFrom(observations)
-
-		if err := recorded.Error(); err != nil {
-			errnie.Error(err)
-
-			continue
-		}
-
-		// Each fragment is published on its own carrying objective anchor boundary B.
-		for _, fragment := range fragments {
-			if ctx.Err() != nil {
-				return
-			}
-
-			if len(fragment.Frames) == 0 || fragment.AnchorIndex <= 0 || fragment.AnchorIndex >= len(fragment.Frames) {
-				continue
-			}
-
-			tape.Publish(fragment)
-			published++
-		}
-	}
-
-	errnie.Info(fmt.Sprintf("training: %d recorded moves", published))
 }
 
 const rootLong = `

@@ -12,6 +12,15 @@ does not decide actions, does not create market categories, and never deletes
 measurements. Feature selection is query-local; the full observational
 Coordinate history remains available.
 
+Everything is a streaming Primitive over an unsafe.Pointer wire: the
+observation store receives command payloads (register, append, query,
+snapshot) and yields one result payload per command; the planner compiles
+plans against resident coordinates; the aligner walks lagged ring views; the
+influence estimator measures prequential predictive contribution. Payloads
+are plain data structs with exported fields only. RingView is the one
+resource payload: a read-locked window over one resident ring that the
+estimation path holds for the duration of its walk and then closes.
+
 The normative contract is nomagique/relation/README.md. Where this code and
 the README disagree, the README wins.
 */
@@ -55,14 +64,14 @@ type Coordinate struct {
 }
 
 /*
-CompareCoordinate orders two Coordinates field-wise without materializing any
-identity string. The lexicographic field order matches Coordinate.ID's render
-order (Symbol, Source, Metric, Side, Peer, Unit, Timescale, Epoch), so ordering
-and rendered identity agree. It is the allocation-free ordering primitive for
-every deterministic sort; computational comparators must never call
-Coordinate.ID, which allocates on every invocation.
+compareCoordinate orders two Coordinates field-wise without materializing any
+identity string. The lexicographic field order matches coordinateID's render
+order (Symbol, Source, Metric, Side, Peer, Unit, Timescale, Epoch), so
+ordering and rendered identity agree. It is the allocation-free ordering
+kernel for every deterministic sort; computational comparators never call
+coordinateID, which allocates on every invocation.
 */
-func CompareCoordinate(left Coordinate, right Coordinate) int {
+func compareCoordinate(left Coordinate, right Coordinate) int {
 	if left.Symbol != right.Symbol {
 		return strings.Compare(left.Symbol, right.Symbol)
 	}
@@ -111,11 +120,10 @@ func CompareCoordinate(left Coordinate, right Coordinate) int {
 }
 
 /*
-ID returns the rendered identity string. It is reversible via ParseCoordinate
-and is intended for logs, telemetry, and serialization — never as the sole
-internal identity.
+coordinateID renders the identity string. It is intended for logs, telemetry,
+and serialization — never as the sole internal identity.
 */
-func (coordinate Coordinate) ID() string {
+func (coordinate Coordinate) coordinateID() string {
 	parts := []string{
 		coordinate.Symbol,
 		coordinate.Source,
@@ -134,90 +142,4 @@ func (coordinate Coordinate) ID() string {
 	)
 
 	return strings.Join(parts, "/")
-}
-
-/*
-ParseMetricSide splits a projected metric label into its base metric and side
-suffix. The signal boundary keys metrics as "metric" or "metric:side", so the
-first colon separates the side suffix; namespaced metric names use '/' and are
-never split.
-*/
-func ParseMetricSide(label string) (metric string, side string) {
-	if index := strings.IndexByte(label, ':'); index >= 0 {
-		return label[:index], label[index+1:]
-	}
-
-	return label, ""
-}
-
-/*
-ParseCoordinate reconstructs a Coordinate from its rendered ID. It is the
-inverse of Coordinate.ID for serialization round-trips.
-*/
-func ParseCoordinate(id string) (Coordinate, error) {
-	parts := strings.Split(id, "/")
-
-	if len(parts) < 3 {
-		return Coordinate{}, fmt.Errorf("relation: malformed coordinate id %q", id)
-	}
-
-	coordinate := Coordinate{
-		Symbol: parts[0],
-		Source: parts[1],
-		Metric: parts[2],
-	}
-
-	next := 3
-
-	if next < len(parts) && parts[next] != "" && !strings.HasPrefix(parts[next], "peer=") &&
-		!strings.HasPrefix(parts[next], "epoch=") {
-		coordinate.Side = parts[next]
-		next++
-	}
-
-	for _, part := range parts[next:] {
-		switch {
-		case strings.HasPrefix(part, "peer="):
-			coordinate.Peer = strings.TrimPrefix(part, "peer=")
-		case strings.HasPrefix(part, "epoch="):
-			_, err := fmt.Sscanf(strings.TrimPrefix(part, "epoch="), "%d", &coordinate.Epoch)
-
-			if err != nil {
-				return Coordinate{}, fmt.Errorf("relation: malformed epoch in %q: %w", id, err)
-			}
-		default:
-			switch part {
-			case string(data.UnitDimensionless):
-				coordinate.Unit = data.UnitDimensionless
-			case string(data.UnitCount):
-				coordinate.Unit = data.UnitCount
-			case string(data.UnitRate):
-				coordinate.Unit = data.UnitRate
-			case string(data.UnitDuration):
-				coordinate.Unit = data.UnitDuration
-			case string(data.Unit("price")):
-				coordinate.Unit = data.Unit("price")
-			case string(data.UnitPercent):
-				coordinate.Unit = data.UnitPercent
-			case string(data.Unit("quote_currency")):
-				coordinate.Unit = data.Unit("quote_currency")
-			case string(data.Unit("base_currency")):
-				coordinate.Unit = data.Unit("base_currency")
-			case string(data.Unit("events_per_second")):
-				coordinate.Unit = data.Unit("events_per_second")
-			case string(data.UnitPerSecond):
-				coordinate.Unit = data.UnitPerSecond
-			case string(data.Unit("inverse_second")):
-				coordinate.Unit = data.Unit("inverse_second")
-			case string(data.UnitNat):
-				coordinate.Unit = data.UnitNat
-			case string(data.UnitSecond):
-				coordinate.Unit = data.UnitSecond
-			default:
-				coordinate.Timescale = data.Timescale(part)
-			}
-		}
-	}
-
-	return coordinate, nil
 }

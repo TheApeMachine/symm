@@ -1,14 +1,15 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Indexed is a value and where it fell in its run. The index is structural
-transport, not a domain count or a statistical support estimate.
+Indexed is a value and where it fell in its run.
 */
 type Indexed[T any] struct {
 	Index int
@@ -16,29 +17,39 @@ type Indexed[T any] struct {
 }
 
 /*
-Enumerate attaches a run-relative index to each value. The index restarts with
-every run because it describes a position within one delivery.
+Enumerate attaches a run-relative index to each value.
 */
 type Enumerate[T any] struct {
-	core.Base[T, Indexed[T]]
+	err error
+	out Indexed[T]
 }
 
-func NewEnumerate[T any]() *Enumerate[T] {
+func NewEnumerate[T any]() core.Primitive {
 	return &Enumerate[T]{}
 }
 
-func (op *Enumerate[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[Indexed[T], Indexed[T]]] {
-	return func(yield func(core.Primitive[Indexed[T], Indexed[T]]) bool) {
+func (op *Enumerate[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		index := 0
 
 		for arriving := range in {
-			if !yield(op.Carrier(Indexed[T]{Index: index, Value: arriving.Read()})) {
+			op.out = Indexed[T]{Index: index, Value: *(*T)(arriving)}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 
 			index++
 		}
 	}
+}
+
+func (op *Enumerate[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

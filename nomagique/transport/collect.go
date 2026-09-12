@@ -1,38 +1,47 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 Collect retains the values of one run as one collection.
-
-It is the one shape that cannot stream: a collection is not complete until its
-run is spent, so nothing is handed over until everything has arrived. That is a
-property of the operation, not of the contract.
 */
 type Collect[T any] struct {
-	core.Base[T, []T]
+	err error
+	out []T
 }
 
-func NewCollect[T any]() *Collect[T] {
+func NewCollect[T any]() core.Primitive {
 	return &Collect[T]{}
 }
 
-func (op *Collect[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[[]T, []T]] {
-	return func(yield func(core.Primitive[[]T, []T]) bool) {
+func (op *Collect[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		var gathered []T
 
 		for arriving := range in {
-			gathered = append(gathered, arriving.Read())
+			gathered = append(gathered, *(*T)(arriving))
 		}
 
-		if !yield(op.Carrier(gathered)) {
+		op.out = gathered
+
+		if !yield(unsafe.Pointer(&op.out)) {
 			return
 		}
 	}
+}
+
+func (op *Collect[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

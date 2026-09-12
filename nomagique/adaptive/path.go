@@ -1,58 +1,74 @@
 package adaptive
 
 import (
+	"errors"
 	"iter"
 	"slices"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/correlation"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-pathRetention owns the configured mean-shift policy for accepted observations.
+PathRetention owns the configured mean-shift policy for accepted observations.
 */
-type pathRetention struct {
-	core.Base[[]equation.Price, []equation.Price]
-	window *Window
+type PathRetention struct {
+	err    error
+	window core.Primitive
+	out    []temporal.Price
 }
 
-/*
-NewPath composes timestamp acceptance with adaptive observation retention. The
-configured window determines retained support from changes in the observed
-values. No wall-clock expiry or fixed history length is imposed. Regressed
-observations never reach the policy; restatements are accepted observations.
-*/
-func NewPath(window *Window) *correlation.Path {
-	return correlation.NewPath(&pathRetention{window: window})
+func NewPathRetention(window core.Primitive) core.Primitive {
+	return &PathRetention{window: window}
 }
 
-func (op *pathRetention) Next(
-	in iter.Seq[core.Primitive[[]equation.Price, []equation.Price]],
-) iter.Seq[core.Primitive[[]equation.Price, []equation.Price]] {
-	return func(yield func(core.Primitive[[]equation.Price, []equation.Price]) bool) {
+func (op *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			observations := arriving.Read()
+			observations := *(*[]temporal.Price)(arriving)
 
 			if len(observations) == 0 {
-				op.Error(core.ErrShape)
+				op.err = errors.Join(op.err, core.ErrShape)
 				return
 			}
 
-			reading := op.window.Observe(observations[len(observations)-1].Value)
-			start := max(0, len(observations)-int(reading.Capacity))
+			lastVal := observations[len(observations)-1].Value
+			var capacity float64
 
-			if start == 0 {
-				if !yield(op.Carrier(observations)) {
-					return
-				}
-
-				continue
+			for wPtr := range op.window.Next(transport.NewOne(unsafe.Pointer(&lastVal)).Next(nil)) {
+				w := *(*WindowReading)(wPtr)
+				capacity = w.Capacity
 			}
 
-			if !yield(op.Carrier(slices.Clone(observations[start:]))) {
+			start := max(0, len(observations)-int(capacity))
+
+			if start == 0 {
+				op.out = observations
+			} else {
+				op.out = slices.Clone(observations[start:])
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *PathRetention) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.window != nil {
+		if err := op.window.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

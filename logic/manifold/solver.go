@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/relation"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -48,7 +47,6 @@ type Solver struct {
 	advanceMu     sync.Mutex
 	errMu         sync.RWMutex
 	err           error
-	status        *runtime.Status
 	api           *websocket.API
 	dataset       *Dataset
 	physics       *sensorium.Manifold
@@ -84,7 +82,8 @@ type Solver struct {
 	reading atomic.Pointer[State]
 	version uint64 // Owned by advanceMu, together with the published reading.
 
-	viewer Viewer
+	viewer      Viewer
+	marketState *types.MarketState
 }
 
 /*
@@ -140,7 +139,6 @@ func NewSolver(ctx context.Context, api *websocket.API) *Solver {
 	solver := &Solver{
 		ctx:     ctx,
 		cancel:  cancel,
-		status:  runtime.NewStatus(),
 		api:     api,
 		dataset: NewDataset(),
 		forcing: make(map[string]forcingState),
@@ -174,6 +172,33 @@ is set once during construction, before any envelope is stepped.
 func (solver *Solver) SetViewer(viewer Viewer) { solver.viewer = viewer }
 
 /*
+SetMarketState attaches the central lock-free market state where fresh manifold
+physics advances are recorded for training and downstream evaluation.
+*/
+func (solver *Solver) SetMarketState(marketState *types.MarketState) {
+	solver.marketState = marketState
+}
+
+/*
+RecordForcing records Hawkes excitation fractions for the given symbol directly.
+*/
+func (solver *Solver) RecordForcing(symbol string, hawkes *data.Measurement[float64]) {
+	solver.recordForcing(symbol, hawkes)
+}
+
+/*
+Wake marks the symbol dirty and wakes the field advance loop.
+*/
+func (solver *Solver) Wake(symbol string) {
+	solver.markDirty(symbol)
+
+	select {
+	case solver.wake <- struct{}{}:
+	default:
+	}
+}
+
+/*
 run advances the resident field for as long as the solver lives. It is the only
 goroutine that touches the physics domain on the live path: ingress coalesces
 into the pending accumulator and wakes this loop, which then loads everything
@@ -189,11 +214,18 @@ func (solver *Solver) run() {
 	}
 	defer pause.Stop()
 
+	ticker := time.NewTicker(33 * time.Millisecond)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-solver.ctx.Done():
 			return
 		case <-solver.wake:
+		case <-ticker.C:
+			if solver.viewer == nil || !solver.viewer.WantsManifold() {
+				continue
+			}
 		}
 
 		started := time.Now()
@@ -415,6 +447,10 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		}
 
 		solver.api.Book(symbol, func(spotbook *book.Book) {
+			if spotbook == nil {
+				return
+			}
+
 			solver.forcingMu.RLock()
 			forcing := solver.latestForcing(symbol)
 			solver.forcingMu.RUnlock()
@@ -601,6 +637,18 @@ func (solver *Solver) publishReading(state *sensorium.State) *State {
 		State: cloneState(state), Reading: solver.physics.Reading(), Modes: modes,
 	}
 	solver.reading.Store(&reading)
+
+	if solver.marketState != nil && solver.api != nil {
+		if symbols := solver.api.Books(); symbols != nil {
+			symbols.Range(func(key, _ any) bool {
+				if symbol, ok := key.(string); ok && symbol != "" {
+					solver.marketState.UpdateManifold(symbol, &reading)
+				}
+				return true
+			})
+		}
+	}
+
 	return &reading
 }
 
@@ -675,6 +723,10 @@ func (solver *Solver) Crystallize(
 	states := make([]*sensorium.State, 0)
 
 	solver.api.Book(symbol, func(spotbook *book.Book) {
+		if spotbook == nil {
+			return
+		}
+
 		for state := range solver.dataset.StepClamped(
 			symbol, spotbook.Bids, spotbook.Asks, forcing,
 		) {
@@ -928,6 +980,10 @@ func (solver *Solver) Snapshot() *State {
 	}
 
 	reading := solver.Reading()
+
+	if reading == nil {
+		return nil
+	}
 	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
 	cells := gridX * gridY * gridZ
 

@@ -1,7 +1,9 @@
 package logic
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -10,27 +12,31 @@ import (
 Pick owns selection of one candidate. The predicate sees the held value and the
 arrival as a pair and decides whether the arrival replaces what is held.
 */
-type Pick[T any] struct {
-	core.Base[T, T]
-	predicate core.Primitive[[2]T, bool]
+type Pick struct {
+	err       error
+	predicate core.Primitive
 	held      bool
+	current   float64
+	out       float64
+	pair      [2]float64
 }
 
-func NewPick[T any](predicate core.Primitive[[2]T, bool]) *Pick[T] {
-	return &Pick[T]{predicate: predicate}
+func NewPick(predicate core.Primitive) core.Primitive {
+	return &Pick{predicate: predicate}
 }
 
-func (op *Pick[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
+func (op *Pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value := arriving.Read()
+			in := (*float64)(arriving)
+			val := *in
 
 			if !op.held {
 				op.held = true
+				op.current = val
+				op.out = val
 
-				if !yield(op.Carrier(value)) {
+				if !yield(unsafe.Pointer(&op.out)) {
 					return
 				}
 
@@ -38,24 +44,38 @@ func (op *Pick[T]) Next(
 			}
 
 			take := false
-			pair := [2]T{op.Read(), value}
+			op.pair = [2]float64{val, op.current}
 
-			for decision := range op.predicate.Next(func(yield func(core.Primitive[[2]T, [2]T]) bool) {
-				carrier := &core.Carrier[[2]T]{}
-				yield(carrier.Carrier(pair))
+			for decision := range op.predicate.Next(func(yield func(unsafe.Pointer) bool) {
+				yield(unsafe.Pointer(&op.pair))
 			}) {
-				take = decision.Read()
+				dec := (*bool)(decision)
+				take = *dec
 			}
-
-			chosen := op.Read()
 
 			if take {
-				chosen = value
+				op.current = val
 			}
 
-			if !yield(op.Carrier(chosen)) {
+			op.out = op.current
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Pick) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+	if op.predicate != nil {
+		if err := op.predicate.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

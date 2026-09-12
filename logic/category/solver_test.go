@@ -370,20 +370,14 @@ func TestSolverStep(t *testing.T) {
 		solver := NewSolver(t.Context())
 		at := time.Unix(1, 0)
 		envelope := types.NewEnvelope(types.EnvelopeTrade)
-		envelope.CVD = data.NewMeasurement[float64](
-			"cvd", "BTC/USD", "cvd", at, at,
-		)
+		envelope.CVD = data.NewMeasurement[float64]("cvd", nil)
+		envelope.CVD.Label, envelope.CVD.At, envelope.CVD.From = "BTC/USD", at, at
 		envelope.CVD.Maturity = 1
-		envelope.CVD.PutMetric(data.Metric[float64]{
-			Label: "signed_net_fraction_zscore", Raw: 0.8,
-		})
-		envelope.Hawkes = data.NewMeasurement[float64](
-			"hawkes", "BTC/USD", "hawkes", at, at,
-		)
+		envelope.CVD.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: 0.8}
+		envelope.Hawkes = data.NewMeasurement[float64]("hawkes", nil)
+		envelope.Hawkes.Label, envelope.Hawkes.At, envelope.Hawkes.From = "BTC/USD", at, at
 		envelope.Hawkes.Maturity = 1
-		envelope.Hawkes.PutMetric(data.Metric[float64]{
-			Label: "arrival_rate", Raw: 0.6,
-		})
+		envelope.Hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
 
 		result := solver.Step(envelope)
 
@@ -401,20 +395,14 @@ func TestSolverStep(t *testing.T) {
 		at2 := at1.Add(5 * time.Millisecond)
 
 		envelope := types.NewEnvelope(types.EnvelopeTrade)
-		envelope.CVD = data.NewMeasurement[float64](
-			"cvd", "BTC/USD", "cvd", at1, at1,
-		)
+		envelope.CVD = data.NewMeasurement[float64]("cvd", nil)
+		envelope.CVD.Label, envelope.CVD.At, envelope.CVD.From = "BTC/USD", at1, at1
 		envelope.CVD.Maturity = 1
-		envelope.CVD.PutMetric(data.Metric[float64]{
-			Label: "signed_net_fraction_zscore", Raw: -3.5,
-		})
-		envelope.Hawkes = data.NewMeasurement[float64](
-			"hawkes", "BTC/USD", "hawkes", at2, at2,
-		)
+		envelope.CVD.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: -3.5}
+		envelope.Hawkes = data.NewMeasurement[float64]("hawkes", nil)
+		envelope.Hawkes.Label, envelope.Hawkes.At, envelope.Hawkes.From = "BTC/USD", at2, at2
 		envelope.Hawkes.Maturity = 1
-		envelope.Hawkes.PutMetric(data.Metric[float64]{
-			Label: "arrival_rate", Raw: 0.6,
-		})
+		envelope.Hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
 
 		result := solver.Step(envelope)
 

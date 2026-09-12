@@ -2,6 +2,10 @@ package learning
 
 import (
 	"errors"
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -16,8 +20,8 @@ adaptive learning rate; when absent the coder runs at the manifold's own.
 type PredictiveCoderConfig struct {
 	CustomArch   []int
 	MaxHorizon   int
-	Target       TargetTransform
-	Pace         *Pace
+	Target       core.Primitive
+	Pace         core.Primitive
 	InitialAlpha float64
 	Learn        bool
 
@@ -58,25 +62,6 @@ type Resolution struct {
 }
 
 /*
-PredictiveOutput is the coder's reading after one observation.
-
-Calibrated states whether the head has resolved enough predictions for its
-readings to mean anything; until then a consumer must not treat the forecast
-as evidence.
-*/
-type PredictiveOutput struct {
-	Dynamics         *ResonanceDynamics
-	ForwardCurve     []float64
-	ForwardRetention []float64
-	SupportedHorizon int
-	Calibrated       bool
-	ResolvedSteps    int
-	Readout          []float64
-	Confidence       float64
-	LastResolution   *Resolution
-}
-
-/*
 ResonanceDynamics reports the manifold's internal state after settling: how
 much free energy remains, how well it reconstructs its input, and how the
 temporal operator is tracking.
@@ -88,6 +73,29 @@ type ResonanceDynamics struct {
 	TemporalError       float64
 	HasTemporalError    bool
 	Alpha               float64
+}
+
+/*
+PredictiveOutput is the coder's reading after one observation.
+
+Calibrated states whether the head has resolved enough predictions for its
+readings to mean anything; until then a consumer must not treat the forecast
+as evidence. Reading carries the manifold's own settled snapshot, and Forecast
+is the head's rollout at the supported horizon.
+*/
+type PredictiveOutput struct {
+	Dynamics         *ResonanceDynamics
+	Reading          *ManifoldReading
+	Forecast         []RLSOutput
+	ForwardCurve     []float64
+	ForwardRetention []float64
+	SupportedHorizon int
+	Calibrated       bool
+	ResolvedSteps    int
+	Pending          int
+	Readout          []float64
+	Confidence       float64
+	LastResolution   *Resolution
 }
 
 /*
@@ -104,15 +112,19 @@ only once the outcome arrives, so the head is never trained against a target
 it was allowed to see.
 */
 type PredictiveCoder struct {
-	manifold *ResonanceManifold
-	target   TargetTransform
-	pace     *Pace
+	err      error
+	manifold core.Primitive
+	target   core.Primitive
+	pace     core.Primitive
 	alpha    float64
 	learn    bool
 
-	horizon int
-	ledger  *TemporalLedger
-	last    *Resolution
+	horizon  int
+	ledger   core.Primitive
+	last     *Resolution
+	pending  int
+	resolved int
+	out      PredictiveOutput
 }
 
 /*
@@ -123,12 +135,12 @@ The supervised head forecasts a single scalar per horizon, so the target
 dimension is one, and MaxHorizon becomes the number of independent horizon
 models the head holds.
 
-The learning rate is never invented here: it comes from the configured Primitive pace graph,
-which derives it from how badly the manifold is reconstructing its own input.
-A config supplying none gets a default controller rather than a fabricated
-constant.
+The learning rate is never invented here: it comes from the configured
+Primitive pace graph, which derives it from how badly the manifold is
+reconstructing its own input. A config supplying none gets a default
+controller rather than a fabricated constant.
 */
-func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
+func NewPredictiveCoder(config PredictiveCoderConfig) core.Primitive {
 	coder := &PredictiveCoder{
 		target:  config.Target,
 		pace:    config.Pace,
@@ -140,8 +152,6 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 	if coder.horizon < 1 {
 		coder.horizon = 1
 	}
-
-	coder.ledger = NewTemporalLedger(coder.horizon, coder.target)
 
 	if coder.alpha == 0 {
 		coder.alpha = 0.03
@@ -158,7 +168,7 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		return coder
 	}
 
-	coder.manifold = NewResonanceManifoldWithReadout(
+	coder.manifold = NewResonanceManifold(
 		config.CustomArch,
 		1,
 		coder.horizon,
@@ -166,17 +176,57 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		config.Readout,
 	)
 
+	coder.ledger = NewTemporalLedger(coder.horizon, coder.manifold, coder.target)
+
 	return coder
 }
 
-// Manifold exposes the underlying resonance manifold.
-func (coder *PredictiveCoder) Manifold() *ResonanceManifold { return coder.manifold }
+/*
+Next receives *PredictiveInput payloads, settles the manifold over each,
+resolves whatever predictions the new outcome has made scorable, issues a
+fresh forecast, and yields a *PredictiveOutput per arrival. An invalid
+observation ends the stream with the error recorded.
+*/
+func (coder *PredictiveCoder) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			input := (*PredictiveInput)(arriving)
+			output, err := coder.step(*input)
+
+			if err != nil {
+				coder.Error(err)
+				return
+			}
+
+			coder.out = output
+
+			if !yield(unsafe.Pointer(&coder.out)) {
+				return
+			}
+		}
+	}
+}
 
 /*
-Step settles the manifold over one observation, resolves whatever predictions
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (coder *PredictiveCoder) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			coder.err = errors.Join(coder.err, err)
+		}
+	}
+
+	return coder.err
+}
+
+/*
+step settles the manifold over one observation, resolves whatever predictions
 the new outcome has made scorable, and issues a fresh forecast.
 */
-func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error) {
+func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, error) {
 	// The manifold refuses an architecture it cannot build, so a nil here is a
 	// rejected configuration surfacing at its first use rather than a panic.
 	if coder.manifold == nil {
@@ -191,76 +241,115 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 		)
 	}
 
-	if coder.learn {
-		if err := coder.manifold.Settle(input.Features, false); err != nil {
-			return PredictiveOutput{}, err
-		}
+	settled, err := coder.manifoldExecute(ManifoldCommand{
+		Batch: &BatchIntent{
+			Input:           input.Features,
+			Learn:           coder.learn,
+			AdvanceTemporal: !coder.learn,
+		},
+	})
 
-		if err := coder.manifold.Learn(nil); err != nil {
-			return PredictiveOutput{}, err
-		}
-	}
-
-	if !coder.learn {
-		if err := coder.manifold.Settle(input.Features, true); err != nil {
-			return PredictiveOutput{}, err
-		}
+	if err != nil {
+		return PredictiveOutput{}, err
 	}
 
 	// The pace controller reads how badly the manifold is reconstructing its
 	// own input and sets the learning rate from it, so the rate is derived
 	// rather than configured.
 	if coder.pace != nil {
-		reading, err := transport.Evaluate(coder.pace, transport.Values(coder.manifold.ReconstructionError()))
+		readingEval := transport.NewEvaluate(coder.pace)
+		var reading PaceReading
+
+		for out := range readingEval.Next(transport.NewValues(settled.ReconstructionError).Next(nil)) {
+			reading = *(*PaceReading)(out)
+		}
+
+		err := readingEval.Error()
 		if err != nil {
 			return PredictiveOutput{}, err
 		}
 		coder.alpha = reading.Alpha
 
-		if err := coder.manifold.SetAlpha(coder.alpha); err != nil {
+		settled, err = coder.manifoldExecute(ManifoldCommand{
+			Alpha: &AlphaIntent{Alpha: coder.alpha},
+		})
+
+		if err != nil {
 			return PredictiveOutput{}, err
 		}
 	}
 
 	if input.HasReference && input.Reference > 0 {
 		if coder.learn {
-			outcome, err := coder.ledger.Resolve(coder.manifold, input.Step, input.Reference)
+			ledgerReading, err := coder.ledgerExecute(LedgerCommand{
+				Resolve: &ResolveIntent{
+					Step:      input.Step,
+					Reference: input.Reference,
+				},
+			})
+
 			if err != nil {
 				return PredictiveOutput{}, err
 			}
 
-			if outcome != nil {
+			coder.pending = ledgerReading.Pending
+			coder.resolved = ledgerReading.Total
+
+			if ledgerReading.Outcome != nil {
 				coder.last = &Resolution{
-					Prediction: outcome.Prediction,
-					Target:     outcome.Target,
-					Error:      outcome.Error,
-					Horizon:    outcome.Horizon,
-					Step:       outcome.Step,
+					Prediction: ledgerReading.Outcome.Prediction,
+					Target:     ledgerReading.Outcome.Target,
+					Error:      ledgerReading.Outcome.Error,
+					Horizon:    ledgerReading.Outcome.Horizon,
+					Step:       ledgerReading.Outcome.Step,
 				}
 			}
 		}
 
-		predictions := coder.manifold.TaskPrediction()
-		readout := coder.manifold.ReadoutVector()
+		settled, err = coder.manifoldExecute(ManifoldCommand{
+			Reading: &ReadingIntent{},
+		})
 
-		if len(predictions) > 0 && len(readout) > 0 {
-			coder.ledger.Issue(input.Step, input.Reference, readout, predictions, coder.horizon)
+		if err != nil {
+			return PredictiveOutput{}, err
+		}
+
+		if len(settled.TaskPrediction) > 0 && len(settled.Readout) > 0 {
+			ledgerReading, err := coder.ledgerExecute(LedgerCommand{
+				Issue: &IssueIntent{
+					Step:        input.Step,
+					Reference:   input.Reference,
+					Features:    settled.Readout,
+					Predictions: settled.TaskPrediction,
+					Horizon:     coder.horizon,
+				},
+			})
+
+			if err != nil {
+				return PredictiveOutput{}, err
+			}
+
+			coder.pending = ledgerReading.Pending
 		}
 	}
 
-	return coder.read(), nil
+	return coder.read(settled), nil
 }
 
 /*
-read assembles the coder's current reading: the forward forecast curve, how
-far ahead it is actually supported, and the manifold's own dynamics.
+read assembles the coder's reading from the manifold's settled snapshot: the
+forward forecast curve, how far ahead it is actually supported, and the
+manifold's own dynamics.
 */
-func (coder *PredictiveCoder) read() PredictiveOutput {
+func (coder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
 	output := PredictiveOutput{
-		ResolvedSteps:  coder.ledger.TotalResolutions(),
-		Readout:        coder.manifold.ReadoutVector(),
+		Reading:        &settled,
+		Readout:        settled.Readout,
 		LastResolution: coder.last,
 	}
+
+	output.ResolvedSteps = coder.resolved
+	output.Pending = coder.pending
 
 	// The supported horizon is the CONTIGUOUS run of rows whose skill is
 	// established, counted from the nearest. A gap ends it: a distant row that
@@ -268,9 +357,7 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 	// have not, and reporting it would let a consumer trust a curve across a
 	// stretch the head has never actually learned.
 	for horizon := 1; horizon <= coder.horizon; horizon++ {
-		skill, defined := coder.manifold.TaskSkillAt(horizon)
-
-		if !defined {
+		if horizon > len(settled.SkillReady) || !settled.SkillReady[horizon-1] {
 			break
 		}
 
@@ -279,7 +366,7 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 		// Confidence is the skill at the nearest horizon: how much of the
 		// target's variation the head explains, not a declared constant.
 		if horizon == 1 {
-			output.Confidence = skill
+			output.Confidence = settled.Skill[0]
 		}
 	}
 
@@ -288,30 +375,40 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 	// The curve runs exactly as far as the head has learned. Rolling out the
 	// full declared depth would append untrained rows, which emit near-zero and
 	// read downstream as a genuine flat forecast rather than as absent evidence.
-	if output.SupportedHorizon > 0 {
-		forecasts, err := coder.manifold.RolloutTaskForecast(output.SupportedHorizon)
+	horizon := max(output.SupportedHorizon, 1)
 
-		if err == nil {
-			// A fresh slice each step: a consumer retaining the artifact must
-			// not see its curve change underneath it on the next step.
-			output.ForwardCurve = make([]float64, len(forecasts))
+	forecast, err := coder.manifoldExecute(ManifoldCommand{
+		Forecast: &ForecastIntent{Steps: horizon},
+	})
 
-			for index, forecast := range forecasts {
-				output.ForwardCurve[index] = forecast.Value
-			}
-		}
-
-		output.ForwardRetention = coder.manifold.RolloutRetention(output.SupportedHorizon)
+	if err == nil && len(forecast.Forecast) > 0 {
+		// A fresh slice each step: a consumer retaining the artifact must
+		// not see its curve change underneath it on the next step.
+		output.Forecast = forecast.Forecast
 	}
 
-	temporalError, hasTemporal := coder.manifold.TemporalError()
+	if output.SupportedHorizon > 0 {
+		output.ForwardCurve = make([]float64, output.SupportedHorizon)
+
+		for index, forecast := range output.Forecast {
+			output.ForwardCurve[index] = forecast.Value
+		}
+
+		retention, err := coder.manifoldExecute(ManifoldCommand{
+			Retention: &RetentionIntent{Steps: output.SupportedHorizon},
+		})
+
+		if err == nil {
+			output.ForwardRetention = retention.Retention
+		}
+	}
 
 	output.Dynamics = &ResonanceDynamics{
-		Energy:              coder.manifold.Energy(),
-		PredictionEnergy:    coder.manifold.PredictionEnergy(),
-		ReconstructionError: coder.manifold.ReconstructionError(),
-		TemporalError:       temporalError,
-		HasTemporalError:    hasTemporal,
+		Energy:              settled.Energy,
+		PredictionEnergy:    settled.PredictionEnergy,
+		ReconstructionError: settled.ReconstructionError,
+		TemporalError:       settled.TemporalError,
+		HasTemporalError:    settled.HasTemporalError,
 	}
 
 	if coder.pace != nil {
@@ -321,14 +418,34 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 	return output
 }
 
-// ResolvedSteps returns how many predictions have been scored against outcomes.
-func (coder *PredictiveCoder) ResolvedSteps() int { return coder.ledger.TotalResolutions() }
+/*
+manifoldExecute drives one manifold command and returns its reading.
+*/
+func (coder *PredictiveCoder) manifoldExecute(
+	command ManifoldCommand,
+) (ManifoldReading, error) {
+	evaluation := transport.NewEvaluate(coder.manifold)
+	var reading ManifoldReading
 
-// PendingCount returns how many observations are currently awaiting outcome resolution.
-func (coder *PredictiveCoder) PendingCount() int {
-	if coder.ledger == nil {
-		return 0
+	for out := range evaluation.Next(transport.NewValues(command).Next(nil)) {
+		reading = *(*ManifoldReading)(out)
 	}
 
-	return len(coder.ledger.pending)
+	return reading, evaluation.Error()
+}
+
+/*
+ledgerExecute drives one ledger command and returns its reading.
+*/
+func (coder *PredictiveCoder) ledgerExecute(
+	command LedgerCommand,
+) (LedgerReading, error) {
+	evaluation := transport.NewEvaluate(coder.ledger)
+	var reading LedgerReading
+
+	for out := range evaluation.Next(transport.NewValues(command).Next(nil)) {
+		reading = *(*LedgerReading)(out)
+	}
+
+	return reading, evaluation.Error()
 }

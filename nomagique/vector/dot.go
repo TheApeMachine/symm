@@ -1,7 +1,9 @@
 package vector
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -10,34 +12,42 @@ import (
 Dot owns the inner product of two equal-length vectors.
 */
 type Dot struct {
-	core.Base[Pair, float64]
+	err error
+	out float64
 }
 
-func NewDot() *Dot {
+func NewDot() core.Primitive {
 	return &Dot{}
 }
 
-func (op *Dot) Next(
-	in iter.Seq[core.Primitive[Pair, Pair]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
+func (op *Dot) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := arriving.Read()
+			pair := (*Pair)(arriving)
 
 			if len(pair.Left) != len(pair.Right) {
 				op.Error(core.ErrShape)
 				continue
 			}
 
-			var total float64
-
+			op.out = 0.0
 			for index, value := range pair.Left {
-				total += value * pair.Right[index]
+				op.out += value * pair.Right[index]
 			}
 
-			if !yield(op.Carrier(total)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Dot) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

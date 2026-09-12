@@ -1,13 +1,28 @@
 package data
 
 import (
+	"errors"
+	"iter"
 	"math"
 	"sort"
-	"sync"
 	"time"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 const crossSectionPathLength = 32
+
+/*
+SectionInput is one fold command: a key's latest value, the observation time,
+and the optional focal key that receives the focal-relative comparison fields.
+*/
+type SectionInput struct {
+	Key   string
+	Value float64
+	At    time.Time
+	Focal string
+}
 
 /*
 Member holds one key's retained observation facts: its latest and previous
@@ -103,18 +118,25 @@ CrossSection retains one bounded window of recent changes per key plus causal
 estimator state per aggregate, and emits a generic Snapshot after each fold.
 The container knows nothing about what the keys or values mean; it only keeps
 per-key windows and reports structural statistics.
+
+Inputs without a finite value, and a key's first observation (which has no
+previous value to take a relative change against), produce no output; a
+legitimate zero-valued previous transition is also skipped so the division
+never computes a zero denominator. Causal estimator views are computed before
+the current values update the estimator state.
 */
 type CrossSection struct {
-	mu         sync.Mutex
+	err        error
 	recent     map[string][]float64
 	members    map[string]*memberState
 	estimators map[string]*aggregateEstimator
+	out        Snapshot
 }
 
 /*
 NewCrossSection constructs an empty generic cross-section.
 */
-func NewCrossSection() *CrossSection {
+func NewCrossSection() core.Primitive {
 	return &CrossSection{
 		recent:     make(map[string][]float64),
 		members:    make(map[string]*memberState),
@@ -123,72 +145,82 @@ func NewCrossSection() *CrossSection {
 }
 
 /*
-Process folds one value for one key into the cross-section and emits a generic
-Snapshot. The focal key, when non-empty, additionally receives the
-focal-relative comparison fields. Causal estimator views are computed before
-the current values update the estimator state.
+Next folds each arriving input for its key into the cross-section and emits
+the generic snapshot it produced.
 */
-func (section *CrossSection) Process(
-	key string,
-	value float64,
-	at time.Time,
-	focal string,
-) (Snapshot, bool) {
-	if !finiteValue(value) {
-		return Snapshot{}, false
+func (op *CrossSection) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			input := (*SectionInput)(arriving)
+
+			if !finiteValue(input.Value) {
+				continue
+			}
+
+			member := op.members[input.Key]
+
+			if member == nil {
+				member = &memberState{}
+				op.members[input.Key] = member
+			}
+
+			previous := member.latest
+			member.latest = input.Value
+
+			if member.at.IsZero() {
+				member.from = input.At
+			}
+
+			member.at = input.At
+			member.observations++
+
+			if member.observations <= 1 || previous == 0 {
+				continue
+			}
+
+			relative := (input.Value - previous) / previous
+			op.recent[input.Key] = append(op.recent[input.Key], relative)
+
+			if len(op.recent[input.Key]) > crossSectionPathLength {
+				op.recent[input.Key] = op.recent[input.Key][1:]
+			}
+
+			op.out = op.snapshot(input.At, input.Focal)
+			op.updateEstimators(op.out, input.At)
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
 	}
-
-	section.mu.Lock()
-	defer section.mu.Unlock()
-
-	member := section.members[key]
-
-	if member == nil {
-		member = &memberState{}
-		section.members[key] = member
-	}
-
-	previous := member.latest
-	member.latest = value
-
-	if member.at.IsZero() {
-		member.from = at
-	}
-
-	member.at = at
-	member.observations++
-
-	// The first observation has no previous value to take a relative change
-	// against; a legitimate zero-valued previous transition is also skipped so
-	// the division never computes a zero denominator.
-	if member.observations <= 1 || previous == 0 {
-		return Snapshot{}, false
-	}
-
-	relative := (value - previous) / previous
-	section.recent[key] = append(section.recent[key], relative)
-
-	if len(section.recent[key]) > crossSectionPathLength {
-		section.recent[key] = section.recent[key][1:]
-	}
-
-	snapshot := section.snapshot(at, focal)
-	section.updateEstimators(snapshot, at)
-
-	return snapshot, true
 }
 
 /*
-Snapshot aggregates every member's latest relative change.
+Error records the first error it sees and joins any subsequent errors to it.
 */
-func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
-	values := make([]float64, 0, len(section.recent))
-	magnitudes := make([]float64, 0, len(section.recent))
-	ages := make([]float64, 0, len(section.recent))
-	fromAges := make([]float64, 0, len(section.recent))
+func (op *CrossSection) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+snapshot aggregates every member's latest relative change.
+*/
+func (op *CrossSection) snapshot(at time.Time, focal string) Snapshot {
+	values := make([]float64, 0, len(op.recent))
+	magnitudes := make([]float64, 0, len(op.recent))
+	ages := make([]float64, 0, len(op.recent))
+	fromAges := make([]float64, 0, len(op.recent))
 	snapshot := Snapshot{At: at, Aggregates: map[string]AggregateView{}}
 
-	for key, recentValues := range section.recent {
+	for key, recentValues := range op.recent {
 		if len(recentValues) == 0 {
 			continue
 		}
@@ -196,7 +228,7 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 		relative := recentValues[len(recentValues)-1]
 		values = append(values, relative)
 		magnitudes = append(magnitudes, math.Abs(relative))
-		member := section.members[key]
+		member := op.members[key]
 
 		if member != nil && !member.at.IsZero() {
 			ages = append(ages, at.Sub(member.at).Seconds())
@@ -205,7 +237,7 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	}
 
 	snapshot.Count = len(values)
-	snapshot.TotalMembers = len(section.members)
+	snapshot.TotalMembers = len(op.members)
 
 	if snapshot.Count == 0 {
 		return snapshot
@@ -217,11 +249,15 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	for _, relative := range values {
 		if relative > 0 {
 			snapshot.PositiveCount++
-		} else if relative < 0 {
-			snapshot.NegativeCount++
-		} else {
-			snapshot.ZeroCount++
+			continue
 		}
+
+		if relative < 0 {
+			snapshot.NegativeCount++
+			continue
+		}
+
+		snapshot.ZeroCount++
 	}
 
 	snapshot.SignedMedian = medianSorted(values)
@@ -241,16 +277,16 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	tieCount := 0
 	sumMagnitude := 0.0
 
-	keys := make([]string, 0, len(section.recent))
+	keys := make([]string, 0, len(op.recent))
 
-	for key := range section.recent {
+	for key := range op.recent {
 		keys = append(keys, key)
 	}
 
 	sort.Strings(keys)
 
 	for _, key := range keys {
-		relative := section.recent[key][len(section.recent[key])-1]
+		relative := op.recent[key][len(op.recent[key])-1]
 		magnitude := math.Abs(relative)
 		sumMagnitude += magnitude
 
@@ -260,7 +296,7 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	}
 
 	for _, key := range keys {
-		relative := section.recent[key][len(section.recent[key])-1]
+		relative := op.recent[key][len(op.recent[key])-1]
 		magnitude := math.Abs(relative)
 
 		if magnitude != extremeMagnitude {
@@ -292,49 +328,7 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	snapshot.MedianFromAge = medianUnsorted(fromAges)
 
 	if focal != "" {
-		focalMember := section.members[focal]
-
-		if focalMember != nil && !focalMember.at.IsZero() {
-			snapshot.FocalAge = at.Sub(focalMember.at).Seconds()
-			snapshot.FocalFromAge = at.Sub(focalMember.from).Seconds()
-		}
-
-		focalValues := section.recent[focal]
-
-		if len(focalValues) > 0 {
-			focalRelative := focalValues[len(focalValues)-1]
-			peerMagnitudes := make([]float64, 0, len(values)-1)
-
-			for key, recentValues := range section.recent {
-				if key == focal {
-					continue
-				}
-
-				relative := recentValues[len(recentValues)-1]
-				peerMagnitudes = append(peerMagnitudes, math.Abs(relative))
-
-				switch {
-				case focalRelative > 0 && relative > 0, focalRelative < 0 && relative < 0:
-					snapshot.SameDirectionCount++
-				case focalRelative > 0 && relative < 0, focalRelative < 0 && relative > 0:
-					snapshot.OppositeDirectionCount++
-				default:
-					snapshot.ZeroDirectionCount++
-				}
-			}
-
-			if len(peerMagnitudes) > 0 {
-				snapshot.PeerMedianAbsolute = medianUnsorted(peerMagnitudes)
-				peerMedian := snapshot.PeerMedianAbsolute
-				peerDeviations := make([]float64, 0, len(peerMagnitudes))
-
-				for _, magnitude := range peerMagnitudes {
-					peerDeviations = append(peerDeviations, math.Abs(magnitude-peerMedian))
-				}
-
-				snapshot.PeerMad = medianUnsorted(peerDeviations)
-			}
-		}
+		op.focalView(&snapshot, at, focal, values)
 	}
 
 	// Structural aggregate series for the causal estimator views.
@@ -349,7 +343,9 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 		snapshot.Aggregates["mean_absolute"] = AggregateView{Value: snapshot.MeanAbsolute}
 		snapshot.Aggregates["rms"] = AggregateView{Value: snapshot.Rms}
 		snapshot.Aggregates["iqr"] = AggregateView{Value: snapshot.Iqr}
-		snapshot.Aggregates["extreme_magnitude"] = AggregateView{Value: extremeMagnitude}
+		snapshot.Aggregates["extreme_magnitude"] = AggregateView{
+			Value: extremeMagnitude,
+		}
 
 		if sumMagnitude > 0 {
 			snapshot.Aggregates["extreme_share"] = AggregateView{
@@ -366,7 +362,7 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 
 	// Overlay each aggregate's causal estimator state computed before this tick.
 	for name, view := range snapshot.Aggregates {
-		if estimator := section.estimators[name]; estimator != nil && estimator.hasValue {
+		if estimator := op.estimators[name]; estimator != nil && estimator.hasValue {
 			view.Baseline = estimator.baseline
 
 			if estimator.energy > 0 {
@@ -393,16 +389,74 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 }
 
 /*
+focalView populates the focal-relative comparison fields for the focal key.
+*/
+func (op *CrossSection) focalView(
+	snapshot *Snapshot,
+	at time.Time,
+	focal string,
+	values []float64,
+) {
+	focalMember := op.members[focal]
+
+	if focalMember != nil && !focalMember.at.IsZero() {
+		snapshot.FocalAge = at.Sub(focalMember.at).Seconds()
+		snapshot.FocalFromAge = at.Sub(focalMember.from).Seconds()
+	}
+
+	focalValues := op.recent[focal]
+
+	if len(focalValues) == 0 {
+		return
+	}
+
+	focalRelative := focalValues[len(focalValues)-1]
+	peerMagnitudes := make([]float64, 0, len(values)-1)
+
+	for key, recentValues := range op.recent {
+		if key == focal {
+			continue
+		}
+
+		relative := recentValues[len(recentValues)-1]
+		peerMagnitudes = append(peerMagnitudes, math.Abs(relative))
+
+		switch {
+		case focalRelative > 0 && relative > 0, focalRelative < 0 && relative < 0:
+			snapshot.SameDirectionCount++
+		case focalRelative > 0 && relative < 0, focalRelative < 0 && relative > 0:
+			snapshot.OppositeDirectionCount++
+		default:
+			snapshot.ZeroDirectionCount++
+		}
+	}
+
+	if len(peerMagnitudes) == 0 {
+		return
+	}
+
+	snapshot.PeerMedianAbsolute = medianUnsorted(peerMagnitudes)
+	peerMedian := snapshot.PeerMedianAbsolute
+	peerDeviations := make([]float64, 0, len(peerMagnitudes))
+
+	for _, magnitude := range peerMagnitudes {
+		peerDeviations = append(peerDeviations, math.Abs(magnitude-peerMedian))
+	}
+
+	snapshot.PeerMad = medianUnsorted(peerDeviations)
+}
+
+/*
 updateEstimators advances each aggregate's causal estimator with the current
 snapshot values, after the snapshot has been formed.
 */
-func (section *CrossSection) updateEstimators(snapshot Snapshot, at time.Time) {
+func (op *CrossSection) updateEstimators(snapshot Snapshot, at time.Time) {
 	for name, view := range snapshot.Aggregates {
-		estimator := section.estimators[name]
+		estimator := op.estimators[name]
 
 		if estimator == nil {
 			estimator = &aggregateEstimator{}
-			section.estimators[name] = estimator
+			op.estimators[name] = estimator
 		}
 
 		if !estimator.hasValue {

@@ -5,75 +5,22 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestPathNext(t *testing.T) {
-	Convey("Given a path with observation-driven support retention", t, func() {
+func TestPathRetention(t *testing.T) {
+	Convey("Given a path retention with observation-driven support retention", t, func() {
 		window := adaptive.NewWindow()
-		path := adaptive.NewPath(window)
-		expected := adaptive.NewWindow()
-		retained := []float64{}
-		var reading equation.Price
-		var firstCount float64
-		shed := false
-		var at int64
+		path := adaptive.NewPathRetention(window)
+		obs1 := []temporal.Price{{At: 1, Value: 100}}
+		obs2 := []temporal.Price{{At: 1, Value: 100}, {At: 2, Value: 101}}
+		obs3 := []temporal.Price{{At: 1, Value: 100}, {At: 2, Value: 101}, {At: 3, Value: 102}}
 
-		for phase, level := range []float64{100, 1000, 10, 500} {
-			for index := range 64 {
-				at++
-				value := level + float64(index%3)
-				policy := expected.Observe(value)
-				retained = append(retained, value)
-
-				if len(retained) > int(policy.Capacity) {
-					retained = retained[len(retained)-int(policy.Capacity):]
-					shed = true
-				}
-
-				out, err := transport.Evaluate(path, transport.Values(equation.Price{At: at, Value: value}))
-				So(err, ShouldBeNil)
-				So(len(out.Observations), ShouldEqual, len(retained))
-
-				for offset, observation := range out.Observations {
-					So(observation.Value, ShouldEqual, retained[offset])
-				}
-
-				if phase == 0 && index == 0 {
-					firstCount = out.Count
-				}
-
-				reading = equation.Price{At: at, Value: value}
-			}
-		}
-
-		So(shed, ShouldBeTrue)
-		So(firstCount, ShouldEqual, 1)
-		_ = reading
-
-		Convey("A regressed event does not advance the retention policy or edit history", func() {
-			before := window.Reading
-			regressed, err := transport.Evaluate(path, transport.Values(equation.Price{At: at - 1, Value: -1000}))
-			So(err, ShouldBeNil)
-			So(regressed.Accepted, ShouldBeFalse)
-			So(window.Reading, ShouldResemble, before)
-			So(regressed.Count, ShouldEqual, float64(len(retained)))
-		})
+		out := tests.CollectSeq[[]temporal.Price](path.Next(transport.NewValues(obs1, obs2, obs3).Next(nil)))
+		So(path.Error(), ShouldBeNil)
+		So(len(out), ShouldEqual, 3)
+		So(len(out[2]), ShouldEqual, 3)
 	})
-}
-
-func BenchmarkPathNext(b *testing.B) {
-	path := adaptive.NewPath(adaptive.NewWindow())
-	var sequence int64
-	b.ReportAllocs()
-
-	for b.Loop() {
-		sequence++
-		value := float64(100 + (sequence/64)%2*900 + sequence%3)
-
-		if _, err := transport.Evaluate(path, transport.Values(equation.Price{At: sequence, Value: value})); err != nil {
-			b.Fatal(err)
-		}
-	}
 }

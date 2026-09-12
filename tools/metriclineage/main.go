@@ -369,9 +369,9 @@ func scanProducers(pkg *packages.Package, file *ast.File, relFile string) ([]pro
 			name := callName(typed)
 
 			switch {
-			// data.NewMeasurement[T](id, label, source, at, from)
-			case name == "NewMeasurement" && len(typed.Args) >= 3:
-				if lit := stringLiteral(typed.Args[2]); lit != "" {
+			// data.NewMeasurement[T](source, metrics)
+			case name == "NewMeasurement" && len(typed.Args) >= 1:
+				if lit := stringLiteral(typed.Args[0]); lit != "" {
 					sources = append(sources, lit)
 				}
 

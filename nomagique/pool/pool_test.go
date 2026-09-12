@@ -4,242 +4,183 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
-// awaitWorkers polls GetSpawnedWorkers until it satisfies the predicate or the
-// timeout elapses, returning the last observed value.
-func awaitWorkers[T any](elasticPool *Pool[T], predicate func(int) bool, timeout time.Duration) int {
-	deadline := time.Now().Add(timeout)
+func TestPoolNext(t *testing.T) {
+	Convey("Given an elastic pool primitive", t, func() {
+		Convey("Every task is delivered exactly once and results travel the wire", func() {
+			tasks := make([]int, 64)
 
-	for {
-		observed := elasticPool.GetSpawnedWorkers()
-		if predicate(observed) {
-			return observed
-		}
+			for index := range tasks {
+				tasks[index] = index + 1
+			}
 
-		if time.Now().After(deadline) {
-			return observed
-		}
+			op := NewPool(func(task *int) { *task *= 2 }, 40*time.Millisecond)
+			count := 0
 
-		time.Sleep(5 * time.Millisecond)
-	}
-}
+			for range op.Next(tests.SliceToSeq(tasks)) {
+				count++
+			}
 
-func NewTest(t *testing.T) {
-	Convey("Given a handler function", t, func() {
-		handlerFunc := func(task int) {}
+			So(count, ShouldEqual, 64)
+			So(op.Error(), ShouldBeNil)
 
-		Convey("A fresh pool defaults to a one second idle lifetime", func() {
-			loadPool := New(handlerFunc)
-
-			So(loadPool.handlerFunc, ShouldNotBeNil)
-			So(loadPool.idleWorkerLifetime, ShouldEqual, time.Second)
+			for index := range tasks {
+				So(tasks[index], ShouldEqual, 2*(index+1))
+			}
 		})
-	})
-}
-
-func SetIdleWorkerLifetimeTest(t *testing.T) {
-	Convey("Given an elastic pool", t, func() {
-		loadPool := New(func(task int) {})
-		loadPool.Start()
-
-		Convey("A positive lifetime is honored", func() {
-			loadPool.SetIdleWorkerLifetime(75 * time.Millisecond)
-
-			So(loadPool.idleWorkerLifetime, ShouldEqual, 75*time.Millisecond)
-		})
-
-		Convey("A non-positive lifetime falls back to one second", func() {
-			loadPool.SetIdleWorkerLifetime(-time.Second)
-
-			So(loadPool.idleWorkerLifetime, ShouldEqual, time.Second)
-		})
-
-		Reset(func() {
-			loadPool.StopAndWait()
-		})
-	})
-}
-
-func GetSpawnedWorkersTest(t *testing.T) {
-	Convey("Given a freshly started pool", t, func() {
-		loadPool := New(func(task int) {
-			time.Sleep(20 * time.Millisecond)
-		})
-		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
-		loadPool.Start()
 
 		Convey("A burst of blocked tasks scales workers up", func() {
-			for task := 0; task < 12; task++ {
-				err := loadPool.AddTask(task)
-				So(err, ShouldBeNil)
-			}
+			var concurrent, maxConcurrent atomic.Int64
 
-			peak := awaitWorkers(loadPool, func(current int) bool { return current >= 2 }, 2*time.Second)
-			So(peak, ShouldBeGreaterThanOrEqualTo, 2)
-		})
+			handler := func(task *int) {
+				current := concurrent.Add(1)
 
-		Convey("After the burst drains, idle retirement scales back to zero", func() {
-			for task := 0; task < 12; task++ {
-				So(loadPool.AddTask(task), ShouldBeNil)
-			}
+				for {
+					observed := maxConcurrent.Load()
 
-			awaitWorkers(loadPool, func(current int) bool { return current >= 2 }, 2*time.Second)
-			floor := awaitWorkers(loadPool, func(current int) bool { return current == 0 }, 3*time.Second)
-			So(floor, ShouldEqual, 0)
-		})
+					if observed >= current {
+						break
+					}
 
-		Reset(func() {
-			loadPool.StopAndWait()
-		})
-	})
-}
-
-func StartTest(t *testing.T) {
-	Convey("Given an unstarted pool", t, func() {
-		loadPool := New(func(task int) {})
-
-		Convey("Submitting before Start is rejected", func() {
-			err := loadPool.AddTask(1)
-			So(err, ShouldNotBeNil)
-		})
-
-		Convey("Start is idempotent", func() {
-			loadPool.Start()
-			loadPool.Start()
-
-			So(loadPool.started.Load(), ShouldBeTrue)
-		})
-
-		Reset(func() {
-			loadPool.StopAndWait()
-		})
-	})
-}
-
-func AddTaskTest(t *testing.T) {
-	Convey("Given a started elastic pool", t, func() {
-		processed := make(chan int, 256)
-		loadPool := New(func(task int) {
-			processed <- task
-		})
-		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
-		loadPool.Start()
-
-		Convey("Every task is delivered exactly once", func() {
-			for task := 0; task < 64; task++ {
-				So(loadPool.AddTask(task), ShouldBeNil)
-			}
-
-			seen := make([]bool, 64)
-			for received := 0; received < 64; received++ {
-				var task int
-				select {
-				case task = <-processed:
-				case <-time.After(5 * time.Second):
-					So(false, ShouldBeTrue, "pool consumed too few tasks within the timeout")
+					if maxConcurrent.CompareAndSwap(observed, current) {
+						break
+					}
 				}
 
-				if task < 0 || task >= 64 {
-					So(false, ShouldBeTrue, "received an unexpected task value")
-				}
-
-				if seen[task] {
-					So(false, ShouldBeTrue, "task was delivered more than once")
-				}
-
-				seen[task] = true
+				time.Sleep(20 * time.Millisecond)
+				concurrent.Add(-1)
 			}
 
-			for received := 0; received < 64; received++ {
-				So(seen[received], ShouldBeTrue)
-			}
-		})
+			tasks := make([]int, 12)
+			op := NewPool(handler, 40*time.Millisecond)
+			count := 0
 
-		Convey("Tasks are rejected after Stop", func() {
-			loadPool.Stop()
-			err := loadPool.AddTask(1)
-
-			So(err, ShouldNotBeNil)
-		})
-
-		Reset(func() {
-			loadPool.StopAndWait()
-		})
-	})
-}
-
-func AddTaskWithBlockingTest(t *testing.T) {
-	Convey("Given a started elastic pool", t, func() {
-		var executed int64
-		loadPool := New(func(task int) {
-			atomic.AddInt64(&executed, 1)
-		})
-		loadPool.Start()
-
-		Convey("A un-bounded queue accepts immediately", func() {
-			err := loadPool.AddTaskWithBlocking(7)
-
-			So(err, ShouldBeNil)
-		})
-
-		Reset(func() {
-			loadPool.StopAndWait()
-		})
-	})
-}
-
-func StopTest(t *testing.T) {
-	Convey("Given a started pool with no traffic", t, func() {
-		loadPool := New(func(task int) {})
-		loadPool.Start()
-
-		Convey("StopAndWait returns promptly even with zero live workers", func() {
-			deadline := time.Now().Add(2 * time.Second)
-			loadPool.StopAndWait()
-
-			So(time.Now().Before(deadline), ShouldBeTrue)
-		})
-	})
-}
-
-func StopAndWaitTest(t *testing.T) {
-	Convey("Given a started pool", t, func() {
-		var executed atomic.Int64
-		loadPool := New(func(task int) {
-			executed.Add(1)
-		})
-		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
-		loadPool.Start()
-
-		Convey("StopAndWait drains every queued task before returning", func() {
-			for task := 0; task < 128; task++ {
-				err := loadPool.AddTask(task)
-				So(err, ShouldBeNil)
+			for range op.Next(tests.SliceToSeq(tasks)) {
+				count++
 			}
 
-			loadPool.StopAndWait()
+			So(count, ShouldEqual, 12)
+			So(maxConcurrent.Load(), ShouldBeGreaterThanOrEqualTo, 2)
+			So(op.Error(), ShouldBeNil)
+		})
 
+		Convey("The stream drains every queued task before ending", func() {
+			var executed atomic.Int64
+			tasks := make([]int, 128)
+
+			op := NewPool(func(task *int) { executed.Add(1) }, 40*time.Millisecond)
+			count := 0
+
+			for range op.Next(tests.SliceToSeq(tasks)) {
+				count++
+			}
+
+			So(count, ShouldEqual, 128)
 			So(executed.Load(), ShouldEqual, 128)
 		})
 
-		Reset(func() {
-			loadPool.StopAndWait()
+		Convey("Idle retirement between waves does not lose late tasks", func() {
+			var executed atomic.Int64
+
+			waves := func(yield func(unsafe.Pointer) bool) {
+				first := []int{1, 2, 3, 4}
+
+				for index := range first {
+					if !yield(unsafe.Pointer(&first[index])) {
+						return
+					}
+				}
+
+				// Long enough for every wave-one worker to retire.
+				time.Sleep(100 * time.Millisecond)
+
+				second := []int{5, 6, 7, 8}
+
+				for index := range second {
+					if !yield(unsafe.Pointer(&second[index])) {
+						return
+					}
+				}
+			}
+
+			op := NewPool(func(task *int) {
+				executed.Add(1)
+				time.Sleep(10 * time.Millisecond)
+			}, 20*time.Millisecond)
+
+			count := 0
+
+			for range op.Next(waves) {
+				count++
+			}
+
+			So(count, ShouldEqual, 8)
+			So(executed.Load(), ShouldEqual, 8)
+			So(op.Error(), ShouldBeNil)
+		})
+
+		Convey("Early consumer termination stops delivery without panic", func() {
+			tasks := make([]int, 32)
+			op := NewPool(func(task *int) { *task = 7 }, 40*time.Millisecond)
+			count := 0
+
+			for range op.Next(tests.SliceToSeq(tasks)) {
+				count++
+				break
+			}
+
+			So(count, ShouldEqual, 1)
+
+			time.Sleep(50 * time.Millisecond)
+			So(op.Error(), ShouldBeNil)
+		})
+
+		Convey("A second stream after the first is rejected", func() {
+			op := NewPool(func(task *int) {}, 40*time.Millisecond)
+
+			for range op.Next(tests.SliceToSeq([]int{1, 2, 3})) {
+			}
+
+			count := 0
+
+			for range op.Next(tests.SliceToSeq([]int{9})) {
+				count++
+			}
+
+			So(count, ShouldEqual, 0)
+			So(op.Error(), ShouldNotBeNil)
 		})
 	})
 }
 
-func StopWithTimeoutTest(t *testing.T) {
-	Convey("Given a started pool", t, func() {
-		loadPool := New(func(task int) {})
-		loadPool.Start()
+func TestPoolError(t *testing.T) {
+	Convey("Given pool construction", t, func() {
+		Convey("A non-positive idle lifetime is rejected", func() {
+			op := NewPool(func(task *int) {}, 0)
 
-		Convey("StopWithTimeout reports a clean drain", func() {
-			completed := loadPool.StopWithTimeout(2 * time.Second)
+			So(op.Error(), ShouldNotBeNil)
 
-			So(completed, ShouldBeTrue)
+			count := 0
+
+			for range op.Next(tests.SliceToSeq([]int{1})) {
+				count++
+			}
+
+			So(count, ShouldEqual, 0)
+		})
+
+		Convey("A valid pool records no error across a full stream", func() {
+			op := NewPool(func(task *int) {}, 40*time.Millisecond)
+
+			for range op.Next(tests.SliceToSeq([]int{1})) {
+			}
+
+			So(op.Error(), ShouldBeNil)
 		})
 	})
 }

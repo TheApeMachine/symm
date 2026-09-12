@@ -9,7 +9,8 @@ import (
 
 func TestMeasurementFinalize(t *testing.T) {
 	Convey("Given a measurement without historical support", t, func() {
-		measurement := NewMeasurement[float64]("id-1", "label", "source", time.Now(), time.Now())
+		measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.Finalize()
 
 		Convey("It should be whole with Maturity 1 and undefined SNR 0", func() {
@@ -19,7 +20,8 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with scalar divergence and noise variance", t, func() {
-		measurement := NewMeasurement[float64]("id-2", "label", "source", time.Now(), time.Now())
+		measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.Metadata = map[string]float64{
 			MetadataSupport:       10,
 			MetadataDivergence:    4.0,
@@ -49,7 +51,8 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with multivariate Mahalanobis SNR metadata", t, func() {
-		measurement := NewMeasurement[float64]("id-3", "label", "source", time.Now(), time.Now())
+		measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.Metadata = map[string]float64{
 			MetadataSupport:        20,
 			MetadataMahalanobisSNR: 5.5,
@@ -64,7 +67,8 @@ func TestMeasurementFinalize(t *testing.T) {
 }
 
 func BenchmarkMeasurementFinalize(b *testing.B) {
-	measurement := NewMeasurement[float64]("id-bench", "label", "source", time.Now(), time.Now())
+	measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+	measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 	measurement.Metadata = map[string]float64{
 		MetadataSupport:        25,
 		MetadataMahalanobisSNR: 3.8,

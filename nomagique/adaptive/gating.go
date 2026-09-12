@@ -1,11 +1,13 @@
 package adaptive
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -13,41 +15,68 @@ import (
 Gating suppresses values inside a configured threshold of inclusive moments.
 */
 type Gating struct {
-	core.Base[float64, float64]
-	moments   core.Primitive[float64, equation.MomentReading]
-	threshold core.Primitive[float64, float64]
+	err       error
+	moments   core.Primitive
+	threshold core.Primitive
+	out       float64
 }
 
 func NewGating(
-	moments core.Primitive[float64, equation.MomentReading],
-	threshold core.Primitive[float64, float64],
-) *Gating {
+	moments core.Primitive,
+	threshold core.Primitive,
+) core.Primitive {
 	return &Gating{moments: moments, threshold: threshold}
 }
 
-func (op *Gating) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
-		for reading := range op.moments.Next(in) {
-			current := reading.Read()
-			value := current.Value
-			limit, err := transport.Evaluate(op.threshold, transport.Values(current.Count))
+func (op *Gating) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for readingPtr := range op.moments.Next(in) {
+			current := *(*statistic.MomentReading)(readingPtr)
+			limitEval := transport.NewEvaluate(op.threshold)
+			var limit float64
+
+			for out := range limitEval.Next(transport.NewValues(current.Count).Next(nil)) {
+				limit = *(*float64)(out)
+			}
+
+			err := limitEval.Error()
 
 			if err != nil {
-				op.Error(err)
+				op.err = errors.Join(op.err, err)
 				return
 			}
 
+			op.out = current.Value
+
 			if current.Dispersion > 0 && math.Abs(current.Value-current.Mean) < limit {
-				value = 0
+				op.out = 0
 			}
 
-			if !yield(op.Carrier(value)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
-
-		op.Error(op.moments.Error())
 	}
+}
+
+func (op *Gating) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.moments != nil {
+		if err := op.moments.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.threshold != nil {
+		if err := op.threshold.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -13,9 +13,11 @@ import (
 func TestAndNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[bool, bool]{
-			Name:      "and",
-			Seed:      true,
-			Operation: NewAnd(true),
+			Name: "and",
+			Seed: true,
+			Factory: func() core.Primitive {
+				return NewAnd(true)
+			},
 			Reference: func(held, value bool) bool {
 				return held && value
 			},
@@ -31,9 +33,11 @@ func TestAndNext(t *testing.T) {
 func TestOrNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[bool, bool]{
-			Name:      "or",
-			Seed:      false,
-			Operation: NewOr(false),
+			Name: "or",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewOr(false)
+			},
 			Reference: func(held, value bool) bool {
 				return held || value
 			},
@@ -49,9 +53,11 @@ func TestOrNext(t *testing.T) {
 func TestNotNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[bool, bool]{
-			Name:      "not",
-			Seed:      false,
-			Operation: NewNot(),
+			Name: "not",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewNot()
+			},
 			Reference: func(_, value bool) bool {
 				return !value
 			},
@@ -66,9 +72,11 @@ func TestNotNext(t *testing.T) {
 func TestGreaterNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[[2]float64, bool]{
-			Name:      "greater",
-			Seed:      false,
-			Operation: NewGreater[float64](),
+			Name: "greater",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewGreater()
+			},
 			Reference: func(_ bool, pair [2]float64) bool {
 				return pair[0] > pair[1]
 			},
@@ -83,9 +91,11 @@ func TestGreaterNext(t *testing.T) {
 func TestLessNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[[2]float64, bool]{
-			Name:      "less",
-			Seed:      false,
-			Operation: NewLess[float64](),
+			Name: "less",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewLess()
+			},
 			Reference: func(_ bool, pair [2]float64) bool {
 				return pair[0] < pair[1]
 			},
@@ -100,9 +110,11 @@ func TestLessNext(t *testing.T) {
 func TestLessEqualNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[[2]float64, bool]{
-			Name:      "less-equal",
-			Seed:      false,
-			Operation: NewLessEqual[float64](),
+			Name: "less-equal",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewLessEqual()
+			},
 			Reference: func(_ bool, pair [2]float64) bool {
 				return pair[0] <= pair[1]
 			},
@@ -117,9 +129,11 @@ func TestLessEqualNext(t *testing.T) {
 func TestEqualNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[[2]float64, bool]{
-			Name:      "equal",
-			Seed:      false,
-			Operation: NewEqual[float64](),
+			Name: "equal",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewEqual()
+			},
 			Reference: func(_ bool, pair [2]float64) bool {
 				return pair[0] == pair[1]
 			},
@@ -134,9 +148,11 @@ func TestEqualNext(t *testing.T) {
 func TestIsNaNNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[float64, bool]{
-			Name:      "isnan",
-			Seed:      false,
-			Operation: NewIsNaN[float64](),
+			Name: "isnan",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewIsNaN()
+			},
 			Reference: func(_ bool, value float64) bool {
 				return math.IsNaN(value)
 			},
@@ -144,23 +160,29 @@ func TestIsNaNNext(t *testing.T) {
 	)
 }
 
-func TestFiniteHolds(t *testing.T) {
-	Convey("Holds is the same predicate Next yields, without a streaming run", t, func() {
-		op := NewFinite[float64]()
-		So(op.Holds(1.5), ShouldBeTrue)
-		So(op.Holds(0), ShouldBeTrue)
-		So(op.Holds(math.NaN()), ShouldBeFalse)
-		So(op.Holds(math.Inf(1)), ShouldBeFalse)
-		So(op.Holds(math.Inf(-1)), ShouldBeFalse)
-	})
+func TestIsInfNext(t *testing.T) {
+	tests.Check(
+		t, tests.Case[float64, bool]{
+			Name: "isinf",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewIsInf()
+			},
+			Reference: func(_ bool, value float64) bool {
+				return math.IsInf(value, 0)
+			},
+		},
+	)
 }
 
 func TestFiniteNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[float64, bool]{
-			Name:      "finite",
-			Seed:      false,
-			Operation: NewFinite[float64](),
+			Name: "finite",
+			Seed: false,
+			Factory: func() core.Primitive {
+				return NewFinite()
+			},
 			Reference: func(_ bool, value float64) bool {
 				return !math.IsNaN(value) && !math.IsInf(value, 0)
 			},
@@ -171,11 +193,37 @@ func TestFiniteNext(t *testing.T) {
 func TestRejectNext(t *testing.T) {
 	Convey("Reject consumes a run and records the configured reason", t, func() {
 		reason := errors.New("refused")
-		op := NewReject[float64](reason)
-		out := tests.CollectSeq(op.Next(tests.SliceToSeq([]float64{1, 2, 3})))
+		op := NewReject(reason)
+		out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([]float64{1, 2, 3})))
 
 		So(len(out), ShouldEqual, 0)
 		So(errors.Is(op.Error(), reason), ShouldBeTrue)
 		So(errors.Is(op.Error(), core.ErrDomain), ShouldBeFalse)
+	})
+}
+
+func TestGateNext(t *testing.T) {
+	Convey("Gate routes each arrival through pass or fail based on predicate", t, func() {
+		// Predicate: Finite()
+		// Pass: Not()
+		// Fail: Not()
+		gate := NewGate(NewFinite(), NewNot(), NewNot())
+		in := tests.SliceToSeq([]bool{true, false})
+		out := tests.CollectSeq[bool](gate.Next(in))
+
+		So(out, ShouldResemble, []bool{false, true})
+		So(gate.Error(), ShouldBeNil)
+	})
+}
+
+func TestPickNext(t *testing.T) {
+	Convey("Pick selects candidates according to predicate", t, func() {
+		// Greater picks larger value (running maximum)
+		pick := NewPick(NewGreater())
+		in := tests.SliceToSeq([]float64{3.0, 1.0, 5.0, 2.0})
+		out := tests.CollectSeq[float64](pick.Next(in))
+
+		So(out, ShouldResemble, []float64{3.0, 3.0, 5.0, 5.0})
+		So(pick.Error(), ShouldBeNil)
 	})
 }

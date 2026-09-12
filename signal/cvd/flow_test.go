@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -15,14 +16,30 @@ func TestFlowNext(t *testing.T) {
 	}{
 		{true, 2, 0, 200, 0}, {false, 1, 1, 100, 1}, {true, 1, 3, 200, 2.0 / 3},
 	} {
-		fields, err := transport.Evaluate(graph, transport.Values(FlowInput{
+		fieldsEval := transport.NewEvaluate(graph)
+		var fields data.ProjectionInput
+
+		for out := range fieldsEval.Next(transport.NewValues(FlowInput{
 			Price: 100, Quantity: event.quantity, Buy: event.buy,
 			At: int64(event.seconds * 1e9),
-		}))
+		}).Next(nil)) {
+			fields = *(*data.ProjectionInput)(out)
+		}
+
+		err := fieldsEval.Error()
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := p.Project(fields)
+		projectEval := transport.NewEvaluate(p)
+		var m *data.Measurement[float64]
+
+		for out := range projectEval.Next(transport.NewValues(fields).Next(nil)) {
+			m = *(**data.Measurement[float64])(out)
+		}
+
+		if err := projectEval.Error(); err != nil {
+			t.Fatal(err)
+		}
 		if m.Err != nil {
 			t.Fatal(m.Err)
 		}
@@ -50,14 +67,30 @@ func TestFlowNext(t *testing.T) {
 func TestFlowQuotedResponse(t *testing.T) {
 	graph, p := newFlowGraph(), flowProjection()
 	for index := 0; index < 3; index++ {
-		fields, err := transport.Evaluate(graph, transport.Values(FlowInput{
+		fieldsEval := transport.NewEvaluate(graph)
+		var fields data.ProjectionInput
+
+		for out := range fieldsEval.Next(transport.NewValues(FlowInput{
 			Price: 100, Quantity: 1, Buy: index != 1, At: int64(index) * 1e9,
 			Quoted: index > 0, Midpoint: 102, PriorMid: 101,
-		}))
+		}).Next(nil)) {
+			fields = *(*data.ProjectionInput)(out)
+		}
+
+		err := fieldsEval.Error()
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := p.Project(fields)
+		projectEval := transport.NewEvaluate(p)
+		var m *data.Measurement[float64]
+
+		for out := range projectEval.Next(transport.NewValues(fields).Next(nil)) {
+			m = *(**data.Measurement[float64])(out)
+		}
+
+		if err := projectEval.Error(); err != nil {
+			t.Fatal(err)
+		}
 		if m.Err != nil {
 			t.Fatal(m.Err)
 		}

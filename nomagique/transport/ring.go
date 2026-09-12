@@ -1,18 +1,31 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
+	"iter"
 	"sync/atomic"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 const cacheLineBytes = 64
 
 /*
-RingBuffer is a bounded single-producer, single-consumer queue. Construction
-allocates its backing storage once; Push and Pop do not allocate or lock.
+Ring is a bounded single-producer, single-consumer queue presented as a
+Primitive. Construction requires a power-of-two capacity and allocates the
+backing storage once; pushes and pops are lock-free SPSC operations with
+cached tails and never allocate or lock.
+
+On the Primitive wire Next is the queue discipline: each arrival is
+published in order, then everything poppable is yielded in order. A value
+that cannot be published because the ring is full is never silently
+dropped; it records a shape error and ends the run.
 */
-type RingBuffer[Value any] struct {
-	buffer []Value
+type Ring struct {
+	err    error
+	buffer []unsafe.Pointer
 	mask   uint64
 
 	head atomic.Uint64
@@ -27,107 +40,105 @@ type RingBuffer[Value any] struct {
 }
 
 /*
-NewRingBuffer creates an SPSC queue whose capacity must be a power of two.
+NewRing instantiates a Ring Primitive whose capacity must be a power of two
+greater than one. Any other capacity records a shape error.
 */
-func NewRingBuffer[Value any](capacity uint64) (*RingBuffer[Value], error) {
+func NewRing(capacity uint64) core.Primitive {
+	op := &Ring{}
+
 	if capacity < 2 || capacity&(capacity-1) != 0 {
-		return nil, fmt.Errorf(
-			"transport: ring capacity %d must be a power of two greater than one",
+		op.Error(fmt.Errorf(
+			"%w: ring capacity %d must be a power of two greater than one",
+			core.ErrShape,
 			capacity,
-		)
+		))
+		return op
 	}
 
-	return &RingBuffer[Value]{
-		buffer: make([]Value, capacity),
-		mask:   capacity - 1,
-	}, nil
+	op.buffer = make([]unsafe.Pointer, capacity)
+	op.mask = capacity - 1
+	return op
+}
+
+func (op *Ring) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if op.Error() != nil {
+			return
+		}
+
+		for arriving := range in {
+			if !op.push(arriving) {
+				op.Error(fmt.Errorf("%w: ring at capacity", core.ErrShape))
+				return
+			}
+		}
+
+		for {
+			value, found := op.pop()
+
+			if !found {
+				return
+			}
+
+			if !yield(value) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Ring) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }
 
 /*
-MustNewRingBuffer creates an SPSC queue or panics for an invalid capacity.
+push publishes one value when capacity is available.
 */
-func MustNewRingBuffer[Value any](capacity uint64) *RingBuffer[Value] {
-	ring, err := NewRingBuffer[Value](capacity)
-
-	if err != nil {
-		panic(err)
-	}
-
-	return ring
-}
-
-/*
-Push publishes one value when capacity is available.
-*/
-func (ring *RingBuffer[Value]) Push(value Value) bool {
-	if ring == nil {
-		return false
-	}
-
-	head := ring.head.Load()
+func (op *Ring) push(value unsafe.Pointer) bool {
+	head := op.head.Load()
 	nextHead := head + 1
-	capacity := uint64(len(ring.buffer))
+	capacity := uint64(len(op.buffer))
 
-	if nextHead-ring.producerTailCache > capacity {
-		ring.producerTailCache = ring.tail.Load()
+	if nextHead-op.producerTailCache > capacity {
+		op.producerTailCache = op.tail.Load()
 
-		if nextHead-ring.producerTailCache > capacity {
+		if nextHead-op.producerTailCache > capacity {
 			return false
 		}
 	}
 
-	ring.buffer[head&ring.mask] = value
-	ring.head.Store(nextHead)
+	op.buffer[head&op.mask] = value
+	op.head.Store(nextHead)
 
 	return true
 }
 
 /*
-Pop consumes one value when the ring is not empty.
+pop consumes one value when the ring is not empty.
 */
-func (ring *RingBuffer[Value]) Pop() (Value, bool) {
-	var zero Value
+func (op *Ring) pop() (unsafe.Pointer, bool) {
+	var zero unsafe.Pointer
 
-	if ring == nil {
-		return zero, false
-	}
+	tail := op.tail.Load()
 
-	tail := ring.tail.Load()
+	if tail == op.consumerHeadCache {
+		op.consumerHeadCache = op.head.Load()
 
-	if tail == ring.consumerHeadCache {
-		ring.consumerHeadCache = ring.head.Load()
-
-		if tail == ring.consumerHeadCache {
+		if tail == op.consumerHeadCache {
 			return zero, false
 		}
 	}
 
-	index := tail & ring.mask
-	value := ring.buffer[index]
-	ring.buffer[index] = zero
-	ring.tail.Store(tail + 1)
+	index := tail & op.mask
+	value := op.buffer[index]
+	op.buffer[index] = zero
+	op.tail.Store(tail + 1)
 
 	return value, true
-}
-
-/*
-Capacity returns the fixed number of queue positions.
-*/
-func (ring *RingBuffer[Value]) Capacity() uint64 {
-	if ring == nil {
-		return 0
-	}
-
-	return uint64(len(ring.buffer))
-}
-
-/*
-Len returns an instantaneous queue depth.
-*/
-func (ring *RingBuffer[Value]) Len() uint64 {
-	if ring == nil {
-		return 0
-	}
-
-	return ring.head.Load() - ring.tail.Load()
 }

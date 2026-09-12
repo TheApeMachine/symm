@@ -1,31 +1,40 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Convert owns one representation change. What it hands over is each arrival
-expressed as U.
+Convert owns one representation pass-through on the wire.
 */
-type Convert[A, B core.Numeric] struct {
-	core.Base[A, B]
+type Convert struct {
+	err error
 }
 
-func NewConvert[A, B core.Numeric]() *Convert[A, B] {
-	return &Convert[A, B]{}
+func NewConvert() core.Primitive {
+	return &Convert{}
 }
 
-func (op *Convert[A, B]) Next(
-	in iter.Seq[core.Primitive[A, A]],
-) iter.Seq[core.Primitive[B, B]] {
-	return func(yield func(core.Primitive[B, B]) bool) {
+func (op *Convert) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(B(arriving.Read()))) {
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Convert) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

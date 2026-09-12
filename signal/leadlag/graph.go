@@ -2,9 +2,11 @@ package leadlag
 
 import (
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type pairObservation struct {
@@ -12,8 +14,13 @@ type pairObservation struct {
 }
 
 type pipeline struct {
-	histories  [3]*adaptive.Baseline
-	velocities [2]temporal.Velocity
+	histories  [3]core.Primitive
+	velocities [2]core.Primitive
+	lag        adaptive.BaselineReading
+	gain       adaptive.BaselineReading
+	corr       adaptive.BaselineReading
+	lagVel     temporal.VelocityReading
+	gainVel    temporal.VelocityReading
 }
 
 const (
@@ -23,28 +30,58 @@ const (
 )
 
 func newPipeline() *pipeline {
-	return &pipeline{histories: [3]*adaptive.Baseline{
-		adaptive.NewBaseline(adaptive.NewWindow()),
-		adaptive.NewBaseline(adaptive.NewWindow()),
-		adaptive.NewBaseline(adaptive.NewWindow()),
-	}}
+	return &pipeline{
+		histories:  [3]core.Primitive{adaptive.NewBaseline(adaptive.NewWindow()), adaptive.NewBaseline(adaptive.NewWindow()), adaptive.NewBaseline(adaptive.NewWindow())},
+		velocities: [2]core.Primitive{temporal.NewVelocity(), temporal.NewVelocity()},
+	}
 }
 
 func (pipeline *pipeline) Observe(pair pairObservation, at int64) {
 	values := [3]float64{pair.Lag, pair.AbsoluteGain, pair.Correlation}
+
 	for index, value := range values {
-		pipeline.histories[index].Observe(value)
+		readingEval := transport.NewEvaluate(pipeline.histories[index])
+		var reading adaptive.BaselineReading
+
+		for out := range readingEval.Next(transport.NewValues(value).Next(nil)) {
+			reading = *(*adaptive.BaselineReading)(out)
+		}
+
+		switch index {
+		case lagHistory:
+			pipeline.lag = reading
+		case gainHistory:
+			pipeline.gain = reading
+		case correlationHistory:
+			pipeline.corr = reading
+		}
 	}
-	pipeline.velocities[lagHistory].Observe(values[lagHistory], at)
-	pipeline.velocities[gainHistory].Observe(values[gainHistory], at)
+
+	pipeline.lagVel = velocityReading(pipeline.velocities[lagHistory], temporal.Observation{Value: values[lagHistory], At: at})
+	pipeline.gainVel = velocityReading(pipeline.velocities[gainHistory], temporal.Observation{Value: values[gainHistory], At: at})
+}
+
+/*
+velocityReading drives one observation through a Velocity primitive and
+returns its reading.
+*/
+func velocityReading(velocity core.Primitive, observation temporal.Observation) temporal.VelocityReading {
+	readingEval := transport.NewEvaluate(velocity)
+	var reading temporal.VelocityReading
+
+	for out := range readingEval.Next(transport.NewValues(observation).Next(nil)) {
+		reading = *(*temporal.VelocityReading)(out)
+	}
+
+	return reading
 }
 
 func (pipeline *pipeline) project(pair nmcorrelation.LeadLagReading, fisher nmcorrelation.FisherReading, resolution, spanSeconds float64) data.ProjectionInput {
-	lag := pipeline.histories[lagHistory].Reading
-	gain := pipeline.histories[gainHistory].Reading
-	corr := pipeline.histories[correlationHistory].Reading
-	lagVel := pipeline.velocities[lagHistory].Reading
-	gainVel := pipeline.velocities[gainHistory].Reading
+	lag := pipeline.lag
+	gain := pipeline.gain
+	corr := pipeline.corr
+	lagVel := pipeline.lagVel
+	gainVel := pipeline.gainVel
 	values := map[string]float64{
 		"contemporaneous_correlation":   pair.Contemporaneous,
 		"best_lag_correlation":          pair.Correlation,

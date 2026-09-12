@@ -37,14 +37,14 @@ accepted, so this finite partition problem needs no chosen iteration count or
 market threshold. It finds a local optimum, not a claimed global optimum.
 */
 func (regions *regions) form(grid *Space) {
-	regions.membership = make([]int, len(grid.Columns))
-	counts := make([]int, len(grid.Columns))
+	regions.membership = make([]int, len(grid.columns))
+	counts := make([]int, len(grid.columns))
 
 	for column := range regions.membership {
 		regions.membership[column] = column
 		counts[column] = 1
 	}
-	scores := make([]float64, len(grid.Columns))
+	scores := make([]float64, len(grid.columns))
 	const maxFormIterations = 100
 
 	for iteration := 0; iteration < maxFormIterations; iteration++ {
@@ -114,81 +114,69 @@ func (regions *regions) form(grid *Space) {
 	}
 }
 
-/* Activity exposes borrowed quality-conditioned values for one context. */
-func (grid *Space) Activity(label string) ([]float64, []float64, error) {
-	grid.mu.RLock()
-	defer grid.mu.RUnlock()
+/* regionsOf measures the active region projection of one context. */
+func (op *Space) regionsOf(label string) ([]Region, uint64, error) {
+	op.mu.Lock()
+	defer op.mu.Unlock()
 
-	row, exists := grid.rowIndex[label]
-
-	if !exists {
-		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "grid: unknown context "+label, nil))
-	}
-	return slices.Clone(grid.activations[row]), slices.Clone(grid.qualities[row]), nil
+	return op.regionsLocked(label)
 }
 
-/*
-Regions measures activation within the completed partition. Region identities
-and membership survive missing or quiet readings. The returned active sequence
-is borrowed storage; Impulse makes the immutable event-owned copy.
-*/
-func (grid *Space) Regions(label string) ([]Region, uint64, error) {
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
-
-	return grid.regionsLocked(label)
-}
-
-func (grid *Space) regionsLocked(label string) ([]Region, uint64, error) {
-	row, exists := grid.rowIndex[label]
+func (op *Space) regionsLocked(label string) ([]Region, uint64, error) {
+	row, exists := op.rowIndex[label]
 
 	if !exists {
 		return nil, 0, errnie.Error(errnie.Err(errnie.NotFound, "grid: unknown context "+label, nil))
 	}
 
-	if !grid.Formed {
-		return nil, grid.versions[row], nil
+	if !op.formed {
+		return nil, op.versions[row], nil
 	}
-	regions := &grid.regions
-	regions.output = slices.Grow(regions.output[:0], len(regions.anchors))[:len(regions.anchors)]
+	held := &op.regions
+	held.output = slices.Grow(held.output[:0], len(held.anchors))[:len(held.anchors)]
 
-	for index, anchor := range regions.anchors {
-		regions.output[index] = Region{ID: uint64(anchor + 1)}
+	for index, anchor := range held.anchors {
+		held.output[index] = Region{ID: uint64(anchor + 1)}
 	}
 
-	for column, community := range regions.membership {
-		if community < 0 || community >= len(regions.output) {
+	for column, community := range held.membership {
+		if community < 0 || community >= len(held.output) {
 			return nil, 0, errnie.Error(errnie.Err(
 				errnie.Internal,
 				"grid: region membership does not match the formed partition",
 				nil,
 			))
 		}
-		region := &regions.output[community]
+		region := &held.output[community]
 		region.Members++
 
-		if !grid.Present[row][column] || grid.baselines[row][column] == nil {
+		if !op.present[row][column] || op.baselines[row][column] == nil {
 			continue
 		}
-		energy := grid.activations[row][column] * grid.activations[row][column]
-		orientation := grid.graph[regions.anchors[community]][column].orientation()
+		energy := op.activations[row][column] * op.activations[row][column]
+		orientation := op.graph[held.anchors[community]][column].orientation()
 		region.Strength += energy
-		region.Authority += energy * grid.qualities[row][column]
-		region.Level += energy * orientation * grid.baselines[row][column].Reading.ZScore
-		region.Change += energy * orientation * grid.activations[row][column]
+		region.Authority += energy * op.qualities[row][column]
+		region.Level += energy * orientation * op.zscores[row][column]
+		region.Change += energy * orientation * op.activations[row][column]
 	}
 
-	for index := range regions.output {
-		region := &regions.output[index]
+	for index := range held.output {
+		region := &held.output[index]
 
 		if region.Strength > 0 {
 			region.Authority /= region.Strength
 			region.Level /= region.Strength
 			region.Change /= region.Strength
 		}
-		region.Condition = ConditionToken(region.ID, region.Level, region.Change)
+		token, err := conditionToken(region.ID, region.Level, region.Change)
+
+		if err != nil {
+			return nil, 0, err
+		}
+		region.Condition = token
 	}
-	return regions.active(), grid.versions[row], nil
+	return held.active(), op.versions[row], nil
 }
 
 /* active selects the stronger activation class without changing membership. */

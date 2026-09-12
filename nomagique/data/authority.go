@@ -1,7 +1,9 @@
 package data
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
@@ -14,46 +16,82 @@ estimated reading with unknown SNR, .1 for defined non-positive SNR. They
 are retained compatibility policy, not calibrated probabilities.
 */
 type Authority struct {
-	core.Base[QualityReading, float64]
-	evidence *equation.EvidenceAuthority
-	unknown  float64
-	zero     float64
+	err       error
+	authority core.Primitive
+	unknown   float64
+	zero      float64
+	out       float64
 }
 
-func NewAuthority() *Authority {
+/*
+NewAuthority creates the evidence-authority weighting primitive over quality
+readings.
+*/
+func NewAuthority() core.Primitive {
 	return &Authority{
-		evidence: equation.NewEvidenceAuthority(),
-		unknown:  0.5,
-		zero:     0.1,
+		authority: equation.NewEvidenceAuthority(),
+		unknown:   0.5,
+		zero:      0.1,
 	}
 }
 
-func (op *Authority) Next(
-	in iter.Seq[core.Primitive[QualityReading, QualityReading]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
+/*
+Next receives *QualityReading payloads and yields a *float64 authority weight
+for each.
+*/
+func (op *Authority) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value, err := op.Weight(arriving.Read())
+			reading := (*QualityReading)(arriving)
+			value, err := op.weight(*reading)
 
 			if err != nil {
 				op.Error(err)
 				return
 			}
 
-			if !yield(op.Carrier(value)) {
+			op.out = value
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (op *Authority) Weight(reading QualityReading) (float64, error) {
-	return transport.Evaluate(op.evidence, transport.Values(equation.EvidenceAuthorityInput{
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *Authority) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+weight drives the canonical evidence-authority equation for one reading.
+*/
+func (op *Authority) weight(reading QualityReading) (float64, error) {
+	var value float64
+
+	for out := range op.authority.Next(transport.NewValues(equation.EvidenceAuthorityInput{
 		Estimated:  reading.Estimated,
 		SNRDefined: reading.SNRDefined,
 		SNR:        reading.SNR,
 		Maturity:   reading.Maturity,
 		Unknown:    op.unknown,
 		Zero:       op.zero,
-	}))
+	}).Next(nil)) {
+		value = *(*float64)(out)
+	}
+
+	if err := op.authority.Error(); err != nil {
+		return 0, err
+	}
+
+	return value, nil
 }

@@ -5,18 +5,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func ticker(symbol string, price float64, at time.Time) kraken.TickerData {
-	return kraken.TickerData{
-		Symbol:    symbol,
-		Last:      decimal.NewFromFloat64(price),
-		Timestamp: at,
+/*
+tick builds the measurement the workload's data management would hand the
+signal: the feed writes the last price it observed, if it observed one.
+*/
+func tick(symbol string, price float64, at time.Time) *data.Measurement[float64] {
+	m := data.NewMeasurement[float64]("correlation", map[string]data.Metric[float64]{})
+	m.Label, m.At, m.From = symbol, at, at
+
+	if price >= 0 {
+		m.Metrics["last_price"] = data.Metric[float64]{Label: "last_price", Raw: price}
 	}
+
+	return m
 }
 
 func timestamp(second int64) time.Time {
@@ -27,7 +32,7 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 	measurements := make([]*data.Measurement[float64], 0, len(prices))
 
 	for index, price := range prices {
-		measurements = append(measurements, entity.Step(ticker(
+		measurements = append(measurements, entity.Step(tick(
 			symbol, price, timestamp(int64(index)+1),
 		)))
 	}
@@ -37,10 +42,10 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 
 func TestTickerStep(t *testing.T) {
 	Convey("Given a correlation ticker-path instrument", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 
 		Convey("the first tick yields one measurement with no warmup", func() {
-			measurement := entity.Step(ticker("BTC/USD", 100.0, timestamp(1)))
+			measurement := entity.Step(tick("BTC/USD", 100.0, timestamp(1)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -53,34 +58,31 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("a quoted market with no recent trade does not enter the price path", func() {
-			untraded := ticker("CORN/USD", 0, timestamp(1))
-			untraded.Bid = decimal.NewFromFloat64(0.02015)
-			untraded.Ask = decimal.NewFromFloat64(0.04414)
+			untraded := tick("CORN/USD", 0, timestamp(1))
 
 			measurement := entity.Step(untraded)
 
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics, ShouldNotContainKey, "last_price")
-			So(measurement.Metrics, ShouldNotContainKey, "observation_count")
+			So(measurement.Metrics["last_price"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["observation_count"].Raw, ShouldEqual, 0.0)
 			So(measurement.Maturity, ShouldEqual, 0.0)
 			So(measurement.Provenance["last_trade_price_state"], ShouldEqual, "unobserved")
 
-			observed := entity.Step(ticker("CORN/USD", 0.03, timestamp(2)))
-			untraded.Timestamp = timestamp(3)
-			unobservedAgain := entity.Step(untraded)
-			observedAgain := entity.Step(ticker("CORN/USD", 0.033, timestamp(4)))
+			observed := entity.Step(tick("CORN/USD", 0.03, timestamp(2)))
+			unobservedAgain := entity.Step(tick("CORN/USD", 0, timestamp(3)))
+			observedAgain := entity.Step(tick("CORN/USD", 0.033, timestamp(4)))
 
 			So(observed.Err, ShouldBeNil)
 			So(observed.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
 			So(observed.Metrics["last_price"].Raw, ShouldEqual, 0.03)
 			So(unobservedAgain.Err, ShouldBeNil)
-			So(unobservedAgain.Metrics, ShouldNotContainKey, "observation_count")
+			So(unobservedAgain.Metrics["observation_count"].Raw, ShouldEqual, 0.0)
 			So(observedAgain.Err, ShouldBeNil)
 			So(observedAgain.Metrics["observation_count"].Raw, ShouldEqual, 2.0)
 		})
 
-		Convey("a negative last price remains invalid", func() {
-			measurement := entity.Step(ticker("BTC/USD", -1, timestamp(1)))
+		Convey("a measurement without a price fails the gate", func() {
+			measurement := entity.Step(tick("BTC/USD", -1, timestamp(1)))
 
 			So(measurement.Err, ShouldNotBeNil)
 		})
@@ -140,14 +142,27 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("time regression surfaces as zero support without error", func() {
-			entity.Step(ticker("BTC/USD", 100.0, timestamp(2)))
+			entity.Step(tick("BTC/USD", 100.0, timestamp(2)))
 
-			measurement := entity.Step(ticker("BTC/USD", 101.0, timestamp(1)))
+			measurement := entity.Step(tick("BTC/USD", 101.0, timestamp(1)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metadata[data.MetadataSupport], ShouldEqual, 0)
 			So(measurement.Provenance["event_time_state"], ShouldEqual, "regressed")
+		})
+
+		Convey("Register declares the full metric schema without values", func() {
+			measurement := entity.Register()
+
+			So(measurement.ID, ShouldEqual, -1)
+			So(measurement.Metrics, ShouldContainKey, "last_price")
+			So(measurement.Metrics, ShouldContainKey, "signed_correlation")
+
+			for label, metric := range measurement.Metrics {
+				So(label, ShouldEqual, metric.Label)
+				So(metric.Raw, ShouldEqual, 0.0)
+			}
 		})
 	})
 }
@@ -161,14 +176,14 @@ cost here means a ~1s avg on the live diagnostics is contention, not intrinsic
 compute.
 */
 func BenchmarkTickerCrossSectionStep(b *testing.B) {
-	entity := NewTicker()
+	entity := NewTicker(b.Context())
 
 	// Prime every symbol's path to steady-state capacity (64 samples) so the
 	// cross-section cost reflects a fully-warmed universe, not cold-start.
 	for s := 0; s < benchmarkSymbols; s++ {
 		symbol := benchmarkSymbol(s)
 		for i := 0; i < benchmarkWarmup; i++ {
-			entity.Step(ticker(symbol, 100.0+float64(i), timestamp(int64(i)+1)))
+			entity.Step(tick(symbol, 100.0+float64(i), timestamp(int64(i)+1)))
 		}
 	}
 
@@ -178,7 +193,7 @@ func BenchmarkTickerCrossSectionStep(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		entity.Step(ticker(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))
+		entity.Step(tick(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))
 		i++
 	}
 }

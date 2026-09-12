@@ -1,6 +1,7 @@
 package relation
 
 import (
+	"strings"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/data"
@@ -32,28 +33,33 @@ type Observation struct {
 	// measured zero departure is a non-nil pointer to zero. Undefined is
 	// never zero.
 	SNR *float64
-	// MeasurementID is the originating measurement identifier.
-	MeasurementID string
+	// MeasurementID is the originating measurement identifier: the register
+	// slot the producing node owns.
+	MeasurementID int
 }
 
 /*
-AppendMeasurement splits one data.Measurement into per-coordinate
-Observations. Every valid metric becomes an independent observational fact;
-nothing is collapsed into a signal-level scalar. A measurement carrying an
-error is rejected as a whole.
+splitMeasurement splits one data.Measurement into per-coordinate Observations.
+Every valid metric becomes an independent observational fact; nothing is
+collapsed into a signal-level scalar. A measurement carrying an error is
+rejected as a whole.
 */
-func AppendMeasurement(
+func splitMeasurement(
 	measurement *data.Measurement[float64],
 	epoch uint64,
-) []Observation {
-	if measurement == nil || measurement.Err != nil {
-		return nil
+) ([]Observation, error) {
+	if measurement == nil {
+		return nil, nil
+	}
+
+	if measurement.Err != nil {
+		return nil, measurement.Err
 	}
 
 	observations := make([]Observation, 0, len(measurement.Metrics))
 
 	for label, metric := range measurement.Metrics {
-		metricName, side := ParseMetricSide(label)
+		metricName, side := parseMetricSide(label)
 
 		var snr *float64
 
@@ -82,5 +88,19 @@ func AppendMeasurement(
 		})
 	}
 
-	return observations
+	return observations, nil
+}
+
+/*
+parseMetricSide splits a projected metric label into its base metric and side
+suffix. The signal boundary keys metrics as "metric" or "metric:side", so the
+first colon separates the side suffix; namespaced metric names use '/' and
+are never split.
+*/
+func parseMetricSide(label string) (metric string, side string) {
+	if index := strings.IndexByte(label, ':'); index >= 0 {
+		return label[:index], label[index+1:]
+	}
+
+	return label, ""
 }

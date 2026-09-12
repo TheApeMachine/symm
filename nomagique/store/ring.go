@@ -2,278 +2,270 @@ package store
 
 import (
 	container "container/ring"
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Ring plays out a ring of rings. Each Next run is one child sequence. When that
-child is spent the run ends, and the next Next begins at the parent's next
-child. The parent loops, so the sequences replay and their order never restarts.
+RingCommand is one intent against a Ring. Write appends one value or one
+nested child ring; WriteAt inserts at an offset slot relative to the current
+element; Advance moves the parent to the next child; Len asks for the parent
+length; Play asks for the current child's values in order (and advances the
+parent afterwards, exactly as one playback run always did).
 */
-type Ring[T any] struct {
-	core.Base[T, T]
-	parent *container.Ring
-	child  *container.Ring
-	played int
+type RingCommand[T any] struct {
+	Write     *RingValue[T]
+	WriteAt   *RingSlot[T]
+	Advance   bool
+	Len       bool
+	ChildLen  bool
+	Current   bool
+	Play      bool
 }
 
 /*
-NewRing begins an empty ring. Values are written into it in order, and the ring
-grows to hold exactly what was written — a ring sized up front would leave nil
-slots for anything the caller did not fill, and those are not values a run can
-carry.
+RingValue is a value written into a parent ring, which is either one T or one
+nested Ring primitive whose held container becomes the parent's element.
 */
-func NewRing[T any]() *Ring[T] {
+type RingValue[T any] struct {
+	Value *T
+	Child core.Primitive
+}
+
+/*
+RingSlot is a RingValue placed at an offset slot relative to the current
+element.
+*/
+type RingSlot[T any] struct {
+	Value RingValue[T]
+	Slot  int
+}
+
+/*
+RingResult carries the answer to one RingCommand.
+*/
+type RingResult[T any] struct {
+	Len      int
+	ChildLen int
+	Values   []T
+	Value    T
+	Has      bool
+}
+
+/*
+Ring owns a ring of rings. Writing builds it; Play plays one child sequence
+per command, then steps the parent so the sequences replay in order and their
+order never restarts. A ring grows to hold exactly what was written — a ring
+sized up front would leave nil slots for anything the caller did not fill,
+and those are not values a run can carry.
+*/
+type Ring[T any] struct {
+	err    error
+	parent *container.Ring
+	child  *container.Ring
+	played int
+	out    RingResult[T]
+}
+
+/*
+NewRing begins an empty ring primitive.
+*/
+func NewRing[T any]() core.Primitive {
 	return &Ring[T]{}
 }
 
 /*
-Held is the container this ring built, so one ring can be written into another.
+NewRingOver plays out a ring that is already built, which is what a caller
+with its own container has.
 */
-func (op *Ring[T]) Held() *container.Ring { return op.parent }
-
-/*
-NewRingOver plays out a ring that is already built, which is what a caller with
-its own container has.
-*/
-func NewRingOver[T any](parent *container.Ring) *Ring[T] {
+func NewRingOver[T any](parent *container.Ring) core.Primitive {
 	return &Ring[T]{parent: parent}
 }
 
-/*
-Write appends one value, and leaves the ring pointing at what was written
-first.
+func (op *Ring[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			command := (*RingCommand[T])(arriving)
+			op.out = RingResult[T]{}
 
-Position matters here: a ring has no beginning of its own, only the element a
-reader starts at, so the first value written is the one the first run plays.
-*/
-func (op *Ring[T]) Write(value any) {
-	held := container.New(1)
-
-	/*
-		A ring written into a ring is the container it built, not the primitive
-		that built it. That is what makes a ring of rings: the parent's every
-		element is a child ring, and Next reads it back as one.
-	*/
-	if child, nested := value.(interface{ Held() *container.Ring }); nested {
-		held.Value = child.Held()
-	}
-
-	if held.Value == nil {
-		held.Value = value
-	}
-
-	if op.parent == nil {
-		op.parent = held
-
-		return
-	}
-	// Link the new element in behind the current one, then step back to the
-	// first: Prev is where a ring's last element is, so writing there keeps
-	// the order the caller wrote in.
-	op.parent.Prev().Link(held)
-}
-
-func (op *Ring[T]) Next(
-	iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
-		if op.parent == nil {
-			return
-		}
-
-		child, held := op.parent.Value.(*container.Ring)
-
-		if !held || child == nil {
-			return
-		}
-
-		op.child, op.played = child, 0
-
-		for op.played < op.child.Len() {
-			value, ok := op.child.Value.(T)
-			op.child, op.played = op.child.Next(), op.played+1
-
-			if !ok {
+			if !op.apply(command) {
 				return
 			}
 
-			if !yield(op.Carrier(value)) {
+			if command.Play {
+				for index := range op.out.Values {
+					held := op.out.Values[index]
+
+					if !yield(unsafe.Pointer(&held)) {
+						return
+					}
+				}
+
+				continue
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
-
-		op.parent = op.parent.Next()
 	}
 }
 
 /*
-Len returns the number of elements in the parent ring.
+apply resolves one command against the ring, reporting false when the run
+must stop. The first value written is the element the first Play reads,
+because a ring has no beginning of its own, only the element a reader starts
+at.
 */
-func (op *Ring[T]) Len() int {
-	if op.parent == nil {
-		return 0
-	}
+func (op *Ring[T]) apply(command *RingCommand[T]) bool {
+	intents := 0
 
-	return op.parent.Len()
-}
-
-/*
-ChildLen returns the length of the child ring at the current parent position.
-*/
-func (op *Ring[T]) ChildLen() int {
-	if op.parent == nil {
-		return 0
-	}
-
-	child, held := op.parent.Value.(*container.Ring)
-
-	if !held || child == nil {
-		return 0
-	}
-
-	return child.Len()
-}
-
-/*
-CurrentChildValues returns all values from the child ring at the current parent position,
-preserving their original sequence.
-*/
-func (op *Ring[T]) CurrentChildValues() []T {
-	if op.parent == nil {
-		return nil
-	}
-
-	child, held := op.parent.Value.(*container.Ring)
-
-	if !held || child == nil {
-		return nil
-	}
-
-	length := child.Len()
-
-	if length == 0 {
-		return nil
-	}
-
-	values := make([]T, 0, length)
-	current := child
-
-	for range length {
-		if value, ok := current.Value.(T); ok {
-			values = append(values, value)
+	for _, held := range []bool{
+		command.Write != nil, command.WriteAt != nil,
+		command.Advance, command.Len, command.ChildLen, command.Current, command.Play,
+	} {
+		if held {
+			intents++
 		}
-
-		current = current.Next()
 	}
 
-	return values
-}
-
-/*
-Advance moves the parent ring forward to the next child sequence.
-*/
-func (op *Ring[T]) Advance() {
-	if op.parent != nil {
-		op.parent = op.parent.Next()
-	}
-}
-
-/*
-WriteAt inserts one value into the parent ring at an offset slot relative
-to the current element.
-*/
-func (op *Ring[T]) WriteAt(value any, slot int) {
-	held := container.New(1)
-
-	if child, nested := value.(interface{ Held() *container.Ring }); nested {
-		held.Value = child.Held()
+	if intents != 1 {
+		op.err = errors.Join(op.err, core.ErrShape)
+		return false
 	}
 
-	if held.Value == nil {
-		held.Value = value
-	}
-
-	if op.parent == nil {
-		op.parent = held
-
-		return
-	}
-
-	target := op.parent.Move(slot)
-	target.Link(held)
-}
-
-/*
-NextOffset plays the current child sequence starting from a specified offset.
-When that child is spent, the parent advances to the next child and loops.
-*/
-func (op *Ring[T]) NextOffset(
-	_ iter.Seq[core.Primitive[T, T]],
-	offset int,
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
-		if op.parent == nil {
-			return
-		}
-
-		child, held := op.parent.Value.(*container.Ring)
-
-		if !held || child == nil {
-			return
-		}
-
-		childLen := child.Len()
-
-		if childLen == 0 {
+	switch {
+	case command.Write != nil:
+		op.link(op.element(*command.Write), 0, false)
+	case command.WriteAt != nil:
+		op.link(op.element(command.WriteAt.Value), command.WriteAt.Slot, true)
+	case command.Advance:
+		if op.parent != nil {
 			op.parent = op.parent.Next()
-
-			return
 		}
-
-		if offset < 0 {
-			offset = 0
+	case command.Len:
+		if op.parent != nil {
+			op.out.Len = op.parent.Len()
 		}
-
-		if offset >= childLen {
-			offset = childLen - 1
+	case command.ChildLen:
+		if child, held := op.currentChild(); held {
+			op.out.ChildLen = child.Len()
 		}
-
-		op.child = child.Move(offset)
-		op.played = offset
-
-		for op.played < childLen {
-			value, ok := op.child.Value.(T)
-			op.child, op.played = op.child.Next(), op.played+1
-
-			if !ok {
-				return
-			}
-
-			if !yield(op.Carrier(value)) {
-				return
+	case command.Current:
+		if op.parent != nil {
+			if value, ok := op.parent.Value.(T); ok {
+				op.out.Value, op.out.Has = value, true
 			}
 		}
-
-		op.parent = op.parent.Next()
+	case command.Play:
+		if !op.play() {
+			return false
+		}
 	}
+
+	return true
 }
 
 /*
-CurrentValue returns the value at the current parent position, if present.
+currentChild reads the child ring at the parent's current position.
 */
-func (op *Ring[T]) CurrentValue() (T, bool) {
-	var zero T
-
+func (op *Ring[T]) currentChild() (*container.Ring, bool) {
 	if op.parent == nil {
-		return zero, false
+		return nil, false
 	}
 
-	if val, ok := op.parent.Value.(T); ok {
-		return val, true
+	child, held := op.parent.Value.(*container.Ring)
+
+	return child, held && child != nil
+}
+
+/*
+play reads the current child sequence into the result, then steps the parent,
+so the next Play begins at the next child.
+*/
+func (op *Ring[T]) play() bool {
+	if op.parent == nil {
+		return true
 	}
 
-	return zero, false
+	child, held := op.parent.Value.(*container.Ring)
+
+	if !held || child == nil {
+		return true
+	}
+
+	op.child, op.played = child, 0
+	op.out.Values = make([]T, 0, child.Len())
+
+	for op.played < op.child.Len() {
+		value, ok := op.child.Value.(T)
+		op.child, op.played = op.child.Next(), op.played+1
+
+		if !ok {
+			op.err = errors.Join(op.err, core.ErrShape)
+			return false
+		}
+
+		op.out.Values = append(op.out.Values, value)
+	}
+
+	op.parent = op.parent.Next()
+
+	return true
+}
+
+/*
+element builds the container element one RingValue describes: a nested ring
+primitive contributes the container it built, which is what makes a ring of
+rings.
+*/
+func (op *Ring[T]) element(value RingValue[T]) *container.Ring {
+	held := container.New(1)
+
+	if value.Child != nil {
+		if child, nested := value.Child.(*Ring[T]); nested && child.parent != nil {
+			held.Value = child.parent
+		}
+	}
+
+	if held.Value == nil && value.Value != nil {
+		held.Value = *value.Value
+	}
+
+	return held
+}
+
+/*
+link places one element. Appending links the new element in behind the
+current one and steps back to the first — Prev is where a ring's last element
+is, so writing there keeps the order the caller wrote in. A slotted write
+inserts at the offset instead.
+*/
+func (op *Ring[T]) link(held *container.Ring, slot int, atSlot bool) {
+	if op.parent == nil {
+		op.parent = held
+
+		return
+	}
+
+	if !atSlot {
+		op.parent.Prev().Link(held)
+
+		return
+	}
+
+	op.parent.Move(slot).Link(held)
+}
+
+func (op *Ring[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -2,11 +2,14 @@ package resonance
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"iter"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 
@@ -14,12 +17,12 @@ import (
 
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
-
 
 /*
 Solver orchestrates Predictive Coding across the multi-sensory microstructure stream.
@@ -68,7 +71,6 @@ type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
-	status        *runtime.Status
 	detectors     *sync.Map
 	standardizers *sync.Map
 	references    *sync.Map
@@ -124,7 +126,6 @@ func NewSolver(
 	return &Solver{
 		ctx:           ctx,
 		cancel:        cancel,
-		status:        runtime.NewStatus(),
 		detectors:     &sync.Map{},
 		standardizers: &sync.Map{},
 		references:    &sync.Map{},
@@ -176,11 +177,6 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		solver.observe(envelope)
 	}
 
-	// The observer has synchronously consumed the live manifold while this
-	// handler owns it. Downstream rings retain the scalar artifact, never the
-	// mutable coder that the next step will advance.
-	envelope.Resonance.Manifold = nil
-
 	return envelope
 }
 
@@ -188,7 +184,6 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 func (solver *Solver) SetObserver(observer func(*types.Envelope)) {
 	solver.observe = observer
 }
-
 
 /*
 Update steps one feature detector for one symbol and publishes the settled
@@ -242,7 +237,7 @@ func (solver *Solver) Update(
 
 	coder, ok := detector.(*learning.PredictiveCoder)
 
-	if !ok || coder == nil {
+	if !ok {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("resonance: detector step failed for %s", symbolName),
@@ -257,7 +252,7 @@ func (solver *Solver) Update(
 
 	stepStarted := time.Now()
 
-	out, err := coder.Step(learning.PredictiveInput{
+	out, err := stepCoder(coder, learning.PredictiveInput{
 		Features:     features,
 		Reference:    midpoint,
 		HasReference: hasReference,
@@ -425,33 +420,99 @@ symbols priced orders of magnitude apart. Before the noise estimate firms up the
 deadband is zero and the head learns raw direction, which recursive least
 squares averages out.
 */
-func (solver *Solver) directionalTarget(symbolName string) learning.TargetTransform {
-	return func(current float64, past float64) (float64, bool) {
-		if current <= 0 || past <= 0 {
-			return 0, false
-		}
+func (solver *Solver) directionalTarget(symbolName string) core.Primitive {
+	return &logDirectionalTarget{
+		deadband: func() float64 {
+			loader, found := solver.returnNoise.Load(symbolName)
+			if !found {
+				return 0
+			}
 
-		logReturn := math.Log(current / past)
-		deadband := 0.0
+			tracker, valid := loader.(*returnNoiseTracker)
+			if !valid {
+				return 0
+			}
 
-		if loader, found := solver.returnNoise.Load(symbolName); found {
-			if tracker, valid := loader.(*returnNoiseTracker); valid {
-				if scale, ready := tracker.scale(); ready {
-					deadband = scale
-				}
+			if scale, ready := tracker.scale(); ready {
+				return scale
+			}
+
+			return 0
+		},
+	}
+}
+
+/*
+logDirectionalTarget classifies the log return between one issued reference
+and its resolved reference, deadbanded live by the symbol's own measured
+per-step log-return noise. A call therefore requires the cumulative move to
+exceed the symbol's own recent noise, which keeps the same target honest for
+symbols priced orders of magnitude apart.
+*/
+type logDirectionalTarget struct {
+	err      error
+	deadband func() float64
+	out      float64
+}
+
+func (op *logDirectionalTarget) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			sample := (*learning.Observation)(arriving)
+
+			if sample.Current <= 0 || sample.Past <= 0 {
+				op.Error(fmt.Errorf(
+					"%w: resonance: directional target references must be positive",
+					core.ErrDomain,
+				))
+				return
+			}
+
+			logReturn := math.Log(sample.Current / sample.Past)
+
+			if math.Abs(logReturn) <= op.deadband() {
+				op.out = 0
+			} else if logReturn > 0 {
+				op.out = 1
+			} else {
+				op.out = -1
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
 			}
 		}
-
-		if math.Abs(logReturn) <= deadband {
-			return 0, true
-		}
-
-		if logReturn > 0 {
-			return 1, true
-		}
-
-		return -1, true
 	}
+}
+
+func (op *logDirectionalTarget) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+stepCoder drives one observation through the coder primitive and returns its
+published reading.
+*/
+func stepCoder(
+	coder core.Primitive,
+	input learning.PredictiveInput,
+) (learning.PredictiveOutput, error) {
+	evaluation := transport.NewEvaluate(coder)
+	var output learning.PredictiveOutput
+
+	for out := range evaluation.Next(transport.NewValues(input).Next(nil)) {
+		output = *(*learning.PredictiveOutput)(out)
+	}
+
+	return output, evaluation.Error()
 }
 
 func (solver *Solver) scorer(symbol string) *featureScorer {
@@ -475,8 +536,9 @@ preventing variance collapse from repeated identical pseudo-observations.
 */
 type featureScorer struct {
 	mu           sync.Mutex
-	pipelines    [11]*adaptive.Baseline
+	pipelines    [11]core.Primitive
 	standardized [11]float64
+	lastReading  [11]adaptive.BaselineReading
 }
 
 func newFeatureScorer() *featureScorer {
@@ -509,14 +571,54 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement[float64]) [
 			continue
 		}
 
-		reading := scorer.pipelines[index].Observe(val)
-		authority := measurement.Authority()
-		scorer.standardized[index] = reading.ZScore * authority * reading.Maturity
+		var reading adaptive.BaselineReading
+
+		for out := range scorer.pipelines[index].Next(transport.NewOne(unsafe.Pointer(&val)).Next(nil)) {
+			reading = *(*adaptive.BaselineReading)(out)
+		}
+
+		scorer.lastReading[index] = reading
+		scorer.standardized[index] = reading.ZScore * authorityOf(measurement) * reading.Maturity
 	}
 
 	features := make([]float64, 11)
 	copy(features, scorer.standardized[:])
 	return features
+}
+
+/*
+authorityOf derives one measurement's evidence authority weight through the
+canonical finalizer, quality, and authority primitives. Finalization runs when
+the measurement carries no derived quality yet. A failed derivation inhibits
+the observation entirely, matching the old zero-authority behavior.
+*/
+func authorityOf(measurement *data.Measurement[float64]) float64 {
+	if !measurement.SNRDefined && measurement.Maturity == 0 {
+		held := measurement
+
+		for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&held)).Next(nil)) {
+		}
+	}
+
+	quality := data.QualityReading{
+		SNR:        measurement.SNR,
+		SNRDefined: measurement.SNRDefined,
+		Estimated:  measurement.Estimated,
+		Maturity:   measurement.Maturity,
+	}
+
+	evidence := transport.NewEvaluate(data.NewAuthority())
+	var authority float64
+
+	for out := range evidence.Next(transport.NewOne(unsafe.Pointer(&quality)).Next(nil)) {
+		authority = *(*float64)(out)
+	}
+
+	if err := evidence.Error(); err != nil {
+		return 0
+	}
+
+	return authority
 }
 
 /*
@@ -542,13 +644,13 @@ func resonanceDynamics(
 }
 
 /*
-publishReturns stores the manifold and its calibrated outputs on the symbol so
-the graph and causal stages can build real predictive evidence. The return
+publishReturns stores the coder's calibrated outputs on the symbol so the
+graph and causal stages can build real predictive evidence. The return
 forecast carries the coder's reward prediction; it is a direction readout, not
-a priced return. The manifold is stored under the symbol key because that is
-the slot both downstream solvers load. The forecast and dynamics are published
-only once the head is calibrated, so the graph never sees a fabricated
-posterior before outcomes exist.
+a priced return. The coder's own manifold snapshot is stored under the symbol
+key because that is the slot both downstream solvers load. The forecast and
+dynamics are published only once the head is calibrated, so the graph never
+sees a fabricated posterior before outcomes exist.
 */
 func (solver *Solver) publishReturns(
 	symbol string,
@@ -556,14 +658,14 @@ func (solver *Solver) publishReturns(
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
 ) *types.ResonanceArtifact {
-	if symbol == "" || coder == nil || coder.Manifold() == nil {
+	if symbol == "" || coder == nil {
 		return nil
 	}
 
 	artifact := types.ResonanceArtifact{
 		Symbol:           symbol,
 		At:               at,
-		Manifold:         coder.Manifold(),
+		Snapshot:         out.Reading,
 		Dynamics:         resonanceDynamics(out.Dynamics),
 		ForwardCurve:     out.ForwardCurve,
 		ForwardRetention: out.ForwardRetention,
@@ -586,12 +688,10 @@ func (solver *Solver) publishReturns(
 	// withholds an output just because the head has not calibrated yet.
 	horizon := max(out.SupportedHorizon, 1)
 
-	forecasts, err := coder.Manifold().RolloutTaskForecast(horizon)
-
-	if err == nil && len(forecasts) > 0 {
+	if len(out.Forecast) > 0 {
 		// The last curve element is the supported horizon's cumulative
 		// directional prediction, which is the call the artifact carries.
-		forecast := forecasts[len(forecasts)-1]
+		forecast := out.Forecast[len(out.Forecast)-1]
 		call := 0.0
 
 		if forecast.Ready {

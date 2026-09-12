@@ -1,16 +1,16 @@
 package probability
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Reading is one simplex and its named readouts. There is no second Collection
-interface and no accessors that bypass Primitive delivery.
+Reading is one simplex and its named readouts.
 */
 type Reading struct {
 	Probabilities []float64
@@ -21,54 +21,76 @@ type Reading struct {
 }
 
 /*
-Distribution owns softmax then the winner, confidence, and ambiguity of that
-simplex.
+Distribution owns softmax then the winner, confidence, ambiguity, and sharpness.
 */
 type Distribution struct {
-	core.Base[float64, Reading]
+	err error
+	out Reading
 }
 
-func NewDistribution() *Distribution {
+func NewDistribution() core.Primitive {
 	return &Distribution{}
 }
 
-func (op *Distribution) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[Reading, Reading]] {
-	return func(yield func(core.Primitive[Reading, Reading]) bool) {
-		softmax := equation.NewSoftmax[float64]()
+func (op *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		softmax := NewSoftmax()
 		var probabilities []float64
 
-		for probability := range softmax.Next(in) {
-			probabilities = append(probabilities, probability.Read())
+		for pPtr := range softmax.Next(in) {
+			probabilities = append(probabilities, *(*float64)(pPtr))
 		}
 
 		if err := softmax.Error(); err != nil {
-			op.Error(err)
+			op.err = errors.Join(op.err, err)
 			return
 		}
 
-		winner, err := transport.Evaluate(equation.NewArgmax[float64](), transport.Values(probabilities...))
+		if len(probabilities) == 0 {
+			op.err = errors.Join(op.err, core.ErrShape)
+			return
+		}
+
+		winner := 0
+
+		for index, p := range probabilities {
+			if p > probabilities[winner] {
+				winner = index
+			}
+		}
+
+		ambiguityValEval := transport.NewEvaluate(NewAmbiguity())
+		var ambiguityVal float64
+
+		for out := range ambiguityValEval.Next(transport.NewValues(probabilities...).Next(nil)) {
+			ambiguityVal = *(*float64)(out)
+		}
+
+		err := ambiguityValEval.Error()
 
 		if err != nil {
-			op.Error(err)
+			op.err = errors.Join(op.err, err)
 			return
 		}
 
-		ambiguity := 0.0
-
-		for out := range NewAmbiguity().Next(transport.Values(probabilities...)) {
-			ambiguity = out.Read()
-		}
-
-		if !yield(op.Carrier(Reading{
+		op.out = Reading{
 			Probabilities: probabilities,
-			Winner:        winner.Index,
-			Confidence:    winner.Value,
-			Ambiguity:     ambiguity,
-			Sharpness:     1 - ambiguity,
-		})) {
-			return
+			Winner:        winner,
+			Confidence:    probabilities[winner],
+			Ambiguity:     ambiguityVal,
+			Sharpness:     1 - ambiguityVal,
+		}
+
+		yield(unsafe.Pointer(&op.out))
+	}
+}
+
+func (op *Distribution) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
+
+	return op.err
 }

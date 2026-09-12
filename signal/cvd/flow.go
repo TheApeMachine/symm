@@ -4,11 +4,13 @@ import (
 	"iter"
 	"math"
 	"time"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -24,11 +26,11 @@ type FlowInput struct {
 Flow owns the cumulative execution arithmetic for one symbol.
 */
 type Flow struct {
-	core.Base[FlowInput, data.ProjectionInput]
+	err                                        error
 	buyQty, sellQty, buyNotional, sellNotional float64
 	buyCount, sellCount                        float64
-	fraction                                   *adaptive.Baseline
-	velocity                                   *temporal.Velocity
+	fraction                                   core.Primitive
+	velocity                                   core.Primitive
 }
 
 func newFlowGraph() *Flow {
@@ -39,15 +41,28 @@ func newFlowGraph() *Flow {
 }
 
 func (op *Flow) Next(
-	in iter.Seq[core.Primitive[FlowInput, FlowInput]],
-) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
-	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(op.observe(arriving.Read()))) {
+			projected := op.observe(*(*FlowInput)(arriving))
+
+			if !yield(unsafe.Pointer(&projected)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Flow) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }
 
 func (op *Flow) observe(input FlowInput) data.ProjectionInput {
@@ -75,7 +90,7 @@ func (op *Flow) observe(input FlowInput) data.ProjectionInput {
 	elapsed := float64(input.At-input.From) / float64(time.Second)
 	signedCount := (op.buyCount - op.sellCount) / tradeCount
 	signedNet := net / gross
-	reading := op.fraction.Observe(signedNet)
+	reading := baselineReading(op.fraction, signedNet)
 
 	values["trade_count"] = tradeCount
 	values["trade_count:buy"] = op.buyCount
@@ -111,7 +126,7 @@ func (op *Flow) observe(input FlowInput) data.ProjectionInput {
 		values["net_notional_rate"] = net / elapsed
 		values["buy_notional_rate"] = op.buyNotional / elapsed
 		values["sell_notional_rate"] = op.sellNotional / elapsed
-		velocity := op.velocity.Observe(net/elapsed, input.At)
+		velocity := velocityReading(op.velocity, temporal.Observation{Value: net / elapsed, At: input.At})
 		values["net_notional_rate_velocity"] = velocity.Rate
 		flags["net_velocity_defined"] = velocity.Defined
 	}
@@ -160,4 +175,34 @@ func flowProjection() *data.Projection {
 		{Name: data.MetadataNoiseVariance, Path: []string{"fraction_variance"}, Defined: []string{"fraction_variance_defined"}},
 	}
 	return p
+}
+
+/*
+baselineReading drives one observation through a Baseline primitive and
+returns its reading.
+*/
+func baselineReading(baseline core.Primitive, value float64) adaptive.BaselineReading {
+	readingEval := transport.NewEvaluate(baseline)
+	var reading adaptive.BaselineReading
+
+	for out := range readingEval.Next(transport.NewValues(value).Next(nil)) {
+		reading = *(*adaptive.BaselineReading)(out)
+	}
+
+	return reading
+}
+
+/*
+velocityReading drives one observation through a Velocity primitive and
+returns its reading.
+*/
+func velocityReading(velocity core.Primitive, observation temporal.Observation) temporal.VelocityReading {
+	readingEval := transport.NewEvaluate(velocity)
+	var reading temporal.VelocityReading
+
+	for out := range readingEval.Next(transport.NewValues(observation).Next(nil)) {
+		reading = *(*temporal.VelocityReading)(out)
+	}
+
+	return reading
 }

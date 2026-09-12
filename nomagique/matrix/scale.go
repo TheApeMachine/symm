@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -18,32 +20,41 @@ type ScaleInput struct {
 Scale multiplies typed matrix coefficients by one scalar.
 */
 type Scale struct {
-	core.Base[ScaleInput, [][]float64]
+	err error
+	out [][]float64
 }
 
-func NewScale() *Scale {
+func NewScale() core.Primitive {
 	return &Scale{}
 }
 
-func (op *Scale) Next(
-	in iter.Seq[core.Primitive[ScaleInput, ScaleInput]],
-) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
-	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+func (op *Scale) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := arriving.Read()
-			scaled := make([][]float64, len(input.Values))
+			input := (*ScaleInput)(arriving)
+			op.out = make([][]float64, len(input.Values))
 
 			for row, values := range input.Values {
-				scaled[row] = make([]float64, len(values))
+				op.out[row] = make([]float64, len(values))
 
 				for column, value := range values {
-					scaled[row][column] = value * input.Factor
+					op.out[row][column] = value * input.Factor
 				}
 			}
 
-			if !yield(op.Carrier(scaled)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Scale) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

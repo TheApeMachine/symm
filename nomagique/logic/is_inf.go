@@ -1,8 +1,10 @@
 package logic
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -11,22 +13,34 @@ import (
 IsInf owns the infinity predicate. It reports whether an arrival is infinite,
 irrespective of sign.
 */
-type IsInf[U core.Floating] struct {
-	core.Base[U, bool]
+type IsInf struct {
+	err error
+	out bool
 }
 
-func NewIsInf[U core.Floating]() *IsInf[U] {
-	return &IsInf[U]{}
+func NewIsInf() core.Primitive {
+	return &IsInf{}
 }
 
-func (op *IsInf[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[bool, bool]] {
-	return func(yield func(core.Primitive[bool, bool]) bool) {
+func (op *IsInf) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(math.IsInf(float64(arriving.Read()), 0))) {
+			in := (*float64)(arriving)
+			op.out = math.IsInf(*in, 0)
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *IsInf) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

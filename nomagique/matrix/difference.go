@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -18,54 +20,58 @@ type DifferenceInput struct {
 Difference subtracts equally shaped matrices in typed coefficient storage.
 */
 type Difference struct {
-	core.Base[DifferenceInput, [][]float64]
+	err error
+	out [][]float64
 }
 
-func NewDifference() *Difference {
+func NewDifference() core.Primitive {
 	return &Difference{}
 }
 
-func (op *Difference) Next(
-	in iter.Seq[core.Primitive[DifferenceInput, DifferenceInput]],
-) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
-	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+func (op *Difference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			rows := op.Subtract(arriving.Read().Left, arriving.Read().Right)
+			input := (*DifferenceInput)(arriving)
 
-			if op.Error() != nil {
+			if len(input.Left) != len(input.Right) {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			if !yield(op.Carrier(rows)) {
+			op.out = make([][]float64, len(input.Left))
+			ok := true
+
+			for row, values := range input.Left {
+				if len(values) != len(input.Right[row]) {
+					op.Error(core.ErrShape)
+					ok = false
+					break
+				}
+
+				op.out[row] = make([]float64, len(values))
+
+				for column, value := range values {
+					op.out[row][column] = value - input.Right[row][column]
+				}
+			}
+
+			if !ok {
+				return
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-/*
-Subtract preserves both operands and rejects unequal shapes.
-*/
-func (op *Difference) Subtract(left, right [][]float64) [][]float64 {
-	if len(left) != len(right) {
-		op.Error(core.ErrShape)
-		return nil
-	}
-
-	rows := make([][]float64, len(left))
-
-	for row, values := range left {
-		if len(values) != len(right[row]) {
-			op.Error(core.ErrShape)
-			return nil
-		}
-
-		rows[row] = make([]float64, len(values))
-
-		for column, value := range values {
-			rows[row][column] = value - right[row][column]
+func (op *Difference) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
 
-	return rows
+	return op.err
 }

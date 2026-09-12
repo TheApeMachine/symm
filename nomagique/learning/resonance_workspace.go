@@ -26,11 +26,7 @@ type resonanceWorkspace struct {
 	temporalUpdates      []*mat.Dense
 	prevLatents          []*mat.VecDense
 	temporalSVDs         []mat.SVD
-	svdValues            []float64   // Top-layer SVD values slice for test/backwards-compatibility
 	layerSVDValues       [][]float64 // Per-layer SVD values
-
-	// Top-layer prior alias for test/backwards-compatibility
-	topPrior *mat.VecDense
 
 	// Inference settling buffers
 	grads       []*mat.VecDense
@@ -65,7 +61,6 @@ func newResonanceWorkspace(
 ) *resonanceWorkspace {
 	numLinks := len(arch) - 1
 	numLatents := len(arch) - 1
-	topDim := arch[len(arch)-1]
 
 	totalLatentDim := 0
 	for _, dim := range arch[1:] {
@@ -106,7 +101,6 @@ func newResonanceWorkspace(
 		prevLatents:          make([]*mat.VecDense, numLatents),
 		temporalSVDs:         make([]mat.SVD, numLatents),
 		layerSVDValues:       make([][]float64, numLatents),
-		svdValues:            make([]float64, topDim),
 		bottomUp:             make([]*mat.VecDense, len(arch)),
 		topDown:              make([]*mat.VecDense, len(arch)),
 		savedStates:          make([]*mat.VecDense, len(arch)),
@@ -137,8 +131,6 @@ func newResonanceWorkspace(
 			workspace.layerSVDValues[latentIndex] = make([]float64, layerDim)
 		}
 	}
-
-	workspace.topPrior = workspace.temporalPriors[numLatents-1]
 
 	for linkIndex := range numLinks {
 		rowDim := arch[linkIndex]

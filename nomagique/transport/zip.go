@@ -1,14 +1,15 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Pair is corresponding values from two runs. Zip does not compare, multiply, or
-interpret the pairing.
+Pair is corresponding values from two runs.
 */
 type Pair[T, U any] struct {
 	Left  T
@@ -16,18 +17,25 @@ type Pair[T, U any] struct {
 }
 
 /*
-Zip pairs corresponding yields from two runs. It stops when either run ends.
-Neither run is buffered into a collection first.
+Zip pairs corresponding yields from the inbound left run and the right run
+held at construction. It stops when either run ends.
 */
-func Zip[T, U any](
-	left iter.Seq[core.Primitive[T, T]],
-	right iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[Pair[T, U], Pair[T, U]]] {
-	return func(yield func(core.Primitive[Pair[T, U], Pair[T, U]]) bool) {
-		next, stop := iter.Pull(right)
-		defer stop()
+type Zip[T, U any] struct {
+	err   error
+	right iter.Seq[unsafe.Pointer]
+}
 
-		carrier := &core.Carrier[Pair[T, U]]{}
+/*
+NewZip instantiates a Zip Primitive holding the right run.
+*/
+func NewZip[T, U any](right iter.Seq[unsafe.Pointer]) core.Primitive {
+	return &Zip[T, U]{right: right}
+}
+
+func (op *Zip[T, U]) Next(left iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		next, stop := iter.Pull(op.right)
+		defer stop()
 
 		for arriving := range left {
 			other, ok := next()
@@ -36,12 +44,24 @@ func Zip[T, U any](
 				return
 			}
 
-			if !yield(carrier.Carrier(Pair[T, U]{
-				Left:  arriving.Read(),
-				Right: other.Read(),
-			})) {
+			pair := Pair[T, U]{
+				Left:  *(*T)(arriving),
+				Right: *(*U)(other),
+			}
+
+			if !yield(unsafe.Pointer(&pair)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Zip[T, U]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

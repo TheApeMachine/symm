@@ -5,17 +5,20 @@ import (
 	"iter"
 	"math"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-// Case defines the test configuration for any Primitive[T, U].
+// Case defines the test configuration for any Primitive.
 type Case[T, U any] struct {
 	Name string
 	Seed U
 	// Operation is the primitive under test.
-	Operation core.Primitive[T, U]
+	Operation core.Primitive
+	// Factory creates a fresh primitive instance under test.
+	Factory func() core.Primitive
 	// Reference defines the mathematical ground truth: how input T transforms accumulator U.
 	// For Add, this is: func(acc, val float64) float64 { return acc + val }
 	Reference func(current U, in T) U
@@ -33,13 +36,20 @@ type TableRow[T, U any] struct {
 // Check exercises independent delivery runs, multi-yield input, empty input,
 // nil input, and every IEEE exceptional value against the reference function.
 func Check[T, U any](t *testing.T, example Case[T, U]) {
+	getOp := func() core.Primitive {
+		if example.Factory != nil {
+			return example.Factory()
+		}
+		return example.Operation
+	}
+
 	Convey("Setup "+example.Name, t, func() {
-		op := example.Operation
+		op := getOp()
 
 		Convey("empty and nil input", func() {
 			emptySeq := SliceToSeq([]T{})
 			outSeq := op.Next(emptySeq)
-			actual := CollectSeq(outSeq)
+			actual := CollectSeq[U](outSeq)
 
 			So(len(actual), ShouldEqual, 0)
 			So(op.Error(), ShouldBeNil)
@@ -50,53 +60,45 @@ func Check[T, U any](t *testing.T, example Case[T, U]) {
 
 			for _, row := range table {
 				Convey(row.Name, func() {
-					// Reset operation state to seed if possible
-					if setter, ok := any(op).(interface{ Write(T) }); ok {
-						if seedT, ok := any(example.Seed).(T); ok {
-							setter.Write(seedT)
-						}
-					}
+					rowOp := getOp()
 
 					inSeq := SliceToSeq(row.Inputs)
-					outSeq := op.Next(inSeq)
-					actual := CollectSeq(outSeq)
+					outSeq := rowOp.Next(inSeq)
+					actual := CollectSeq[U](outSeq)
 
 					So(actual, ShouldMatchElements[U], row.Expected)
-					So(op.Error(), ShouldBeNil)
+					So(rowOp.Error(), ShouldBeNil)
 				})
 			}
 		})
 
 		Convey("independent delivery runs", func() {
-			if setter, ok := any(op).(interface{ Write(T) }); ok {
-				if seedT, ok := any(example.Seed).(T); ok {
-					setter.Write(seedT)
-				}
-			}
+			indepOp := getOp()
 
 			if example.Reference != nil {
 				run1Inputs := []T{generateValue[T](1), generateValue[T](2)}
 				run2Inputs := []T{generateValue[T](3), generateValue[T](4)}
 
 				// Run 1
-				outSeq1 := op.Next(SliceToSeq(run1Inputs))
-				actual1 := CollectSeq(outSeq1)
 				expected1 := ComputeExpected(example.Seed, run1Inputs, example.Reference)
+				outSeq1 := indepOp.Next(SliceToSeq(run1Inputs))
+				actual1 := CollectSeq[U](outSeq1)
 				So(actual1, ShouldMatchElements[U], expected1)
 
 				// Run 2: starts from the state left after Run 1
 				lastAcc := expected1[len(expected1)-1]
-				outSeq2 := op.Next(SliceToSeq(run2Inputs))
-				actual2 := CollectSeq(outSeq2)
 				expected2 := ComputeExpected(lastAcc, run2Inputs, example.Reference)
+				outSeq2 := indepOp.Next(SliceToSeq(run2Inputs))
+				actual2 := CollectSeq[U](outSeq2)
 				So(actual2, ShouldMatchElements[U], expected2)
 			}
 		})
 
 		Convey("early consumer termination (yield break)", func() {
+			breakOp := getOp()
 			inputs := []T{generateValue[T](10), generateValue[T](20), generateValue[T](30)}
 			inSeq := SliceToSeq(inputs)
-			outSeq := op.Next(inSeq)
+			outSeq := breakOp.Next(inSeq)
 
 			// Pull only the first yielded element
 			count := 0
@@ -167,41 +169,26 @@ func ComputeExpected[T, U any](seed U, inputs []T, ref func(U, T) U) []U {
 }
 
 // ----------------------------------------------------------------------------
-// Test Carrier and Sequence Adapters
+// Test Sequence Adapters
 // ----------------------------------------------------------------------------
 
-type testCarrier[T any] struct {
-	core.Base[T, T]
-}
-
-func newTestCarrier[T any](v T) *testCarrier[T] {
-	c := &testCarrier[T]{}
-	c.Write(v)
-	return c
-}
-
-func (c *testCarrier[T]) Next(in iter.Seq[core.Primitive[T, T]]) iter.Seq[core.Primitive[T, T]] {
-	return in
-}
-
-func SliceToSeq[T any](items []T) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
-		for _, item := range items {
-			carrier := newTestCarrier(item)
-			if !yield(carrier) {
+func SliceToSeq[T any](items []T) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for i := range items {
+			if !yield(unsafe.Pointer(&items[i])) {
 				return
 			}
 		}
 	}
 }
 
-func CollectSeq[U any](seq iter.Seq[core.Primitive[U, U]]) []U {
+func CollectSeq[U any](seq iter.Seq[unsafe.Pointer]) []U {
 	var out []U
 	if seq == nil {
 		return out
 	}
-	for item := range seq {
-		out = append(out, item.Read())
+	for ptr := range seq {
+		out = append(out, *(*U)(ptr))
 	}
 	return out
 }

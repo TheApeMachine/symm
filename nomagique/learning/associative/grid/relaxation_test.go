@@ -34,13 +34,13 @@ var absent = math.NaN()
 
 func TestSpaceRelax(t *testing.T) {
 	Convey("Given two quantities and evidence in a 9:1 ratio", t, func() {
-		grid := NewSpace()
-		grid.Column("source", "first")
-		grid.Column("source", "second")
-		grid.Version = 1
-		grid.Present = [][]bool{{true, true}}
+		grid := NewSpace().(*Space)
+		grid.column("source", "first")
+		grid.column("source", "second")
+		grid.version = 1
+		grid.present = [][]bool{{true, true}}
 		copy(grid.weights, []float64{9, 1})
-		*grid.Coordinates[1] = [2]float64{2, 0}
+		*grid.coordinates[1] = [2]float64{2, 0}
 
 		Convey("consistent inverses attract with stronger evidence resisting movement", func() {
 			for range 8 {
@@ -48,12 +48,12 @@ func TestSpaceRelax(t *testing.T) {
 			}
 			So(grid.calibrate(), ShouldBeTrue)
 			grid.relax()
-			So(grid.Coordinates[0][0], ShouldAlmostEqual, 0.2)
-			*grid.Coordinates[0] = [2]float64{}
+			So(grid.coordinates[0][0], ShouldAlmostEqual, 0.2)
+			*grid.coordinates[0] = [2]float64{}
 			grid.relax()
-			So(grid.Coordinates[1][0], ShouldAlmostEqual, 0.2)
+			So(grid.coordinates[1][0], ShouldAlmostEqual, 0.2)
 			// Starting from the same geometry, movement is 0.2 versus 1.8.
-			So(2-grid.Coordinates[1][0], ShouldBeGreaterThan, 0.2)
+			So(2-grid.coordinates[1][0], ShouldBeGreaterThan, 0.2)
 		})
 
 		/*
@@ -72,7 +72,7 @@ func TestSpaceRelax(t *testing.T) {
 		})
 
 		Convey("inconsistent movement repels even from coincident coordinates", func() {
-			*grid.Coordinates[1] = [2]float64{}
+			*grid.coordinates[1] = [2]float64{}
 			// The pair agrees as often as it disagrees, so their relationship
 			// averages out of noise rather than out of any relationship.
 			for range 4 {
@@ -87,7 +87,7 @@ func TestSpaceRelax(t *testing.T) {
 			So(grid.calibrate(), ShouldBeTrue)
 			grid.cursor = 0
 			grid.relax()
-			So(math.Hypot(grid.Coordinates[1][0], grid.Coordinates[1][1]),
+			So(math.Hypot(grid.coordinates[1][0], grid.coordinates[1][1]),
 				ShouldBeGreaterThan, 0)
 		})
 
@@ -100,8 +100,8 @@ func TestSpaceRelax(t *testing.T) {
 			}
 			So(grid.window.measure(0, 1).shared, ShouldEqual, 0)
 			So(grid.calibrate(), ShouldBeFalse)
-			So(*grid.Coordinates[0], ShouldResemble, [2]float64{})
-			So(*grid.Coordinates[1], ShouldResemble, [2]float64{2, 0})
+			So(*grid.coordinates[0], ShouldResemble, [2]float64{})
+			So(*grid.coordinates[1], ShouldResemble, [2]float64{2, 0})
 		})
 
 		Convey("a point without evidence does not invent a force", func() {
@@ -110,8 +110,8 @@ func TestSpaceRelax(t *testing.T) {
 			}
 			grid.weights[0] = 0
 			So(grid.calibrate(), ShouldBeFalse)
-			So(*grid.Coordinates[0], ShouldResemble, [2]float64{})
-			So(*grid.Coordinates[1], ShouldResemble, [2]float64{2, 0})
+			So(*grid.coordinates[0], ShouldResemble, [2]float64{})
+			So(*grid.coordinates[1], ShouldResemble, [2]float64{2, 0})
 		})
 
 		Convey("calibrated relationships survive a later absent reading", func() {
@@ -119,11 +119,11 @@ func TestSpaceRelax(t *testing.T) {
 				seed(grid, []float64{1, -1}, []float64{-1, 1})
 			}
 			So(grid.calibrate(), ShouldBeTrue)
-			grid.Present[0][0] = false
+			grid.present[0][0] = false
 			grid.relax()
 			So(grid.cursor, ShouldEqual, 0)
-			So(grid.Coordinates[0][0], ShouldAlmostEqual, 0.2)
-			So(*grid.Coordinates[1], ShouldResemble, [2]float64{2, 0})
+			So(grid.coordinates[0][0], ShouldAlmostEqual, 0.2)
+			So(*grid.coordinates[1], ShouldResemble, [2]float64{2, 0})
 		})
 	})
 
@@ -134,14 +134,14 @@ func TestSpaceRelax(t *testing.T) {
 		its own objective between observations.
 	*/
 	Convey("Given three quantities with fixed relationships", t, func() {
-		grid := NewSpace()
+		grid := NewSpace().(*Space)
 
 		for column := range 3 {
-			grid.Column("source", strconv.Itoa(column))
+			grid.column("source", strconv.Itoa(column))
 		}
 
-		grid.Version = 1
-		grid.Present = [][]bool{{true, true, true}}
+		grid.version = 1
+		grid.present = [][]bool{{true, true, true}}
 		copy(grid.weights, []float64{1, 1, 1})
 
 		// The first two move together, the third against both about half the
@@ -154,8 +154,8 @@ func TestSpaceRelax(t *testing.T) {
 		}
 		targets := [3][3]float64{}
 
-		for left := range grid.Columns {
-			for right := range grid.Columns {
+		for left := range grid.columns {
+			for right := range grid.columns {
 				if left != right {
 					targets[left][right] = grid.separation(grid.window.measure(left, right))
 				}
@@ -163,8 +163,8 @@ func TestSpaceRelax(t *testing.T) {
 		}
 		pull := [3][3]float64{}
 
-		for left := range grid.Columns {
-			for right := range grid.Columns {
+		for left := range grid.columns {
+			for right := range grid.columns {
 				if left != right {
 					pull[left][right] = grid.window.measure(left, right).strength()
 				}
@@ -173,11 +173,11 @@ func TestSpaceRelax(t *testing.T) {
 		stress := func() float64 {
 			total := 0.0
 
-			for left := range grid.Columns {
-				for right := left + 1; right < len(grid.Columns); right++ {
+			for left := range grid.columns {
+				for right := left + 1; right < len(grid.columns); right++ {
 					separation := math.Hypot(
-						grid.Coordinates[left][0]-grid.Coordinates[right][0],
-						grid.Coordinates[left][1]-grid.Coordinates[right][1],
+						grid.coordinates[left][0]-grid.coordinates[right][0],
+						grid.coordinates[left][1]-grid.coordinates[right][1],
 					)
 					residual := separation - targets[left][right]
 					total += pull[left][right] * residual * residual
@@ -192,7 +192,7 @@ func TestSpaceRelax(t *testing.T) {
 		So(previous, ShouldBeGreaterThan, 0)
 
 		for range 64 {
-			for range grid.Columns {
+			for range grid.columns {
 				grid.relax()
 				next := stress()
 				So(next, ShouldBeLessThanOrEqualTo, previous+1e-12)
@@ -204,10 +204,10 @@ func TestSpaceRelax(t *testing.T) {
 
 func TestSpaceForm(t *testing.T) {
 	Convey("Conflicting pair distances settle when represented stress cannot improve", t, func() {
-		grid := NewSpace()
+		grid := NewSpace().(*Space)
 
 		for column := range 32 {
-			grid.Column("source", strconv.Itoa(column))
+			grid.column("source", strconv.Itoa(column))
 			grid.weights[column] = float64(column + 1)
 		}
 
@@ -215,7 +215,7 @@ func TestSpaceForm(t *testing.T) {
 		// layout to satisfy incompatible pair distances, unlike an exact
 		// two-cohort fixture. These are solver inputs, not market beliefs.
 		for bin := range grid.window.capacity {
-			values := make([]float64, len(grid.Columns))
+			values := make([]float64, len(grid.columns))
 
 			for column := range values {
 				values[column] = math.Sin(float64((bin+1)*(column+1))) +
@@ -224,31 +224,32 @@ func TestSpaceForm(t *testing.T) {
 			seed(grid, values)
 		}
 
-		for attempts := 0; attempts < 100000 && !grid.Formed; attempts++ {
+		for attempts := 0; attempts < 100000 && !grid.formed; attempts++ {
 			grid.form()
 		}
-		So(grid.Formed, ShouldBeTrue)
+		So(grid.formed, ShouldBeTrue)
 
-		for column := range grid.Columns {
-			position := *grid.Coordinates[column]
+		for column := range grid.columns {
+			position := *grid.coordinates[column]
 			grid.relax()
-			So(*grid.Coordinates[column], ShouldResemble, position)
+			So(*grid.coordinates[column], ShouldResemble, position)
 		}
 	})
 
 	Convey("A complete calibration settles once and subsequent activity cannot restart it", t, func() {
-		grid := NewSpaceWithWindow(8)
-		measurement := data.NewMeasurement[float64]("formation", "market", "source", time.Time{}, time.Time{})
+		grid := NewSpace(8).(*Space)
+		measurement := data.NewMeasurement[float64]("source", nil)
+		measurement.Label, measurement.At, measurement.From = "market", time.Time{}, time.Time{}
 
 		for column := range 4 {
-			grid.Column("source", strconv.Itoa(column))
+			grid.column("source", strconv.Itoa(column))
 		}
 		tape := market.NewOpportunityTape("market", time.Unix(1, 0), 12)
 		steps := 0
 
 		// This bounds a test failure, not production formation. Production has
 		// no iteration cutoff and reports ready only after an unchanged sweep.
-		for steps < 8192 && !grid.Formed {
+		for steps < 8192 && !grid.formed {
 			event := tape.Steps[steps%len(tape.Steps)]
 			measurement.At = event.EventTime
 			measurement.Maturity = 1
@@ -256,17 +257,17 @@ func TestSpaceForm(t *testing.T) {
 			values := []float64{event.Context, -event.Context, event.ExecutableBid, event.ExecutableBid}
 
 			for column, value := range values {
-				measurement.PutMetric(data.Metric[float64]{Label: strconv.Itoa(column), Raw: value})
+				measurement.Metrics[strconv.Itoa(column)] = data.Metric[float64]{Label: strconv.Itoa(column), Raw: value}
 			}
-			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 			steps++
 		}
-		So(grid.Formed, ShouldBeTrue)
+		So(grid.formed, ShouldBeTrue)
 		So(steps, ShouldBeGreaterThan, grid.window.capacity)
-		coordinates := make([][2]float64, len(grid.Columns))
+		coordinates := make([][2]float64, len(grid.columns))
 
 		for column := range coordinates {
-			coordinates[column] = *grid.Coordinates[column]
+			coordinates[column] = *grid.coordinates[column]
 		}
 		membership := slices.Clone(grid.regions.membership)
 
@@ -274,21 +275,21 @@ func TestSpaceForm(t *testing.T) {
 			measurement.Metrics = map[string]data.Metric[float64]{
 				"0": {Label: "0", Raw: event.ExecutableBid},
 			}
-			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
-			impulse, err := grid.Impulse("market", event.EventTime, time.Unix(1, 0))
+			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+			impulse, err := grid.impulse("market", event.EventTime, time.Unix(1, 0))
 			So(err, ShouldBeNil)
 			So(impulse.Ready, ShouldBeTrue)
 			So(grid.regions.membership, ShouldResemble, membership)
 
 			for column, expected := range coordinates {
-				So(*grid.Coordinates[column], ShouldResemble, expected)
+				So(*grid.coordinates[column], ShouldResemble, expected)
 			}
 		}
 
 		Convey("Adding a new quantity is an explicit schema change", func() {
 			countBefore := grid.window.count
-			grid.Column("source", "new quantity")
-			So(grid.Formed, ShouldBeFalse)
+			grid.column("source", "new quantity")
+			So(grid.formed, ShouldBeFalse)
 			So(grid.graph, ShouldBeNil)
 			So(grid.window.count, ShouldEqual, countBefore)
 		})
@@ -299,17 +300,18 @@ func TestSpaceForm(t *testing.T) {
 // calibration span. Pairs within a cohort share movement; the cohorts do not.
 func formationFixture(t testing.TB, columns int) (*Space, *data.Measurement[float64], int) {
 	t.Helper()
-	grid := NewSpace()
-	measurement := data.NewMeasurement[float64]("formation", "market", "source", time.Time{}, time.Time{})
+	grid := NewSpace().(*Space)
+	measurement := data.NewMeasurement[float64]("source", nil)
+	measurement.Label, measurement.At, measurement.From = "market", time.Time{}, time.Time{}
 	measurement.Maturity = 1
 	measurement.SNR, measurement.SNRDefined = 100, true
 
 	for column := range columns {
-		grid.Column("source", strconv.Itoa(column))
+		grid.column("source", strconv.Itoa(column))
 	}
 	steps := 0
 
-	for !grid.Formed {
+	for !grid.formed {
 		// A test-only execution budget catches a broken convergence loop.
 		if steps == 100000 {
 			t.Fatalf("formation did not settle: columns=%d cursor=%d", columns, grid.cursor)
@@ -317,10 +319,10 @@ func formationFixture(t testing.TB, columns int) (*Space, *data.Measurement[floa
 
 		for column := range columns {
 			value := float64((steps/(1+column%2))%2)*2 - 1
-			measurement.PutMetric(data.Metric[float64]{Label: strconv.Itoa(column), Raw: value})
+			measurement.Metrics[strconv.Itoa(column)] = data.Metric[float64]{Label: strconv.Itoa(column), Raw: value}
 		}
 
-		if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
+		if err := grid.step([]*data.Measurement[float64]{measurement}); err != nil {
 			t.Fatal(err)
 		}
 		steps++

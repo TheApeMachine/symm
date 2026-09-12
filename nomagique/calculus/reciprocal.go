@@ -1,31 +1,44 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 Reciprocal owns one field operation. What it hands over is the multiplicative
-inverse of each arrival.
+inverse of each arrival, operating in-place on the wire pointer.
 */
-type Reciprocal[U core.Floating] struct {
-	core.Base[U, U]
+type Reciprocal struct {
+	err error
 }
 
-func NewReciprocal[U core.Floating]() *Reciprocal[U] {
-	return &Reciprocal[U]{}
+func NewReciprocal() core.Primitive {
+	return &Reciprocal{}
 }
 
-func (op *Reciprocal[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Reciprocal) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(1 / arriving.Read())) {
+			in := (*float64)(arriving)
+			*in = 1.0 / *in
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Reciprocal) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

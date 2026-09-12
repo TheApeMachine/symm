@@ -1,7 +1,9 @@
 package logic
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -11,46 +13,73 @@ Gate routes each arrival through one of two operations according to a
 predicate. The predicate and the branches are themselves Primitives; Gate does
 not snapshot a run in order to replay it.
 */
-type Gate[T, U any] struct {
-	core.Base[T, U]
-	predicate core.Primitive[T, bool]
-	pass      core.Primitive[T, U]
-	fail      core.Primitive[T, U]
+type Gate struct {
+	err       error
+	predicate core.Primitive
+	pass      core.Primitive
+	fail      core.Primitive
 }
 
-func NewGate[T, U any](
-	predicate core.Primitive[T, bool],
-	pass, fail core.Primitive[T, U],
-) *Gate[T, U] {
-	return &Gate[T, U]{predicate: predicate, pass: pass, fail: fail}
+func NewGate(
+	predicate core.Primitive,
+	pass, fail core.Primitive,
+) core.Primitive {
+	return &Gate{
+		predicate: predicate,
+		pass:      pass,
+		fail:      fail,
+	}
 }
 
-func (op *Gate[T, U]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			once := func(yield func(core.Primitive[T, T]) bool) {
+			once := func(yield func(unsafe.Pointer) bool) {
 				yield(arriving)
 			}
 
 			selected := false
 
 			for decision := range op.predicate.Next(once) {
-				selected = decision.Read()
+				in := (*bool)(decision)
+				selected = *in
 			}
 
 			branch := op.fail
-
 			if selected {
 				branch = op.pass
 			}
 
 			for out := range branch.Next(once) {
-				if !yield(op.Carrier(out.Read())) {
+				if !yield(out) {
 					return
 				}
 			}
 		}
 	}
+}
+
+func (op *Gate) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+	if op.predicate != nil {
+		if err := op.predicate.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+	if op.pass != nil {
+		if err := op.pass.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+	if op.fail != nil {
+		if err := op.fail.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

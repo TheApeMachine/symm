@@ -8,12 +8,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/equation"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -32,7 +35,7 @@ type Solver struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
-	status     *runtime.Status
+	status     core.Primitive
 	categories []types.CategoryType
 	states     sync.Map
 	// version is the monotonic committed-classification revision. It is local
@@ -94,7 +97,7 @@ func NewSolver(ctx context.Context) *Solver {
 	solver := &Solver{
 		ctx:        ctx,
 		cancel:     cancel,
-		status:     runtime.NewStatus().Transition(runtime.READY),
+		status:     driveStatus(runtime.NewStatus(), runtime.READY),
 		categories: categories,
 	}
 
@@ -191,19 +194,19 @@ func (solver *Solver) stepMeasurements(
 
 		validCount++
 
-		if measurement.Symbol() == "" || measurement.At.IsZero() {
+		if measurement.Label == "" || measurement.At.IsZero() {
 			solver.fail("category: measurement symbol and event time required", nil)
 
 			return nil
 		}
 
 		if symbol == "" {
-			symbol = measurement.Symbol()
+			symbol = measurement.Label
 			at = measurement.At
 			state = solver.symbolState(symbol)
 		}
 
-		if measurement.Symbol() != symbol {
+		if measurement.Label != symbol {
 			solver.fail("category: envelope requires one symbol", nil)
 
 			return nil
@@ -313,7 +316,7 @@ func (solver *Solver) accumulateLocked(
 			"%s %s/%s interval begins at %s after event time %s",
 			measurement.ID,
 			measurement.Source,
-			measurement.Symbol(),
+			measurement.Label,
 			measurement.From.Format(time.RFC3339Nano),
 			measurement.At.Format(time.RFC3339Nano),
 		)
@@ -402,27 +405,36 @@ one near-zero affinity should drag the category's strength down rather than
 being averaged away by its stronger siblings.
 */
 func categoryStrength(items []evidenceItem) (float64, error) {
-	affinities := make([]nmtypes.Scalar, len(items))
-
-	for index, item := range items {
-		affinities[index] = nmtypes.Scalar(item.Affinity)
+	if len(items) == 0 {
+		return 0, nil
 	}
 
-	return float64(nomagique_probability.Geomean(affinities)), nil
+	affinities := make([]float64, len(items))
+
+	for index, item := range items {
+		affinities[index] = item.Affinity
+	}
+
+	strengthFold := nomagique_probability.NewGeomean()
+	var strength float64
+
+	for out := range strengthFold.Next(transport.NewValues(affinities...).Next(nil)) {
+		strength = *(*float64)(out)
+	}
+
+	if err := strengthFold.Error(); err != nil {
+		return 0, err
+	}
+
+	return strength, nil
 }
 
 /*
 lift converts a strength vector into the carrier the probability reductions
 fold over, so they reduce it without knowing category identity.
 */
-func lift(strengths []float64) []nmtypes.Scalar {
-	values := make([]nmtypes.Scalar, len(strengths))
-
-	for index, strength := range strengths {
-		values[index] = nmtypes.Scalar(strength)
-	}
-
-	return values
+func lift(strengths []float64) []float64 {
+	return append([]float64(nil), strengths...)
 }
 
 func (solver *Solver) aggregateLocked(
@@ -476,12 +488,32 @@ func (solver *Solver) buildBatch(
 
 	// The batch shares one uncertainty: how evenly the evidence is spread
 	// across the whole declared vocabulary.
-	uncertainty := float64(nomagique_probability.ShannonAmbiguity(evidence))
+	uncertaintyFold := nomagique_probability.NewShannonAmbiguity()
+	var uncertainty float64
+
+	for out := range uncertaintyFold.Next(transport.NewValues(evidence...).Next(nil)) {
+		uncertainty = *(*float64)(out)
+	}
+
+	err := uncertaintyFold.Error()
+
+	if err != nil {
+		return nil, err
+	}
 
 	for index := range solver.categories {
-		confidences[index] = float64(
-			nomagique_probability.EvidenceShare(evidence, index),
-		)
+		selection := transport.NewEvaluate(equation.NewEvidenceShare(index))
+		share := 0.0
+
+		for out := range selection.Next(transport.NewOne(unsafe.Pointer(&evidence)).Next(nil)) {
+			share = *(*float64)(out)
+		}
+
+		if err := selection.Error(); err != nil {
+			return nil, err
+		}
+
+		confidences[index] = share
 	}
 
 	categories := make([]types.Category, 0, count)
@@ -515,9 +547,23 @@ func (solver *Solver) buildBatch(
 	return categories, nil
 }
 
+/*
+driveStatus commands one status primitive through a transition and returns
+it, so construction and failure share one pipeline.
+*/
+func driveStatus(status core.Primitive, stage runtime.Stage) core.Primitive {
+	command := runtime.StatusCommand{Transition: &stage}
+	source := transport.NewOne(unsafe.Pointer(&command)).Next(nil)
+
+	for range status.Next(source) {
+	}
+
+	return status
+}
+
 func (solver *Solver) fail(message string, err error) {
 	solver.err = errnie.Error(errnie.Err(errnie.Validation, message, err))
-	solver.status.Transition(runtime.FATAL)
+	driveStatus(solver.status, runtime.FATAL)
 	solver.cancel()
 }
 

@@ -304,12 +304,11 @@ should do is the learner's decision, not something the record pre-writes.
 The anchor and extremum indices are factual replay boundaries.
 */
 func (tape *Tape) fragment(
-	index *RunIndex,
+	_ *RunIndex,
 	window excursionWindow,
 	decoded map[tables.EnvelopeRefRow][]*data.Measurement[float64],
 ) types.ReplayFragment {
 	held := make([][]*data.Measurement[float64], 0, len(window.captures))
-	prices := make([]float64, 0, len(window.captures))
 	anchorIdx := -1
 	extremumIdx := -1
 
@@ -318,18 +317,6 @@ func (tape *Tape) fragment(
 
 		if !stored || len(measurements) == 0 {
 			continue
-		}
-
-		priceVal := 0.0
-
-		if index != nil {
-			observation, hasObs := index.ObservationAt(window.symbol, candidate)
-
-			if hasObs {
-				if p, ok := extractObsPrice(observation); ok {
-					priceVal = p
-				}
-			}
 		}
 
 		if candidate == window.anchor && anchorIdx < 0 {
@@ -341,32 +328,14 @@ func (tape *Tape) fragment(
 		}
 
 		held = append(held, measurements)
-		prices = append(prices, priceVal)
 	}
 
 	return types.ReplayFragment{
 		Frames:        held,
-		Prices:        prices,
 		Symbol:        window.symbol,
 		AnchorIndex:   anchorIdx,
 		ExtremumIndex: extremumIdx,
 	}
-}
-
-func extractObsPrice(observation Observation) (float64, bool) {
-	if observation.HasLast && observation.Last > 0 {
-		return observation.Last, true
-	}
-
-	if observation.HasTrade && observation.TradePrice > 0 {
-		return observation.TradePrice, true
-	}
-
-	if observation.HasBid && observation.Bid > 0 {
-		return observation.Bid, true
-	}
-
-	return 0, false
 }
 
 /* Error exposes what the record refused, if anything. */

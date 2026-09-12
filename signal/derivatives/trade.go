@@ -83,9 +83,8 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 	netLiq := state.liqBuyTotal - state.liqSellTotal
 
 	id := fmt.Sprintf("derivatives:%s:%d", point.Symbol, point.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64](
-		id, point.Symbol, "derivatives", state.lastAdvancedTime, state.startTime,
-	)
+	measurement := data.NewMeasurement[float64]("derivatives", nil)
+	measurement.Label, measurement.At, measurement.From = point.Symbol, state.lastAdvancedTime, state.startTime
 	measurement.Metadata = make(map[string]float64)
 
 	putDerivMetric(measurement, "liquidation_notional:buy", state.liqBuyTotal, data.UnitRate)
@@ -130,7 +129,7 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 }
 
 func putDerivMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
-	measurement.PutMetric(data.NewMetric(
-		name, value, nil, nil, unit, data.TimescaleInstantaneous,
-	))
+	measurement.Metrics[name] = data.Metric[float64]{
+		Label: name, Raw: value, Unit: unit, Timescale: data.TimescaleInstantaneous,
+	}
 }

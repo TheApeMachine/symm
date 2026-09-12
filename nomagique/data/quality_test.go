@@ -27,7 +27,14 @@ func TestQualityNext(t *testing.T) {
 			{Support: 4, Divergence: 0, NoiseVariance: 1, HasSupport: true, HasDivergence: true, HasNoise: true},
 			{},
 		} {
-			reading, err := transport.Evaluate(quality, transport.Values(facts))
+			readingEval := transport.NewEvaluate(quality)
+			var reading data.QualityReading
+
+			for out := range readingEval.Next(transport.NewValues(facts).Next(nil)) {
+				reading = *(*data.QualityReading)(out)
+			}
+
+			err := readingEval.Error()
 			So(err, ShouldBeNil)
 
 			snr, defined, maturity := 0.0, false, 1.0
@@ -70,7 +77,14 @@ func TestQualityNext(t *testing.T) {
 				}
 			}
 
-			weight, err := transport.Evaluate(authority, transport.Values(reading))
+			weightEval := transport.NewEvaluate(authority)
+			var weight float64
+
+			for out := range weightEval.Next(transport.NewValues(reading).Next(nil)) {
+				weight = *(*float64)(out)
+			}
+
+			err = weightEval.Error()
 			So(err, ShouldBeNil)
 			So(weight, ShouldAlmostEqual, math.Min(1, math.Max(0, maturity*factor)))
 		}

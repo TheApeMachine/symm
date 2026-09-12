@@ -1,7 +1,12 @@
 package statistic
 
 import (
+	"errors"
+	"iter"
 	"math"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -32,11 +37,66 @@ type OLSFit struct {
 }
 
 /*
-FitOLS fits y (length n) on the design matrix x (n×p, row-major). The caller
-owns the design: an intercept column of ones is included only when the model
-requires it. When rank < p the fit is undefined; no regularization is applied.
+OLSRequest is one ordinary least squares fit request: the row-major n×p design
+matrix, the n targets, and the parameter count.
 */
-func FitOLS(x []float64, y []float64, p int) OLSFit {
+type OLSRequest struct {
+	X []float64
+	Y []float64
+	P int
+}
+
+/*
+OLS owns one ordinary least squares fit as a Primitive. The caller owns the
+design: an intercept column of ones is included only when the model requires
+it. When rank < p the fit is undefined; no regularization is applied.
+*/
+type OLS struct {
+	err error
+	out OLSFit
+}
+
+/*
+NewFitOLS instantiates the ordinary least squares Primitive.
+*/
+func NewFitOLS() core.Primitive {
+	return &OLS{}
+}
+
+/*
+Next fits every arriving request and hands over the resulting fit.
+*/
+func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			request := (*OLSRequest)(arriving)
+			op.out = fitOLS(request.X, request.Y, request.P)
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *OLS) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+fitOLS fits y (length n) on the design matrix x (n×p, row-major). When
+rank < p the fit is undefined; no regularization is applied.
+*/
+func fitOLS(x []float64, y []float64, p int) OLSFit {
 	n := len(y)
 
 	if p < 1 || n < 1 || len(x) < n*p {
@@ -126,24 +186,66 @@ func FitOLS(x []float64, y []float64, p int) OLSFit {
 }
 
 /*
-VarianceAt returns the coefficient variance at a column index, reporting
-false for negative, out-of-range, or unavailable entries so callers never
-index an absent variance slice.
+CoefficientSNRPair carries one coefficient and the variance it must be judged
+against.
 */
-func (fit OLSFit) VarianceAt(column int) (float64, bool) {
-	if column < 0 || column >= fit.Parameters || len(fit.CoefficientVariance) != fit.Parameters {
-		return 0, false
-	}
-
-	return fit.CoefficientVariance[column], true
+type CoefficientSNRPair struct {
+	Coefficient float64
+	Variance    float64
 }
 
 /*
-CoefficientSNR returns the primary coefficient SNR, Coefficient² / Variance.
-It is non-negative and unbounded. It is not probability or confidence, and it
-is undefined (NaN) when the coefficient variance is unavailable or zero.
+CoefficientSNR owns the primary coefficient SNR, Coefficient² / Variance, as a
+Primitive. It is non-negative and unbounded. It is not probability or
+confidence, and it is undefined (NaN) when the coefficient variance is
+unavailable or zero.
 */
-func CoefficientSNR(coefficient float64, variance float64) float64 {
+type CoefficientSNR struct {
+	err error
+	out float64
+}
+
+/*
+NewCoefficientSNR instantiates the coefficient signal-to-noise Primitive.
+*/
+func NewCoefficientSNR() core.Primitive {
+	return &CoefficientSNR{}
+}
+
+/*
+Next scores every arriving coefficient/variance pair and hands over the SNR.
+*/
+func (op *CoefficientSNR) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			pair := (*CoefficientSNRPair)(arriving)
+			op.out = coefficientSNR(pair.Coefficient, pair.Variance)
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *CoefficientSNR) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+coefficientSNR returns Coefficient² / Variance, undefined (NaN) when the
+coefficient variance is unavailable or zero.
+*/
+func coefficientSNR(coefficient float64, variance float64) float64 {
 	if math.IsNaN(variance) || math.IsInf(variance, 0) || variance <= 0 {
 		return math.NaN()
 	}

@@ -1,32 +1,45 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 Sqrt owns one field operation. What it hands over is the square root of each
-arrival.
+arrival, operating in-place on the wire pointer.
 */
-type Sqrt[U core.Floating] struct {
-	core.Base[U, U]
+type Sqrt struct {
+	err error
 }
 
-func NewSqrt[U core.Floating]() *Sqrt[U] {
-	return &Sqrt[U]{}
+func NewSqrt() core.Primitive {
+	return &Sqrt{}
 }
 
-func (op *Sqrt[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Sqrt) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(U(math.Sqrt(float64(arriving.Read()))))) {
+			in := (*float64)(arriving)
+			*in = math.Sqrt(*in)
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Sqrt) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

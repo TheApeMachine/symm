@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -11,36 +13,46 @@ Identity constructs I_n from an arriving dimension. The diagonal is written in
 typed storage; there is no scalar graph per coefficient.
 */
 type Identity struct {
-	core.Base[float64, [][]float64]
+	err error
+	out [][]float64
 }
 
-func NewIdentity() *Identity {
+func NewIdentity() core.Primitive {
 	return &Identity{}
 }
 
-func (op *Identity) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
-	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+func (op *Identity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			size := int(arriving.Read())
+			val := *(*float64)(arriving)
+			size := int(val)
 
-			if float64(size) != arriving.Read() || size < 0 {
+			if float64(size) != val || size < 0 {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			rows := make([][]float64, size)
+			op.out = make([][]float64, size)
 			values := make([]float64, size*size)
 
-			for row := range rows {
-				rows[row] = values[row*size : (row+1)*size]
-				rows[row][row] = 1
+			for row := range op.out {
+				op.out[row] = values[row*size : (row+1)*size]
+				op.out[row][row] = 1
 			}
 
-			if !yield(op.Carrier(rows)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Identity) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

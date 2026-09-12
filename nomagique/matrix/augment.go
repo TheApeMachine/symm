@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -18,37 +20,46 @@ type AugmentInput struct {
 Augment joins corresponding rows. Unequal row counts are a shape error.
 */
 type Augment struct {
-	core.Base[AugmentInput, [][]float64]
+	err error
+	out [][]float64
 }
 
-func NewAugment() *Augment {
+func NewAugment() core.Primitive {
 	return &Augment{}
 }
 
-func (op *Augment) Next(
-	in iter.Seq[core.Primitive[AugmentInput, AugmentInput]],
-) iter.Seq[core.Primitive[[][]float64, [][]float64]] {
-	return func(yield func(core.Primitive[[][]float64, [][]float64]) bool) {
+func (op *Augment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := arriving.Read()
+			input := (*AugmentInput)(arriving)
 
 			if len(input.Left) != len(input.Right) {
 				op.Error(core.ErrShape)
-				continue
+				return
 			}
 
-			rows := make([][]float64, len(input.Left))
+			op.out = make([][]float64, len(input.Left))
 
 			for index, left := range input.Left {
 				joined := make([]float64, 0, len(left)+len(input.Right[index]))
 				joined = append(joined, left...)
 				joined = append(joined, input.Right[index]...)
-				rows[index] = joined
+				op.out[index] = joined
 			}
 
-			if !yield(op.Carrier(rows)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Augment) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

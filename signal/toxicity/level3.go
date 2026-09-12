@@ -255,11 +255,29 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	state.prevSec = sec
 	state.prevNsec = nsec
 
-	fields, err := transport.Evaluate(state.graph, transport.Values(typed))
+	fieldsEval := transport.NewEvaluate(state.graph)
+	var fields data.ProjectionInput
+
+	for out := range fieldsEval.Next(transport.NewValues(typed).Next(nil)) {
+		fields = *(*data.ProjectionInput)(out)
+	}
+
+	err := fieldsEval.Error()
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}
-	measurement := level3.projection.Project(fields)
+	resultEval := transport.NewEvaluate(level3.projection)
+	var measurement *data.Measurement[float64]
+
+	for out := range resultEval.Next(transport.NewValues(fields).Next(nil)) {
+		measurement = *(**data.Measurement[float64])(out)
+	}
+
+	err = resultEval.Error()
+
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
+	}
 
 	return measurement
 }

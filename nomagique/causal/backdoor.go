@@ -1,12 +1,15 @@
 package causal
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"slices"
+	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -24,12 +27,13 @@ Backdoor standardizes configured predictions over the observed rows after
 replacing the treatment coordinate.
 */
 type Backdoor struct {
-	core.Base[Query, BackdoorReading]
-	fit     *LinearFit
-	predict *LinearPrediction
+	err     error
+	fit     core.Primitive
+	predict core.Primitive
+	out     BackdoorReading
 }
 
-func NewBackdoor(tolerance float64) *Backdoor {
+func NewBackdoor(tolerance float64) core.Primitive {
 	return &Backdoor{
 		fit:     NewLinearFit(tolerance),
 		predict: NewLinearPrediction(),
@@ -37,63 +41,89 @@ func NewBackdoor(tolerance float64) *Backdoor {
 }
 
 func (op *Backdoor) Next(
-	in iter.Seq[core.Primitive[Query, Query]],
-) iter.Seq[core.Primitive[BackdoorReading, BackdoorReading]] {
-	return func(yield func(core.Primitive[BackdoorReading, BackdoorReading]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			reading, err := op.Estimate(arriving.Read())
+			query := (*Query)(arriving)
 
-			if err != nil {
+			var fit algo.Fit
+
+			for out := range op.fit.Next(transport.NewValues(*query).Next(nil)) {
+				fit = *(*algo.Fit)(out)
+			}
+
+			if err := op.fit.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			if !yield(op.Carrier(reading)) {
+			if !fit.Defined {
+				op.out = BackdoorReading{Expectation: math.NaN()}
+
+				if !yield(unsafe.Pointer(&op.out)) {
+					return
+				}
+
+				continue
+			}
+
+			predictions := make([]float64, 0, len(query.Rows))
+
+			for _, row := range query.Rows {
+				intervened := slices.Clone(row)
+				intervened[query.Treatment] = query.Level
+
+				pq := PredictionQuery{
+					Fit:      fit,
+					Features: query.Features,
+					Row:      intervened,
+				}
+
+				var val float64
+
+				for out := range op.predict.Next(transport.NewValues(pq).Next(nil)) {
+					val = *(*float64)(out)
+				}
+
+				if err := op.predict.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				predictions = append(predictions, val)
+			}
+
+			meanNode := statistic.NewMean()
+			var expectation float64
+
+			for out := range meanNode.Next(transport.NewValues(predictions...).Next(nil)) {
+				expectation = *(*float64)(out)
+			}
+
+			if err := meanNode.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			op.out = BackdoorReading{
+				Defined:     true,
+				Expectation: expectation,
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (op *Backdoor) Estimate(query Query) (BackdoorReading, error) {
-	fit, err := op.fit.Fit(query)
-
-	if err != nil {
-		return BackdoorReading{}, err
-	}
-
-	if !fit.Defined {
-		return BackdoorReading{Expectation: math.NaN()}, nil
-	}
-
-	predictions := make([]float64, 0, len(query.Rows))
-
-	for _, row := range query.Rows {
-		intervened := slices.Clone(row)
-		intervened[query.Treatment] = query.Level
-		value, err := op.predict.Predict(PredictionQuery{
-			Fit:      fit,
-			Features: query.Features,
-			Row:      intervened,
-		})
-
+func (op *Backdoor) Error(errs ...error) error {
+	for _, err := range errs {
 		if err != nil {
-			return BackdoorReading{}, err
+			op.err = errors.Join(op.err, err)
 		}
-
-		predictions = append(predictions, value)
 	}
 
-	mean := equation.NewMean[float64]()
-	expectation := 0.0
-
-	for out := range mean.Next(transport.Values(predictions...)) {
-		expectation = out.Read()
-	}
-
-	if err := mean.Error(); err != nil {
-		return BackdoorReading{}, err
-	}
-
-	return BackdoorReading{Defined: true, Expectation: expectation}, nil
+	return op.err
 }

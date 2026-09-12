@@ -1,24 +1,33 @@
-package temporal
+package temporal_test
 
 import (
 	"testing"
 	"time"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestVelocityNext(t *testing.T) {
 	Convey("Velocity yields a finite difference for each observation", t, func() {
-		op := NewVelocity()
+		op := temporal.NewVelocity()
 		origin := time.Unix(1700000000, 0).UnixNano()
-		out := tests.CollectSeq(op.Next(transport.Values(
-			Observation{Value: 10, At: origin},
-			Observation{Value: 13, At: origin + int64(time.Second)},
-			Observation{Value: 16, At: origin + int64(time.Second)},
-			Observation{Value: 17, At: origin + int64(time.Second) + 1},
-		)))
+		obs := []temporal.Observation{
+			{Value: 10, At: origin},
+			{Value: 13, At: origin + int64(time.Second)},
+			{Value: 16, At: origin + int64(time.Second)},
+			{Value: 17, At: origin + int64(time.Second) + 1},
+		}
+		in := func(yield func(unsafe.Pointer) bool) {
+			for i := range obs {
+				if !yield(unsafe.Pointer(&obs[i])) {
+					return
+				}
+			}
+		}
+		out := tests.CollectSeq[temporal.VelocityReading](op.Next(in))
 
 		So(len(out), ShouldEqual, 4)
 		So(out[0].Rate, ShouldEqual, 0)
@@ -30,34 +39,30 @@ func TestVelocityNext(t *testing.T) {
 		So(out[3].Rate, ShouldEqual, 1/(1/float64(time.Second)))
 		So(out[3].Defined, ShouldBeTrue)
 	})
-}
 
-func TestVelocityObserve(t *testing.T) {
-	Convey("Given a finite difference with one previous observation", t, func() {
-		velocity := NewVelocity()
-		first := velocity.Observe(10, 0)
-		So(first.HasPrior, ShouldBeFalse)
-		So(first.Defined, ShouldBeFalse)
-
-		for _, fixture := range []struct {
-			value   float64
-			at      int64
+	Convey("Given a finite difference with one previous observation via Next", t, func() {
+		velocity := temporal.NewVelocity()
+		fixtures := []struct {
+			obs     temporal.Observation
 			rate    float64
 			defined bool
 		}{
-			{13, int64(time.Second), 3, true},
-			{16, int64(time.Second), 0, false},
-			{17, int64(time.Second) + 1, 1 / (1 / float64(time.Second)), true},
-			{11, int64(time.Second), 0, false},
-			{8, int64(2 * time.Second), -3, true},
-		} {
-			reading := velocity.Observe(fixture.value, fixture.at)
-			So(reading.Rate, ShouldEqual, fixture.rate)
-			So(reading.Defined, ShouldEqual, fixture.defined)
-			So(reading.HasPrior, ShouldBeTrue)
+			{temporal.Observation{Value: 10, At: 0}, 0, false},
+			{temporal.Observation{Value: 13, At: int64(time.Second)}, 3, true},
+			{temporal.Observation{Value: 16, At: int64(time.Second)}, 0, false},
+			{temporal.Observation{Value: 17, At: int64(time.Second) + 1}, 1 / (1 / float64(time.Second)), true},
+			{temporal.Observation{Value: 11, At: int64(time.Second)}, 0, false},
+			{temporal.Observation{Value: 8, At: int64(2 * time.Second)}, -3, true},
 		}
 
-		So(first.Through.Value, ShouldEqual, 10)
-		So(first.HasPrior, ShouldBeFalse)
+		for _, fixture := range fixtures {
+			in := func(yield func(unsafe.Pointer) bool) {
+				yield(unsafe.Pointer(&fixture.obs))
+			}
+			out := tests.CollectSeq[temporal.VelocityReading](velocity.Next(in))
+			So(len(out), ShouldEqual, 1)
+			So(out[0].Rate, ShouldEqual, fixture.rate)
+			So(out[0].Defined, ShouldEqual, fixture.defined)
+		}
 	})
 }

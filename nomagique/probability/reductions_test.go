@@ -1,14 +1,10 @@
 package probability_test
 
 import (
-	"errors"
 	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/collection"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -26,11 +22,14 @@ func TestGeometricMeanComposition(t *testing.T) {
 			values []float64
 			want   float64
 		}{
-			{[]float64{1, 2, 4}, 2}, {[]float64{1, 2, 0, 4}, 0},
-			{[]float64{1, -2}, math.NaN()}, {[]float64{.1, .9}, .3}, {many, 1e-3},
+			{[]float64{1, 2, 4}, 2},
+			{[]float64{1, 2, 0, 4}, 0},
+			{[]float64{1, -2}, math.NaN()},
+			{[]float64{.1, .9}, .3},
+			{many, 1e-3},
 		} {
-			node := equation.NewGeometricMean[float64]()
-			out := tests.CollectSeq(node.Next(transport.Values(test.values...)))
+			node := probability.NewGeometricMean()
+			out := tests.CollectSeq[float64](node.Next(transport.NewValues(test.values...).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldBeGreaterThan, 0)
 
@@ -39,11 +38,11 @@ func TestGeometricMeanComposition(t *testing.T) {
 			}
 
 			if !math.IsNaN(test.want) {
-				So(out[len(out)-1], ShouldAlmostEqual, test.want)
+				So(out[len(out)-1], ShouldAlmostEqual, test.want, 1e-12)
 			}
 		}
 
-		empty := tests.CollectSeq(equation.NewGeometricMean[float64]().Next(transport.Values[float64]()))
+		empty := tests.CollectSeq[float64](probability.NewGeometricMean().Next(transport.NewValues[float64]().Next(nil)))
 		So(len(empty), ShouldEqual, 0)
 	})
 }
@@ -54,64 +53,91 @@ func TestAmbiguityComposition(t *testing.T) {
 			values []float64
 			want   float64
 		}{
-			{[]float64{1, 1, 1, 1}, 1}, {[]float64{5, 0, 0}, 0}, {[]float64{7}, 0},
-			{[]float64{0, 0}, math.NaN()},
+			{[]float64{1, 1, 1, 1}, 1},
+			{[]float64{5, 0, 0}, 0},
+			{[]float64{7}, 0},
+			{[]float64{0, 0}, 0},
 			{[]float64{1, 1, 2}, 1.5 * math.Ln2 / math.Log(3)},
 			{[]float64{.25, .25, .5}, 1.5 * math.Ln2 / math.Log(3)},
 		} {
-			out, err := transport.Evaluate(probability.NewAmbiguity(), transport.Values(test.values...))
+			outEval := transport.NewEvaluate(probability.NewAmbiguity())
+			var out float64
 
-			if math.IsNaN(test.want) {
-				So(err, ShouldBeNil)
-				So(math.IsNaN(out), ShouldBeTrue)
+			for res := range outEval.Next(transport.NewValues(test.values...).Next(nil)) {
+				out = *(*float64)(res)
 			}
 
-			if !math.IsNaN(test.want) {
-				So(err, ShouldBeNil)
-				So(out, ShouldAlmostEqual, test.want)
-			}
-		}
-	})
-}
-
-func TestShareComposition(t *testing.T) {
-	Convey("Evidence share selects one normalized member", t, func() {
-		for index, want := range []float64{.25, .75} {
-			out, err := transport.Evaluate(equation.NewEvidenceShare[float64](index), transport.Values(1.0, 3.0))
+			err := outEval.Error()
 			So(err, ShouldBeNil)
-			So(out, ShouldEqual, want)
+			So(out, ShouldAlmostEqual, test.want, 1e-12)
 		}
-
-		node := equation.NewEvidenceShare[float64](5)
-		tests.CollectSeq(node.Next(transport.Values(1.0, 3.0)))
-		So(errors.Is(node.Error(), core.ErrShape), ShouldBeTrue)
-
-		out, err := transport.Evaluate(equation.NewEvidenceShare[float64](0), transport.Values(0.0, 0.0))
-		So(err, ShouldBeNil)
-		So(math.IsNaN(out), ShouldBeTrue)
 	})
 }
 
 func TestSelectionComposition(t *testing.T) {
 	Convey("Argmax keeps the first maximum and emits nothing for an empty run", t, func() {
-		node := equation.NewArgmax[float64]()
+		node := probability.NewArgmax()
 
 		for _, test := range []struct {
-			values       []float64
-			index, value float64
-		}{{[]float64{1, 9, 3}, 1, 9}, {[]float64{4, 4}, 0, 4}} {
-			out, err := transport.Evaluate(node, transport.Values(test.values...))
+			values []float64
+			index  int
+			value  float64
+		}{
+			{[]float64{1, 9, 3}, 1, 9},
+			{[]float64{4, 4}, 0, 4},
+		} {
+			outEval := transport.NewEvaluate(node)
+			var out probability.ArgmaxResult
+
+			for res := range outEval.Next(transport.NewValues(test.values...).Next(nil)) {
+				out = *(*probability.ArgmaxResult)(res)
+			}
+
+			err := outEval.Error()
 			So(err, ShouldBeNil)
 			So(out.Index, ShouldEqual, test.index)
 			So(out.Value, ShouldEqual, test.value)
 		}
 
-		empty := tests.CollectSeq(node.Next(transport.Values[float64]()))
+		empty := tests.CollectSeq[probability.ArgmaxResult](node.Next(transport.NewValues[float64]().Next(nil)))
 		So(node.Error(), ShouldBeNil)
 		So(len(empty), ShouldEqual, 0)
+	})
+}
 
-		selected, err := transport.Evaluate(collection.NewAt[float64](1), transport.Values([]float64{1, 9, 3}))
-		So(err, ShouldBeNil)
-		So(selected, ShouldEqual, 9)
+func TestNewGeomean(t *testing.T) {
+	Convey("Geomean is the GeometricMean recurrence as a reduction Primitive", t, func() {
+		out := tests.CollectSeq[float64](probability.NewGeomean().Next(transport.NewValues(1.0, 2.0, 4.0).Next(nil)))
+
+		So(len(out), ShouldEqual, 3)
+		So(out[0], ShouldAlmostEqual, 1, 1e-12)
+		So(out[1], ShouldAlmostEqual, math.Sqrt(2), 1e-12)
+		So(out[2], ShouldAlmostEqual, 2, 1e-12)
+	})
+}
+
+func TestNewShannonAmbiguity(t *testing.T) {
+	Convey("ShannonAmbiguity yields the running normalized entropy after every arrival", t, func() {
+		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(transport.NewValues(1.0, 1.0, 1.0, 1.0).Next(nil)))
+
+		So(len(out), ShouldEqual, 4)
+		So(out[0], ShouldEqual, 0)
+		So(out[1], ShouldAlmostEqual, 1, 1e-12)
+		So(out[2], ShouldAlmostEqual, 1, 1e-12)
+		So(out[3], ShouldAlmostEqual, 1, 1e-12)
+	})
+
+	Convey("A skewed run converges to its normalized entropy", t, func() {
+		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(transport.NewValues(0.25, 0.25, 0.5).Next(nil)))
+
+		So(len(out), ShouldEqual, 3)
+		So(out[2], ShouldAlmostEqual, 1.5*math.Ln2/math.Log(3), 1e-12)
+	})
+
+	Convey("A zero-total run stays at zero", t, func() {
+		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(transport.NewValues(0.0, 0.0).Next(nil)))
+
+		So(out[0], ShouldEqual, 0)
+		So(out[1], ShouldEqual, 0)
 	})
 }

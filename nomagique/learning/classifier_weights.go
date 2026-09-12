@@ -1,10 +1,13 @@
 package learning
 
 import (
+	"errors"
 	"fmt"
+	"iter"
 	"math"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -24,35 +27,109 @@ type ClassifierWeightsConfig struct {
 }
 
 /*
-ClassifierWeights holds dynamically derived coefficients for configured outputs.
+ClassifierReading is one scored observation: one logit per configured output,
+the first output's strength, and the configured threshold and scales.
+*/
+type ClassifierReading struct {
+	Scores    []float64
+	Strength  float64
+	Threshold float64
+	Scales    map[string]float64
+}
+
+/*
+ClassifierWeights holds dynamically derived coefficients for configured outputs
+and scores feature maps against them.
 */
 type ClassifierWeights struct {
-	Threshold   float64
+	err         error
+	threshold   float64
 	scales      map[string]float64
 	outputs     []string
 	specs       map[string]LogitSpec
 	termWeights map[string]map[string]float64
+	out         ClassifierReading
 }
 
 /*
-NewClassifierWeights builds balanced logits from typed recipes and feature scales.
+NewClassifierWeights builds balanced logits from typed recipes and feature
+scales. A rejected configuration is recorded as the primitive's error state
+and every stream over it yields nothing.
 */
 func NewClassifierWeights(
 	config ClassifierWeightsConfig,
 	threshold float64,
 	scales map[string]float64,
-) (ClassifierWeights, error) {
+) core.Primitive {
+	weights, err := buildClassifierWeights(config, threshold, scales)
+
+	if err != nil {
+		return &ClassifierWeights{err: err}
+	}
+
+	return weights
+}
+
+/*
+Next receives feature maps and yields a *ClassifierReading per arrival with
+one logit per configured output and the first output's strength.
+*/
+func (op *ClassifierWeights) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	if op.err != nil {
+		return func(yield func(unsafe.Pointer) bool) {}
+	}
+
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			features := (*map[string]float64)(arriving)
+
+			op.out = ClassifierReading{
+				Scores:    op.scores(*features),
+				Threshold: op.threshold,
+				Scales:    cloneScales(op.scales),
+			}
+			op.out.Strength = op.out.Scores[0]
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *ClassifierWeights) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+func buildClassifierWeights(
+	config ClassifierWeightsConfig,
+	threshold float64,
+	scales map[string]float64,
+) (*ClassifierWeights, error) {
 	if threshold <= 0 {
-		return ClassifierWeights{}, errnie.Error(fmt.Errorf(
-			"learning: NewClassifierWeights threshold must be positive, got %v",
+		return nil, fmt.Errorf(
+			"%w: classifier weights threshold must be positive, got %v",
+			core.ErrDomain,
 			threshold,
-		))
+		)
 	}
 
 	if len(config.Outputs) == 0 {
-		return ClassifierWeights{}, errnie.Error(fmt.Errorf(
-			"learning: NewClassifierWeights requires outputs",
-		))
+		return nil, fmt.Errorf(
+			"%w: classifier weights require outputs",
+			core.ErrShape,
+		)
 	}
 
 	specs := make(map[string]LogitSpec, len(config.Outputs))
@@ -62,24 +139,25 @@ func NewClassifierWeights(
 		spec := config.Specs[outputKey]
 
 		if len(spec.Terms) == 0 {
-			return ClassifierWeights{}, errnie.Error(fmt.Errorf(
-				"learning: output %q requires terms",
+			return nil, fmt.Errorf(
+				"%w: output %q requires terms",
+				core.ErrShape,
 				outputKey,
-			))
+			)
 		}
 
 		weights, err := balancedTermWeights(spec.Terms, scales)
 
 		if err != nil {
-			return ClassifierWeights{}, err
+			return nil, err
 		}
 
 		specs[outputKey] = spec
 		termWeights[outputKey] = weights
 	}
 
-	return ClassifierWeights{
-		Threshold:   threshold,
+	return &ClassifierWeights{
+		threshold:   threshold,
 		scales:      cloneScales(scales),
 		outputs:     append([]string(nil), config.Outputs...),
 		specs:       specs,
@@ -106,9 +184,10 @@ func balancedTermWeights(
 	}
 
 	if total <= 0 {
-		return nil, errnie.Error(fmt.Errorf(
-			"learning: balanced term weights require positive scales",
-		))
+		return nil, fmt.Errorf(
+			"%w: balanced term weights require positive scales",
+			core.ErrDomain,
+		)
 	}
 
 	weights := make(map[string]float64, len(terms))
@@ -120,50 +199,47 @@ func balancedTermWeights(
 	return weights, nil
 }
 
-func (weights *ClassifierWeights) FeatureScales() map[string]float64 {
-	return cloneScales(weights.scales)
-}
-
 func positiveScale(scale float64, name string) (float64, error) {
 	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-		return 0, errnie.Error(fmt.Errorf(
-			"learning: feature scale for %s must be finite and positive, got %v",
+		return 0, fmt.Errorf(
+			"%w: feature scale for %s must be finite and positive, got %v",
+			core.ErrDomain,
 			name,
 			scale,
-		))
+		)
 	}
 
 	return scale, nil
 }
 
 /*
-Scores returns one logit per configured output.
+scores returns one logit per configured output.
 */
-func (weights *ClassifierWeights) Scores(features map[string]float64) []float64 {
-	scores := make([]float64, len(weights.outputs))
+func (op *ClassifierWeights) scores(features map[string]float64) []float64 {
+	scores := make([]float64, len(op.outputs))
 
-	for index, outputKey := range weights.outputs {
-		scores[index] = weights.outputScore(outputKey, features)
+	for index, outputKey := range op.outputs {
+		scores[index] = op.outputScore(outputKey, features)
 	}
 
 	return scores
 }
 
-func (weights *ClassifierWeights) outputScore(
+func (op *ClassifierWeights) outputScore(
 	outputKey string,
 	features map[string]float64,
 ) float64 {
-	spec, ok := weights.specs[outputKey]
+	spec, ok := op.specs[outputKey]
 
 	if !ok {
 		return 0
 	}
 
-	termWeights := weights.termWeights[outputKey]
+	termWeights := op.termWeights[outputKey]
 	score := 0.0
 
 	for _, featureKey := range spec.Terms {
-		normalized := normalizeFeature(features[featureKey], weights.scales[featureKey])
+		normalized := normalizeFeature(features[featureKey], op.scales[featureKey])
 
 		if spec.Inverts[featureKey] {
 			normalized = 1.0 - normalized
@@ -173,17 +249,6 @@ func (weights *ClassifierWeights) outputScore(
 	}
 
 	return score
-}
-
-/*
-Strength returns the first configured output logit from feature values.
-*/
-func (weights *ClassifierWeights) Strength(features map[string]float64) float64 {
-	if len(weights.outputs) == 0 {
-		return 0
-	}
-
-	return weights.outputScore(weights.outputs[0], features)
 }
 
 func normalizeFeature(value, scale float64) float64 {
@@ -202,54 +267,6 @@ func squashFeature(value float64) float64 {
 	}
 
 	return value / (1.0 + math.Abs(value))
-}
-
-func (weights *ClassifierWeights) clamp() error {
-	floor, ceiling, err := weightBounds(weights.scales)
-
-	if err != nil {
-		return err
-	}
-
-	if ceiling <= 0 {
-		return nil
-	}
-
-	for outputKey, featureWeights := range weights.termWeights {
-		for featureKey, weight := range featureWeights {
-			weights.termWeights[outputKey][featureKey] = clamp(weight, floor, ceiling)
-		}
-	}
-
-	return nil
-}
-
-func weightBounds(scales map[string]float64) (float64, float64, error) {
-	minScale := math.MaxFloat64
-	maxScale := 0.0
-
-	for _, scale := range scales {
-		if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
-			continue
-		}
-
-		minScale = math.Min(minScale, scale)
-		maxScale = math.Max(maxScale, scale)
-	}
-
-	if minScale == math.MaxFloat64 || maxScale <= 0 {
-		return 0, 0, nil
-	}
-
-	spreadRatio := maxScale / minScale
-	floor := 1.0 / (maxScale * spreadRatio)
-	ceiling := spreadRatio / minScale
-
-	return floor, ceiling, nil
-}
-
-func clamp(value, lower, upper float64) float64 {
-	return math.Min(math.Max(value, lower), upper)
 }
 
 func cloneScales(scales map[string]float64) map[string]float64 {

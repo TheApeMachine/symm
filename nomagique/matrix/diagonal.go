@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -10,20 +12,19 @@ import (
 Diagonal selects row i's member i. An undersized row is a shape error.
 */
 type Diagonal struct {
-	core.Base[[][]float64, []float64]
+	err error
+	out []float64
 }
 
-func NewDiagonal() *Diagonal {
+func NewDiagonal() core.Primitive {
 	return &Diagonal{}
 }
 
-func (op *Diagonal) Next(
-	in iter.Seq[core.Primitive[[][]float64, [][]float64]],
-) iter.Seq[core.Primitive[[]float64, []float64]] {
-	return func(yield func(core.Primitive[[]float64, []float64]) bool) {
+func (op *Diagonal) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			rows := arriving.Read()
-			diag := make([]float64, len(rows))
+			rows := *(*[][]float64)(arriving)
+			op.out = make([]float64, len(rows))
 			ok := true
 
 			for index, row := range rows {
@@ -33,16 +34,26 @@ func (op *Diagonal) Next(
 					break
 				}
 
-				diag[index] = row[index]
+				op.out[index] = row[index]
 			}
 
 			if !ok {
-				continue
+				return
 			}
 
-			if !yield(op.Carrier(diag)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Diagonal) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

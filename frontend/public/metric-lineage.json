@@ -12,12 +12,56 @@
       "kernelOnly": false
     },
     {
+      "id": "cognition/coherence_damping_work",
+      "source": "cognition",
+      "metric": "coherence_damping_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 129,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/coherence_drive_work",
+      "source": "cognition",
+      "metric": "coherence_drive_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 128,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "cognition/coherence_mag2",
       "source": "cognition",
       "metric": "coherence_mag2",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 88,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/coherence_mechanical_work",
+      "source": "cognition",
+      "metric": "coherence_mechanical_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 126,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/coherence_potential_work",
+      "source": "cognition",
+      "metric": "coherence_potential_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 127,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -78,12 +122,155 @@
       "kernelOnly": false
     },
     {
+      "id": "cognition/gas_internal_energy",
+      "source": "cognition",
+      "metric": "gas_internal_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 101,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_kinetic_energy",
+      "source": "cognition",
+      "metric": "gas_kinetic_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 102,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_max_mach",
+      "source": "cognition",
+      "metric": "gas_max_mach",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 99,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_max_speed",
+      "source": "cognition",
+      "metric": "gas_max_speed",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 100,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_min_density",
+      "source": "cognition",
+      "metric": "gas_min_density",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 105,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_min_pressure",
+      "source": "cognition",
+      "metric": "gas_min_pressure",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 104,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_min_temperature",
+      "source": "cognition",
+      "metric": "gas_min_temperature",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 106,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_strain_max",
+      "source": "cognition",
+      "metric": "gas_strain_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 98,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_strain_rms",
+      "source": "cognition",
+      "metric": "gas_strain_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 97,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_viscous_power",
+      "source": "cognition",
+      "metric": "gas_viscous_power",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 103,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_vorticity_max",
+      "source": "cognition",
+      "metric": "gas_vorticity_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 96,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/gas_vorticity_rms",
+      "source": "cognition",
+      "metric": "gas_vorticity_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 95,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "cognition/guidance_speed",
       "source": "cognition",
       "metric": "guidance_speed",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 87,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/integrator_accepted_dt",
+      "source": "cognition",
+      "metric": "integrator_accepted_dt",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 141,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -106,6 +293,149 @@
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 50,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/particle_kinetic",
+      "source": "cognition",
+      "metric": "particle_kinetic",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 140,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/particle_material_total",
+      "source": "cognition",
+      "metric": "particle_material_total",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 137,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/particle_oscillator",
+      "source": "cognition",
+      "metric": "particle_oscillator",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 139,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/particle_thermal",
+      "source": "cognition",
+      "metric": "particle_thermal",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 138,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/phase_dissipation",
+      "source": "cognition",
+      "metric": "phase_dissipation",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 132,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/phase_drive_work",
+      "source": "cognition",
+      "metric": "phase_drive_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 131,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/pilot_displacement_max",
+      "source": "cognition",
+      "metric": "pilot_displacement_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 121,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/pilot_displacement_rms",
+      "source": "cognition",
+      "metric": "pilot_displacement_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 120,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/pilot_integration_error_max",
+      "source": "cognition",
+      "metric": "pilot_integration_error_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 123,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/pilot_min_density",
+      "source": "cognition",
+      "metric": "pilot_min_density",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 122,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/pilot_speed_max",
+      "source": "cognition",
+      "metric": "pilot_speed_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 119,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/pilot_speed_rms",
+      "source": "cognition",
+      "metric": "pilot_speed_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 118,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/pilot_work",
+      "source": "cognition",
+      "metric": "pilot_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 130,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -155,6 +485,17 @@
       "kernelOnly": false
     },
     {
+      "id": "cognition/thermal_conduction_net",
+      "source": "cognition",
+      "metric": "thermal_conduction_net",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 133,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "cognition/uncertainty",
       "source": "cognition",
       "metric": "uncertainty",
@@ -172,6 +513,94 @@
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 90,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/viscous_to_heat",
+      "source": "cognition",
+      "metric": "viscous_to_heat",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 134,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/wave_chemical_potential",
+      "source": "cognition",
+      "metric": "wave_chemical_potential",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 113,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/wave_kinetic_energy",
+      "source": "cognition",
+      "metric": "wave_kinetic_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 110,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/wave_nonlinear_energy",
+      "source": "cognition",
+      "metric": "wave_nonlinear_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 111,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/wave_norm",
+      "source": "cognition",
+      "metric": "wave_norm",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 109,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/wave_phase_potential",
+      "source": "cognition",
+      "metric": "wave_phase_potential",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 115,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/wave_potential_energy",
+      "source": "cognition",
+      "metric": "wave_potential_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 112,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/wave_projected_norm",
+      "source": "cognition",
+      "metric": "wave_projected_norm",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 114,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1360,7 +1789,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 151
+          "line": 121
         }
       ],
       "dead": false,
@@ -1381,7 +1810,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 156
+          "line": 126
         }
       ],
       "dead": false,
@@ -1991,12 +2420,56 @@
       "kernelOnly": false
     },
     {
+      "id": "manifold/coherence_damping_work",
+      "source": "manifold",
+      "metric": "coherence_damping_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 129,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/coherence_drive_work",
+      "source": "manifold",
+      "metric": "coherence_drive_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 128,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "manifold/coherence_mag2",
       "source": "manifold",
       "metric": "coherence_mag2",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 88,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/coherence_mechanical_work",
+      "source": "manifold",
+      "metric": "coherence_mechanical_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 126,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/coherence_potential_work",
+      "source": "manifold",
+      "metric": "coherence_potential_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 127,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2057,12 +2530,155 @@
       "kernelOnly": false
     },
     {
+      "id": "manifold/gas_internal_energy",
+      "source": "manifold",
+      "metric": "gas_internal_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 101,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_kinetic_energy",
+      "source": "manifold",
+      "metric": "gas_kinetic_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 102,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_max_mach",
+      "source": "manifold",
+      "metric": "gas_max_mach",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 99,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_max_speed",
+      "source": "manifold",
+      "metric": "gas_max_speed",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 100,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_min_density",
+      "source": "manifold",
+      "metric": "gas_min_density",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 105,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_min_pressure",
+      "source": "manifold",
+      "metric": "gas_min_pressure",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 104,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_min_temperature",
+      "source": "manifold",
+      "metric": "gas_min_temperature",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 106,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_strain_max",
+      "source": "manifold",
+      "metric": "gas_strain_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 98,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_strain_rms",
+      "source": "manifold",
+      "metric": "gas_strain_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 97,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_viscous_power",
+      "source": "manifold",
+      "metric": "gas_viscous_power",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 103,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_vorticity_max",
+      "source": "manifold",
+      "metric": "gas_vorticity_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 96,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_vorticity_rms",
+      "source": "manifold",
+      "metric": "gas_vorticity_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 95,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "manifold/guidance_speed",
       "source": "manifold",
       "metric": "guidance_speed",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 87,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/integrator_accepted_dt",
+      "source": "manifold",
+      "metric": "integrator_accepted_dt",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 141,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2085,6 +2701,149 @@
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 50,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/particle_kinetic",
+      "source": "manifold",
+      "metric": "particle_kinetic",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 140,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/particle_material_total",
+      "source": "manifold",
+      "metric": "particle_material_total",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 137,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/particle_oscillator",
+      "source": "manifold",
+      "metric": "particle_oscillator",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 139,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/particle_thermal",
+      "source": "manifold",
+      "metric": "particle_thermal",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 138,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/phase_dissipation",
+      "source": "manifold",
+      "metric": "phase_dissipation",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 132,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/phase_drive_work",
+      "source": "manifold",
+      "metric": "phase_drive_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 131,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pilot_displacement_max",
+      "source": "manifold",
+      "metric": "pilot_displacement_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 121,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pilot_displacement_rms",
+      "source": "manifold",
+      "metric": "pilot_displacement_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 120,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pilot_integration_error_max",
+      "source": "manifold",
+      "metric": "pilot_integration_error_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 123,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pilot_min_density",
+      "source": "manifold",
+      "metric": "pilot_min_density",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 122,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pilot_speed_max",
+      "source": "manifold",
+      "metric": "pilot_speed_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 119,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pilot_speed_rms",
+      "source": "manifold",
+      "metric": "pilot_speed_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 118,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pilot_work",
+      "source": "manifold",
+      "metric": "pilot_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 130,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2134,6 +2893,17 @@
       "kernelOnly": false
     },
     {
+      "id": "manifold/thermal_conduction_net",
+      "source": "manifold",
+      "metric": "thermal_conduction_net",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 133,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "manifold/uncertainty",
       "source": "manifold",
       "metric": "uncertainty",
@@ -2151,6 +2921,94 @@
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 90,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/viscous_to_heat",
+      "source": "manifold",
+      "metric": "viscous_to_heat",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 134,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_chemical_potential",
+      "source": "manifold",
+      "metric": "wave_chemical_potential",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 113,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_kinetic_energy",
+      "source": "manifold",
+      "metric": "wave_kinetic_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 110,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_nonlinear_energy",
+      "source": "manifold",
+      "metric": "wave_nonlinear_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 111,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_norm",
+      "source": "manifold",
+      "metric": "wave_norm",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 109,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_phase_potential",
+      "source": "manifold",
+      "metric": "wave_phase_potential",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 115,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_potential_energy",
+      "source": "manifold",
+      "metric": "wave_potential_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 112,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_projected_norm",
+      "source": "manifold",
+      "metric": "wave_projected_norm",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 114,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3035,12 +3893,56 @@
       "kernelOnly": false
     },
     {
+      "id": "resonance/coherence_damping_work",
+      "source": "resonance",
+      "metric": "coherence_damping_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 129,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/coherence_drive_work",
+      "source": "resonance",
+      "metric": "coherence_drive_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 128,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "resonance/coherence_mag2",
       "source": "resonance",
       "metric": "coherence_mag2",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 88,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/coherence_mechanical_work",
+      "source": "resonance",
+      "metric": "coherence_mechanical_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 126,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/coherence_potential_work",
+      "source": "resonance",
+      "metric": "coherence_potential_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 127,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3101,12 +4003,155 @@
       "kernelOnly": false
     },
     {
+      "id": "resonance/gas_internal_energy",
+      "source": "resonance",
+      "metric": "gas_internal_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 101,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_kinetic_energy",
+      "source": "resonance",
+      "metric": "gas_kinetic_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 102,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_max_mach",
+      "source": "resonance",
+      "metric": "gas_max_mach",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 99,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_max_speed",
+      "source": "resonance",
+      "metric": "gas_max_speed",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 100,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_min_density",
+      "source": "resonance",
+      "metric": "gas_min_density",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 105,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_min_pressure",
+      "source": "resonance",
+      "metric": "gas_min_pressure",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 104,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_min_temperature",
+      "source": "resonance",
+      "metric": "gas_min_temperature",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 106,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_strain_max",
+      "source": "resonance",
+      "metric": "gas_strain_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 98,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_strain_rms",
+      "source": "resonance",
+      "metric": "gas_strain_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 97,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_viscous_power",
+      "source": "resonance",
+      "metric": "gas_viscous_power",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 103,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_vorticity_max",
+      "source": "resonance",
+      "metric": "gas_vorticity_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 96,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/gas_vorticity_rms",
+      "source": "resonance",
+      "metric": "gas_vorticity_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 95,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "resonance/guidance_speed",
       "source": "resonance",
       "metric": "guidance_speed",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 87,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/integrator_accepted_dt",
+      "source": "resonance",
+      "metric": "integrator_accepted_dt",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 141,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3129,6 +4174,149 @@
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 50,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/particle_kinetic",
+      "source": "resonance",
+      "metric": "particle_kinetic",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 140,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/particle_material_total",
+      "source": "resonance",
+      "metric": "particle_material_total",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 137,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/particle_oscillator",
+      "source": "resonance",
+      "metric": "particle_oscillator",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 139,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/particle_thermal",
+      "source": "resonance",
+      "metric": "particle_thermal",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 138,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/phase_dissipation",
+      "source": "resonance",
+      "metric": "phase_dissipation",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 132,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/phase_drive_work",
+      "source": "resonance",
+      "metric": "phase_drive_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 131,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/pilot_displacement_max",
+      "source": "resonance",
+      "metric": "pilot_displacement_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 121,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/pilot_displacement_rms",
+      "source": "resonance",
+      "metric": "pilot_displacement_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 120,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/pilot_integration_error_max",
+      "source": "resonance",
+      "metric": "pilot_integration_error_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 123,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/pilot_min_density",
+      "source": "resonance",
+      "metric": "pilot_min_density",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 122,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/pilot_speed_max",
+      "source": "resonance",
+      "metric": "pilot_speed_max",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 119,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/pilot_speed_rms",
+      "source": "resonance",
+      "metric": "pilot_speed_rms",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 118,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/pilot_work",
+      "source": "resonance",
+      "metric": "pilot_work",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 130,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -3178,6 +4366,17 @@
       "kernelOnly": false
     },
     {
+      "id": "resonance/thermal_conduction_net",
+      "source": "resonance",
+      "metric": "thermal_conduction_net",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 133,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "resonance/uncertainty",
       "source": "resonance",
       "metric": "uncertainty",
@@ -3195,6 +4394,94 @@
       "package": "github.com/theapemachine/symm/types",
       "file": "types/observation.go",
       "line": 90,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/viscous_to_heat",
+      "source": "resonance",
+      "metric": "viscous_to_heat",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 134,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/wave_chemical_potential",
+      "source": "resonance",
+      "metric": "wave_chemical_potential",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 113,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/wave_kinetic_energy",
+      "source": "resonance",
+      "metric": "wave_kinetic_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 110,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/wave_nonlinear_energy",
+      "source": "resonance",
+      "metric": "wave_nonlinear_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 111,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/wave_norm",
+      "source": "resonance",
+      "metric": "wave_norm",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 109,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/wave_phase_potential",
+      "source": "resonance",
+      "metric": "wave_phase_potential",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 115,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/wave_potential_energy",
+      "source": "resonance",
+      "metric": "wave_potential_energy",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 112,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/wave_projected_norm",
+      "source": "resonance",
+      "metric": "wave_projected_norm",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 114,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5907,7 +7194,7 @@
       "kind": "catalog",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 151,
+      "line": 121,
       "targets": [
         "hawkes/excitation_fraction:buy",
         "hawkes/excitation_fraction:sell"
@@ -5947,8 +7234,8 @@
     }
   ],
   "summary": {
-    "totalProducers": 306,
-    "deadProducers": 118,
+    "totalProducers": 423,
+    "deadProducers": 235,
     "referencedProducers": 188,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,

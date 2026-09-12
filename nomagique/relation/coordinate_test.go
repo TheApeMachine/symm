@@ -22,15 +22,15 @@ func TestCompareCoordinate(t *testing.T) {
 
 		Convey("every coordinate equals itself", func() {
 			for _, coordinate := range coordinates {
-				So(CompareCoordinate(coordinate, coordinate), ShouldEqual, 0)
+				So(compareCoordinate(coordinate, coordinate), ShouldEqual, 0)
 			}
 		})
 
 		Convey("comparison is antisymmetric for distinct coordinates", func() {
 			for left := range coordinates {
 				for right := range coordinates {
-					So(CompareCoordinate(coordinates[left], coordinates[right]), ShouldEqual,
-						-CompareCoordinate(coordinates[right], coordinates[left]))
+					So(compareCoordinate(coordinates[left], coordinates[right]), ShouldEqual,
+						-compareCoordinate(coordinates[right], coordinates[left]))
 				}
 			}
 		})
@@ -39,9 +39,9 @@ func TestCompareCoordinate(t *testing.T) {
 			for first := range coordinates {
 				for second := range coordinates {
 					for third := range coordinates {
-						if CompareCoordinate(coordinates[first], coordinates[second]) < 0 &&
-							CompareCoordinate(coordinates[second], coordinates[third]) < 0 {
-							So(CompareCoordinate(coordinates[first], coordinates[third]) < 0, ShouldBeTrue)
+						if compareCoordinate(coordinates[first], coordinates[second]) < 0 &&
+							compareCoordinate(coordinates[second], coordinates[third]) < 0 {
+							So(compareCoordinate(coordinates[first], coordinates[third]) < 0, ShouldBeTrue)
 						}
 					}
 				}
@@ -52,7 +52,7 @@ func TestCompareCoordinate(t *testing.T) {
 	Convey("Given coordinates whose rendered fields carry no separator or padding", t, func() {
 		// Symbol/Source/Metric/Side/Peer contain no '/', and Epoch stays a
 		// single digit, so the rendered ID joins fields in exactly the order
-		// CompareCoordinate walks: lexicographic identity order must then
+		// compareCoordinate walks: lexicographic identity order must then
 		// agree with the field-wise order.
 		coordinates := []Coordinate{
 			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "buy", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
@@ -66,12 +66,28 @@ func TestCompareCoordinate(t *testing.T) {
 		Convey("the field-wise sign agrees with the rendered identity order", func() {
 			for left := range coordinates {
 				for right := range coordinates {
-					fieldSign := sign(CompareCoordinate(coordinates[left], coordinates[right]))
-					renderedSign := sign(strings.Compare(coordinates[left].ID(), coordinates[right].ID()))
+					fieldSign := sign(compareCoordinate(coordinates[left], coordinates[right]))
+					renderedSign := sign(strings.Compare(coordinates[left].coordinateID(), coordinates[right].coordinateID()))
 
 					So(fieldSign, ShouldEqual, renderedSign)
 				}
 			}
+		})
+	})
+}
+
+func TestParseMetricSide(t *testing.T) {
+	Convey("Given projected metric labels", t, func() {
+		Convey("a side suffix is split at the first colon", func() {
+			metric, side := parseMetricSide("signed_net_fraction:buy")
+			So(metric, ShouldEqual, "signed_net_fraction")
+			So(side, ShouldEqual, "buy")
+		})
+
+		Convey("a namespaced name is never split", func() {
+			metric, side := parseMetricSide("ns/metric")
+			So(metric, ShouldEqual, "ns/metric")
+			So(side, ShouldEqual, "")
 		})
 	})
 }
@@ -102,7 +118,7 @@ func BenchmarkCompareCoordinate(b *testing.B) {
 	for iteration := 0; b.Loop(); iteration++ {
 		left := coordinates[iteration%len(coordinates)]
 		right := coordinates[(iteration+1)%len(coordinates)]
-		benchmarkCompareSink += CompareCoordinate(left, right)
+		benchmarkCompareSink += compareCoordinate(left, right)
 	}
 }
 
@@ -124,7 +140,7 @@ func BenchmarkSortCoordinates(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		slices.SortFunc(coordinates, CompareCoordinate)
+		slices.SortFunc(coordinates, compareCoordinate)
 		benchmarkCompareSink += len(coordinates)
 	}
 }

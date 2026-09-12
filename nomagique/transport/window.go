@@ -1,24 +1,24 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Window exposes fixed-width overlapping groups within a delivery run. Width and
-stride are structural configuration. Width 2 / stride 1 supplies consecutive
-pairs; width N / stride N supplies disjoint groups. Groups are handed over as
-soon as they are complete.
+Window exposes fixed-width overlapping groups within a delivery run.
 */
 type Window[T any] struct {
-	core.Base[T, []T]
+	err    error
 	width  int
 	stride int
+	out    []T
 }
 
-func NewWindow[T any](width, stride int) *Window[T] {
+func NewWindow[T any](width, stride int) core.Primitive {
 	op := &Window[T]{width: width, stride: stride}
 
 	if width < 1 || stride < 1 {
@@ -28,10 +28,8 @@ func NewWindow[T any](width, stride int) *Window[T] {
 	return op
 }
 
-func (op *Window[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[[]T, []T]] {
-	return func(yield func(core.Primitive[[]T, []T]) bool) {
+func (op *Window[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		if op.Error() != nil {
 			return
 		}
@@ -39,15 +37,15 @@ func (op *Window[T]) Next(
 		var buf []T
 
 		for arriving := range in {
-			buf = append(buf, arriving.Read())
+			buf = append(buf, *(*T)(arriving))
 
 			if len(buf) < op.width {
 				continue
 			}
 
-			group := append([]T(nil), buf[:op.width]...)
+			op.out = append([]T(nil), buf[:op.width]...)
 
-			if !yield(op.Carrier(group)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 
@@ -60,4 +58,14 @@ func (op *Window[T]) Next(
 			buf = append(buf[:0], buf[drop:]...)
 		}
 	}
+}
+
+func (op *Window[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

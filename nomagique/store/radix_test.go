@@ -1,25 +1,35 @@
-package store
+package store_test
 
 import (
 	"testing"
+	"unsafe"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestRadixNext(t *testing.T) {
 	Convey("Radix retains writes and answers a prefix selector from its own state", t, func() {
-		op := NewRadix(iradix.New[[]byte]())
+		op := store.NewRadix(iradix.New[[]byte]())
 
-		tests.CollectSeq(op.Next(transport.Values(
-			map[string][]byte{"selector": []byte("b/enter\x00abc"), "data": []byte("one")},
-			map[string][]byte{"selector": []byte("b/exit\x00abc"), "data": []byte("two")},
-			map[string][]byte{"selector": []byte("b/")},
-		)))
+		m1 := map[string][]byte{"selector": []byte("b/enter\x00abc"), "data": []byte("one")}
+		m2 := map[string][]byte{"selector": []byte("b/exit\x00abc"), "data": []byte("two")}
+		m3 := map[string][]byte{"selector": []byte("b/")}
 
-		tree := op.Read()
+		in := func(yield func(unsafe.Pointer) bool) {
+			for _, m := range []map[string][]byte{m1, m2, m3} {
+				if !yield(unsafe.Pointer(&m)) {
+					return
+				}
+			}
+		}
+
+		out := tests.CollectSeq[*iradix.Tree[[]byte]](op.Next(in))
+		So(len(out), ShouldEqual, 3)
+
+		tree := out[len(out)-1]
 		So(tree, ShouldNotBeNil)
 
 		found := map[string]string{}

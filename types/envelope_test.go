@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -62,16 +63,38 @@ settledManifold runs a predictive manifold long enough that it has real
 layer states to project, so the encoder is exercised against a live model
 rather than a zero-valued one.
 */
-func settledManifold() *learning.ResonanceManifold {
-	manifold := learning.NewResonanceManifold([]int{4, 8, 4}, 1, 0.03)
+/*
+settledSnapshot runs a predictive manifold long enough that it has real layer
+states to project, so the encoder is exercised against a live model rather
+than a zero-valued one.
+*/
+func settledSnapshot() *learning.ManifoldReading {
+	manifold := learning.NewResonanceManifold(
+		[]int{4, 8, 4}, 1, 1, 0.03, learning.ReadoutAll,
+	)
+
+	var reading learning.ManifoldReading
 
 	for step := range 32 {
 		value := float64(step % 5)
-		_ = manifold.Settle([]float64{value, value / 2, value / 3, 1}, false)
-		_ = manifold.Learn([]float64{value})
+
+		for out := range manifold.Next(transport.NewValues(learning.ManifoldCommand{
+			Batch: &learning.BatchIntent{
+				Input: []float64{value, value / 2, value / 3, 1},
+				Learn: true,
+			},
+		}).Next(nil)) {
+			reading = *(*learning.ManifoldReading)(out)
+		}
 	}
 
-	return manifold
+	for out := range manifold.Next(transport.NewValues(learning.ManifoldCommand{
+		Reading: &learning.ReadingIntent{},
+	}).Next(nil)) {
+		reading = *(*learning.ManifoldReading)(out)
+	}
+
+	return &reading
 }
 
 func TestEncodeResonanceArtifact(t *testing.T) {
@@ -79,7 +102,7 @@ func TestEncodeResonanceArtifact(t *testing.T) {
 		artifact := &ResonanceArtifact{
 			Symbol:           "BTC/USD",
 			At:               time.Now(),
-			Manifold:         settledManifold(),
+			Snapshot:         settledSnapshot(),
 			Dynamics:         &telemetry.EnvelopeResonanceDynamicsT{Ready: 1, Velocity: 0.5},
 			ForwardCurve:     []float64{0.01, 0.02},
 			SupportedHorizon: 2,
@@ -231,15 +254,15 @@ func TestEnvelopeMeasurementFocusGate(t *testing.T) {
 			SetFocus("BTC/USD")
 		})
 
+		hawkes := data.NewMeasurement[float64]("hawkes", map[string]data.Metric[float64]{})
+		hawkes.Label, hawkes.At, hawkes.From = "BTC/USD", time.Now(), time.Time{}
+		toxicity := data.NewMeasurement[float64]("toxicity", map[string]data.Metric[float64]{})
+		toxicity.Label, toxicity.At, toxicity.From = "ETH/USD", time.Now(), time.Time{}
 		envelope := &Envelope{
-			Key:    "BTC/USD",
-			Equity: &EquityReading{Cash: "1000", Unrealized: "0", Equity: "1000"},
-			Hawkes: data.NewMeasurement[float64](
-				"hawkes:BTC/USD:1", "BTC/USD", "hawkes", time.Now(), time.Time{},
-			),
-			Toxicity: data.NewMeasurement[float64](
-				"toxicity:ETH/USD:2", "ETH/USD", "toxicity", time.Now(), time.Time{},
-			),
+			Key:      "BTC/USD",
+			Equity:   &EquityReading{Cash: "1000", Unrealized: "0", Equity: "1000"},
+			Hawkes:   hawkes,
+			Toxicity: toxicity,
 		}
 
 		Convey("the websocket mirror keeps the focused measurement and equity", func() {

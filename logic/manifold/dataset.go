@@ -3,6 +3,7 @@ package manifold
 import (
 	"iter"
 	"math"
+	"sort"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
@@ -125,22 +126,20 @@ func (dataset *Dataset) step(
 		symbolIndex := symbolToken(symbol)
 
 		for sidePositive, side := range []*book.Side{bids, asks} {
-			total := 0
-			orders := side.Last.Queue()
+			if side == nil {
+				continue
+			}
 
-			for _, order := range orders {
-				if usableOrder(order) {
-					total++
-				}
+			orders := collectSideOrders(side)
+			total := len(orders)
+
+			if total == 0 {
+				continue
 			}
 
 			rank := 0
 
 			for _, order := range orders {
-				if !usableOrder(order) {
-					continue
-				}
-
 				token := packToken(symbolIndex, sidePositive)
 				positionX, positionY, priceDeviation, quantityDeviation, err := dataset.frames.place(
 					symbol,
@@ -248,6 +247,48 @@ func orderEnergy(quantityDeviation float64, excitation float32) float32 {
 	return float32(size*energySizeSpan+energyFloor) * (1 + excitation)
 }
 
+func collectSideOrders(side *book.Side) []*book.Order {
+	if side == nil || len(side.Levels) == 0 {
+		return nil
+	}
+
+	levels := make([]*book.Level, 0, len(side.Levels))
+
+	for _, level := range side.Levels {
+		if level != nil && level.Price != nil {
+			levels = append(levels, level)
+		}
+	}
+
+	if len(levels) == 0 {
+		return nil
+	}
+
+	if side.Direction == book.Bid {
+		sort.Slice(levels, func(first, second int) bool {
+			return levels[first].Price.Cmp(levels[second].Price) > 0
+		})
+	}
+
+	if side.Direction != book.Bid {
+		sort.Slice(levels, func(first, second int) bool {
+			return levels[first].Price.Cmp(levels[second].Price) < 0
+		})
+	}
+
+	var orders []*book.Order
+
+	for _, level := range levels {
+		for _, order := range level.Queue() {
+			if usableOrder(order) {
+				orders = append(orders, order)
+			}
+		}
+	}
+
+	return orders
+}
+
 /*
 usableOrder reports whether an order describes a resting particle: it must be
 identified, and carry a finite positive price and size for the log-space
@@ -255,6 +296,9 @@ projection to be defined.
 */
 func usableOrder(order *book.Order) bool {
 	return order != nil &&
+		order.ID != "" &&
+		order.LimitPrice != nil &&
+		order.Quantity != nil &&
 		validPositive(order.LimitPrice.Float64()) &&
 		validPositive(order.Quantity.Float64())
 }

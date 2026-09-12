@@ -1,32 +1,45 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Absolute owns one field operation. What it hands over is the absolute value of
-each arrival.
+Absolute owns one field operation. What it hands over is the absolute value
+of each arrival, operating in-place on the wire pointer.
 */
-type Absolute[U core.Floating] struct {
-	core.Base[U, U]
+type Absolute struct {
+	err error
 }
 
-func NewAbsolute[U core.Floating]() *Absolute[U] {
-	return &Absolute[U]{}
+func NewAbsolute() core.Primitive {
+	return &Absolute{}
 }
 
-func (op *Absolute[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Absolute) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(U(math.Abs(float64(arriving.Read()))))) {
+			in := (*float64)(arriving)
+			*in = math.Abs(*in)
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Absolute) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

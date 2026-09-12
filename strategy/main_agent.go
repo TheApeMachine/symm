@@ -1,16 +1,19 @@
 package strategy
 
 import (
+	"context"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -60,11 +63,13 @@ trading according to configuration.
 type MainAgent struct {
 	mu            sync.RWMutex
 	id            int
-	status        string // "simulated" or "trading"
+	status        string // "paper" or "real"
 	targetAccount string // "paper" or "real"
 	instrument    *broker.Instrument
 	price         *broker.Price
-	engine        *cognition.Engine
+	engine        core.Primitive
+	api           *websocket.API
+	balance       *broker.Balance
 
 	symbolPhase    map[string]string
 	symbolMaturity map[string]int
@@ -111,17 +116,19 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...an
 		initialCash = decimal.NewFromInt64(balance)
 	}
 
-	if targetAccount == "" {
+	if targetAccount == "" || targetAccount == "simulated" {
 		targetAccount = viper.GetString("trading.model")
 
-		if targetAccount == "" {
+		if targetAccount == "" || targetAccount == "simulated" {
 			targetAccount = "paper"
 		}
 	}
 
 	var inst *broker.Instrument
 	var prc *broker.Price
-	var eng *cognition.Engine
+	var eng core.Primitive
+	var api *websocket.API
+	var bal *broker.Balance
 
 	for _, dep := range deps {
 		switch v := dep.(type) {
@@ -129,28 +136,30 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...an
 			inst = v
 		case *broker.Price:
 			prc = v
-		case *cognition.Engine:
+		case core.Primitive:
 			eng = v
+		case *websocket.API:
+			api = v
+		case *broker.Balance:
+			bal = v
 		}
 	}
 
-	if targetAccount == "" {
-		targetAccount = "simulated"
-	}
-
-	if initialCash == nil || initialCash.Sign() <= 0 {
-		initialCash = decimal.NewFromInt64(10000)
+	if bal != nil && bal.Cash() != nil && bal.Cash().Sign() > 0 {
+		initialCash = bal.Cash()
 	}
 
 	zero := decimal.NewFromInt64(0)
 
 	return &MainAgent{
 		id:             0,
-		status:         "simulated",
+		status:         targetAccount,
 		targetAccount:  targetAccount,
 		instrument:     inst,
 		price:          prc,
 		engine:         eng,
+		api:            api,
+		balance:        bal,
 		initial:        initialCash,
 		cash:           initialCash,
 		equity:         initialCash,
@@ -194,11 +203,66 @@ func (agent *MainAgent) SetPrice(price *broker.Price) {
 	agent.price = price
 }
 
-func (agent *MainAgent) SetEngine(engine *cognition.Engine) {
+func (agent *MainAgent) SetEngine(engine core.Primitive) {
 	agent.mu.Lock()
 	defer agent.mu.Unlock()
 
 	agent.engine = engine
+}
+
+func (agent *MainAgent) SetAPI(api *websocket.API) {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+
+	agent.api = api
+}
+
+func (agent *MainAgent) SetBalance(balance *broker.Balance) {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+
+	agent.balance = balance
+}
+
+func (agent *MainAgent) resetPaperAccount() {
+	errnie.Info("main agent: resetting paper account via kraken paper reset")
+
+	ctx := context.Background()
+
+	if agent.api != nil && agent.api.Context() != nil {
+		ctx = agent.api.Context()
+	}
+
+	err := websocket.ResetPaperAccount(ctx)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.IO, "main agent: paper account reset failed", err))
+		return
+	}
+
+	if agent.balance != nil {
+		if refreshErr := agent.balance.Refresh(agent.instrument); refreshErr != nil {
+			errnie.Error(errnie.Err(errnie.IO, "main agent: balance refresh failed after reset", refreshErr))
+		}
+
+		if agent.balance.Cash() != nil {
+			agent.cash = agent.balance.Cash()
+		}
+
+		if agent.balance.Equity() != nil {
+			agent.equity = agent.balance.Equity()
+		}
+
+		if agent.balance.Unrealized() != nil {
+			agent.unrealized = agent.balance.Unrealized()
+		}
+
+		agent.initial = agent.cash
+	}
+
+	agent.positions = make(map[string]*types.Holding)
+	agent.posQuantities = make(map[string]*decimal.Decimal)
+	agent.posCosts = make(map[string]*decimal.Decimal)
 }
 
 func (agent *MainAgent) feeRate(symbol string) *decimal.Decimal {
@@ -219,7 +283,7 @@ func (agent *MainAgent) ID() int {
 func (agent *MainAgent) statusLocked() string {
 	samples := agent.wins + agent.losses
 
-	if agent.status == "simulated" && samples >= 10 {
+	if (agent.status == "paper" || agent.status == "simulated") && samples >= 10 {
 		stdErr := 0.0
 
 		if samples > 1 {
@@ -264,7 +328,12 @@ func (agent *MainAgent) canEnter(decision ActionDecision) bool {
 		return false
 	}
 
+	if agent.balance != nil && agent.balance.Cash() != nil {
+		agent.cash = agent.balance.Cash()
+	}
+
 	if agent.cash == nil || agent.cash.Sign() <= 0 {
+		agent.resetPaperAccount()
 		return false
 	}
 
@@ -535,6 +604,15 @@ func (agent *MainAgent) enterLong(
 		maxFraction = system.Cfg.Planner.MaxAllocationFraction
 	}
 
+	if agent.balance != nil && agent.balance.Cash() != nil {
+		agent.cash = agent.balance.Cash()
+	}
+
+	if agent.cash == nil || agent.cash.Sign() <= 0 {
+		agent.resetPaperAccount()
+		return
+	}
+
 	allocatedCash := agent.cash.Mul(decimal.NewFromFloat64(maxFraction))
 
 	var quantity *decimal.Decimal
@@ -567,8 +645,42 @@ func (agent *MainAgent) enterLong(
 		return
 	}
 
-	agent.cash = agent.cash.Sub(totalCost)
-	agent.fees = agent.fees.Add(fee)
+	if agent.api != nil {
+		orderReq := &spot.AddOrderRequest{
+			ClOrdId:   uuid.NewString(),
+			Pair:      symbol,
+			Type:      "buy",
+			OrderType: "market",
+			Volume:    quantity.String(),
+		}
+
+		_, orderErr := agent.api.AddOrder(orderReq)
+
+		if orderErr != nil {
+			errnie.Error(errnie.Err(errnie.IO, "main agent: paper buy failed, resetting paper account", orderErr))
+			agent.resetPaperAccount()
+			return
+		}
+
+		if agent.balance != nil {
+			if refreshErr := agent.balance.Refresh(agent.instrument); refreshErr != nil {
+				errnie.Error(errnie.Err(errnie.IO, "main agent: balance refresh failed after buy", refreshErr))
+			}
+
+			if agent.balance.Cash() != nil {
+				agent.cash = agent.balance.Cash()
+			}
+		}
+	}
+
+	if agent.api == nil {
+		agent.cash = agent.cash.Sub(totalCost)
+	}
+
+	if fee != nil {
+		agent.fees = agent.fees.Add(fee)
+	}
+
 	agent.fills++
 	agent.decisions++
 
@@ -642,54 +754,57 @@ func (agent *MainAgent) exitLong(
 		return
 	}
 
-	var proceeds *decimal.Decimal
-	var exitFee *decimal.Decimal
-	var exitPrice *decimal.Decimal
+	if agent.api != nil {
+		orderReq := &spot.AddOrderRequest{
+			ClOrdId:   uuid.NewString(),
+			Pair:      symbol,
+			Type:      "sell",
+			OrderType: "market",
+			Volume:    qty.String(),
+		}
 
-	if agent.price != nil {
-		if surface, err := agent.price.Surface(symbol, qty, now); err == nil && surface != nil && surface.FullyExecutable {
-			proceeds = surface.Gross
+		_, orderErr := agent.api.AddOrder(orderReq)
 
-			if surface.ExecutableValue != nil {
-				exitFee = surface.Gross.Sub(surface.ExecutableValue)
+		if orderErr != nil {
+			errnie.Error(errnie.Err(errnie.IO, "main agent: paper exit order failed", orderErr))
+			return
+		}
+
+		if agent.balance != nil {
+			if refreshErr := agent.balance.Refresh(agent.instrument); refreshErr != nil {
+				errnie.Error(errnie.Err(errnie.IO, "main agent: balance refresh failed after sell", refreshErr))
 			}
 
-			if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
-				exitPrice = surface.ExecutableVWAP
+			if agent.balance.Cash() != nil {
+				agent.cash = agent.balance.Cash()
 			}
 		}
 	}
 
-	if proceeds == nil {
-		if agent.price != nil {
-			return
-		}
+	var proceeds *decimal.Decimal
+	var exitFee *decimal.Decimal
+	var exitPrice *decimal.Decimal
 
+	if price != nil && price.Sign() > 0 {
+		proceeds = price.Mul(qty)
+		exitPrice = price
 		feeRate := agent.feeRate(symbol)
 
-		if feeRate == nil {
-			return
+		if feeRate != nil {
+			exitFee = proceeds.Mul(feeRate)
 		}
+	}
 
-		proceeds = price.Mul(qty)
-		exitFee = proceeds.Mul(feeRate)
-		exitPrice = price
+	if exitFee == nil {
+		exitFee = decimal.NewFromInt64(0)
 	}
 
 	if exitPrice == nil {
 		exitPrice = price
 	}
 
-	if exitFee == nil {
-		feeRate := agent.feeRate(symbol)
-
-		if feeRate != nil {
-			exitFee = proceeds.Mul(feeRate)
-		}
-
-		if exitFee == nil {
-			exitFee = decimal.NewFromInt64(0)
-		}
+	if proceeds == nil {
+		proceeds = cost
 	}
 
 	entryFee := holding.EntryFee
@@ -700,7 +815,9 @@ func (agent *MainAgent) exitLong(
 
 	netProfit := proceeds.Sub(cost).Sub(exitFee).Sub(entryFee)
 
-	agent.cash = agent.cash.Add(proceeds).Sub(exitFee)
+	if agent.api == nil {
+		agent.cash = agent.cash.Add(proceeds).Sub(exitFee)
+	}
 	agent.fees = agent.fees.Add(exitFee)
 	agent.realized = agent.realized.Add(netProfit)
 	agent.fills++
@@ -893,6 +1010,34 @@ func (agent *MainAgent) buildCandidates(symbol string, decision ActionDecision) 
 }
 
 func (agent *MainAgent) updateValuation() {
+	if agent.balance != nil {
+		if agent.balance.Cash() != nil {
+			agent.cash = agent.balance.Cash()
+		}
+
+		if agent.balance.Equity() != nil {
+			agent.equity = agent.balance.Equity()
+		}
+
+		if agent.balance.Unrealized() != nil {
+			agent.unrealized = agent.balance.Unrealized()
+		}
+
+		if agent.equity != nil && agent.initial != nil {
+			agent.profit = agent.equity.Sub(agent.initial)
+		}
+
+		if agent.initial != nil && agent.initial.Sign() > 0 && agent.profit != nil {
+			agent.wealth = agent.profit.Div(agent.initial).Float64()
+		}
+
+		if agent.equity != nil && agent.equity.Sign() <= 0 {
+			agent.resetPaperAccount()
+		}
+
+		return
+	}
+
 	positionValue := decimal.NewFromInt64(0)
 
 	for symbol, qty := range agent.posQuantities {
@@ -911,11 +1056,6 @@ func (agent *MainAgent) updateValuation() {
 	}
 }
 
-/*
-evaluateRobustness verifies if the main agent has developed a statistically
-defensible edge (sample maturity, net-positive return after fees, positive profit).
-When robustly positive, promotes the agent from "simulated" to "trading".
-*/
 func (agent *MainAgent) evaluateRobustness() {
 	samples := agent.wins + agent.losses
 
@@ -925,15 +1065,15 @@ func (agent *MainAgent) evaluateRobustness() {
 
 	if agent.realized.Sign() <= 0 || agent.meanReturn <= 0 {
 		if agent.status == "trading" {
-			agent.status = "simulated"
-			errnie.Info("main agent demoted to simulated: edge degraded")
+			agent.status = "paper"
+			errnie.Info("main agent demoted to paper: edge degraded")
 		}
 
 		return
 	}
+
 	standardError := math.Sqrt(agent.variance / float64(samples))
 
-	// Positive lower confidence bound
 	if (agent.meanReturn - standardError) > 0 {
 		if agent.status != "trading" {
 			agent.status = "trading"
@@ -996,7 +1136,7 @@ func (agent *MainAgent) AgentTelemetry() *telemetry.LearningAgentT {
 
 	status := agent.status
 
-	if status == "simulated" && samples >= 3 && (agent.meanReturn <= 0 || agent.realized.Sign() < 0) {
+	if (status == "paper" || status == "simulated") && samples >= 3 && (agent.meanReturn <= 0 || agent.realized.Sign() < 0) {
 		status = "learning"
 	}
 

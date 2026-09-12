@@ -3,22 +3,39 @@ package toxicity
 import (
 	"testing"
 
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestTradeGraphNext(t *testing.T) {
 	graph, p := newTradeGraph(), tradeProjection()
 	for index, fraction := range []float64{.3, .5, .9, 1.2} {
-		fields, err := transport.Evaluate(graph, transport.Values(TradeInput{
+		fieldsEval := transport.NewEvaluate(graph)
+		var fields data.ProjectionInput
+
+		for out := range fieldsEval.Next(transport.NewValues(TradeInput{
 			BracketQty: fraction * 10, MatchedBidQty: fraction * 10,
 			TouchFillBidQty: fraction * 10, TouchFillBidFrac: fraction,
 			HasRate: index > 0, TouchFillBidRate: fraction * 10,
 			BidSupported: index >= 2,
-		}))
+		}).Next(nil)) {
+			fields = *(*data.ProjectionInput)(out)
+		}
+
+		err := fieldsEval.Error()
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := p.Project(fields)
+		projectEval := transport.NewEvaluate(p)
+		var m *data.Measurement[float64]
+
+		for out := range projectEval.Next(transport.NewValues(fields).Next(nil)) {
+			m = *(**data.Measurement[float64])(out)
+		}
+
+		if err := projectEval.Error(); err != nil {
+			t.Fatal(err)
+		}
 		if m.Err != nil {
 			t.Fatal(m.Err)
 		}
@@ -41,11 +58,27 @@ func TestLevel3GraphNext(t *testing.T) {
 		if index == 1 {
 			input.WithFracBid = .6
 		}
-		fields, err := transport.Evaluate(graph, transport.Values(input))
+		fieldsEval := transport.NewEvaluate(graph)
+		var fields data.ProjectionInput
+
+		for out := range fieldsEval.Next(transport.NewValues(input).Next(nil)) {
+			fields = *(*data.ProjectionInput)(out)
+		}
+
+		err := fieldsEval.Error()
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := p.Project(fields)
+		projectEval := transport.NewEvaluate(p)
+		var m *data.Measurement[float64]
+
+		for out := range projectEval.Next(transport.NewValues(fields).Next(nil)) {
+			m = *(**data.Measurement[float64])(out)
+		}
+
+		if err := projectEval.Error(); err != nil {
+			t.Fatal(err)
+		}
 		if m.Err != nil {
 			t.Fatal(m.Err)
 		}

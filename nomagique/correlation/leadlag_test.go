@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/correlation"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -26,57 +26,59 @@ func TestLeadLagNext(t *testing.T) {
 		}
 
 		node := correlation.NewLeadLag(algo.NewHayashiYoshida())
-		var original []equation.LagCandidate
+		var original []correlation.LagCandidate
 
 		for range 2 {
-			out, err := transport.Evaluate(node, transport.Values(equation.LagProfileInput{
+			out := tests.CollectSeq[correlation.LeadLagReading](node.Next(transport.NewValues(correlation.LagProfileInput{
 				Left:  prices(times, left),
 				Right: prices(times, right),
-			}))
-			So(err, ShouldBeNil)
-			So(out.X, ShouldEqual, 2)
-			So(out.Spacing, ShouldEqual, 1e9)
-			So(out.Span, ShouldEqual, 14)
-			So(out.LagIndex, ShouldEqual, 2)
-			So(out.Defined, ShouldBeTrue)
-			So(len(out.Profile), ShouldEqual, 29)
-			So(out.Profile[int(out.Index)].Support, ShouldEqual, out.Support)
-			So(out.Support, ShouldBeGreaterThan, 0)
+			}).Next(nil)))
+			So(node.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 1)
+			got := out[0]
+			So(got.X, ShouldEqual, 2)
+			So(got.Spacing, ShouldEqual, 1e9)
+			So(got.Span, ShouldEqual, 14)
+			So(got.LagIndex, ShouldEqual, 2)
+			So(got.Defined, ShouldBeTrue)
+			So(len(got.Profile), ShouldEqual, 29)
+			So(got.Profile[int(got.Index)].Support, ShouldEqual, got.Support)
+			So(got.Support, ShouldBeGreaterThan, 0)
 
 			if original == nil {
-				original = out.Profile
+				original = got.Profile
 			}
 		}
 
-		empty, err := transport.Evaluate(node, transport.Values(equation.LagProfileInput{}))
-		So(err, ShouldBeNil)
-		So(len(empty.Profile), ShouldEqual, 0)
-		So(empty.Defined, ShouldBeFalse)
+		empty := tests.CollectSeq[correlation.LeadLagReading](node.Next(transport.NewValues(correlation.LagProfileInput{}).Next(nil)))
+		So(node.Error(), ShouldBeNil)
+		So(len(empty[0].Profile), ShouldEqual, 0)
+		So(empty[0].Defined, ShouldBeFalse)
 		So(original[0].X, ShouldEqual, -14)
 	})
 }
 
 func TestLagShapeUsesSelectedIndex(t *testing.T) {
 	Convey("Shape uses the selected index, not a new peak search", t, func() {
-		profile := make([]equation.LagCandidate, 5)
+		profile := make([]correlation.LagCandidate, 5)
 
 		for index, y := range []float64{.1, .2, 1, .8, .2} {
-			profile[index] = equation.LagCandidate{
-				LagEstimate: equation.LagEstimate{Support: 1, LeftEnergy: 1, RightEnergy: 1, Correlation: y},
+			profile[index] = correlation.LagCandidate{
+				LagEstimate: correlation.LagEstimate{Support: 1, LeftEnergy: 1, RightEnergy: 1, Correlation: y, Defined: true},
 				Index:       float64(index),
 				X:           float64(index - 2),
 				Y:           y,
 			}
 		}
 
-		out, err := transport.Evaluate(correlation.NewLagShape(), transport.Values(correlation.LagShapeInput{
+		out := tests.CollectSeq[correlation.LagShapeResult](correlation.NewLagShape().Next(transport.NewValues(correlation.LagShapeInput{
 			Profile: profile,
 			Index:   3,
 			Span:    2,
 			Spacing: 1e9,
-		}))
-		So(err, ShouldBeNil)
-		So(out.Prominence, ShouldAlmostEqual, .2)
-		So(out.Curvature, ShouldAlmostEqual, .4)
+		}).Next(nil)))
+		So(len(out), ShouldEqual, 1)
+		So(out[0].Prominence, ShouldAlmostEqual, .2)
+		So(out[0].Curvature, ShouldAlmostEqual, .4)
 	})
 }

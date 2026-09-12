@@ -1,12 +1,16 @@
 package cognition
 
-// LookaheadPath is one scored future branch trajectory.
+/*
+LookaheadPath is one scored future branch trajectory.
+*/
 type LookaheadPath struct {
 	Sequence string
 	Score    float64
 }
 
-// ClassCandidate carries evidence recalled for one specific action or category class.
+/*
+ClassCandidate carries evidence recalled for one specific action or category class.
+*/
 type ClassCandidate struct {
 	Name        string
 	Probability float64
@@ -16,13 +20,13 @@ type ClassCandidate struct {
 
 /*
 Evaluation is the full information-theoretic readout of an evaluated context.
+It is plain wire payload: no methods.
 */
 type Evaluation struct {
-	// What is being asked about, and the terms it is asked under. Both travel
-	// with the reading so a caller never has to pair an answer back up with the
-	// question by position.
+	// What is being asked about, and the trie clock it was read under. Both
+	// travel with the reading so a caller never has to pair an answer back up
+	// with the question by position.
 	Context []byte
-	Config  Config
 	Step    uint64
 
 	// How much evidence stands behind the leading class, which is what

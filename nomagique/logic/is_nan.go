@@ -1,8 +1,10 @@
 package logic
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -11,22 +13,34 @@ import (
 IsNaN owns the undefinedness predicate. It reports whether an arrival is NaN;
 it does not replace, skip, or otherwise keep invalid state alive.
 */
-type IsNaN[U core.Floating] struct {
-	core.Base[U, bool]
+type IsNaN struct {
+	err error
+	out bool
 }
 
-func NewIsNaN[U core.Floating]() *IsNaN[U] {
-	return &IsNaN[U]{}
+func NewIsNaN() core.Primitive {
+	return &IsNaN{}
 }
 
-func (op *IsNaN[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[bool, bool]] {
-	return func(yield func(core.Primitive[bool, bool]) bool) {
+func (op *IsNaN) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(math.IsNaN(float64(arriving.Read())))) {
+			in := (*float64)(arriving)
+			op.out = math.IsNaN(*in)
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *IsNaN) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

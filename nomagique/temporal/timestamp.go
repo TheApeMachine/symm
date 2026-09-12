@@ -1,8 +1,10 @@
 package temporal
 
 import (
+	"errors"
 	"iter"
 	"time"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -11,21 +13,32 @@ import (
 Timestamp converts a time.Time arrival to signed Unix nanoseconds.
 */
 type Timestamp struct {
-	core.Base[time.Time, int64]
+	err error
+	out int64
 }
 
-func NewTimestamp() *Timestamp {
+func NewTimestamp() core.Primitive {
 	return &Timestamp{}
 }
 
-func (op *Timestamp) Next(
-	in iter.Seq[core.Primitive[time.Time, time.Time]],
-) iter.Seq[core.Primitive[int64, int64]] {
-	return func(yield func(core.Primitive[int64, int64]) bool) {
+func (op *Timestamp) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(arriving.Read().UnixNano())) {
+			op.out = (*time.Time)(arriving).UnixNano()
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Timestamp) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

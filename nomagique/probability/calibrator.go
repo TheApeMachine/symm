@@ -1,10 +1,13 @@
 package probability
 
 import (
+	"errors"
 	"iter"
+	"math"
+	"slices"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -23,31 +26,23 @@ Calibrator owns that rank. Retention is a configured collection transform:
 identity for all history, Tail for a bounded history.
 */
 type Calibrator struct {
-	core.Base[float64, CalibratorReading]
+	err       error
 	history   []float64
-	retention core.Primitive[[]float64, []float64]
-	finite    *logic.Finite[float64]
+	retention core.Primitive
+	out       CalibratorReading
 }
 
-func NewCalibrator(retention core.Primitive[[]float64, []float64]) *Calibrator {
-	return &Calibrator{retention: retention, finite: logic.NewFinite[float64]()}
+func NewCalibrator(retention core.Primitive) core.Primitive {
+	return &Calibrator{retention: retention}
 }
 
-func (op *Calibrator) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[CalibratorReading, CalibratorReading]] {
-	return func(yield func(core.Primitive[CalibratorReading, CalibratorReading]) bool) {
+func (op *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value := arriving.Read()
-			defined, err := transport.Evaluate(op.finite, transport.Values(value))
+			val := *(*float64)(arriving)
 
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !defined {
-				op.Error(core.ErrShape)
+			if math.IsNaN(val) || math.IsInf(val, 0) {
+				op.err = errors.Join(op.err, core.ErrShape)
 				continue
 			}
 
@@ -60,30 +55,56 @@ func (op *Calibrator) Next(
 				hits := 0.0
 
 				for _, prior := range op.history {
-					if prior > value {
+					if prior > val {
 						hits++
 					}
 				}
 
-				reading.Value = hits / float64(len(op.history))
+				reading.Value = hits / reading.PriorCount
 			}
-
-			history := append(append([]float64{}, op.history...), value)
 
 			if op.retention != nil {
-				history, err = transport.Evaluate(op.retention, transport.Values(history))
+				candidate := append(slices.Clone(op.history), val)
+				retainedEval := transport.NewEvaluate(op.retention)
+				var retained []float64
+
+				for out := range retainedEval.Next(transport.NewValues(candidate).Next(nil)) {
+					retained = *(*[]float64)(out)
+				}
+
+				err := retainedEval.Error()
 
 				if err != nil {
-					op.Error(err)
+					op.err = errors.Join(op.err, err)
 					return
 				}
+
+				op.history = retained
+			} else {
+				op.history = append(op.history, val)
 			}
 
-			op.history = history
+			op.out = reading
 
-			if !yield(op.Carrier(reading)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Calibrator) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.retention != nil {
+		if err := op.retention.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

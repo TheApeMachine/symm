@@ -23,14 +23,12 @@ func TestTrainingStep(t *testing.T) {
 
 	Convey("A tape frame flows through the nomagique composition", t, func() {
 		tape := NewTape()
-		measurement := data.NewMeasurement[float64](
-			"1", "BTC/USD", "cvd", time.Now().UTC(), time.Time{},
-		)
-		measurement.PutMetric(data.Metric[float64]{Label: "signed", Raw: 1.5})
-		measurement2 := data.NewMeasurement[float64](
-			"2", "BTC/USD", "cvd", time.Now().UTC(), time.Time{},
-		)
-		measurement2.PutMetric(data.Metric[float64]{Label: "signed", Raw: 1.8})
+		measurement := data.NewMeasurement[float64]("cvd", nil)
+		measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Now().UTC(), time.Time{}
+		measurement.Metrics["signed"] = data.Metric[float64]{Label: "signed", Raw: 1.5}
+		measurement2 := data.NewMeasurement[float64]("cvd", nil)
+		measurement2.Label, measurement2.At, measurement2.From = "BTC/USD", time.Now().UTC(), time.Time{}
+		measurement2.Metrics["signed"] = data.Metric[float64]{Label: "signed", Raw: 1.8}
 		tape.Publish(types.ReplayFragment{
 			Frames:      [][]*data.Measurement[float64]{{measurement}, {measurement2}},
 			Symbol:      "BTC/USD",
@@ -40,8 +38,8 @@ func TestTrainingStep(t *testing.T) {
 		training := NewTraining(context.Background(), tape)
 		envelope := &types.Envelope{}
 		So(training.Step(envelope), ShouldEqual, envelope)
-		So(training.agents[1].Space().Label(), ShouldEqual, "BTC/USD")
-		So(training.space.Label(), ShouldEqual, "")
+		So(spaceState(training.agents[1].Space()).Updated, ShouldEqual, "BTC/USD")
+		So(spaceState(training.space).Updated, ShouldEqual, "")
 		So(training.Error(), ShouldBeNil)
 	})
 
@@ -58,7 +56,7 @@ func TestTrainingStep(t *testing.T) {
 		So(len(state.Agents), ShouldEqual, 8)
 		So(state.Agents[0].Initial, ShouldStartWith, "200")
 		So(state.Agents[0].Cash, ShouldStartWith, "200")
-		So(state.Agents[0].Status, ShouldEqual, "simulated")
+		So(state.Agents[0].Status, ShouldEqual, "paper")
 		So(state.Agents[1].Status, ShouldEqual, "learning")
 		So(state.Rehearsal, ShouldNotBeNil)
 		So(state.Rehearsal.Workers, ShouldEqual, 8)
@@ -70,12 +68,14 @@ func TestTrainingStep(t *testing.T) {
 		tape := NewTape()
 		tape.Close()
 		training := NewTraining(context.Background(), tape)
+		cvd := data.NewMeasurement[float64]("cvd", map[string]data.Metric[float64]{})
+		cvd.Label, cvd.At, cvd.From = "BTC/USD", time.Now().UTC(), time.Now().UTC()
 		envelope := &types.Envelope{
-			CVD: data.NewMeasurement[float64]("flow", "BTC/USD", "cvd", time.Now().UTC(), time.Now().UTC()),
+			CVD: cvd,
 		}
 		So(envelope.Symbol(), ShouldEqual, "")
 		So(training.Step(envelope), ShouldEqual, envelope)
-		So(training.space.UpdatedLabel, ShouldEqual, "BTC/USD")
+		So(spaceState(training.space).Updated, ShouldEqual, "BTC/USD")
 		So(training.Error(), ShouldBeNil)
 		So(envelope.StrategyRound, ShouldNotBeNil)
 		So(envelope.StrategyRound.Evaluated, ShouldBeTrue)
@@ -86,11 +86,13 @@ func TestTrainingStep(t *testing.T) {
 
 	Convey("Ring-of-rings rehearsal ingests fragments with random slots and plays with random offsets", t, func() {
 		agent := NewAgent(1, false, nil, 64)
-		measurementA := data.NewMeasurement[float64]("1", "BTC/USD", "cvd", time.Now().UTC(), time.Time{})
-		measurementA.PutMetric(data.Metric[float64]{Label: "signed", Raw: 1.0})
+		measurementA := data.NewMeasurement[float64]("cvd", nil)
+		measurementA.Label, measurementA.At, measurementA.From = "BTC/USD", time.Now().UTC(), time.Time{}
+		measurementA.Metrics["signed"] = data.Metric[float64]{Label: "signed", Raw: 1.0}
 
-		measurementB := data.NewMeasurement[float64]("2", "BTC/USD", "cvd", time.Now().UTC(), time.Time{})
-		measurementB.PutMetric(data.Metric[float64]{Label: "signed", Raw: 2.0})
+		measurementB := data.NewMeasurement[float64]("cvd", nil)
+		measurementB.Label, measurementB.At, measurementB.From = "BTC/USD", time.Now().UTC(), time.Time{}
+		measurementB.Metrics["signed"] = data.Metric[float64]{Label: "signed", Raw: 2.0}
 
 		fragment := types.ReplayFragment{
 			Frames: [][]*data.Measurement[float64]{
@@ -102,8 +104,8 @@ func TestTrainingStep(t *testing.T) {
 		}
 
 		agent.IngestReplay(fragment, 0)
-		So(agent.ring.Len(), ShouldEqual, 1)
-		So(agent.ring.ChildLen(), ShouldEqual, 2)
+		So(ringLen[[]*data.Measurement[float64]](agent.ring), ShouldEqual, 1)
+		So(ringChildLen[[]*data.Measurement[float64]](agent.ring), ShouldEqual, 2)
 
 		stepped, err := agent.RehearseChild()
 		So(err, ShouldBeNil)

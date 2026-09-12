@@ -21,10 +21,17 @@ func TestSampleRatioNext(t *testing.T) {
 				residual = 0.4 * math.Sin(float64(index)*0.17)
 			}
 
-			got, err := transport.Evaluate(node, transport.Values(learning.Pair{
+			gotEval := transport.NewEvaluate(node)
+			var got learning.RatioReading
+
+			for out := range gotEval.Next(transport.NewValues(learning.Pair{
 				Predicted: predicted,
 				Actual:    predicted + residual,
-			}))
+			}).Next(nil)) {
+				got = *(*learning.RatioReading)(out)
+			}
+
+			err := gotEval.Error()
 			So(err, ShouldBeNil)
 			So(got.PeakRatio, ShouldBeGreaterThanOrEqualTo, got.Value)
 		}

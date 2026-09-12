@@ -1,32 +1,28 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 Fan presents one input run to every configured branch and streams what each
-branch yields. The sequence is ranged once per branch; a replayable producer
-(Values, a fold over a collection) supplies the same run to each, and a
-one-shot producer is ranged as many times as it will produce.
-
-Buffering a one-shot run so every branch sees a snapshot is Collect, not Fan.
+branch yields.
 */
-type Fan[T any] struct {
-	core.Base[T, T]
-	branches []core.Primitive[T, T]
+type Fan struct {
+	err      error
+	branches []core.Primitive
 }
 
-func NewFan[T any](branches ...core.Primitive[T, T]) *Fan[T] {
-	return &Fan[T]{branches: branches}
+func NewFan(branches ...core.Primitive) core.Primitive {
+	return &Fan{branches: branches}
 }
 
-func (op *Fan[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
+func (op *Fan) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for _, branch := range op.branches {
 			for out := range branch.Next(in) {
 				if !yield(out) {
@@ -35,4 +31,14 @@ func (op *Fan[T]) Next(
 			}
 		}
 	}
+}
+
+func (op *Fan) Error(errs ...error) error {
+	for _, branch := range op.branches {
+		if err := branch.Error(errs...); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

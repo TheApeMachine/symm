@@ -4,16 +4,26 @@ An immutable radix trie for associative learning and inference. Basin and sensor
 records use the same pointer-free, 24-byte `PackedWeight` representation.
 
 ```go
+engine := cognition.NewEngine(cognition.Config{})
+
 // Learn an observed association.
-cog.Observe(precursorSequence, []byte("action_enter"))
+observe(engine, cognition.Association{
+	Context: precursorSequence,
+	Class:   []byte("action_enter"),
+})
 
 // Or apply a completed replay grade to that association.
-// The strategy supplies a signed return relative to initial funding, adjusted
-// for unproductive time by Evaluation.Grade and weighted by measured authority.
-cog.Observe(precursorSequence, []byte("action_enter"), grade*authority)
+observe(engine, cognition.Association{
+	Context:  precursorSequence,
+	Class:    []byte("action_enter"),
+	Feedback: grade * authority,
+	Graded:   true,
+})
 
 // Live inference reads the immutable trie without acquiring a mutex.
-evaluation := cog.Evaluate(precursorSequence)
+result, err := ask(engine, &cognition.Command{
+	Evaluate: &cognition.Question{Context: precursorSequence},
+})
 ```
 
 Positive feedback strengthens the action's basin; negative feedback inhibits it.
@@ -31,7 +41,7 @@ wait action and no training sample.
 
 Only completed replay grades train the policy. Position accounting and forward
 outcome reporting stay with their existing owners. Missing market or account
-observations leave the agent waiting. The engine's `Encode` and `Decode` persist
+observations leave the agent waiting. The engine's Snapshot and Restore commands persist
 its configuration, clock and packed records directly; retired formats are
 rejected explicitly rather than silently converted.
 

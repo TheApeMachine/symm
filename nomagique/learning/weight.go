@@ -1,12 +1,14 @@
 package learning
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -27,108 +29,123 @@ TrustWeight owns that recurrence. Invalid inputs fail before entering retained
 state.
 */
 type TrustWeight struct {
-	core.Base[Pair, TrustReading]
-	valid *equation.ValidPair[float64]
-	span  *equation.ResidualSpan
-	mix   *equation.Mix[float64]
-	abs   *calculus.Absolute[float64]
+	err   error
+	span  core.Primitive
+	mix   core.Primitive
+	abs   core.Primitive
 	count float64
 	min   float64
 	max   float64
 	trust float64
 	rate  float64
 	prev  float64
+	out   TrustReading
 }
 
-func NewTrustWeight() *TrustWeight {
+func NewTrustWeight() core.Primitive {
 	return &TrustWeight{
-		valid: equation.NewValidPair[float64](),
-		span:  equation.NewResidualSpan(),
-		mix:   equation.NewMix[float64](),
-		abs:   calculus.NewAbsolute[float64](),
+		span:  statistic.NewResidualSpan(),
+		mix:   calculus.NewMix(),
+		abs:   calculus.NewAbsolute(),
 		trust: 1,
 	}
 }
 
 func (op *TrustWeight) Next(
-	in iter.Seq[core.Primitive[Pair, Pair]],
-) iter.Seq[core.Primitive[TrustReading, TrustReading]] {
-	return func(yield func(core.Primitive[TrustReading, TrustReading]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			reading, err := op.Measure(arriving.Read())
+			pair := (*Pair)(arriving)
 
-			if err != nil {
+			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
+				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			residual := pair.Actual - pair.Predicted
+			spanInput := statistic.ResidualSpanInput{
+				Count:    op.count,
+				Minimum:  op.min,
+				Maximum:  op.max,
+				Residual: residual,
+			}
+
+			var span statistic.ResidualSpanResult
+
+			for out := range op.span.Next(transport.NewValues(spanInput).Next(nil)) {
+				span = *(*statistic.ResidualSpanResult)(out)
+			}
+
+			if err := op.span.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			if !yield(op.Carrier(reading)) {
+			op.count = span.Count
+			op.min = span.Minimum
+			op.max = span.Maximum
+
+			if op.count > 1 {
+				if !(span.Span > 0) {
+					op.Error(core.ErrDomain)
+					return
+				}
+
+				magnitude := residual
+
+				for out := range op.abs.Next(transport.NewValues(magnitude).Next(nil)) {
+					magnitude = *(*float64)(out)
+				}
+
+				if err := op.abs.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				op.rate = magnitude / span.Span
+				mixRec := calculus.MixRecord{
+					Left:   op.trust,
+					Right:  math.Max(0, 1-op.rate),
+					Weight: op.rate,
+				}
+
+				var trust float64
+
+				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
+					trust = *(*float64)(out)
+				}
+
+				if err := op.mix.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				op.trust = trust
+				op.prev = pair.Predicted
+			}
+
+			op.out = TrustReading{
+				Value: op.trust,
+				Trust: op.trust,
+				Rate:  op.rate,
+				Count: op.count,
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (op *TrustWeight) Measure(pair Pair) (TrustReading, error) {
-	ok, err := transport.Evaluate(op.valid, transport.Values(equation.ValidPairInput[float64]{
-		Predicted: pair.Predicted,
-		Actual:    pair.Actual,
-	}))
-
-	if err != nil {
-		return TrustReading{}, err
-	}
-
-	if !ok {
-		return TrustReading{}, core.ErrDomain
-	}
-
-	residual := pair.Actual - pair.Predicted
-	span, err := transport.Evaluate(op.span, transport.Values(equation.ResidualSpanInput{
-		Count:    op.count,
-		Minimum:  op.min,
-		Maximum:  op.max,
-		Residual: residual,
-	}))
-
-	if err != nil {
-		return TrustReading{}, err
-	}
-
-	op.count = span.Count
-	op.min = span.Minimum
-	op.max = span.Maximum
-
-	if op.count > 1 {
-		if !(span.Span > 0) {
-			return TrustReading{}, core.ErrDomain
-		}
-
-		magnitude, err := transport.Evaluate(op.abs, transport.Values(residual))
-
+func (op *TrustWeight) Error(errs ...error) error {
+	for _, err := range errs {
 		if err != nil {
-			return TrustReading{}, err
+			op.err = errors.Join(op.err, err)
 		}
-
-		op.rate = magnitude / span.Span
-		trust, err := transport.Evaluate(op.mix, transport.Values(equation.MixRecord[float64]{
-			Left:   op.trust,
-			Right:  math.Max(0, 1-op.rate),
-			Weight: op.rate,
-		}))
-
-		if err != nil {
-			return TrustReading{}, err
-		}
-
-		op.trust = trust
-		op.prev = pair.Predicted
 	}
 
-	return TrustReading{
-		Value: op.trust,
-		Trust: op.trust,
-		Rate:  op.rate,
-		Count: op.count,
-	}, nil
+	return op.err
 }

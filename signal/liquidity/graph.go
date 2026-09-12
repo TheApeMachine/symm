@@ -3,12 +3,12 @@ package liquidity
 import (
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/equation/joint"
-	"github.com/theapemachine/symm/nomagique/equation/linear"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -18,35 +18,46 @@ type GraphInput struct {
 }
 
 type Graph struct {
-	core.Base[GraphInput, data.ProjectionInput]
-	estimator *joint.Estimator
-	velocity  [3]*linear.LocalRegression
+	err       error
+	estimator core.Primitive
+	velocity  [3]core.Primitive
 }
 
 func newLiquidityGraph() *Graph {
 	return &Graph{
-		estimator: joint.NewEstimator(equation.NewWelford(), equation.NewWelford(), equation.NewWelford()),
-		velocity:  [3]*linear.LocalRegression{linear.NewLocalRegression(), linear.NewLocalRegression(), linear.NewLocalRegression()},
+		estimator: statistic.NewJoint(3),
+		velocity:  [3]core.Primitive{statistic.NewLocalRegression(), statistic.NewLocalRegression(), statistic.NewLocalRegression()},
 	}
 }
 
 func (op *Graph) Next(
-	in iter.Seq[core.Primitive[GraphInput, GraphInput]],
-) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
-	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			projected, err := op.observe(arriving.Read())
+			projected, err := op.observe(*(*GraphInput)(arriving))
 
 			if err != nil {
-				op.Error(err)
+				op.err = err
 				return
 			}
 
-			if !yield(op.Carrier(projected)) {
+			if !yield(unsafe.Pointer(&projected)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Graph) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }
 
 func (op *Graph) observe(input GraphInput) (data.ProjectionInput, error) {
@@ -72,7 +83,14 @@ func (op *Graph) observe(input GraphInput) (data.ProjectionInput, error) {
 	logged := []float64{math.Log(bidNotional), math.Log(askNotional), math.Log(relative)}
 	originals := []float64{bidNotional, askNotional, relative}
 	names := []string{"bid", "ask", "spread"}
-	result, err := transport.Evaluate(op.estimator, transport.Values(joint.Input{Values: logged}))
+	resultEval := transport.NewEvaluate(op.estimator)
+	var result statistic.JointReading
+
+	for out := range resultEval.Next(transport.NewValues(statistic.JointInput{Values: logged}).Next(nil)) {
+		result = *(*statistic.JointReading)(out)
+	}
+
+	err := resultEval.Error()
 
 	if err != nil {
 		return data.ProjectionInput{}, err
@@ -95,7 +113,14 @@ func (op *Graph) observe(input GraphInput) (data.ProjectionInput, error) {
 			values[name+"_ratio"] = originals[index] / channel.Baseline
 			values[name+"_zscore"] = channel.ZScore
 			values[name+"_noise"] = channel.ScoreScale
-			summary, err := transport.Evaluate(op.velocity[index], transport.Values(equation.Price{At: input.At, Value: channel.Residual}))
+			summaryEval := transport.NewEvaluate(op.velocity[index])
+			var summary statistic.LocalRegressionReading
+
+			for out := range summaryEval.Next(transport.NewValues(temporal.Price{At: input.At, Value: channel.Residual}).Next(nil)) {
+				summary = *(*statistic.LocalRegressionReading)(out)
+			}
+
+			err := summaryEval.Error()
 
 			if err != nil {
 				return data.ProjectionInput{}, err

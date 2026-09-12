@@ -56,10 +56,11 @@ func TestSessionStep(t *testing.T) {
 		})
 
 		Convey("Every precursor survives even when full-state witnesses are sampled", func() {
-			envelope.CVD = data.NewMeasurement[float64]("flow", "TEST/USD", "cvd", time.Unix(2, 0), time.Unix(1, 0))
+			envelope.CVD = data.NewMeasurement[float64]("cvd", nil)
+			envelope.CVD.Label, envelope.CVD.At, envelope.CVD.From = "TEST/USD", time.Unix(2, 0), time.Unix(1, 0)
 			for index := range 3 {
 				envelope.CaptureOrdinal = uint64(index)
-				envelope.CVD.PutMetric(data.Metric[float64]{Label: "change", Raw: float64(index)})
+				envelope.CVD.Metrics["change"] = data.Metric[float64]{Label: "change", Raw: float64(index)}
 				node.Step(envelope)
 			}
 			So(writer.Close(), ShouldBeNil)

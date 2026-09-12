@@ -31,14 +31,15 @@ const (
 )
 
 /*
-ResonanceArtifact carries one settled predictive manifold to downstream stages.
-Solver.Step exposes the manifold only to its synchronous observer, then clears
-it before the artifact crosses the Workload boundary.
+ResonanceArtifact carries one settled predictive manifold reading to
+downstream stages. The solver publishes the coder's own snapshot of the
+manifold rather than the mutable model itself, so no downstream stage can
+advance shared state.
 */
 type ResonanceArtifact struct {
 	Symbol   string
 	At       time.Time
-	Manifold *learning.ResonanceManifold
+	Snapshot *learning.ManifoldReading
 	Forecast *ResonanceReturnForecast
 	Dynamics *telemetry.EnvelopeResonanceDynamicsT
 

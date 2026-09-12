@@ -1,35 +1,47 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Range enumerates [0, count) for each arriving count. Iteration state is
-private and never leaks into the payload as a control opcode.
+Range enumerates [0, count) for each arriving count.
 */
-type Range[U core.Numeric] struct {
-	core.Base[U, U]
+type Range struct {
+	err error
+	out float64
 }
 
-func NewRange[U core.Numeric]() *Range[U] {
-	return &Range[U]{}
+func NewRange() core.Primitive {
+	return &Range{}
 }
 
-func (op *Range[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Range) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			count := arriving.Read()
+			count := int(*(*float64)(arriving))
 
-			for index := U(0); index < count; index++ {
-				if !yield(op.Carrier(index)) {
+			for index := 0; index < count; index++ {
+				op.out = float64(index)
+
+				if !yield(unsafe.Pointer(&op.out)) {
 					return
 				}
 			}
 		}
 	}
+}
+
+func (op *Range) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -19,7 +20,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -439,7 +439,7 @@ func NewFuturesWithClient(
 			}
 
 			envelopes, manifests := IngestEnvelopes(
-				"futures."+futuresIngressKey(feed), out, captureID,
+				"futures."+futuresKey(feed), out, captureID,
 			)
 
 			for index, envelope := range envelopes {
@@ -459,7 +459,7 @@ func NewFuturesWithClient(
 					}
 				}
 
-				workload, mounted := futures.ingress[futuresIngressKey(feed)]
+				workload, mounted := futures.ingress[futuresKey(feed)]
 
 				if !mounted || workload == nil {
 					futures.fail(errnie.Err(
@@ -650,11 +650,11 @@ func (futures *FuturesLive) restoreSubscriptions() error {
 }
 
 /*
-futuresIngressKey maps a futures feed onto the ingress workload that carries it.
+futuresKey maps a futures feed onto the ingress workload that carries it.
 The venue emits a snapshot feed and an incremental feed for the same stream, and
 both belong on the same workload.
 */
-func futuresIngressKey(feed string) string {
+func futuresKey(feed string) string {
 	switch feed {
 	case "ticker", "ticker_lite":
 		return "ticker"

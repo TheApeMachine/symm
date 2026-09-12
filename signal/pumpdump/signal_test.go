@@ -13,7 +13,8 @@ func TestSignalStep(t *testing.T) {
 	Convey("Given measurements produced at the book's transport boundary", t, func() {
 		signal := NewSignal(t.Context(), nil)
 		Reset(func() { So(signal.Close(), ShouldBeNil) })
-		measurement := data.NewMeasurement[float64]("", "TEST/USD", "pumpdump", time.Time{}, time.Time{})
+		measurement := data.NewMeasurement[float64]("pumpdump", nil)
+		measurement.Label, measurement.At, measurement.From = "TEST/USD", time.Time{}, time.Time{}
 		envelope := types.NewEnvelope(types.EnvelopeLevel3)
 		envelope.Level3Data.Symbol = "TEST/USD"
 		envelope.PumpDump = measurement

@@ -1,39 +1,47 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 Sign owns one field operation. What it hands over is the unit sign of each
-arrival. Zero keeps its own value, including a signed zero.
+arrival, operating in-place on the wire pointer. Zero keeps its own value.
 */
-type Sign[U core.Floating] struct {
-	core.Base[U, U]
+type Sign struct {
+	err error
 }
 
-func NewSign[U core.Floating]() *Sign[U] {
-	return &Sign[U]{}
+func NewSign() core.Primitive {
+	return &Sign{}
 }
 
-func (op *Sign[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value := arriving.Read()
-			signed := value
-
-			if value != 0 {
-				signed = U(math.Copysign(1, float64(value)))
+			in := (*float64)(arriving)
+			if *in != 0 {
+				*in = math.Copysign(1, *in)
 			}
 
-			if !yield(op.Carrier(signed)) {
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Sign) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

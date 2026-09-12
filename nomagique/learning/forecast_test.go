@@ -21,10 +21,17 @@ func TestForecastNext(t *testing.T) {
 				residual = 0.4 * math.Sin(float64(index)*0.17)
 			}
 
-			got, err := transport.Evaluate(node, transport.Values(learning.Pair{
+			gotEval := transport.NewEvaluate(node)
+			var got learning.ForecastReading
+
+			for out := range gotEval.Next(transport.NewValues(learning.Pair{
 				Predicted: predicted,
 				Actual:    predicted + residual,
-			}))
+			}).Next(nil)) {
+				got = *(*learning.ForecastReading)(out)
+			}
+
+			err := gotEval.Error()
 			So(err, ShouldBeNil)
 			So(got.Value, ShouldEqual, got.Scale)
 			So(got.Count, ShouldEqual, float64(index+1))

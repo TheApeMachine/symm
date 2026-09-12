@@ -1,32 +1,45 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Tanh owns one field operation. What it hands over is the hyperbolic tangent of
-each arrival.
+Tanh owns one field operation. What it hands over is the hyperbolic tangent
+of each arrival, operating in-place on the wire pointer.
 */
-type Tanh[U core.Floating] struct {
-	core.Base[U, U]
+type Tanh struct {
+	err error
 }
 
-func NewTanh[U core.Floating]() *Tanh[U] {
-	return &Tanh[U]{}
+func NewTanh() core.Primitive {
+	return &Tanh{}
 }
 
-func (op *Tanh[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Tanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(U(math.Tanh(float64(arriving.Read()))))) {
+			in := (*float64)(arriving)
+			*in = math.Tanh(*in)
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Tanh) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

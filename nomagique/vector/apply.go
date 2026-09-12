@@ -1,10 +1,11 @@
 package vector
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -12,19 +13,17 @@ Apply aligns one arrival with each configured operation and forwards that
 operation's complete output. Operations retain their identity between runs, so
 each coordinate may own an independent recurrence.
 */
-type Apply[T, U any] struct {
-	core.Base[T, U]
-	operations []core.Primitive[T, U]
+type Apply struct {
+	err        error
+	operations []core.Primitive
 }
 
-func NewApply[T, U any](operations ...core.Primitive[T, U]) *Apply[T, U] {
-	return &Apply[T, U]{operations: operations}
+func NewApply(operations ...core.Primitive) core.Primitive {
+	return &Apply{operations: operations}
 }
 
-func (op *Apply[T, U]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Apply) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		index := 0
 
 		for arriving := range in {
@@ -33,8 +32,12 @@ func (op *Apply[T, U]) Next(
 				return
 			}
 
-			for out := range op.operations[index].Next(transport.One(arriving)) {
-				if !yield(op.Carrier(out.Read())) {
+			once := func(y func(unsafe.Pointer) bool) {
+				y(arriving)
+			}
+
+			for out := range op.operations[index].Next(once) {
+				if !yield(out) {
 					return
 				}
 			}
@@ -47,4 +50,19 @@ func (op *Apply[T, U]) Next(
 			op.Error(core.ErrShape)
 		}
 	}
+}
+
+func (op *Apply) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+	for _, operation := range op.operations {
+		if err := operation.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

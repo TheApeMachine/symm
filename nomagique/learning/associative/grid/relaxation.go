@@ -10,7 +10,7 @@ convergence of a fixed objective, not a claim that the market stopped changing.
 Ordinary observations cannot restart a completed formation.
 */
 func (grid *Space) form() {
-	if grid.Formed || grid.window.count < grid.window.capacity {
+	if grid.formed || grid.window.count < grid.window.capacity {
 		return
 	}
 
@@ -22,7 +22,7 @@ func (grid *Space) form() {
 
 	grid.relax()
 
-	if grid.cursor != len(grid.Columns)-1 {
+	if grid.cursor != len(grid.columns)-1 {
 		return
 	}
 
@@ -32,7 +32,7 @@ func (grid *Space) form() {
 	}
 
 	grid.regions.form(grid)
-	grid.Formed = true
+	grid.formed = true
 }
 
 /*
@@ -41,7 +41,7 @@ An unobserved relationship stays absent. At least one evidenced pair is needed
 before a layout can claim to have balanced anything.
 */
 func (grid *Space) calibrate() bool {
-	graph := make([][]affinity, len(grid.Columns))
+	graph := make([][]affinity, len(grid.columns))
 
 	for column := range graph {
 		graph[column] = make([]affinity, len(graph))
@@ -80,14 +80,14 @@ not establish convergence. See de Leeuw and Mair (2009):
 https://www.jstatsoft.org/article/view/v031i03
 */
 func (grid *Space) relax() {
-	grid.cursor = (grid.cursor + 1) % len(grid.Columns)
+	grid.cursor = (grid.cursor + 1) % len(grid.columns)
 	column := grid.cursor
 	weight := grid.weights[column]
 
 	if weight == 0 {
 		return
 	}
-	position := *grid.Coordinates[column]
+	position := *grid.coordinates[column]
 	next := [2]float64{weight * position[0], weight * position[1]}
 
 	for peer, evidence := range grid.weights {
@@ -102,19 +102,19 @@ func (grid *Space) relax() {
 			continue
 		}
 		target := grid.separation(reading)
-		horizontal := position[0] - grid.Coordinates[peer][0]
-		vertical := position[1] - grid.Coordinates[peer][1]
+		horizontal := position[0] - grid.coordinates[peer][0]
+		vertical := position[1] - grid.coordinates[peer][1]
 		distance := math.Hypot(horizontal, vertical)
 
 		if distance == 0 {
 			// A deterministic direction breaks coincidence without collapsing
 			// every repulsive pair onto the horizontal axis. The angle names
 			// the peer on the unit circle; it is not a learning parameter.
-			angle := 2 * math.Pi * float64(peer) / float64(len(grid.Columns))
+			angle := 2 * math.Pi * float64(peer) / float64(len(grid.columns))
 			horizontal, vertical, distance = math.Cos(angle), math.Sin(angle), 1
 		}
-		next[0] += pull * (grid.Coordinates[peer][0] + horizontal*target/distance)
-		next[1] += pull * (grid.Coordinates[peer][1] + vertical*target/distance)
+		next[0] += pull * (grid.coordinates[peer][0] + horizontal*target/distance)
+		next[1] += pull * (grid.coordinates[peer][1] + vertical*target/distance)
 		weight += pull
 	}
 
@@ -128,7 +128,7 @@ func (grid *Space) relax() {
 	if grid.stress(column, next) >= grid.stress(column, position) {
 		return
 	}
-	*grid.Coordinates[column] = next
+	*grid.coordinates[column] = next
 	grid.moved = true
 }
 
@@ -140,8 +140,8 @@ func (grid *Space) stress(column int, position [2]float64) float64 {
 		if peer == column || reading.shared < 2 {
 			continue
 		}
-		distance := math.Hypot(position[0]-grid.Coordinates[peer][0],
-			position[1]-grid.Coordinates[peer][1])
+		distance := math.Hypot(position[0]-grid.coordinates[peer][0],
+			position[1]-grid.coordinates[peer][1])
 		residual := distance - grid.separation(reading)
 		total += grid.weights[peer] * reading.strength() * residual * residual
 	}

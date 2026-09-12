@@ -1,31 +1,31 @@
 package collection
 
 import (
+	"errors"
 	"fmt"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Gather selects members at the configured indices. At owns single-index
-selection; Gather owns a list of them.
+Gather selects members at the configured indices.
 */
 type Gather[T any] struct {
-	core.Base[[]T, []T]
+	err     error
 	indices []int
+	out     []T
 }
 
-func NewGather[T any](indices []int) *Gather[T] {
+func NewGather[T any](indices []int) core.Primitive {
 	return &Gather[T]{indices: append([]int(nil), indices...)}
 }
 
-func (op *Gather[T]) Next(
-	in iter.Seq[core.Primitive[[]T, []T]],
-) iter.Seq[core.Primitive[[]T, []T]] {
-	return func(yield func(core.Primitive[[]T, []T]) bool) {
+func (op *Gather[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			values := arriving.Read()
+			values := *(*[]T)(arriving)
 			gathered := make([]T, 0, len(op.indices))
 			ok := true
 
@@ -40,12 +40,24 @@ func (op *Gather[T]) Next(
 			}
 
 			if !ok {
-				continue
+				return
 			}
 
-			if !yield(op.Carrier(gathered)) {
+			op.out = gathered
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Gather[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

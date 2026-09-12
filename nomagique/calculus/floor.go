@@ -1,32 +1,45 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Floor owns one field operation. What it hands over is the greatest integer not
-exceeding each arrival.
+Floor owns one field operation. What it hands over is the floor of each
+arrival, operating in-place on the wire pointer.
 */
-type Floor[U core.Floating] struct {
-	core.Base[U, U]
+type Floor struct {
+	err error
 }
 
-func NewFloor[U core.Floating]() *Floor[U] {
-	return &Floor[U]{}
+func NewFloor() core.Primitive {
+	return &Floor{}
 }
 
-func (op *Floor[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Floor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(U(math.Floor(float64(arriving.Read()))))) {
+			in := (*float64)(arriving)
+			*in = math.Floor(*in)
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Floor) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

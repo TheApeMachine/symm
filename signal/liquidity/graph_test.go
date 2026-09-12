@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -19,12 +20,28 @@ func TestGraphNext(t *testing.T) {
 			seconds := float64(index*index + index)
 			askPrice := 101 + quantity
 			askQuantity := 1 / quantity
-			fields, err := transport.Evaluate(graph, transport.Values(GraphInput{
+			fieldsEval := transport.NewEvaluate(graph)
+			var fields data.ProjectionInput
+
+			for out := range fieldsEval.Next(transport.NewValues(GraphInput{
 				BestBid: 100, BestAsk: askPrice, BidQty: quantity, AskQty: askQuantity,
 				At: int64(seconds * float64(time.Second)),
-			}))
+			}).Next(nil)) {
+				fields = *(*data.ProjectionInput)(out)
+			}
+
+			err := fieldsEval.Error()
 			So(err, ShouldBeNil)
-			measurement := projection.Project(fields)
+			projectEval := transport.NewEvaluate(projection)
+			var measurement *data.Measurement[float64]
+
+			for out := range projectEval.Next(transport.NewValues(fields).Next(nil)) {
+				measurement = *(**data.Measurement[float64])(out)
+			}
+
+			if err := projectEval.Error(); err != nil {
+				t.Fatal(err)
+			}
 			So(measurement.Err, ShouldBeNil)
 
 			if index > 0 {
@@ -74,12 +91,15 @@ func BenchmarkGraphNext(b *testing.B) {
 
 	for b.Loop() {
 		quantity := quantities[step%len(quantities)]
-		_, err := transport.Evaluate(graph, transport.Values(GraphInput{
+		benchEval := transport.NewEvaluate(graph)
+
+		for range benchEval.Next(transport.NewValues(GraphInput{
 			BestBid: 100, BestAsk: 101 + quantity, BidQty: quantity, AskQty: 1 / quantity,
 			At: int64(step) * int64(time.Second),
-		}))
+		}).Next(nil)) {
+		}
 
-		if err != nil {
+		if err := benchEval.Error(); err != nil {
 			b.Fatal(err)
 		}
 

@@ -3,16 +3,15 @@ package matrix_test
 import (
 	"math"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/matrix"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestFiniteNext(t *testing.T) {
 	Convey("Every run checks its own rows including empty and invalid matrices", t, func() {
-		node := matrix.NewFinite()
-
 		for _, fixture := range []struct {
 			rows  [][]float64
 			valid bool
@@ -23,10 +22,14 @@ func TestFiniteNext(t *testing.T) {
 			{[][]float64{}, true},
 			{[][]float64{{0}}, true},
 		} {
-			valid, err := transport.Evaluate(node, transport.Values(fixture.rows))
-			So(err, ShouldBeNil)
-			So(valid, ShouldEqual, fixture.valid)
-			So(node.Read(), ShouldEqual, fixture.valid)
+			node := matrix.NewFinite()
+			seq := func(yield func(unsafe.Pointer) bool) {
+				yield(unsafe.Pointer(&fixture.rows))
+			}
+			out := tests.CollectSeq[bool](node.Next(seq))
+			So(node.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 1)
+			So(out[0], ShouldEqual, fixture.valid)
 		}
 	})
 }

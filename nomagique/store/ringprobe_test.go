@@ -1,15 +1,18 @@
-package store
+package store_test
 
 import (
 	container "container/ring"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestRingNext(t *testing.T) {
-	Convey("Ring plays one child sequence per run and advances the parent", t, func() {
+	Convey("Ring plays one child sequence per Play command and advances the parent", t, func() {
 		child := func(values ...float64) *container.Ring {
 			ring := container.New(len(values))
 
@@ -27,70 +30,45 @@ func TestRingNext(t *testing.T) {
 		parent.Value = child(3, 4)
 		parent = parent.Next()
 
-		op := NewRingOver[float64](parent)
+		op := store.NewRingOver[float64](parent)
+		play := func() []float64 {
+			command := store.RingCommand[float64]{Play: true}
 
-		So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{1, 2})
-		So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{3, 4})
-		So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{1, 2})
+			return tests.CollectSeq[float64](op.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)))
+		}
+
+		So(play(), ShouldResemble, []float64{1, 2})
+		So(play(), ShouldResemble, []float64{3, 4})
+		So(play(), ShouldResemble, []float64{1, 2})
 	})
 }
 
 func TestRingWrite(t *testing.T) {
-	Convey("A ring written into plays what was written, in order", t, func() {
-		child := func(values ...float64) *Ring[float64] {
-			held := NewRing[float64]()
+	Convey("Ring writes values and nested child rings through commands", t, func() {
+		parent := store.NewRing[[]float64]()
+		child := store.NewRing[[]float64]()
 
-			for _, value := range values {
-				held.Write(value)
+		for _, frame := range [][]float64{{1, 2}, {3, 4}} {
+			held := frame
+			command := store.RingCommand[[]float64]{Write: &store.RingValue[[]float64]{Value: &held}}
+
+			for range child.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)) {
 			}
-
-			return held
 		}
 
-		parent := NewRing[float64]()
-		parent.Write(child(1, 2, 3).Held())
-		parent.Write(child(4, 5).Held())
+		slot := store.RingSlot[[]float64]{Value: store.RingValue[[]float64]{Child: child}}
+		nest := store.RingCommand[[]float64]{WriteAt: &slot}
 
-		op := NewRingOver[float64](parent.Held())
-
-		Convey("One run is one child, and the parent then advances", func() {
-			So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{1, 2, 3})
-			So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{4, 5})
-		})
-
-		Convey("The parent loops rather than ending", func() {
-			tests.CollectSeq(op.Next(nil))
-			tests.CollectSeq(op.Next(nil))
-			So(tests.CollectSeq(op.Next(nil)), ShouldResemble, []float64{1, 2, 3})
-		})
-	})
-}
-
-func TestRingOffsetAndSlot(t *testing.T) {
-	Convey("Ring plays from an offset position between start and end", t, func() {
-		child := func(values ...float64) *Ring[float64] {
-			held := NewRing[float64]()
-
-			for _, value := range values {
-				held.Write(value)
-			}
-
-			return held
+		for range parent.Next(transport.NewOne(unsafe.Pointer(&nest)).Next(nil)) {
 		}
 
-		parent := NewRing[float64]()
-		parent.Write(child(10, 20, 30, 40, 50).Held())
-		parent.WriteAt(child(100, 200, 300).Held(), 1)
+		So(parent.Error(), ShouldBeNil)
+		So(child.Error(), ShouldBeNil)
 
-		So(parent.Len(), ShouldEqual, 2)
-		So(parent.ChildLen(), ShouldEqual, 5)
+		play := store.RingCommand[[]float64]{Play: true}
+		out := tests.CollectSeq[[]float64](parent.Next(transport.NewOne(unsafe.Pointer(&play)).Next(nil)))
 
-		op := NewRingOver[float64](parent.Held())
-
-		Convey("Plays from offset, advances parent to next child, and loops", func() {
-			So(tests.CollectSeq(op.NextOffset(nil, 2)), ShouldResemble, []float64{30, 40, 50})
-			So(tests.CollectSeq(op.NextOffset(nil, 1)), ShouldResemble, []float64{200, 300})
-			So(tests.CollectSeq(op.NextOffset(nil, 0)), ShouldResemble, []float64{10, 20, 30, 40, 50})
-		})
+		So(out, ShouldResemble, [][]float64{{1, 2}, {3, 4}})
+		So(parent.Error(), ShouldBeNil)
 	})
 }

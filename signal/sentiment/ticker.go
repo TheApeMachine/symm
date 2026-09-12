@@ -1,12 +1,85 @@
 package sentiment
 
 import (
+	"context"
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/types"
 )
+
+/*
+Signal is the cross-sectional price-state instrument. It composes its market
+entity in its constructor and exposes the canonical signal structure:
+Constructor, Name, Error, Step, Close.
+*/
+type Signal struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+
+	ticker *Ticker
+}
+
+/*
+NewSignal composes the Ticker (per-symbol price-state) entity.
+*/
+func NewSignal(ctx context.Context) *Signal {
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &Signal{
+		ctx:    ctx,
+		cancel: cancel,
+		ticker: NewTicker(),
+	}
+}
+
+func (signal *Signal) Name() string { return "sentiment" }
+
+func (signal *Signal) Error() error { return signal.err }
+
+func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	if signal.err != nil {
+		errnie.Error(signal.Close())
+		return nil
+	}
+
+	/*
+		A signal observes exactly the envelope kind it consumes. Stepping on any
+		other kind hands the estimator a zero-valued observation, which it
+		correctly rejects — and that rejection becomes a Measurement carrying an
+		Err. data.Lift discards the WHOLE frame on the first failed measurement,
+		so one signal stepped out of turn erased every other signal's metrics
+		from the same envelope, and no advisor could ever assemble a complete
+		feature group.
+	*/
+	if envelope.TypeID != types.EnvelopeTicker {
+		return envelope
+	}
+
+	measurement := signal.ticker.Step(envelope.TickerData)
+
+	if measurement != nil {
+		signal.err = measurement.Err
+	}
+
+	envelope.Sentiment = measurement
+
+	return envelope
+}
+
+func (signal *Signal) Close() error {
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	return signal.ticker.Close()
+}
 
 type symbolState struct {
 	previousPrice float64
@@ -23,7 +96,7 @@ Outputs are directly projected into data.Measurement without intermediate
 Frame allocations or string intern table lookups.
 */
 type Ticker struct {
-	section *data.CrossSection
+	section core.Primitive
 	symbols map[string]*symbolState
 }
 
@@ -56,7 +129,8 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	id := fmt.Sprintf("sentiment:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
 
 	if last == 0 {
-		measurement := data.NewMeasurement[float64](id, tick.Symbol, "sentiment", tick.Timestamp, tick.Timestamp)
+		measurement := data.NewMeasurement[float64]("sentiment", nil)
+		measurement.Label, measurement.At, measurement.From = tick.Symbol, tick.Timestamp, tick.Timestamp
 		measurement.Metadata = make(map[string]float64)
 		measurement.Metadata[data.MetadataSupport] = 0.0
 		measurement.Maturity = 0.0
@@ -92,7 +166,8 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	state.previousNsec = tickNsec
 	state.hasPrice = true
 
-	measurement := data.NewMeasurement[float64](id, tick.Symbol, "sentiment", tick.Timestamp, tick.Timestamp)
+	measurement := data.NewMeasurement[float64]("sentiment", nil)
+	measurement.Label, measurement.At, measurement.From = tick.Symbol, tick.Timestamp, tick.Timestamp
 	measurement.Metadata = make(map[string]float64)
 
 	if hasPrevious && previousPrice > 0 && last > 0 {
@@ -101,12 +176,20 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 		putMetric(measurement, "absolute_return", math.Abs(logReturn), data.UnitDimensionless)
 	}
 
-	snapshot, hasSnapshot := ticker.section.Process(
-		tick.Symbol,
-		last,
-		tick.Timestamp,
-		tick.Symbol,
-	)
+	snapshotEval := transport.NewEvaluate(ticker.section)
+	var snapshot data.Snapshot
+	hasSnapshot := false
+
+	for out := range snapshotEval.Next(transport.NewValues(data.SectionInput{
+		Key: tick.Symbol, Value: last, At: tick.Timestamp, Focal: tick.Symbol,
+	}).Next(nil)) {
+		snapshot = *(*data.Snapshot)(out)
+		hasSnapshot = true
+	}
+
+	if err := snapshotEval.Error(); err != nil {
+		return &data.Measurement[float64]{Err: err}
+	}
 
 	if hasSnapshot {
 		foldSnapshot(measurement, snapshot)
@@ -221,9 +304,9 @@ func foldSnapshot(measurement *data.Measurement[float64], snapshot data.Snapshot
 }
 
 func putMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
-	measurement.PutMetric(data.NewMetric(
-		name, value, nil, nil, unit, data.TimescaleInstantaneous,
-	))
+	measurement.Metrics[name] = data.Metric[float64]{
+		Label: name, Raw: value, Unit: unit, Timescale: data.TimescaleInstantaneous,
+	}
 }
 
 func putRatio(measurement *data.Measurement[float64], name string, num, den float64, unit data.Unit) {

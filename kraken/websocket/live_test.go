@@ -21,6 +21,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	"github.com/theapemachine/symm/system"
@@ -41,12 +42,12 @@ func (ingress *testIngress) Push(envelope *types.Envelope) {
 
 func (ingress *testIngress) Status() runtime.Stage { return ingress.status.Current() }
 
-func readyTestIngress(channels ...string) map[string]runtime.Ingress[*types.Envelope] {
-	ingress := make(map[string]runtime.Ingress[*types.Envelope], len(channels))
+func readyTestIngress(channels ...string) map[string]Ingress {
+	ingress := make(map[string]Ingress, len(channels))
 
 	for _, channel := range channels {
 		ingress[channel] = &testIngress{
-			status: runtime.NewStatus().Transition(runtime.READY),
+			status: stagedStatus(runtime.READY),
 		}
 	}
 
@@ -324,13 +325,13 @@ func TestLiveAttachLevel3(t *testing.T) {
 		parent := &Live{
 			ctx:     parentCtx,
 			cancel:  parentCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY).Transition(runtime.READY),
+			status:  stagedStatus(runtime.BUSY).Transition(runtime.READY),
 			ingress: readyTestIngress("level3"),
 		}
 		child := &Live{
 			ctx:     childCtx,
 			cancel:  childCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: parent.ingress,
 		}
 
@@ -351,13 +352,13 @@ func TestLiveMarkReady(t *testing.T) {
 		parent := &Live{
 			ctx:     parentCtx,
 			cancel:  parentCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: readyTestIngress("level3"),
 		}
 		child := &Live{
 			ctx:     childCtx,
 			cancel:  childCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: parent.ingress,
 		}
 		parent.AttachLevel3("BTC/USD", child)
@@ -376,11 +377,9 @@ func TestLiveMarkReady(t *testing.T) {
 		live := &Live{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
-			ingress: map[string]runtime.Ingress[*types.Envelope]{
-				"ticker": &testIngress{
-					status: runtime.NewStatus().Transition(runtime.WAITING),
-				},
+			status: stagedStatus(runtime.BUSY),
+			ingress: map[string]Ingress{
+				"ticker": &testIngress{},
 			},
 		}
 
@@ -424,8 +423,8 @@ func newLiveFixture(t testing.TB) liveFixture {
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
 			Body: io.NopCloser(strings.NewReader(`{"error":[],"result":{}}`)), Request: request}, nil
 	}
-	ingress := &testIngress{status: runtime.NewStatus().Transition(runtime.READY), frames: make(chan *types.Envelope, 1)}
-	live := NewWithClient(t.Context(), map[string]runtime.Ingress[*types.Envelope]{"level3": ingress},
+	ingress := &testIngress{ready: true, frames: make(chan *types.Envelope, 1)}
+	live := NewWithClient(t.Context(), map[string]Ingress{"level3": ingress},
 		nil, false, system.Cfg.WebSocket.Endpoints.Level3, client)
 	t.Cleanup(live.Close)
 	if err := live.Error(); err != nil {

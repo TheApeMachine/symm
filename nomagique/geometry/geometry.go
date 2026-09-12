@@ -1,45 +1,44 @@
 /*
 Package geometry provides phase-fingerprint primitives: a high-dimensional
-complex PhaseDial, an evenly spaced angular PhasePath, and a bounded, outcome-
-tagged Corpus of retained dials.
+complex PhaseDial, an evenly spaced angular PhasePath, Hermitian Overlap, and a
+bounded, outcome-tagged Corpus of retained dials.
 
-A PhaseDial is a data primitive — a []complex128 of rotational phase gradients —
-not a numeric scalar, so it is a concrete value type rather than a
-types.Primitive. The corpus is a bounded ring whose entries are dials tagged
-with the outcome that followed; it answers top-K signed-interference scans
-against a query dial. The math is pure (Overlap/copy/normalize/rank); only the
-corpus's retained entries need mutual exclusion for concurrent reads and writes.
+Everything is a streaming Primitive over an unsafe.Pointer wire. Payloads are
+plain data types: PhaseDial is a []complex128 of rotational phase gradients,
+and every command, query, and reading is a struct with exported fields only.
+
+The math is pure (dial overlap/copy/normalize/rank); only the corpus's retained
+entries need mutual exclusion for concurrent reads and writes, and the Corpus
+primitive owns that mutex itself.
 */
 package geometry
 
 import (
+	"errors"
 	"fmt"
+	"iter"
 	"math"
 	"math/cmplx"
 	"sort"
 	"sync"
 	"time"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 PhaseDial is a high-dimensional complex vector of rotational phase gradients.
 Each component is a complex amplitude; its magnitude is scale and its argument
 is phase. It carries no encoding policy — callers project their source (e.g. an
-oscillator lattice) into it directly.
+oscillator lattice) into it directly. It is pure wire payload: no methods.
 */
 type PhaseDial []complex128
 
 /*
-NewPhaseDial allocates a zero-initialized dial of the requested length.
+dialNorm returns the L2 magnitude of the dial.
 */
-func NewPhaseDial(dimensions int) PhaseDial {
-	return make(PhaseDial, dimensions)
-}
-
-/*
-norm returns the L2 magnitude of the dial.
-*/
-func (dial PhaseDial) norm() float64 {
+func dialNorm(dial PhaseDial) float64 {
 	var total float64
 
 	for _, value := range dial {
@@ -51,17 +50,10 @@ func (dial PhaseDial) norm() float64 {
 }
 
 /*
-CopyAndNormalize returns a cloned, unit-normalized copy of the dial. An empty
-or zero-energy dial is returned unchanged.
+normalizeDial scales the dial to unit energy in place. An empty or zero-energy
+dial is returned unchanged.
 */
-func (dial PhaseDial) CopyAndNormalize() PhaseDial {
-	out := make(PhaseDial, len(dial))
-	copy(out, dial)
-
-	return out.normalize()
-}
-
-func (dial PhaseDial) normalize() PhaseDial {
+func normalizeDial(dial PhaseDial) PhaseDial {
 	var sumSq float64
 
 	for _, value := range dial {
@@ -83,11 +75,23 @@ func (dial PhaseDial) normalize() PhaseDial {
 }
 
 /*
-Overlap returns the normalized Hermitian inner product of two dials. Its
-magnitude is their rotationally invariant affinity and its argument is the global
-phase displacement that aligns them. Mismatched or empty dials yield zero.
+copyAndNormalize returns a cloned, unit-normalized copy of the dial so callers
+cannot mutate a retained fingerprint through their original reference.
 */
-func (dial PhaseDial) Overlap(other PhaseDial) complex128 {
+func copyAndNormalize(dial PhaseDial) PhaseDial {
+	out := make(PhaseDial, len(dial))
+	copy(out, dial)
+
+	return normalizeDial(out)
+}
+
+/*
+dialOverlap returns the normalized Hermitian inner product of two dials. Its
+magnitude is their rotationally invariant affinity and its argument is the
+global phase displacement that aligns them. Mismatched or empty dials yield
+zero.
+*/
+func dialOverlap(dial, other PhaseDial) complex128 {
 	if len(dial) != len(other) || len(dial) == 0 {
 		return 0
 	}
@@ -111,23 +115,190 @@ func (dial PhaseDial) Overlap(other PhaseDial) complex128 {
 }
 
 /*
-PhasePath returns an evenly spaced angular path over the full circle, excluding
-the endpoint so the last sample does not repeat the first. A scan is only
-comparable between queries when every query is evaluated on the same path, so
-the path is constructed here rather than by each caller.
+validateDial rejects empty, zero-energy, or non-finite dials.
 */
-func PhasePath(samples int) ([]float64, error) {
-	if samples <= 0 {
-		return nil, fmt.Errorf("geometry: phase path requires a positive sample count")
+func validateDial(dial PhaseDial) error {
+	if len(dial) == 0 || dialNorm(dial) == 0 {
+		return fmt.Errorf("phase dial must contain nonzero amplitude")
 	}
 
-	angles := make([]float64, samples)
-
-	for index := range angles {
-		angles[index] = 2 * math.Pi * float64(index) / float64(samples)
+	for _, component := range dial {
+		if math.IsNaN(real(component)) || math.IsNaN(imag(component)) ||
+			math.IsInf(real(component), 0) || math.IsInf(imag(component), 0) {
+			return fmt.Errorf("phase dial must contain finite components")
+		}
 	}
 
-	return angles, nil
+	return nil
+}
+
+/*
+PhasePathReading is the evenly spaced angular path over the full circle,
+excluding the endpoint so the last sample does not repeat the first.
+*/
+type PhasePathReading struct {
+	Angles []float64
+}
+
+/*
+PhasePath owns angular path construction. A scan is only comparable between
+queries when every query is evaluated on the same path, so the path is
+constructed here rather than by each caller.
+*/
+type PhasePath struct {
+	err error
+	out PhasePathReading
+}
+
+/*
+NewPhasePath creates a PhasePath primitive.
+*/
+func NewPhasePath() core.Primitive {
+	return &PhasePath{}
+}
+
+/*
+Next receives *int sample counts and yields a *PhasePathReading with the
+evenly spaced angles. A non-positive count is a domain failure: it is recorded
+and the stream ends.
+*/
+func (op *PhasePath) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			samples := *(*int)(arriving)
+
+			if samples <= 0 {
+				op.Error(fmt.Errorf(
+					"%w: geometry: phase path requires a positive sample count",
+					core.ErrDomain,
+				))
+				return
+			}
+
+			angles := make([]float64, samples)
+
+			for index := range angles {
+				angles[index] = 2 * math.Pi * float64(index) / float64(samples)
+			}
+
+			op.out = PhasePathReading{Angles: angles}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *PhasePath) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+Normalize owns unit-energy scaling of arriving dials.
+*/
+type Normalize struct {
+	err error
+}
+
+/*
+NewNormalize creates a Normalize primitive.
+*/
+func NewNormalize() core.Primitive {
+	return &Normalize{}
+}
+
+/*
+Next receives *PhaseDial pointers, normalizes each dial in place, and yields
+the same pointer. An empty or zero-energy dial passes through unchanged.
+*/
+func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			dial := (*PhaseDial)(arriving)
+			*dial = normalizeDial(*dial)
+
+			if !yield(arriving) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *Normalize) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+OverlapPair is the two-dial wire payload of the Overlap primitive.
+*/
+type OverlapPair struct {
+	Probe PhaseDial
+	Entry PhaseDial
+}
+
+/*
+Overlap owns the normalized Hermitian inner product between two dials.
+*/
+type Overlap struct {
+	err error
+	out complex128
+}
+
+/*
+NewOverlap creates an Overlap primitive.
+*/
+func NewOverlap() core.Primitive {
+	return &Overlap{}
+}
+
+/*
+Next receives *OverlapPair payloads and yields a *complex128 normalized
+Hermitian overlap. Mismatched or empty pairs yield zero, matching the pure
+dial math.
+*/
+func (op *Overlap) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			pair := (*OverlapPair)(arriving)
+			op.out = dialOverlap(pair.Probe, pair.Entry)
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *Overlap) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }
 
 /*
@@ -151,161 +322,274 @@ type CorpusMatch[Outcome any] struct {
 }
 
 /*
-Corpus is a bounded, outcome-tagged collection of normalized dials. It answers
-top-K signed-interference retrieval and controlled global phase scans. It is
-safe for concurrent reads and writes.
+CorpusQuery asks for a controlled phase scan: the query dial, the global phase
+angles to evaluate, the top-K count, and the entry timestamps to exclude so a
+resident query cannot select itself.
+*/
+type CorpusQuery struct {
+	Dial         PhaseDial
+	Angles       []float64
+	TopK         int
+	ExcludeTimes []time.Time
+}
+
+/*
+CorpusCount asks for the number of retained entries.
+*/
+type CorpusCount struct{}
+
+/*
+CorpusCommand discriminates one corpus operation. Exactly one of Insert, Query,
+or Count must be set; anything else is a shape failure.
+*/
+type CorpusCommand[Outcome any] struct {
+	Insert *CorpusEntry[Outcome]
+	Query  *CorpusQuery
+	Count  *CorpusCount
+}
+
+/*
+CorpusResult is one acknowledgement or scan response: an insertion
+acknowledgement, a retained-entry count, or the top-K matches for every
+requested angle.
+*/
+type CorpusResult[Outcome any] struct {
+	Inserted bool
+	Size     int
+	Scan     [][]CorpusMatch[Outcome]
+}
+
+/*
+Corpus is a bounded, outcome-tagged collection of normalized dials, owned by
+one Primitive. It answers top-K signed-interference retrieval and controlled
+global phase scans. It is safe for concurrent reads and writes: the primitive
+owns the mutex around its retained entries.
 */
 type Corpus[Outcome any] struct {
+	err        error
 	mu         sync.RWMutex
 	entries    []CorpusEntry[Outcome]
 	maxSize    int
 	dimensions int
 	next       int
+	out        CorpusResult[Outcome]
 }
 
 /*
-NewCorpus creates a corpus with maximum capacity; when full, the oldest entries
-are evicted to make room.
+NewCorpus creates a corpus primitive with maximum capacity; when full, the
+oldest entries are evicted to make room. A non-positive capacity is recorded
+as a domain failure and every stream over the primitive yields nothing.
 */
-func NewCorpus[Outcome any](maxSize int) (*Corpus[Outcome], error) {
+func NewCorpus[Outcome any](maxSize int) core.Primitive {
 	if maxSize <= 0 {
-		return nil, fmt.Errorf("geometry: corpus capacity must be positive")
+		return &Corpus[Outcome]{
+			err: fmt.Errorf("%w: geometry: corpus capacity must be positive", core.ErrDomain),
+		}
 	}
 
 	return &Corpus[Outcome]{
 		entries: make([]CorpusEntry[Outcome], 0, maxSize),
 		maxSize: maxSize,
-	}, nil
+	}
 }
 
 /*
-Insert adds one observation. At capacity the oldest entry is evicted. The dial
-is normalized and copied so callers cannot mutate it after insertion.
+Next receives *CorpusCommand payloads and yields a *CorpusResult for each:
+insertion acknowledgements, retained-entry counts, or per-angle top-K scan
+rows. Any invalid command ends the stream with the error recorded.
 */
-func (corpus *Corpus[Outcome]) Insert(entry CorpusEntry[Outcome]) error {
-	if err := corpus.validate(entry.Dial); err != nil {
-		return fmt.Errorf("geometry: insert corpus entry: %w", err)
+func (op *Corpus[Outcome]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	if op.err != nil {
+		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
-	entry.Dial = entry.Dial.CopyAndNormalize()
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			command := (*CorpusCommand[Outcome])(arriving)
+			result, err := op.execute(command)
 
-	corpus.mu.Lock()
-	defer corpus.mu.Unlock()
+			if err != nil {
+				op.Error(err)
+				return
+			}
 
-	if corpus.dimensions == 0 {
-		corpus.dimensions = len(entry.Dial)
+			op.out = result
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
 	}
-
-	if len(entry.Dial) != corpus.dimensions {
-		return fmt.Errorf(
-			"geometry: corpus dial has %d dimensions, expected %d",
-			len(entry.Dial), corpus.dimensions,
-		)
-	}
-
-	if len(corpus.entries) < corpus.maxSize {
-		corpus.entries = append(corpus.entries, entry)
-
-		return nil
-	}
-
-	corpus.entries[corpus.next] = entry
-	corpus.next = (corpus.next + 1) % corpus.maxSize
-
-	return nil
 }
 
 /*
-Size returns the current number of retained entries.
+Error records the first error it sees and joins any subsequent errors to it.
 */
-func (corpus *Corpus[Outcome]) Size() int {
-	corpus.mu.RLock()
-	defer corpus.mu.RUnlock()
-
-	return len(corpus.entries)
-}
-
-/*
-ScanPhases evaluates the corpus at each requested global phase rotation. The
-complex overlaps are computed once, then analytically rotated, preserving both
-constructive and destructive interference without reallocating rotated
-fingerprints.
-*/
-func (corpus *Corpus[Outcome]) ScanPhases(
-	queryDial PhaseDial, angles []float64, topK int,
-) ([][]CorpusMatch[Outcome], error) {
-	return corpus.scanPhases(queryDial, angles, topK, nil)
-}
-
-/*
-ScanPhasesExcluding evaluates a controlled phase path while excluding entries at
-the supplied timestamps, so a resident query cannot select itself.
-*/
-func (corpus *Corpus[Outcome]) ScanPhasesExcluding(
-	queryDial PhaseDial,
-	angles []float64,
-	topK int,
-	excludeTimes ...time.Time,
-) ([][]CorpusMatch[Outcome], error) {
-	excluded := make(map[int64]bool, len(excludeTimes))
-
-	for _, excludeTime := range excludeTimes {
-		excluded[excludeTime.UnixNano()] = true
-	}
-
-	return corpus.scanPhases(queryDial, angles, topK, excluded)
-}
-
-func (corpus *Corpus[Outcome]) scanPhases(
-	queryDial PhaseDial, angles []float64, topK int, excluded map[int64]bool,
-) ([][]CorpusMatch[Outcome], error) {
-	if err := corpus.validate(queryDial); err != nil {
-		return nil, fmt.Errorf("geometry: scan corpus: %w", err)
-	}
-
-	if topK <= 0 {
-		return nil, fmt.Errorf("geometry: scan count must be positive")
-	}
-
-	if len(angles) == 0 {
-		return nil, fmt.Errorf("geometry: phase scan requires at least one angle")
-	}
-
-	for _, angle := range angles {
-		if math.IsNaN(angle) || math.IsInf(angle, 0) {
-			return nil, fmt.Errorf("geometry: phase scan angle must be finite")
+func (op *Corpus[Outcome]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
 
-	corpus.mu.RLock()
+	return op.err
+}
 
-	if corpus.dimensions != 0 && len(queryDial) != corpus.dimensions {
-		corpus.mu.RUnlock()
+/*
+execute dispatches one command to its intent and returns its result.
+*/
+func (op *Corpus[Outcome]) execute(
+	command *CorpusCommand[Outcome],
+) (CorpusResult[Outcome], error) {
+	intents := 0
 
-		return nil, fmt.Errorf(
-			"geometry: query dial has %d dimensions, expected %d",
-			len(queryDial), corpus.dimensions,
+	if command.Insert != nil {
+		intents++
+	}
+
+	if command.Query != nil {
+		intents++
+	}
+
+	if command.Count != nil {
+		intents++
+	}
+
+	if intents != 1 {
+		return CorpusResult[Outcome]{}, fmt.Errorf(
+			"%w: geometry: corpus command must set exactly one intent",
+			core.ErrShape,
 		)
 	}
 
-	entries := make([]CorpusEntry[Outcome], 0, len(corpus.entries))
-	overlaps := make([]complex128, 0, len(corpus.entries))
+	if command.Insert != nil {
+		return op.insert(*command.Insert)
+	}
 
-	for _, entry := range corpus.entries {
+	if command.Query != nil {
+		return op.scan(command.Query)
+	}
+
+	return CorpusResult[Outcome]{Size: op.size()}, nil
+}
+
+/*
+insert adds one observation. At capacity the oldest entry is evicted. The dial
+is normalized and copied so callers cannot mutate it after insertion.
+*/
+func (op *Corpus[Outcome]) insert(
+	entry CorpusEntry[Outcome],
+) (CorpusResult[Outcome], error) {
+	if err := validateDial(entry.Dial); err != nil {
+		return CorpusResult[Outcome]{}, fmt.Errorf("geometry: insert corpus entry: %w", err)
+	}
+
+	entry.Dial = copyAndNormalize(entry.Dial)
+
+	op.mu.Lock()
+	defer op.mu.Unlock()
+
+	if op.dimensions == 0 {
+		op.dimensions = len(entry.Dial)
+	}
+
+	if len(entry.Dial) != op.dimensions {
+		return CorpusResult[Outcome]{}, fmt.Errorf(
+			"%w: geometry: corpus dial has %d dimensions, expected %d",
+			core.ErrShape, len(entry.Dial), op.dimensions,
+		)
+	}
+
+	if len(op.entries) < op.maxSize {
+		op.entries = append(op.entries, entry)
+
+		return CorpusResult[Outcome]{Inserted: true}, nil
+	}
+
+	op.entries[op.next] = entry
+	op.next = (op.next + 1) % op.maxSize
+
+	return CorpusResult[Outcome]{Inserted: true}, nil
+}
+
+/*
+size returns the current number of retained entries under the read lock.
+*/
+func (op *Corpus[Outcome]) size() int {
+	op.mu.RLock()
+	defer op.mu.RUnlock()
+
+	return len(op.entries)
+}
+
+/*
+scan evaluates the corpus at each requested global phase rotation. The complex
+overlaps are computed once, then analytically rotated, preserving both
+constructive and destructive interference without reallocating rotated
+fingerprints. Entries at the excluded timestamps are skipped.
+*/
+func (op *Corpus[Outcome]) scan(
+	query *CorpusQuery,
+) (CorpusResult[Outcome], error) {
+	if err := validateDial(query.Dial); err != nil {
+		return CorpusResult[Outcome]{}, fmt.Errorf("geometry: scan corpus: %w", err)
+	}
+
+	if query.TopK <= 0 {
+		return CorpusResult[Outcome]{}, fmt.Errorf(
+			"%w: geometry: scan count must be positive", core.ErrDomain,
+		)
+	}
+
+	if len(query.Angles) == 0 {
+		return CorpusResult[Outcome]{}, fmt.Errorf(
+			"%w: geometry: phase scan requires at least one angle", core.ErrDomain,
+		)
+	}
+
+	for _, angle := range query.Angles {
+		if math.IsNaN(angle) || math.IsInf(angle, 0) {
+			return CorpusResult[Outcome]{}, fmt.Errorf(
+				"%w: geometry: phase scan angle must be finite", core.ErrDomain,
+			)
+		}
+	}
+
+	excluded := make(map[int64]bool, len(query.ExcludeTimes))
+
+	for _, excludeTime := range query.ExcludeTimes {
+		excluded[excludeTime.UnixNano()] = true
+	}
+
+	op.mu.RLock()
+
+	if op.dimensions != 0 && len(query.Dial) != op.dimensions {
+		op.mu.RUnlock()
+
+		return CorpusResult[Outcome]{}, fmt.Errorf(
+			"%w: geometry: query dial has %d dimensions, expected %d",
+			core.ErrShape, len(query.Dial), op.dimensions,
+		)
+	}
+
+	entries := make([]CorpusEntry[Outcome], 0, len(op.entries))
+	overlaps := make([]complex128, 0, len(op.entries))
+
+	for _, entry := range op.entries {
 		if excluded[entry.At.UnixNano()] {
 			continue
 		}
 
 		entries = append(entries, entry)
-		overlaps = append(overlaps, queryDial.Overlap(entry.Dial))
+		overlaps = append(overlaps, dialOverlap(query.Dial, entry.Dial))
 	}
 
-	corpus.mu.RUnlock()
+	op.mu.RUnlock()
 
-	responses := make([][]CorpusMatch[Outcome], len(angles))
+	responses := make([][]CorpusMatch[Outcome], len(query.Angles))
 	matches := make([]CorpusMatch[Outcome], len(entries))
 
-	for angleIndex, angle := range angles {
+	for angleIndex, angle := range query.Angles {
 		rotation := cmplx.Rect(1, -angle)
 
 		for entryIndex, entry := range entries {
@@ -316,32 +600,21 @@ func (corpus *Corpus[Outcome]) scanPhases(
 			}
 		}
 
-		corpus.rank(matches)
+		rankMatches(matches)
 		responses[angleIndex] = append(
 			[]CorpusMatch[Outcome](nil),
-			matches[:min(topK, len(matches))]...,
+			matches[:min(query.TopK, len(matches))]...,
 		)
 	}
 
-	return responses, nil
+	return CorpusResult[Outcome]{Scan: responses}, nil
 }
 
-func (corpus *Corpus[Outcome]) validate(dial PhaseDial) error {
-	if len(dial) == 0 || dial.norm() == 0 {
-		return fmt.Errorf("phase dial must contain nonzero amplitude")
-	}
-
-	for _, component := range dial {
-		if math.IsNaN(real(component)) || math.IsNaN(imag(component)) ||
-			math.IsInf(real(component), 0) || math.IsInf(imag(component), 0) {
-			return fmt.Errorf("phase dial must contain finite components")
-		}
-	}
-
-	return nil
-}
-
-func (corpus *Corpus[Outcome]) rank(matches []CorpusMatch[Outcome]) {
+/*
+rankMatches orders matches by descending similarity, breaking ties by the
+earlier timestamp.
+*/
+func rankMatches[Outcome any](matches []CorpusMatch[Outcome]) {
 	sort.Slice(matches, func(left, right int) bool {
 		if matches[left].Similarity != matches[right].Similarity {
 			return matches[left].Similarity > matches[right].Similarity

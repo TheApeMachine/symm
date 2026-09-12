@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -23,15 +24,29 @@ func TestRLSNext(t *testing.T) {
 				features[index] = float64(index + 1)
 			}
 
-			first, err := transport.Evaluate(node, transport.Values(learning.Sample{
+			firstEval := transport.NewEvaluate(node)
+			var first algo.Reading
+
+			for out := range firstEval.Next(transport.NewValues(learning.Sample{
 				Features: features,
 				Target:   1,
 				Observed: true,
-			}))
+			}).Next(nil)) {
+				first = *(*algo.Reading)(out)
+			}
+
+			err := firstEval.Error()
 			_ = first
 			So(err, ShouldBeNil)
 
-			query, err := transport.Evaluate(node, transport.Values(learning.Sample{Features: features}))
+			queryEval := transport.NewEvaluate(node)
+			var query algo.Reading
+
+			for out := range queryEval.Next(transport.NewValues(learning.Sample{Features: features}).Next(nil)) {
+				query = *(*algo.Reading)(out)
+			}
+
+			err = queryEval.Error()
 			So(err, ShouldBeNil)
 			So(query.Observed, ShouldBeFalse)
 			So(query.Beta, ShouldResemble, first.Beta)
@@ -59,15 +74,27 @@ func BenchmarkRLSNext(b *testing.B) {
 			features[index] = math.Sin(float64((step + 1) * (index + 1)))
 		}
 
-		if _, err := transport.Evaluate(node, transport.Values(learning.Sample{
+		trained := transport.NewEvaluate(node)
+
+		for out := range trained.Next(transport.NewValues(learning.Sample{
 			Features: features,
 			Target:   features[0] - features[1],
 			Observed: true,
-		})); err != nil {
+		}).Next(nil)) {
+			_ = *(*algo.Reading)(out)
+		}
+
+		if err := trained.Error(); err != nil {
 			b.Fatal(err)
 		}
 
-		if _, err := transport.Evaluate(node, transport.Values(learning.Sample{Features: features})); err != nil {
+		predicted := transport.NewEvaluate(node)
+
+		for out := range predicted.Next(transport.NewValues(learning.Sample{Features: features}).Next(nil)) {
+			_ = *(*algo.Reading)(out)
+		}
+
+		if err := predicted.Error(); err != nil {
 			b.Fatal(err)
 		}
 

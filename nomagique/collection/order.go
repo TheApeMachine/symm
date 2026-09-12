@@ -2,34 +2,46 @@ package collection
 
 import (
 	"cmp"
+	"errors"
 	"iter"
 	"slices"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Order owns ordering a collection. It never reorders a caller's storage.
+Order owns ordering a collection.
 */
 type Order[T cmp.Ordered] struct {
-	core.Base[[]T, []T]
+	err error
+	out []T
 }
 
-func NewOrder[T cmp.Ordered]() *Order[T] {
+func NewOrder[T cmp.Ordered]() core.Primitive {
 	return &Order[T]{}
 }
 
-func (op *Order[T]) Next(
-	in iter.Seq[core.Primitive[[]T, []T]],
-) iter.Seq[core.Primitive[[]T, []T]] {
-	return func(yield func(core.Primitive[[]T, []T]) bool) {
+func (op *Order[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			ordered := slices.Clone(arriving.Read())
+			ordered := slices.Clone(*(*[]T)(arriving))
 			slices.Sort(ordered)
+			op.out = ordered
 
-			if !yield(op.Carrier(ordered)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Order[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

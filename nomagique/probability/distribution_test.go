@@ -16,7 +16,14 @@ func TestDistributionSnapshot(t *testing.T) {
 
 		for _, run := range [][]float64{{1, 1, 1, 1}, {0, 5, 1}, {1000, 1001}, {8}, {0, 4}} {
 			node := probability.NewDistribution()
-			out, err := transport.Evaluate(node, transport.Values(run...))
+			outEval := transport.NewEvaluate(node)
+			var out probability.Reading
+
+			for res := range outEval.Next(transport.NewValues(run...).Next(nil)) {
+				out = *(*probability.Reading)(res)
+			}
+
+			err := outEval.Error()
 			So(err, ShouldBeNil)
 
 			maximum := run[0]
@@ -75,7 +82,12 @@ func TestDistributionUndefinedInput(t *testing.T) {
 	Convey("Empty or non-finite logits fail instead of inventing a simplex", t, func() {
 		for _, members := range [][]float64{nil, {math.NaN()}, {math.Inf(1)}} {
 			node := probability.NewDistribution()
-			_, err := transport.Evaluate(node, transport.Values(members...))
+			_Eval := transport.NewEvaluate(node)
+
+			for range _Eval.Next(transport.NewValues(members...).Next(nil)) {
+			}
+
+			err := _Eval.Error()
 			So(err, ShouldNotBeNil)
 			So(node.Error(), ShouldNotBeNil)
 		}
@@ -87,7 +99,7 @@ func BenchmarkNewDistribution(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		out := tests.CollectSeq(node.Next(transport.Values(0.0, 5.0, 1.0)))
+		out := tests.CollectSeq[probability.Reading](node.Next(transport.NewValues(0.0, 5.0, 1.0).Next(nil)))
 
 		if len(out) != 1 || node.Error() != nil {
 			b.Fatal("expected one distribution", node.Error())
@@ -98,7 +110,14 @@ func BenchmarkNewDistribution(b *testing.B) {
 func TestDistributionNext(t *testing.T) {
 	Convey("Independent softmax runs keep a unit simplex", t, func() {
 		for _, values := range [][]float64{{1, 1, 1, 1}, {-1000, 1000, 0}, {8}, {0, 5, 1}} {
-			out, err := transport.Evaluate(probability.NewDistribution(), transport.Values(values...))
+			outEval := transport.NewEvaluate(probability.NewDistribution())
+			var out probability.Reading
+
+			for res := range outEval.Next(transport.NewValues(values...).Next(nil)) {
+				out = *(*probability.Reading)(res)
+			}
+
+			err := outEval.Error()
 			So(err, ShouldBeNil)
 			sum := 0.0
 

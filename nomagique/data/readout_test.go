@@ -22,13 +22,20 @@ func TestReadoutNext(t *testing.T) {
 			{0.8, 5, 1, []float64{}, []float64{}, false, false},
 			{0.8, 5, 1, []float64{}, []float64{}, false, true},
 		} {
-			out, err := transport.Evaluate(node, transport.Values(data.ReadoutInput{
+			outEval := transport.NewEvaluate(node)
+			var out data.Readout
+
+			for pointer := range outEval.Next(transport.NewValues(data.ReadoutInput{
 				QualityReading: data.QualityReading{
 					Maturity: test.maturity, SNR: test.snr, Estimated: true, SNRDefined: true,
 				},
 				Raw: 10, Credibility: test.cred, Supports: test.supports,
 				Contradictions: test.contradictions, Defined: test.defined, Discrete: test.discrete,
-			}))
+			}).Next(nil)) {
+				out = *(*data.Readout)(pointer)
+			}
+
+			err := outEval.Error()
 			So(err, ShouldBeNil)
 
 			authority := test.maturity * test.snr / (1 + test.snr) * test.cred

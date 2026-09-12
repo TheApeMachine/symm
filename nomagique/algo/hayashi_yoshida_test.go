@@ -9,34 +9,44 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/tests/market"
 )
 
-func prices(at []int64, values []float64) []equation.Price {
-	out := make([]equation.Price, len(values))
+func prices(at []int64, values []float64) []temporal.Price {
+	out := make([]temporal.Price, len(values))
 
 	for index, value := range values {
-		out[index] = equation.Price{At: at[index], Value: value}
+		out[index] = temporal.Price{At: at[index], Value: value}
 	}
 
 	return out
 }
 
-func pair(left, right []equation.Price) equation.LagProfileInput {
-	return equation.LagProfileInput{Left: left, Right: right}
+func pathQuery(left, right []temporal.Price) correlation.EstimateInput {
+	leftReturns := makeReturns(left)
+	rightReturns := makeReturns(right)
+	return correlation.EstimateInput{
+		Left:        leftReturns,
+		Right:       rightReturns,
+		LeftEnergy:  calcEnergy(leftReturns),
+		RightEnergy: calcEnergy(rightReturns),
+	}
 }
 
 func TestHayashiYoshidaNext(t *testing.T) {
 	Convey("One left increment overlapping two right increments is counted twice", t, func() {
-		left := prices([]int64{0, 2}, []float64{1, math.Exp(1)})
-		right := prices([]int64{0, 1, 2}, []float64{1, math.Exp(1), math.Exp(2)})
+		query := pathQuery(
+			prices([]int64{0, 2}, []float64{1, math.Exp(1)}),
+			prices([]int64{0, 1, 2}, []float64{1, math.Exp(1), math.Exp(2)}),
+		)
 		node := algo.NewHayashiYoshida()
 
 		for range 3 {
-			out := tests.CollectSeq(node.Next(transport.Values(pair(left, right))))
+			out := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(query).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
 			So(out[0].Covariance, ShouldEqual, 2)
@@ -51,15 +61,15 @@ func TestHayashiYoshidaNext(t *testing.T) {
 func TestHayashiEmptyAndTouch(t *testing.T) {
 	Convey("Touching intervals contribute no overlap, and empty paths stay undefined", t, func() {
 		node := algo.NewHayashiYoshida()
-		fields := tests.CollectSeq(node.Next(transport.Values(pair(
+		fields := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(
 			prices([]int64{0, 1}, []float64{1, 2}),
 			prices([]int64{1, 2}, []float64{1, 2}),
-		))))
+		)).Next(nil)))
 		So(fields[0].Support, ShouldEqual, 0)
 		So(fields[0].Correlation, ShouldEqual, 0)
 
 		node = algo.NewHayashiYoshida()
-		empty := tests.CollectSeq(node.Next(transport.Values(pair(nil, nil))))
+		empty := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(nil, nil)).Next(nil)))
 		So(math.IsNaN(empty[0].Correlation), ShouldBeTrue)
 	})
 }
@@ -99,7 +109,7 @@ func TestHayashiReference(t *testing.T) {
 			}
 
 			node := algo.NewHayashiYoshida()
-			out := tests.CollectSeq(node.Next(transport.Values(pair(prices(lt, lp), prices(rt, rp)))))
+			out := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(prices(lt, lp), prices(rt, rp))).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(out[0].Covariance, ShouldEqual, covariance)
 			So(out[0].Support, ShouldEqual, support)
@@ -118,14 +128,14 @@ func BenchmarkNewHayashiYoshida(b *testing.B) {
 		values[index] = 100 * math.Exp(0.01*math.Sin(float64(index)))
 	}
 
-	input := pair(prices(times, values), prices(shifted, values))
+	input := pathQuery(prices(times, values), prices(shifted, values))
 	graph := algo.NewHayashiYoshida()
 	b.ReportAllocs()
 
 	for b.Loop() {
 		count := 0
 
-		for range graph.Next(transport.Values(input)) {
+		for range graph.Next(transport.NewValues(input).Next(nil)) {
 			count++
 		}
 
@@ -145,17 +155,34 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 			shifted[index] = times[index] + int64(43*time.Millisecond)
 		}
 
-		var left, right equation.LogReturns
-		So(left.Load(prices(times, values)), ShouldBeNil)
-		So(right.Load(prices(shifted, values)), ShouldBeNil)
-		original := slices.Clone(left.Intervals)
+		leftReturns := makeReturns(prices(times, values))
+		rightReturns := makeReturns(prices(shifted, values))
+		leftEnergy := calcEnergy(leftReturns)
+		rightEnergy := calcEnergy(rightReturns)
+		original := slices.Clone(leftReturns)
 		estimator := algo.NewHayashiYoshida()
+
+		estimate := func(lag int64) (correlation.LagEstimate, error) {
+			out := tests.CollectSeq[correlation.LagEstimate](estimator.Next(transport.NewValues(correlation.EstimateInput{
+				Left:        leftReturns,
+				Right:       rightReturns,
+				LeftEnergy:  leftEnergy,
+				RightEnergy: rightEnergy,
+				Lag:         lag,
+			}).Next(nil)))
+
+			if len(out) == 0 {
+				return correlation.LagEstimate{}, estimator.Error()
+			}
+
+			return out[0], estimator.Error()
+		}
 
 		for _, lag := range []int64{-int64(time.Second), 0, int64(43 * time.Millisecond), int64(time.Second)} {
 			covariance, support := 0.0, 0.0
 
-			for _, leftReturn := range left.Intervals {
-				for _, rightReturn := range right.Intervals {
+			for _, leftReturn := range leftReturns {
+				for _, rightReturn := range rightReturns {
 					if leftReturn.From+lag < rightReturn.To && rightReturn.From < leftReturn.To+lag {
 						covariance += leftReturn.Value * rightReturn.Value
 						support++
@@ -163,26 +190,50 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 				}
 			}
 
-			fields, err := estimator.Estimate(&left, &right, lag)
+			fields, err := estimate(lag)
 			So(err, ShouldBeNil)
 			So(fields.Support, ShouldEqual, support)
 			So(fields.Covariance, ShouldAlmostEqual, covariance)
-			So(fields.Correlation, ShouldAlmostEqual, covariance/math.Sqrt(left.Energy*right.Energy))
-			So(left.Intervals, ShouldResemble, original)
+			So(fields.Correlation, ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			So(leftReturns, ShouldResemble, original)
 		}
 
 		Convey("Later evaluations do not overwrite an earlier result", func() {
-			first, err := estimator.Estimate(&left, &right, 0)
+			first, err := estimate(0)
 			So(err, ShouldBeNil)
 			covariance := first.Covariance
-			_, err = estimator.Estimate(&left, &right, int64(time.Hour))
+			_, err = estimate(int64(time.Hour))
 			So(err, ShouldBeNil)
 			So(first.Covariance, ShouldEqual, covariance)
 		})
 
 		Convey("Unrepresentable timestamp offsets fail explicitly", func() {
-			_, err := estimator.Estimate(&left, &right, math.MaxInt64)
+			_, err := estimate(math.MaxInt64)
 			So(err, ShouldNotBeNil)
 		})
 	})
+}
+
+func makeReturns(prices []temporal.Price) []temporal.LogReturn {
+	returns := make([]temporal.LogReturn, 0, max(0, len(prices)-1))
+
+	for i := 1; i < len(prices); i++ {
+		returns = append(returns, temporal.LogReturn{
+			From:  prices[i-1].At,
+			To:    prices[i].At,
+			Value: math.Log(prices[i].Value) - math.Log(prices[i-1].Value),
+		})
+	}
+
+	return returns
+}
+
+func calcEnergy(returns []temporal.LogReturn) float64 {
+	energy := 0.0
+
+	for _, r := range returns {
+		energy += r.Value * r.Value
+	}
+
+	return energy
 }

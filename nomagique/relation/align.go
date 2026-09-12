@@ -1,6 +1,13 @@
 package relation
 
-import "time"
+import (
+	"errors"
+	"iter"
+	"time"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+)
 
 /*
 SeriesView is one predictor series viewed as a resident ring with its own
@@ -23,20 +30,81 @@ type AlignedRow struct {
 }
 
 /*
-AlignViews aligns target observations with lagged predictor series, all read
-in place from resident rings. For a target observation at time t and a
-predictor series with lag τ, the aligned predictor is the newest observation
-available no later than t - τ. Future observations never enter a row. Only
-target observations with every predictor aligned are retained, in
-chronological target order.
+AlignRequest asks for one target ring aligned with its lagged predictor
+series.
+*/
+type AlignRequest struct {
+	Target RingView
+	Series []SeriesView
+}
+
+/*
+AlignResult is the aligned rows of one request, in chronological target order.
+*/
+type AlignResult struct {
+	Rows []AlignedRow
+}
+
+/*
+Align owns lagged alignment of target observations against predictor series,
+all read in place from resident rings. For a target observation at time t and
+a predictor series with lag τ, the aligned predictor is the newest
+observation available no later than t - τ. Future observations never enter a
+row. Only target observations with every predictor aligned are retained.
 
 Preconditions: the target ring and every series ring must be in
 non-decreasing chronological order (resident rings are by construction); the
-per-series cursor alignment scans each series once across the whole call,
-and a later call on the same series (or a continued scan) requires
+per-series cursor alignment scans each series once across the whole request,
+and a later request on the same series (or a continued scan) requires
 non-decreasing cutoffs.
 */
-func AlignViews(targets RingView, series []SeriesView) []AlignedRow {
+type Align struct {
+	err error
+	out AlignResult
+}
+
+/*
+NewAlign creates an Align primitive.
+*/
+func NewAlign() core.Primitive {
+	return &Align{}
+}
+
+/*
+Next receives *AlignRequest payloads and yields a *AlignResult with the
+aligned rows for each.
+*/
+func (op *Align) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			request := (*AlignRequest)(arriving)
+			op.out = AlignResult{Rows: alignRows(request.Target, request.Series)}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *Align) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+alignRows walks one target ring against lagged predictor series, reading
+every series in place with per-series cursors.
+*/
+func alignRows(targets RingView, series []SeriesView) []AlignedRow {
 	if targets.Len() == 0 || len(series) == 0 {
 		return nil
 	}
@@ -56,7 +124,7 @@ func AlignViews(targets RingView, series []SeriesView) []AlignedRow {
 
 		for index, predictorSeries := range series {
 			cutoff := target.At.Add(-predictorSeries.Lag)
-			predictor, found := newestAtOrBeforeView(predictorSeries.History, &cursors[index], cutoff)
+			predictor, found := newestAtOrBefore(predictorSeries.History, &cursors[index], cutoff)
 
 			if !found {
 				complete = false
@@ -80,17 +148,16 @@ func AlignViews(targets RingView, series []SeriesView) []AlignedRow {
 }
 
 /*
-newestAtOrBeforeView returns the newest observation in a resident ring view
-at or before cutoff. The cursor remains positioned on the last matched
-observation (a negative value means no match has ever been recorded):
-repeated calls with non-decreasing cutoffs re-scan only entries after the
-previous match, and a call whose cutoff reaches no newer entry returns the
-previously matched observation. When no observation has ever matched, the
-result is not-found. The precondition is that the ring is chronological and
-cutoffs are non-decreasing across calls, which the alignment paths
-guarantee.
+newestAtOrBefore returns the newest observation in a resident ring view at or
+before cutoff. The cursor remains positioned on the last matched observation
+(a negative value means no match has ever been recorded): repeated calls with
+non-decreasing cutoffs re-scan only entries after the previous match, and a
+call whose cutoff reaches no newer entry returns the previously matched
+observation. When no observation has ever matched, the result is not-found.
+The precondition is that the ring is chronological and cutoffs are
+non-decreasing across calls, which the alignment paths guarantee.
 */
-func newestAtOrBeforeView(history RingView, cursor *int, cutoff time.Time) (Observation, bool) {
+func newestAtOrBefore(history RingView, cursor *int, cutoff time.Time) (Observation, bool) {
 	best := -1
 	start := 0
 

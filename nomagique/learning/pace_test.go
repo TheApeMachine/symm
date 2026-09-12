@@ -17,7 +17,14 @@ func TestPaceNext(t *testing.T) {
 		rng := rand.New(rand.NewSource(86))
 
 		for index := 0; index < 200; index++ {
-			got, err := transport.Evaluate(node, transport.Values(rng.Float64()+float64(index/50)))
+			gotEval := transport.NewEvaluate(node)
+			var got learning.PaceReading
+
+			for out := range gotEval.Next(transport.NewValues(rng.Float64() + float64(index/50)).Next(nil)) {
+				got = *(*learning.PaceReading)(out)
+			}
+
+			err := gotEval.Error()
 			So(err, ShouldBeNil)
 
 			if index < 8 {

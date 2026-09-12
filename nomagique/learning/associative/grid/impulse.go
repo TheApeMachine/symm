@@ -21,21 +21,21 @@ type Impulse struct {
 	Regions  []Region
 }
 
-/* Impulse copies the current activation sequence without rebuilding regions. */
-func (grid *Space) Impulse(label string, at, from time.Time) (Impulse, error) {
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
+/* impulse copies the current activation sequence without rebuilding regions. */
+func (op *Space) impulse(label string, at, from time.Time) (Impulse, error) {
+	op.mu.Lock()
+	defer op.mu.Unlock()
 
 	contextLabel := label
 
 	if contextLabel == "" {
-		contextLabel = grid.UpdatedLabel
+		contextLabel = op.updated
 	}
 
 	if contextLabel == "" {
 		return Impulse{At: at, From: from, Ready: false}, nil
 	}
-	regions, version, err := grid.regionsLocked(contextLabel)
+	measured, version, err := op.regionsLocked(contextLabel)
 
 	if err != nil {
 		return Impulse{}, err
@@ -43,6 +43,6 @@ func (grid *Space) Impulse(label string, at, from time.Time) (Impulse, error) {
 
 	return Impulse{
 		Label: contextLabel, At: at, From: from, Version: version,
-		Ready: grid.Formed, Regions: slices.Clone(regions),
+		Ready: op.formed, Regions: slices.Clone(measured),
 	}, nil
 }

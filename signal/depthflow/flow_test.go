@@ -3,6 +3,7 @@ package depthflow
 import (
 	"testing"
 
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -13,14 +14,30 @@ func TestDepthNext(t *testing.T) {
 		if index > 0 {
 			bid, ask, elapsed = 100, 0, 1
 		}
-		fields, err := transport.Evaluate(graph, transport.Values(DepthInput{
+		fieldsEval := transport.NewEvaluate(graph)
+		var fields data.ProjectionInput
+
+		for out := range fieldsEval.Next(transport.NewValues(DepthInput{
 			ObservedBid: bid, ObservedAsk: ask, AddBid: bid, AddAsk: ask,
 			MutationBid: 2, MutationAsk: 1, Elapsed: elapsed,
-		}))
+		}).Next(nil)) {
+			fields = *(*data.ProjectionInput)(out)
+		}
+
+		err := fieldsEval.Error()
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := p.Project(fields)
+		projectEval := transport.NewEvaluate(p)
+		var m *data.Measurement[float64]
+
+		for out := range projectEval.Next(transport.NewValues(fields).Next(nil)) {
+			m = *(**data.Measurement[float64])(out)
+		}
+
+		if err := projectEval.Error(); err != nil {
+			t.Fatal(err)
+		}
 		if m.Err != nil {
 			t.Fatal(m.Err)
 		}

@@ -2,10 +2,12 @@ package toxicity
 
 import (
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type TradeInput struct {
@@ -17,9 +19,9 @@ type TradeInput struct {
 }
 
 type TradeGraph struct {
-	core.Base[TradeInput, data.ProjectionInput]
-	bid *adaptive.Baseline
-	ask *adaptive.Baseline
+	err error
+	bid core.Primitive
+	ask core.Primitive
 }
 
 func newTradeGraph() *TradeGraph {
@@ -30,20 +32,33 @@ func newTradeGraph() *TradeGraph {
 }
 
 func (op *TradeGraph) Next(
-	in iter.Seq[core.Primitive[TradeInput, TradeInput]],
-) iter.Seq[core.Primitive[data.ProjectionInput, data.ProjectionInput]] {
-	return func(yield func(core.Primitive[data.ProjectionInput, data.ProjectionInput]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(op.observe(arriving.Read()))) {
+			projected := op.observe(*(*TradeInput)(arriving))
+
+			if !yield(unsafe.Pointer(&projected)) {
 				return
 			}
 		}
 	}
 }
 
+func (op *TradeGraph) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
+}
+
 func (op *TradeGraph) observe(input TradeInput) data.ProjectionInput {
-	bid := op.bid.Observe(input.TouchFillBidFrac)
-	ask := op.ask.Observe(input.TouchFillAskFrac)
+	bid := baselineReading(op.bid, input.TouchFillBidFrac)
+	ask := baselineReading(op.ask, input.TouchFillAskFrac)
 	evidence := ask
 
 	if input.BidSupported {
@@ -104,4 +119,19 @@ func tradeProjection() *data.Projection {
 		{Name: data.MetadataNoiseVariance, Path: []string{"evidence_variance"}, Defined: []string{"quality_defined"}},
 	}
 	return p
+}
+
+/*
+baselineReading drives one observation through a Baseline primitive and
+returns its reading.
+*/
+func baselineReading(baseline core.Primitive, value float64) adaptive.BaselineReading {
+	readingEval := transport.NewEvaluate(baseline)
+	var reading adaptive.BaselineReading
+
+	for out := range readingEval.Next(transport.NewValues(value).Next(nil)) {
+		reading = *(*adaptive.BaselineReading)(out)
+	}
+
+	return reading
 }

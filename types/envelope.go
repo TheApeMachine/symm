@@ -2,6 +2,7 @@ package types
 
 import (
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -333,7 +335,13 @@ func (envelope *Envelope) LiftedObservation() (map[string]float64, error) {
 	}
 
 	measurements := envelope.SignalMeasurements()
-	envelope.liftedObservation, envelope.liftErr = data.Lift(measurements[:])
+	lift := data.NewLift()
+
+	for out := range lift.Next(transport.NewValues(measurements[:]...).Next(nil)) {
+		envelope.liftedObservation = (*data.LiftReading)(out).Values
+	}
+
+	envelope.liftErr = lift.Error()
 
 	return envelope.liftedObservation, envelope.liftErr
 }
@@ -419,7 +427,7 @@ func encodeMeasurement(measurement *data.Measurement[float64]) *telemetry.Envelo
 	}
 
 	return &telemetry.EnvelopeMeasurementT{
-		Id:         measurement.ID,
+		Id:         strconv.Itoa(measurement.ID),
 		Label:      measurement.Label,
 		Source:     measurement.Source,
 		SeqIdx:     measurement.SeqIdx,
@@ -660,11 +668,10 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 		LastResolutionError:      resonance.LastResolutionError,
 	}
 
-	if manifold := resonance.Manifold; manifold != nil {
-		layers, surprise, energy := manifold.WireSnapshot()
-		encoded.Layers = make([]*telemetry.EnvelopeResonanceLayerT, 0, len(layers))
+	if snapshot := resonance.Snapshot; snapshot != nil {
+		encoded.Layers = make([]*telemetry.EnvelopeResonanceLayerT, 0, len(snapshot.Layers))
 
-		for _, layer := range layers {
+		for _, layer := range snapshot.Layers {
 			encoded.Layers = append(encoded.Layers, &telemetry.EnvelopeResonanceLayerT{
 				State:      layer.State,
 				Prediction: layer.Prediction,
@@ -673,12 +680,12 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 			})
 		}
 
-		encoded.Latent = manifold.LatentState()
-		encoded.Energy = energy
-		encoded.Surprise = surprise
-		encoded.TaskSkill, encoded.TaskSkillReady = manifold.TaskSkill()
-		encoded.TaskRelativePrecision, encoded.TaskRelativePrecisionReady = manifold.TaskPrecision()
-		encoded.TaskScale, encoded.TaskScaleReady = manifold.TaskScale()
+		encoded.Latent = snapshot.Latent
+		encoded.Energy = snapshot.EnergyDensity
+		encoded.Surprise = snapshot.Surprise
+		encoded.TaskSkill, encoded.TaskSkillReady = snapshot.SkillAverage, snapshot.SkillReadyAvg
+		encoded.TaskRelativePrecision, encoded.TaskRelativePrecisionReady = snapshot.PrecisionAverage, snapshot.PrecisionReadyAvg
+		encoded.TaskScale, encoded.TaskScaleReady = snapshot.ScaleAverage, snapshot.ScaleReadyAvg
 	}
 
 	encoded.DynamicsNamed = resonance.Dynamics

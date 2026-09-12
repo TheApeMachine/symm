@@ -1,11 +1,13 @@
 package adaptive
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -14,28 +16,34 @@ Clock normalizes |value| by the estimator's inclusive mean and applies its
 configured pace. A non-positive mean leaves the pace unscaled.
 */
 type Clock struct {
-	core.Base[float64, float64]
-	moments core.Primitive[float64, equation.MomentReading]
-	pace    core.Primitive[float64, float64]
+	err     error
+	moments core.Primitive
+	pace    core.Primitive
+	out     float64
 }
 
 func NewClock(
-	moments core.Primitive[float64, equation.MomentReading],
-	pace core.Primitive[float64, float64],
-) *Clock {
+	moments core.Primitive,
+	pace core.Primitive,
+) core.Primitive {
 	return &Clock{moments: moments, pace: pace}
 }
 
-func (op *Clock) Next(
-	in iter.Seq[core.Primitive[float64, float64]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
-		for reading := range op.moments.Next(in) {
-			current := reading.Read()
-			pace, err := transport.Evaluate(op.pace, transport.Values(current.Value))
+func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for readingPtr := range op.moments.Next(in) {
+			current := *(*statistic.MomentReading)(readingPtr)
+			paceValEval := transport.NewEvaluate(op.pace)
+			var paceVal float64
+
+			for out := range paceValEval.Next(transport.NewValues(current.Value).Next(nil)) {
+				paceVal = *(*float64)(out)
+			}
+
+			err := paceValEval.Error()
 
 			if err != nil {
-				op.Error(err)
+				op.err = errors.Join(op.err, err)
 				return
 			}
 
@@ -45,11 +53,33 @@ func (op *Clock) Next(
 				ratio = math.Abs(current.Value) / current.Mean
 			}
 
-			if !yield(op.Carrier(ratio * pace)) {
+			op.out = ratio * paceVal
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
-
-		op.Error(op.moments.Error())
 	}
+}
+
+func (op *Clock) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.moments != nil {
+		if err := op.moments.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.pace != nil {
+		if err := op.pace.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -1,7 +1,9 @@
 package matrix
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -11,22 +13,23 @@ Transpose changes only matrix addressing. Ragged rows are a shape error, not
 silently padded zeros.
 */
 type Transpose[T any] struct {
-	core.Base[[][]T, [][]T]
+	err error
+	out [][]T
 }
 
-func NewTranspose[T any]() *Transpose[T] {
+func NewTranspose[T any]() core.Primitive {
 	return &Transpose[T]{}
 }
 
-func (op *Transpose[T]) Next(
-	in iter.Seq[core.Primitive[[][]T, [][]T]],
-) iter.Seq[core.Primitive[[][]T, [][]T]] {
-	return func(yield func(core.Primitive[[][]T, [][]T]) bool) {
+func (op *Transpose[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			rows := arriving.Read()
+			rows := *(*[][]T)(arriving)
 
 			if len(rows) == 0 {
-				if !yield(op.Carrier([][]T{})) {
+				op.out = [][]T{}
+
+				if !yield(unsafe.Pointer(&op.out)) {
 					return
 				}
 
@@ -55,12 +58,24 @@ func (op *Transpose[T]) Next(
 			}
 
 			if !ok {
-				continue
+				return
 			}
 
-			if !yield(op.Carrier(columns)) {
+			op.out = columns
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Transpose[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

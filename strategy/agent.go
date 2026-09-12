@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
-	"time"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
@@ -28,13 +27,12 @@ type Agent struct {
 	answersMu  sync.RWMutex
 	id         int
 	isLive     bool
-	space      *grid.Space
-	learner    *associative.Agent
-	context    *associative.Context
+	space      core.Primitive
+	engine     core.Primitive
+	learner    core.Primitive
 	evaluator  *FragmentEvaluator
-	price      *broker.Price
-	ring       *store.Ring[[]*data.Measurement[float64]]
-	replays    *store.Ring[types.ReplayFragment]
+	ring       core.Primitive
+	replays    core.Primitive
 	answers    []*telemetry.LearningAnswerT
 	rng        *rand.Rand
 	lastOffset int
@@ -50,12 +48,11 @@ and randomized precursor offset generator.
 func NewAgent(
 	id int,
 	isLive bool,
-	engine *cognition.Engine,
+	engine core.Primitive,
 	windowBins int,
 	rng ...*rand.Rand,
 ) *Agent {
-	space := grid.NewSpaceWithWindow(windowBins)
-	learner := associative.NewAgent(engine)
+	space := grid.NewSpace(windowBins)
 	var randomSource *rand.Rand
 
 	if len(rng) > 0 {
@@ -66,8 +63,8 @@ func NewAgent(
 		id:        id,
 		isLive:    isLive,
 		space:     space,
-		learner:   learner,
-		context:   associative.NewContext(),
+		engine:    engine,
+		learner:   associative.NewAgent(engine),
 		evaluator: NewFragmentEvaluator(nil),
 		ring:      store.NewRing[[]*data.Measurement[float64]](),
 		replays:   store.NewRing[types.ReplayFragment](),
@@ -87,46 +84,16 @@ func (agent *Agent) IsLive() bool {
 	return agent.isLive
 }
 
-func (agent *Agent) Space() *grid.Space {
+func (agent *Agent) Space() core.Primitive {
 	return agent.space
 }
 
-func (agent *Agent) Engine() *cognition.Engine {
-	return agent.learner.Engine()
-}
-
-func (agent *Agent) Learner() *associative.Agent {
-	return agent.learner
-}
-
-func (agent *Agent) Context() *associative.Context {
-	return agent.context
+func (agent *Agent) Engine() core.Primitive {
+	return agent.engine
 }
 
 func (agent *Agent) Evaluator() *FragmentEvaluator {
 	return agent.evaluator
-}
-
-func (agent *Agent) SetPrice(price *broker.Price) {
-	agent.mu.Lock()
-	defer agent.mu.Unlock()
-
-	agent.price = price
-	agent.evaluator.SetPrice(price)
-}
-
-func (agent *Agent) Price() *broker.Price {
-	agent.mu.RLock()
-	defer agent.mu.RUnlock()
-
-	return agent.price
-}
-
-func (agent *Agent) SetFeeRate(rate float64) {
-	agent.mu.Lock()
-	defer agent.mu.Unlock()
-
-	agent.evaluator.SetFeeRate(rate)
 }
 
 func (agent *Agent) SetRNG(source *rand.Rand) {
@@ -176,27 +143,44 @@ func (agent *Agent) PreseedColumns(sources map[string][]string) {
 	agent.mu.Lock()
 	defer agent.mu.Unlock()
 
-	agent.space.PreseedColumns(sources)
+	if _, err := askGrid(agent.space, &grid.Command{Preseed: sources}); err != nil {
+		errnie.Error(err)
+	}
 }
 
 /*
 Reset clears observation-local perception state in Space and temporal history
-in Context while preserving the learned grid structure and shared cognition trie.
+in the learner while preserving the learned grid structure and shared cognition trie.
 Must be called before replaying an independent historical fragment or starting at A.
 */
 func (agent *Agent) Reset() {
 	agent.mu.Lock()
 	defer agent.mu.Unlock()
 
-	agent.space.Reset()
-	agent.context.Reset()
+	agent.resetLocked()
+}
+
+func (agent *Agent) resetLocked() {
+	if _, err := askGrid(agent.space, &grid.Command{Reset: &grid.ResetSignal{}}); err != nil {
+		errnie.Error(err)
+	}
+
+	if _, err := askLearner(agent.learner, &associative.Command{Reset: &associative.ResetSignal{}}); err != nil {
+		errnie.Error(err)
+	}
 }
 
 func (agent *Agent) Tree() *iradix.Tree[[]byte] {
 	agent.mu.RLock()
 	defer agent.mu.RUnlock()
 
-	return agent.learner.Tree()
+	tree, err := engineTree(agent.engine)
+
+	if err != nil {
+		return nil
+	}
+
+	return tree
 }
 
 /* IsUnprimed reports whether the agent space has processed any observation. */
@@ -204,7 +188,7 @@ func (agent *Agent) IsUnprimed() bool {
 	agent.mu.RLock()
 	defer agent.mu.RUnlock()
 
-	return agent.space.UpdatedLabel == ""
+	return spaceState(agent.space).Updated == ""
 }
 
 /*
@@ -225,7 +209,7 @@ func (agent *Agent) IngestReplay(fragment types.ReplayFragment, slot int) {
 
 		for measIdx, meas := range frame {
 			if meas != nil {
-				clonedFrame[measIdx] = meas.Clone()
+				clonedFrame[measIdx] = cloneMeasurement(meas)
 			}
 		}
 
@@ -235,15 +219,15 @@ func (agent *Agent) IngestReplay(fragment types.ReplayFragment, slot int) {
 	fragCopy := fragment
 	fragCopy.Frames = clonedFrames
 
-	agent.replays.WriteAt(fragCopy, slot)
+	ringWriteSlot(agent.replays, slot, &fragCopy, nil)
 
 	child := store.NewRing[[]*data.Measurement[float64]]()
 
 	for _, frame := range clonedFrames {
-		child.Write(frame)
+		ringWrite(child, frame)
 	}
 
-	agent.ring.WriteAt(child, slot)
+	ringWriteSlot[[]*data.Measurement[float64]](agent.ring, slot, nil, child)
 }
 
 type actionCandidate struct {
@@ -364,17 +348,33 @@ When holding: {ActionExit, ActionWait}
 func (agent *Agent) ChooseAction(
 	impulse grid.Impulse,
 	holding bool,
-) ActionDecision {
-	sequence := agent.context.Sequence(impulse)
+) (ActionDecision, error) {
+	recall, err := askLearner(agent.learner, &associative.Command{
+		Recall: &associative.Recall{Impulse: impulse},
+	})
 
-	if len(sequence) == 0 {
-		return ActionDecision{Action: ActionWait}
+	if err != nil {
+		return ActionDecision{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"agent: cognition evaluation failed",
+			err,
+		))
 	}
 
-	evaluation := agent.learner.Engine().Evaluate(sequence)
+	sequence := recall.Sequence
+
+	if len(sequence) == 0 {
+		return ActionDecision{Action: ActionWait}, nil
+	}
+
+	evaluation := recall.Evaluation
 
 	if evaluation.IsBreak {
-		agent.context.Reset()
+		if _, err := askLearner(agent.learner, &associative.Command{
+			Reset: &associative.ResetSignal{},
+		}); err != nil {
+			return ActionDecision{}, errnie.Error(err)
+		}
 	}
 
 	legal := LegalActions(holding)
@@ -388,7 +388,7 @@ func (agent *Agent) ChooseAction(
 		Support:    support,
 		RunnerUp:   evaluation.RunnerUp,
 		Ambiguity:  evaluation.Ambiguity,
-	}
+	}, nil
 }
 
 type rehearsalTransition struct {
@@ -417,8 +417,8 @@ func (agent *Agent) RehearseChild() (int, error) {
 
 	var replay types.ReplayFragment
 
-	if agent.replays != nil && agent.replays.Len() > 0 {
-		if val, ok := agent.replays.CurrentValue(); ok {
+	if agent.replays != nil && ringLen[types.ReplayFragment](agent.replays) > 0 {
+		if val, ok := ringCurrent[types.ReplayFragment](agent.replays); ok {
 			replay = val
 		}
 	}
@@ -426,12 +426,12 @@ func (agent *Agent) RehearseChild() (int, error) {
 	childLen := len(replay.Frames)
 
 	if childLen <= 0 {
-		if agent.replays != nil && agent.replays.Len() > 0 {
-			agent.replays.Advance()
+		if agent.replays != nil && ringLen[types.ReplayFragment](agent.replays) > 0 {
+			ringAdvance[types.ReplayFragment](agent.replays)
 		}
 
-		if agent.ring != nil && agent.ring.Len() > 0 {
-			agent.ring.Advance()
+		if agent.ring != nil && ringLen[[]*data.Measurement[float64]](agent.ring) > 0 {
+			ringAdvance[[]*data.Measurement[float64]](agent.ring)
 		}
 
 		return 0, nil
@@ -442,12 +442,12 @@ func (agent *Agent) RehearseChild() (int, error) {
 	anchorIdx := replay.AnchorIndex
 
 	if anchorIdx <= 0 || anchorIdx >= childLen {
-		if agent.replays != nil && agent.replays.Len() > 0 {
-			agent.replays.Advance()
+		if agent.replays != nil && ringLen[types.ReplayFragment](agent.replays) > 0 {
+			ringAdvance[types.ReplayFragment](agent.replays)
 		}
 
-		if agent.ring != nil && agent.ring.Len() > 0 {
-			agent.ring.Advance()
+		if agent.ring != nil && ringLen[[]*data.Measurement[float64]](agent.ring) > 0 {
+			ringAdvance[[]*data.Measurement[float64]](agent.ring)
 		}
 
 		return 0, errnie.Error(errnie.Err(
@@ -464,14 +464,11 @@ func (agent *Agent) RehearseChild() (int, error) {
 	}
 
 	// 2. Clear observation-local perception and context history before replay from A
-	agent.space.Reset()
-	agent.context.Reset()
+	agent.resetLocked()
 
 	// 3. Configure objective evaluation parameters
 	agent.evaluator.SetAnchorIndex(replay.AnchorIndex)
-	agent.evaluator.SetSurfaces(replay.Surfaces)
-	agent.evaluator.SetPrices(replay.Prices)
-	agent.evaluator.SetPrice(agent.price)
+	agent.evaluator.SetExtremumIndex(replay.ExtremumIndex)
 
 	holding := false
 	entryIdx := -1
@@ -515,7 +512,11 @@ func (agent *Agent) RehearseChild() (int, error) {
 			continue
 		}
 
-		decision := agent.ChooseAction(impulse, holding)
+		decision, err := agent.ChooseAction(impulse, holding)
+
+		if err != nil {
+			return stepped, errnie.Error(err)
+		}
 
 		if len(decision.Context) == 0 {
 			continue
@@ -565,7 +566,18 @@ func (agent *Agent) RehearseChild() (int, error) {
 			return stepped, errnie.Error(evalErr)
 		}
 
-		agent.learner.Engine().Observe(tr.context, []byte(tr.action), outcome.Reinforcement)
+		if err := observeContext(agent.engine, cognition.Association{
+			Context:  tr.context,
+			Class:    []byte(tr.action),
+			Feedback: outcome.Reinforcement,
+			Graded:   true,
+		}); err != nil {
+			return stepped, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"rehearsal: reinforcement write failed",
+				err,
+			))
+		}
 
 		marks = append(marks, &telemetry.LearningMarkT{
 			Id:      uint64(len(marks)),
@@ -613,12 +625,12 @@ func (agent *Agent) RehearseChild() (int, error) {
 	agent.lastExit = exitIdx
 	agent.lastMarks = marks
 
-	if agent.replays != nil && agent.replays.Len() > 0 {
-		agent.replays.Advance()
+	if agent.replays != nil && ringLen[types.ReplayFragment](agent.replays) > 0 {
+		ringAdvance[types.ReplayFragment](agent.replays)
 	}
 
-	if agent.ring != nil && agent.ring.Len() > 0 {
-		agent.ring.Advance()
+	if agent.ring != nil && ringLen[[]*data.Measurement[float64]](agent.ring) > 0 {
+		ringAdvance[[]*data.Measurement[float64]](agent.ring)
 	}
 
 	return stepped, nil
@@ -633,23 +645,13 @@ func (agent *Agent) Step(measurements []*data.Measurement[float64], symbol strin
 }
 
 func (agent *Agent) stepLocked(measurements []*data.Measurement[float64], symbol string) (grid.Impulse, error) {
-	if err := agent.space.Step(measurements); err != nil {
+	result, err := askGrid(agent.space, &grid.Command{Step: measurements})
+
+	if err != nil {
 		return grid.Impulse{}, err
 	}
 
-	label := symbol
-
-	if label == "" {
-		label = agent.space.UpdatedLabel
-	}
-
-	if label == "" {
-		return grid.Impulse{}, nil
-	}
-
-	now := time.Now().UTC()
-
-	return agent.space.Impulse(label, now, now)
+	return result.Impulse, nil
 }
 
 func (agent *Agent) recordAnswer(answer *telemetry.LearningAnswerT) {

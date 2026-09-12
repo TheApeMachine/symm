@@ -9,15 +9,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/correlation"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func prices(at []int64, values []float64) []equation.Price {
-	out := make([]equation.Price, len(values))
+func prices(at []int64, values []float64) []temporal.Price {
+	out := make([]temporal.Price, len(values))
 
 	for index, value := range values {
-		out[index] = equation.Price{At: at[index], Value: value}
+		out[index] = temporal.Price{At: at[index], Value: value}
 	}
 
 	return out
@@ -93,11 +94,13 @@ func TestDependenceNext(t *testing.T) {
 				density = support / shared
 			}
 
-			got, err := transport.Evaluate(node, transport.Values(equation.LagProfileInput{
+			out := tests.CollectSeq[correlation.DependenceReading](node.Next(transport.NewValues(correlation.LagProfileInput{
 				Left:  prices(test.lt, test.lp),
 				Right: prices(test.rt, test.rp),
-			}))
-			So(err, ShouldBeNil)
+			}).Next(nil)))
+			So(node.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 1)
+			got := out[0]
 			So(got.Covariance, ShouldAlmostEqual, covariance)
 			So(got.Support, ShouldEqual, support)
 			So(got.LeftEnergy, ShouldAlmostEqual, leftEnergy)

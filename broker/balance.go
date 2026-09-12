@@ -1,12 +1,14 @@
 package broker
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -16,20 +18,24 @@ Balance is a centralized manager of the exchange wallet, and should be called by
 any other object that wants to interact with the balance in any way.
 */
 type Balance struct {
-	*runtime.System
+	system       core.Primitive
 	api          *websocket.API
 	Quote        string
 	wallet       atomic.Pointer[kraken.Balance]
 	tradeBalance atomic.Pointer[kraken.TradeBalanceResult]
 }
 
-/*
-NewBalance binds the existing account and fetches its initial holdings.
-*/
 func NewBalance(api *websocket.API) *Balance {
+	ctx := context.Background()
+
+	if api != nil && api.Context() != nil {
+		ctx = api.Context()
+	}
+
 	balance := &Balance{
-		api:   api,
-		Quote: system.Cfg.Market.QuoteCurrency,
+		system: runtime.NewSystem(ctx, "balance"),
+		api:    api,
+		Quote:  system.Cfg.Market.QuoteCurrency,
 	}
 
 	balance.Update()
@@ -40,12 +46,16 @@ func NewBalance(api *websocket.API) *Balance {
 Update replaces the entire map; readers cannot observe a partially refreshed account.
 */
 func (balance *Balance) Update() {
+	if balance == nil || balance.api == nil {
+		return
+	}
+
 	if balance.Status() == runtime.BUSY {
 		return
 	}
 
-	balance.Transition(runtime.BUSY)
-	defer balance.Transition(runtime.READY)
+	systemTransition(balance.system, runtime.BUSY)
+	defer systemTransition(balance.system, runtime.READY)
 
 	result, err := balance.api.Balance()
 
@@ -59,7 +69,9 @@ func (balance *Balance) Update() {
 		return
 	}
 
-	balance.wallet.Store(result)
+	if result != nil {
+		balance.wallet.Store(result)
+	}
 }
 
 /*
@@ -68,6 +80,10 @@ Assets copies the current account map for callers that retain or transform it.
 func (balance *Balance) Assets() map[string]*decimal.Decimal {
 	balanceData := balance.wallet.Load()
 	out := make(map[string]*decimal.Decimal)
+
+	if balanceData == nil {
+		return out
+	}
 
 	for _, data := range balanceData.Data {
 		out[data.Asset] = data.Balance
@@ -79,6 +95,32 @@ func (balance *Balance) Assets() map[string]*decimal.Decimal {
 /* Cash reports the quote balance exactly as the exchange last stated it. */
 func (balance *Balance) Cash() *decimal.Decimal { return balance.Assets()[balance.Quote] }
 
+/* Equity returns total portfolio equity from authoritative trade balance or cash. */
+func (balance *Balance) Equity() *decimal.Decimal {
+	tradeBalance := balance.tradeBalance.Load()
+
+	if tradeBalance != nil && tradeBalance.Equity != nil {
+		return tradeBalance.Equity
+	}
+
+	if tradeBalance != nil && tradeBalance.EquivalentBalance != nil {
+		return tradeBalance.EquivalentBalance
+	}
+
+	return balance.Cash()
+}
+
+/* Unrealized returns unrealized profit/loss across all open positions. */
+func (balance *Balance) Unrealized() *decimal.Decimal {
+	tradeBalance := balance.tradeBalance.Load()
+
+	if tradeBalance != nil && tradeBalance.UnrealizedPnL != nil {
+		return tradeBalance.UnrealizedPnL
+	}
+
+	return decimal.NewFromInt64(0)
+}
+
 /*
 Refresh reports what the desk is worth if every open lot were closed now.
 
@@ -87,12 +129,16 @@ profit/loss only; equity is cash plus the basis committed to open positions plus
 that profit/loss.
 */
 func (balance *Balance) Refresh(instrument *Instrument) (err error) {
-	if balance.Status() == runtime.BUSY {
-		return
+	if balance == nil || balance.api == nil {
+		return nil
 	}
 
-	balance.Transition(runtime.BUSY)
-	defer balance.Transition(runtime.READY)
+	if balance.Status() == runtime.BUSY {
+		return nil
+	}
+
+	systemTransition(balance.system, runtime.BUSY)
+	defer systemTransition(balance.system, runtime.READY)
 
 	balance.Update()
 	tradeBalance, err := balance.api.TradeBalance()
@@ -108,4 +154,25 @@ func (balance *Balance) Refresh(instrument *Instrument) (err error) {
 	balance.tradeBalance.Store(tradeBalance)
 
 	return nil
+}
+
+/*
+Transition drives the balance lifecycle's stage machine.
+*/
+func (balance *Balance) Transition(stage runtime.Stage) {
+	systemTransition(balance.system, stage)
+}
+
+/*
+Status reads the balance lifecycle's current stage.
+*/
+func (balance *Balance) Status() runtime.Stage {
+	return systemStage(balance.system)
+}
+
+/*
+Error reports the balance lifecycle's retained failure.
+*/
+func (balance *Balance) Error() error {
+	return balance.system.Error()
 }

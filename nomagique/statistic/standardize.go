@@ -1,35 +1,83 @@
 package statistic
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
+	"errors"
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Standardize centers and scales streaming signals.
-Degenerate zero-value behavior (Table 5.1):
-- Center omitted: subtracts 0 (location defaults to zero).
-- Scale omitted: divides by 1 (dispersion defaults to unity).
+StandardizeInput is a value and the center/scale that locate it.
 */
-type Standardize struct {
-	Center types.Node
-	Scale  types.Node
+type StandardizeInput struct {
+	Value  float64
+	Center float64
+	Scale  float64
 }
 
-func (standardize *Standardize) Step(number types.Number) types.Number {
-	center := types.Number(0)
-	scale := types.Number(1)
+/*
+Standardize owns (value - center) / scale.
+*/
+type Standardize struct {
+	err    error
+	center float64
+	scale  float64
+	fixed  bool
+	out    float64
+}
 
-	if standardize.Center != nil {
-		center = standardize.Center.Step(number)
+/*
+NewStandardize constructs a Standardize primitive.
+If center and scale are provided, it centers and scales arriving *float64 values.
+Otherwise, arriving values are *StandardizeInput.
+*/
+func NewStandardize(params ...float64) core.Primitive {
+	op := &Standardize{scale: 1}
+	if len(params) >= 2 {
+		op.center = params[0]
+		op.scale = params[1]
+		op.fixed = true
+	} else if len(params) == 1 {
+		op.center = params[0]
+		op.fixed = true
+	}
+	return op
+}
+
+func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if op.fixed {
+				val := *(*float64)(arriving)
+				if op.scale == 0 {
+					op.out = 0
+				} else {
+					op.out = (val - op.center) / op.scale
+				}
+			} else {
+				input := *(*StandardizeInput)(arriving)
+				if input.Scale == 0 {
+					op.out = 0
+				} else {
+					op.out = (input.Value - input.Center) / input.Scale
+				}
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Standardize) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
 	}
 
-	if standardize.Scale != nil {
-		scale = standardize.Scale.Step(number)
-	}
-
-	if scale == 0 {
-		return 0
-	}
-
-	return (number - center) / scale
+	return op.err
 }

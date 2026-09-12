@@ -14,7 +14,6 @@ import (
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -39,7 +38,6 @@ type Solver struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	err            error
-	status         *runtime.Status
 	treeMu         sync.RWMutex
 	tree           *dmt.Tree
 	states         sync.Map // string (symbol) -> *symbolCognitionState
@@ -110,7 +108,6 @@ func NewSolver(
 	solver := &Solver{
 		ctx:            ctx,
 		cancel:         cancel,
-		status:         runtime.NewStatus(),
 		tree:           tree,
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break

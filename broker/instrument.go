@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -24,7 +25,7 @@ type Instrument struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	err     error
-	status  *runtime.Status
+	status  core.Primitive
 	api     *websocket.API
 	cache   *sync.Map
 	quote   string
@@ -75,7 +76,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 		products:         make(map[string]string),
 		symbolsByProduct: make(map[string]string),
 	}
-	instrument.status.Transition(runtime.BUSY)
+	transition(instrument.status, runtime.BUSY)
 
 	callback := make(chan any, 1)
 	api.SubInstrument(callback)
@@ -137,7 +138,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 		api.Futures().SetResolver(instrument.FuturesSymbol)
 	}
 
-	instrument.status.Transition(runtime.WAITING)
+	transition(instrument.status, runtime.WAITING)
 
 	return instrument
 }
@@ -159,7 +160,7 @@ func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 Status reports instrument readiness.
 */
 func (instrument *Instrument) Status() runtime.Stage {
-	return instrument.status.Current()
+	return stageOf(instrument.status)
 }
 
 /*
@@ -175,7 +176,7 @@ func (instrument *Instrument) fail(err error) {
 	}
 
 	instrument.err = errnie.Error(err)
-	instrument.status.Transition(runtime.ERROR)
+	transition(instrument.status, runtime.ERROR)
 	instrument.cancel()
 }
 
@@ -324,7 +325,7 @@ func (instrument *Instrument) Subscribe() error {
 		return instrument.err
 	}
 
-	instrument.status.Transition(runtime.READY)
+	transition(instrument.status, runtime.READY)
 	return nil
 }
 
@@ -376,7 +377,7 @@ func (instrument *Instrument) Unsubscribe() error {
 		}
 	}
 
-	instrument.status.Transition(runtime.WAITING)
+	transition(instrument.status, runtime.WAITING)
 
 	return nil
 }
@@ -511,6 +512,6 @@ func (instrument *Instrument) Close() {
 	instrument.cancel()
 
 	if instrument.err == nil {
-		instrument.status.Transition(runtime.DONE)
+		transition(instrument.status, runtime.DONE)
 	}
 }

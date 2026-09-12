@@ -1,33 +1,44 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
 Square owns one field operation. What it hands over is the square of each
-arrival.
+arrival, operating in-place on the wire pointer.
 */
-type Square[U core.Numeric] struct {
-	core.Base[U, U]
+type Square struct {
+	err error
 }
 
-func NewSquare[U core.Numeric]() *Square[U] {
-	return &Square[U]{}
+func NewSquare() core.Primitive {
+	return &Square{}
 }
 
-func (op *Square[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
+func (op *Square) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			value := arriving.Read()
+			in := (*float64)(arriving)
+			*in = *in * *in
 
-			if !yield(op.Carrier(value * value)) {
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Square) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

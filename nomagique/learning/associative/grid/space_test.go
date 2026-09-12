@@ -22,18 +22,19 @@ func related(grid *Space, left, right string) affinity {
 
 func TestSpaceStep(t *testing.T) {
 	Convey("Given quantities with shared and opposing activation profiles", t, func() {
-		grid := NewSpace()
-		measurement := data.NewMeasurement[float64]("", "context", "source", time.Time{}, time.Time{})
+		grid := NewSpace().(*Space)
+		measurement := data.NewMeasurement[float64]("source", nil)
+		measurement.Label, measurement.At, measurement.From = "context", time.Time{}, time.Time{}
 		// Two independent alternating sequences span the requested plane.
 		left := [...]float64{-1, 1, -1, 1, -1, 1, -1, 1}
 		right := [...]float64{-1, -1, 1, 1, -1, -1, 1, 1}
 
 		for index := range left {
-			measurement.PutMetric(data.Metric[float64]{Label: "alpha", Raw: left[index]})
-			measurement.PutMetric(data.Metric[float64]{Label: "beta", Raw: left[index]})
-			measurement.PutMetric(data.Metric[float64]{Label: "opposite", Raw: -left[index]})
-			measurement.PutMetric(data.Metric[float64]{Label: "independent", Raw: right[index]})
-			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+			measurement.Metrics["alpha"] = data.Metric[float64]{Label: "alpha", Raw: left[index]}
+			measurement.Metrics["beta"] = data.Metric[float64]{Label: "beta", Raw: left[index]}
+			measurement.Metrics["opposite"] = data.Metric[float64]{Label: "opposite", Raw: -left[index]}
+			measurement.Metrics["independent"] = data.Metric[float64]{Label: "independent", Raw: right[index]}
+			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 		}
 
 		alpha := measurement.Metrics["alpha"].Coordinates
@@ -50,28 +51,28 @@ func TestSpaceStep(t *testing.T) {
 		// A persistent inverse is a relationship, not an absence of one.
 		So(related(grid, "alpha", "opposite").stable(), ShouldBeTrue)
 
-		So(grid.Formed, ShouldBeFalse) // Calibration has not filled its feature window.
+		So(grid.formed, ShouldBeFalse) // Calibration has not filled its feature window.
 		So(independent, ShouldNotBeNil)
 		So(alpha, ShouldNotBeNil)
-		So(grid.Version, ShouldEqual, len(left))
+		So(grid.version, ShouldEqual, len(left))
 
 		Convey("the existing coordinates and storage survive another update", func() {
-			values := &grid.Values[0][0]
-			measurement.PutMetric(data.Metric[float64]{Label: "alpha", Raw: 2})
-			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+			values := &grid.values[0][0]
+			measurement.Metrics["alpha"] = data.Metric[float64]{Label: "alpha", Raw: 2}
+			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 			So(measurement.Metrics["alpha"].Coordinates, ShouldEqual, alpha)
-			So(&grid.Values[0][0], ShouldEqual, values)
+			So(&grid.values[0][0], ShouldEqual, values)
 			column := grid.columnIndex[[2]string{"source", "alpha"}]
-			So(grid.Values[0][column], ShouldEqual, 2)
+			So(grid.values[0][column], ShouldEqual, 2)
 		})
 
 		Convey("missing values become absent while a measured zero remains present", func() {
 			delete(measurement.Metrics, "alpha")
-			measurement.PutMetric(data.Metric[float64]{Label: "beta", Raw: 0})
-			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
-			So(grid.Present[0][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldBeFalse)
-			So(grid.Present[0][grid.columnIndex[[2]string{"source", "beta"}]], ShouldBeTrue)
-			So(grid.Coordinates[grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, alpha)
+			measurement.Metrics["beta"] = data.Metric[float64]{Label: "beta", Raw: 0}
+			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+			So(grid.present[0][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldBeFalse)
+			So(grid.present[0][grid.columnIndex[[2]string{"source", "beta"}]], ShouldBeTrue)
+			So(grid.coordinates[grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, alpha)
 			So(grid.activations[0][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 0)
 		})
 
@@ -79,10 +80,10 @@ func TestSpaceStep(t *testing.T) {
 			// The first half was a persistent inverse. It now becomes a copy,
 			// while beta continues to match throughout the whole sequence.
 			for _, value := range left {
-				measurement.PutMetric(data.Metric[float64]{Label: "alpha", Raw: value})
-				measurement.PutMetric(data.Metric[float64]{Label: "beta", Raw: value})
-				measurement.PutMetric(data.Metric[float64]{Label: "opposite", Raw: value})
-				So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+				measurement.Metrics["alpha"] = data.Metric[float64]{Label: "alpha", Raw: value}
+				measurement.Metrics["beta"] = data.Metric[float64]{Label: "beta", Raw: value}
+				measurement.Metrics["opposite"] = data.Metric[float64]{Label: "opposite", Raw: value}
+				So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 			}
 
 			// beta matched throughout, so it stays a settled relationship.
@@ -96,16 +97,18 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Given different numerical units and independent context histories", t, func() {
-		grid := NewSpace()
-		first := data.NewMeasurement[float64]("", "first", "source", time.Time{}, time.Time{})
-		second := data.NewMeasurement[float64]("", "second", "source", time.Time{}, time.Time{})
+		grid := NewSpace().(*Space)
+		first := data.NewMeasurement[float64]("source", nil)
+		first.Label, first.At, first.From = "first", time.Time{}, time.Time{}
+		second := data.NewMeasurement[float64]("source", nil)
+		second.Label, second.At, second.From = "second", time.Time{}, time.Time{}
 
 		for _, value := range []float64{-1, 1, -1, 1, -1, 1} {
-			first.PutMetric(data.Metric[float64]{Label: "alpha", Raw: value})
-			first.PutMetric(data.Metric[float64]{Label: "scaled", Raw: 1000 + value*100})
-			So(grid.Step([]*data.Measurement[float64]{first}), ShouldBeNil)
-			second.PutMetric(data.Metric[float64]{Label: "alpha", Raw: 100000})
-			So(grid.Step([]*data.Measurement[float64]{second}), ShouldBeNil)
+			first.Metrics["alpha"] = data.Metric[float64]{Label: "alpha", Raw: value}
+			first.Metrics["scaled"] = data.Metric[float64]{Label: "scaled", Raw: 1000 + value*100}
+			So(grid.step([]*data.Measurement[float64]{first}), ShouldBeNil)
+			second.Metrics["alpha"] = data.Metric[float64]{Label: "alpha", Raw: 100000}
+			So(grid.step([]*data.Measurement[float64]{second}), ShouldBeNil)
 		}
 
 		alpha := first.Metrics["alpha"].Coordinates
@@ -115,25 +118,28 @@ func TestSpaceStep(t *testing.T) {
 		So(related(grid, "alpha", "scaled").directional, ShouldAlmostEqual, 1, 1e-9)
 
 		So(second.Metrics["alpha"].Coordinates, ShouldEqual, alpha)
-		So(grid.Values[grid.rowIndex["first"]][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 1)
-		So(grid.Values[grid.rowIndex["second"]][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 100000)
+		So(grid.values[grid.rowIndex["first"]][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 1)
+		So(grid.values[grid.rowIndex["second"]][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 100000)
 	})
 
 	Convey("Given the same observations with different producer evidence", t, func() {
-		grid := NewSpace()
-		strong := data.NewMeasurement[float64]("", "context", "strong", time.Time{}, time.Time{})
-		weak := data.NewMeasurement[float64]("", "context", "weak", time.Time{}, time.Time{})
-		unknown := data.NewMeasurement[float64]("", "context", "unknown", time.Time{}, time.Time{})
+		grid := NewSpace().(*Space)
+		strong := data.NewMeasurement[float64]("strong", nil)
+		strong.Label, strong.At, strong.From = "context", time.Time{}, time.Time{}
+		weak := data.NewMeasurement[float64]("weak", nil)
+		weak.Label, weak.At, weak.From = "context", time.Time{}, time.Time{}
+		unknown := data.NewMeasurement[float64]("unknown", nil)
+		unknown.Label, unknown.At, unknown.From = "context", time.Time{}, time.Time{}
 		strong.Metadata = map[string]float64{data.MetadataSupport: 10, data.MetadataMahalanobisSNR: 9}
 		weak.Metadata = map[string]float64{data.MetadataSupport: 2, data.MetadataMahalanobisSNR: 1}
 		unknown.Metadata = map[string]float64{data.MetadataSupport: 10}
 
 		for _, value := range []float64{-1, 1, -1, 1} {
 			for _, measurement := range []*data.Measurement[float64]{strong, weak, unknown} {
-				measurement.PutMetric(data.Metric[float64]{Label: "value", Raw: value})
+				measurement.Metrics["value"] = data.Metric[float64]{Label: "value", Raw: value}
 			}
 
-			So(grid.Step([]*data.Measurement[float64]{strong, weak, unknown}), ShouldBeNil)
+			So(grid.step([]*data.Measurement[float64]{strong, weak, unknown}), ShouldBeNil)
 		}
 
 		/*
@@ -148,14 +154,14 @@ func TestSpaceStep(t *testing.T) {
 			ShouldAlmostEqual, 0)
 		So(grid.weights[grid.columnIndex[[2]string{"strong", "value"}]], ShouldBeGreaterThan,
 			grid.weights[grid.columnIndex[[2]string{"weak", "value"}]])
-		So(grid.Present[0][grid.columnIndex[[2]string{"unknown", "value"}]], ShouldBeTrue)
+		So(grid.present[0][grid.columnIndex[[2]string{"unknown", "value"}]], ShouldBeTrue)
 		So(grid.activations[0][grid.columnIndex[[2]string{"unknown", "value"}]], ShouldNotEqual, 0)
 		So(unknown.SNRDefined, ShouldBeFalse)
 
 		Convey("withdrawn producer noise evidence uses only the grid's local change history", func() {
 			delete(strong.Metadata, data.MetadataMahalanobisSNR)
-			strong.PutMetric(data.Metric[float64]{Label: "value", Raw: -1})
-			So(grid.Step([]*data.Measurement[float64]{strong}), ShouldBeNil)
+			strong.Metrics["value"] = data.Metric[float64]{Label: "value", Raw: -1}
+			So(grid.step([]*data.Measurement[float64]{strong}), ShouldBeNil)
 			So(strong.SNRDefined, ShouldBeFalse)
 			So(grid.activations[0][grid.columnIndex[[2]string{"strong", "value"}]], ShouldNotEqual, 0)
 			So(grid.activations[0][grid.columnIndex[[2]string{"weak", "value"}]], ShouldEqual, 0)
@@ -163,16 +169,17 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Given values that all change on every update", t, func() {
-		grid := NewSpace()
-		measurement := data.NewMeasurement[float64]("", "context", "source", time.Time{}, time.Time{})
+		grid := NewSpace().(*Space)
+		measurement := data.NewMeasurement[float64]("source", nil)
+		measurement.Label, measurement.At, measurement.From = "context", time.Time{}, time.Time{}
 		left := [...]float64{-1, 1, -1, 1, -1, 1, -1, 1}
 		right := [...]float64{-1, 0, 1, 0, -1, 0, 1, 0}
 
 		for index, value := range left {
-			measurement.PutMetric(data.Metric[float64]{Label: "alpha", Raw: value})
-			measurement.PutMetric(data.Metric[float64]{Label: "inverse", Raw: -value})
-			measurement.PutMetric(data.Metric[float64]{Label: "independent", Raw: right[index]})
-			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+			measurement.Metrics["alpha"] = data.Metric[float64]{Label: "alpha", Raw: value}
+			measurement.Metrics["inverse"] = data.Metric[float64]{Label: "inverse", Raw: -value}
+			measurement.Metrics["independent"] = data.Metric[float64]{Label: "independent", Raw: right[index]}
+			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 		}
 
 		alpha := measurement.Metrics["alpha"].Coordinates
@@ -181,12 +188,12 @@ func TestSpaceStep(t *testing.T) {
 		So(related(grid, "alpha", "inverse").directional, ShouldAlmostEqual, -1, 1e-9)
 		So(related(grid, "alpha", "inverse").stable(), ShouldBeTrue)
 
-		So(grid.Formed, ShouldBeFalse) // Calibration has not filled its feature window.
+		So(grid.formed, ShouldBeFalse) // Calibration has not filled its feature window.
 		So(independent, ShouldNotBeNil)
 		So(alpha, ShouldNotBeNil)
 
 		Convey("an unchanged value has no movement even while away from its baseline", func() {
-			So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 
 			for _, activation := range grid.activations[0] {
 				So(activation, ShouldEqual, 0)
@@ -198,16 +205,17 @@ func TestSpaceStep(t *testing.T) {
 		// A movement arithmetic cannot represent is a numerical failure, not a
 		// missing reading: it must stop rather than enter the window as a
 		// value that is not a number.
-		grid := NewSpace()
-		measurement := data.NewMeasurement[float64]("overflow-fixture", "context", "source", time.Time{}, time.Time{})
+		grid := NewSpace().(*Space)
+		measurement := data.NewMeasurement[float64]("source", nil)
+		measurement.Label, measurement.At, measurement.From = "context", time.Time{}, time.Time{}
 		// Both observations are representable. Their difference is not. This
 		// exercises a numerical failure, not a missing-value fallback.
-		measurement.PutMetric(data.Metric[float64]{Label: "signed-extreme", Raw: math.MaxFloat64})
-		So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
-		measurement.PutMetric(data.Metric[float64]{Label: "signed-extreme", Raw: -math.MaxFloat64})
-		err := grid.Step([]*data.Measurement[float64]{measurement})
+		measurement.Metrics["signed-extreme"] = data.Metric[float64]{Label: "signed-extreme", Raw: math.MaxFloat64}
+		So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+		measurement.Metrics["signed-extreme"] = data.Metric[float64]{Label: "signed-extreme", Raw: -math.MaxFloat64}
+		err := grid.step([]*data.Measurement[float64]{measurement})
 		So(err, ShouldNotBeNil)
-		So(grid.Version, ShouldEqual, 1)
+		So(grid.version, ShouldEqual, 1)
 		So(err.Error(), ShouldContainSubstring, `context="context" committed_version=1`)
 		So(err.Error(), ShouldContainSubstring, `source="source" metric="signed-extreme"`)
 		So(err.Error(), ShouldContainSubstring, "dispersion=")
@@ -215,17 +223,19 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Given a rejected or mixed-context update", t, func() {
-		grid := NewSpace()
+		grid := NewSpace().(*Space)
 		failure := errors.New("unavailable input")
-		measurement := data.NewMeasurement[float64]("", "first", "source", time.Time{}, time.Time{})
-		measurement.PutMetric(data.Metric[float64]{Label: "value", Raw: 1})
-		So(grid.Step([]*data.Measurement[float64]{measurement, {Err: failure}}), ShouldEqual, failure)
-		So(grid.Rows, ShouldBeEmpty)
-		other := data.NewMeasurement[float64]("", "second", "source", time.Time{}, time.Time{})
-		So(grid.Step([]*data.Measurement[float64]{measurement, other}), ShouldNotBeNil)
-		So(grid.Rows, ShouldBeEmpty)
-		So(grid.Step(nil), ShouldBeNil)
-		So(grid.Version, ShouldEqual, 0)
+		measurement := data.NewMeasurement[float64]("source", nil)
+		measurement.Label, measurement.At, measurement.From = "first", time.Time{}, time.Time{}
+		measurement.Metrics["value"] = data.Metric[float64]{Label: "value", Raw: 1}
+		So(grid.step([]*data.Measurement[float64]{measurement, {Err: failure}}), ShouldEqual, failure)
+		So(grid.rows, ShouldBeEmpty)
+		other := data.NewMeasurement[float64]("source", nil)
+		other.Label, other.At, other.From = "second", time.Time{}, time.Time{}
+		So(grid.step([]*data.Measurement[float64]{measurement, other}), ShouldNotBeNil)
+		So(grid.rows, ShouldBeEmpty)
+		So(grid.step(nil), ShouldBeNil)
+		So(grid.version, ShouldEqual, 0)
 	})
 }
 
@@ -244,7 +254,7 @@ func BenchmarkSpaceStep(b *testing.B) {
 					measurement.Metrics[key] = metric
 				}
 
-				if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
+				if err := grid.step([]*data.Measurement[float64]{measurement}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -261,15 +271,16 @@ func BenchmarkSpaceStepUniverse(b *testing.B) {
 	runtime.GC()
 	var initial runtime.MemStats
 	runtime.ReadMemStats(&initial)
-	grid := NewSpace()
-	measurement := data.NewMeasurement[float64]("", "", "fixture", time.Time{}, time.Time{})
+	grid := NewSpace().(*Space)
+	measurement := data.NewMeasurement[float64]("fixture", nil)
+	measurement.Label, measurement.At, measurement.From = "", time.Time{}, time.Time{}
 	labels := make([]string, 640)
 	for index := range labels {
 		labels[index] = strconv.Itoa(index)
 	}
 	for column := range 638 {
 		label := strconv.Itoa(column)
-		measurement.PutMetric(data.Metric[float64]{Label: label, Raw: float64(column)})
+		measurement.Metrics[label] = data.Metric[float64]{Label: label, Raw: float64(column)}
 	}
 	// Admit all cells, then give their baselines a second value and real movement.
 	for epoch := range 2 {
@@ -279,7 +290,7 @@ func BenchmarkSpaceStepUniverse(b *testing.B) {
 				metric.Raw += float64(epoch)
 				measurement.Metrics[key] = metric
 			}
-			if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
+			if err := grid.step([]*data.Measurement[float64]{measurement}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -295,7 +306,7 @@ func BenchmarkSpaceStepUniverse(b *testing.B) {
 			metric.Raw = -metric.Raw
 			measurement.Metrics[key] = metric
 		}
-		if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
+		if err := grid.step([]*data.Measurement[float64]{measurement}); err != nil {
 			b.Fatal(err)
 		}
 		index++
@@ -311,22 +322,22 @@ func BenchmarkSpaceStepUniverse(b *testing.B) {
 func TestSpaceReset(t *testing.T) {
 	Convey("Independent tapes retain formation but reset observation state", t, func() {
 		grid := regionFixture(t)
-		coordinates := grid.Coordinates[0]
-		grid.Reset()
+		coordinates := grid.coordinates[0]
+		grid.reset()
 		So(grid.baselines[0][0], ShouldBeNil)
-		So(grid.Present[0][0], ShouldBeFalse)
-		So(grid.Formed, ShouldBeTrue)
+		So(grid.present[0][0], ShouldBeFalse)
+		So(grid.formed, ShouldBeTrue)
 		So(grid.regions.membership, ShouldResemble, []int{0, 0, 1, 1})
-		So(grid.Coordinates[0], ShouldEqual, coordinates)
+		So(grid.coordinates[0], ShouldEqual, coordinates)
 	})
 
 	Convey("An unfinished bin cannot combine observations from separate tapes", t, func() {
-		grid := NewSpaceWithWindow(4)
-		grid.Column("source", "first")
-		grid.Column("source", "second")
+		grid := NewSpace(4).(*Space)
+		grid.column("source", "first")
+		grid.column("source", "second")
 		seed(grid, []float64{1, -1})
 		grid.window.observe(0, 7)
-		grid.Reset()
+		grid.reset()
 		grid.window.observe(1, 9)
 		grid.window.close()
 		So(grid.window.count, ShouldEqual, 2)

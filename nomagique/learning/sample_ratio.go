@@ -1,11 +1,14 @@
 package learning
 
 import (
+	"errors"
 	"iter"
+	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -23,107 +26,119 @@ type RatioReading struct {
 SampleRatio owns that policy over the shared residual-span update.
 */
 type SampleRatio struct {
-	core.Base[Pair, RatioReading]
-	valid     *equation.ValidPair[float64]
-	span      *equation.ResidualSpan
-	abs       *calculus.Absolute[float64]
+	err       error
+	span      core.Primitive
+	abs       core.Primitive
 	count     float64
 	min       float64
 	max       float64
 	prev      float64
 	peakRatio float64
+	out       RatioReading
 }
 
-func NewSampleRatio() *SampleRatio {
+func NewSampleRatio() core.Primitive {
 	return &SampleRatio{
-		valid: equation.NewValidPair[float64](),
-		span:  equation.NewResidualSpan(),
-		abs:   calculus.NewAbsolute[float64](),
+		span: statistic.NewResidualSpan(),
+		abs:  calculus.NewAbsolute(),
 	}
 }
 
 func (op *SampleRatio) Next(
-	in iter.Seq[core.Primitive[Pair, Pair]],
-) iter.Seq[core.Primitive[RatioReading, RatioReading]] {
-	return func(yield func(core.Primitive[RatioReading, RatioReading]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			reading, err := op.Measure(arriving.Read())
+			pair := (*Pair)(arriving)
 
-			if err != nil {
+			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
+				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			residual := pair.Actual - pair.Predicted
+			spanInput := statistic.ResidualSpanInput{
+				Count:    op.count,
+				Minimum:  op.min,
+				Maximum:  op.max,
+				Residual: residual,
+			}
+
+			var span statistic.ResidualSpanResult
+
+			for out := range op.span.Next(transport.NewValues(spanInput).Next(nil)) {
+				span = *(*statistic.ResidualSpanResult)(out)
+			}
+
+			if err := op.span.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			if !yield(op.Carrier(reading)) {
+			op.count = span.Count
+			op.min = span.Minimum
+			op.max = span.Maximum
+			ratio := pair.Actual / pair.Predicted
+
+			if pair.Actual < pair.Predicted {
+				ratio = 1 + pair.Actual/pair.Predicted
+			}
+
+			if !(pair.Predicted <= pair.Actual || ratio >= 0) {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			ceiling := 1.0
+
+			if span.Span > 0 {
+				ceiling = 1 + 1/span.Span
+			}
+
+			if !(span.Span > 0) {
+				prevAbs := op.prev
+
+				for out := range op.abs.Next(transport.NewValues(prevAbs).Next(nil)) {
+					prevAbs = *(*float64)(out)
+				}
+
+				if err := op.abs.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				ceiling = 1 + 1/prevAbs
+			}
+
+			if ratio > ceiling {
+				ratio = ceiling
+			}
+
+			if ratio > op.peakRatio {
+				op.peakRatio = ratio
+			}
+
+			op.prev = pair.Predicted
+			op.out = RatioReading{
+				Value:     ratio,
+				PeakRatio: op.peakRatio,
+				Count:     op.count,
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (op *SampleRatio) Measure(pair Pair) (RatioReading, error) {
-	ok, err := transport.Evaluate(op.valid, transport.Values(equation.ValidPairInput[float64]{
-		Predicted: pair.Predicted,
-		Actual:    pair.Actual,
-	}))
-
-	if err != nil {
-		return RatioReading{}, err
-	}
-
-	if !ok {
-		return RatioReading{}, core.ErrDomain
-	}
-
-	residual := pair.Actual - pair.Predicted
-	span, err := transport.Evaluate(op.span, transport.Values(equation.ResidualSpanInput{
-		Count:    op.count,
-		Minimum:  op.min,
-		Maximum:  op.max,
-		Residual: residual,
-	}))
-
-	if err != nil {
-		return RatioReading{}, err
-	}
-
-	op.count = span.Count
-	op.min = span.Minimum
-	op.max = span.Maximum
-	ratio := pair.Actual / pair.Predicted
-
-	if pair.Actual < pair.Predicted {
-		ratio = 1 + pair.Actual/pair.Predicted
-	}
-
-	if !(pair.Predicted <= pair.Actual || ratio >= 0) {
-		return RatioReading{}, core.ErrDomain
-	}
-
-	ceiling := 1.0
-
-	if span.Span > 0 {
-		ceiling = 1 + 1/span.Span
-	}
-
-	if !(span.Span > 0) {
-		prevAbs, err := transport.Evaluate(op.abs, transport.Values(op.prev))
-
+func (op *SampleRatio) Error(errs ...error) error {
+	for _, err := range errs {
 		if err != nil {
-			return RatioReading{}, err
+			op.err = errors.Join(op.err, err)
 		}
-
-		ceiling = 1 + 1/prevAbs
 	}
 
-	if ratio > ceiling {
-		ratio = ceiling
-	}
-
-	if ratio > op.peakRatio {
-		op.peakRatio = ratio
-	}
-
-	op.prev = pair.Predicted
-	return RatioReading{Value: ratio, PeakRatio: op.peakRatio, Count: op.count}, nil
+	return op.err
 }

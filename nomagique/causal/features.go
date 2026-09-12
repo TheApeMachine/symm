@@ -1,7 +1,5 @@
 package causal
 
-import "github.com/theapemachine/symm/nomagique/core"
-
 /*
 Query is one observational table, the declared predictors, and the intervention.
 The caller declares the exact feature list; no automatic removal, addition,
@@ -17,10 +15,10 @@ type Query struct {
 }
 
 /*
-Features reports whether the treatment is represented and the outcome is
+validFeatures reports whether the treatment is represented and the outcome is
 excluded from the predictors.
 */
-func Features(query Query) bool {
+func validFeatures(query Query) bool {
 	hasTreatment := false
 	hasTarget := false
 
@@ -35,12 +33,4 @@ func Features(query Query) bool {
 	}
 
 	return hasTreatment && !hasTarget
-}
-
-func shape(query Query) error {
-	if !Features(query) {
-		return core.ErrDomain
-	}
-
-	return nil
 }

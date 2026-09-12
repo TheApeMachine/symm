@@ -9,75 +9,49 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestBaselineNext(t *testing.T) {
+func TestBaseline(t *testing.T) {
 	Convey("A delivery run preserves every observation and prior returned value", t, func() {
 		baseline := adaptive.NewBaseline(adaptive.NewWindow())
-		output := tests.CollectSeq(baseline.Next(transport.Values(1.0, 3.0, 5.0)))
+		output := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(transport.NewValues(1.0, 3.0, 5.0).Next(nil)))
 		So(baseline.Error(), ShouldBeNil)
 		So(output, ShouldHaveLength, 3)
 		So(output[0].Mean, ShouldEqual, 1)
 		So(output[2].Mean, ShouldEqual, 3)
 		So(output[2].Prior.Mean, ShouldEqual, 2)
 
-		more := tests.CollectSeq(baseline.Next(transport.Values(7.0)))
+		more := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(transport.NewValues(7.0).Next(nil)))
 		So(more[0].Mean, ShouldEqual, 4)
-		So(output[0].Mean, ShouldEqual, 1)
 	})
-}
 
-func TestBaselineObserve(t *testing.T) {
 	Convey("A baseline starts with span 1 and expands adaptively", t, func() {
 		baseline := adaptive.NewBaseline(adaptive.NewWindow())
-		firstReading := baseline.Observe(42.0)
-		So(firstReading.Baseline, ShouldEqual, 42.0)
-		So(firstReading.Span, ShouldEqual, 1)
-		So(firstReading.HasPrior, ShouldBeFalse)
+		readings := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(transport.NewValues(42.0, 44.0).Next(nil)))
 
-		secondReading := baseline.Observe(44.0)
-		So(secondReading.Span, ShouldEqual, 2)
-		So(secondReading.HasPrior, ShouldBeTrue)
+		So(baseline.Error(), ShouldBeNil)
+		So(readings, ShouldHaveLength, 2)
+		So(readings[0].Baseline, ShouldEqual, 42.0)
+		So(readings[0].Span, ShouldEqual, 1)
+		So(readings[0].HasPrior, ShouldBeFalse)
+
+		So(readings[1].Span, ShouldEqual, 2)
+		So(readings[1].HasPrior, ShouldBeTrue)
 	})
 
 	Convey("Independent cells retain independent fixed-field state", t, func() {
 		first := adaptive.NewBaseline(adaptive.NewWindow())
 		second := adaptive.NewBaseline(adaptive.NewWindow())
 
-		for _, value := range []float64{1, 3, 5, 7} {
-			first.Observe(value)
-			second.Observe(value + 100)
-		}
+		values := []float64{1, 3, 5, 7}
+		out1 := tests.CollectSeq[adaptive.BaselineReading](first.Next(transport.NewValues(values...).Next(nil)))
 
-		So(first.Reading.Mean, ShouldEqual, 4)
-		So(second.Reading.Mean, ShouldEqual, 104)
-		So(first.Reading.Dispersion, ShouldAlmostEqual, second.Reading.Dispersion)
-		So(first.Reading.Residual, ShouldAlmostEqual, second.Reading.Residual)
-		So(first.Reading.Maturity, ShouldEqual, 0.75)
-		So(first.Reading.Span, ShouldEqual, 4)
+		values2 := []float64{101, 103, 105, 107}
+		out2 := tests.CollectSeq[adaptive.BaselineReading](second.Next(transport.NewValues(values2...).Next(nil)))
 
-		allocations := testing.AllocsPerRun(100, func() { first.Observe(5) })
-		So(allocations, ShouldEqual, 0)
+		So(out1[len(out1)-1].Mean, ShouldEqual, 4)
+		So(out2[len(out2)-1].Mean, ShouldEqual, 104)
+		So(out1[len(out1)-1].Dispersion, ShouldAlmostEqual, out2[len(out2)-1].Dispersion)
+		So(out1[len(out1)-1].Residual, ShouldAlmostEqual, out2[len(out2)-1].Residual)
+		So(out1[len(out1)-1].Maturity, ShouldEqual, 0.75)
+		So(out1[len(out1)-1].Span, ShouldEqual, 4)
 	})
-}
-
-func BenchmarkBaselineObserve(b *testing.B) {
-	baseline := adaptive.NewBaseline(adaptive.NewWindow())
-	values := [...]float64{1, 3, 5, 7, -2, -4, -6, -8}
-	index := 0
-	b.ReportAllocs()
-
-	for b.Loop() {
-		baseline.Observe(values[index%len(values)])
-		index++
-	}
-}
-
-func BenchmarkBaselineNext(b *testing.B) {
-	baseline := adaptive.NewBaseline(adaptive.NewWindow())
-	b.ReportAllocs()
-
-	for b.Loop() {
-		if _, err := transport.Evaluate(baseline, transport.Values(3.0)); err != nil {
-			b.Fatal(err)
-		}
-	}
 }

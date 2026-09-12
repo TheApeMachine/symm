@@ -1,14 +1,53 @@
 package statistic
 
 import (
+	"errors"
+	"fmt"
+	"iter"
 	"math"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-RegressionAccumulator maintains the normal-equation moments (X'X, X'y, y'y)
-of a linear regression incrementally across prequential steps, so each step's
-fit costs O(p²) instead of refitting the full design from scratch. The
-intercept is an explicit column of ones supplied by the caller.
+RegressionFit is the result of one accumulator fit.
+*/
+type RegressionFit struct {
+	Coefficients        []float64
+	CoefficientVariance []float64
+	ResidualSSE         float64
+	ResidualVariance    float64
+	Observations        int
+	Parameters          int
+	Defined             bool
+}
+
+/*
+RegressionRow is one design row (length p, row-major with the intercept first)
+and its target value.
+*/
+type RegressionRow struct {
+	Predictors []float64
+	Target     float64
+}
+
+/*
+RegressionReading fixes the facts of one incorporated row: the prequential
+prediction made by the model fitted strictly on earlier rows, and the fit over
+every row including this one.
+*/
+type RegressionReading struct {
+	Prediction        float64
+	PredictionDefined bool
+	Fit               RegressionFit
+}
+
+/*
+RegressionAccumulator owns the normal-equation moments (X'X, X'y, y'y) of a
+linear regression incrementally across prequential steps, so each step's fit
+costs O(p²) instead of refitting the full design from scratch. The intercept
+is an explicit column of ones supplied by the caller.
 
 Rank deficiency is explicit: the cross-product matrix is singular exactly
 when the design is rank-deficient, and the fit is then undefined. No ridge,
@@ -18,6 +57,7 @@ which is why rank is checked by the singularity of X'X; the mathematical
 results match ordinary least squares for well-conditioned designs.
 */
 type RegressionAccumulator struct {
+	err        error
 	parameters int
 	xtx        []float64 // p×p row-major
 	xty        []float64 // p
@@ -35,15 +75,19 @@ type RegressionAccumulator struct {
 	rlsW       []float64
 	rlsScratch []float64
 	rlsReady   bool
+
+	out RegressionReading
 }
 
 /*
-NewRegressionAccumulator builds an empty accumulator for a model with the
-given parameter count (including the intercept column).
+NewRegressionAccumulator builds an empty accumulator Primitive for a model
+with the given parameter count (including the intercept column).
 */
-func NewRegressionAccumulator(parameters int) *RegressionAccumulator {
+func NewRegressionAccumulator(parameters int) core.Primitive {
 	if parameters < 1 {
-		parameters = 1
+		op := &RegressionAccumulator{}
+		op.err = fmt.Errorf("%w: parameter count must be at least one", core.ErrDomain)
+		return op
 	}
 
 	return &RegressionAccumulator{
@@ -62,106 +106,95 @@ func NewRegressionAccumulator(parameters int) *RegressionAccumulator {
 }
 
 /*
-Parameters returns the model's parameter count.
+Next scores every arriving row prequentially against the model fitted on
+earlier rows, incorporates it, and hands over the reading with the refreshed
+fit.
 */
-func (accumulator *RegressionAccumulator) Parameters() int {
-	if accumulator == nil {
-		return 0
-	}
+func (op *RegressionAccumulator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if op.err != nil || op.xtx == nil {
+			return
+		}
 
-	return accumulator.parameters
+		for arriving := range in {
+			row := (*RegressionRow)(arriving)
+
+			if len(row.Predictors) != op.parameters {
+				op.err = fmt.Errorf("%w: design row length %d does not match parameter count %d", core.ErrShape, len(row.Predictors), op.parameters)
+				return
+			}
+
+			prediction, defined := op.prequentialPredict(row.Predictors)
+			op.prequentialAdd(row.Predictors, row.Target)
+			op.out = RegressionReading{Prediction: prediction, PredictionDefined: defined, Fit: op.fit()}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
 }
 
 /*
-Rows returns the number of incorporated rows.
+Error records the first error it sees and joins any subsequent errors to it.
 */
-func (accumulator *RegressionAccumulator) Rows() int {
-	if accumulator == nil {
-		return 0
-	}
-
-	return accumulator.rows
-}
-
-/*
-Reset clears accumulated moments and RLS state so the accumulator's buffers
-can be reused for a new candidate/lag without a fresh allocation.
-*/
-func (accumulator *RegressionAccumulator) Reset() {
-	if accumulator == nil {
-		return
-	}
-
-	clear(accumulator.xtx)
-	clear(accumulator.xty)
-	accumulator.yty = 0
-	accumulator.rows = 0
-
-	clear(accumulator.fitCoefficients)
-	clear(accumulator.fitInverse)
-
-	clear(accumulator.rlsP)
-	clear(accumulator.rlsW)
-	clear(accumulator.rlsScratch)
-	accumulator.rlsReady = false
-}
-
-/*
-Add incorporates one design row (length p, row-major with the intercept
-first) and its target value.
-*/
-func (accumulator *RegressionAccumulator) Add(predictors []float64, target float64) {
-	if accumulator == nil || len(predictors) != accumulator.parameters {
-		return
-	}
-
-	for column := 0; column < accumulator.parameters; column++ {
-		accumulator.xty[column] += predictors[column] * target
-
-		for row := 0; row < accumulator.parameters; row++ {
-			accumulator.xtx[row*accumulator.parameters+column] += predictors[row] * predictors[column]
+func (op *RegressionAccumulator) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
 
-	accumulator.yty += target * target
-	accumulator.rows++
+	return op.err
 }
 
 /*
-PrequentialPredict returns the model's prediction for one design row using the
+add incorporates one design row and its target value into the moments.
+*/
+func (op *RegressionAccumulator) add(predictors []float64, target float64) {
+	for column := 0; column < op.parameters; column++ {
+		op.xty[column] += predictors[column] * target
+
+		for row := 0; row < op.parameters; row++ {
+			op.xtx[row*op.parameters+column] += predictors[row] * predictors[column]
+		}
+	}
+
+	op.yty += target * target
+	op.rows++
+}
+
+/*
+prequentialPredict returns the model's prediction for one design row using the
 model fit on every previously incorporated row, without allocating.
 */
-func (accumulator *RegressionAccumulator) PrequentialPredict(predictors []float64) (float64, bool) {
-	if accumulator == nil || len(predictors) != accumulator.parameters || !accumulator.rlsReady {
+func (op *RegressionAccumulator) prequentialPredict(predictors []float64) (float64, bool) {
+	if !op.rlsReady {
 		return 0, false
 	}
 
 	prediction := 0.0
 
-	for column := 0; column < accumulator.parameters; column++ {
-		prediction += accumulator.rlsW[column] * predictors[column]
+	for column := 0; column < op.parameters; column++ {
+		prediction += op.rlsW[column] * predictors[column]
 	}
 
 	return prediction, true
 }
 
 /*
-PrequentialAdd incorporates one design row after it has been scored by
-PrequentialPredict.
+prequentialAdd incorporates one design row after it has been scored by
+prequentialPredict.
 */
-func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, target float64) {
-	if accumulator == nil || len(predictors) != accumulator.parameters {
-		return
-	}
+func (op *RegressionAccumulator) prequentialAdd(predictors []float64, target float64) {
+	op.add(predictors, target)
 
-	accumulator.Add(predictors, target)
-
-	if !accumulator.rlsReady {
-		if accumulator.rows <= accumulator.parameters {
+	if !op.rlsReady {
+		if op.rows <= op.parameters {
 			return
 		}
 
-		if !accumulator.initializeRLS() {
+		if !op.initializeRLS() {
 			return
 		}
 
@@ -170,19 +203,19 @@ func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, t
 
 	denominator := 1.0
 
-	for row := 0; row < accumulator.parameters; row++ {
+	for row := 0; row < op.parameters; row++ {
 		sum := 0.0
 
-		for column := 0; column < accumulator.parameters; column++ {
-			sum += accumulator.rlsP[row*accumulator.parameters+column] * predictors[column]
+		for column := 0; column < op.parameters; column++ {
+			sum += op.rlsP[row*op.parameters+column] * predictors[column]
 		}
 
-		accumulator.rlsScratch[row] = sum
+		op.rlsScratch[row] = sum
 		denominator += predictors[row] * sum
 	}
 
 	if denominator == 0 || math.IsNaN(denominator) {
-		accumulator.rlsReady = false
+		op.rlsReady = false
 
 		return
 	}
@@ -190,83 +223,76 @@ func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, t
 	invDenominator := 1 / denominator
 	errorTerm := target
 
-	for column := 0; column < accumulator.parameters; column++ {
-		errorTerm -= accumulator.rlsW[column] * predictors[column]
+	for column := 0; column < op.parameters; column++ {
+		errorTerm -= op.rlsW[column] * predictors[column]
 	}
 
-	for row := 0; row < accumulator.parameters; row++ {
-		gain := accumulator.rlsScratch[row] * invDenominator
-		accumulator.rlsW[row] += gain * errorTerm
+	for row := 0; row < op.parameters; row++ {
+		gain := op.rlsScratch[row] * invDenominator
+		op.rlsW[row] += gain * errorTerm
 
-		for column := 0; column < accumulator.parameters; column++ {
-			accumulator.rlsP[row*accumulator.parameters+column] -= gain * accumulator.rlsScratch[column]
+		for column := 0; column < op.parameters; column++ {
+			op.rlsP[row*op.parameters+column] -= gain * op.rlsScratch[column]
 		}
 	}
 }
 
-func (accumulator *RegressionAccumulator) initializeRLS() bool {
+/*
+initializeRLS seeds the recursive least-squares state from the exact normal
+equations at the first non-singular design.
+*/
+func (op *RegressionAccumulator) initializeRLS() bool {
 	if !invertLU(
-		accumulator.xtx, accumulator.rlsP, accumulator.parameters,
-		accumulator.luScratch, accumulator.pvtScratch, accumulator.colScratch,
+		op.xtx, op.rlsP, op.parameters,
+		op.luScratch, op.pvtScratch, op.colScratch,
 	) {
-		accumulator.rlsReady = false
+		op.rlsReady = false
 
 		return false
 	}
 
 	if !solveLU(
-		accumulator.xtx, accumulator.xty, accumulator.rlsW, accumulator.parameters,
-		accumulator.luScratch, accumulator.pvtScratch,
+		op.xtx, op.xty, op.rlsW, op.parameters,
+		op.luScratch, op.pvtScratch,
 	) {
-		accumulator.rlsReady = false
+		op.rlsReady = false
 
 		return false
 	}
 
-	accumulator.rlsReady = true
+	op.rlsReady = true
 
 	return true
 }
 
 /*
-Fit solves the normal equations over the incorporated rows.
+fit solves the normal equations over the incorporated rows.
 */
-func (accumulator *RegressionAccumulator) Fit() RegressionFit {
-	return accumulator.fit(true)
-}
-
-/*
-Coefficients solves the normal equations for the coefficient vector only.
-*/
-func (accumulator *RegressionAccumulator) Coefficients() RegressionFit {
-	return accumulator.fit(false)
-}
-
-func (accumulator *RegressionAccumulator) fit(withVariance bool) RegressionFit {
+func (op *RegressionAccumulator) fit() RegressionFit {
 	fit := RegressionFit{
-		Observations:     accumulator.rows,
-		Parameters:       accumulator.parameters,
+		Observations:     op.rows,
+		Parameters:       op.parameters,
 		ResidualVariance: math.NaN(),
 		Defined:          false,
 	}
 
-	if accumulator.rows <= accumulator.parameters {
+	if op.rows <= op.parameters {
 		return fit
 	}
 
 	if !solveLU(
-		accumulator.xtx, accumulator.xty, accumulator.fitCoefficients, accumulator.parameters,
-		accumulator.luScratch, accumulator.pvtScratch,
+		op.xtx, op.xty, op.fitCoefficients, op.parameters,
+		op.luScratch, op.pvtScratch,
 	) {
 		return fit
 	}
 
-	fit.Coefficients = append(fit.Coefficients[:0], accumulator.fitCoefficients...)
+	fit.Coefficients = append(fit.Coefficients[:0], op.fitCoefficients...)
 
-	sse := accumulator.yty
+	sse := op.yty
 
-	for column := 0; column < accumulator.parameters; column++ {
-		sse -= fit.Coefficients[column] * accumulator.xty[column]
+	for column := 0; column < op.parameters; column++ {
+		sse -= fit.Coefficients[column] * op.xty[column]
 	}
 
 	if sse < 0 {
@@ -274,33 +300,33 @@ func (accumulator *RegressionAccumulator) fit(withVariance bool) RegressionFit {
 	}
 
 	fit.ResidualSSE = sse
-	fit.ResidualVariance = sse / float64(accumulator.rows-accumulator.parameters)
-
-	if withVariance {
-		fit.CoefficientVariance = accumulator.coefficientVarianceFromCrossProduct(fit.ResidualVariance)
-	}
-
+	fit.ResidualVariance = sse / float64(op.rows-op.parameters)
+	fit.CoefficientVariance = op.coefficientVarianceFromCrossProduct(fit.ResidualVariance)
 	fit.Defined = true
 
 	return fit
 }
 
-func (accumulator *RegressionAccumulator) coefficientVarianceFromCrossProduct(residualVariance float64) []float64 {
+/*
+coefficientVarianceFromCrossProduct scales the diagonal of (X'X)⁻¹ by the
+residual variance, reporting nil when the covariance is not identifiable.
+*/
+func (op *RegressionAccumulator) coefficientVarianceFromCrossProduct(residualVariance float64) []float64 {
 	if math.IsNaN(residualVariance) || residualVariance < 0 {
 		return nil
 	}
 
 	if !invertLU(
-		accumulator.xtx, accumulator.fitInverse, accumulator.parameters,
-		accumulator.luScratch, accumulator.pvtScratch, accumulator.colScratch,
+		op.xtx, op.fitInverse, op.parameters,
+		op.luScratch, op.pvtScratch, op.colScratch,
 	) {
 		return nil
 	}
 
-	variances := make([]float64, accumulator.parameters)
+	variances := make([]float64, op.parameters)
 
-	for index := 0; index < accumulator.parameters; index++ {
-		diag := accumulator.fitInverse[index*accumulator.parameters+index]
+	for index := 0; index < op.parameters; index++ {
+		diag := op.fitInverse[index*op.parameters+index]
 		variance := residualVariance * diag
 
 		if variance < 0 || math.IsNaN(variance) {
@@ -311,45 +337,4 @@ func (accumulator *RegressionAccumulator) coefficientVarianceFromCrossProduct(re
 	}
 
 	return variances
-}
-
-/*
-Predict evaluates the fitted model on one design row.
-*/
-func (fit RegressionFit) Predict(predictors []float64) (float64, bool) {
-	if !fit.Defined || len(predictors) != fit.Parameters {
-		return 0, false
-	}
-
-	predicted := 0.0
-
-	for index, predictor := range predictors {
-		predicted += fit.Coefficients[index] * predictor
-	}
-
-	return predicted, true
-}
-
-/*
-VarianceAt returns the coefficient variance at a column index.
-*/
-func (fit RegressionFit) VarianceAt(column int) (float64, bool) {
-	if column < 0 || column >= fit.Parameters || len(fit.CoefficientVariance) != fit.Parameters {
-		return 0, false
-	}
-
-	return fit.CoefficientVariance[column], true
-}
-
-/*
-RegressionFit is the result of one accumulator fit.
-*/
-type RegressionFit struct {
-	Coefficients        []float64
-	CoefficientVariance []float64
-	ResidualSSE         float64
-	ResidualVariance    float64
-	Observations        int
-	Parameters          int
-	Defined             bool
 }

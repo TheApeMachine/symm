@@ -10,7 +10,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
+	"unsafe"
 )
 
 func TestStep(t *testing.T) {
@@ -19,7 +21,7 @@ func TestStep(t *testing.T) {
 		defer solver.Close()
 		observed := false
 		solver.SetObserver(func(envelope *types.Envelope) {
-			observed = envelope.Resonance != nil && envelope.Resonance.Manifold != nil
+			observed = envelope.Resonance != nil && envelope.Resonance.Snapshot != nil
 		})
 		envelope := types.NewEnvelope(types.EnvelopeTicker)
 		envelope.TickerData = kraken.TickerData{
@@ -43,7 +45,7 @@ func TestStep(t *testing.T) {
 		Convey("the observer sees the owned model before it leaves the ring", func() {
 			So(observed, ShouldBeTrue)
 			So(result.Resonance, ShouldNotBeNil)
-			So(result.Resonance.Manifold, ShouldBeNil)
+			So(result.Resonance.Calibrated, ShouldBeFalse)
 		})
 	})
 }
@@ -54,13 +56,12 @@ func TestSignalFeatureIngestion(t *testing.T) {
 		defer solver.Close()
 
 		createMetric := func(label, metricName string, value float64) *data.Measurement[float64] {
-			measurement := data.NewMeasurement[float64](label, "BTC/USD", label, time.Unix(10, 0), time.Unix(10, 0))
-			measurement.PutMetric(data.Metric[float64]{
-				Label: metricName,
-				Raw:   value,
-			})
+			measurement := data.NewMeasurement[float64](label, nil)
+			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Unix(10, 0), time.Unix(10, 0)
+			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: value}
 			measurement.Metadata = map[string]float64{data.MetadataSupport: 1}
-			measurement.Finalize()
+			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+			}
 			return measurement
 		}
 
@@ -114,13 +115,12 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 			}
 
 			createMetric := func(label, metricName string, val float64) *data.Measurement[float64] {
-				measurement := data.NewMeasurement[float64](label, "ETH/USD", label, time.Unix(sec, 0), time.Unix(sec, 0))
-				measurement.PutMetric(data.Metric[float64]{
-					Label: metricName,
-					Raw:   val,
-				})
+				measurement := data.NewMeasurement[float64](label, nil)
+				measurement.Label, measurement.At, measurement.From = "ETH/USD", time.Unix(sec, 0), time.Unix(sec, 0)
+				measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
 				measurement.Metadata = map[string]float64{data.MetadataSupport: 1}
-				measurement.Finalize()
+				for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+				}
 				return measurement
 			}
 
@@ -195,13 +195,12 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		defer solver.Close()
 
 		createMetric := func(label, metricName string, val float64, support float64) *data.Measurement[float64] {
-			measurement := data.NewMeasurement[float64](label, "BTC/USD", label, time.Now(), time.Now())
-			measurement.PutMetric(data.Metric[float64]{
-				Label: metricName,
-				Raw:   val,
-			})
+			measurement := data.NewMeasurement[float64](label, nil)
+			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Now(), time.Now()
+			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
 			measurement.Metadata = map[string]float64{data.MetadataSupport: support}
-			measurement.Finalize()
+			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+			}
 			return measurement
 		}
 
@@ -254,8 +253,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 			So(surprise, ShouldBeLessThan, 5.0)
 
 			scorer := solver.scorer("BTC/USD")
-			So(scorer.pipelines[4].Reading.Count, ShouldEqual, 2)
+			So(scorer.lastReading[4].Count, ShouldEqual, 2)
 		})
 	})
 }
-

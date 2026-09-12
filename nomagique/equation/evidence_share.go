@@ -2,49 +2,63 @@ package equation
 
 import (
 	"iter"
+	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-EvidenceShare selects one member after normalization. An absent index reports
-a shape error; zero total mass remains undefined.
+EvidenceShare selects one member after normalization.
 */
-type EvidenceShare[U core.Floating] struct {
-	core.Base[U, U]
-	normalize *Normalize[U]
-	at        *collection.At[U]
+type EvidenceShare struct {
+	err   error
+	index int
+	out   float64
 }
 
-func NewEvidenceShare[U core.Floating](index int) *EvidenceShare[U] {
-	return &EvidenceShare[U]{
-		normalize: NewNormalize[U](),
-		at:        collection.NewAt[U](index),
-	}
+func NewEvidenceShare(index int) core.Primitive {
+	return &EvidenceShare{index: index}
 }
 
-func (op *EvidenceShare[U]) Next(
-	in iter.Seq[core.Primitive[U, U]],
-) iter.Seq[core.Primitive[U, U]] {
-	return func(yield func(core.Primitive[U, U]) bool) {
-		var shares []U
+func (op *EvidenceShare) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			values := *(*[]float64)(arriving)
 
-		for share := range op.normalize.Next(in) {
-			shares = append(shares, share.Read())
-		}
+			if op.index < 0 || op.index >= len(values) {
+				op.err = core.ErrShape
+				return
+			}
 
-		op.Error(op.normalize.Error())
+			sum := 0.0
 
-		for selected := range op.at.Next(func(yield func(core.Primitive[[]U, []U]) bool) {
-			carrier := &core.Carrier[[]U]{}
-			yield(carrier.Carrier(shares))
-		}) {
-			if !yield(op.Carrier(selected.Read())) {
+			for _, v := range values {
+				sum += v
+			}
+
+			if sum == 0 {
+				op.err = core.ErrDomain
+				return
+			}
+
+			op.out = values[op.index] / sum
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
-
-		op.Error(op.at.Error())
 	}
+}
+
+func (op *EvidenceShare) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

@@ -1,6 +1,7 @@
 package cvd
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -116,7 +117,9 @@ func TestTradeStep(t *testing.T) {
 			// divergence and z-score are judged against it.
 			So(measurement.Metrics["signed_net_fraction_baseline"].Raw, ShouldEqual, 1.0)
 			So(measurement.Metrics["signed_net_fraction_divergence"].Raw, ShouldAlmostEqual, -2.0/3.0, 1e-12)
-			So(measurement.Metrics["signed_net_fraction_zscore"].Raw, ShouldEqual, -1.0)
+			// The z-score is judged against the prior dispersion of the two
+			// committed fractions (1 and 1/3), not a single-sample fallback.
+			So(measurement.Metrics["signed_net_fraction_zscore"].Raw, ShouldAlmostEqual, -math.Sqrt(2.0), 1e-12)
 
 			_, hasGrossBaseline := measurement.Metrics["gross_notional_rate_baseline"]
 

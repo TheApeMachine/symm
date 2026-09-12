@@ -70,15 +70,12 @@ func TestSessionCapture(t *testing.T) {
 			// a semantic artifact (a Measurement is the category solver's input).
 			solver := category.NewSolver(context.Background())
 
-			measurement := data.NewMeasurement[float64](
-				"cvd-1", "XBT/USD", "cvd",
-				time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-				time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC),
-			)
-			measurement.PutMetric(data.Metric[float64]{
+			measurement := data.NewMeasurement[float64]("cvd", nil)
+			measurement.Label, measurement.At, measurement.From = "XBT/USD", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC)
+			measurement.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{
 				Label: "signed_net_fraction_zscore",
 				Raw:   1.5,
-			})
+			}
 
 			envelopes[0].CVD = measurement
 			solver.Step(envelopes[0])

@@ -1,87 +1,43 @@
 package core
 
 import (
-	"errors"
 	"iter"
+	"unsafe"
 )
 
 /*
-Primitive is the interface for a data cell that can read and write values of
-different types, handle errors, and process incoming sequences of other
-Primitives. It is parameterized by two types: T, the type of values it can
-accept, and U, the type of values it holds and returns.
+Primitive is the interface that all nomagique types must implement.
+Consider nomagique a streaming, composable algebra. Each type must
+constrain itself to the absolute most minimal implementation of one
+transformation. This can essentially manifest in two ways:
+
+1. Implementation of a new transformation.
+2. Composition of existing Primitive types.
+
+Before creating a new Primitive always first consider:
+
+1. Does what I need already exist as a Primitive?
+
+Primitive types should be placed in a sub-package that generally represents
+the Primitive's most canonical domain or discipline.
+To avoid import cycles, a composition can always be promoted to an equation.
+The equation sub-package may only contain composition, no implementation code.
+The algo package has the same rules as equation, with one additional constraint,
+algo Primitives may only be well-known, named algorithms.
+
+2. Does what I need exist if I make an existing Primitive more flexible?
+
+This can be done by expanding the constructor, or potentially also by wrapping
+things in another Primitive to basically act as a decorator, altering behavior.
+
+3. Does what I need exist if I compose multiple existing Primitives?
+
+This is really always the goal, and the idea behind it is that we can validate
+the code once, and then always confidently use it, while also keeping an eye
+on the other principle: never using magic numbers, or otherwise non-derived
+values.
 */
-type Primitive[T, U any] interface {
-	Next(iter.Seq[Primitive[T, T]]) iter.Seq[Primitive[U, U]]
-	Read() U
-	Write(T)
+type Primitive interface {
+	Next(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 	Error(...error) error
-}
-
-/*
-Base is the standard Primitive[T, U] data cell. It holds a value of type U and
-provides methods to read, write, and handle errors. The Base struct is designed
-to be embedded in other structs that implement the Primitive interface.
-*/
-type Base[T, U any] struct {
-	value U
-	ok    bool
-	err   error
-	out   *Carrier[U] // Pre-allocated output carrier (zero-alloc per tick)
-}
-
-/*
-Read returns the current value held by the Base. It is of type U, which may be
-different from the type T that is written to it.
-*/
-func (base *Base[T, U]) Read() U { return base.value }
-
-/*
-Write updates the held value and returns a valid Primitive[U, U]
-using the pre-allocated carrier struct—zero heap allocations in the loop.
-*/
-func (base *Base[T, U]) Write(value T) {
-	base.value, base.ok = any(value).(U)
-	if !base.ok {
-		base.Error(ErrWrongType)
-	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (base *Base[T, U]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil && base.err == nil {
-			base.err = errors.Join(base.err, err)
-		}
-	}
-
-	return base.err
-}
-
-/*
-Carrier updates the held value and returns a valid Primitive[U, U]
-using the pre-allocated carrier struct—zero heap allocations in the loop.
-*/
-func (base *Base[T, U]) Carrier(val U) Primitive[U, U] {
-	if base.out == nil {
-		base.out = &Carrier[U]{}
-	}
-
-	base.value = val
-	base.out.value = val
-
-	return base.out
-}
-
-/*
-Carrier is the standard Primitive[T, T] data cell
-*/
-type Carrier[T any] struct {
-	Base[T, T]
-}
-
-func (carrier *Carrier[T]) Next(in iter.Seq[Primitive[T, T]]) iter.Seq[Primitive[T, T]] {
-	return in
 }

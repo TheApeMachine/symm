@@ -14,8 +14,9 @@ import (
 func precursorPayload(value float64) []byte {
 	at := time.Unix(1, 0)
 	envelope := &types.Envelope{Key: "TEST/USD"}
-	measurement := data.NewMeasurement[float64]("flow", "TEST/USD", "cvd", at, at)
-	measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: value})
+	measurement := data.NewMeasurement[float64]("cvd", nil)
+	measurement.Label, measurement.At, measurement.From = "TEST/USD", at, at
+	measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: value}
 	envelope.CVD = measurement
 
 	return envelope.EncodePrecursor()
@@ -24,8 +25,9 @@ func precursorPayload(value float64) []byte {
 func statePayload(value float64) []byte {
 	at := time.Unix(1, 0)
 	envelope := &types.Envelope{Key: "TEST/USD"}
-	measurement := data.NewMeasurement[float64]("flow", "TEST/USD", "cvd", at, at)
-	measurement.PutMetric(data.Metric[float64]{Label: "level", Raw: value})
+	measurement := data.NewMeasurement[float64]("cvd", nil)
+	measurement.Label, measurement.At, measurement.From = "TEST/USD", at, at
+	measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: value}
 	envelope.CVD = measurement
 
 	return envelope.EncodeBytes()

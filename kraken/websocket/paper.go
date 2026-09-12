@@ -243,6 +243,49 @@ func (paper *Paper) Close() {
 }
 
 /*
+ResetPaperAccount calls `kraken paper reset --yes` via the system shell to restore
+the paper trading account to its default state.
+*/
+func ResetPaperAccount(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "kraken", "paper", "reset", "--yes", "--output", "json")
+
+	if errors.Is(cmd.Err, exec.ErrDot) {
+		cmd.Err = nil
+	}
+
+	stdout, err := cmd.Output()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"kraken paper reset failed",
+			err,
+		))
+	}
+
+	_ = stdout
+
+	return nil
+}
+
+/*
+Reset resets the paper trading account via ResetPaperAccount and publishes a fresh balance snapshot.
+*/
+func (paper *Paper) Reset() error {
+	var err error
+
+	paper.simulator.Do(REST, func() {
+		err = ResetPaperAccount(paper.ctx)
+	})
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	return paper.publishBalance("snapshot")
+}
+
+/*
 TradesHistory loads paper fills from `kraken paper history`.
 */
 func (paper *Paper) TradesHistory() (spot.TradesHistoryResult, error) {

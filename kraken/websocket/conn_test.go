@@ -56,13 +56,13 @@ func TestAPIRun(t *testing.T) {
 
 		private := &Live{
 			ctx: privateCtx, cancel: privateCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: readyTestIngress("level3", "executions"),
 		}
 
 		futures := &FuturesLive{
 			ctx: futuresCtx, cancel: futuresCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: readyTestIngress("ticker", "trade"),
 		}
 
@@ -88,21 +88,21 @@ func TestAPIMarkReady(t *testing.T) {
 		public := &Live{
 			ctx:     publicCtx,
 			cancel:  publicCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: readyTestIngress("ticker", "trade"),
 		}
 
 		private := &Live{
 			ctx:     privateCtx,
 			cancel:  privateCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: readyTestIngress("level3", "executions"),
 		}
 
 		futures := &FuturesLive{
 			ctx:     futuresCtx,
 			cancel:  futuresCancel,
-			status:  runtime.NewStatus().Transition(runtime.BUSY),
+			status:  stagedStatus(runtime.BUSY),
 			ingress: readyTestIngress("ticker", "trade"),
 		}
 

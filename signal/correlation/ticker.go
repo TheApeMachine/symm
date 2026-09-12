@@ -1,135 +1,293 @@
 package correlation
 
 import (
-	"fmt"
-	"sort"
-	"time"
+	"context"
+	"math"
+	"unsafe"
 
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-type pricePath struct {
-	graph   *nmcorrelation.Path
-	reading nmcorrelation.PathReading
-}
-
+/*
+Ticker is the asynchronous price-path correlation instrument. It holds no
+state and no logic of its own: its entire behavior is one nomagique pipeline,
+and Step is only the input and output boundary for the measurement the
+workload's data management hands it.
+*/
 type Ticker struct {
-	Relations Relations
-	paths     map[string]*pricePath
-	pipelines map[string]*pipeline
-	finite    *logic.Finite[float64]
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
 }
 
-func NewTicker() *Ticker {
+func NewTicker(ctx context.Context) *Ticker {
 	return &Ticker{
-		paths:     make(map[string]*pricePath),
-		pipelines: make(map[string]*pipeline),
-		finite:    logic.NewFinite[float64](),
+		System: runtime.NewSystem(ctx, "correlation:ticker"),
+		pipeline: nomagique.NewNumber(
+			nmcorrelation.NewGate(),
+			nmcorrelation.NewFocal(),
+			nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+			nmcorrelation.NewFold(),
+			nmcorrelation.NewHistory(),
+			nmcorrelation.NewRelative(),
+			nmcorrelation.NewCorrelationVelocity(),
+			nmcorrelation.NewEnergyVelocity(),
+		),
 	}
 }
 
-func (ticker *Ticker) Close() error { return nil }
+/*
+Step supplies the arriving measurement to the pipeline and shapes the
+pipeline's reduced facts back into the same measurement.
+*/
+func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	reading := nmcorrelation.Reading{Measurement: m}
 
-func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
-	if event.Last == nil {
-		return &data.Measurement[float64]{Err: fmt.Errorf("correlation: ticker requires a last price")}
+	for range ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&reading)).Next(nil)) {
 	}
-	last := event.Last.Float64()
 
-	if !ticker.finite.Holds(last) || last < 0 {
-		return &data.Measurement[float64]{Err: fmt.Errorf("correlation: finite non-negative last price required")}
+	if err := ticker.pipeline.Error(); err != nil && m.Err == nil {
+		m.Err = err
+
+		return m
 	}
-	m := data.NewMeasurement[float64](event.Symbol+":correlation:"+event.Timestamp.Format(time.RFC3339Nano), event.Symbol, "correlation", event.Timestamp, event.Timestamp)
-	m.Metadata = map[string]float64{data.MetadataSupport: 0}
-	if last == 0 {
+
+	switch reading.State {
+	case nmcorrelation.StateNeedsPrice, nmcorrelation.StateInvalid:
+		return m
+	case nmcorrelation.StateUnobserved:
 		m.Provenance = map[string]string{"last_trade_price_state": "unobserved"}
 		m.Finalize()
+
 		return m
-	}
-	focal := ticker.paths[event.Symbol]
-	if focal == nil {
-		focal = &pricePath{graph: adaptive.NewPath(adaptive.NewWindow())}
-		ticker.paths[event.Symbol] = focal
-	}
-	reading, err := transport.Evaluate(focal.graph, transport.Values(equation.Price{At: event.Timestamp.UnixNano(), Value: last}))
-	if err != nil {
-		m.Err = err
-		return m
-	}
-	if !reading.Accepted {
+	case nmcorrelation.StateRegressed:
 		m.Provenance = map[string]string{"event_time_state": "regressed"}
 		m.Finalize()
+
 		return m
+	case nmcorrelation.StateTraded:
 	}
-	focal.reading = reading
-	putMetric(m, "last_price", last, data.UnitRate, data.TimescaleInstantaneous)
-	putMetric(m, "observation_count", reading.Count, data.UnitCount, data.TimescaleInstantaneous)
-	built := ticker.pipelines[event.Symbol]
-	if built == nil {
-		built = newPipeline()
-		ticker.pipelines[event.Symbol] = built
-	}
-	peers := make([]string, 0, len(ticker.paths))
-	for symbol := range ticker.paths {
-		if symbol != event.Symbol {
-			peers = append(peers, symbol)
-		}
-	}
-	sort.Strings(peers)
-	admitted := []nmcorrelation.Peer{}
-	var selected pairResult
-	selectedSymbol := ""
-	for _, symbol := range peers {
-		peer := ticker.paths[symbol]
-		pair, err := built.pair(reading.Observations, peer.reading.Observations)
-		if err != nil {
-			m.Err = err
-			return m
-		}
-		if err = ticker.Relations.observe(event.Symbol, symbol, pair, event.Timestamp.UnixNano(), peer.reading.To); err != nil {
-			m.Err = err
-			return m
-		}
-		if !pair.dependence.Defined || pair.dependence.Support < 2 {
-			continue
-		}
-		admitted = append(admitted, nmcorrelation.Peer{
-			Correlation: pair.dependence.Correlation,
-			Support:     pair.dependence.Support,
-			PeerEnergy:  pair.dependence.RightEnergyRate,
-		})
-		selected, selectedSymbol = pair, symbol
-	}
-	if len(admitted) == 0 {
+
+	if !reading.Focal.Accepted {
+		m.Provenance = map[string]string{"event_time_state": "regressed"}
 		m.Finalize()
+
 		return m
 	}
-	cohort, err := built.fold(admitted)
-	if err != nil {
-		m.Err = err
-		return m
+
+	m.Metrics["last_price"] = m.Metrics["last_price"].Write(reading.Price.Value)
+	m.Metrics["observation_count"] = m.Metrics["observation_count"].Write(reading.Focal.Count)
+
+	pair, cohort, history := reading.Selected, reading.Cohort, reading.History
+
+	if len(reading.Admitted) > 0 {
+		m.Provenance = map[string]string{
+			"peer":                       reading.SelectedSymbol,
+			"pair_diagnostics_selection": "last_defined_peer_lexicographic",
+		}
+
+		m.Metrics["signed_correlation"] = m.Metrics["signed_correlation"].Write(pair.Dependence.Correlation)
+		m.Metrics["absolute_correlation"] = m.Metrics["absolute_correlation"].Write(math.Abs(pair.Dependence.Correlation))
+		m.Metrics["cohort_signed_correlation"] = m.Metrics["cohort_signed_correlation"].Write(cohort.SignedCorrelation)
+		m.Metrics["cohort_absolute_correlation"] = m.Metrics["cohort_absolute_correlation"].Write(cohort.AbsoluteCorrelation)
+		m.Metrics["covariance"] = m.Metrics["covariance"].Write(pair.Dependence.Covariance)
+		m.Metrics["return_energy:reference"] = m.Metrics["return_energy:reference"].Write(pair.Dependence.RightEnergy)
+		m.Metrics["return_energy:measured"] = m.Metrics["return_energy:measured"].Write(pair.Dependence.LeftEnergy)
+		m.Metrics["return_energy_rate:reference"] = m.Metrics["return_energy_rate:reference"].Write(pair.Dependence.RightEnergyRate)
+		m.Metrics["return_energy_rate:measured"] = m.Metrics["return_energy_rate:measured"].Write(pair.Dependence.LeftEnergyRate)
+		m.Metrics["focal_return_energy_rate"] = m.Metrics["focal_return_energy_rate"].Write(pair.Dependence.LeftEnergyRate)
+		m.Metrics["overlap_density"] = m.Metrics["overlap_density"].Write(pair.Dependence.OverlapDensity)
+		m.Metrics["peer_return_energy_rate"] = m.Metrics["peer_return_energy_rate"].Write(cohort.PeerEnergyRate)
+		m.Metrics["supported_return_count:measured"] = m.Metrics["supported_return_count:measured"].Write(pair.Dependence.LeftReturns)
+		m.Metrics["supported_return_count:reference"] = m.Metrics["supported_return_count:reference"].Write(pair.Dependence.RightReturns)
+		m.Metrics["overlap_pair_count"] = m.Metrics["overlap_pair_count"].Write(pair.Dependence.Support)
+		m.Metrics["effective_sample_count"] = m.Metrics["effective_sample_count"].Write(pair.Dependence.Support)
+		m.Metrics["shared_time"] = m.Metrics["shared_time"].Write(pair.Dependence.SharedTime)
+		m.Metrics["cohort_peer_count"] = m.Metrics["cohort_peer_count"].Write(cohort.Peers)
+		m.Metrics["cohort_effective_peer_count"] = m.Metrics["cohort_effective_peer_count"].Write(cohort.EffectivePeers)
+		m.Metrics["relative_return_energy"] = m.Metrics["relative_return_energy"].Write(reading.Relative)
+		m.Metrics["relative_cohort_return_energy"] = m.Metrics["relative_cohort_return_energy"].Write(reading.Relative)
+		m.Metrics["correlation_baseline"] = m.Metrics["correlation_baseline"].Write(history.Baseline)
+		m.Metrics["correlation_divergence"] = m.Metrics["correlation_divergence"].Write(history.Divergence)
+		m.Metrics["correlation_zscore"] = m.Metrics["correlation_zscore"].Write(history.ZScore)
+		m.Metrics["relative_return_energy_baseline"] = m.Metrics["relative_return_energy_baseline"].Write(reading.RelativeHistory.Baseline)
+		m.Metrics["relative_return_energy_divergence"] = m.Metrics["relative_return_energy_divergence"].Write(reading.RelativeHistory.Residual)
+		m.Metrics["relative_return_energy_zscore"] = m.Metrics["relative_return_energy_zscore"].Write(reading.RelativeHistory.ZScore)
+
+		if pair.Fisher.Defined {
+			m.Metrics["correlation_p_value"] = data.Metric[float64]{
+				Label:     "correlation_p_value",
+				Raw:       pair.Fisher.PValue,
+				Unit:      data.UnitDimensionless,
+				Timescale: data.TimescaleInstantaneous,
+			}
+
+			m.Metrics["correlation_standard_error_fisher"] = data.Metric[float64]{
+				Label:     "correlation_standard_error_fisher",
+				Raw:       pair.Fisher.StandardError,
+				Unit:      data.UnitDimensionless,
+				Timescale: data.TimescaleInstantaneous,
+			}
+		}
+
+		if cohort.FisherDefined {
+			m.Metrics["cohort_correlation_dispersion"] = data.Metric[float64]{
+				Label:     "cohort_correlation_dispersion",
+				Raw:       cohort.Dispersion,
+				Unit:      data.UnitNat,
+				Timescale: data.TimescaleInstantaneous,
+			}
+		}
+
+		if reading.CorrelationVelocity.Defined {
+			m.Metrics["correlation_velocity"] = data.Metric[float64]{
+				Label:     "correlation_velocity",
+				Raw:       reading.CorrelationVelocity.Rate,
+				Unit:      data.UnitPerSecond,
+				Timescale: data.TimescaleInstantaneous,
+			}
+		}
+
+		if reading.EnergyVelocity.Defined {
+			m.Metrics["relative_return_energy_velocity"] = data.Metric[float64]{
+				Label:     "relative_return_energy_velocity",
+				Raw:       reading.EnergyVelocity.Rate,
+				Unit:      data.UnitPerSecond,
+				Timescale: data.TimescaleInstantaneous,
+			}
+		}
+
+		if history.Defined {
+			m.Metadata[data.MetadataDivergence] = history.Divergence
+			m.Metadata[data.MetadataSupport] = history.Count
+
+			if history.VarianceDefined {
+				m.Metadata[data.MetadataNoiseVariance] = history.Variance
+			}
+		}
 	}
-	progress, err := built.advance(selected, cohort, event.Timestamp.UnixNano())
-	if err != nil {
-		m.Err = err
-		return m
-	}
-	built.projection.Identity = func() (string, string, time.Time, time.Time) {
-		return m.ID, event.Symbol, event.Timestamp, time.Unix(0, reading.From)
-	}
-	result := built.projection.Project(progress)
-	putMetric(result, "last_price", last, data.UnitRate, data.TimescaleInstantaneous)
-	putMetric(result, "observation_count", reading.Count, data.UnitCount, data.TimescaleInstantaneous)
-	result.Provenance = map[string]string{"peer": selectedSymbol, "pair_diagnostics_selection": "last_defined_peer_lexicographic"}
-	return result
+
+	m.Finalize()
+
+	return m
 }
 
-func putMetric(m *data.Measurement[float64], label string, raw float64, unit data.Unit, scale data.Timescale) {
-	m.PutMetric(data.Metric[float64]{Label: label, Raw: raw, Unit: unit, Timescale: scale})
+func (ticker *Ticker) Identify() int      { return ticker.ID }
+func (ticker *Ticker) SetIdentity(ID int) { ticker.ID = ID }
+
+/*
+Register returns the pre-allocated measurement every correlation tick flows
+through: every metric the instrument can produce is declared, none valued.
+*/
+func (ticker *Ticker) Register() *data.Measurement[float64] {
+	return data.NewMeasurement("correlation", map[string]data.Metric[float64]{
+		"last_price": data.NewMetric[float64](
+			"last_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"observation_count": data.NewMetric[float64](
+			"observation_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"signed_correlation": data.NewMetric[float64](
+			"signed_correlation", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"absolute_correlation": data.NewMetric[float64](
+			"absolute_correlation", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cohort_signed_correlation": data.NewMetric[float64](
+			"cohort_signed_correlation", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cohort_absolute_correlation": data.NewMetric[float64](
+			"cohort_absolute_correlation", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"covariance": data.NewMetric[float64](
+			"covariance", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"return_energy:reference": data.NewMetric[float64](
+			"return_energy:reference", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"return_energy:measured": data.NewMetric[float64](
+			"return_energy:measured", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"return_energy_rate:reference": data.NewMetric[float64](
+			"return_energy_rate:reference", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"return_energy_rate:measured": data.NewMetric[float64](
+			"return_energy_rate:measured", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"focal_return_energy_rate": data.NewMetric[float64](
+			"focal_return_energy_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"overlap_density": data.NewMetric[float64](
+			"overlap_density", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"peer_return_energy_rate": data.NewMetric[float64](
+			"peer_return_energy_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"supported_return_count:measured": data.NewMetric[float64](
+			"supported_return_count:measured", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"supported_return_count:reference": data.NewMetric[float64](
+			"supported_return_count:reference", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"overlap_pair_count": data.NewMetric[float64](
+			"overlap_pair_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"effective_sample_count": data.NewMetric[float64](
+			"effective_sample_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"shared_time": data.NewMetric[float64](
+			"shared_time", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"correlation_p_value": data.NewMetric[float64](
+			"correlation_p_value", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"correlation_standard_error_fisher": data.NewMetric[float64](
+			"correlation_standard_error_fisher", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cohort_peer_count": data.NewMetric[float64](
+			"cohort_peer_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cohort_effective_peer_count": data.NewMetric[float64](
+			"cohort_effective_peer_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cohort_correlation_dispersion": data.NewMetric[float64](
+			"cohort_correlation_dispersion", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_return_energy": data.NewMetric[float64](
+			"relative_return_energy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_cohort_return_energy": data.NewMetric[float64](
+			"relative_cohort_return_energy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"correlation_baseline": data.NewMetric[float64](
+			"correlation_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"correlation_divergence": data.NewMetric[float64](
+			"correlation_divergence", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"correlation_zscore": data.NewMetric[float64](
+			"correlation_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"correlation_velocity": data.NewMetric[float64](
+			"correlation_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_return_energy_baseline": data.NewMetric[float64](
+			"relative_return_energy_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_return_energy_divergence": data.NewMetric[float64](
+			"relative_return_energy_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_return_energy_zscore": data.NewMetric[float64](
+			"relative_return_energy_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_return_energy_velocity": data.NewMetric[float64](
+			"relative_return_energy_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+	})
 }

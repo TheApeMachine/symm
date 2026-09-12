@@ -1,8 +1,10 @@
 package equation
 
 import (
+	"errors"
 	"fmt"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
@@ -40,29 +42,52 @@ func SamplingVariance(depth, contextLength, support, variance float64) (float64,
 SamplingVarianceOp binds that equation to the Primitive contract.
 */
 type SamplingVarianceOp struct {
-	core.Base[SamplingVarianceInput, float64]
+	err error
+	out float64
 }
 
-func NewSamplingVariance() *SamplingVarianceOp {
+/*
+NewSamplingVariance creates the specificity-debt equation Primitive.
+*/
+func NewSamplingVariance() core.Primitive {
 	return &SamplingVarianceOp{}
 }
 
+/*
+Next receives *SamplingVarianceInput payloads and yields a *float64 sampling
+variance for each.
+*/
 func (op *SamplingVarianceOp) Next(
-	in iter.Seq[core.Primitive[SamplingVarianceInput, SamplingVarianceInput]],
-) iter.Seq[core.Primitive[float64, float64]] {
-	return func(yield func(core.Primitive[float64, float64]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := arriving.Read()
+			input := (*SamplingVarianceInput)(arriving)
 			value, err := SamplingVariance(input.Depth, input.ContextLength, input.Support, input.Variance)
 
 			if err != nil {
 				op.Error(err)
-				continue
+				return
 			}
 
-			if !yield(op.Carrier(value)) {
+			op.out = value
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *SamplingVarianceOp) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

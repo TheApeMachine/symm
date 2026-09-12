@@ -1,31 +1,40 @@
 package transport
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Pass hands each arrival over unchanged. It is the identity stage: Fan, Pipe,
-and tests compose against a Primitive, not against a missing stage.
+Pass hands each arrival over unchanged. It is the identity stage.
 */
-type Pass[T any] struct {
-	core.Base[T, T]
+type Pass struct {
+	err error
 }
 
-func NewPass[T any]() *Pass[T] {
-	return &Pass[T]{}
+func NewPass() core.Primitive {
+	return &Pass{}
 }
 
-func (op *Pass[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
+func (op *Pass) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(arriving.Read())) {
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Pass) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

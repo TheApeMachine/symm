@@ -14,7 +14,7 @@ func TestProjectionNext(t *testing.T) {
 		at := time.Unix(1700000000, 0).UTC()
 		projection := &data.Projection{
 			Source:   "test",
-			Identity: func() (string, string, time.Time, time.Time) { return "id", "BTC/USD", at, at },
+			Identity: func() (string, time.Time, time.Time) { return "BTC/USD", at, at },
 			Metrics: []data.MetricProjection{
 				{Path: []string{"alpha"}, Label: "alpha", Unit: data.UnitRate},
 				{Path: []string{"beta"}, Label: "beta", Defined: []string{"beta_defined"}},
@@ -27,13 +27,20 @@ func TestProjectionNext(t *testing.T) {
 		}
 
 		for _, value := range []float64{2.5, 0, -1} {
-			measurement, err := transport.Evaluate(projection, transport.Values(data.ProjectionInput{
+			measurementEval := transport.NewEvaluate(projection)
+			var measurement *data.Measurement[float64]
+
+			for out := range measurementEval.Next(transport.NewValues(data.ProjectionInput{
 				Values: map[string]float64{"alpha": value, "support": 4, "residual": 2, "variance": 1},
 				Flags:  map[string]bool{"beta_defined": false},
-			}))
+			}).Next(nil)) {
+				measurement = *(**data.Measurement[float64])(out)
+			}
+
+			err := measurementEval.Error()
 			So(err, ShouldBeNil)
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.ID, ShouldEqual, "id")
+			So(measurement.ID, ShouldEqual, -1)
 			So(measurement.Metrics["alpha"].Raw, ShouldEqual, value)
 			So(measurement.Maturity, ShouldEqual, 0.75)
 			So(measurement.SNR, ShouldEqual, 4)

@@ -3,15 +3,13 @@ package correlation
 import (
 	"iter"
 	"math"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 FisherSample is a correlation, its support, and an optional search multiplicity.
-A finite-sample overlap count is not thereby made an independent sample size.
 */
 type FisherSample struct {
 	Correlation float64
@@ -21,8 +19,7 @@ type FisherSample struct {
 
 /*
 FisherReading is the Fisher-z normal approximation. Undefined inputs yield
-Defined=false and NaN, never a stale p-value. At ±1 the extended-real limit
-yields p=0, not p=1.
+Defined=false and NaN.
 */
 type FisherReading struct {
 	Defined              bool
@@ -37,78 +34,65 @@ type FisherReading struct {
 Fisher owns that approximation.
 */
 type Fisher struct {
-	core.Base[FisherSample, FisherReading]
-	fisher     *equation.Fisher
-	bonferroni *equation.Bonferroni[float64]
+	err error
+	out FisherReading
 }
 
-func NewFisher() *Fisher {
-	return &Fisher{
-		fisher:     equation.NewFisher(),
-		bonferroni: equation.NewBonferroni[float64](),
-	}
+func NewFisher() core.Primitive {
+	return &Fisher{}
 }
 
 func (op *Fisher) Next(
-	in iter.Seq[core.Primitive[FisherSample, FisherSample]],
-) iter.Seq[core.Primitive[FisherReading, FisherReading]] {
-	return func(yield func(core.Primitive[FisherReading, FisherReading]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			reading, err := op.Evaluate(arriving.Read())
-
-			if err != nil {
-				op.Error(err)
-				return
+			sample := (*FisherSample)(arriving)
+			reading := FisherReading{
+				PValue:               math.NaN(),
+				Z:                    math.NaN(),
+				StandardError:        math.NaN(),
+				SearchAdjustedPValue: math.NaN(),
+				HasSearch:            sample.SearchCount >= 1,
 			}
 
-			if !yield(op.Carrier(reading)) {
+			if sample.Support > 3 && math.Abs(sample.Correlation) <= 1 {
+				degrees := math.Sqrt(sample.Support - 3)
+				z := math.Atanh(sample.Correlation) * degrees
+				p := math.Erfc(math.Abs(z) / math.Sqrt2)
+
+				reading.Defined = true
+				reading.PValue = p
+				reading.Z = z
+				reading.StandardError = 1.0 / degrees
+
+				if reading.HasSearch {
+					adj := p * sample.SearchCount
+
+					if adj > 1.0 {
+						adj = 1.0
+					}
+
+					reading.SearchAdjustedPValue = adj
+				}
+			}
+
+			op.out = reading
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (op *Fisher) Evaluate(sample FisherSample) (FisherReading, error) {
-	reading := FisherReading{
-		PValue:               math.NaN(),
-		Z:                    math.NaN(),
-		StandardError:        math.NaN(),
-		SearchAdjustedPValue: math.NaN(),
-		HasSearch:            sample.SearchCount >= 1,
+func (op *Fisher) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
 	}
 
-	if !(sample.Support > 3 && math.Abs(sample.Correlation) <= 1) {
-		return reading, nil
-	}
-
-	p, err := transport.Evaluate(op.fisher, transport.Values(equation.FisherInput{
-		Correlation: sample.Correlation,
-		Support:     sample.Support,
-	}))
-
-	if err != nil {
-		return FisherReading{}, err
-	}
-
-	degrees := math.Sqrt(sample.Support - 3)
-	reading.Defined = true
-	reading.PValue = p
-	reading.Z = math.Atanh(sample.Correlation) * degrees
-	reading.StandardError = 1 / degrees
-
-	if !reading.HasSearch {
-		return reading, nil
-	}
-
-	adjusted, err := transport.Evaluate(op.bonferroni, transport.Values(equation.BonferroniInput[float64]{
-		P:          p,
-		Candidates: sample.SearchCount,
-	}))
-
-	if err != nil {
-		return FisherReading{}, err
-	}
-
-	reading.SearchAdjustedPValue = adjusted
-	return reading, nil
+	return op.err
 }

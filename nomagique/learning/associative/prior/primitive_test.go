@@ -6,17 +6,45 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
+/*
+canonicalSummary drives the canonical prior Primitive with one observation and
+returns the summary it yields, as the reference for the composed wrapper.
+*/
+func canonicalSummary(
+	t *testing.T,
+	node core.Primitive,
+	request statistic.PriorObservation,
+) statistic.PriorSummary {
+	t.Helper()
+
+	summaryEval := transport.NewEvaluate(node)
+	var summary statistic.PriorSummary
+
+	for out := range summaryEval.Next(transport.NewValues(request).Next(nil)) {
+		summary = *(*statistic.PriorSummary)(out)
+	}
+
+	err := summaryEval.Error()
+
+	if err != nil {
+		t.Fatalf("canonical prior evaluation: %v", err)
+	}
+
+	return summary
+}
+
 func TestPrimitiveNext(t *testing.T) {
-	Convey("Updates and read-only aging match the canonical prior recurrence", t, func() {
+	Convey("Updates and read-only aging match the canonical prior Primitive", t, func() {
 		for _, memory := range []float64{0, 10} {
 			Convey(fmt.Sprintf("memory %g", memory), func() {
 				node := prior.New(memory)
-				reference := equation.PriorMoments{}
+				reference := statistic.NewPriorMoments()
 				random := rand.New(rand.NewSource(83))
 
 				for index := 0; index < 400; index++ {
@@ -28,20 +56,25 @@ func TestPrimitiveNext(t *testing.T) {
 					}
 
 					observation := prior.Observation{Value: value, Authority: authority, HasValue: true}
+					request := statistic.PriorObservation{Value: value, Authority: authority, Memory: memory}
 
 					if index < 200 {
 						observation.Epoch = uint64(index + 1)
 						observation.HasEpoch = true
-						So(reference.Observe(value, authority, memory, observation.Epoch), ShouldBeNil)
+						request.Epoch = observation.Epoch
+						request.HasEpoch = true
 					}
 
-					if index >= 200 {
-						So(reference.Observe(value, authority, memory), ShouldBeNil)
+					gotEval := transport.NewEvaluate(node)
+					var got prior.Reading
+
+					for out := range gotEval.Next(transport.NewValues(observation).Next(nil)) {
+						got = *(*prior.Reading)(out)
 					}
 
-					got, err := transport.Evaluate(node, transport.Values(observation))
+					err := gotEval.Error()
 					So(err, ShouldBeNil)
-					want := reference.Summary(memory)
+					want := canonicalSummary(t, reference, request)
 					So(got.Mean, ShouldEqual, want.Mean)
 					So(got.Variance, ShouldEqual, want.Variance)
 					So(got.Support, ShouldEqual, want.Support)
@@ -55,21 +88,38 @@ func TestPrimitiveNext(t *testing.T) {
 				}
 
 				for _, epoch := range []uint64{200, 300, 1000000, 1000000} {
-					reference.Age(epoch, memory)
-					got, err := transport.Evaluate(node, transport.Values(prior.Observation{Epoch: epoch, HasEpoch: true}))
+					gotEval := transport.NewEvaluate(node)
+					var got prior.Reading
+
+					for out := range gotEval.Next(transport.NewValues(prior.Observation{Epoch: epoch, HasEpoch: true}).Next(nil)) {
+						got = *(*prior.Reading)(out)
+					}
+
+					err := gotEval.Error()
 					So(err, ShouldBeNil)
-					want := reference.Summary(memory)
+					want := canonicalSummary(t, reference, statistic.PriorObservation{
+						Memory: memory, Epoch: epoch, HasEpoch: true, AgeOnly: true,
+					})
 					So(got.Mean, ShouldEqual, want.Mean)
 					So(got.Support, ShouldEqual, want.Support)
 					So(got.Samples, ShouldEqual, want.Samples)
 				}
 
-				So(reference.Observe(7, 0.5, memory, 1000001), ShouldBeNil)
-				got, err := transport.Evaluate(node, transport.Values(prior.Observation{
+				final := statistic.PriorObservation{
+					Value: 7, Authority: 0.5, Memory: memory, Epoch: 1000001, HasEpoch: true,
+				}
+				gotEval := transport.NewEvaluate(node)
+				var got prior.Reading
+
+				for out := range gotEval.Next(transport.NewValues(prior.Observation{
 					Value: 7, Authority: 0.5, HasValue: true, Epoch: 1000001, HasEpoch: true,
-				}))
+				}).Next(nil)) {
+					got = *(*prior.Reading)(out)
+				}
+
+				err := gotEval.Error()
 				So(err, ShouldBeNil)
-				So(got.Mean, ShouldEqual, reference.Summary(memory).Mean)
+				So(got.Mean, ShouldEqual, canonicalSummary(t, reference, final).Mean)
 			})
 		}
 	})

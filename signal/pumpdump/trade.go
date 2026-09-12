@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -17,9 +18,9 @@ import (
 type tradeState struct {
 	quantityTarget      *QuantityTarget
 	rateReading         adaptive.BaselineReading
-	rateResidual        *adaptive.Baseline
-	returnResidual      *adaptive.Baseline
-	returnRateResidual  *adaptive.Baseline
+	rateResidual        core.Primitive
+	returnResidual      core.Primitive
+	returnRateResidual  core.Primitive
 	accumulatedQty      float64
 	accumulatedNotional float64
 	barTradeCount       float64
@@ -83,7 +84,14 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 		return nil
 	}
 	notional := price * qty
-	targetQty, err := transport.Evaluate(state.quantityTarget, transport.Values(qty))
+	targetQtyEval := transport.NewEvaluate(state.quantityTarget)
+	var targetQty float64
+
+	for out := range targetQtyEval.Next(transport.NewValues(qty).Next(nil)) {
+		targetQty = *(*float64)(out)
+	}
+
+	err := targetQtyEval.Error()
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}
@@ -112,7 +120,8 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 
 	duration := tick.Timestamp.Sub(state.barStart).Seconds()
 	id := fmt.Sprintf("pumpdump:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64](id, tick.Symbol, "pumpdump", tick.Timestamp, tick.Timestamp)
+	measurement := data.NewMeasurement[float64]("pumpdump", nil)
+	measurement.Label, measurement.At, measurement.From = tick.Symbol, tick.Timestamp, tick.Timestamp
 	measurement.Metadata = make(map[string]float64)
 
 	putPumpDumpMetric(measurement, "trade_price", price, data.UnitRate)
@@ -164,7 +173,13 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 		putPumpDumpMetric(measurement, "notional_rate", notionalRate, data.UnitPerSecond)
 		putPumpDumpMetric(measurement, "trade_rate", tradeRate, data.UnitPerSecond)
 
-		state.rateReading, err = transport.Evaluate(state.rateResidual, transport.Values(notionalRate))
+		rateEval := transport.NewEvaluate(state.rateResidual)
+
+		for out := range rateEval.Next(transport.NewValues(notionalRate).Next(nil)) {
+			state.rateReading = *(*adaptive.BaselineReading)(out)
+		}
+
+		err = rateEval.Error()
 		if err != nil {
 			measurement.Err = err
 			return measurement
@@ -208,12 +223,26 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 				// OrganicTrend and FadedExhaustion read these two standardized
 				// forms: a bar's move, and that move per second, each against
 				// the run of bars this symbol has already produced.
-				returns, err := transport.Evaluate(state.returnResidual, transport.Values(logReturn))
+				returnsEval := transport.NewEvaluate(state.returnResidual)
+				var returns adaptive.BaselineReading
+
+				for out := range returnsEval.Next(transport.NewValues(logReturn).Next(nil)) {
+					returns = *(*adaptive.BaselineReading)(out)
+				}
+
+				err = returnsEval.Error()
 				if err != nil {
 					measurement.Err = err
 					return measurement
 				}
-				returnRates, err := transport.Evaluate(state.returnRateResidual, transport.Values(returnRate))
+				returnRatesEval := transport.NewEvaluate(state.returnRateResidual)
+				var returnRates adaptive.BaselineReading
+
+				for out := range returnRatesEval.Next(transport.NewValues(returnRate).Next(nil)) {
+					returnRates = *(*adaptive.BaselineReading)(out)
+				}
+
+				err = returnRatesEval.Error()
 				if err != nil {
 					measurement.Err = err
 					return measurement

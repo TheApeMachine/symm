@@ -3,12 +3,9 @@ package correlation
 import (
 	"iter"
 	"math"
+	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -21,8 +18,7 @@ type Peer struct {
 }
 
 /*
-CohortSummary is one delivery's admitted-peer reductions. A new run is a new
-cohort; no Reset method or replay convention exists.
+CohortSummary is one delivery's admitted-peer reductions.
 */
 type CohortSummary struct {
 	PeersSeen           float64
@@ -39,48 +35,32 @@ type CohortSummary struct {
 }
 
 /*
-Cohort summarizes one peer run. Support below two is excluded, with counts
-exposed. The caller supplies the dispersion transform, applied once per
-admitted peer.
+Cohort summarizes one peer run. Support below two is excluded.
 */
 type Cohort struct {
-	core.Base[Peer, CohortSummary]
-	transform *calculus.Atanh[float64]
-	finite    *logic.Finite[float64]
+	err error
+	out CohortSummary
 }
 
-func NewCohort(transform *calculus.Atanh[float64]) *Cohort {
-	return &Cohort{transform: transform, finite: logic.NewFinite[float64]()}
+func NewCohort() core.Primitive {
+	return &Cohort{}
 }
 
 func (op *Cohort) Next(
-	in iter.Seq[core.Primitive[Peer, Peer]],
-) iter.Seq[core.Primitive[CohortSummary, CohortSummary]] {
-	return func(yield func(core.Primitive[CohortSummary, CohortSummary]) bool) {
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		var admitted []Peer
 		seen := 0.0
 
 		for arriving := range in {
 			seen++
-			peer := arriving.Read()
-			finite, err := transport.Evaluate(op.finite, transport.Values(peer.Correlation))
+			peer := *(*Peer)(arriving)
 
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			if finite {
-				support, err := transport.Evaluate(op.finite, transport.Values(peer.Support))
-
-				if err != nil {
-					op.Error(err)
-					return
-				}
-
-				if support && peer.Support >= 2 {
-					admitted = append(admitted, peer)
-				}
+			if !math.IsNaN(peer.Correlation) && !math.IsInf(peer.Correlation, 0) &&
+				!math.IsNaN(peer.Support) && !math.IsInf(peer.Support, 0) &&
+				peer.Support >= 2 {
+				admitted = append(admitted, peer)
 			}
 		}
 
@@ -96,80 +76,69 @@ func (op *Cohort) Next(
 		}
 
 		if len(admitted) == 0 {
-			if !yield(op.Carrier(summary)) {
+			op.out = summary
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 
 			return
 		}
 
-		weights := make([]float64, len(admitted))
-		signed := make([]equation.Weighted[float64], len(admitted))
-		absolute := make([]equation.Weighted[float64], len(admitted))
-		energy := make([]equation.Weighted[float64], len(admitted))
-		transformed := make([]equation.Weighted[float64], len(admitted))
+		totalWeight := 0.0
+		sumWeightSq := 0.0
+		sumSigned := 0.0
+		sumAbsolute := 0.0
+		sumEnergy := 0.0
+		sumZ := 0.0
+		sumZ2 := 0.0
 
-		for index, peer := range admitted {
-			z, err := transport.Evaluate(op.transform, transport.Values(peer.Correlation))
-
-			if err != nil {
-				op.Error(err)
-				return
-			}
-
-			weights[index] = peer.Support
-			signed[index] = equation.Weighted[float64]{Weight: peer.Support, Value: peer.Correlation}
-			absolute[index] = equation.Weighted[float64]{Weight: peer.Support, Value: math.Abs(peer.Correlation)}
-			energy[index] = equation.Weighted[float64]{Weight: peer.Support, Value: peer.PeerEnergy}
-			transformed[index] = equation.Weighted[float64]{Weight: peer.Support, Value: z}
+		for _, p := range admitted {
+			w := p.Support
+			totalWeight += w
+			sumWeightSq += w * w
+			sumSigned += w * p.Correlation
+			sumAbsolute += w * math.Abs(p.Correlation)
+			sumEnergy += w * p.PeerEnergy
+			z := math.Atanh(p.Correlation)
+			sumZ += w * z
+			sumZ2 += w * z * z
 		}
 
-		kish := last(equation.NewKish[float64]().Next(transport.Values(weights...)))
-		signedMean := last(equation.NewWeightedMean[float64]().Next(transport.Values(signed...)))
-		absoluteMean := last(equation.NewWeightedMean[float64]().Next(transport.Values(absolute...)))
-		energyMean := last(equation.NewWeightedMean[float64]().Next(transport.Values(energy...)))
-		variance := last(equation.NewWeightedVariance[float64]().Next(transport.Values(transformed...)))
-		dispersion, err := transport.Evaluate(calculus.NewSqrt[float64](), transport.Values(variance))
+		signedMean := sumSigned / totalWeight
+		absoluteMean := sumAbsolute / totalWeight
+		energyMean := sumEnergy / totalWeight
+		kish := (totalWeight * totalWeight) / sumWeightSq
 
-		if err != nil {
-			op.Error(err)
-			return
-		}
+		zMean := sumZ / totalWeight
+		weightedVariance := (sumZ2 / totalWeight) - (zMean * zMean)
+		dispersion := math.Sqrt(weightedVariance)
+		fisherDefined := !math.IsNaN(dispersion) && !math.IsInf(dispersion, 0)
 
-		total := 0.0
-
-		for _, weight := range weights {
-			total += weight
-		}
-
-		finite, err := transport.Evaluate(op.finite, transport.Values(dispersion))
-
-		if err != nil {
-			op.Error(err)
-			return
-		}
-
-		summary.TotalSupport = total
+		summary.TotalSupport = totalWeight
 		summary.EffectivePeers = kish
 		summary.SignedCorrelation = signedMean
 		summary.AbsoluteCorrelation = absoluteMean
 		summary.PeerEnergyRate = energyMean
 		summary.Dispersion = dispersion
-		summary.Defined = total > 0
-		summary.FisherDefined = finite
+		summary.Defined = totalWeight > 0
+		summary.FisherDefined = fisherDefined
 
-		if !yield(op.Carrier(summary)) {
+		op.out = summary
+
+		if !yield(unsafe.Pointer(&op.out)) {
 			return
 		}
 	}
 }
 
-func last[U any](seq iter.Seq[core.Primitive[U, U]]) U {
-	var value U
-
-	for arriving := range seq {
-		value = arriving.Read()
+func (op *Cohort) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
 	}
 
-	return value
+	return op.err
 }

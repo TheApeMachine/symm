@@ -1,31 +1,44 @@
 package logic
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
-Not owns one Boolean operation. What it hands over is the negation of each
-arrival.
+Not inverts each arrival.
 */
 type Not struct {
-	core.Base[bool, bool]
+	err error
+	out bool
 }
 
-func NewNot() *Not {
+func NewNot() core.Primitive {
 	return &Not{}
 }
 
-func (op *Not) Next(
-	in iter.Seq[core.Primitive[bool, bool]],
-) iter.Seq[core.Primitive[bool, bool]] {
-	return func(yield func(core.Primitive[bool, bool]) bool) {
+func (op *Not) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if !yield(op.Carrier(!arriving.Read())) {
+			in := (*bool)(arriving)
+			op.out = !*in
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Not) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

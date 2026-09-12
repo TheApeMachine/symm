@@ -1,23 +1,27 @@
-package store
+package store_test
 
 import (
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestRetainedNext(t *testing.T) {
-	Convey("Retained holds the latest arrival and remains readable after the run", t, func() {
-		memory := NewRetained(10.0)
-		subtraction := arithmetic.NewSubtract[float64](memory.Read())
+	Convey("Retained holds the latest arrival and yields it on Next", t, func() {
+		memory := store.NewRetained(10.0)
+		val := 20.0
+		in := func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(&val))
+		}
+		out := tests.CollectSeq[float64](memory.Next(in))
+		So(len(out), ShouldEqual, 1)
+		So(out[0], ShouldEqual, 20.0)
 
-		out := tests.CollectSeq(subtraction.Next(transport.Values(3.0)))
-		So(out[0], ShouldEqual, 7)
-
-		tests.CollectSeq(memory.Next(transport.Values(20.0)))
-		So(memory.Read(), ShouldEqual, 20)
+		outHeld := tests.CollectSeq[float64](memory.Next(nil))
+		So(len(outHeld), ShouldEqual, 1)
+		So(outHeld[0], ShouldEqual, 20.0)
 	})
 }

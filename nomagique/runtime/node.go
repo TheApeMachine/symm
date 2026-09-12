@@ -1,97 +1,72 @@
 package runtime
 
 import (
-	"sync/atomic"
-
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/store"
 )
 
 type Node[T any] interface {
 	Step(T) T
-}
-
-/* ErrorNode exposes a terminal node failure to the runtime boundary. */
-type ErrorNode interface {
-	Error() error
+	Register() T
 }
 
 /*
-BacklogStepper is a Node that also wants to know how many slots behind the
-Workload's producer this call is running — real ring pressure, read from the
-same sequence numbers the ring itself uses for backpressure, never
-estimated. A node opts in by implementing StepBacklog in addition to Step;
-Consumer favors StepBacklog when present and falls back to Step otherwise, so
-every existing Node implementation is unaffected.
+Consumer binds one Node to the Workload's register. At construction the node
+identifies itself: Register() supplies the initial value, an identify query
+appends it and answers the slot, and the node is told its identity so the
+values it produces name their own register slot.
 */
-type BacklogStepper[T any] interface {
-	Node[T]
-	StepBacklog(value T, backlog int64) T
-}
-
-/*
-Composed is a Node that wants to know where in the runtime composition it
-sits: which Workload ring owns it, and which handler group (stage) within
-that ring it belongs to. A node opts in by implementing Compose; Workload
-calls it once per node while building its stages, before the ring is started,
-so an implementation may store the values as plain fields.
-
-This exists because a stage's structure is not recoverable downstream. Nodes
-in one handler group run concurrently against the same value, so any trace
-they produce orders them by goroutine completion — a consumer reading that
-trace cannot tell a genuine hop from two siblings racing. Composed hands over
-the structure the ring already knows rather than making anyone guess at it.
-*/
-type Composed interface {
-	Compose(group string, stage int)
-}
-
 type Consumer[T any] struct {
-	node        Node[T]
-	backlogNode BacklogStepper[T]
-	errorNode   ErrorNode
-	buffer      []T
-	headSeq     *atomic.Int64
+	node     Node[T]
+	register *store.Register[T]
+	ID       int
 }
 
-func NewConsumer[T any](node Node[T], buffer []T, headSeq *atomic.Int64) *Consumer[T] {
-	consumer := &Consumer[T]{node: node, buffer: buffer, headSeq: headSeq}
-	consumer.backlogNode, _ = node.(BacklogStepper[T])
-	consumer.errorNode, _ = node.(ErrorNode)
+func NewConsumer[T any](
+	node Node[T], register *store.Register[T],
+) *Consumer[T] {
+	consumer := &Consumer[T]{
+		node:     node,
+		register: register,
+	}
+
+	data.Read[*store.Query[T]](consumer.register.Next(data.NewValue(*store.NewQuery(
+		consumer, data.ActionIdentify, consumer.node.Register(),
+	))))
 
 	return consumer
 }
 
 /*
-Handle steps one node over every slot in [lower, upper]. It never writes the
-Step return value back into the ring: every Handler in a HandlerGroup runs
-concurrently against the same buffer, so two Handlers reassigning the same
-slot pointer would race even though each only mutates its own field on the
-shared envelope. Step still returns T so a Node can be used standalone
-outside a group; Handle intentionally discards that return here.
+Identify names the register slot this consumer's node owns, so the consumer
+is the subject of every query against its slot.
 */
-func (consumer *Consumer[T]) Handle(lower, upper int64) {
-	if consumer.backlogNode != nil {
-		for seq := lower; seq <= upper; seq++ {
-			backlog := consumer.headSeq.Load() - seq
-			consumer.backlogNode.StepBacklog(consumer.buffer[seq&system.Cfg.Runtime.Workspace.Mask], backlog)
-			consumer.haltOnError()
-		}
-
-		return
-	}
-
-	for seq := lower; seq <= upper; seq++ {
-		consumer.node.Step(consumer.buffer[seq&system.Cfg.Runtime.Workspace.Mask])
-		consumer.haltOnError()
-	}
+func (consumer *Consumer[T]) Identity() int {
+	return consumer.ID
 }
 
-func (consumer *Consumer[T]) haltOnError() {
-	if consumer.errorNode == nil {
-		return
-	}
+/*
+Identify names the register slot this consumer's node owns, so the consumer
+is the subject of every query against its slot.
+*/
+func (consumer *Consumer[T]) Identify(id int) data.Identifiable[T] {
+	consumer.ID = id
+	return consumer
+}
 
-	if err := consumer.errorNode.Error(); err != nil {
-		panic(err)
+/*
+Handle steps one node over every slot in [lower, upper]. Each invocation
+reads the node's registered data back out of the register, passes it to Step,
+and puts what Step returns back into the register under the node's slot.
+*/
+func (consumer *Consumer[T]) Handle(lower, upper int64) {
+	for seq := lower; seq <= upper; seq++ {
+		query := store.NewQuery(consumer, data.ActionRead)
+
+		data.Read[T](consumer.register.Next(data.NewValue(*store.NewQuery(
+			consumer, data.ActionWrite, consumer.node.Step(
+				data.Read[T](consumer.register.Next(data.NewValue(*query))),
+			),
+		))))
 	}
 }

@@ -1,58 +1,74 @@
 package store
 
 import (
+	"errors"
 	"iter"
+	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Query holds the latest arrival of a question. Selector-then-data ordering is
-the caller's composition, not a second protocol inside Query.
+Query is the interrogation protocol every store answers. It carries a subject
+(what is addressed, via Identify), an intent (what should happen, via
+Action), and the value a write puts in place. The store answers into the same
+query: a read fills Value, a write into an unstamped subject reports the ID
+it was assigned.
 */
-type QueryOp[T any] struct {
-	core.Base[T, T]
-}
-
-func NewQuery[T any](current T) *QueryOp[T] {
-	op := &QueryOp[T]{}
-	op.Carrier(current)
-	return op
-}
-
-/*
-Query is a query with nothing in it yet: it takes what the run hands it.
-
-A composition names its stages before it has values for them, so a retriever
-placed mid-pipeline holds whatever reached it rather than something declared at
-construction. Named as the type itself because that is what a stage in a
-composition reads as: the stage is a Query, not a call that makes one.
-*/
-func Query[T any]() *QueryOp[T] {
-	return &QueryOp[T]{}
+type Query[T any] struct {
+	data.Identifiable[T]
+	data.Actionable
+	err     error
+	subject data.Identifiable[T]
+	payload []T
 }
 
 /*
-Next passes a run through, and produces one when there is none.
-
-Query is where a composed pipeline starts: at the head there is nothing
-upstream to range over, so it hands on what it holds. Anywhere else it is a
-retained value the run flows through, taking the latest arrival as its own.
+NewQuery instantiates one interrogation; the subject's identity seeds the
+query, so an unstamped subject asks for an append and a stamped one addresses
+its slot.
 */
-func (op *QueryOp[T]) Next(
-	in iter.Seq[core.Primitive[T, T]],
-) iter.Seq[core.Primitive[T, T]] {
-	return func(yield func(core.Primitive[T, T]) bool) {
-		if in == nil {
-			yield(op.Carrier(op.Read()))
+func NewQuery[T any](
+	subject data.Identifiable[T], action data.Actionable, payload ...T,
+) *Query[T] {
+	return &Query[T]{
+		Identifiable: subject,
+		Actionable:   action,
+		subject:      subject,
+		payload:      payload,
+	}
+}
 
+/*
+Next ignores the inbound run and yields the query itself, so a query rides a
+pipeline like any other payload.
+*/
+func (op *Query[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if !yield(unsafe.Pointer(op)) {
 			return
 		}
+	}
+}
 
-		for arriving := range in {
-			if !yield(op.Carrier(arriving.Read())) {
-				return
-			}
+func (op *Query[T]) Identity() int {
+	return op.subject.Identity()
+}
+
+func (op *Query[T]) Identify(id int) data.Identifiable[T] {
+	return op.subject.Identify(id)
+}
+
+func (op *Query[T]) First() T {
+	return op.payload[0]
+}
+
+func (op *Query[T]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
+
+	return op.err
 }
