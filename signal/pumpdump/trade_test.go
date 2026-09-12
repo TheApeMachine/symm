@@ -190,8 +190,9 @@ func (source *tradeBook) Mark(midpoint float64) {
 	source.current.Update(&book.UpdateOptions{Direction: book.Bid, Price: decimal.NewFromFloat64(midpoint - 1), Quantity: decimal.NewFromInt64(10)})
 	source.current.Update(&book.UpdateOptions{Direction: book.Ask, Price: decimal.NewFromFloat64(midpoint + 1), Quantity: decimal.NewFromInt64(10)})
 }
+
 func tradeFixture(t testing.TB) (*Trade, *tradeBook) {
 	t.Helper()
 	source := &tradeBook{Conn: venue.NewConn()}
-	return NewTrade(websocket.NewAPI(t.Context(), source, source)), source
+	return NewTrade(websocket.NewAPI(t.Context(), source, source, &websocket.FuturesLive{})), source
 }

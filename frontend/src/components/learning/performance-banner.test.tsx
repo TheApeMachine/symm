@@ -23,7 +23,7 @@ describe("LearningPerformanceBanner", () => {
 		expect(html).toContain("MAIN AGENT FORWARD TESTING (POLICY TRADER)");
 		expect(html).toContain("Measured Edge");
 		expect(html).toContain("Simulated Win Rate");
-		expect(html).toContain("Simulated Net P&amp;L");
+		expect(html).toContain("Simulated Realized P&amp;L");
 		expect(html).toContain("Trades Graded");
 
 		// Promotion gates

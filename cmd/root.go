@@ -88,12 +88,12 @@ var (
 				"symm started with %d CPUs", runtime.NumCPU(),
 			))
 
-			runtimeCtx, runtimeCancel := context.WithCancel(cmd.Context())
-			defer runtimeCancel()
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
 
 			startPprof()
 
-			hub := ui.NewHub(runtimeCtx)
+			hub := ui.NewHub(ctx)
 			defer hub.Close()
 
 			// The hub reads the ring rather than running on it: a publisher
@@ -152,20 +152,34 @@ var (
 				))
 			}
 
-			rawCapture, err := recording.NewSession(runtimeCtx, writer, hindsight.RunIdentity{
-				StartedAt: processStartedAt, CodeCommit: buildCodeCommit(), BuildID: buildBuildID(), ConfigDigest: configDigest(), SchemaVersions: hindsightSchemaVersions(),
-			}.Resolve(runID), viper.GetInt("hindsight.capture.batch_size"), viper.GetDuration("hindsight.capture.flush_interval"))
+			rawCapture, err := recording.NewSession(
+				ctx, writer, hindsight.RunIdentity{
+					StartedAt:      processStartedAt,
+					CodeCommit:     buildCodeCommit(),
+					BuildID:        buildBuildID(),
+					ConfigDigest:   configDigest(),
+					SchemaVersions: hindsightSchemaVersions(),
+				}.Resolve(runID),
+				viper.GetInt("hindsight.capture.batch_size"),
+				viper.GetDuration("hindsight.capture.flush_interval"),
+			)
+
 			if err != nil {
-				return err
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"[root] failed to initialize raw capture",
+					err,
+				))
 			}
+
 			defer func() {
 				if err := rawCapture.Close(); err != nil {
 					errnie.Error(err)
 				}
 			}()
 
-			publicSession := websocket.New(
-				runtimeCtx,
+			public := websocket.New(
+				ctx,
 				publicIngress,
 				websocket.NewSimulator(),
 				false,
@@ -173,67 +187,37 @@ var (
 				rawCapture,
 			)
 
-			defer publicSession.Close()
+			defer public.Close()
 
-			if err := publicSession.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: public transport failed during construction",
-					err,
-				))
-			}
-
-			privateSession := websocket.New(
-				runtimeCtx,
+			private := websocket.New(
+				ctx,
 				privateIngress,
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
 				rawCapture,
 			)
-			defer privateSession.Close()
 
-			if err := privateSession.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: private transport failed during construction",
-					err,
-				))
-			}
+			defer private.Close()
+
+			futures := websocket.NewFutures(
+				ctx,
+				system.Cfg.WebSocket.Endpoints.Futures,
+				futuresIngress,
+				rawCapture,
+			)
+
+			defer futures.Close()
 
 			api := websocket.NewAPI(
-				runtimeCtx,
-				publicSession,
-				privateSession,
+				ctx, public, private, futures,
 			)
 
 			defer api.Close()
 
-			futures := websocket.NewFutures(
-				runtimeCtx, system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture,
-			)
-
-			api.SetFutures(futures)
-
-			transportErrors := make(chan error, 1)
-
-			go func() {
-				transportErrors <- api.Run()
-				runtimeCancel()
-			}()
-
-			if err := api.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: transport failed during construction",
-					err,
-				))
-			}
-
 			instrument := broker.NewInstrument(api)
 			price := broker.NewPrice(api, instrument)
 			balance := broker.NewBalance(api)
-			go balance.Run(runtimeCtx, instrument)
 
 			defer instrument.Close()
 
@@ -248,23 +232,20 @@ var (
 			// Stateful analytical stages are constructed once and mounted directly
 			// in each Workload that produces their inputs. The Workloads themselves
 			// remain the complete topology; there is no secondary observation store.
-			categorySolver := category.NewSolver(runtimeCtx)
-			cognitionSolver := cognition.NewSolver(runtimeCtx)
-			resonanceSolver := resonance.NewSolver(runtimeCtx, 0)
+			categorySolver := category.NewSolver(ctx)
+			cognitionSolver := cognition.NewSolver(ctx)
+			resonanceSolver := resonance.NewSolver(ctx, 0)
 			resonanceSolver.SetObserver(hub.PublishResonance)
 
-			manifoldSolver := manifold.NewSolver(runtimeCtx)
-			// The Level3 stream carries a semaphore, not orders: the venue's
-			// book is the population, and the advance reads it directly.
-			manifoldSolver.SetBooks(api)
+			manifoldSolver := manifold.NewSolver(ctx, api)
 			defer manifoldSolver.Close()
 
 			manifoldSolver.SetViewer(hub)
 			manifoldSolver.Start()
 
-			pumpdumpSolver := pumpdump.NewSignal(runtimeCtx, api)
-			toxicitySolver := toxicity.NewSignal(runtimeCtx)
-			derivativesSolver := derivatives.NewSignal(runtimeCtx)
+			pumpdumpSolver := pumpdump.NewSignal(ctx, api)
+			toxicitySolver := toxicity.NewSignal(ctx)
+			derivativesSolver := derivatives.NewSignal(ctx)
 
 			if err := price.GetFees(instrument.Symbols()); err != nil {
 				return errnie.Error(errnie.Err(
@@ -274,7 +255,7 @@ var (
 				))
 			}
 
-			if balance.Status() != types.READY {
+			if balance.Status() != nmruntime.READY {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
 					"[symm] initial balance is not ready",
@@ -283,11 +264,11 @@ var (
 			}
 
 			signals := nmruntime.NewWorkload(
-				runtimeCtx, "signals",
+				ctx, "signals",
 				[][]nmruntime.Node[*types.Envelope]{
 					{
-						system.NewTraced("signal.correlation", correlation.NewSignal(runtimeCtx)),
-						system.NewTraced("signal.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
+						system.NewTraced("signal.correlation", correlation.NewSignal(ctx)),
+						system.NewTraced("signal.cvd", cvd.NewSignal(ctx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
 							tick := price.Tick(symbol)
 
 							if tick == nil {
@@ -295,14 +276,14 @@ var (
 							}
 							return tick.Bid, tick.Ask
 						})),
-						system.NewTraced("signal.depthflow", depthflow.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.depthflow", depthflow.NewSignal(ctx)),
 						system.NewTraced("signal.derivatives", derivativesSolver),
-						system.NewTraced("signal.hawkes", hawkes.NewSignal(runtimeCtx)),
-						system.NewTraced("signal.leadlag", leadlag.NewSignal(runtimeCtx)),
-						system.NewTraced("signal.liquidity", liquidity.NewSignal(runtimeCtx)),
-						system.NewTraced("signal.morphology", morphology.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.hawkes", hawkes.NewSignal(ctx)),
+						system.NewTraced("signal.leadlag", leadlag.NewSignal(ctx)),
+						system.NewTraced("signal.liquidity", liquidity.NewSignal(ctx)),
+						system.NewTraced("signal.morphology", morphology.NewSignal(ctx)),
 						system.NewTraced("signal.pumpdump", pumpdumpSolver),
-						system.NewTraced("signal.sentiment", sentiment.NewSignal(runtimeCtx)),
+						system.NewTraced("signal.sentiment", sentiment.NewSignal(ctx)),
 						system.NewTraced("signal.toxicity", toxicitySolver),
 					},
 					{
@@ -313,7 +294,7 @@ var (
 			)
 
 			classification := nmruntime.NewWorkload(
-				runtimeCtx,
+				ctx,
 				"classification",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewTraced("logic.category", categorySolver)},
@@ -324,7 +305,7 @@ var (
 			// Category consumes the current envelope's signal measurements. Its ring
 			// follows their join; all numerical output is complete before Grid runs.
 			observations := nmruntime.NewWorkload(
-				runtimeCtx,
+				ctx,
 				"observations",
 				[][]nmruntime.Node[*types.Envelope]{
 					{signals},
@@ -333,21 +314,19 @@ var (
 				},
 			)
 
-			/*
-				One training. Nodes in a stage run concurrently against the
-				same envelope, and the grid writes the measurements it is
-				shown — seven of those on one envelope is a concurrent map
-				write. The tape arrives on a channel because walking the
-				record is a long read against an object store.
-			*/
-			tape := measurements(runtimeCtx, catalog, runID)
+			// One training. Nodes in a stage run concurrently against the
+			// same envelope, and the grid writes the measurements it is
+			// shown — seven of those on one envelope is a concurrent map
+			// write. The tape arrives on a channel because walking the
+			// record is a long read against an object store.
+			tape := measurements(ctx, catalog, runID)
 
-			training := strategy.NewTraining(runtimeCtx, tape, instrument, price)
+			training := strategy.NewTraining(ctx, tape, instrument, price, balance)
 			hub.SetTradeStore(training)
 			hub.SetExitHandler(training.RequestExit)
 
 			trainer := nmruntime.NewWorkload(
-				runtimeCtx,
+				ctx,
 				"trainer",
 				[][]nmruntime.Node[*types.Envelope]{{
 					training,
@@ -355,7 +334,7 @@ var (
 			)
 
 			workspace := nmruntime.NewWorkspace(
-				runtimeCtx,
+				ctx,
 				"workspace",
 				[][]nmruntime.Node[*types.Envelope]{
 					{observations},
@@ -430,48 +409,7 @@ var (
 				))
 			}
 
-			hubErrors := make(chan error, 1)
-
-			go func() {
-				hubErrors <- hub.Run()
-			}()
-
-			select {
-			case err := <-rawCapture.Errors:
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: capture storage failed",
-					err,
-				))
-			case err := <-transportErrors:
-
-				if api.Error() == nil && cmd.Context().Err() != nil {
-					return cmd.Context().Err()
-				}
-
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: required transport failed",
-					err,
-				))
-			case err := <-hubErrors:
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: dashboard server failed",
-					err,
-				))
-			case <-runtimeCtx.Done():
-
-				if err := api.Error(); err != nil {
-					return err
-				}
-
-				if err := cmd.Context().Err(); err != nil {
-					return err
-				}
-
-				return runtimeCtx.Err()
-			}
+			return hub.Run()
 		},
 	}
 )

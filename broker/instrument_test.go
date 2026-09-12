@@ -64,7 +64,7 @@ func TestInstrumentNewInstrument(t *testing.T) {
 		Reset(viper.Reset)
 
 		conn := &instrumentConn{Conn: venue.NewConn()}
-		api := websocket.NewAPI(t.Context(), conn, conn)
+		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
 		instrument := newTestInstrument(t, api)
 
 		Convey("It should remain pending without starting market flow", func() {
@@ -84,7 +84,7 @@ func TestInstrumentSubscribe(t *testing.T) {
 		Reset(viper.Reset)
 
 		conn := &instrumentConn{Conn: venue.NewConn()}
-		api := websocket.NewAPI(t.Context(), conn, conn)
+		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
 		instrument := newTestInstrument(t, api)
 
 		Convey("When subscriptions are explicitly started", func() {

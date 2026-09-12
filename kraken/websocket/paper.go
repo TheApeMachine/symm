@@ -74,7 +74,7 @@ func (paper *Paper) Status() runtime.Stage {
 Balances loads the current paper wallet through the native CLI and returns the
 same asset-to-decimal map used by Kraken's real REST balance endpoint.
 */
-func (paper *Paper) Balances() (map[string]*decimal.Decimal, error) {
+func (paper *Paper) Balances() (*kraken.Balance, error) {
 	var (
 		model datura.Map[any]
 		err   error
@@ -102,7 +102,7 @@ func (paper *Paper) Balances() (map[string]*decimal.Decimal, error) {
 		))
 	}
 
-	return kraken.NewPaperBalance(raw).Totals(), nil
+	return kraken.NewPaperBalance(raw), nil
 }
 
 func (paper *Paper) SubInstrument(chan any) {}
@@ -381,7 +381,7 @@ kraken paper status --verbose --output json
 [verbose] Response 200 OK: {"error":[],"result":{"WARDUSD":{"a":["0.003190000","7863","7863.000"],"b":["0.003160000","19402","19402.000"],"c":["0.003160000","598.18293"],"v":["2637691.59698","2668461.40298"],"p":["0.003233967","0.003234724"],"t":[462,466],"l":["0.003100000","0.003100000"],"h":["0.003620000","0.003620000"],"o":"0.003290000"}}}
 {"current_value":199.16016971858227,"fee_rate":0.0026,"mode":"paper","open_orders":0,"slippage_rate":0.0,"starting_balance":200.0,"starting_currency":"USD","total_trades":5,"unrealized_pnl":-0.8398302814177327,"unrealized_pnl_pct":-0.4199151407088664,"valuation_complete":true}
 */
-func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
+func (paper *Paper) TradeBalance() (*kraken.TradeBalanceResult, error) {
 	var (
 		model  datura.Map[any]
 		wallet datura.Map[any]
@@ -397,10 +397,8 @@ func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
 	})
 
 	if err != nil {
-		return kraken.TradeBalanceResult{}, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get trade balance",
-			err,
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal, "[paper] failed to get trade balance", err,
 		))
 	}
 
@@ -408,23 +406,31 @@ func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
 	quote, valid := model["starting_currency"].(string)
 
 	if !valid || quote == "" {
-		return result, errnie.Err(errnie.Validation, "paper valuation: quote currency required", nil)
+		return &result, errnie.Error(errnie.Err(
+			errnie.Validation, "[paper] quote currency required", nil,
+		))
 	}
 
 	raw, err := sonic.Marshal(wallet)
 
 	if err != nil {
-		return result, err
+		return &result, errnie.Error(errnie.Err(
+			errnie.Validation, "[paper] failed to marshal wallet", nil,
+		))
 	}
 
 	var balance kraken.PaperBalance
 
 	if err := sonic.Unmarshal(raw, &balance); err != nil {
-		return result, err
+		return &result, errnie.Error(errnie.Err(
+			errnie.Validation, "[paper] complete wallet required", nil,
+		))
 	}
 
 	if balance.Balances == nil {
-		return result, errnie.Err(errnie.Validation, "paper valuation: complete wallet required", nil)
+		return &result, errnie.Error(errnie.Err(
+			errnie.Validation, "[paper] complete wallet required", nil,
+		))
 	}
 
 	result.AvailableCash = decimal.NewFromInt64(0)
@@ -433,7 +439,7 @@ func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
 		result.AvailableCash = row.Available
 	}
 
-	return result, nil
+	return &result, nil
 }
 
 /*
@@ -605,28 +611,21 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 Balance returns the paper wallet in the same asset-total map shape as the real
 private REST balance endpoint.
 */
-func (paper *Paper) Balance() (map[string]*decimal.Decimal, error) {
+func (paper *Paper) Balance() (*kraken.Balance, error) {
 	return paper.Balances()
 }
 
 /*
-publishBalance emits a paper wallet frame from `kraken paper balance`.
+publishBalance emits a paper wallet frame from `kraken paper balance --verbose`.
 */
 func (paper *Paper) publishBalance(frameType string) error {
-	var model datura.Map[any]
-	var err error
-
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("balances", "balance")
-	})
+	balance, err := paper.Balances()
 
 	if err != nil {
 		return err
 	}
 
-	balance := kraken.NewBalanceFromMap(model)
 	balance.Type = frameType
-
 	paper.publish("balances", balance)
 	return nil
 }

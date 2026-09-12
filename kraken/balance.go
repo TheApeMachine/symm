@@ -109,13 +109,14 @@ func (balance *Balance) IsSuccess() bool {
 }
 
 /*
-NewPaperBalance decodes the native paper wallet payload into Kraken-style asset
-totals so callers can consume paper and real balances through the same map type.
+NewPaperBalance decodes the native paper wallet payload into the same Balance
+observation shape as the real REST endpoint, keeping each row's available,
+reserved, and total amounts as separate Data fields.
 */
-func NewPaperBalance(buf []byte) *PaperBalance {
-	var balance PaperBalance
+func NewPaperBalance(buf []byte) *Balance {
+	var paper PaperBalance
 
-	if err := sonic.Unmarshal(buf, &balance); err != nil {
+	if err := sonic.Unmarshal(buf, &paper); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"invalid paper balance",
@@ -123,29 +124,40 @@ func NewPaperBalance(buf []byte) *PaperBalance {
 		))
 	}
 
-	return &balance
-}
-
-/*
-Totals returns the same asset-to-decimal total map shape produced by Kraken's
-real balance endpoint, using each paper wallet row's total amount.
-*/
-func (balance *PaperBalance) Totals() map[string]*decimal.Decimal {
-	totals := make(map[string]*decimal.Decimal, len(balance.Balances))
-
-	for asset, data := range balance.Balances {
-		totals[asset] = data.Total
+	out := Balance{
+		Channel:   "balances",
+		Data:      []BalanceData{},
+		Type:      "snapshot",
+		Timestamp: time.Now(),
 	}
 
-	return totals
+	for asset, row := range paper.Balances {
+		out.Data = append(out.Data, BalanceData{
+			Asset:      asset,
+			AssetClass: "currency",
+			Balance:    row.Total,
+			Available:  row.Available,
+			Reserved:   row.Reserved,
+			Wallets: []Wallet{
+				{
+					Type:    "spot",
+					ID:      "main",
+					Balance: row.Total,
+				},
+			},
+		})
+	}
+
+	return &out
 }
 
+var zero = decimal.NewFromFloat64(0)
+
 /*
-NewBalanceFromMap reshapes the paper CLI wallet dump into the websocket balance
-frame used by downstream consumers, preserving available, reserved, and total
-values for each asset row.
+NewBalanceFromMap reshapes the venue's asset-to-total map into the Balance
+observation consumed downstream, synthesizing one Data row per asset.
 */
-func NewBalanceFromMap(model datura.Map[any]) *Balance {
+func NewBalanceFromMap(model map[string]*decimal.Decimal) *Balance {
 	out := Balance{
 		Channel:   "balances",
 		Data:      []BalanceData{},
@@ -154,34 +166,18 @@ func NewBalanceFromMap(model datura.Map[any]) *Balance {
 		Timestamp: time.Now(),
 	}
 
-	balances, ok := model["balances"].(map[string]any)
-
-	if !ok {
-		return &out
-	}
-
-	for asset, entryRaw := range balances {
-		entry, ok := entryRaw.(map[string]any)
-
-		if !ok {
-			continue
-		}
-
-		available := decimal.NewFromFloat64(entry["available"].(float64))
-		reserved := decimal.NewFromFloat64(entry["reserved"].(float64))
-		total := decimal.NewFromFloat64(entry["total"].(float64))
-
+	for asset, amount := range model {
 		out.Data = append(out.Data, BalanceData{
 			Asset:      asset,
 			AssetClass: "currency",
-			Balance:    total,
-			Available:  available,
-			Reserved:   reserved,
+			Balance:    amount,
+			Available:  amount,
+			Reserved:   zero,
 			Wallets: []Wallet{
 				{
 					Type:    "spot",
 					ID:      "main",
-					Balance: total,
+					Balance: amount,
 				},
 			},
 		})
@@ -194,13 +190,16 @@ func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 	currentValue := decimal.NewFromFloat64(model["current_value"].(float64))
 	unrealizedPnL := decimal.NewFromFloat64(model["unrealized_pnl"].(float64))
 	tradeBalance := currentValue.Sub(unrealizedPnL)
+
 	zero := decimal.NewFromInt64(0)
 	var funding *decimal.Decimal
 
 	if amount, found := model["starting_balance"].(float64); found {
 		funding = decimal.NewFromFloat64(amount)
 	}
+
 	complete, known := model["valuation_complete"].(bool)
+
 	var valuation *bool
 
 	if known {
@@ -208,7 +207,8 @@ func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 	}
 
 	return TradeBalanceResult{
-		NetFunding: funding, ValuationComplete: valuation,
+		NetFunding:        funding,
+		ValuationComplete: valuation,
 		EquivalentBalance: currentValue,
 		TradeBalance:      tradeBalance,
 		MarginAmount:      zero,

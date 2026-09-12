@@ -59,10 +59,10 @@ func newTestRecoveryWithOptions(
 	t.Cleanup(viper.Reset)
 
 	conn := &recoveryConn{Conn: venue.NewConn()}
-	conn.BalanceResult = balances
+	conn.BalanceResult = kraken.NewBalanceFromMap(balances)
 	conn.TradesHistoryResult = spot.TradesHistoryResult{Trades: trades}
 
-	api := websocket.NewAPI(t.Context(), conn, conn)
+	api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
 	api.Normalizer().Update(&spot.AssetsManagerUpdate{
 		NewAssets: map[string]spot.AssetInfo{
 			"AAA": {AltName: "AAA", Decimals: 8, DisplayDecimals: 8},

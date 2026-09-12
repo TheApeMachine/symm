@@ -9,6 +9,8 @@ import (
 	"time"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/cognition"
@@ -137,6 +139,8 @@ func NewTraining(
 	var inst *broker.Instrument
 	var prc *broker.Price
 	var rng *rand.Rand
+	var bal *broker.Balance
+	var initialCash *decimal.Decimal
 
 	for _, dep := range deps {
 		switch v := dep.(type) {
@@ -144,9 +148,23 @@ func NewTraining(
 			inst = v
 		case *broker.Price:
 			prc = v
+		case *broker.Balance:
+			bal = v
 		case *rand.Rand:
 			rng = v
+		case *decimal.Decimal:
+			initialCash = v
 		}
+	}
+
+	if initialCash == nil && bal != nil {
+		initialCash = bal.Cash()
+	}
+
+	targetAccount := viper.GetString("trading.model")
+
+	if targetAccount == "" {
+		targetAccount = "simulated"
 	}
 
 	sharedEngine := cognition.NewEngine(cognition.DefaultConfig())
@@ -174,7 +192,7 @@ func NewTraining(
 		space:  agents[0].Space(),
 		agent:  agents[0].learner,
 		agents: agents,
-		main:   NewMainAgent(nil, "", inst, prc, sharedEngine),
+		main:   NewMainAgent(initialCash, targetAccount, inst, prc, sharedEngine),
 		System: runtime.NewSystem(ctx, "training"),
 	}
 

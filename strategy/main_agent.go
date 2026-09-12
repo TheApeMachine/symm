@@ -134,6 +134,14 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...an
 		}
 	}
 
+	if targetAccount == "" {
+		targetAccount = "simulated"
+	}
+
+	if initialCash == nil || initialCash.Sign() <= 0 {
+		initialCash = decimal.NewFromInt64(10000)
+	}
+
 	zero := decimal.NewFromInt64(0)
 
 	return &MainAgent{
@@ -329,6 +337,28 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 		// 2. Score candidate actions against learned decision
 		agent.buildCandidates(symbol, decision)
 
+		currentAction := "wait"
+		reduce := false
+
+		if holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
+			if decision.Action == ActionExit {
+				currentAction = "sell"
+				reduce = true
+			}
+		} else if decision.Action == ActionEnter {
+			currentAction = "buy"
+		}
+
+		agent.lastDecision = &telemetry.LearningDecisionT{
+			Symbol: symbol,
+			Action: &telemetry.LearningActionT{
+				Kind:   currentAction,
+				Power:  0,
+				Reduce: reduce,
+			},
+			AtNs: now.UnixNano(),
+		}
+
 		// 3. Evaluate trading action
 		if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
 			if decision.Action == ActionEnter {
@@ -522,6 +552,11 @@ func (agent *MainAgent) enterLong(
 				totalCost = entryCost.Total
 			}
 		}
+	} else if price != nil && price.Sign() > 0 && allocatedCash.Sign() > 0 {
+		quantity = allocatedCash.Div(price)
+		notional = allocatedCash
+		fee = decimal.NewFromInt64(0)
+		totalCost = allocatedCash
 	}
 
 	if quantity == nil || notional == nil || totalCost == nil {
@@ -851,8 +886,8 @@ func (agent *MainAgent) buildCandidates(symbol string, decision ActionDecision) 
 	}
 
 	agent.alternatives = []*telemetry.LearningActionT{
-		{Kind: "enter", Power: 1, Reduce: false, Prior: priorUp},
-		{Kind: "exit", Power: 1, Reduce: true, Prior: priorDown},
+		{Kind: "buy", Power: 0, Reduce: false, Prior: priorUp},
+		{Kind: "sell", Power: 0, Reduce: true, Prior: priorDown},
 		{Kind: "wait", Power: 0, Reduce: false, Prior: priorWait},
 	}
 }

@@ -7,7 +7,6 @@ import (
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
@@ -32,7 +31,7 @@ type Conn struct {
 	// by Balance/TradesHistory instead of the empty defaults — tests use them
 	// to simulate an exchange reporting multiple held assets with fill
 	// history, e.g. for account-recovery-on-boot scenarios.
-	BalanceResult       map[string]*decimal.Decimal
+	BalanceResult       *kraken.Balance
 	TradesHistoryResult spot.TradesHistoryResult
 	TradeVolumeResult   *kraken.TradeVolumeResult
 	book                *spotbook.Book
@@ -69,7 +68,7 @@ func (conn *Conn) UnsubTrades(symbols []string) {}
 
 func (conn *Conn) UnsubL3(symbols []string) {}
 
-func (conn *Conn) Balance() (map[string]*decimal.Decimal, error) {
+func (conn *Conn) Balance() (*kraken.Balance, error) {
 	if conn.BalanceResult != nil {
 		return conn.BalanceResult, nil
 	}
@@ -85,8 +84,8 @@ func (conn *Conn) TradesHistory() (spot.TradesHistoryResult, error) {
 	return spot.TradesHistoryResult{}, nil
 }
 
-func (conn *Conn) TradeBalance() (kraken.TradeBalanceResult, error) {
-	return kraken.TradeBalanceResult{}, nil
+func (conn *Conn) TradeBalance() (*kraken.TradeBalanceResult, error) {
+	return &kraken.TradeBalanceResult{}, nil
 }
 
 func (conn *Conn) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {

@@ -7,11 +7,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 )
 
 /*
-	FundingLedger observes external quote flows from Kraken's paginated ledger.
+FundingLedger observes external quote flows from Kraken's paginated ledger.
 
 The cursor overlaps the final API second; ledger IDs prevent double counting.
 Non-quote transfers lack a historical quote valuation and explicitly make
@@ -48,8 +50,15 @@ type ledgerEntry struct {
 	Fee    *decimal.Decimal `json:"fee"`
 }
 
-/* Observe fetches a complete bounded range before advancing the funding cursor. */
-func (funding *FundingLedger) Observe(post func(string, json.Marshaler) ([]byte, error), normalize func(string) string, quote string, at time.Time) (*decimal.Decimal, string, error) {
+/*
+Observe fetches a complete bounded range before advancing the funding cursor.
+*/
+func (funding *FundingLedger) Observe(
+	post func(string, json.Marshaler) ([]byte, error),
+	normalize func(string) string,
+	quote string,
+	at time.Time,
+) (*decimal.Decimal, string, error) {
 	funding.mu.Lock()
 	defer funding.mu.Unlock()
 
@@ -58,14 +67,21 @@ func (funding *FundingLedger) Observe(post func(string, json.Marshaler) ([]byte,
 		funding.cursor = at.Unix()
 		funding.seen = make(map[string]struct{})
 	}
+
 	request := ledgerRequest{Start: funding.cursor, End: at.Unix()}
 	entries := make(map[string]ledgerEntry)
+
 	for {
 		payload, err := post("/0/private/Ledgers", request)
 
 		if err != nil {
-			return nil, "funding ledger unavailable", err
+			return nil, "funding ledger unavailable", errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[funcint] funding ledger unavailable",
+				err,
+			))
 		}
+
 		response := struct {
 			Error  []string `json:"error"`
 			Result struct {
@@ -74,21 +90,34 @@ func (funding *FundingLedger) Observe(post func(string, json.Marshaler) ([]byte,
 			} `json:"result"`
 		}{}
 
-		if err := json.Unmarshal(payload, &response); err != nil {
-			return nil, "invalid funding ledger", err
+		if err := sonic.Unmarshal(payload, &response); err != nil {
+			return nil, "invalid funding ledger", errnie.Error(errnie.Err(
+				errnie.IO,
+				"[funding] invalid funding ledger",
+				err,
+			))
 		}
 
 		if len(response.Error) > 0 {
-			return nil, "funding ledger unavailable", fmt.Errorf("funding ledger: %s", strings.Join(response.Error, "; "))
+			return nil, "funding ledger unavailable", errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[funcint] funding ledger unavailable",
+				fmt.Errorf("funding ledger: %s", strings.Join(response.Error, "; ")),
+			))
 		}
 
 		if response.Result.Ledger == nil || response.Result.Count == nil || *response.Result.Count < 0 {
-			return nil, "incomplete funding ledger", fmt.Errorf("funding ledger: complete entries and count required")
+			return nil, "incomplete funding ledger", errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[funding] incomplete funding ledger",
+				fmt.Errorf("funding ledger: complete entries and count required"),
+			))
 		}
 
 		for identity, entry := range response.Result.Ledger {
 			entries[identity] = entry
 		}
+
 		request.Offset += len(response.Result.Ledger)
 
 		if request.Offset >= *response.Result.Count {
@@ -96,15 +125,25 @@ func (funding *FundingLedger) Observe(post func(string, json.Marshaler) ([]byte,
 		}
 
 		if len(response.Result.Ledger) == 0 {
-			return nil, "incomplete funding ledger", fmt.Errorf("funding ledger: empty page before advertised count")
+			return nil, "incomplete funding ledger", errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[funding] incomplete funding ledger",
+				fmt.Errorf("funding ledger: empty page before advertised count"),
+			))
 		}
 	}
 	for identity, entry := range entries {
 		if entry.Kind != "trade" && entry.Kind != "margin" && entry.Kind != "rollover" && (entry.Amount == nil || entry.Fee == nil) {
-			return nil, "invalid funding ledger", fmt.Errorf("funding ledger %s: missing amount or fee", identity)
+			return nil, "invalid funding ledger", errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[funding] invalid funding ledger",
+				fmt.Errorf("funding ledger %s: missing amount or fee", identity),
+			))
 		}
 	}
+
 	next := make(map[string]struct{})
+
 	for identity, entry := range entries {
 		if int64(entry.At) >= request.End {
 			next[identity] = struct{}{}
@@ -122,12 +161,15 @@ func (funding *FundingLedger) Observe(post func(string, json.Marshaler) ([]byte,
 			funding.reason = "non-quote funding requires historical valuation: " + entry.Asset
 			continue
 		}
+
 		funding.total = funding.total.Add(entry.Amount).Sub(entry.Fee)
 	}
+
 	funding.cursor, funding.seen = request.End, next
 
 	if funding.reason != "" {
 		return nil, funding.reason, nil
 	}
+
 	return funding.total.Copy(), "", nil
 }

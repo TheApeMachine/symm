@@ -13,11 +13,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-const (
-	TradeBalanceEndpoint = "/0/private/TradeBalance"
-	TradeVolumeEndpoint  = "/0/private/TradeVolume"
-)
-
 /*
 Conn is the internal websocket and REST transport.
 */
@@ -33,9 +28,9 @@ type Conn interface {
 	UnsubTicker([]string)
 	UnsubTrades([]string)
 	UnsubL3([]string)
-	Balance() (map[string]*decimal.Decimal, error)
+	Balance() (*kraken.Balance, error)
 	TradesHistory() (spot.TradesHistoryResult, error)
-	TradeBalance() (kraken.TradeBalanceResult, error)
+	TradeBalance() (*kraken.TradeBalanceResult, error)
 	TradeVolume([]string) (*kraken.TradeVolumeResult, error)
 	AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error)
 	OpenOrders() (spot.OpenOrdersResult, error)
@@ -97,7 +92,7 @@ type API struct {
 }
 
 func NewAPI(
-	ctx context.Context, public, private Conn,
+	ctx context.Context, public, private Conn, futures *FuturesLive,
 ) *API {
 	ctx, cancel := context.WithCancel(ctx)
 	normalizer := spot.NewNormalizer()
@@ -110,6 +105,7 @@ func NewAPI(
 		failures:   make(chan error, 1),
 		public:     public,
 		private:    private,
+		futures:    futures,
 	}
 	api.status.Transition(runtime.WAITING)
 	api.bindFailureSource(public)
@@ -134,11 +130,6 @@ func NewAPI(
 	}
 
 	return api
-}
-
-func (api *API) SetFutures(futures *FuturesLive) {
-	api.futures = futures
-	api.bindFailureSource(futures)
 }
 
 func (api *API) Futures() *FuturesLive {
@@ -172,23 +163,6 @@ boot.
 */
 func (api *API) Context() context.Context {
 	return api.ctx
-}
-
-func (api *API) Run() error {
-	if err := api.Error(); err != nil {
-		return err
-	}
-
-	select {
-	case <-api.ctx.Done():
-		if err := api.Error(); err != nil {
-			return err
-		}
-
-		return api.ctx.Err()
-	case err := <-api.failures:
-		return err
-	}
 }
 
 func (api *API) reportFailure(err error) {
@@ -299,19 +273,33 @@ func (api *API) MarkReady() {
 	api.private.MarkReady()
 }
 
-func (api *API) Private() Conn                                    { return api.private }
-func (api *API) Books() *sync.Map                                 { return api.private.Books() }
-func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
-func (api *API) SubInstrument(callback chan any)                  { api.public.SubInstrument(callback) }
-func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
-func (api *API) SubL3(symbols []string)                           { api.private.SubL3(symbols) }
-func (api *API) SubTrades(symbols []string)                       { api.public.SubTrades(symbols) }
-func (api *API) UnsubTicker(symbols []string)                     { api.public.UnsubTicker(symbols) }
-func (api *API) UnsubTrades(symbols []string)                     { api.public.UnsubTrades(symbols) }
-func (api *API) UnsubL3(symbols []string)                         { api.private.UnsubL3(symbols) }
-func (api *API) Balance() (map[string]*decimal.Decimal, error)    { return api.private.Balance() }
-func (api *API) TradesHistory() (spot.TradesHistoryResult, error) { return api.private.TradesHistory() }
-func (api *API) TradeBalance() (kraken.TradeBalanceResult, error) { return api.private.TradeBalance() }
+func (api *API) Private() Conn                                     { return api.private }
+func (api *API) Books() *sync.Map                                  { return api.private.Books() }
+func (api *API) Book(symbol string, read func(*book.Book))         { api.private.Book(symbol, read) }
+func (api *API) SubInstrument(callback chan any)                   { api.public.SubInstrument(callback) }
+func (api *API) SubTicker(symbols []string)                        { api.public.SubTicker(symbols) }
+func (api *API) SubL3(symbols []string)                            { api.private.SubL3(symbols) }
+func (api *API) SubTrades(symbols []string)                        { api.public.SubTrades(symbols) }
+func (api *API) UnsubTicker(symbols []string)                      { api.public.UnsubTicker(symbols) }
+func (api *API) UnsubTrades(symbols []string)                      { api.public.UnsubTrades(symbols) }
+func (api *API) UnsubL3(symbols []string)                          { api.private.UnsubL3(symbols) }
+func (api *API) Balance() (*kraken.Balance, error) {
+	balance, err := api.private.Balance()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	assets := make(map[string]*decimal.Decimal, len(balance.Data))
+
+	for _, row := range balance.Data {
+		assets[api.normalizer.Name(row.Asset)] = row.Balance
+	}
+
+	return kraken.NewBalanceFromMap(assets), nil
+}
+func (api *API) TradesHistory() (spot.TradesHistoryResult, error)  { return api.private.TradesHistory() }
+func (api *API) TradeBalance() (*kraken.TradeBalanceResult, error) { return api.private.TradeBalance() }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
 	normalized := append([]string{}, symbols...)

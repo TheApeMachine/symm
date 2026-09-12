@@ -20,7 +20,6 @@ import (
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
@@ -334,6 +333,7 @@ func NewWithClient(
 		quote:       viper.GetViper().GetString("market.quote_currency"),
 		streams:     NewStreams(client.URL),
 	}
+
 	live.client.Store(client)
 
 	live.pinger = NewPinger("websocket", func() error {
@@ -938,7 +938,6 @@ func (live *Live) reconnect(err error) {
 		case <-retry.C:
 		case <-live.ctx.Done():
 			retry.Stop()
-
 			return
 		}
 	}
@@ -1542,7 +1541,7 @@ func (live *Live) Book(symbol string, read func(*book.Book)) {
 	}
 }
 
-func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
+func (live *Live) Balance() (*kraken.Balance, error) {
 	if live.model == "real" {
 		response, err := live.Client().REST.Balances()
 
@@ -1554,7 +1553,7 @@ func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
 			))
 		}
 
-		return response.Result, nil
+		return kraken.NewBalanceFromMap(response.Result), nil
 	}
 
 	return live.paper.Balances()
@@ -1631,21 +1630,28 @@ func (live *Live) CancelOrder(
 	return response.Result, nil
 }
 
-func (live *Live) TradeBalance() (kraken.TradeBalanceResult, error) {
+func (live *Live) TradeBalance() (*kraken.TradeBalanceResult, error) {
 	if live.model == "real" {
-		before, _, err := live.funding.Observe(live.Post, live.normalizer.Name, live.quote, time.Now().UTC())
+		before, _, err := live.funding.Observe(
+			live.Post,
+			live.normalizer.Name,
+			live.quote,
+			time.Now().UTC(),
+		)
 
 		if err != nil {
 			errnie.Error(err)
 		}
+
 		response, err := live.Post(
-			TradeBalanceEndpoint,
+			system.Cfg.WebSocket.Endpoints.TradeBalance,
 			kraken.NewTradeBalanceRequest(live.quote),
 		)
 
 		if err != nil {
-			return kraken.TradeBalanceResult{}, errnie.Error(err)
+			return nil, errnie.Error(err)
 		}
+
 		result := kraken.NewTradeBalance(response)
 		complete := result.EquivalentBalance != nil
 		result.ValuationComplete = &complete
@@ -1666,7 +1672,10 @@ func (live *Live) TradeBalance() (kraken.TradeBalanceResult, error) {
 		if err != nil {
 			return result, errnie.Error(err)
 		}
-		result.NetFunding, result.FundingReason, err = live.funding.Observe(live.Post, live.normalizer.Name, live.quote, time.Now().UTC())
+
+		result.NetFunding, result.FundingReason, err = live.funding.Observe(
+			live.Post, live.normalizer.Name, live.quote, time.Now().UTC(),
+		)
 
 		if err != nil {
 			errnie.Error(err)
@@ -1688,15 +1697,21 @@ func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 	}
 
 	response, err := live.Post(
-		TradeVolumeEndpoint,
+		system.Cfg.WebSocket.Endpoints.TradeVolume,
 		kraken.NewTradeVolumeRequest(symbols),
 	)
 
 	if len(response) > 0 {
-		captureErr := live.captureFrame("trade_volume", TradeVolumeEndpoint, response)
+		err := live.captureFrame(
+			"trade_volume", system.Cfg.WebSocket.Endpoints.TradeVolume, response,
+		)
 
-		if captureErr != nil {
-			return nil, captureErr
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"[live] capture frame error",
+				err,
+			))
 		}
 	}
 
@@ -1713,7 +1728,7 @@ func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, er
 		if err != nil {
 			return spot.AddOrderResult{}, errnie.Error(errnie.Err(
 				errnie.IO,
-				"add order: failed to submit",
+				"[live] add order failed to submit",
 				err,
 			))
 		}
@@ -1726,7 +1741,11 @@ func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, er
 
 func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error {
 	if err := live.operationalError(); err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[live] write error",
+			err,
+		))
 	}
 
 	for _, callback := range callbacks {
@@ -1736,9 +1755,9 @@ func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error
 	raw, err := params.MarshalJSON()
 
 	if err != nil {
-		err = errnie.Err(
+		live.err = errnie.Err(
 			errnie.Validation,
-			"websocket: write marshal failed",
+			"[live] write marshal failed",
 			err,
 		)
 		live.fail(err)
@@ -1759,7 +1778,7 @@ func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error
 	if err != nil {
 		err = errnie.Err(
 			errnie.IO,
-			"websocket: write failed",
+			"[live] write failed",
 			err,
 		)
 	}
@@ -1769,7 +1788,6 @@ func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error
 
 func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
 	started := time.Now()
-
 	request, err := live.Client().REST.NewRequest(options)
 
 	if err != nil {
@@ -1831,10 +1849,6 @@ func (live *Live) Post(
 }
 
 func (live *Live) Close() {
-	if live == nil {
-		return
-	}
-
 	live.closeOnce.Do(func() {
 		live.closing.Store(true)
 		live.cancel()

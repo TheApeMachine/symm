@@ -41,8 +41,7 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "telemetry",
         "specs",
         "tests",
-        "advisor",
-        "frontend"
+        "advisor"
     }
 )
 
@@ -72,6 +71,7 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".h",
     "cuh",
     ".cu",
+    ".inc"
 )
 
 

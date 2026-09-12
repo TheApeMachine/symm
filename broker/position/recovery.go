@@ -42,8 +42,9 @@ func (recovery *Recovery) Recover(
 	}
 	positions := make(map[string]*Regulator)
 
-	for asset, amount := range balances {
-		asset = recovery.API.Normalizer().Name(asset)
+	for _, row := range balances.Data {
+		asset := recovery.API.Normalizer().Name(row.Asset)
+		amount := row.Balance
 
 		if asset == quote || amount.Sign() <= 0 {
 			continue

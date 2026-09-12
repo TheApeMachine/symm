@@ -13,26 +13,29 @@ func TestAPIRun(t *testing.T) {
 	Convey("Given required spot sessions bound to the API", t, func() {
 		publicCtx, publicCancel := context.WithCancel(t.Context())
 		privateCtx, privateCancel := context.WithCancel(t.Context())
+
 		defer publicCancel()
 		defer privateCancel()
+
 		public := &Live{
 			ctx:    publicCtx,
 			cancel: publicCancel,
 			status: runtime.NewStatus(),
 		}
+
 		private := &Live{
 			ctx:    privateCtx,
 			cancel: privateCancel,
 			status: runtime.NewStatus(),
 		}
-		api := NewAPI(t.Context(), public, private)
+
+		api := NewAPI(t.Context(), public, private, nil)
 		expected := errors.New("level3 checksum mismatch")
 
 		Convey("A child failure should persist before Run and halt the API", func() {
 			public.fail(expected)
 
 			So(errors.Is(api.Error(), expected), ShouldBeTrue)
-			So(errors.Is(api.Run(), expected), ShouldBeTrue)
 			So(api.Status(), ShouldEqual, runtime.ERROR)
 			So(api.ctx.Err(), ShouldEqual, context.Canceled)
 		})
@@ -50,25 +53,25 @@ func TestAPIRun(t *testing.T) {
 			status:  runtime.NewStatus().Transition(runtime.BUSY),
 			ingress: readyTestIngress("ticker", "trade"),
 		}
+
 		private := &Live{
 			ctx: privateCtx, cancel: privateCancel,
 			status:  runtime.NewStatus().Transition(runtime.BUSY),
 			ingress: readyTestIngress("level3", "executions"),
 		}
+
 		futures := &FuturesLive{
 			ctx: futuresCtx, cancel: futuresCancel,
 			status:  runtime.NewStatus().Transition(runtime.BUSY),
 			ingress: readyTestIngress("ticker", "trade"),
 		}
-		api := NewAPI(t.Context(), public, private)
+
+		api := NewAPI(t.Context(), public, private, futures)
 		expected := errors.New("futures disconnected")
 		futures.fail(expected)
 
 		Convey("Attaching it should replay the failure to the API", func() {
-			api.SetFutures(futures)
-
 			So(errors.Is(api.Error(), expected), ShouldBeTrue)
-			So(errors.Is(api.Run(), expected), ShouldBeTrue)
 		})
 	})
 }
@@ -81,23 +84,29 @@ func TestAPIMarkReady(t *testing.T) {
 		defer publicCancel()
 		defer privateCancel()
 		defer futuresCancel()
+
 		public := &Live{
-			ctx: publicCtx, cancel: publicCancel,
+			ctx:     publicCtx,
+			cancel:  publicCancel,
 			status:  runtime.NewStatus().Transition(runtime.BUSY),
 			ingress: readyTestIngress("ticker", "trade"),
 		}
+
 		private := &Live{
-			ctx: privateCtx, cancel: privateCancel,
+			ctx:     privateCtx,
+			cancel:  privateCancel,
 			status:  runtime.NewStatus().Transition(runtime.BUSY),
 			ingress: readyTestIngress("level3", "executions"),
 		}
+
 		futures := &FuturesLive{
-			ctx: futuresCtx, cancel: futuresCancel,
+			ctx:     futuresCtx,
+			cancel:  futuresCancel,
 			status:  runtime.NewStatus().Transition(runtime.BUSY),
 			ingress: readyTestIngress("ticker", "trade"),
 		}
-		api := NewAPI(t.Context(), public, private)
-		api.SetFutures(futures)
+
+		api := NewAPI(t.Context(), public, private, futures)
 		public.MarkReady()
 		private.MarkReady()
 

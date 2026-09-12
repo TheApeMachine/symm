@@ -9,7 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/relation"
@@ -48,6 +49,7 @@ type Solver struct {
 	errMu         sync.RWMutex
 	err           error
 	status        *runtime.Status
+	api           *websocket.API
 	dataset       *Dataset
 	physics       *sensorium.Manifold
 	ObserveModule func(string, time.Duration)
@@ -61,12 +63,6 @@ type Solver struct {
 	forcingMu sync.RWMutex
 	forcing   map[string]forcingState
 
-	// books is the venue's resident order book — the authority on what is
-	// resting right now. The Level3 stream no longer carries orders at all,
-	// only a semaphore saying a symbol's book moved, so the advance reads the
-	// book directly rather than reconstructing one from a message tape.
-	books BookSource
-
 	wake chan struct{}
 
 	// dirty names the symbols whose books moved since the last advance. The
@@ -75,11 +71,6 @@ type Solver struct {
 	// identity). Production ingress always marks the symbol before waking.
 	dirtyMu sync.Mutex
 	dirty   map[string]struct{}
-
-	// booksHeld is the last copied resting orders per symbol. The advance
-	// goroutine owns it: a dirty symbol is recopied into the same backing
-	// arrays, a quiet symbol is projected from what it already holds.
-	booksHeld map[string]heldBook
 
 	// loaded is the set of ContentIDs the physics domain holds, and dataset is
 	// the projector. Both are touched only by the advance goroutine, which is
@@ -105,28 +96,6 @@ frame — never pays for a full field readout it would only discard.
 type Viewer interface {
 	WantsManifold() bool
 	PublishManifold(*types.Envelope)
-}
-
-/*
-BookSource is the venue's resident order book, in the two calls the manifold
-needs: the symbols that have one, and a guarded read of one symbol's.
-
-Book hands its book to the callback under the venue's own read lock, so the
-callback must copy what it needs and return — it is holding a writer out for as
-long as it runs. Books is only ever ranged for its keys: the values it exposes
-are the live books themselves, and walking one outside Book's lock is a race.
-*/
-type BookSource interface {
-	Books() *sync.Map
-	Book(symbol string, read func(*spotbook.Book))
-}
-
-/*
-heldBook is one symbol's last copied resting orders.
-*/
-type heldBook struct {
-	bids []restingOrder
-	asks []restingOrder
 }
 
 /*
@@ -165,21 +134,19 @@ var (
 	sellExcitationMetric = forcingInputs.Sell.Metric + ":" + forcingInputs.Sell.Side
 )
 
-func NewSolver(ctx context.Context) *Solver {
+func NewSolver(ctx context.Context, api *websocket.API) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
-	dataset := NewDataset()
-
 	solver := &Solver{
-		ctx:       ctx,
-		cancel:    cancel,
-		status:    runtime.NewStatus(),
-		dataset:   dataset,
-		forcing:   make(map[string]forcingState),
-		loaded:    make(map[int64]struct{}),
-		dirty:     make(map[string]struct{}),
-		booksHeld: make(map[string]heldBook),
-		wake:      make(chan struct{}, 1),
+		ctx:     ctx,
+		cancel:  cancel,
+		status:  runtime.NewStatus(),
+		api:     api,
+		dataset: NewDataset(),
+		forcing: make(map[string]forcingState),
+		loaded:  make(map[int64]struct{}),
+		dirty:   make(map[string]struct{}),
+		wake:    make(chan struct{}, 1),
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
 			system.Cfg.Manifold.Grid.Y,
@@ -205,12 +172,6 @@ SetViewer attaches the publication boundary the advance loop renders into. It
 is set once during construction, before any envelope is stepped.
 */
 func (solver *Solver) SetViewer(viewer Viewer) { solver.viewer = viewer }
-
-/*
-SetBooks attaches the venue's resident order book. It is set once during
-construction, before any envelope is stepped.
-*/
-func (solver *Solver) SetBooks(books BookSource) { solver.books = books }
 
 /*
 run advances the resident field for as long as the solver lives. It is the only
@@ -437,34 +398,14 @@ func (solver *Solver) markDirty(symbol string) {
 	solver.dirtyMu.Unlock()
 }
 
-func (solver *Solver) takeDirty() map[string]struct{} {
-	solver.dirtyMu.Lock()
-	held := solver.dirty
-	solver.dirty = make(map[string]struct{})
-	solver.dirtyMu.Unlock()
-
-	return held
-}
-
 func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
-	if solver.books == nil {
-		return nil, nil
-	}
-
 	seen := make(map[int64]struct{}, len(solver.loaded))
 	states := make([]*sensorium.State, 0, len(solver.loaded))
-	symbols := solver.books.Books()
+	symbols := solver.api.Books()
 
 	if symbols == nil {
 		return nil, nil
 	}
-
-	if solver.booksHeld == nil {
-		solver.booksHeld = make(map[string]heldBook)
-	}
-	dirty := solver.takeDirty()
-	refresh := len(dirty) == 0
-	present := make(map[string]struct{})
 
 	symbols.Range(func(key, _ any) bool {
 		symbol, ok := key.(string)
@@ -472,42 +413,27 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		if !ok || symbol == "" {
 			return true
 		}
-		present[symbol] = struct{}{}
-		solver.forcingMu.RLock()
-		forcing := solver.latestForcing(symbol)
-		solver.forcingMu.RUnlock()
-		held := solver.booksHeld[symbol]
-		_, moved := dirty[symbol]
 
-		if refresh || moved || (len(held.bids) == 0 && len(held.asks) == 0) {
-			held.bids, held.asks = solver.readBook(symbol, held.bids, held.asks)
-			solver.booksHeld[symbol] = held
-		}
+		solver.api.Book(symbol, func(spotbook *book.Book) {
+			solver.forcingMu.RLock()
+			forcing := solver.latestForcing(symbol)
+			solver.forcingMu.RUnlock()
 
-		if len(held.bids) == 0 && len(held.asks) == 0 {
-			return true
-		}
+			for state := range solver.dataset.Step(
+				symbol, spotbook.Bids, spotbook.Asks, forcing,
+			) {
+				if state == nil || state.N != 1 {
+					sensorium.StatePool.Put(state)
+					continue
+				}
 
-		for state := range solver.dataset.Step(symbol, held.bids, held.asks, forcing) {
-			if state == nil || state.N != 1 {
-				sensorium.StatePool.Put(state)
-				continue
+				seen[state.ContentIDs[0]] = struct{}{}
+				states = append(states, state)
 			}
-
-			seen[state.ContentIDs[0]] = struct{}{}
-			states = append(states, state)
-		}
+		})
 
 		return true
 	})
-
-	for symbol := range solver.booksHeld {
-		if _, still := present[symbol]; still {
-			continue
-		}
-
-		delete(solver.booksHeld, symbol)
-	}
 
 	if solver.dataset.Error() != nil {
 		for _, state := range states {
@@ -532,70 +458,6 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 	solver.loaded = seen
 
 	return departures, batch
-}
-
-/*
-readBook copies one symbol's resting orders out from under the venue's read
-lock. Only the identity, price and size cross out: the projection runs on the
-copy, never inside the callback.
-*/
-func (solver *Solver) readBook(symbol string, bids, asks []restingOrder) ([]restingOrder, []restingOrder) {
-	bids = bids[:0]
-	asks = asks[:0]
-	solver.books.Book(symbol, func(managed *spotbook.Book) {
-		if managed == nil {
-			return
-		}
-
-		bids = appendSide(bids, managed.Bids)
-		asks = appendSide(asks, managed.Asks)
-	})
-
-	return bids, asks
-}
-
-/*
-appendSide flattens one side of a book into resting orders, best price first,
-preserving each level's time priority so a projected order's rank is the queue
-position the venue actually gives it.
-*/
-func appendSide(orders []restingOrder, side *spotbook.Side) []restingOrder {
-	if side == nil {
-		return orders
-	}
-
-	// Best price first: a bid side is best at its high and descends, an ask
-	// side is best at its low and ascends. Rank is queue position, so walking
-	// a side backwards would invert every order's phase and depth.
-	level := side.Low
-	next := func(from *spotbook.Level) *spotbook.Level { return from.Higher }
-
-	if side.Direction == spotbook.Bid {
-		level = side.High
-		next = func(from *spotbook.Level) *spotbook.Level { return from.Lower }
-	}
-
-	for ; level != nil; level = next(level) {
-		if level.Price == nil {
-			continue
-		}
-
-		price := level.Price.Float64()
-
-		for _, order := range level.Queue() {
-			if order == nil || order.Quantity == nil {
-				continue
-			}
-
-			orders = append(orders, restingOrder{
-				id:    order.ID,
-				price: price,
-				size:  order.Quantity.Float64(),
-			})
-		}
-	}
-
-	return orders
 }
 
 /*
@@ -806,21 +668,24 @@ func (solver *Solver) Crystallize(
 	candidateLevels []float64,
 	relaxationSteps int,
 ) ([]float64, *State) {
-	if solver == nil || solver.physics == nil || solver.books == nil {
+	if solver == nil || solver.physics == nil || solver.api == nil {
 		return nil, nil
 	}
 
-	bids, asks := solver.readBook(symbol, nil, nil)
-	states := make([]*sensorium.State, 0, len(bids)+len(asks))
+	states := make([]*sensorium.State, 0)
 
-	for state := range solver.dataset.StepClamped(symbol, bids, asks, forcing) {
-		if state == nil || state.N != 1 {
-			sensorium.StatePool.Put(state)
-			continue
+	solver.api.Book(symbol, func(spotbook *book.Book) {
+		for state := range solver.dataset.StepClamped(
+			symbol, spotbook.Bids, spotbook.Asks, forcing,
+		) {
+			if state == nil || state.N != 1 {
+				sensorium.StatePool.Put(state)
+				continue
+			}
+
+			states = append(states, state)
 		}
-
-		states = append(states, state)
-	}
+	})
 
 	if err := solver.dataset.Error(); err != nil {
 		for _, state := range states {

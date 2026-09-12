@@ -21,7 +21,7 @@ func newPriceSurface(t testing.TB, symbol string) (*Price, *websocket.API) {
 	t.Helper()
 
 	conn := venue.NewConn()
-	api := websocket.NewAPI(t.Context(), conn, conn)
+	api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
 	price := newTestPrice(t, api)
 	price.fees.Store(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.25),
@@ -280,7 +280,7 @@ func TestPriceGetFees(t *testing.T) {
 				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
 			},
 		}
-		api := websocket.NewAPI(t.Context(), conn, conn)
+		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
 		api.Normalizer().Update(&spot.AssetsManagerUpdate{
 			NewAssets: map[string]spot.AssetInfo{
 				"BTC": {AltName: "BTC"},

@@ -4,6 +4,7 @@ import (
 	"iter"
 	"math"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 )
 
@@ -82,29 +83,14 @@ func (dataset *Dataset) Name() string { return "book" }
 func (dataset *Dataset) Error() error { return dataset.err }
 
 /*
-restingOrder is one order resting on the book, in the only terms the projection
-needs: its identity, its price and its size.
-
-The venue's book is the authority on what is resting, and its orders are read
-under its own lock. Copying those three values out is what lets the projection
-run outside that lock — the math below is not something to hold a book writer
-behind.
-*/
-type restingOrder struct {
-	id    string
-	price float64
-	size  float64
-}
-
-/*
 Step projects one symbol's resting orders into States and yields them unclamped:
 every particle is free to evolve under the resident field. Bids and asks are
 consumed directly without a flattened intermediary representation.
 */
 func (dataset *Dataset) Step(
 	symbol string,
-	bids []restingOrder,
-	asks []restingOrder,
+	bids *book.Side,
+	asks *book.Side,
 	forcing forcingState,
 ) iter.Seq[*sensorium.State] {
 	return dataset.step(symbol, bids, asks, forcing, false)
@@ -117,8 +103,8 @@ injected dark probe particles crystallize around them.
 */
 func (dataset *Dataset) StepClamped(
 	symbol string,
-	bids []restingOrder,
-	asks []restingOrder,
+	bids *book.Side,
+	asks *book.Side,
 	forcing forcingState,
 ) iter.Seq[*sensorium.State] {
 	return dataset.step(symbol, bids, asks, forcing, true)
@@ -126,8 +112,8 @@ func (dataset *Dataset) StepClamped(
 
 func (dataset *Dataset) step(
 	symbol string,
-	bids []restingOrder,
-	asks []restingOrder,
+	bids *book.Side,
+	asks *book.Side,
 	forcing forcingState,
 	clamped bool,
 ) iter.Seq[*sensorium.State] {
@@ -138,8 +124,9 @@ func (dataset *Dataset) step(
 
 		symbolIndex := symbolToken(symbol)
 
-		for sidePositive, orders := range [][]restingOrder{bids, asks} {
+		for sidePositive, side := range []*book.Side{bids, asks} {
 			total := 0
+			orders := side.Last.Queue()
 
 			for _, order := range orders {
 				if usableOrder(order) {
@@ -155,19 +142,20 @@ func (dataset *Dataset) step(
 				}
 
 				token := packToken(symbolIndex, sidePositive)
-				positionX, positionY, priceDeviation, quantityDeviation, err :=
-					dataset.frames.place(
-						symbol,
-						math.Log(order.price),
-						math.Log(order.size),
-					)
+				positionX, positionY, priceDeviation, quantityDeviation, err := dataset.frames.place(
+					symbol,
+					math.Log(order.LimitPrice.Float64()),
+					math.Log(order.Quantity.Float64()),
+				)
+
 				if err != nil {
 					dataset.err = err
 					return
 				}
+
 				contentID := orderContentID(orderIdentity{
 					symbol:  symbol,
-					orderID: order.id,
+					orderID: order.ID,
 				})
 
 				state, _ := sensorium.StatePool.Get().(*sensorium.State)
@@ -265,10 +253,10 @@ usableOrder reports whether an order describes a resting particle: it must be
 identified, and carry a finite positive price and size for the log-space
 projection to be defined.
 */
-func usableOrder(order restingOrder) bool {
-	return order.id != "" &&
-		validPositive(order.price) &&
-		validPositive(order.size)
+func usableOrder(order *book.Order) bool {
+	return order != nil &&
+		validPositive(order.LimitPrice.Float64()) &&
+		validPositive(order.Quantity.Float64())
 }
 
 /*
