@@ -24,6 +24,7 @@ type Workspace[T any] struct {
 	channel  disruptor.Disruptor
 	buffer   []T
 	register *store.Register[T]
+	workers  []Node[T]
 }
 
 func NewWorkspace[T any](

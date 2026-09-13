@@ -6,9 +6,9 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 

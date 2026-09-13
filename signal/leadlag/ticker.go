@@ -7,8 +7,8 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	nmleadlag "github.com/theapemachine/symm/nomagique/leadlag"
 	"github.com/theapemachine/symm/nomagique/data"
+	nmleadlag "github.com/theapemachine/symm/nomagique/leadlag"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
 )

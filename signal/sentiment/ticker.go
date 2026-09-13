@@ -8,15 +8,15 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmsentiment "github.com/theapemachine/symm/nomagique/sentiment"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Ticker is the cross-sectional price-state instrument. It holds no state and
-no logic of its own: its entire behavior is one nomagique pipeline over the
-measurement itself — every stage writes its facts into the measurement where
-it computes them, and the workload's register owns the measurement's lifetime.
+Ticker is the cross-sectional change-breadth instrument. It holds no state
+and no logic of its own: its entire behavior is one nomagique pipeline over
+the measurement itself — every stage writes its facts into the measurement
+where it computes them, and the workload's register owns the measurement's
+lifetime.
 */
 type Ticker struct {
 	*runtime.System
@@ -28,9 +28,8 @@ func NewTicker(ctx context.Context) *Ticker {
 	return &Ticker{
 		System: runtime.NewSystem(ctx, "sentiment:ticker"),
 		pipeline: nomagique.NewNumber(
-			nmsentiment.NewGate(),
-			nmsentiment.NewReturn(),
-			nmsentiment.NewFold(),
+			data.NewMetricGate("last"),
+			data.NewCrossSectionFacts("last"),
 			data.NewFinalizer[float64](),
 		),
 	}
@@ -46,201 +45,157 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 
 /*
 Register returns the pre-allocated measurement every sentiment tick flows
-through: every metric the instrument can produce is declared, none valued.
+through: the feed's last price plus every cross-section fact the pipeline can
+write, declared, none valued.
 */
 func (ticker *Ticker) Register() *data.Measurement[float64] {
 	return data.NewMeasurement("sentiment", map[string]data.Metric[float64]{
 		"last": data.NewMetric[float64](
 			"last", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
 		),
-		"return": data.NewMetric[float64](
-			"return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"absolute_return": data.NewMetric[float64](
-			"absolute_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"advance_count": data.NewMetric[float64](
-			"advance_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"decline_count": data.NewMetric[float64](
-			"decline_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"unchanged_count": data.NewMetric[float64](
-			"unchanged_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
 		"valid_member_count": data.NewMetric[float64](
 			"valid_member_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
-		"cohort_member_count": data.NewMetric[float64](
-			"cohort_member_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		"member_count": data.NewMetric[float64](
+			"member_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
 		"excluded_member_count": data.NewMetric[float64](
 			"excluded_member_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
-		"advance_fraction": data.NewMetric[float64](
-			"advance_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"positive_count": data.NewMetric[float64](
+			"positive_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
-		"decline_fraction": data.NewMetric[float64](
-			"decline_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"negative_count": data.NewMetric[float64](
+			"negative_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
-		"unchanged_fraction": data.NewMetric[float64](
-			"unchanged_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"zero_count": data.NewMetric[float64](
+			"zero_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
-		"directional_participation": data.NewMetric[float64](
-			"directional_participation", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"extreme_tie_count": data.NewMetric[float64](
+			"extreme_tie_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
-		"directional_agreement": data.NewMetric[float64](
-			"directional_agreement", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"max_age": data.NewMetric[float64](
+			"max_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"directional_consensus": data.NewMetric[float64](
-			"directional_consensus", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"mean_age": data.NewMetric[float64](
+			"mean_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"same_direction_peer_count": data.NewMetric[float64](
-			"same_direction_peer_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		"median_age": data.NewMetric[float64](
+			"median_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"opposite_direction_peer_count": data.NewMetric[float64](
-			"opposite_direction_peer_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		"median_from_age": data.NewMetric[float64](
+			"median_from_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"zero_return_peer_count": data.NewMetric[float64](
-			"zero_return_peer_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		"focal_age": data.NewMetric[float64](
+			"focal_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"same_direction_peer_fraction": data.NewMetric[float64](
-			"same_direction_peer_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"focal_from_age": data.NewMetric[float64](
+			"focal_from_age", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"opposite_direction_peer_fraction": data.NewMetric[float64](
-			"opposite_direction_peer_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"signed_median": data.NewMetric[float64](
+			"signed_median", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"zero_return_peer_fraction": data.NewMetric[float64](
-			"zero_return_peer_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"mean_absolute": data.NewMetric[float64](
+			"mean_absolute", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"breadth": data.NewMetric[float64](
-			"breadth", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"median_absolute": data.NewMetric[float64](
+			"median_absolute", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"breadth_baseline": data.NewMetric[float64](
-			"breadth_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"breadth_divergence": data.NewMetric[float64](
-			"breadth_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"breadth_zscore": data.NewMetric[float64](
-			"breadth_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"breadth_velocity": data.NewMetric[float64](
-			"breadth_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_return": data.NewMetric[float64](
-			"median_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_return_baseline": data.NewMetric[float64](
-			"median_return_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_return_divergence": data.NewMetric[float64](
-			"median_return_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_return_zscore": data.NewMetric[float64](
-			"median_return_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_return_velocity": data.NewMetric[float64](
-			"median_return_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_return": data.NewMetric[float64](
-			"median_absolute_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_return_baseline": data.NewMetric[float64](
-			"median_absolute_return_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_return_zscore": data.NewMetric[float64](
-			"median_absolute_return_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_return_velocity": data.NewMetric[float64](
-			"median_absolute_return_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"median_absolute_return_ratio": data.NewMetric[float64](
-			"median_absolute_return_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"mean_absolute_return": data.NewMetric[float64](
-			"mean_absolute_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"rms_return": data.NewMetric[float64](
-			"rms_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"return_interquartile_range": data.NewMetric[float64](
-			"return_interquartile_range", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"return_dispersion_baseline": data.NewMetric[float64](
-			"return_dispersion_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"return_dispersion_zscore": data.NewMetric[float64](
-			"return_dispersion_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"return_dispersion_velocity": data.NewMetric[float64](
-			"return_dispersion_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"return_dispersion_ratio": data.NewMetric[float64](
-			"return_dispersion_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"return_mad": data.NewMetric[float64](
-			"return_mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"mad": data.NewMetric[float64](
+			"mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 		"magnitude_mad": data.NewMetric[float64](
 			"magnitude_mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_absolute_return": data.NewMetric[float64](
-			"largest_absolute_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"interquartile_range": data.NewMetric[float64](
+			"interquartile_range", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_tie_count": data.NewMetric[float64](
-			"largest_move_tie_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		"rms": data.NewMetric[float64](
+			"rms", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_signed_return": data.NewMetric[float64](
-			"largest_signed_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"extreme_magnitude": data.NewMetric[float64](
+			"extreme_magnitude", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_excess": data.NewMetric[float64](
-			"largest_move_excess", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"extreme_signed": data.NewMetric[float64](
+			"extreme_signed", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_mad_excess": data.NewMetric[float64](
-			"largest_move_mad_excess", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"peer_median_absolute": data.NewMetric[float64](
+			"peer_median_absolute", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_ratio": data.NewMetric[float64](
-			"largest_move_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"peer_mad": data.NewMetric[float64](
+			"peer_mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_ratio_baseline": data.NewMetric[float64](
-			"largest_move_ratio_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"signed_fraction": data.NewMetric[float64](
+			"signed_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_ratio_zscore": data.NewMetric[float64](
-			"largest_move_ratio_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"signed_fraction_baseline": data.NewMetric[float64](
+			"signed_fraction_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_share": data.NewMetric[float64](
-			"largest_move_share", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"signed_fraction_divergence": data.NewMetric[float64](
+			"signed_fraction_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_share_baseline": data.NewMetric[float64](
-			"largest_move_share_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"signed_fraction_zscore": data.NewMetric[float64](
+			"signed_fraction_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"largest_move_share_zscore": data.NewMetric[float64](
-			"largest_move_share_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"signed_fraction_velocity": data.NewMetric[float64](
+			"signed_fraction_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"peer_median_absolute_return": data.NewMetric[float64](
-			"peer_median_absolute_return", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"median_absolute_baseline": data.NewMetric[float64](
+			"median_absolute_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"peer_magnitude_mad": data.NewMetric[float64](
-			"peer_magnitude_mad", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		"median_absolute_divergence": data.NewMetric[float64](
+			"median_absolute_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"median_asof_age_seconds": data.NewMetric[float64](
-			"median_asof_age_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		"median_absolute_zscore": data.NewMetric[float64](
+			"median_absolute_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"max_asof_age_seconds": data.NewMetric[float64](
-			"max_asof_age_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		"median_absolute_velocity": data.NewMetric[float64](
+			"median_absolute_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
 		),
-		"median_from_age_seconds": data.NewMetric[float64](
-			"median_from_age_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		"iqr": data.NewMetric[float64](
+			"iqr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"cohort_horizon_seconds": data.NewMetric[float64](
-			"cohort_horizon_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		"iqr_baseline": data.NewMetric[float64](
+			"iqr_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"asof_age_seconds": data.NewMetric[float64](
-			"asof_age_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		"iqr_divergence": data.NewMetric[float64](
+			"iqr_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-		"from_age_seconds": data.NewMetric[float64](
-			"from_age_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		"iqr_zscore": data.NewMetric[float64](
+			"iqr_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"iqr_velocity": data.NewMetric[float64](
+			"iqr_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_ratio": data.NewMetric[float64](
+			"extreme_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_ratio_baseline": data.NewMetric[float64](
+			"extreme_ratio_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_ratio_divergence": data.NewMetric[float64](
+			"extreme_ratio_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_ratio_zscore": data.NewMetric[float64](
+			"extreme_ratio_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_ratio_velocity": data.NewMetric[float64](
+			"extreme_ratio_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_share": data.NewMetric[float64](
+			"extreme_share", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_share_baseline": data.NewMetric[float64](
+			"extreme_share_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_share_divergence": data.NewMetric[float64](
+			"extreme_share_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_share_zscore": data.NewMetric[float64](
+			"extreme_share_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"extreme_share_velocity": data.NewMetric[float64](
+			"extreme_share_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
 }

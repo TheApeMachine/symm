@@ -45,8 +45,10 @@ func NewTicker(ctx context.Context) *Ticker {
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&m)).Next(nil)))
+func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	))
 }
 
 /*
