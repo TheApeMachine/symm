@@ -10,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestStep(t *testing.T) {
@@ -173,6 +174,89 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 
 			scorer := solver.scorer("BTC/USD")
 			So(scorer.lastReading[4].Count, ShouldEqual, 2)
+		})
+	})
+}
+
+func TestSubSourceAndNonZeroLatents(t *testing.T) {
+	Convey("Given a resonance solver receiving real-world sub-sources", t, func() {
+		solver := NewSolver(context.Background(), 0.05)
+		defer solver.Close()
+
+		var lastArtifact *types.ResonanceArtifact
+		solver.SetObserver(func(artifact *types.ResonanceArtifact) {
+			lastArtifact = artifact
+		})
+
+		createMetric := func(source, metricName string, val, support float64) *data.Measurement[float64] {
+			measurement := data.NewMeasurement[float64](source, nil)
+			measurement.Label = "BTC/USD"
+			measurement.At = time.Now()
+			measurement.From = measurement.At
+			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
+			measurement.Metadata = map[string]string{data.MetadataSupport: strconv.FormatFloat(support, 'f', -1, 64)}
+			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+			}
+			return measurement
+		}
+
+		for step := 1; step <= 20; step++ {
+			m := solver.Register()
+			m.Label = "BTC/USD"
+			m.At = time.Now()
+			s := float64(step) + 10.0
+			v := float64(step%5) * 0.2
+
+			m.Peers = []*data.Measurement[float64]{
+				createMetric("correlation", "signed_correlation", 0.5+v, s),
+				createMetric("leadlag", "best_lag_correlation", 0.4+v, s),
+				createMetric("liquidity", "relative_spread", 0.0002+v*0.0001, s),
+				createMetric("sentiment", "signed_fraction_zscore", -0.3+v, s),
+				createMetric("cvd", "signed_net_fraction_zscore", 0.6-v, s),
+				createMetric("depthflow:level3", "observed_notional_imbalance_zscore", -0.5+v, s),
+				createMetric("morphology:level3", "morphology_change_zscore", 0.2+v, s),
+				createMetric("hawkes", "branching_spectral_radius", 0.7+v*0.1, s),
+				createMetric("pumpdump:ticker", "spread_zscore", 0.1+v, s),
+				createMetric("toxicity:trade", "fill_fraction_zscore:bid", 0.3-v, s),
+				createMetric("derivatives", "basis_zscore", 0.05+v, s),
+			}
+
+			priceMetric := data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
+			m.Metrics["midpoint"] = priceMetric.Write(50000.0 + float64(step)*10.0)
+
+			res := solver.Step(m)
+			So(res, ShouldNotBeNil)
+		}
+
+		Convey("the manifold settles into non-zero latents and layer states", func() {
+			So(lastArtifact, ShouldNotBeNil)
+			So(lastArtifact.Snapshot, ShouldNotBeNil)
+			So(len(lastArtifact.Snapshot.Latent), ShouldBeGreaterThan, 0)
+
+			hasNonZeroLatent := false
+			for _, val := range lastArtifact.Snapshot.Latent {
+				if val != 0 {
+					hasNonZeroLatent = true
+					break
+				}
+			}
+			So(hasNonZeroLatent, ShouldBeTrue)
+
+			wire := lastArtifact.EncodeWire()
+			So(wire, ShouldNotBeNil)
+			So(len(wire.Latent), ShouldEqual, len(lastArtifact.Snapshot.Latent))
+			So(len(wire.Layers), ShouldEqual, len(lastArtifact.Snapshot.Layers))
+
+			for _, layer := range wire.Layers {
+				hasNonZeroState := false
+				for _, val := range layer.State {
+					if val != 0 {
+						hasNonZeroState = true
+						break
+					}
+				}
+				So(hasNonZeroState, ShouldBeTrue)
+			}
 		})
 	})
 }

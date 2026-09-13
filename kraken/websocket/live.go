@@ -378,16 +378,36 @@ func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement
 		return measurement
 	}
 
+	if measurement.Provenance == nil {
+		measurement.Provenance = make(map[string]string, 4)
+	}
+
+	if live.Name() != "" && (measurement.Source == "" || measurement.Source == "websocket") {
+		measurement.Source = live.Name()
+	}
+
 	if symbol, ok := row["symbol"].(string); ok {
 		measurement.Label = live.normalizer.Name(symbol)
 	}
 
-	if side, ok := row["side"].(string); ok {
-		if measurement.Provenance == nil {
-			measurement.Provenance = make(map[string]string, 1)
-		}
+	if channel, ok := row["channel"].(string); ok {
+		measurement.Provenance["channel"] = channel
+	}
 
+	if side, ok := row["side"].(string); ok {
 		measurement.Provenance["side"] = side
+	}
+
+	if ordType, ok := row["ord_type"].(string); ok {
+		measurement.Provenance["ord_type"] = ordType
+	}
+
+	if event, ok := row["event"].(string); ok {
+		measurement.Provenance["event"] = event
+	}
+
+	if orderID, ok := row["order_id"].(string); ok {
+		measurement.Provenance["order_id"] = orderID
 	}
 
 	if stamped, ok := row["timestamp"].(string); ok {
@@ -510,8 +530,6 @@ func (live *Live) resume() error {
 				err,
 			)
 		}
-
-		return nil
 	}
 
 	if live.Status() == runtime.READY {
@@ -816,7 +834,23 @@ func (live *Live) subscribeLevel3Group(conn *Live) error {
 		time.Sleep(viper.GetDuration("market.subscribe.pace"))
 	}
 
+	conn.Transition(runtime.READY)
+
 	return nil
+}
+
+func (live *Live) Transition(stage runtime.Stage) {
+	live.System.Transition(stage)
+
+	if live.level3 != nil {
+		live.level3.Range(func(_, value any) bool {
+			if child, ok := value.(*Live); ok && child != nil {
+				child.Transition(stage)
+			}
+
+			return true
+		})
+	}
 }
 
 /*

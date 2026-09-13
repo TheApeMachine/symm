@@ -585,6 +585,10 @@ func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.M
 		measurement.Provenance = make(map[string]string)
 	}
 
+	if channel, ok := row["channel"].(string); ok {
+		measurement.Provenance["channel"] = channel
+	}
+
 	if side, ok := row["side"].(string); ok {
 		measurement.Provenance["side"] = side
 	}

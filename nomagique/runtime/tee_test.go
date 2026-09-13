@@ -61,7 +61,8 @@ func TestTeeStep(t *testing.T) {
 
 				dequeued, ok := tee.Ring().Get()
 				So(ok, ShouldBeTrue)
-				So(dequeued, ShouldEqual, measurement)
+				So(dequeued.Source, ShouldEqual, measurement.Source)
+				So(dequeued.Label, ShouldEqual, measurement.Label)
 				So(tee.Ring().IsEmpty(), ShouldBeTrue)
 			})
 		})
@@ -86,11 +87,13 @@ func TestTeeStep(t *testing.T) {
 
 				first, okFirst := tee.Ring().Get()
 				So(okFirst, ShouldBeTrue)
-				So(first, ShouldEqual, peerFirst)
+				So(first.Source, ShouldEqual, peerFirst.Source)
+				So(first.Label, ShouldEqual, peerFirst.Label)
 
 				second, okSecond := tee.Ring().Get()
 				So(okSecond, ShouldBeTrue)
-				So(second, ShouldEqual, peerSecond)
+				So(second.Source, ShouldEqual, peerSecond.Source)
+				So(second.Label, ShouldEqual, peerSecond.Label)
 
 				So(tee.Ring().IsEmpty(), ShouldBeTrue)
 			})

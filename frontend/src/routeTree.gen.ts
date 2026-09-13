@@ -23,7 +23,6 @@ import { Route as GraphRouteImport } from './routes/graph'
 import { Route as FluidRouteImport } from './routes/fluid'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as CortexRouteImport } from './routes/cortex'
-import { Route as AllocationRouteImport } from './routes/allocation'
 import { Route as IndexRouteImport } from './routes/index'
 
 const XrayRoute = XrayRouteImport.update({
@@ -96,11 +95,6 @@ const CortexRoute = CortexRouteImport.update({
   path: '/cortex',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AllocationRoute = AllocationRouteImport.update({
-  id: '/allocation',
-  path: '/allocation',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -109,7 +103,6 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
@@ -127,7 +120,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
@@ -146,7 +138,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
@@ -166,7 +157,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/allocation'
     | '/cortex'
     | '/diagnostics'
     | '/fluid'
@@ -184,7 +174,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/allocation'
     | '/cortex'
     | '/diagnostics'
     | '/fluid'
@@ -202,7 +191,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/allocation'
     | '/cortex'
     | '/diagnostics'
     | '/fluid'
@@ -221,7 +209,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AllocationRoute: typeof AllocationRoute
   CortexRoute: typeof CortexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
   FluidRoute: typeof FluidRoute
@@ -338,13 +325,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CortexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/allocation': {
-      id: '/allocation'
-      path: '/allocation'
-      fullPath: '/allocation'
-      preLoaderRoute: typeof AllocationRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -357,7 +337,6 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AllocationRoute: AllocationRoute,
   CortexRoute: CortexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
   FluidRoute: FluidRoute,

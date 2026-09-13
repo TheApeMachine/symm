@@ -14,7 +14,7 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => () => {},
 }));
 
-const { DEFAULT_FOCUS_SYMBOL, getKernelReadingStore, getMeasurementStore } =
+const { DEFAULT_FOCUS_SYMBOL, getMeasurementStore } =
 	await import("#/collections/app");
 const { KernelInspector } = await import("#/components/kernel/inspector");
 
@@ -93,8 +93,10 @@ describe("KernelInspector", () => {
 	});
 
 	it("renders the kernel's identity, blurb, history and meters", () => {
-		getKernelReadingStore("hawkes").state.clear();
-		getKernelReadingStore("hawkes").actions.add(2.5);
+		getMeasurementStore("hawkes", DEFAULT_FOCUS_SYMBOL).state.clear();
+		getMeasurementStore("hawkes", DEFAULT_FOCUS_SYMBOL).actions.add(
+			sparseMeasurement(2.5),
+		);
 		terminalStore.actions.inspectSource("hawkes");
 
 		const markup = renderInspector();
@@ -127,7 +129,6 @@ describe("KernelInspector", () => {
 		carries that kernel's metric names with their current readouts.
 	*/
 	it("renders a meter for every metric the kernel publishes", () => {
-		getKernelReadingStore("toxicity").state.clear();
 		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
 		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
 			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
@@ -160,7 +161,6 @@ describe("KernelInspector", () => {
 		dash for the ticks between X-bearing rows.
 	*/
 	it("holds a metric's last value across rows that do not carry it", () => {
-		getKernelReadingStore("toxicity").state.clear();
 		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
 		// First, X is published with a value.
 		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
@@ -182,7 +182,7 @@ describe("KernelInspector", () => {
 	});
 
 	it("reports a kernel with no readings as standby rather than crashing", () => {
-		getKernelReadingStore("toxicity").state.clear();
+		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();

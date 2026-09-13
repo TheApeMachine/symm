@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"fmt"
+
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
@@ -51,10 +52,10 @@ type Hub struct {
 	frontend         *websocket.Conn
 	frontendMu       sync.Mutex
 	store            *tables.Catalog
-	warehouse   *workbench.Warehouse
-	tradeStore  TradeJournalSource
-	exitHandler func(symbol string)
-	fluid       *FluidRTC
+	warehouse        *workbench.Warehouse
+	tradeStore       TradeJournalSource
+	exitHandler      func(symbol string)
+	fluid            *FluidRTC
 	learningInterval time.Duration
 	lastLearning     time.Time
 }
@@ -334,6 +335,7 @@ func NewHub(ctx context.Context) *Hub {
 		hub.frontendMu.Lock()
 		hub.frontend = conn
 		hub.frontendMu.Unlock()
+		errnie.Info("hub: frontend websocket connected")
 
 		defer func() {
 			hub.frontendMu.Lock()
@@ -343,6 +345,7 @@ func NewHub(ctx context.Context) *Hub {
 			}
 
 			hub.frontendMu.Unlock()
+			errnie.Info("hub: frontend websocket disconnected")
 
 			conn.Conn.Close()
 		}()
@@ -414,10 +417,10 @@ func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
 		return
 	}
 
-	ticker := time.NewTicker(16 * time.Millisecond)
+	ticker := time.NewTicker(4 * time.Millisecond)
 	defer ticker.Stop()
 
-	batch := make([]*data.Measurement[float64], 0, 512)
+	batch := make([]*data.Measurement[float64], 0, 64)
 
 	for {
 		select {
@@ -437,7 +440,7 @@ func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
 				batch = append(batch, measurement)
 			}
 
-			if len(batch) >= 512 {
+			if len(batch) >= 64 {
 				hub.writeMeasurements(batch)
 				batch = batch[:0]
 			}
@@ -550,6 +553,8 @@ func (hub *Hub) writeMeasurements(measurements []*data.Measurement[float64]) {
 		if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
 		}
+
+		return
 	}
 }
 

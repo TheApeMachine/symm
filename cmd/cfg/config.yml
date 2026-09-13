@@ -43,10 +43,9 @@ experimental:
 
 runtime:
   workspace:
-    # Disruptor slot count. A power of two, sized as a resource allocation so
-    # the nine observation stages can absorb a ticker/trade/L3 burst without
-    # spinning in TryReserve. It is not a market horizon.
-    buffer: 4096
+    # Disruptor slot count. Sized to 1 so each sequence completes all stages
+    # sequentially across the shared pre-allocated register before the next sequence enters.
+    buffer: 1
 
 system:
   data_path: ~/.symm/data

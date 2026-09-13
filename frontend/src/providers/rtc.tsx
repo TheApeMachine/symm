@@ -138,7 +138,7 @@ export const RtcFeed = () => {
 			const onChannelOpen = () => {
 				openChannels += 1;
 
-				if (openChannels < 2) {
+				if (openChannels < 1) {
 					return;
 				}
 

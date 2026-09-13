@@ -96,10 +96,7 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 
 	if len(measurement.Peers) != 0 {
 		peers = make([]*Measurement[T], len(measurement.Peers))
-
-		for idx, peer := range measurement.Peers {
-			peers[idx] = peer.Clone()
-		}
+		copy(peers, measurement.Peers)
 	}
 
 	return &Measurement[T]{
@@ -215,7 +212,7 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 		for arriving := range in {
 			measurement := *(**Measurement[Value])(arriving)
 
-			if measurement != nil && measurement.Err == nil {
+			if measurement != nil {
 				readingEval := transport.NewEvaluate(op.quality)
 				var reading QualityReading
 
@@ -225,7 +222,7 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 				err := readingEval.Error()
 
-				if err != nil {
+				if err != nil && measurement.Err == nil {
 					measurement.Err = err
 				}
 
@@ -310,10 +307,7 @@ func (op *Cloner[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 
 			if len(measurement.Peers) != 0 {
 				peers = make([]*Measurement[Value], len(measurement.Peers))
-
-				for idx, peer := range measurement.Peers {
-					peers[idx] = peer.Clone()
-				}
+				copy(peers, measurement.Peers)
 			}
 
 			op.out = &Measurement[Value]{

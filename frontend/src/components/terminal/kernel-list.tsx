@@ -3,7 +3,7 @@ import type { FrameBuffer } from "#/collections/app";
 import {
 	DEFAULT_KERNELS,
 	focusStore,
-	getKernelReadingStore,
+	getMeasurementStore,
 	getResonanceReadingStore,
 	kernelDetailStore,
 } from "#/collections/app";
@@ -18,17 +18,32 @@ import {
 import { Flex } from "#/components/ui";
 import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
 
 /*
-readingsOf collects a kernel's accumulated readings.
-
-The ring it walks holds only readings that were actually defined — the sparse
-rows a kernel emits before its estimator has a noise model never enter it (see
-addMeasurement in collections/app). So a run of empty updates leaves this
-history untouched rather than evicting the real readings out of it, and a
-kernel that has measured once stays measured until it says otherwise.
+readingsOf collects a kernel's accumulated readings directly from its measurement store.
 */
-const readingsOf = (ring: FrameBuffer<number>) => {
+const readingsOf = (ring: FrameBuffer<Measurement>) => {
+	const points: number[] = [];
+	const len = ring.getBufferLength();
+
+	for (let i = 0; i < len; i++) {
+		const m = ring.get(i);
+
+		if (m) {
+			const snr = m.snr();
+			if (Number.isFinite(snr)) {
+				points.push(snr);
+			}
+		}
+	}
+
+	const latest = points.length > 0 ? points[points.length - 1] : null;
+
+	return { points, latest };
+};
+
+const readingsOfNumbers = (ring: FrameBuffer<number>) => {
 	const points: number[] = [];
 	const len = ring.getBufferLength();
 
@@ -93,8 +108,8 @@ const KernelRow = ({
 }) => {
 	const resonance = isResonance(source);
 	const focusSymbol = useSelector(focusStore, (state) => state);
-	const measurementReadings = useSelector(
-		getKernelReadingStore(source),
+	const measurements = useSelector(
+		getMeasurementStore(source, focusSymbol),
 		(state) => state,
 	);
 	const resonanceReadings = useSelector(
@@ -102,9 +117,9 @@ const KernelRow = ({
 		(state) => state,
 	);
 
-	const { points, latest } = readingsOf(
-		resonance ? resonanceReadings : measurementReadings,
-	);
+	const { points, latest } = resonance
+		? readingsOfNumbers(resonanceReadings)
+		: readingsOf(measurements);
 	const copy = kernelCopy(source, "");
 	const status = kernelStatus(latest);
 	const badge = kernelStatusMeta(status);

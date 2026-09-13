@@ -428,8 +428,6 @@ func (op *Space) update(row int, measurement *data.Measurement[float64]) error {
 		previous := op.values[row][column]
 		op.values[row][column] = metric.Raw
 		op.present[row][column] = true
-		metric.Coordinates = op.coordinates[column]
-		measurement.Metrics[key] = metric
 		baseline := op.baselines[row][column]
 
 		if baseline == nil {
@@ -697,4 +695,20 @@ func observed(measurements []*data.Measurement[float64]) (time.Time, time.Time) 
 	}
 
 	return at, from
+}
+
+/*
+Coordinates returns the coordinate pointer for a given source and metric key.
+*/
+func (op *Space) Coordinates(source, key string) *[2]float64 {
+	op.mu.RLock()
+	defer op.mu.RUnlock()
+
+	column, exists := op.columnIndex[[2]string{source, key}]
+
+	if !exists || column >= len(op.coordinates) {
+		return nil
+	}
+
+	return op.coordinates[column]
 }

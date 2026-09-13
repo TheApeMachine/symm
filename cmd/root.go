@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -194,152 +195,67 @@ var (
 
 			workspaceRegister := store.NewRegister[*data.Measurement[float64]]()
 
-			publicWorkload := nmruntime.NewWorkload(
-				ctx, "public",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					public,
-				}},
-				workspaceRegister,
-			)
-
-			privateWorkload := nmruntime.NewWorkload(
-				ctx, "private",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					private,
-				}},
-				workspaceRegister,
-			)
-
-			futuresWorkload := nmruntime.NewWorkload(
-				ctx, "futures",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					futures,
-				}},
-				workspaceRegister,
-			)
-
-			tickerRing := nmruntime.NewWorkload(
-				ctx, "ticker",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					correlation.NewTicker(ctx),
-					leadlag.NewTicker(ctx),
-					liquidity.NewTicker(ctx),
-					sentiment.NewTicker(ctx),
-					pumpdump.NewTicker(ctx),
-				}},
-				workspaceRegister,
-			)
-
-			tradeRing := nmruntime.NewWorkload(
-				ctx, "trade",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					cvd.NewTrade(ctx),
-					hawkes.NewTrade(ctx),
-					toxicity.NewTrade(ctx),
-					pumpdump.NewTrade(ctx),
-				}},
-				workspaceRegister,
-			)
-
-			level3Ring := nmruntime.NewWorkload(
-				ctx, "level3",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					depthflow.NewLevel3(ctx),
-					morphology.NewLevel3(ctx),
-					toxicity.NewLevel3(ctx),
-					pumpdump.NewLevel3(ctx),
-				}},
-				workspaceRegister,
-			)
-
-			futuresTicker := nmruntime.NewWorkload(
-				ctx, "futures_ticker",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					derivatives.NewTicker(ctx),
-				}},
-				workspaceRegister,
-			)
-
-			futuresTrade := nmruntime.NewWorkload(
-				ctx, "futures_trade",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					derivatives.NewTrade(ctx),
-				}},
-				workspaceRegister,
-			)
-
-			classificationRing := nmruntime.NewWorkload(
-				ctx,
-				"classification",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					category.NewSolver(ctx),
-				}, {
-					cognition.NewSolver(ctx),
-				}},
-				workspaceRegister,
-			)
-
-			resonanceRing := nmruntime.NewWorkload(
-				ctx,
-				"resonance",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					resonance.NewSolver(ctx, system.Cfg.Resonance.LearningRate),
-				}},
-				workspaceRegister,
-			)
-
-			// One training. Nodes in a stage run concurrently against the
-			// same envelope, and the grid writes the measurements it is
-			// shown — seven of those on one envelope is a concurrent map
-			// write. The tape arrives on a channel because walking the
-			// record is a long read against an object store.
 			tape := strategy.NewTape()
 
 			training := strategy.NewTraining(ctx, tape, instrument, price, balance, api)
 			hub.SetTradeStore(training)
 			hub.SetExitHandler(training.RequestExit)
 
-			trainerRing := nmruntime.NewWorkload(
-				ctx,
-				"trainer",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					training,
-				}},
-				workspaceRegister,
-			)
-
 			telemetryTee := nmruntime.NewTee(131072)
 			go hub.Drain(telemetryTee.Ring())
+
+			storageTee := nmruntime.NewNamedTee("storage.tee", 131072)
+			go tables.Drain(ctx, catalog, storageTee.Ring())
+
+			resonanceSolver := resonance.NewSolver(ctx, system.Cfg.Resonance.LearningRate)
+			resonanceSolver.SetObserver(hub.PublishResonance)
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				"workspace",
-				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					publicWorkload, privateWorkload, futuresWorkload,
-				}, {
-					tickerRing, tradeRing, level3Ring, futuresTicker, futuresTrade,
-				}, {
-					classificationRing, resonanceRing,
-				}, {
-					trainerRing,
-				}, {
-					telemetryTee,
-				}},
+				[][]nmruntime.Node[*data.Measurement[float64]]{
+					{
+						public,
+						private,
+						futures,
+					},
+					{
+						correlation.NewTicker(ctx),
+						leadlag.NewTicker(ctx),
+						liquidity.NewTicker(ctx),
+						sentiment.NewTicker(ctx),
+						pumpdump.NewTicker(ctx),
+						cvd.NewTrade(ctx),
+						hawkes.NewTrade(ctx),
+						toxicity.NewTrade(ctx),
+						pumpdump.NewTrade(ctx),
+						depthflow.NewLevel3(ctx),
+						morphology.NewLevel3(ctx),
+						toxicity.NewLevel3(ctx),
+						pumpdump.NewLevel3(ctx),
+						derivatives.NewTicker(ctx),
+						derivatives.NewTrade(ctx),
+					},
+					{
+						category.NewSolver(ctx),
+						resonanceSolver,
+						manifoldSolver,
+					},
+					{
+						cognition.NewSolver(ctx),
+					},
+					{
+						training,
+					},
+					{
+						telemetryTee,
+						storageTee,
+					},
+				},
 				workspaceRegister,
 			)
 
 			defer workspace.Close()
-			defer trainerRing.Close()
-			defer resonanceRing.Close()
-			defer classificationRing.Close()
-			defer futuresTrade.Close()
-			defer futuresTicker.Close()
-			defer level3Ring.Close()
-			defer tradeRing.Close()
-			defer tickerRing.Close()
-			defer futuresWorkload.Close()
-			defer privateWorkload.Close()
-			defer publicWorkload.Close()
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
@@ -385,6 +301,8 @@ var (
 				))
 			}
 
+			var totalSteps atomic.Uint64
+
 			go func() {
 				for {
 					select {
@@ -415,6 +333,7 @@ var (
 
 					if public.Pending() > 0 || private.Pending() > 0 || futures.Pending() > 0 {
 						workspace.Step(nil)
+						totalSteps.Add(1)
 						continue
 					}
 

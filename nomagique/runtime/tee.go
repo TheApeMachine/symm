@@ -18,15 +18,23 @@ memory allocations, and never exerts backpressure on the upstream LMAX ring.
 */
 type Tee struct {
 	*System
-	ring *wf.RingBuffer[*data.Measurement[float64]]
+	ring     *wf.RingBuffer[*data.Measurement[float64]]
+	lastSeen map[string]int64
 }
 
 /*
-NewTee creates a new Tee node with the given ring buffer capacity.
+NewTee creates a new Tee node with the given ring buffer capacity and default "telemetry.tee" label.
 */
 func NewTee(capacity int) *Tee {
+	return NewNamedTee("telemetry.tee", capacity)
+}
+
+/*
+NewNamedTee creates a new Tee node with a custom system label and ring buffer capacity.
+*/
+func NewNamedTee(label string, capacity int) *Tee {
 	tee := &Tee{
-		System: NewSystem(context.Background(), "telemetry.tee"),
+		System: NewSystem(context.Background(), label),
 		ring:   wf.NewRingBuffer[*data.Measurement[float64]](capacity),
 	}
 	tee.Transition(READY)
@@ -45,7 +53,7 @@ Register identifies the Tee with the runtime register and declares a wildcard pe
 interest so all stage measurements are populated into val.Peers.
 */
 func (tee *Tee) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement[float64]("telemetry.tee", nil)
+	measurement := data.NewMeasurement[float64](tee.Name(), nil)
 	measurement.Metadata["peer-interest"] = "*"
 
 	return measurement
@@ -60,7 +68,7 @@ func (tee *Tee) Step(measurement *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	if measurement.Source != "telemetry.tee" && measurement.Label != "" {
+	if measurement.Source != tee.Name() && measurement.Label != "" {
 		tee.ring.Put(measurement.Clone())
 	}
 

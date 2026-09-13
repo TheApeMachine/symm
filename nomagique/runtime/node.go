@@ -71,28 +71,12 @@ and puts what Step returns back into the register under the node's slot.
 */
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
-		if sys, ok := any(consumer.node).(interface{ Status() Stage }); ok && sys.Status() != READY {
-			continue
-		}
-
 		query := store.NewQuery(consumer, data.ActionRead)
 		val := data.Read[T](consumer.register.Next(data.NewValue(*query)))
-
-		valToStep := val
-
-		if measurement, ok := any(val).(*data.Measurement[float64]); ok && measurement != nil {
-			valToStep = any(measurement.Clone()).(T)
-		}
-
-		result := consumer.node.Step(valToStep)
-		toWrite := result
-
-		if measurement, ok := any(result).(*data.Measurement[float64]); ok && measurement != nil {
-			toWrite = any(measurement.Clone()).(T)
-		}
+		result := consumer.node.Step(val)
 
 		data.Read[T](consumer.register.Next(data.NewValue(*store.NewQuery(
-			consumer, data.ActionWrite, toWrite,
+			consumer, data.ActionWrite, result,
 		))))
 	}
 }

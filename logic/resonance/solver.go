@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,6 +82,14 @@ type Solver struct {
 	// duration so the wiring diagram can profile the resonance stage like
 	// every other pipeline node.
 	ObserveModule func(string, time.Duration)
+	observe       func(*types.ResonanceArtifact)
+}
+
+/*
+SetObserver installs the synchronous observer for producer-owned model state.
+*/
+func (solver *Solver) SetObserver(observer func(*types.ResonanceArtifact)) {
+	solver.observe = observer
 }
 
 /*
@@ -223,29 +232,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	var signals [11]*data.Measurement[float64]
 
 	if measurement.Label == symbol {
-		switch measurement.Source {
-		case "correlation":
-			signals[0] = measurement
-		case "leadlag":
-			signals[1] = measurement
-		case "liquidity":
-			signals[2] = measurement
-		case "sentiment":
-			signals[3] = measurement
-		case "cvd":
-			signals[4] = measurement
-		case "depthflow":
-			signals[5] = measurement
-		case "morphology":
-			signals[6] = measurement
-		case "hawkes":
-			signals[7] = measurement
-		case "pumpdump":
-			signals[8] = measurement
-		case "toxicity":
-			signals[9] = measurement
-		case "derivatives":
-			signals[10] = measurement
+		if idx := signalIndex(measurement.Source); idx >= 0 {
+			signals[idx] = measurement
 		}
 	}
 
@@ -254,29 +242,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			continue
 		}
 
-		switch peer.Source {
-		case "correlation":
-			signals[0] = peer
-		case "leadlag":
-			signals[1] = peer
-		case "liquidity":
-			signals[2] = peer
-		case "sentiment":
-			signals[3] = peer
-		case "cvd":
-			signals[4] = peer
-		case "depthflow":
-			signals[5] = peer
-		case "morphology":
-			signals[6] = peer
-		case "hawkes":
-			signals[7] = peer
-		case "pumpdump":
-			signals[8] = peer
-		case "toxicity":
-			signals[9] = peer
-		case "derivatives":
-			signals[10] = peer
+		if idx := signalIndex(peer.Source); idx >= 0 {
+			signals[idx] = peer
 		}
 	}
 
@@ -286,13 +253,17 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	resonance := solver.Update(symbol, at, features, midpoint)
 
 	if resonance != nil && resonance.Snapshot != nil {
-		if m, ok := measurement.Metrics["energy"]; ok {
-			measurement.Metrics["energy"] = m.Write(resonance.Snapshot.Energy)
+		if energyMetric, ok := measurement.Metrics["energy"]; ok {
+			measurement.Metrics["energy"] = energyMetric.Write(resonance.Snapshot.Energy)
 		}
 
-		if m, ok := measurement.Metrics["surprise"]; ok {
-			measurement.Metrics["surprise"] = m.Write(resonance.Snapshot.Surprise)
+		if surpriseMetric, ok := measurement.Metrics["surprise"]; ok {
+			measurement.Metrics["surprise"] = surpriseMetric.Write(resonance.Snapshot.Surprise)
 		}
+	}
+
+	if resonance != nil && solver.observe != nil {
+		solver.observe(resonance)
 	}
 
 	return measurement
@@ -407,6 +378,40 @@ func (solver *Solver) Update(
 	return solver.publishReturns(symbolName, at, coder, out)
 }
 
+func signalIndex(source string) int {
+	prefix := source
+	if idx := strings.IndexByte(prefix, ':'); idx >= 0 {
+		prefix = prefix[:idx]
+	}
+
+	switch prefix {
+	case "correlation":
+		return 0
+	case "leadlag":
+		return 1
+	case "liquidity":
+		return 2
+	case "sentiment":
+		return 3
+	case "cvd":
+		return 4
+	case "depthflow":
+		return 5
+	case "morphology":
+		return 6
+	case "hawkes":
+		return 7
+	case "pumpdump":
+		return 8
+	case "toxicity":
+		return 9
+	case "derivatives":
+		return 10
+	default:
+		return -1
+	}
+}
+
 func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (float64, bool) {
 	if measurement == nil || measurement.Err != nil || len(measurement.Metrics) == 0 {
 		return 0, false
@@ -416,27 +421,68 @@ func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (f
 
 	switch index {
 	case 0: // Correlation
-		candidates = []string{"relative_return_energy", "cohort_signed_correlation", "signed_correlation"}
+		candidates = []string{
+			"signed_correlation", "cohort_signed_correlation", "covariance",
+			"absolute_correlation", "relative_return_energy",
+		}
 	case 1: // LeadLag
-		candidates = []string{"best_lag_correlation", "contemporaneous_correlation", "absolute_correlation_gain"}
+		candidates = []string{
+			"best_lag_correlation", "contemporaneous_correlation",
+			"absolute_correlation_gain", "lag_fraction",
+		}
 	case 2: // Liquidity
-		candidates = []string{"relative_spread", "touch_notional_imbalance", "spread"}
+		candidates = []string{
+			"touch_notional_imbalance", "relative_spread", "spread", "depth_zscore:bid",
+		}
 	case 3: // Sentiment
-		candidates = []string{"advance_fraction", "breadth", "median_return"}
+		candidates = []string{
+			"signed_fraction_zscore", "signed_fraction", "signed_median",
+			"median_absolute_zscore", "advance_fraction", "breadth", "median_return",
+		}
 	case 4: // CVD
-		candidates = []string{"signed_net_fraction", "signed_count_fraction", "cumulative_volume_delta"}
+		candidates = []string{
+			"signed_net_fraction_zscore", "signed_net_fraction",
+			"cumulative_volume_delta", "net_notional_rate", "signed_count_fraction",
+		}
 	case 5: // DepthFlow
-		candidates = []string{"observed_notional_imbalance", "mutation_activity_imbalance"}
+		candidates = []string{
+			"observed_notional_imbalance_zscore", "observed_notional_imbalance",
+			"observed_notional_rate_zscore", "observed_notional_rate",
+			"mutation_activity_imbalance",
+		}
 	case 6: // Morphology
-		candidates = []string{"book_shape_distance", "book_shape_ks", "morphology_change"}
+		candidates = []string{
+			"morphology_change_zscore", "morphology_change",
+			"book_shape_distance", "book_shape_ks",
+		}
 	case 7: // Hawkes
-		candidates = []string{"excitation_fraction:buy", "event_fraction:buy", "conditional_intensity:buy"}
+		candidates = []string{
+			"branching_spectral_radius", "conditional_intensity:buy",
+			"arrival_rate", "event_fraction:buy", "excitation_fraction:buy",
+		}
 	case 8: // PumpDump
-		candidates = []string{"spread_ratio", "relative_spread", "notional_rate_ratio", "spread_zscore"}
+		candidates = []string{
+			"spread_zscore", "notional_rate_zscore", "spread_ratio",
+			"notional_rate_ratio", "relative_spread",
+		}
 	case 9: // Toxicity
-		candidates = []string{"net_withdrawal_fraction:bid", "retreat_fraction:bid", "net_withdrawn_quantity:bid"}
+		candidates = []string{
+			"fill_fraction_zscore:bid", "fill_fraction_zscore:ask",
+			"net_withdrawal_fraction:bid", "retreat_fraction:bid", "touch_fill_fraction:bid",
+		}
 	case 10: // Derivatives
-		candidates = []string{"basis", "liquidation_signed_fraction", "log_basis"}
+		candidates = []string{
+			"basis_zscore", "open_interest_growth_zscore", "basis",
+			"open_interest_growth_rate", "liquidation_signed_fraction", "log_basis",
+		}
+	}
+
+	for _, label := range candidates {
+		if metric, found := measurement.Metrics[label]; found {
+			if metric.Standardized != nil || metric.Raw != 0 {
+				return metric.Raw, true
+			}
+		}
 	}
 
 	for _, label := range candidates {

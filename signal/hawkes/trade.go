@@ -56,7 +56,11 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if trade.Status() != runtime.READY {
+	if trade.Status() != runtime.READY || measurement == nil {
+		return measurement
+	}
+
+	if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
 		return measurement
 	}
 

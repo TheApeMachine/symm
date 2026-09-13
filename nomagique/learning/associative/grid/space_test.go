@@ -37,10 +37,10 @@ func TestSpaceStep(t *testing.T) {
 			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 		}
 
-		alpha := measurement.Metrics["alpha"].Coordinates
-		beta := measurement.Metrics["beta"].Coordinates
-		opposite := measurement.Metrics["opposite"].Coordinates
-		independent := measurement.Metrics["independent"].Coordinates
+		alpha := grid.Coordinates("source", "alpha")
+		beta := grid.Coordinates("source", "beta")
+		opposite := grid.Coordinates("source", "opposite")
+		independent := grid.Coordinates("source", "independent")
 		So(alpha, ShouldNotBeNil)
 		So(beta, ShouldNotBeNil)
 		So(opposite, ShouldNotBeNil)
@@ -60,7 +60,7 @@ func TestSpaceStep(t *testing.T) {
 			values := &grid.values[0][0]
 			measurement.Metrics["alpha"] = data.Metric[float64]{Label: "alpha", Raw: 2}
 			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
-			So(measurement.Metrics["alpha"].Coordinates, ShouldEqual, alpha)
+			So(grid.Coordinates("source", "alpha"), ShouldEqual, alpha)
 			So(&grid.values[0][0], ShouldEqual, values)
 			column := grid.columnIndex[[2]string{"source", "alpha"}]
 			So(grid.values[0][column], ShouldEqual, 2)
@@ -111,13 +111,13 @@ func TestSpaceStep(t *testing.T) {
 			So(grid.step([]*data.Measurement[float64]{second}), ShouldBeNil)
 		}
 
-		alpha := first.Metrics["alpha"].Coordinates
+		alpha := grid.Coordinates("source", "alpha")
 
 		// Each quantity is standardized against its own behaviour, so a
 		// thousandfold difference of unit is not a difference of behaviour.
 		So(related(grid, "alpha", "scaled").directional, ShouldAlmostEqual, 1, 1e-9)
 
-		So(second.Metrics["alpha"].Coordinates, ShouldEqual, alpha)
+		So(grid.Coordinates("source", "alpha"), ShouldEqual, alpha)
 		So(grid.values[grid.rowIndex["first"]][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 1)
 		So(grid.values[grid.rowIndex["second"]][grid.columnIndex[[2]string{"source", "alpha"}]], ShouldEqual, 100000)
 	})
@@ -148,8 +148,8 @@ func TestSpaceStep(t *testing.T) {
 			the same. How far each reading is to be trusted is a different
 			reading and is reported separately, as accumulated evidence.
 		*/
-		strongPoint := strong.Metrics["value"].Coordinates
-		weakPoint := weak.Metrics["value"].Coordinates
+		strongPoint := grid.Coordinates("strong", "value")
+		weakPoint := grid.Coordinates("weak", "value")
 		So(math.Hypot(strongPoint[0]-weakPoint[0], strongPoint[1]-weakPoint[1]),
 			ShouldAlmostEqual, 0)
 		So(grid.weights[grid.columnIndex[[2]string{"strong", "value"}]], ShouldBeGreaterThan,
@@ -182,8 +182,8 @@ func TestSpaceStep(t *testing.T) {
 			So(grid.step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 		}
 
-		alpha := measurement.Metrics["alpha"].Coordinates
-		independent := measurement.Metrics["independent"].Coordinates
+		alpha := grid.Coordinates("source", "alpha")
+		independent := grid.Coordinates("source", "independent")
 
 		So(related(grid, "alpha", "inverse").directional, ShouldAlmostEqual, -1, 1e-9)
 		So(related(grid, "alpha", "inverse").stable(), ShouldBeTrue)

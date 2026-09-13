@@ -155,7 +155,7 @@ func (solver *Solver) Register() *data.Measurement[float64] {
 		)
 	}
 
-	measurement := data.NewMeasurement[float64]("category", metrics)
+	measurement := data.NewMeasurement("category", metrics)
 	measurement.Metadata["peer-interest"] = "*"
 
 	return measurement
@@ -235,21 +235,6 @@ func (solver *Solver) stepMeasurements(
 			solver.fail("category: envelope requires one symbol", nil)
 
 			return nil
-		}
-
-		diff := measurement.At.Sub(at)
-
-		if diff < 0 {
-			diff = -diff
-		}
-
-		if diff > 2*time.Second {
-			errnie.Warn(fmt.Sprintf(
-				"[category] dropping measurement with drifted timestamp: %v vs %v",
-				measurement.At, at,
-			))
-
-			continue
 		}
 
 		if measurement.At.After(at) {

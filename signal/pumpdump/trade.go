@@ -192,8 +192,15 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		return m
 	}
 
-	price := m.Metrics["price"].Raw
-	qty := m.Metrics["qty"].Raw
+	priceMetric, hasPrice := m.Metrics["price"]
+	qtyMetric, hasQty := m.Metrics["qty"]
+
+	if !hasPrice || !hasQty {
+		return m
+	}
+
+	price := priceMetric.Raw
+	qty := qtyMetric.Raw
 
 	if price <= 0 || qty <= 0 {
 		m.Err = fmt.Errorf("pumpdump: non-positive price or quantity")

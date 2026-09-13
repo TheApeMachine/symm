@@ -234,55 +234,13 @@ export const getMeasurementStore = (source: string, symbol: string) => {
 	}
 	return store;
 };
-
-/*
-kernelReadingStores holds each kernel's usable readings — the SNR values that
-were actually defined — separately from the raw measurement ring.
-
-The two cannot be the same ring. Backend rows are sparse: a kernel emits a
-measurement on every observation but only carries an SNR once its estimator has
-a noise model, so a run of SNR-less rows is normal and says nothing about the
-kernel's health. Deriving the trace from the raw ring made those rows
-destructive — 50 of them evicted every real reading, and the row fell back to
-Standby with a blue empty trace despite nothing having gone wrong.
-
-This ring only ever advances on a real reading, so an update carrying no data
-leaves the kernel exactly as it was. That is the honest reading of a sparse
-update: no data means no change, never "the value is now nothing".
-*/
-const kernelReadingStores: Record<
-	string,
-	ReturnType<typeof createFrameStore<number>>
-> = {};
-
-export const getKernelReadingStore = (source: string) => {
-	let store = kernelReadingStores[source];
-
-	if (!store) {
-		store = createFrameStore<number>(50);
-		kernelReadingStores[source] = store;
-	}
-
-	return store;
-};
-
 export const addMeasurement = (source: string, row: Measurement) => {
-	// Symbol is the measured symbol on a Measurement (Source names the kernel
-	// that produced it), so the row itself says which symbol's ring it belongs
-	// in — no need to thread the envelope key down here.
-	getMeasurementStore(source, row.symbol() ?? "").actions.add(row);
+	const symbol = row.symbol() ?? "";
+	getMeasurementStore(source, symbol).actions.add(row);
 
-	// SNRDefined is the backend's own "this reading is real" flag (see
-	// data.Measurement.Finalize): an undefined SNR is absent, not zero, so a row
-	// without one contributes nothing rather than a fabricated reading.
-	if (!row.snrDefined()) {
-		return;
-	}
-
-	const snr = row.snr();
-
-	if (Number.isFinite(snr)) {
-		getKernelReadingStore(source).actions.add(snr);
+	if (source.includes(":")) {
+		const baseSource = source.split(":")[0];
+		getMeasurementStore(baseSource, symbol).actions.add(row);
 	}
 };
 

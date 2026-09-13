@@ -193,13 +193,16 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		return m
 	}
 
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
+	price := m.Metrics["price"].Raw
+	qty := m.Metrics["qty"].Raw
+
+	if price <= 0 || qty <= 0 {
+		return m
 	}
 
 	input := tradeInput{
-		Price:    m.Metrics["price"].Raw,
-		Qty:      m.Metrics["qty"].Raw,
+		Price:    price,
+		Qty:      qty,
 		Side:     m.Provenance["side"],
 		BidPrice: m.Metrics["best_price:bid"].Raw,
 		AskPrice: m.Metrics["best_price:ask"].Raw,

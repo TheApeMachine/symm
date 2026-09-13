@@ -29,7 +29,6 @@ type Metric[Value any] struct {
 	Scale        float64          `json:"scale,omitempty"`
 	Unit         Unit             `json:"unit,omitempty"`
 	Timescale    Timescale        `json:"timescale,omitempty"`
-	Coordinates  *[2]float64      `json:"-"`
 }
 
 /*

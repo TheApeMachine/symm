@@ -2,7 +2,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import {
 	focusStore,
-	getKernelReadingStore,
 	getMeasurementStore,
 	getResonanceReadingStore,
 } from "#/collections/app";
@@ -30,11 +29,30 @@ const metricObj = new Metric();
 const isResonance = (source: string) => source === "resonance";
 
 /*
-readings collects the accumulated values for one kernel from the same rings the
-kernel list reads, so the panel that opens on a row agrees with the row itself
-rather than deriving a second, differently-shaped history.
+readings collects the accumulated values for one kernel directly from its store.
 */
-const readings = (ring: {
+const readingsFromMeasurements = (ring: {
+	getBufferLength: () => number;
+	get: (index: number) => { snr: () => number } | undefined;
+}) => {
+	const points: number[] = [];
+	const len = ring.getBufferLength();
+
+	for (let i = 0; i < len; i++) {
+		const m = ring.get(i);
+
+		if (m) {
+			const snr = m.snr();
+			if (Number.isFinite(snr)) {
+				points.push(snr);
+			}
+		}
+	}
+
+	return points;
+};
+
+const readingsFromNumbers = (ring: {
 	getBufferLength: () => number;
 	get: (index: number) => number | undefined;
 }) => {
@@ -116,13 +134,6 @@ export const KernelInspector = () => {
 	const active = source !== null && source !== "";
 	const resonance = active && isResonance(source);
 
-	// Both selectors run unconditionally (hooks cannot be conditional); only
-	// one of their results is used. An inactive panel reads an empty ring under
-	// a harmless placeholder key rather than skipping the hook.
-	const measurementReadings = useSelector(
-		getKernelReadingStore(active ? source : ""),
-		(state) => state,
-	);
 	const resonanceReadings = useSelector(
 		getResonanceReadingStore(focusSymbol),
 		(state) => state,
@@ -142,7 +153,9 @@ export const KernelInspector = () => {
 	}
 
 	const copy = kernelCopy(source, "");
-	const points = readings(resonance ? resonanceReadings : measurementReadings);
+	const points = resonance
+		? readingsFromNumbers(resonanceReadings)
+		: readingsFromMeasurements(measurementState);
 	const latest = points.length > 0 ? points[points.length - 1] : null;
 	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);

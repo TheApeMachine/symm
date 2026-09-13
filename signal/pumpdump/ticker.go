@@ -131,7 +131,13 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	bid := m.Metrics["best_bid"].Raw
+	if bid == 0 {
+		bid = m.Metrics["bid"].Raw
+	}
 	ask := m.Metrics["best_ask"].Raw
+	if ask == 0 {
+		ask = m.Metrics["ask"].Raw
+	}
 
 	if bid <= 0 || ask <= 0 {
 		return m

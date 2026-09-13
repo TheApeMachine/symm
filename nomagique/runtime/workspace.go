@@ -8,6 +8,10 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+func optionList[O any](initial ...O) []O {
+	return initial
+}
+
 /*
 Workspace is SYMM's real-time streaming execution fabric. Every node declares
 exactly two things at registration: the type it wants and the type it returns.
