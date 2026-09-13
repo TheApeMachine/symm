@@ -2,211 +2,130 @@ package cvd
 
 import (
 	"context"
-	"errors"
-	"time"
+	"unsafe"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
+	nmcvd "github.com/theapemachine/symm/nomagique/cvd"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
-errUnmeasurable rejects observations the Finite primitive cannot score.
+Trade is the CVD executed-flow measuring instrument. It holds no state and no
+logic of its own: its entire behavior is one nomagique pipeline over the
+measurement itself — every stage writes its facts into the measurement where
+it computes them, and the workload's register owns the measurement's lifetime.
 */
-var errUnmeasurable = errors.New("cvd: trade requires a finite positive price and quantity and a known aggressor side")
-
-/*
-Signal is the CVD executed-flow measuring instrument. It composes its market
-entities in its constructor and exposes the canonical signal structure:
-Constructor, Name, Error, Step, Close.
-*/
-type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	trade  *Trade
-}
-
-/*
-NewSignal composes the Trade (executed-flow) entity. quote, when non-nil,
-supplies the contemporaneous top-of-book bid/ask so the response-price metrics
-(midpoint and midpoint_log_return) can be computed; without it they remain
-permanently undefined and only the executed-flow accounting is measured.
-*/
-func NewSignal(ctx context.Context, quote func(symbol string) (bid, ask *decimal.Decimal)) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
-
-	trade := NewTrade()
-	trade.SetQuote(quote)
-
-	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		trade:  trade,
-	}
-}
-
-func (signal *Signal) Name() string { return "cvd" }
-
-func (signal *Signal) Error() error { return signal.err }
-
-func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
-	if signal.err != nil {
-		errnie.Error(signal.Close())
-		return nil
-	}
-
-	/*
-		A signal observes exactly the envelope kind it consumes. Stepping on any
-		other kind hands the estimator a zero-valued observation, which it
-		correctly rejects — and that rejection becomes a Measurement carrying an
-		Err. data.Lift discards the WHOLE frame on the first failed measurement,
-		so one signal stepped out of turn erased every other signal's metrics
-		from the same envelope, and no advisor could ever assemble a complete
-		feature group.
-	*/
-	if envelope.TypeID != types.EnvelopeTrade {
-		return envelope
-	}
-
-	envelope.CVD = signal.trade.Step(envelope.TradeData)
-
-	return envelope
-}
-
-func (signal *Signal) Close() error {
-	if signal.cancel != nil {
-		signal.cancel()
-	}
-
-	return signal.trade.Close()
-}
-
-type flowState struct {
-	graph    *Flow
-	from, at time.Time
-	priorMid float64
-}
-
-// Trade owns per-symbol event chronology and one retained execution graph per
-// symbol. The graph owns accumulation and estimator state, not mutable slots.
 type Trade struct {
-	states     map[string]*flowState
-	projection *data.Projection
-	quote      func(string) (*decimal.Decimal, *decimal.Decimal)
-	finite     core.Primitive
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
 }
 
-func NewTrade() *Trade {
+func NewTrade(ctx context.Context) *Trade {
 	return &Trade{
-		states:     make(map[string]*flowState),
-		projection: flowProjection(),
-		finite:     logic.NewFinite(),
+		System: runtime.NewSystem(ctx, "cvd:trade"),
+		pipeline: nomagique.NewNumber(
+			nmcvd.NewGate(),
+			nmcvd.NewFlow(),
+			data.NewFinalizer[float64](),
+		),
 	}
 }
-
-func (trade *Trade) SetQuote(quote func(string) (*decimal.Decimal, *decimal.Decimal)) {
-	trade.quote = quote
-}
-
-// Step delivers one validated market observation and drains its complete
-// Primitive run. Quotes do not become response evidence until a prior exists.
-func (trade *Trade) Step(event kraken.TradeData) *data.Measurement[float64] {
-	price, quantity := event.Price.Float64(), event.Qty
-
-	if !finiteHolds(trade.finite, price, quantity, price*quantity) ||
-		price <= 0 || quantity <= 0 || (event.Side != "buy" && event.Side != "sell") {
-		return &data.Measurement[float64]{Err: errUnmeasurable}
-	}
-
-	state := trade.states[event.Symbol]
-	existing := state != nil
-
-	if !existing {
-		state = &flowState{graph: newFlowGraph(), from: event.Timestamp}
-		trade.states[event.Symbol] = state
-	}
-
-	if existing && event.Timestamp.Before(state.at) {
-		return nil
-	}
-
-	midpoint := 0.0
-
-	if trade.quote != nil {
-		bid, ask := trade.quote(event.Symbol)
-
-		if bid != nil && ask != nil && bid.Sign() > 0 && ask.Cmp(bid) >= 0 {
-			midpoint = (bid.Float64() + ask.Float64()) / 2
-		}
-	}
-
-	fieldsEval := transport.NewEvaluate(state.graph)
-	var fields data.ProjectionInput
-
-	for out := range fieldsEval.Next(transport.NewValues(FlowInput{
-		Price: price, Quantity: quantity, Buy: event.Side == "buy",
-		At: event.Timestamp.UnixNano(), From: state.from.UnixNano(),
-		Midpoint: midpoint, PriorMid: state.priorMid,
-		Quoted: midpoint > 0 && state.priorMid > 0,
-	}).Next(nil)) {
-		fields = *(*data.ProjectionInput)(out)
-	}
-
-	err := fieldsEval.Error()
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-
-	state.at = event.Timestamp
-
-	if midpoint > 0 {
-		state.priorMid = midpoint
-	}
-
-	trade.projection.Identity = func() (string, time.Time, time.Time) {
-		return event.Symbol, event.Timestamp, state.from
-	}
-
-	resultEval := transport.NewEvaluate(trade.projection)
-	var result *data.Measurement[float64]
-
-	for out := range resultEval.Next(transport.NewValues(fields).Next(nil)) {
-		result = *(**data.Measurement[float64])(out)
-	}
-
-	err = resultEval.Error()
-
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-
-	return result
-}
-
-func (trade *Trade) Close() error { return nil }
 
 /*
-finiteHolds reports whether every value passes the Finite primitive.
+Step supplies the arriving measurement to the pipeline and returns it: the
+measurement is the pipeline's state, enriched in place.
 */
-func finiteHolds(finite core.Primitive, values ...float64) bool {
-	for _, value := range values {
-		holdsEval := transport.NewEvaluate(finite)
-		var holds bool
+func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	return data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&m)).Next(nil)))
+}
 
-		for out := range holdsEval.Next(transport.NewValues(value).Next(nil)) {
-			holds = *(*bool)(out)
-		}
-
-		if holdsEval.Error() != nil || !holds {
-			return false
-		}
-	}
-
-	return true
+/*
+Register returns the pre-allocated measurement every trade flows through:
+every metric the instrument can produce is declared, none valued.
+*/
+func (trade *Trade) Register() *data.Measurement[float64] {
+	return data.NewMeasurement("cvd", map[string]data.Metric[float64]{
+		"trade_count": data.NewMetric[float64](
+			"trade_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"trade_count:buy": data.NewMetric[float64](
+			"trade_count:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"trade_count:sell": data.NewMetric[float64](
+			"trade_count:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"executed_quantity:buy": data.NewMetric[float64](
+			"executed_quantity:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"executed_quantity:sell": data.NewMetric[float64](
+			"executed_quantity:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"gross_executed_quantity": data.NewMetric[float64](
+			"gross_executed_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"net_executed_quantity": data.NewMetric[float64](
+			"net_executed_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cumulative_volume_delta": data.NewMetric[float64](
+			"cumulative_volume_delta", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"aggressive_notional:buy": data.NewMetric[float64](
+			"aggressive_notional:buy", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"aggressive_notional:sell": data.NewMetric[float64](
+			"aggressive_notional:sell", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"gross_notional": data.NewMetric[float64](
+			"gross_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"net_notional": data.NewMetric[float64](
+			"net_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"mean_trade_notional": data.NewMetric[float64](
+			"mean_trade_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cumulative_notional_delta": data.NewMetric[float64](
+			"cumulative_notional_delta", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"trade_rate": data.NewMetric[float64](
+			"trade_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"gross_notional_rate": data.NewMetric[float64](
+			"gross_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"net_notional_rate": data.NewMetric[float64](
+			"net_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"buy_notional_rate": data.NewMetric[float64](
+			"buy_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"sell_notional_rate": data.NewMetric[float64](
+			"sell_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"net_notional_rate_velocity": data.NewMetric[float64](
+			"net_notional_rate_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"signed_count_fraction": data.NewMetric[float64](
+			"signed_count_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"signed_net_fraction": data.NewMetric[float64](
+			"signed_net_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"cvd_epoch_from": data.NewMetric[float64](
+			"cvd_epoch_from", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"signed_net_fraction_baseline": data.NewMetric[float64](
+			"signed_net_fraction_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"signed_net_fraction_divergence": data.NewMetric[float64](
+			"signed_net_fraction_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"signed_net_fraction_zscore": data.NewMetric[float64](
+			"signed_net_fraction_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+	})
 }

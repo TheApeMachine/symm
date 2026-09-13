@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/grafana/pyroscope-go"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -30,7 +29,7 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -95,16 +94,6 @@ var (
 
 			hub := ui.NewHub(ctx)
 			defer hub.Close()
-
-			// Phase 1 — the brokers' transport and account objects, which the
-			// logic stages and the decision path both consume. The workload
-			// maps are built empty here and populated in Phase 2: websocket.New
-			// stores the map by reference and only indexes it when envelopes
-			// flow, so the maps are complete well before instrument.Subscribe
-			// opens the stream.
-			publicIngress := map[string]websocket.Ingress{}
-			privateIngress := map[string]websocket.Ingress{}
-			futuresIngress := map[string]websocket.Ingress{}
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
@@ -171,7 +160,6 @@ var (
 
 			public := websocket.New(
 				ctx,
-				publicIngress,
 				websocket.NewSimulator(),
 				false,
 				system.Cfg.WebSocket.Endpoints.Public,
@@ -182,7 +170,6 @@ var (
 
 			private := websocket.New(
 				ctx,
-				privateIngress,
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
@@ -194,7 +181,6 @@ var (
 			futures := websocket.NewFutures(
 				ctx,
 				system.Cfg.WebSocket.Endpoints.Futures,
-				futuresIngress,
 				rawCapture,
 			)
 
@@ -223,11 +209,6 @@ var (
 			// Stateful analytical stages are constructed once and mounted directly
 			// in each Workload that produces their inputs. The Workloads themselves
 			// remain the complete topology; there is no secondary observation store.
-			categorySolver := category.NewSolver(ctx)
-			cognitionSolver := cognition.NewSolver(ctx)
-			resonanceSolver := resonance.NewSolver(ctx, 0)
-			resonanceSolver.SetObserver(hub.PublishResonance)
-
 			marketState := types.NewMarketState()
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
@@ -236,10 +217,6 @@ var (
 			manifoldSolver.SetMarketState(marketState)
 			manifoldSolver.SetViewer(hub)
 			manifoldSolver.Start()
-
-			pumpdumpSolver := pumpdump.NewSignal(ctx, api)
-			toxicitySolver := toxicity.NewSignal(ctx)
-			derivativesSolver := derivatives.NewSignal(ctx)
 
 			if err := price.GetFees(instrument.Symbols()); err != nil {
 				return errnie.Error(errnie.Err(
@@ -257,98 +234,72 @@ var (
 				))
 			}
 
-			tickerRing := newRing(nmruntime.NewWorkspace(
+			tickerRing := nmruntime.NewWorkload(
 				ctx, "ticker",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						correlation.NewSignal(ctx),
-						leadlag.NewSignal(ctx),
-						liquidity.NewSignal(ctx),
-						sentiment.NewSignal(ctx),
-						pumpdumpSolver,
-					},
-					{
-						resonanceSolver,
-					},
-				},
-			))
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					public,
+				}, {
+					correlation.NewTicker(ctx),
+					leadlag.NewTicker(ctx),
+					liquidity.NewTicker(ctx),
+					sentiment.NewTicker(ctx),
+					pumpdump.NewTicker(ctx),
+				}},
+			)
 
-			tradeRing := newRing(nmruntime.NewWorkspace(
-				ctx, "trade",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						system.NewTraced("trade.cvd", cvd.NewSignal(ctx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
-							tick := price.Tick(symbol)
+			tradeRing := nmruntime.NewWorkload(
+				ctx, "ticker",
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					public,
+				}, {
+					cvd.NewTrade(ctx),
+					hawkes.NewTrade(ctx),
+					toxicity.NewTrade(ctx),
+					pumpdump.NewTrade(ctx),
+				}},
+			)
 
-							if tick == nil {
-								return nil, nil
-							}
-							return tick.Bid, tick.Ask
-						})),
-						system.NewTraced("trade.hawkes", hawkes.NewSignal(ctx)),
-						system.NewTraced("trade.toxicity", toxicitySolver),
-						system.NewTraced("trade.pumpdump", pumpdumpSolver),
-					},
-				},
-			))
-
-			level3Ring := newRing(nmruntime.NewWorkspace(
+			level3Ring := nmruntime.NewWorkload(
 				ctx, "level3",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						system.NewTraced("level3.depthflow", depthflow.NewSignal(ctx)),
-						system.NewTraced("level3.morphology", morphology.NewSignal(ctx)),
-						system.NewTraced("level3.toxicity", toxicitySolver),
-						system.NewTraced("level3.pumpdump", pumpdumpSolver),
-					},
-				},
-			))
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					depthflow.NewLevel3(ctx),
+					morphology.NewLevel3(ctx),
+					toxicity.NewLevel3(ctx),
+					pumpdump.NewLevel3(ctx),
+				}},
+			)
 
-			futuresRing := newRing(nmruntime.NewWorkspace(
+			futuresTicker := nmruntime.NewWorkload(
 				ctx, "futures",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						system.NewTraced("futures.derivatives", derivativesSolver),
-					},
-				},
-			))
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					derivatives.NewTicker(ctx),
+				}},
+			)
 
-			classificationRing := newRing(nmruntime.NewWorkspace(
+			futuresTrade := nmruntime.NewWorkload(
+				ctx, "futures",
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					derivatives.NewTrade(ctx),
+				}},
+			)
+
+			classificationRing := nmruntime.NewWorkload(
 				ctx,
 				"classification",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewTraced("logic.category", categorySolver)},
-					{system.NewTraced("logic.cognition", cognitionSolver)},
-				},
-			))
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					category.NewSolver(ctx),
+				}, {
+					cognition.NewSolver(ctx),
+				}},
+			)
 
-			// Observations composes the concurrent entity workloads, followed by
-			// manifold/classification and central lock-free market state hydration.
-			// The gated wrappers carry the data-readiness each sub-ring declared:
-			// its nodes only step on the envelope kind they observe.
-			observationsRing := newRing(nmruntime.NewWorkspace(
+			resonanceRing := nmruntime.NewWorkload(
 				ctx,
-				"observations",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						&gated{node: tickerRing, accept: func(env *types.Envelope) bool {
-							return env != nil && env.TypeID == types.EnvelopeTicker
-						}},
-						&gated{node: tradeRing, accept: func(env *types.Envelope) bool {
-							return env != nil && env.TypeID == types.EnvelopeTrade
-						}},
-						&gated{node: level3Ring, accept: func(env *types.Envelope) bool {
-							return env != nil && env.TypeID == types.EnvelopeLevel3
-						}},
-						&gated{node: futuresRing, accept: func(env *types.Envelope) bool {
-							return env != nil && (env.TypeID == types.EnvelopeFuturesTicker || env.TypeID == types.EnvelopeFuturesTrade)
-						}},
-					},
-					{system.NewTraced("logic.manifold", manifoldSolver), classificationRing},
-					{system.NewTraced("market.cut", marketState)},
-					{rawCapture},
-				},
-			))
+				"resonance",
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					resonance.NewSolver(ctx),
+				}},
+			)
 
 			// One training. Nodes in a stage run concurrently against the
 			// same envelope, and the grid writes the measurements it is
@@ -361,51 +312,25 @@ var (
 			hub.SetTradeStore(training)
 			hub.SetExitHandler(training.RequestExit)
 
-			trainerRing := newRing(nmruntime.NewWorkspace(
+			trainerRing := nmruntime.NewWorkload(
 				ctx,
 				"trainer",
-				[][]nmruntime.Node[*types.Envelope]{{
-					training,
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					strategy.NewTraining(ctx, tape),
 				}},
-			))
+			)
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				"workspace",
-				[][]nmruntime.Node[*types.Envelope]{
-					{observationsRing},
-					{trainerRing},
-					{uiSink},
-				},
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					tickerRing, tradeRing, level3Ring, futuresTicker, futuresTrade,
+				}, {
+					classificationRing, resonanceRing,
+				}, {
+					trainerRing,
+				}},
 			)
-			workspaceRing := newRing(workspace)
-
-			defer func() {
-				for _, closing := range []core.Primitive{
-					workspace, observationsRing.workspace, trainerRing.workspace,
-					classificationRing.workspace, futuresRing.workspace,
-					level3Ring.workspace, tradeRing.workspace, tickerRing.workspace,
-				} {
-					if err := closeWorkspace(closing); err != nil {
-						errnie.Error(err)
-					}
-				}
-			}()
-
-			if err := workspace.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct workspace",
-					err,
-				))
-			}
-
-			publicIngress["ticker"] = workspaceRing
-			publicIngress["trade"] = workspaceRing
-			privateIngress["level3"] = workspaceRing
-			privateIngress["executions"] = workspaceRing
-			futuresIngress["ticker"] = workspaceRing
-			futuresIngress["trade"] = workspaceRing
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
@@ -416,6 +341,7 @@ var (
 					err,
 				))
 			}
+
 			if instrument.Status() != nmruntime.READY {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,

@@ -1,4 +1,4 @@
-package correlation
+package sentiment
 
 import (
 	"errors"
@@ -47,10 +47,10 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			metric, traded := m.Metrics["last_price"]
+			metric, traded := m.Metrics["last"]
 
 			if !traded {
-				m.Err = fmt.Errorf("%w: correlation: ticker requires a last price", core.ErrDomain)
+				m.Err = fmt.Errorf("%w: sentiment: ticker requires a last price", core.ErrDomain)
 
 				if !yield(arriving) {
 					return
@@ -63,7 +63,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.Metadata = map[string]float64{data.MetadataSupport: 0}
 
 			if holds := drive[float64, bool](op.finite, &last); !holds || last < 0 {
-				m.Err = fmt.Errorf("%w: correlation: finite non-negative last price required", core.ErrDomain)
+				m.Err = fmt.Errorf("%w: sentiment: finite non-negative last price required", core.ErrDomain)
 
 				if !yield(arriving) {
 					return
@@ -72,7 +72,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metrics["last_price"] = metric.Write(last)
+			m.Metrics["last"] = metric.Write(last)
 
 			if last == 0 {
 				m.Provenance = map[string]string{"last_trade_price_state": "unobserved"}

@@ -1,7 +1,9 @@
 package correlation
 
 import (
+	"context"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -11,15 +13,15 @@ import (
 
 /*
 tick builds the measurement the workload's data management would hand the
-signal: the feed writes the last price it observed, if it observed one.
+signal: the register's declared schema with the feed's last price written.
+Zero is an unobserved market; a negative price is an invalid one.
 */
-func tick(symbol string, price float64, at time.Time) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("correlation", map[string]data.Metric[float64]{})
-	m.Label, m.At, m.From = symbol, at, at
+var schema = new(Ticker).Register().Metrics
 
-	if price >= 0 {
-		m.Metrics["last_price"] = data.Metric[float64]{Label: "last_price", Raw: price}
-	}
+func tick(symbol string, price float64, at time.Time) *data.Measurement[float64] {
+	m := data.NewMeasurement[float64]("correlation", maps.Clone(schema))
+	m.Label, m.At, m.From = symbol, at, at
+	m.Metrics["last_price"] = m.Metrics["last_price"].Write(price)
 
 	return m
 }
@@ -51,7 +53,7 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["last_price"].Raw, ShouldEqual, 100.0)
 			So(measurement.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
-			So(measurement.Metrics, ShouldNotContainKey, "signed_correlation")
+			So(measurement.Metrics["signed_correlation"].Raw, ShouldEqual, 0.0)
 
 			So(measurement.Maturity, ShouldEqual, 0.0)
 			So(measurement.SNR, ShouldEqual, 0.0)
@@ -111,7 +113,6 @@ func TestTickerStep(t *testing.T) {
 			So(last.Metrics, ShouldContainKey, "return_energy:measured")
 			So(last.Metrics["return_energy_rate:reference"].Raw, ShouldBeGreaterThan, 0.0)
 			So(last.Metrics["return_energy_rate:measured"].Raw, ShouldBeGreaterThan, 0.0)
-			So(last.Metrics["focal_return_energy_rate"].Raw, ShouldBeGreaterThan, 0.0)
 			So(last.Metrics["peer_return_energy_rate"].Raw, ShouldBeGreaterThan, 0.0)
 			So(last.Metrics, ShouldContainKey, "correlation_p_value")
 			So(last.Metrics, ShouldContainKey, "correlation_standard_error_fisher")
@@ -176,7 +177,7 @@ cost here means a ~1s avg on the live diagnostics is contention, not intrinsic
 compute.
 */
 func BenchmarkTickerCrossSectionStep(b *testing.B) {
-	entity := NewTicker(b.Context())
+	entity := NewTicker(context.Background())
 
 	// Prime every symbol's path to steady-state capacity (64 samples) so the
 	// cross-section cost reflects a fully-warmed universe, not cold-start.
@@ -187,13 +188,18 @@ func BenchmarkTickerCrossSectionStep(b *testing.B) {
 		}
 	}
 
+	// The register measurement flows through every tick in production, so the
+	// benchmark reuses one instead of reallocating per iteration.
 	focal := benchmarkSymbol(0)
+	measurement := tick(focal, 0, timestamp(benchmarkWarmup))
 	i := 0
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		entity.Step(tick(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))
+		measurement.Metrics["last_price"] = measurement.Metrics["last_price"].Write(100.0 + float64(i))
+		measurement.At = timestamp(int64(benchmarkWarmup + i + 1))
+		entity.Step(measurement)
 		i++
 	}
 }

@@ -11,16 +11,15 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/derivatives"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/utils"
+	"golang.design/x/lockfree/lf"
 )
 
 /*
@@ -58,7 +57,7 @@ type FuturesLive struct {
 	status         *runtime.Status
 	err            error
 	client         atomic.Pointer[derivatives.WebSocket]
-	ingress        map[string]runtime.Ingress[*types.Envelope]
+	queue          *lf.Queue[map[string]any]
 	simulator      *Simulator
 	callbacks      *sync.Map
 	capture        CaptureSink
@@ -252,10 +251,9 @@ constructor, mirroring New.
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
-	workloads map[string]runtime.Ingress[*types.Envelope],
 	recorders ...CaptureSink,
 ) *FuturesLive {
-	return NewFuturesWithClient(ctx, endpoint, workloads, nil, recorders...)
+	return NewFuturesWithClient(ctx, endpoint, nil, recorders...)
 }
 
 /*
@@ -265,7 +263,6 @@ derivatives.WebSocket client instance, mirroring NewWithClient.
 func NewFuturesWithClient(
 	ctx context.Context,
 	endpoint string,
-	workloads map[string]runtime.Ingress[*types.Envelope],
 	client *derivatives.WebSocket,
 	recorders ...CaptureSink,
 ) *FuturesLive {
@@ -291,7 +288,7 @@ func NewFuturesWithClient(
 		cancel:        cancel,
 		status:        runtime.NewStatus(),
 		callbacks:     &sync.Map{},
-		ingress:       workloads,
+		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
 		streams:       NewStreams(client.URL),
 	}
@@ -360,20 +357,14 @@ func NewFuturesWithClient(
 		// Hindsight both on and off.
 		streamRef := futures.streams.Next(feed)
 
-		var captureID hindsight.CaptureIdentity
-
 		if futures.capture != nil {
-			var captureErr error
-
-			captureID, captureErr = futures.capture.Capture(
+			if _, captureErr := futures.capture.Capture(
 				feed,
 				futures.Client().URL,
 				raw,
 				time.Now().UTC(),
 				streamRef,
-			)
-
-			if captureErr != nil {
+			); captureErr != nil {
 				futures.fail(errnie.Err(
 					errnie.IO,
 					fmt.Sprintf("futures: capture failed for %s frame: %s", feed, captureErr.Error()),
@@ -438,50 +429,37 @@ func NewFuturesWithClient(
 				return
 			}
 
-			envelopes, manifests := IngestEnvelopes(
-				"futures."+futuresKey(feed), out, captureID,
-			)
+			// One queue row per venue record; conversion to measurements
+			// happens in Step, exactly like the spot transport.
+			frame, err := event.Data.Map()
 
-			for index, envelope := range envelopes {
-				// Live trading reads the operational StreamRef; Hindsight's
-				// CaptureID records the same fact but is never the source.
-				envelope.Stream = streamRef
+			if err != nil {
+				futures.fail(errnie.Err(
+					errnie.Validation,
+					"futures: failed to map "+feed+" frame",
+					err,
+				))
 
-				if futures.manifestSink != nil {
-					if err := futures.manifestSink.WriteManifest(manifests[index]); err != nil {
-						futures.fail(errnie.Err(
-							errnie.IO,
-							"futures: failed to persist envelope manifest",
-							err,
-						))
+				return
+			}
 
-						return
-					}
+			rows, rowsOk := frame["data"].([]any)
+
+			if !rowsOk {
+				return
+			}
+
+			channel := "futures." + futuresKey(feed)
+
+			for _, entry := range rows {
+				row, rowOk := entry.(map[string]any)
+
+				if !rowOk {
+					continue
 				}
 
-				workload, mounted := futures.ingress[futuresKey(feed)]
-
-				if !mounted || workload == nil {
-					futures.fail(errnie.Err(
-						errnie.NotFound,
-						"futures: required ingress is not mounted for "+feed,
-						nil,
-					))
-
-					return
-				}
-
-				if workload.Status() != runtime.READY {
-					futures.fail(errnie.Err(
-						errnie.NotAcceptable,
-						"futures: ingress is not ready for "+feed,
-						nil,
-					))
-
-					return
-				}
-
-				workload.Push(envelope)
+				row["channel"] = channel
+				futures.queue.Enqueue(row)
 			}
 		}
 	})
@@ -696,30 +674,6 @@ func (futures *FuturesLive) MarkReady() {
 		futures.fail(errnie.Err(
 			errnie.NotAcceptable,
 			"futures: only a connected session can become ready",
-			nil,
-		))
-
-		return
-	}
-
-	if len(futures.ingress) == 0 {
-		futures.fail(errnie.Err(
-			errnie.NotFound,
-			"futures: readiness requires mounted ingress workloads",
-			nil,
-		))
-
-		return
-	}
-
-	for feed, workload := range futures.ingress {
-		if workload != nil && workload.Status() == runtime.READY {
-			continue
-		}
-
-		futures.fail(errnie.Err(
-			errnie.NotAcceptable,
-			"futures: cannot become ready before ingress "+feed,
 			nil,
 		))
 

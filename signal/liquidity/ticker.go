@@ -2,169 +2,162 @@ package liquidity
 
 import (
 	"context"
-	"fmt"
-	"time"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
+	nmliquidity "github.com/theapemachine/symm/nomagique/liquidity"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal is the liquidity measuring instrument. It composes its market entities
-in its constructor and exposes the canonical signal structure: Constructor,
-Name, Error, Step, Close. It satisfies nomagique/runtime.Node[*types.Envelope],
-writing its projected Measurement into the envelope's Liquidity field.
+Ticker is the asynchronous touch-liquidity instrument. It holds no state and
+no logic of its own: its entire behavior is one nomagique pipeline over the
+measurement itself — every stage writes its facts into the measurement where
+it computes them, and the workload's register owns the measurement's lifetime.
 */
-type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-
-	ticker *Ticker
-}
-
-// NewSignal composes the Ticker (touch) entity. Full-book morphology is added
-// as a further entity in a later pass.
-func NewSignal(ctx context.Context) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
-
-	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		ticker: NewTicker(),
-	}
-}
-
-func (signal *Signal) Name() string { return "liquidity" }
-
-func (signal *Signal) Error() error { return signal.err }
-
-func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
-	if signal.err != nil {
-		errnie.Error(signal.Close())
-		return nil
-	}
-
-	/*
-		A signal observes exactly the envelope kind it consumes. Stepping on any
-		other kind hands the estimator a zero-valued observation, which it
-		correctly rejects — and that rejection becomes a Measurement carrying an
-		Err. data.Lift discards the WHOLE frame on the first failed measurement,
-		so one signal stepped out of turn erased every other signal's metrics
-		from the same envelope, and no advisor could ever assemble a complete
-		feature group.
-	*/
-	if envelope.TypeID != types.EnvelopeTicker {
-		return envelope
-	}
-
-	measurement := signal.ticker.Step(envelope.TickerData)
-
-	if measurement != nil {
-		signal.err = measurement.Err
-	}
-
-	envelope.Liquidity = measurement
-
-	return envelope
-}
-
-func (signal *Signal) Close() error {
-	if signal.cancel != nil {
-		signal.cancel()
-	}
-
-	return signal.ticker.Close()
-}
-
-type liquidityState struct {
-	graph *Graph
-	at    time.Time
-}
-
-// Ticker owns one causal Primitive liquidity model per symbol and serializes
-// each delivered observation with that model's exact event-time coordinate.
 type Ticker struct {
-	states     map[string]*liquidityState
-	projection *data.Projection
-	finite     core.Primitive
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
 }
 
-func NewTicker() *Ticker {
-	return &Ticker{states: make(map[string]*liquidityState), projection: liquidityProjection(), finite: logic.NewFinite()}
+func NewTicker(ctx context.Context) *Ticker {
+	return &Ticker{
+		System: runtime.NewSystem(ctx, "liquidity:ticker"),
+		pipeline: nomagique.NewNumber(
+			nmliquidity.NewGate(),
+			nmliquidity.NewTouch(),
+			data.NewFinalizer[float64](),
+		),
+	}
 }
-
-func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
-	if event.Bid == nil || event.Ask == nil {
-		return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: ticker requires bid and ask")}
-	}
-	bid, ask := event.Bid.Float64(), event.Ask.Float64()
-
-	for _, value := range []float64{bid, ask, event.BidQty, event.AskQty, bid * event.BidQty, ask * event.AskQty} {
-		if !finiteHolds(ticker.finite, value) || value <= 0 {
-			return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: finite positive prices and displayed quantities required")}
-		}
-	}
-	if ask <= bid {
-		return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: positive order violated (%f <= %f)", ask, bid)}
-	}
-
-	state := ticker.states[event.Symbol]
-	if state == nil {
-		state = &liquidityState{graph: newLiquidityGraph()}
-		ticker.states[event.Symbol] = state
-	} else if event.Timestamp.Before(state.at) {
-		return nil
-	}
-	fieldsEval := transport.NewEvaluate(state.graph)
-	var fields data.ProjectionInput
-
-	for out := range fieldsEval.Next(transport.NewValues(GraphInput{
-		BestBid: bid, BestAsk: ask, BidQty: event.BidQty, AskQty: event.AskQty, At: event.Timestamp.UnixNano(),
-	}).Next(nil)) {
-		fields = *(*data.ProjectionInput)(out)
-	}
-
-	err := fieldsEval.Error()
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	state.at = event.Timestamp
-	ticker.projection.Identity = func() (string, string, time.Time, time.Time) {
-		return fmt.Sprintf("liquidity:%s:%d", event.Symbol, event.Timestamp.UnixNano()), event.Symbol, event.Timestamp, event.Timestamp
-	}
-	resultEval := transport.NewEvaluate(ticker.projection)
-	var result *data.Measurement[float64]
-
-	for out := range resultEval.Next(transport.NewValues(fields).Next(nil)) {
-		result = *(**data.Measurement[float64])(out)
-	}
-
-	err = resultEval.Error()
-
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-
-	return result
-}
-func (ticker *Ticker) Close() error { return nil }
 
 /*
-finiteHolds reports whether one value passes the Finite primitive.
+Step supplies the arriving measurement to the pipeline and returns it: the
+measurement is the pipeline's state, enriched in place.
 */
-func finiteHolds(finite core.Primitive, value float64) bool {
-	holdsEval := transport.NewEvaluate(finite)
-	var holds bool
+func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&m)).Next(nil)))
+}
 
-	for out := range holdsEval.Next(transport.NewValues(value).Next(nil)) {
-		holds = *(*bool)(out)
-	}
-
-	return holdsEval.Error() == nil && holds
+/*
+Register returns the pre-allocated measurement every liquidity tick flows
+through: every metric the instrument can produce is declared, none valued.
+The touch quote and displayed quantities are the feed's facts the stages
+consume; the rest are written where they are computed.
+*/
+func (ticker *Ticker) Register() *data.Measurement[float64] {
+	return data.NewMeasurement("liquidity", map[string]data.Metric[float64]{
+		"bid": data.NewMetric[float64](
+			"bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"ask": data.NewMetric[float64](
+			"ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"bid_qty": data.NewMetric[float64](
+			"bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"ask_qty": data.NewMetric[float64](
+			"ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"best_bid_price": data.NewMetric[float64](
+			"best_bid_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"best_ask_price": data.NewMetric[float64](
+			"best_ask_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"midpoint": data.NewMetric[float64](
+			"midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"spread": data.NewMetric[float64](
+			"spread", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"touch_quantity:bid": data.NewMetric[float64](
+			"touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"touch_quantity:ask": data.NewMetric[float64](
+			"touch_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"touch_notional:bid": data.NewMetric[float64](
+			"touch_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"touch_notional:ask": data.NewMetric[float64](
+			"touch_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"two_sided_touch_notional": data.NewMetric[float64](
+			"two_sided_touch_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_spread": data.NewMetric[float64](
+			"relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"touch_notional_imbalance": data.NewMetric[float64](
+			"touch_notional_imbalance", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"touch_notional_baseline:bid": data.NewMetric[float64](
+			"touch_notional_baseline:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_ratio:bid": data.NewMetric[float64](
+			"depth_ratio:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_divergence:bid": data.NewMetric[float64](
+			"depth_divergence:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_noise_scale:bid": data.NewMetric[float64](
+			"depth_noise_scale:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_zscore:bid": data.NewMetric[float64](
+			"depth_zscore:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"divergence_velocity:bid": data.NewMetric[float64](
+			"divergence_velocity:bid", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"divergence_velocity_snr:bid": data.NewMetric[float64](
+			"divergence_velocity_snr:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"touch_notional_baseline:ask": data.NewMetric[float64](
+			"touch_notional_baseline:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_ratio:ask": data.NewMetric[float64](
+			"depth_ratio:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_divergence:ask": data.NewMetric[float64](
+			"depth_divergence:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_noise_scale:ask": data.NewMetric[float64](
+			"depth_noise_scale:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"depth_zscore:ask": data.NewMetric[float64](
+			"depth_zscore:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"divergence_velocity:ask": data.NewMetric[float64](
+			"divergence_velocity:ask", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"divergence_velocity_snr:ask": data.NewMetric[float64](
+			"divergence_velocity_snr:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"relative_spread_baseline": data.NewMetric[float64](
+			"relative_spread_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"spread_ratio": data.NewMetric[float64](
+			"spread_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"spread_divergence": data.NewMetric[float64](
+			"spread_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"spread_noise_scale": data.NewMetric[float64](
+			"spread_noise_scale", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"spread_zscore": data.NewMetric[float64](
+			"spread_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"spread_divergence_velocity": data.NewMetric[float64](
+			"spread_divergence_velocity", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"spread_divergence_velocity_snr": data.NewMetric[float64](
+			"spread_divergence_velocity_snr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+	})
 }

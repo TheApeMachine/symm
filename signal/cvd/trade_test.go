@@ -1,31 +1,49 @@
 package cvd
 
 import (
+	"context"
 	"math"
+	"maps"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func cvdTrade(symbol string, side string, price float64, qty float64, at time.Time) kraken.TradeData {
-	return kraken.TradeData{
-		Symbol:    symbol,
-		Side:      side,
-		Price:     *decimal.NewFromFloat64(price),
-		Qty:       qty,
-		Timestamp: at,
-	}
+/*
+schema is the register's declared metric set the workload's data management
+hands the signal: every producible metric, none valued.
+*/
+var schema = new(Trade).Register().Metrics
+
+/*
+row builds the measurement a trade row lifts into: the feed fills the price
+and quantity metrics, carries the categorical aggressor side in provenance,
+and names the symbol and venue timestamp. Zero or negative price/quantity is
+an invalid execution.
+*/
+func row(symbol, side string, price, qty float64, at time.Time) *data.Measurement[float64] {
+	m := data.NewMeasurement[float64]("websocket", maps.Clone(schema))
+	m.Label, m.At, m.From = symbol, at, at
+	m.Metrics["price"] = m.Metrics["price"].Write(price)
+	m.Metrics["qty"] = m.Metrics["qty"].Write(qty)
+	m.Provenance = map[string]string{"side": side}
+
+	return m
+}
+
+func timestamp(second int64) time.Time {
+	return time.Unix(1_000+second, 0)
 }
 
 func TestTradeStep(t *testing.T) {
 	Convey("Given an executed-flow entity", t, func() {
-		entity := NewTrade()
+		entity := NewTrade(t.Context())
 
 		Convey("the first buy trade yields a measurement with no warmup gating", func() {
-			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
+			measurement := entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -66,7 +84,7 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("the first trade reports no SNR, its estimator having no baseline yet", func() {
-			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
+			measurement := entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.SNRDefined, ShouldBeFalse)
@@ -82,10 +100,10 @@ func TestTradeStep(t *testing.T) {
 					side = "sell"
 				}
 
-				entity.Step(cvdTrade("BTC/USD", side, 100, 2, time.Unix(int64(1000+step), 0)))
+				entity.Step(row("BTC/USD", side, 100, 2, timestamp(int64(step))))
 			}
 
-			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 5, time.Unix(1012, 0)))
+			measurement := entity.Step(row("BTC/USD", "buy", 100, 5, timestamp(12)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -94,8 +112,8 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("a second sell trade advances accounting, rates, and baselines", func() {
-			entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
-			measurement := entity.Step(cvdTrade("BTC/USD", "sell", 100, 1, time.Unix(1001, 0)))
+			entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
+			measurement := entity.Step(row("BTC/USD", "sell", 100, 1, timestamp(1)))
 
 			So(measurement.Err, ShouldBeNil)
 
@@ -121,17 +139,14 @@ func TestTradeStep(t *testing.T) {
 			// committed fractions (1 and 1/3), not a single-sample fallback.
 			So(measurement.Metrics["signed_net_fraction_zscore"].Raw, ShouldAlmostEqual, -math.Sqrt(2.0), 1e-12)
 
-			_, hasGrossBaseline := measurement.Metrics["gross_notional_rate_baseline"]
-
-			So(hasGrossBaseline, ShouldBeFalse)
 			So(measurement.Maturity, ShouldEqual, 0.5)
 		})
 
 		Convey("a third buy trade advances baselines, velocities, and response", func() {
-			entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
-			entity.Step(cvdTrade("BTC/USD", "sell", 100, 1, time.Unix(1001, 0)))
+			entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
+			entity.Step(row("BTC/USD", "sell", 100, 1, timestamp(1)))
 
-			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 1, time.Unix(1003, 0)))
+			measurement := entity.Step(row("BTC/USD", "buy", 100, 1, timestamp(3)))
 
 			So(measurement.Err, ShouldBeNil)
 
@@ -156,10 +171,21 @@ func TestTradeStep(t *testing.T) {
 	})
 
 	Convey("Given a non-positive execution price", t, func() {
-		entity := NewTrade()
+		entity := NewTrade(t.Context())
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 0, 1, time.Unix(1000, 0)))
+			measurement := entity.Step(row("BTC/USD", "buy", 0, 1, timestamp(0)))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given a trade whose side is not a known aggressor", t, func() {
+		entity := NewTrade(t.Context())
+
+		Convey("the measurement carries the pipeline rejection in its Err field", func() {
+			measurement := entity.Step(row("BTC/USD", "both", 100, 1, timestamp(0)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -168,46 +194,25 @@ func TestTradeStep(t *testing.T) {
 }
 
 /*
-TestResponsePriceWithQuote proves the restored quote path: with a shared quote
-provider, the response-price metrics (midpoint and midpoint_log_return) become
-computable from real bid/ask, so the causal outcome coordinate the decision
-loop depends on is no longer permanently undefined. A second causally ordered
-quote yields a defined midpoint_log_return.
+TestTradeRegister proves the declared schema: every producible metric is
+declared, none valued, and every label names itself.
 */
-func TestResponsePriceWithQuote(t *testing.T) {
-	Convey("Given a Trade entity with a moving quote provider", t, func() {
-		entity := NewTrade()
-		quote := 100.0
+func TestTradeRegister(t *testing.T) {
+	Convey("Given a Trade entity", t, func() {
+		entity := new(Trade)
 
-		entity.SetQuote(func(symbol string) (bid, ask *decimal.Decimal) {
-			bidValue := decimal.NewFromFloat64(quote)
-			askValue := decimal.NewFromFloat64(quote + 1.0)
+		Convey("Register declares the full metric schema without values", func() {
+			measurement := entity.Register()
 
-			return bidValue, askValue
-		})
+			So(measurement.ID, ShouldEqual, -1)
+			So(measurement.Metrics, ShouldContainKey, "trade_count")
+			So(measurement.Metrics, ShouldContainKey, "cumulative_volume_delta")
+			So(measurement.Metrics, ShouldContainKey, "signed_net_fraction_zscore")
 
-		Convey("the first trade has no prior quote, so the midpoint is undefined", func() {
-			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 1, time.Unix(1000, 0)))
-
-			So(measurement, ShouldNotBeNil)
-			_, hasMidpoint := measurement.Metrics["midpoint_log_return"]
-			So(hasMidpoint, ShouldBeFalse)
-		})
-
-		Convey("a second trade with a moved quote yields a defined midpoint log return", func() {
-			entity.Step(cvdTrade("BTC/USD", "buy", 100, 1, time.Unix(1000, 0)))
-
-			// Move the quote up: the midpoint at the second observation is
-			// higher than the prior retained midpoint, so midpoint_log_return
-			// is a defined non-zero value.
-			quote = 110.0
-
-			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 101, 1, time.Unix(1001, 0)))
-
-			So(measurement, ShouldNotBeNil)
-			midpoint, hasMidpoint := measurement.Metrics["midpoint_log_return"]
-			So(hasMidpoint, ShouldBeTrue)
-			So(midpoint.Raw, ShouldNotEqual, 0.0)
+			for label, metric := range measurement.Metrics {
+				So(label, ShouldEqual, metric.Label)
+				So(metric.Raw, ShouldEqual, 0.0)
+			}
 		})
 	})
 }

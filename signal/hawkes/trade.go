@@ -2,123 +2,242 @@ package hawkes
 
 import (
 	"context"
-	"fmt"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/core"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal is the Hawkes arrival-dynamics measuring instrument. It composes its
-market entities in its constructor and exposes the canonical signal structure:
-Constructor, Name, Error, Step, Close. It satisfies
-nomagique/runtime.Node[*types.Envelope], writing its projected Measurement
-into the envelope's Hawkes field — the manifold stage's forcing term.
+Trade is the Hawkes arrival-dynamics instrument. It holds no estimation state
+of its own: its entire behavior is one nomagique pipeline over the
+measurement itself — every stage writes its facts into the measurement where
+it computes them, and the workload's register owns the measurement's
+lifetime. The per-symbol arrival paths and fitted models live inside the
+pipeline's shared stage registry.
 */
-type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-
-	trade *Trade
-}
-
-// NewSignal composes the Trade (arrival-dynamics) entity.
-func NewSignal(ctx context.Context) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
-
-	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		trade:  NewTrade(),
-	}
-}
-
-func (signal *Signal) Name() string { return "hawkes" }
-
-func (signal *Signal) Error() error { return signal.err }
-
-func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
-	if signal.err != nil {
-		errnie.Error(signal.Close())
-		return nil
-	}
-
-	/*
-		A signal observes exactly the envelope kind it consumes. Stepping on any
-		other kind hands the estimator a zero-valued observation, which it
-		correctly rejects — and that rejection becomes a Measurement carrying an
-		Err. data.Lift discards the WHOLE frame on the first failed measurement,
-		so one signal stepped out of turn erased every other signal's metrics
-		from the same envelope, and no advisor could ever assemble a complete
-		feature group.
-	*/
-	if envelope.TypeID != types.EnvelopeTrade {
-		return envelope
-	}
-
-	envelope.Hawkes = signal.trade.Step(envelope.TradeData)
-
-	return envelope
-}
-
-func (signal *Signal) Close() error {
-	if signal.cancel != nil {
-		signal.cancel()
-	}
-
-	return signal.trade.Close()
-}
-
 type Trade struct {
-	process *nmhawkes.Bivariate
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
 }
 
-func NewTrade() *Trade {
+/*
+NewTrade composes the arrival-dynamics pipeline: the gate classifies the
+trade's side, the counts stage admits the arrival into the symbol's
+observation window, the excitation stage measures the arrival against the
+model fitted before it, and the refit stage folds the arrival into the
+history and re-estimates for the next one.
+*/
+func NewTrade(ctx context.Context) *Trade {
+	history := nmhawkes.Paths()
+
 	return &Trade{
-		process: nmhawkes.NewBivariate(),
+		System: runtime.NewSystem(ctx, "hawkes:trade"),
+		pipeline: nomagique.NewNumber(
+			nmhawkes.NewGate(),
+			nmhawkes.NewCounts(history),
+			nmhawkes.NewExcitation(history),
+			nmhawkes.NewRefit(history),
+			data.NewFinalizer[float64](),
+		),
 	}
 }
 
-func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64] {
-	if observation.Side != "buy" && observation.Side != "sell" {
-		return &data.Measurement[float64]{
-			Err: fmt.Errorf(
-				"hawkes: unsupported trade side %q", observation.Side,
-			),
-		}
-	}
-
-	measurementEval := transport.NewEvaluate(trade.process)
-	var measurement *data.Measurement[float64]
-
-	for out := range measurementEval.Next(transport.NewValues(nmhawkes.Event{
-		Key:  observation.Symbol,
-		At:   observation.Timestamp.UnixNano(),
-		Mark: markForSide(observation.Side),
-	}).Next(nil)) {
-		measurement = *(**data.Measurement[float64])(out)
-	}
-
-	err := measurementEval.Error()
-
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-
-	return measurement
+/*
+Step supplies the arriving measurement to the pipeline and returns it: the
+measurement is the pipeline's state, enriched in place.
+*/
+func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	return data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&m)).Next(nil)))
 }
 
-func (trade *Trade) Close() error { return nil }
-
-func markForSide(side string) float64 {
-	if side == "buy" {
-		return 1
-	}
-
-	return -1
+/*
+Register returns the pre-allocated measurement every trade flows through:
+every metric the instrument can produce is declared, none valued.
+*/
+func (trade *Trade) Register() *data.Measurement[float64] {
+	return data.NewMeasurement("hawkes", map[string]data.Metric[float64]{
+		"event_count": data.NewMetric[float64](
+			"event_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"event_count:buy": data.NewMetric[float64](
+			"event_count:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"event_count:sell": data.NewMetric[float64](
+			"event_count:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"event_fraction:buy": data.NewMetric[float64](
+			"event_fraction:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"event_fraction:sell": data.NewMetric[float64](
+			"event_fraction:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"arrival_rate:buy": data.NewMetric[float64](
+			"arrival_rate:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"arrival_rate:sell": data.NewMetric[float64](
+			"arrival_rate:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"arrival_rate": data.NewMetric[float64](
+			"arrival_rate", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"conditional_intensity:buy": data.NewMetric[float64](
+			"conditional_intensity:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"conditional_intensity:sell": data.NewMetric[float64](
+			"conditional_intensity:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"conditional_intensity": data.NewMetric[float64](
+			"conditional_intensity", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"background_rate:buy": data.NewMetric[float64](
+			"background_rate:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"background_rate:sell": data.NewMetric[float64](
+			"background_rate:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"background_rate": data.NewMetric[float64](
+			"background_rate", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_intensity:buy": data.NewMetric[float64](
+			"excitation_intensity:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_intensity:sell": data.NewMetric[float64](
+			"excitation_intensity:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_fraction:buy": data.NewMetric[float64](
+			"excitation_fraction:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_fraction:sell": data.NewMetric[float64](
+			"excitation_fraction:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_amplitude:buy_from_buy": data.NewMetric[float64](
+			"excitation_amplitude:buy_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_amplitude:buy_from_sell": data.NewMetric[float64](
+			"excitation_amplitude:buy_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_amplitude:sell_from_buy": data.NewMetric[float64](
+			"excitation_amplitude:sell_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_amplitude:sell_from_sell": data.NewMetric[float64](
+			"excitation_amplitude:sell_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_decay": data.NewMetric[float64](
+			"excitation_decay", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_decay:buy_from_buy": data.NewMetric[float64](
+			"excitation_decay:buy_from_buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_decay:buy_from_sell": data.NewMetric[float64](
+			"excitation_decay:buy_from_sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_decay:sell_from_buy": data.NewMetric[float64](
+			"excitation_decay:sell_from_buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_decay:sell_from_sell": data.NewMetric[float64](
+			"excitation_decay:sell_from_sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
+		),
+		"excitation_timescale": data.NewMetric[float64](
+			"excitation_timescale", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_timescale:buy_from_buy": data.NewMetric[float64](
+			"excitation_timescale:buy_from_buy", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_timescale:buy_from_sell": data.NewMetric[float64](
+			"excitation_timescale:buy_from_sell", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_timescale:sell_from_buy": data.NewMetric[float64](
+			"excitation_timescale:sell_from_buy", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_timescale:sell_from_sell": data.NewMetric[float64](
+			"excitation_timescale:sell_from_sell", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"offspring:buy_from_buy": data.NewMetric[float64](
+			"offspring:buy_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"offspring:buy_from_sell": data.NewMetric[float64](
+			"offspring:buy_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"offspring:sell_from_buy": data.NewMetric[float64](
+			"offspring:sell_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"offspring:sell_from_sell": data.NewMetric[float64](
+			"offspring:sell_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"branching_spectral_radius": data.NewMetric[float64](
+			"branching_spectral_radius", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"expected_descendants_from_buy": data.NewMetric[float64](
+			"expected_descendants_from_buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"expected_descendants_from_sell": data.NewMetric[float64](
+			"expected_descendants_from_sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood:hawkes": data.NewMetric[float64](
+			"log_likelihood:hawkes", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood:poisson": data.NewMetric[float64](
+			"log_likelihood:poisson", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood:self_only": data.NewMetric[float64](
+			"log_likelihood:self_only", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood_per_event:hawkes": data.NewMetric[float64](
+			"log_likelihood_per_event:hawkes", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood_gain_vs_poisson": data.NewMetric[float64](
+			"log_likelihood_gain_vs_poisson", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood_gain_per_event_vs_poisson": data.NewMetric[float64](
+			"log_likelihood_gain_per_event_vs_poisson", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood_gain_vs_self_only": data.NewMetric[float64](
+			"log_likelihood_gain_vs_self_only", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"log_likelihood_gain_per_event_vs_self_only": data.NewMetric[float64](
+			"log_likelihood_gain_per_event_vs_self_only", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"compensator:buy": data.NewMetric[float64](
+			"compensator:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"compensator:sell": data.NewMetric[float64](
+			"compensator:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"count_innovation:buy": data.NewMetric[float64](
+			"count_innovation:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"count_innovation:sell": data.NewMetric[float64](
+			"count_innovation:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"standardized_innovation:buy": data.NewMetric[float64](
+			"standardized_innovation:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"standardized_innovation:sell": data.NewMetric[float64](
+			"standardized_innovation:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_mass:buy": data.NewMetric[float64](
+			"excitation_mass:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_mass:sell": data.NewMetric[float64](
+			"excitation_mass:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_share:buy": data.NewMetric[float64](
+			"excitation_share:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_share:sell": data.NewMetric[float64](
+			"excitation_share:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"excitation_share": data.NewMetric[float64](
+			"excitation_share", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"snr": data.NewMetric[float64](
+			"snr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+	})
 }

@@ -1,135 +1,81 @@
 package derivatives
 
 import (
-	"fmt"
-	"time"
+	"context"
+	"unsafe"
 
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	nmderivatives "github.com/theapemachine/symm/nomagique/derivatives"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-type tradeState struct {
-	liqBuyTotal      float64
-	liqSellTotal     float64
-	grossTradeTotal  float64
-	startTime        time.Time
-	tradeCount       float64
-	prevLiqShare     float64
-	hasPrevLiqShare  bool
-	lastAdvancedTime time.Time
+/*
+Trade is the liquidation-notional accounting instrument. It holds no state
+and no logic of its own: its entire behavior is one nomagique pipeline over
+the measurement itself — every stage writes its facts into the measurement
+where it computes them, and the workload's register owns the measurement's
+lifetime.
+*/
+type Trade struct {
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
+}
+
+func NewTrade(ctx context.Context) *Trade {
+	return &Trade{
+		System: runtime.NewSystem(ctx, "derivatives:trade"),
+		pipeline: nomagique.NewNumber(
+			nmderivatives.NewTradeGate(),
+			nmderivatives.NewLiquidation(),
+			data.NewFinalizer[float64](),
+		),
+	}
 }
 
 /*
-Trade is the liquidation-notional accounting entity.
-It measures gross and net liquidation flow, liquidation share of aggregate volume,
-and throughput rates across a causal timeline without Frame or Wire blocks.
+Step supplies the arriving measurement to the pipeline and returns it: the
+measurement is the pipeline's state, enriched in place.
 */
-type Trade struct {
-	states map[string]*tradeState
-	clock  causalClock
+func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	return data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&m)).Next(nil)))
 }
 
-func NewTrade() *Trade {
-	return &Trade{
-		states: make(map[string]*tradeState),
-		clock:  newCausalClock(),
-	}
-}
-
-func (trade *Trade) Close() error {
-	return nil
-}
-
-func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float64] {
-	stamped, advanced := trade.clock.stamp(
-		point.Symbol, point.Timestamp, point.SyntheticTimestamp,
-	)
-	point.Timestamp = stamped
-
-	price := point.Price.Float64()
-	qty := point.Qty
-	notional := price * qty
-
-	state, found := trade.states[point.Symbol]
-
-	if !found {
-		state = &tradeState{startTime: stamped}
-		trade.states[point.Symbol] = state
-	}
-
-	state.grossTradeTotal += notional
-
-	if point.Type == "liquidation" {
-		switch point.Side {
-		case "buy":
-			state.liqBuyTotal += notional
-		case "sell":
-			state.liqSellTotal += notional
-		}
-	}
-
-	// Totals include every received trade, including historical reconnect data.
-	// Their interval is the earliest through latest accounted event time.
-	if stamped.Before(state.startTime) {
-		state.startTime = stamped
-	}
-
-	if advanced {
-		state.tradeCount++
-		state.lastAdvancedTime = stamped
-	}
-
-	grossLiq := state.liqBuyTotal + state.liqSellTotal
-	netLiq := state.liqBuyTotal - state.liqSellTotal
-
-	id := fmt.Sprintf("derivatives:%s:%d", point.Symbol, point.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64]("derivatives", nil)
-	measurement.Label, measurement.At, measurement.From = point.Symbol, state.lastAdvancedTime, state.startTime
-	measurement.Metadata = make(map[string]float64)
-
-	putDerivMetric(measurement, "liquidation_notional:buy", state.liqBuyTotal, data.UnitRate)
-	putDerivMetric(measurement, "liquidation_notional:sell", state.liqSellTotal, data.UnitRate)
-	putDerivMetric(measurement, "gross_liquidation_notional", grossLiq, data.UnitRate)
-	putDerivMetric(measurement, "net_liquidation_notional", netLiq, data.UnitRate)
-	putDerivMetric(measurement, "gross_derivative_trade_notional", state.grossTradeTotal, data.UnitRate)
-
-	if grossLiq > 0 {
-		signedFraction := netLiq / grossLiq
-		putDerivMetric(measurement, "liquidation_signed_fraction", signedFraction, data.UnitDimensionless)
-	}
-
-	var currentShare float64
-
-	if state.grossTradeTotal > 0 {
-		currentShare = grossLiq / state.grossTradeTotal
-		putDerivMetric(measurement, "liquidation_share", currentShare, data.UnitDimensionless)
-	}
-
-	// Late trades revise totals and the earliest boundary, but do not emit a
-	// rate or share change until the live event-time clock advances again.
-	if advanced {
-		duration := state.lastAdvancedTime.Sub(state.startTime).Seconds()
-
-		if duration > 0 {
-			putDerivMetric(measurement, "liquidation_notional_rate", grossLiq/duration, data.UnitPerSecond)
-		}
-
-		if state.hasPrevLiqShare {
-			putDerivMetric(measurement, "liquidation_share_velocity", currentShare-state.prevLiqShare, data.UnitPerSecond)
-		}
-
-		state.prevLiqShare = currentShare
-		state.hasPrevLiqShare = true
-	}
-
-	measurement.Metadata[data.MetadataSupport] = state.tradeCount
-	measurement.Finalize()
-
-	return measurement
-}
-
-func putDerivMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
-	measurement.Metrics[name] = data.Metric[float64]{
-		Label: name, Raw: value, Unit: unit, Timescale: data.TimescaleInstantaneous,
-	}
+/*
+Register returns the pre-allocated measurement every futures trade flows
+through: every metric the instrument can produce is declared, none valued.
+*/
+func (trade *Trade) Register() *data.Measurement[float64] {
+	return data.NewMeasurement("derivatives", map[string]data.Metric[float64]{
+		"liquidation_notional:buy": data.NewMetric[float64](
+			"liquidation_notional:buy", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"liquidation_notional:sell": data.NewMetric[float64](
+			"liquidation_notional:sell", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"gross_liquidation_notional": data.NewMetric[float64](
+			"gross_liquidation_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"net_liquidation_notional": data.NewMetric[float64](
+			"net_liquidation_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"gross_derivative_trade_notional": data.NewMetric[float64](
+			"gross_derivative_trade_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
+		),
+		"liquidation_signed_fraction": data.NewMetric[float64](
+			"liquidation_signed_fraction", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"liquidation_share": data.NewMetric[float64](
+			"liquidation_share", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"liquidation_notional_rate": data.NewMetric[float64](
+			"liquidation_notional_rate", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+		"liquidation_share_velocity": data.NewMetric[float64](
+			"liquidation_share_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
+		),
+	})
 }

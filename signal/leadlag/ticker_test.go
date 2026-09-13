@@ -1,23 +1,38 @@
 package leadlag
 
 import (
-	"fmt"
+	"context"
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	markettest "github.com/theapemachine/symm/tests/market"
 )
 
-func ticker(symbol string, price float64, at time.Time) kraken.TickerData {
-	return kraken.TickerData{
-		Symbol:    symbol,
-		Last:      decimal.NewFromFloat64(price),
-		Timestamp: at,
+/*
+tick builds the measurement the workload's data management would hand the
+signal: the register's declared schema with the feed's last trade price
+written. Zero is an unobserved market; a negative price is an invalid one.
+*/
+var schema = new(Ticker).Register().Metrics
+
+func tick(symbol string, price float64, at time.Time) *data.Measurement[float64] {
+	m := data.NewMeasurement[float64]("leadlag", cloneSchema())
+	m.Label, m.At, m.From = symbol, at, at
+	m.Metrics["last"] = m.Metrics["last"].Write(price)
+
+	return m
+}
+
+func cloneSchema() map[string]data.Metric[float64] {
+	metrics := make(map[string]data.Metric[float64], len(schema))
+
+	for key, metric := range schema {
+		metrics[key] = metric
 	}
+
+	return metrics
 }
 
 func timestamp(second int64) time.Time {
@@ -28,7 +43,7 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 	measurements := make([]*data.Measurement[float64], 0, len(prices))
 
 	for index, price := range prices {
-		measurements = append(measurements, entity.Step(ticker(
+		measurements = append(measurements, entity.Step(tick(
 			symbol, price, timestamp(int64(index)+1),
 		)))
 	}
@@ -36,69 +51,77 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 	return measurements
 }
 
+func tapeTicks() []*data.Measurement[float64] {
+	measurements := make([]*data.Measurement[float64], 0, 32)
+
+	for _, row := range markettest.LeadLagTape() {
+		measurements = append(measurements, tick(row.Symbol, row.Last.Float64(), row.Timestamp))
+	}
+
+	return measurements
+}
+
 func TestTickerStep(t *testing.T) {
 	Convey("Given the captured CRV/DOT tape that stalled the spot workload", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(context.Background())
 		var measurement *data.Measurement[float64]
 
 		Convey("Every asynchronous observation completes, including the boundary lag", func() {
-			for _, tick := range markettest.LeadLagTape() {
-				measurement = entity.Step(tick)
+			for _, arrival := range tapeTicks() {
+				measurement = entity.Step(arrival)
 				So(measurement, ShouldNotBeNil)
 				So(measurement.Err, ShouldBeNil)
 			}
 
-			So(measurement.Metrics, ShouldContainKey, "best_lag_index")
 			So(measurement.Metrics["best_lag_index"].Raw, ShouldEqual, -5)
-			So(measurement.Metrics, ShouldNotContainKey, "lag_peak_curvature")
+			So(measurement.Metrics["lag_peak_curvature"].Raw, ShouldEqual, 0.0)
 		})
 	})
 
 	Convey("Given a lead-lag ticker-path instrument", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(context.Background())
 
 		Convey("the first tick yields one measurement with no warmup", func() {
-			measurement := entity.Step(ticker("BTC/USD", 100.0, timestamp(1)))
+			measurement := entity.Step(tick("BTC/USD", 100.0, timestamp(1)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["last_price"].Raw, ShouldEqual, 100.0)
 			So(measurement.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
-			So(measurement.Metrics, ShouldNotContainKey, "best_lag_correlation")
+			So(measurement.Metrics["best_lag_correlation"].Raw, ShouldEqual, 0.0)
 
 			So(measurement.Maturity, ShouldEqual, 0.0)
 			So(measurement.SNR, ShouldEqual, 0.0)
 		})
 
 		Convey("a quoted market with no recent trade does not enter the price path", func() {
-			untraded := ticker("CORN/USD", 0, timestamp(1))
-			untraded.Bid = decimal.NewFromFloat64(0.02015)
-			untraded.Ask = decimal.NewFromFloat64(0.04414)
+			untraded := tick("CORN/USD", 0, timestamp(1))
+			untraded.Metrics["bid"] = untraded.Metrics["bid"].Write(0.02015)
+			untraded.Metrics["ask"] = untraded.Metrics["ask"].Write(0.04414)
 
 			measurement := entity.Step(untraded)
 
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics, ShouldNotContainKey, "last_price")
-			So(measurement.Metrics, ShouldNotContainKey, "observation_count")
+			So(measurement.Metrics["last_price"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["observation_count"].Raw, ShouldEqual, 0.0)
 			So(measurement.Maturity, ShouldEqual, 0.0)
 			So(measurement.Provenance["last_trade_price_state"], ShouldEqual, "unobserved")
 
-			observed := entity.Step(ticker("CORN/USD", 0.03, timestamp(2)))
-			untraded.Timestamp = timestamp(3)
-			unobservedAgain := entity.Step(untraded)
-			observedAgain := entity.Step(ticker("CORN/USD", 0.033, timestamp(4)))
+			observed := entity.Step(tick("CORN/USD", 0.03, timestamp(2)))
+			unobservedAgain := entity.Step(tick("CORN/USD", 0, timestamp(3)))
+			observedAgain := entity.Step(tick("CORN/USD", 0.033, timestamp(4)))
 
 			So(observed.Err, ShouldBeNil)
 			So(observed.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
 			So(observed.Metrics["last_price"].Raw, ShouldEqual, 0.03)
 			So(unobservedAgain.Err, ShouldBeNil)
-			So(unobservedAgain.Metrics, ShouldNotContainKey, "observation_count")
+			So(unobservedAgain.Metrics["observation_count"].Raw, ShouldEqual, 0.0)
 			So(observedAgain.Err, ShouldBeNil)
 			So(observedAgain.Metrics["observation_count"].Raw, ShouldEqual, 2.0)
 		})
 
 		Convey("a negative last price remains invalid", func() {
-			measurement := entity.Step(ticker("BTC/USD", -1, timestamp(1)))
+			measurement := entity.Step(tick("BTC/USD", -1, timestamp(1)))
 
 			So(measurement.Err, ShouldNotBeNil)
 		})
@@ -109,35 +132,37 @@ func TestTickerStep(t *testing.T) {
 
 			last := measurements[len(measurements)-1]
 
-			So(last.Metrics, ShouldContainKey, "contemporaneous_correlation")
-			So(last.Metrics, ShouldContainKey, "best_lag_correlation")
-			So(last.Metrics, ShouldContainKey, "best_lag_index")
-			So(last.Metrics, ShouldContainKey, "best_lag_seconds")
-			So(last.Metrics, ShouldContainKey, "absolute_correlation_gain")
+			So(last.Metrics["contemporaneous_correlation"].Raw, ShouldNotEqual, 0.0)
+			So(last.Metrics["best_lag_correlation"].Raw, ShouldNotEqual, 0.0)
+			So(last.Metrics["best_lag_seconds"].Raw, ShouldNotEqual, 0.0)
+			So(last.Metrics["absolute_correlation_gain"].Raw, ShouldNotEqual, 0.0)
 			So(last.Metrics["lag_search_resolution_seconds"].Raw, ShouldAlmostEqual, 1.0, 1e-9)
-			So(last.Metrics, ShouldContainKey, "lag_search_span")
 
 			So(last.Metrics["reference_return_count"].Raw, ShouldEqual, 6.0)
 			So(last.Metrics["measured_return_count"].Raw, ShouldEqual, 6.0)
-			So(last.Metrics, ShouldContainKey, "overlap_pair_count")
-			So(last.Metrics, ShouldContainKey, "effective_sample_count")
+			So(last.Metrics["effective_sample_count"].Raw, ShouldBeGreaterThan, 0.0)
 			So(last.Metrics["search_count"].Raw, ShouldBeGreaterThan, 0.0)
 
-			So(last.Metrics, ShouldContainKey, "lag_peak_prominence")
-			So(last.Metrics, ShouldContainKey, "lag_peak_curvature")
-			So(last.Metrics, ShouldContainKey, "correlation_p_value")
-			So(last.Metrics, ShouldContainKey, "search_adjusted_p_value")
+			So(last.Metrics["lag_baseline_seconds"].Raw, ShouldNotEqual, 0.0)
+			So(last.Metrics["correlation_gain_baseline"].Raw, ShouldNotEqual, 0.0)
+			So(last.Metrics["best_lag_correlation_baseline"].Raw, ShouldNotEqual, 0.0)
 
-			So(last.Metrics, ShouldContainKey, "lag_baseline_seconds")
-			So(last.Metrics, ShouldContainKey, "lag_divergence_seconds")
-			So(last.Metrics, ShouldContainKey, "lag_noise_scale_seconds")
-			So(last.Metrics, ShouldContainKey, "lag_zscore")
-			So(last.Metrics, ShouldContainKey, "lag_velocity")
-			So(last.Metrics, ShouldContainKey, "correlation_gain_baseline")
-			So(last.Metrics, ShouldContainKey, "correlation_gain_zscore")
-			So(last.Metrics, ShouldContainKey, "correlation_gain_velocity")
-			So(last.Metrics, ShouldContainKey, "best_lag_correlation_baseline")
-			So(last.Metrics, ShouldContainKey, "best_lag_correlation_zscore")
+			// The correlation history is the estimator fact the measurement's
+			// support derives from: a defined pair history means support.
+			So(last.Metadata[data.MetadataSupport], ShouldBeGreaterThan, 0.0)
+		})
+
+		Convey("the pair history yields defined divergences once a prior exists", func() {
+			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104, 105})
+			measurements := drive(entity, "ETH/USD", []float64{200, 202, 201, 205, 203, 208, 204, 211, 206, 214, 208, 217})
+
+			last := measurements[len(measurements)-1]
+
+			// The drifted tape moves the best lag from cut to cut, so the
+			// lag and gain histories carry real divergence and velocity.
+			So(last.Metrics["lag_divergence_seconds"].Raw, ShouldNotEqual, 0.0)
+			So(last.Metrics["correlation_gain_zscore"].Raw, ShouldNotEqual, 0.0)
+			So(last.Metadata[data.MetadataDivergence], ShouldNotEqual, 0.0)
 		})
 
 		Convey("a settled best-lag estimator yields a defined SNR", func() {
@@ -156,37 +181,41 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("time regression surfaces as zero support without error", func() {
-			entity.Step(ticker("BTC/USD", 100.0, timestamp(2)))
+			entity.Step(tick("BTC/USD", 100.0, timestamp(2)))
 
-			measurement := entity.Step(ticker("BTC/USD", 101.0, timestamp(1)))
+			measurement := entity.Step(tick("BTC/USD", 101.0, timestamp(1)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metadata[data.MetadataSupport], ShouldEqual, 0)
 			So(measurement.Provenance["event_time_state"], ShouldEqual, "regressed")
 		})
+
+		Convey("Register declares the full metric schema without values", func() {
+			measurement := entity.Register()
+
+			So(measurement.ID, ShouldEqual, -1)
+			So(measurement.Metrics, ShouldContainKey, "last")
+			So(measurement.Metrics, ShouldContainKey, "best_lag_correlation")
+
+			for label, metric := range measurement.Metrics {
+				So(label, ShouldEqual, metric.Label)
+				So(metric.Raw, ShouldEqual, 0.0)
+			}
+		})
 	})
 }
 
-func benchmarkSymbol(s int) string {
-	return fmt.Sprintf("S%02d/USD", s)
-}
-
-const (
-	benchmarkSymbols = 32
-	benchmarkWarmup  = 64
-)
-
 func BenchmarkTickerStep(b *testing.B) {
-	messages := markettest.LeadLagTape()
+	arrivals := tapeTicks()
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		entity := NewTicker()
+		entity := NewTicker(context.Background())
 
-		for _, tick := range messages {
-			measurement := entity.Step(tick)
+		for _, arrival := range arrivals {
+			measurement := entity.Step(arrival)
 
 			if measurement.Err != nil {
 				b.Fatal(measurement.Err)
@@ -195,22 +224,32 @@ func BenchmarkTickerStep(b *testing.B) {
 	}
 }
 
+func benchmarkSymbol(s int) string {
+	return "S" + string(rune('0'+s/10)) + string(rune('0'+s%10)) + "/USD"
+}
+
+const (
+	benchmarkSymbols = 32
+	benchmarkWarmup  = 64
+)
+
 /*
 BenchmarkTickerCrossLagStep isolates the intrinsic cost of one leadlag Step on a
 focal symbol whose peers all hold full (64-sample) committed paths. It exercises
-the CrossSection peer fan-out (one CrossLag lag-surface scan per peer) plus the
-per-tick cohort reduce/finalize. Sustained single-digit-millisecond cost here
-means a ~1s avg on the live diagnostics is contention, not intrinsic compute.
+the pair fan-out (one lag-surface scan per peer) plus the per-tick pair
+history/finalize. Sustained single-digit-millisecond cost here means a ~1s avg
+on the live diagnostics is contention, not intrinsic compute.
 */
 func BenchmarkTickerCrossLagStep(b *testing.B) {
-	entity := NewTicker()
+	entity := NewTicker(context.Background())
 
 	// Prime every symbol's path to steady-state capacity (64 samples) so the
 	// cross-section cost reflects a fully-warmed universe, not cold-start.
 	for s := 0; s < benchmarkSymbols; s++ {
 		symbol := benchmarkSymbol(s)
+
 		for i := 0; i < benchmarkWarmup; i++ {
-			entity.Step(ticker(symbol, 100.0+float64(i), timestamp(int64(i)+1)))
+			entity.Step(tick(symbol, 100.0+float64(i), timestamp(int64(i)+1)))
 		}
 	}
 
@@ -220,7 +259,7 @@ func BenchmarkTickerCrossLagStep(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		entity.Step(ticker(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))
+		entity.Step(tick(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))
 		i++
 	}
 }

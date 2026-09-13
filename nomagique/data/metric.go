@@ -3,6 +3,7 @@ package data
 import (
 	"unsafe"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -12,17 +13,23 @@ var standardizer = statistic.NewStandardize()
 /*
 Metric is one projected value of a measurement: a label, the raw observation,
 its normalized and standardized forms, and the physical unit and timescale.
+
+Exact retains the venue's original decimal for observations the venue printed
+exactly (prices, sizes). Ingest writes it and capture/audit reads it; the
+mathematics runs on Raw alone and never consults it. Derived facts leave it
+nil.
 */
 type Metric[Value any] struct {
-	Label        string      `json:"label"`
-	Raw          Value       `json:"raw"`
-	Normalized   *Value      `json:"normalized,omitempty"`
-	Standardized *Value      `json:"standardized,omitempty"`
-	Center       float64     `json:"center,omitempty"`
-	Scale        float64     `json:"scale,omitempty"`
-	Unit         Unit        `json:"unit,omitempty"`
-	Timescale    Timescale   `json:"timescale,omitempty"`
-	Coordinates  *[2]float64 `json:"-"`
+	Label        string           `json:"label"`
+	Raw          Value            `json:"raw"`
+	Normalized   *Value           `json:"normalized,omitempty"`
+	Standardized *Value           `json:"standardized,omitempty"`
+	Exact        *decimal.Decimal `json:"exact,omitempty"`
+	Center       float64          `json:"center,omitempty"`
+	Scale        float64          `json:"scale,omitempty"`
+	Unit         Unit             `json:"unit,omitempty"`
+	Timescale    Timescale        `json:"timescale,omitempty"`
+	Coordinates  *[2]float64      `json:"-"`
 }
 
 /*

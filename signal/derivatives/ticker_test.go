@@ -2,39 +2,55 @@ package derivatives
 
 import (
 	"math"
+	"maps"
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func futuresTicker(
-	symbol string,
-	last float64,
-	index float64,
-	mark float64,
-	openInterest float64,
-	at time.Time,
-) kraken.FuturesTickerData {
-	return kraken.FuturesTickerData{
-		Symbol:       symbol,
-		Last:         decimal.NewFromFloat64(last),
-		IndexPrice:   decimal.NewFromFloat64(index),
-		MarkPrice:    decimal.NewFromFloat64(mark),
-		OpenInterest: openInterest,
-		Timestamp:    at,
-	}
+/*
+schema is the register's declared metric set the workload's data management
+hands the signal: every producible metric, none valued.
+*/
+var schema = new(Ticker).Register().Metrics
+
+/*
+row builds the measurement a futures ticker row lifts into: the feed fills
+the derivative, reference, and spot prices and the open interest, names the
+symbol, and stamps the venue timestamp. A fabricated timestamp travels as a
+provenance fact; zero or negative prices are an invalid market.
+*/
+func row(symbol string, last, index, mark, openInterest float64, at time.Time) *data.Measurement[float64] {
+	m := data.NewMeasurement[float64]("websocket", maps.Clone(schema))
+	m.Label, m.At, m.From = symbol, at, at
+	m.Metrics["last"] = m.Metrics["last"].Write(last)
+	m.Metrics["index_price"] = m.Metrics["index_price"].Write(index)
+	m.Metrics["mark_price"] = m.Metrics["mark_price"].Write(mark)
+	m.Metrics["open_interest"] = m.Metrics["open_interest"].Write(openInterest)
+
+	return m
+}
+
+/*
+syntheticRow marks the measurement's timestamp as a local wall-clock
+substitute for a payload that carried no server time.
+*/
+func syntheticRow(symbol string, last, index, mark, openInterest float64, at time.Time) *data.Measurement[float64] {
+	m := row(symbol, last, index, mark, openInterest, at)
+	m.Provenance = map[string]string{"synthetic_timestamp": "true"}
+
+	return m
 }
 
 func TestTickerStep(t *testing.T) {
 	Convey("Given a valid derivative ticker snapshot", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the first data point yields point and geometry metrics with no warmup", func() {
-			measurement := entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 100.5, 1000, at))
+			measurement := entity.Step(row("PF_XBTUSD", 101, 100, 100.5, 1000, at))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -77,8 +93,8 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("a multi-leg sequence derives the differences, returns, and baselines", func() {
-			entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 100.5, 1000, at))
-			measurement := entity.Step(futuresTicker("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(10*time.Second)))
+			entity.Step(row("PF_XBTUSD", 101, 100, 100.5, 1000, at))
+			measurement := entity.Step(row("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(10*time.Second)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -104,10 +120,10 @@ func TestTickerStep(t *testing.T) {
 	})
 
 	Convey("Given a derivative ticker with a non-positive reference price", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(futuresTicker("PF_XBTUSD", 101, 0, 100.5, 1000, time.Unix(1_700_000_000, 0)))
+			measurement := entity.Step(row("PF_XBTUSD", 101, 0, 100.5, 1000, time.Unix(1_700_000_000, 0)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -124,15 +140,13 @@ alongside it.
 */
 func TestTickerStep_ZeroOpenInterest(t *testing.T) {
 	Convey("Given a contract whose open interest is zero", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(futuresTicker("PF_THIN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
+		So(entity.Step(row("PF_THIN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
 
 		Convey("A second observation still publishes its price metrics", func() {
-			measurement := entity.Step(futuresTicker(
-				"PF_THIN", 102, 100, 100.5, 0, at.Add(time.Second),
-			))
+			measurement := entity.Step(row("PF_THIN", 102, 100, 100.5, 0, at.Add(time.Second)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -147,15 +161,13 @@ func TestTickerStep_ZeroOpenInterest(t *testing.T) {
 	})
 
 	Convey("Given open interest that rises from zero", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(futuresTicker("PF_OPEN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
+		So(entity.Step(row("PF_OPEN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
 
 		Convey("The log change stays absent while the previous endpoint is zero", func() {
-			measurement := entity.Step(futuresTicker(
-				"PF_OPEN", 101, 100, 100.5, 500, at.Add(time.Second),
-			))
+			measurement := entity.Step(row("PF_OPEN", 101, 100, 100.5, 500, at.Add(time.Second)))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 500.0)
@@ -175,11 +187,11 @@ it, for every observation of that symbol.
 */
 func TestTickerStep_ZeroPrice(t *testing.T) {
 	Convey("Given a contract whose last price is zero", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("The first observation still publishes its arithmetic metrics", func() {
-			measurement := entity.Step(futuresTicker("PF_UNTRADED", 0, 100, 100.5, 1000, at))
+			measurement := entity.Step(row("PF_UNTRADED", 0, 100, 100.5, 1000, at))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -195,11 +207,9 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 		})
 
 		Convey("A second zero-priced observation still reports without error", func() {
-			So(entity.Step(futuresTicker("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(entity.Step(row("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
 
-			measurement := entity.Step(futuresTicker(
-				"PF_UNTRADED", 0, 101, 100.5, 1000, at.Add(time.Second),
-			))
+			measurement := entity.Step(row("PF_UNTRADED", 0, 101, 100.5, 1000, at.Add(time.Second)))
 
 			So(measurement.Err, ShouldBeNil)
 
@@ -215,11 +225,9 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 		})
 
 		Convey("A price recovering from zero reports without error", func() {
-			So(entity.Step(futuresTicker("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(entity.Step(row("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
 
-			measurement := entity.Step(futuresTicker(
-				"PF_UNTRADED", 102, 101, 100.5, 1000, at.Add(time.Second),
-			))
+			measurement := entity.Step(row("PF_UNTRADED", 102, 101, 100.5, 1000, at.Add(time.Second)))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 102.0)
@@ -234,15 +242,13 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 	})
 
 	Convey("Given positive prices throughout", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(futuresTicker("PF_XBTUSD", 100, 99, 99.5, 1000, at)).Err, ShouldBeNil)
+		So(entity.Step(row("PF_XBTUSD", 100, 99, 99.5, 1000, at)).Err, ShouldBeNil)
 
 		Convey("The full log-space geometry is still published", func() {
-			measurement := entity.Step(futuresTicker(
-				"PF_XBTUSD", 102, 100, 100.5, 1100, at.Add(time.Second),
-			))
+			measurement := entity.Step(row("PF_XBTUSD", 102, 100, 100.5, 1100, at.Add(time.Second)))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["log_basis"].Raw, ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
@@ -257,19 +263,19 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 
 func TestTickerStep_RegressingTimestamp(t *testing.T) {
 	Convey("Given a snapshot whose timestamp regresses relative to the prior one", t, func() {
-		entity := NewTicker()
+		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the observer's causal clock must not regress across the out-of-order event", func() {
-			So(entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
-			So(entity.Step(futuresTicker("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(time.Second))).Err, ShouldBeNil)
+			So(entity.Step(row("PF_XBTUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(entity.Step(row("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(time.Second))).Err, ShouldBeNil)
 
 			// A snapshot carrying a REAL timestamp older than the last seen is
 			// a late event, not a broken one. Its instantaneous price geometry
 			// is true whenever the snapshot was taken, so it publishes; but it
 			// is not a valid newest observation, so nothing derived from the
 			// event clock does.
-			measurement := entity.Step(futuresTicker("PF_XBTUSD", 103, 102, 102.5, 1200, at.Add(500*time.Millisecond)))
+			measurement := entity.Step(row("PF_XBTUSD", 103, 102, 102.5, 1200, at.Add(500*time.Millisecond)))
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 103.0)
@@ -281,25 +287,45 @@ func TestTickerStep_RegressingTimestamp(t *testing.T) {
 		})
 
 		Convey("a fabricated timestamp is folded forward, not read as late", func() {
-			So(entity.Step(futuresTicker("PF_SYNUSD", 101, 100, 100.5, 1000, at.Add(time.Hour))).Err, ShouldBeNil)
+			So(entity.Step(row("PF_SYNUSD", 101, 100, 100.5, 1000, at.Add(time.Hour))).Err, ShouldBeNil)
 
 			// No server timestamp: the wall-clock substitute reads as older,
 			// but it holds no truth, so it is pinned to the timeline head and
 			// the snapshot counts as the newest observation.
-			point := futuresTicker("PF_SYNUSD", 102, 101, 101.5, 1100, at)
-			point.SyntheticTimestamp = true
-
-			measurement := entity.Step(point)
+			measurement := entity.Step(syntheticRow("PF_SYNUSD", 102, 101, 101.5, 1100, at))
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 100.0)
 		})
 
 		Convey("identical timestamps are accepted and hold the timeline at the same instant", func() {
-			So(entity.Step(futuresTicker("PF_RAREUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(entity.Step(row("PF_RAREUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
 
-			measurement := entity.Step(futuresTicker("PF_RAREUSD", 102, 101, 101.5, 1100, at))
+			measurement := entity.Step(row("PF_RAREUSD", 102, 101, 101.5, 1100, at))
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 100.0)
+		})
+	})
+}
+
+/*
+TestTickerRegister proves the declared schema: every producible metric is
+declared, none valued, and every label names itself.
+*/
+func TestTickerRegister(t *testing.T) {
+	Convey("Given a Ticker entity", t, func() {
+		entity := new(Ticker)
+
+		Convey("Register declares the full metric schema without values", func() {
+			measurement := entity.Register()
+
+			So(measurement.ID, ShouldEqual, -1)
+			So(measurement.Metrics, ShouldContainKey, "basis")
+			So(measurement.Metrics, ShouldContainKey, "open_interest_growth_rate")
+
+			for label, metric := range measurement.Metrics {
+				So(label, ShouldEqual, metric.Label)
+				So(metric.Raw, ShouldEqual, 0.0)
+			}
 		})
 	})
 }

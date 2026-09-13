@@ -13,13 +13,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
+	"golang.design/x/lockfree/lf"
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
+	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
@@ -60,12 +63,13 @@ type Live struct {
 	cancel       context.CancelFunc
 	status       *runtime.Status
 	err          error
+	queue        *lf.Queue[map[string]any]
+	schema       map[string]data.Metric[float64]
 	client       atomic.Pointer[spot.WebSocket]
 	receiveMu    sync.Mutex
 	receive      callback.Action[*sdkkraken.WebSocketMessage]
 	endpoint     string
 	quote        string
-	ingress      map[string]runtime.Ingress[*types.Envelope]
 	simulator    *Simulator
 	normalizer   *spot.Normalizer
 	book         *Book
@@ -102,75 +106,9 @@ type Live struct {
 	// feed the session's book manager instead of dialing the real venue.
 	level3Client func() *spot.WebSocket
 
-	// l3forward funnels level3 envelopes from this session to the shared
-	// ingestion sequencer. It is set on every Level3 child session so all
-	// children push through exactly one writer goroutine instead of calling
-	// Push on the shared ring concurrently. The parent/private/ticker/trade
-	// sessions leave it nil and push directly.
-	l3forward *level3Sequencer
-
 	// pingReqID is echoed back on the pong reply, so a response can be tied to
 	// the request that produced it.
 	pingReqID atomic.Int64
-}
-
-/*
-level3Sequencer owns the single writer goroutine for the shared Level3 ingress
-ring. SubL3 chunks the universe into many child websocket sessions, each of
-which would otherwise call Push concurrently on the same ring; go-disruptor
-requires WriterCount(2+) for concurrent Reserve/Commit, so a single producer is
-forwarded through here. Every child hands its envelope to the one writer, which
-commits it to the ring in arrival order.
-*/
-type level3Sequencer struct {
-	ingress   chan *types.Envelope
-	done      chan struct{}
-	closeOnce sync.Once
-}
-
-func newLevel3Sequencer(workload runtime.Ingress[*types.Envelope], capacity int) *level3Sequencer {
-	sequencer := &level3Sequencer{
-		ingress: make(chan *types.Envelope, capacity),
-		done:    make(chan struct{}),
-	}
-
-	go func() {
-		for {
-			select {
-			case envelope := <-sequencer.ingress:
-				workload.Push(envelope)
-			case <-sequencer.done:
-				return
-			}
-		}
-	}()
-
-	return sequencer
-}
-
-/*
-Push forwards one level3 envelope to the shared ring's single writer. It drops
-the envelope when the sequencer is closed rather than pushing onto a dead ring.
-*/
-func (sequencer *level3Sequencer) Push(envelope *types.Envelope) {
-	if sequencer == nil || envelope == nil {
-		return
-	}
-
-	select {
-	case sequencer.ingress <- envelope:
-	case <-sequencer.done:
-	}
-}
-
-func (sequencer *level3Sequencer) Close() {
-	if sequencer == nil {
-		return
-	}
-
-	sequencer.closeOnce.Do(func() {
-		close(sequencer.done)
-	})
 }
 
 /*
@@ -278,14 +216,13 @@ New opens a spot websocket session and wires SDK callbacks in the constructor.
 */
 func New(
 	ctx context.Context,
-	workloads map[string]runtime.Ingress[*types.Envelope],
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
 	recorders ...CaptureSink,
 ) *Live {
 	return NewWithClient(
-		ctx, workloads, simulator, auth, endpoint, nil, recorders...,
+		ctx, simulator, auth, endpoint, nil, recorders...,
 	)
 }
 
@@ -296,7 +233,6 @@ the connection becomes part of a running system.
 */
 func NewWithClient(
 	ctx context.Context,
-	workloads map[string]runtime.Ingress[*types.Envelope],
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
@@ -327,8 +263,9 @@ func NewWithClient(
 		subscribers: &sync.Map{},
 		callbacks:   &sync.Map{},
 		public:      make(map[string][][]string),
-		paper:       NewPaper(ctx, simulator, workloads),
-		ingress:     workloads,
+		queue:       lf.NewQueue[map[string]any](),
+		schema:      ingestSchema(),
+		paper:       NewPaper(ctx, simulator),
 		model:       viper.GetViper().GetString("trading.model"),
 		quote:       viper.GetViper().GetString("market.quote_currency"),
 		streams:     NewStreams(client.URL),
@@ -430,44 +367,39 @@ func NewWithClient(
 				live.fail(err)
 			}
 		})
-		live.book.SetNotify(func(symbol string, at time.Time) {
-			envelope := types.NewEnvelope(types.EnvelopeLevel3)
-			envelope.Level3Data = kraken.Level3Data{Symbol: symbol, Timestamp: at}
-			envelope.Stream, envelope.CaptureID = bookStream, bookCapture
-			envelope.CaptureOrdinal = uint64(slices.IndexFunc(bookFrame.Data, func(data kraken.Level3Data) bool {
+		live.book.SetNotify(func(symbol string, _ time.Time) {
+			ordinal := uint64(slices.IndexFunc(bookFrame.Data, func(data kraken.Level3Data) bool {
 				return data.Symbol == symbol
 			}))
-
-			// The accepted delta travels through the signal Workload. The resident
-			// book remains owned by this transport; no full book snapshot is copied.
-			envelope.Level3Data = bookFrame.Data[envelope.CaptureOrdinal]
 
 			if live.Status() != runtime.READY {
 				return
 			}
 
 			if live.manifestSink != nil {
+				notification := types.NewEnvelope(types.EnvelopeLevel3)
+				notification.Level3Data = bookFrame.Data[ordinal]
+				notification.Stream, notification.CaptureID = bookStream, bookCapture
+				notification.CaptureOrdinal = ordinal
+
 				if err := live.manifestSink.WriteManifest(manifestFor(
-					envelope, bookCapture, envelope.CaptureOrdinal, "level3", symbol,
+					notification, bookCapture, ordinal, "level3", symbol,
 				)); err != nil {
 					live.fail(errnie.Err(errnie.IO, "websocket: persist book notification manifest", err))
 					return
 				}
 			}
 
-			if live.l3forward != nil {
-				live.l3forward.Push(envelope)
-				return
+			// The accepted delta travels through the ingest queue as its own row.
+			// The resident book remains owned by this transport; no full book
+			// snapshot is copied. The typed delta rides alongside the row so the
+			// level3 consumer keeps venue-exact fields.
+			row := map[string]any{
+				"channel": "level3",
+				"symbol":  symbol,
+				"data":    bookFrame.Data[ordinal],
 			}
-
-			workload := live.ingress["level3"]
-
-			if workload == nil || workload.Status() != runtime.READY {
-				live.fail(errnie.Err(errnie.NotAcceptable, "websocket: book notification ingress is not ready", nil))
-				return
-			}
-
-			workload.Push(envelope)
+			live.queue.Enqueue(row)
 		})
 	}
 
@@ -526,6 +458,49 @@ func NewWithClient(
 		if channel == "unsubscribe" {
 			if message := utils.GetString(raw, "error"); message != "" {
 				live.fail(errnie.Err(errnie.IO, "websocket: unsubscribe rejected: "+message, nil))
+			}
+
+			return
+		}
+
+		switch channel {
+		case "ticker", "trade", "executions":
+			// Connected sessions capture but do not feed the pipeline until the
+			// complete consumer graph has crossed its READY boundary.
+			if live.Status() != runtime.READY {
+				return
+			}
+
+			// One queue row per venue record: the callback splits the frame's
+			// data array so Step converts exactly one measurement per dequeue.
+			// The typed entity parse is skipped; the row map is the payload.
+			frame, err := event.Data.Map()
+
+			if err != nil {
+				live.fail(errnie.Err(
+					errnie.Validation,
+					"websocket: failed to map "+channel+" frame",
+					err,
+				))
+
+				return
+			}
+
+			rows, rowsOk := frame["data"].([]any)
+
+			if !rowsOk {
+				return
+			}
+
+			for _, entry := range rows {
+				row, rowOk := entry.(map[string]any)
+
+				if !rowOk {
+					continue
+				}
+
+				row["channel"] = channel
+				live.queue.Enqueue(row)
 			}
 
 			return
@@ -602,56 +577,6 @@ func NewWithClient(
 			}
 
 			return
-		case "ticker", "trade", "executions":
-			// Connected sessions capture but do not feed the pipeline until the
-			// complete consumer graph has crossed its READY boundary.
-			if live.Status() != runtime.READY {
-				return
-			}
-
-			envelopes, manifests := IngestEnvelopes(channel, out, captureID)
-
-			for index, envelope := range envelopes {
-				// Live trading reads the operational StreamRef; Hindsight's
-				// CaptureID records the same fact but is never the source.
-				envelope.Stream = streamRef
-
-				if live.manifestSink != nil {
-					if err := live.manifestSink.WriteManifest(manifests[index]); err != nil {
-						live.fail(errnie.Err(
-							errnie.IO,
-							"websocket: failed to persist envelope manifest",
-							err,
-						))
-
-						return
-					}
-				}
-
-				workload, mounted := live.ingress[channel]
-
-				if !mounted || workload == nil {
-					live.fail(errnie.Err(
-						errnie.NotFound,
-						"websocket: required ingress is not mounted for "+channel,
-						nil,
-					))
-
-					return
-				}
-
-				if workload.Status() != runtime.READY {
-					live.fail(errnie.Err(
-						errnie.NotAcceptable,
-						"websocket: ingress is not ready for "+channel,
-						nil,
-					))
-
-					return
-				}
-
-				workload.Push(envelope)
-			}
 		}
 	}
 
@@ -671,6 +596,117 @@ func NewWithClient(
 	}
 
 	return live
+}
+
+/*
+Step implements the runtime.Node interface: one dequeued venue row becomes one
+measurement. The queue's rows carry the venue's numbers as json.Number, so each
+metric keeps the exact decimal the venue printed in Exact while Raw carries the
+float64 the mathematics runs on.
+*/
+func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	row, ok := live.queue.Dequeue()
+
+	if !ok {
+		return measurement
+	}
+
+	if symbol, ok := row["symbol"].(string); ok {
+		measurement.Label = live.normalizer.Name(symbol)
+	}
+
+	if side, ok := row["side"].(string); ok {
+		if measurement.Provenance == nil {
+			measurement.Provenance = make(map[string]string, 1)
+		}
+
+		measurement.Provenance["side"] = side
+	}
+
+	if stamped, ok := row["timestamp"].(string); ok {
+		at, err := time.Parse(time.RFC3339Nano, stamped)
+
+		if err != nil {
+			measurement.Err = errnie.Err(errnie.Validation, "websocket: invalid row timestamp", err)
+			return measurement
+		}
+
+		measurement.At = at
+	}
+
+	for key, value := range row {
+		number, ok := value.(json.Number)
+
+		if !ok {
+			continue
+		}
+
+		exact, err := sdkdecimal.NewFromString(number.String())
+
+		if err != nil {
+			measurement.Err = errnie.Err(
+				errnie.Validation,
+				"websocket: invalid row number "+key,
+				err,
+			)
+
+			return measurement
+		}
+
+		metric := measurement.Metrics[key]
+		metric.Label = key
+		metric.Raw = exact.Float64()
+		metric.Exact = exact
+		measurement.Metrics[key] = metric
+	}
+
+	return measurement
+}
+
+/*
+Register implements the runtime.Node interface: it declares every numeric field
+the venue's spot rows can produce, none valued.
+*/
+func (live *Live) Register() *data.Measurement[float64] {
+	return data.NewMeasurement("websocket", maps.Clone(live.schema))
+}
+
+/*
+ingestSchema declares the numeric fields the venue's ticker and trade rows
+carry, with each field's market unit. Row keys outside this schema (symbol,
+timestamp, side) are identity or categorical facts, not metrics.
+*/
+func ingestSchema() map[string]data.Metric[float64] {
+	fields := []struct {
+		label string
+		unit  data.Unit
+	}{
+		{"bid", data.UnitRate},
+		{"bid_qty", data.UnitCount},
+		{"ask", data.UnitRate},
+		{"ask_qty", data.UnitCount},
+		{"last", data.UnitRate},
+		{"volume", data.UnitCount},
+		{"vwap", data.UnitRate},
+		{"low", data.UnitRate},
+		{"high", data.UnitRate},
+		{"change", data.UnitRate},
+		{"change_pct", data.UnitDimensionless},
+		{"trades", data.UnitCount},
+		{"price", data.UnitRate},
+		{"qty", data.UnitCount},
+		{"trade_id", data.UnitCount},
+	}
+
+	schema := make(map[string]data.Metric[float64], len(fields))
+
+	for _, field := range fields {
+		schema[field.label] = data.NewMetric[float64](
+			field.label, field.unit, data.TimescaleInstantaneous, 0, 1,
+		)
+	}
+
+	return schema
 }
 
 /*
@@ -1004,7 +1040,7 @@ func (live *Live) subscribeExecutionsWhenReady(token string) {
 /*
 MarkReady releases a connected session after the complete consumer graph has
 been admitted. Level3 child sessions already attached to this parent cross the
-same boundary because they push through the same ingress sequencer.
+same boundary.
 */
 func (live *Live) MarkReady() {
 	if live == nil {
@@ -1019,30 +1055,6 @@ func (live *Live) MarkReady() {
 		live.fail(errnie.Err(
 			errnie.NotAcceptable,
 			"websocket: only a connected session can become ready",
-			nil,
-		))
-
-		return
-	}
-
-	if len(live.ingress) == 0 {
-		live.fail(errnie.Err(
-			errnie.NotFound,
-			"websocket: readiness requires mounted ingress workloads",
-			nil,
-		))
-
-		return
-	}
-
-	for channel, workload := range live.ingress {
-		if workload != nil && workload.Status() == runtime.READY {
-			continue
-		}
-
-		live.fail(errnie.Err(
-			errnie.NotAcceptable,
-			"websocket: cannot become ready before ingress "+channel,
 			nil,
 		))
 
@@ -1340,16 +1352,6 @@ func (live *Live) SubL3(symbols []string) {
 		live.level3 = &sync.Map{}
 	}
 
-	// One sequencer owns the shared level3 ring for this whole session. Child
-	// sessions forward through it so the ring has a single writer regardless
-	// of how the universe is chunked across websocket children.
-	if live.l3forward == nil {
-		live.l3forward = newLevel3Sequencer(
-			live.ingress["level3"],
-			8192,
-		)
-	}
-
 	for groups := range slices.Chunk(symbols, 200) {
 		groupKey := strings.Join(groups, "|")
 
@@ -1369,7 +1371,6 @@ func (live *Live) SubL3(symbols []string) {
 
 		conn := NewWithClient(
 			live.ctx,
-			live.ingress,
 			live.simulator,
 			live.auth,
 			system.Cfg.WebSocket.Endpoints.Level3,
@@ -1380,8 +1381,6 @@ func (live *Live) SubL3(symbols []string) {
 		if conn.Error() != nil {
 			return
 		}
-
-		conn.l3forward = live.l3forward
 
 		conn.symbols = append([]string{}, groups...)
 		live.AttachLevel3(groupKey, conn)
@@ -1855,10 +1854,6 @@ func (live *Live) Close() {
 
 		if live.pinger != nil {
 			live.pinger.Stop()
-		}
-
-		if live.l3forward != nil {
-			live.l3forward.Close()
 		}
 
 		if live.level3 != nil {

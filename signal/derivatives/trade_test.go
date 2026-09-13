@@ -1,40 +1,54 @@
 package derivatives
 
 import (
+	"maps"
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/logic/category"
 )
 
-func futuresTrade(
-	symbol string,
-	price float64,
-	qty float64,
-	side string,
-	tradeType string,
-	at time.Time,
-) kraken.FuturesTradeData {
-	return kraken.FuturesTradeData{
-		Symbol:    symbol,
-		Price:     *decimal.NewFromFloat64(price),
-		Qty:       qty,
-		Side:      side,
-		Type:      tradeType,
-		Timestamp: at,
-	}
+/*
+tradeSchema is the register's declared metric set the workload's data
+management hands the signal: every producible metric, none valued.
+*/
+var tradeSchema = new(Trade).Register().Metrics
+
+/*
+tradeRow builds the measurement a futures trade row lifts into: the feed
+fills the price and quantity metrics, carries the categorical side and trade
+type in provenance, and names the symbol and venue timestamp.
+*/
+func tradeRow(symbol string, price, qty float64, side, tradeType string, at time.Time) *data.Measurement[float64] {
+	m := data.NewMeasurement[float64]("websocket", maps.Clone(tradeSchema))
+	m.Label, m.At, m.From = symbol, at, at
+	m.Metrics["price"] = m.Metrics["price"].Write(price)
+	m.Metrics["qty"] = m.Metrics["qty"].Write(qty)
+	m.Provenance = map[string]string{"side": side, "type": tradeType}
+
+	return m
+}
+
+/*
+syntheticTradeRow marks the measurement's timestamp as a local wall-clock
+substitute for a payload that carried no server time.
+*/
+func syntheticTradeRow(symbol string, price, qty float64, side, tradeType string, at time.Time) *data.Measurement[float64] {
+	m := tradeRow(symbol, price, qty, side, tradeType, at)
+	m.Provenance["synthetic_timestamp"] = "true"
+
+	return m
 }
 
 func TestTradeStep(t *testing.T) {
 	Convey("Given a multi-leg liquidation sequence", t, func() {
-		entity := NewTrade()
+		entity := NewTrade(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("a single buy liquidation accounts its interval", func() {
-			measurement := entity.Step(futuresTrade("PF_XBTUSD", 100, 2, "buy", "liquidation", at))
+			measurement := entity.Step(tradeRow("PF_XBTUSD", 100, 2, "buy", "liquidation", at))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -56,8 +70,8 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("a follow-up sell liquidation extends the interval", func() {
-			entity.Step(futuresTrade("PF_XBTUSD", 100, 2, "buy", "liquidation", at))
-			measurement := entity.Step(futuresTrade("PF_XBTUSD", 110, 1, "sell", "liquidation", at.Add(5*time.Second)))
+			entity.Step(tradeRow("PF_XBTUSD", 100, 2, "buy", "liquidation", at))
+			measurement := entity.Step(tradeRow("PF_XBTUSD", 110, 1, "sell", "liquidation", at.Add(5*time.Second)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -74,10 +88,10 @@ func TestTradeStep(t *testing.T) {
 	})
 
 	Convey("Given a non-liquidation trade", t, func() {
-		entity := NewTrade()
+		entity := NewTrade(t.Context())
 
 		Convey("gross liquidation is a valid zero and the signed fraction is omitted", func() {
-			measurement := entity.Step(futuresTrade("PF_XBTUSD", 100, 2, "buy", "trade", time.Unix(1_700_000_000, 0)))
+			measurement := entity.Step(tradeRow("PF_XBTUSD", 100, 2, "buy", "trade", time.Unix(1_700_000_000, 0)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -94,23 +108,19 @@ func TestTradeStep(t *testing.T) {
 
 func TestTradeStep_LateTrade(t *testing.T) {
 	Convey("Given a real trade timestamp older than the last seen", t, func() {
-		entity := NewTrade()
+		entity := NewTrade(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(futuresTrade("PF_XBTUSD", 100, 2, "buy", "liquidation", at)).Err, ShouldBeNil)
+		So(entity.Step(tradeRow("PF_XBTUSD", 100, 2, "buy", "liquidation", at)).Err, ShouldBeNil)
 
-		opened := entity.Step(futuresTrade(
-			"PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(10*time.Second),
-		))
+		opened := entity.Step(tradeRow("PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(10*time.Second)))
 		So(opened.Err, ShouldBeNil)
 
 		rateBefore := opened.Metrics["liquidation_notional_rate"].Raw
 
 		Convey("the late trade is accounted without advancing the event clock", func() {
 			// A real timestamp from five seconds INSIDE the open interval.
-			measurement := entity.Step(futuresTrade(
-				"PF_XBTUSD", 100, 3, "buy", "liquidation", at.Add(5*time.Second),
-			))
+			measurement := entity.Step(tradeRow("PF_XBTUSD", 100, 3, "buy", "liquidation", at.Add(5*time.Second)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -137,10 +147,10 @@ func TestTradeStep_LateTrade(t *testing.T) {
 		})
 
 		Convey("a reconnect trade predating the interval remains valid through Category", func() {
-			historical := futuresTrade("PF_XBTUSD", 100, 3, "buy", "liquidation", at.Add(-30*time.Second))
-			measurement := entity.Step(historical)
+			historicalAt := at.Add(-30 * time.Second)
+			measurement := entity.Step(tradeRow("PF_XBTUSD", 100, 3, "buy", "liquidation", historicalAt))
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.From.Equal(historical.Timestamp), ShouldBeTrue)
+			So(measurement.From.Equal(historicalAt), ShouldBeTrue)
 			So(measurement.At.Equal(at.Add(10*time.Second)), ShouldBeTrue)
 			So(measurement.Metrics["gross_liquidation_notional"].Raw, ShouldEqual, 600)
 			_, hasRate := measurement.Metrics["liquidation_notional_rate"]
@@ -153,8 +163,8 @@ func TestTradeStep_LateTrade(t *testing.T) {
 			solver.StepMeasurement(measurement)
 			So(solver.Error(), ShouldBeNil)
 
-			resumed := entity.Step(futuresTrade("PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(20*time.Second)))
-			So(resumed.From.Equal(historical.Timestamp), ShouldBeTrue)
+			resumed := entity.Step(tradeRow("PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(20*time.Second)))
+			So(resumed.From.Equal(historicalAt), ShouldBeTrue)
 			So(resumed.At.Equal(at.Add(20*time.Second)), ShouldBeTrue)
 			// 700 notional across the full retained interval [-30s, +20s].
 			So(resumed.Metrics["liquidation_notional_rate"].Raw, ShouldAlmostEqual, 14)
@@ -163,11 +173,9 @@ func TestTradeStep_LateTrade(t *testing.T) {
 		})
 
 		Convey("a later in-order trade still advances the clock normally", func() {
-			entity.Step(futuresTrade("PF_XBTUSD", 100, 3, "buy", "liquidation", at.Add(5*time.Second)))
+			entity.Step(tradeRow("PF_XBTUSD", 100, 3, "buy", "liquidation", at.Add(5*time.Second)))
 
-			measurement := entity.Step(futuresTrade(
-				"PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(20*time.Second),
-			))
+			measurement := entity.Step(tradeRow("PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(20*time.Second)))
 
 			So(measurement.Err, ShouldBeNil)
 			// The interval now runs the full 20s from the origin.
@@ -178,10 +186,10 @@ func TestTradeStep_LateTrade(t *testing.T) {
 
 func TestTradeStep_SyntheticTimestamp(t *testing.T) {
 	Convey("Given a payload that carried no server timestamp", t, func() {
-		entity := NewTrade()
+		entity := NewTrade(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(futuresTrade(
+		So(entity.Step(tradeRow(
 			"PF_XBTUSD", 100, 2, "buy", "liquidation", at.Add(time.Hour),
 		)).Err, ShouldBeNil)
 
@@ -189,10 +197,7 @@ func TestTradeStep_SyntheticTimestamp(t *testing.T) {
 			// The wall-clock substitute reads as older than the exchange time,
 			// but it holds no truth, so it is pinned to the timeline head and
 			// the event counts as the newest observation.
-			late := futuresTrade("PF_XBTUSD", 100, 1, "sell", "liquidation", at)
-			late.SyntheticTimestamp = true
-
-			measurement := entity.Step(late)
+			measurement := entity.Step(syntheticTradeRow("PF_XBTUSD", 100, 1, "sell", "liquidation", at))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["gross_liquidation_notional"].Raw, ShouldEqual, 300.0)
@@ -202,17 +207,17 @@ func TestTradeStep_SyntheticTimestamp(t *testing.T) {
 
 func TestTradeStep_PerSymbolTimeline(t *testing.T) {
 	Convey("Given trades on two symbols", t, func() {
-		entity := NewTrade()
+		entity := NewTrade(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(futuresTrade(
+		So(entity.Step(tradeRow(
 			"PF_XBTUSD", 100, 2, "buy", "liquidation", at.Add(time.Hour),
 		)).Err, ShouldBeNil)
 
 		Convey("each symbol keeps its own timeline", func() {
-			So(entity.Step(futuresTrade("PF_RAREUSD", 100, 2, "buy", "liquidation", at)).Err, ShouldBeNil)
+			So(entity.Step(tradeRow("PF_RAREUSD", 100, 2, "buy", "liquidation", at)).Err, ShouldBeNil)
 
-			measurement := entity.Step(futuresTrade(
+			measurement := entity.Step(tradeRow(
 				"PF_RAREUSD", 100, 1, "sell", "liquidation", at.Add(time.Second),
 			))
 
@@ -223,28 +228,52 @@ func TestTradeStep_PerSymbolTimeline(t *testing.T) {
 	})
 }
 
+/*
+TestTradeRegister proves the declared schema: every producible metric is
+declared, none valued, and every label names itself.
+*/
+func TestTradeRegister(t *testing.T) {
+	Convey("Given a Trade entity", t, func() {
+		entity := new(Trade)
+
+		Convey("Register declares the full metric schema without values", func() {
+			measurement := entity.Register()
+
+			So(measurement.ID, ShouldEqual, -1)
+			So(measurement.Metrics, ShouldContainKey, "gross_liquidation_notional")
+			So(measurement.Metrics, ShouldContainKey, "liquidation_share")
+
+			for label, metric := range measurement.Metrics {
+				So(label, ShouldEqual, metric.Label)
+				So(metric.Raw, ShouldEqual, 0.0)
+			}
+		})
+	})
+}
+
+/*
+BenchmarkTradeStep isolates the intrinsic cost of one liquidation accounting
+Step over a live buy/sell leg sequence interleaved with historical reconnect
+trades.
+*/
 func BenchmarkTradeStep(b *testing.B) {
-	entity := NewTrade()
-	defer func() {
-		if err := entity.Close(); err != nil {
-			b.Fatal(err)
-		}
-	}()
+	entity := NewTrade(b.Context())
 	at := time.Unix(1_700_000_000, 0)
 	// Live buy/sell legs interleaved with historical reconnect trades.
-	sequence := []kraken.FuturesTradeData{
-		futuresTrade("PF_XBTUSD", 100, 2, "buy", "liquidation", at),
-		futuresTrade("PF_XBTUSD", 110, 1, "sell", "trade", at.Add(10*time.Second)),
-		futuresTrade("PF_XBTUSD", 90, 3, "sell", "liquidation", at.Add(-30*time.Second)),
-		futuresTrade("PF_XBTUSD", 105, 1, "buy", "trade", at.Add(20*time.Second)),
+	sequence := []*data.Measurement[float64]{
+		tradeRow("PF_XBTUSD", 100, 2, "buy", "liquidation", at),
+		tradeRow("PF_XBTUSD", 110, 1, "sell", "trade", at.Add(10*time.Second)),
+		tradeRow("PF_XBTUSD", 90, 3, "sell", "liquidation", at.Add(-30*time.Second)),
+		tradeRow("PF_XBTUSD", 105, 1, "buy", "trade", at.Add(20*time.Second)),
 	}
 	b.ReportAllocs()
 
 	for index := 0; b.Loop(); index++ {
 		for _, original := range sequence {
-			point := original
-			point.Timestamp = point.Timestamp.Add(time.Duration(index) * time.Minute)
-			measurement := entity.Step(point)
+			point := *original
+			point.At = point.At.Add(time.Duration(index) * time.Minute)
+			point.Metrics = maps.Clone(original.Metrics)
+			measurement := entity.Step(&point)
 
 			if measurement.Err != nil {
 				b.Fatal(measurement.Err)

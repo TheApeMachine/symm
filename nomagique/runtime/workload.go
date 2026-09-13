@@ -57,17 +57,17 @@ func NewWorkload[T any](
 	return workload
 }
 
-func (workload *Workload[T]) Step(payload T) {
+func (workload *Workload[T]) Step(payload T) T {
 	select {
 	case <-workload.ctx.Done():
 		workload.err = errors.Join(
 			workload.err, workload.ctx.Err(),
 		)
 
-		return
+		return payload
 	default:
 		if workload.err != nil {
-			return
+			return payload
 		}
 	}
 
@@ -80,6 +80,12 @@ func (workload *Workload[T]) Step(payload T) {
 
 	// Make available to Stage 1
 	workload.channel.Commit(seq, seq)
+	return payload
+}
+
+func (workload *Workload[T]) Register() T {
+	var zero T
+	return zero
 }
 
 /*

@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -33,7 +32,6 @@ type Paper struct {
 	cancel    context.CancelFunc
 	simulator *Simulator
 	commandMu sync.Mutex
-	ingress   map[string]runtime.Ingress[*types.Envelope]
 }
 
 /*
@@ -42,7 +40,6 @@ NewPaper opens the paper spot transport with explicit private subscriptions.
 func NewPaper(
 	ctx context.Context,
 	simulator *Simulator,
-	bus map[string]runtime.Ingress[*types.Envelope],
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -50,7 +47,6 @@ func NewPaper(
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
-		ingress:   bus,
 	}
 
 	return paper
@@ -762,27 +758,14 @@ func (paper *Paper) placeOrder(
 func (paper *Paper) publish(channel string, message any) {
 	switch channel {
 	case "executions":
-		execution, ok := message.(*kraken.Execution)
-
-		if !ok || execution == nil {
-			return
-		}
-
-		// A paper fill lands synchronously through AddOrder; deliver each
-		// execution record as its own envelope so the desk can advance the
-		// matching position's state, mirroring the live execution stream.
-		for ordinal, data := range execution.Data {
-			envelope := types.NewEnvelope(types.EnvelopeExecution)
-			envelope.ExecutionData = data
-			envelope.CaptureOrdinal = uint64(ordinal)
-
-			if workload := paper.ingress[channel]; workload != nil {
-				workload.Push(envelope)
-			}
-		}
+		// A paper fill lands synchronously through AddOrder; its records are
+		// observable through the paper REST mirrors (Balances, OpenOrders,
+		// TradesHistory). The desk's execution fan-out is rewired with the
+		// workspace's measurement ingest and consumes nothing here yet.
+		_ = channel
 	case "balances", "add_order":
 		// Balances and order acks are consumed through the explicit REST
 		// methods (Balance, AddOrder) and their callbacks rather than a
-		// private ingress fan-out.
+		// private fan-out.
 	}
 }

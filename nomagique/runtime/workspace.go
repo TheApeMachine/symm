@@ -2,6 +2,10 @@ package runtime
 
 import (
 	"context"
+
+	"github.com/smarty/go-disruptor"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -16,24 +20,45 @@ point for a value with no upstream producer (e.g. a value parsed off a
 websocket).
 */
 type Workspace[T any] struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
-	workloads []*Workload[T]
+	*System
+	channel  disruptor.Disruptor
+	buffer   []T
+	register *store.Register[T]
 }
 
 func NewWorkspace[T any](
-	ctx context.Context, workloads []*Workload[T],
+	ctx context.Context, label string, stages [][]Node[T],
 ) *Workspace[T] {
-	ctx, cancel := context.WithCancel(ctx)
-
-	workspace := &Workspace[T]{
-		ctx:       ctx,
-		cancel:    cancel,
-		workloads: workloads,
+	workload := &Workspace[T]{
+		System:   NewSystem(ctx, label),
+		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
+		register: store.NewRegister[T](),
 	}
 
-	return workspace
+	opts := optionList(
+		disruptor.Options.BufferCapacity(
+			system.Cfg.Runtime.Workspace.Buffer,
+		),
+	)
+
+	for _, stage := range stages {
+		group := make([]disruptor.Handler, len(stage))
+
+		for i, node := range stage {
+			group[i] = NewConsumer(node, workload.register)
+		}
+
+		if len(group) > 0 {
+			opts = append(opts, disruptor.Options.NewHandlerGroup(group...))
+		}
+	}
+
+	workload.channel, workload.err = disruptor.New(
+		opts...,
+	)
+
+	go workload.channel.Listen()
+	return workload
 }
 
 func (workspace *Workspace[T]) Close() error {
