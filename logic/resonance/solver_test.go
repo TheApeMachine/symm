@@ -2,6 +2,7 @@ package resonance
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -16,7 +17,7 @@ func TestStep(t *testing.T) {
 		solver := NewSolver(context.Background(), 0)
 		defer solver.Close()
 
-		m, _ := solver.Register()
+		m := solver.Register()
 		m.Label = "TEST/USD"
 		m.At = time.Unix(1, 0)
 
@@ -38,13 +39,13 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			measurement := data.NewMeasurement[float64](label, nil)
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Unix(10, 0), time.Unix(10, 0)
 			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: value}
-			measurement.Metadata = map[string]float64{data.MetadataSupport: 1}
+			measurement.Metadata = map[string]string{data.MetadataSupport: "1"}
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
 
-		m, _ := solver.Register()
+		m := solver.Register()
 		m.Label = "BTC/USD"
 		m.At = time.Unix(10, 0)
 		m.Peers = []*data.Measurement[float64]{
@@ -77,7 +78,7 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		defer solver.Close()
 
 		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Measurement[float64] {
-			m, _ := solver.Register()
+			m := solver.Register()
 			m.Label = "ETH/USD"
 			m.At = time.Unix(sec, 0)
 
@@ -85,7 +86,7 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 				measurement := data.NewMeasurement[float64](label, nil)
 				measurement.Label, measurement.At, measurement.From = "ETH/USD", time.Unix(sec, 0), time.Unix(sec, 0)
 				measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
-				measurement.Metadata = map[string]float64{data.MetadataSupport: 1}
+				measurement.Metadata = map[string]string{data.MetadataSupport: "1"}
 				for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 				}
 				return measurement
@@ -130,13 +131,13 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 			measurement := data.NewMeasurement[float64](label, nil)
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Now(), time.Now()
 			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
-			measurement.Metadata = map[string]float64{data.MetadataSupport: support}
+			measurement.Metadata = map[string]string{data.MetadataSupport: strconv.FormatFloat(support, 'f', -1, 64)}
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
 
-		m1, _ := solver.Register()
+		m1 := solver.Register()
 		m1.Label = "BTC/USD"
 		m1.At = time.Unix(100, 0)
 		m1.Peers = []*data.Measurement[float64]{
@@ -147,7 +148,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 
 		// 500 measurements arrive where CVD is absent (only DepthFlow is present)
 		for step := int64(1); step <= 500; step++ {
-			mL3, _ := solver.Register()
+			mL3 := solver.Register()
 			mL3.Label = "BTC/USD"
 			mL3.At = time.Unix(100+step, 0)
 			mL3.Peers = []*data.Measurement[float64]{
@@ -158,7 +159,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		}
 
 		// Subsequent measurement: CVD changes from 0.1 to 0.8
-		m2, _ := solver.Register()
+		m2 := solver.Register()
 		m2.Label = "BTC/USD"
 		m2.At = time.Unix(700, 0)
 		m2.Peers = []*data.Measurement[float64]{

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -146,11 +147,11 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			m := *(**data.Measurement[float64])(arriving)
 			p := op.history.at(m.Label)
 
-			metadata := map[string]float64{data.MetadataSupport: p.support()}
+			metadata := map[string]string{data.MetadataSupport: strconv.FormatFloat(p.support(), 'f', -1, 64)}
 
 			if p.hasSNR {
-				metadata[data.MetadataDivergence] = p.divergence()
-				metadata[data.MetadataNoiseVariance] = 1.0
+				metadata[data.MetadataDivergence] = strconv.FormatFloat(p.divergence(), 'f', -1, 64)
+				metadata[data.MetadataNoiseVariance] = "1"
 			}
 
 			m.Metadata = metadata

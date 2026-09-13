@@ -130,9 +130,9 @@ func TestSpaceStep(t *testing.T) {
 		weak.Label, weak.At, weak.From = "context", time.Time{}, time.Time{}
 		unknown := data.NewMeasurement[float64]("unknown", nil)
 		unknown.Label, unknown.At, unknown.From = "context", time.Time{}, time.Time{}
-		strong.Metadata = map[string]float64{data.MetadataSupport: 10, data.MetadataMahalanobisSNR: 9}
-		weak.Metadata = map[string]float64{data.MetadataSupport: 2, data.MetadataMahalanobisSNR: 1}
-		unknown.Metadata = map[string]float64{data.MetadataSupport: 10}
+		strong.Metadata = map[string]string{data.MetadataSupport: "10", data.MetadataMahalanobisSNR: "9"}
+		weak.Metadata = map[string]string{data.MetadataSupport: "2", data.MetadataMahalanobisSNR: "1"}
+		unknown.Metadata = map[string]string{data.MetadataSupport: "10"}
 
 		for _, value := range []float64{-1, 1, -1, 1} {
 			for _, measurement := range []*data.Measurement[float64]{strong, weak, unknown} {

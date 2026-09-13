@@ -3,6 +3,7 @@ package crosssection
 import (
 	"iter"
 	"math"
+	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
@@ -80,7 +81,11 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				}
 			}
 
-			m.Metadata[data.MetadataSupport] = valid
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(valid, 'f', -1, 64)
 
 			if !yield(arriving) {
 				return
@@ -124,10 +129,14 @@ func (op *ChangeBaseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 					m.Metrics["signed_fraction_baseline"] = m.Metrics["signed_fraction_baseline"].Write(reading.Baseline)
 					m.Metrics["signed_fraction_divergence"] = m.Metrics["signed_fraction_divergence"].Write(reading.Residual)
 					m.Metrics["signed_fraction_zscore"] = m.Metrics["signed_fraction_zscore"].Write(reading.ZScore)
-					m.Metadata[data.MetadataDivergence] = reading.Residual
+					if m.Metadata == nil {
+						m.Metadata = make(map[string]string)
+					}
+
+					m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(reading.Residual, 'f', -1, 64)
 
 					if reading.VarianceDefined {
-						m.Metadata[data.MetadataNoiseVariance] = reading.Variance
+						m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(reading.Variance, 'f', -1, 64)
 					}
 				}
 			}

@@ -211,7 +211,6 @@ func NewFuturesWithClient(
 		runtime.Closer(client.Disconnect),
 	)
 
-
 	futures.pinger.OnFailed(func(err error) {
 		go futures.reconnect(errnie.Err(
 			errnie.IO,

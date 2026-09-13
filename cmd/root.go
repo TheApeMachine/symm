@@ -283,7 +283,7 @@ var (
 				ctx,
 				"resonance",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					resonance.NewSolver(ctx, 1.0),
+					resonance.NewSolver(ctx, system.Cfg.Resonance.LearningRate),
 				}},
 				workspaceRegister,
 			)

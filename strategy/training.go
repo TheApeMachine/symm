@@ -220,38 +220,52 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 			symbol := measurement.Label
 
 			if symbol == "" {
-				for _, m := range liveMeasurements {
-					if m != nil && m.Label != "" {
-						symbol = m.Label
+				for _, meas := range liveMeasurements {
+					if meas != nil && meas.Label != "" {
+						symbol = meas.Label
 						break
 					}
 				}
 			}
 
 			if symbol != "" {
-				impulse, err := training.agents[0].Step(liveMeasurements, symbol)
+				symbolMeasurements := make([]*data.Measurement[float64], 0, len(liveMeasurements))
 
-				if err != nil {
-					errnie.Error(err)
+				for _, peerMeas := range liveMeasurements {
+					if peerMeas != nil && peerMeas.Label == symbol {
+						symbolMeasurements = append(symbolMeasurements, peerMeas)
+					}
 				}
 
-				if training.main != nil {
-					if !impulse.Ready {
-						training.main.Step(nil, symbol, ActionDecision{
-							Action: ActionWait,
-						})
+				if len(symbolMeasurements) == 0 && measurement.Label == symbol {
+					symbolMeasurements = []*data.Measurement[float64]{measurement}
+				}
+
+				if len(symbolMeasurements) > 0 {
+					impulse, err := training.agents[0].Step(symbolMeasurements, symbol)
+
+					if err != nil {
+						errnie.Error(err)
 					}
 
-					if impulse.Ready {
-						holding := training.main.IsHolding(symbol)
-						decision, err := training.agents[0].ChooseAction(impulse, holding)
-
-						if err != nil {
-							errnie.Error(errnie.Err(errnie.Internal, "training: cognition evaluation failed", err))
-							decision = ActionDecision{Action: ActionWait}
+					if training.main != nil {
+						if !impulse.Ready {
+							training.main.Step(nil, symbol, ActionDecision{
+								Action: ActionWait,
+							})
 						}
 
-						training.main.Step(nil, symbol, decision)
+						if impulse.Ready {
+							holding := training.main.IsHolding(symbol)
+							decision, err := training.agents[0].ChooseAction(impulse, holding)
+
+							if err != nil {
+								errnie.Error(errnie.Err(errnie.Internal, "training: cognition evaluation failed", err))
+								decision = ActionDecision{Action: ActionWait}
+							}
+
+							training.main.Step(nil, symbol, decision)
+						}
 					}
 				}
 			}
@@ -273,15 +287,18 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	return measurement
 }
 
-func (training *Training) Register() (*data.Measurement[float64], []string) {
-	return data.NewMeasurement("training", map[string]data.Metric[float64]{
+func (training *Training) Register() *data.Measurement[float64] {
+	measurement := data.NewMeasurement("training", map[string]data.Metric[float64]{
 		"seen": data.NewMetric[float64](
 			"seen", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
 		"wealth": data.NewMetric[float64](
 			"wealth", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-	}), []string{"resonance", "cognition", "category", "websocket"}
+	})
+
+	measurement.Metadata["peer-interest"] = "*"
+	return measurement
 }
 
 /*

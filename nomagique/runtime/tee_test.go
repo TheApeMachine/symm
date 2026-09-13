@@ -24,12 +24,12 @@ func TestNewTee(t *testing.T) {
 func TestTeeRegister(t *testing.T) {
 	Convey("Given a Tee registering with the runtime", t, func() {
 		tee := NewTee(1024)
-		measurement, peers := tee.Register()
+		measurement := tee.Register()
 
 		Convey("It declares a telemetry envelope and wildcard peer interests", func() {
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Source, ShouldEqual, "telemetry.tee")
-			So(peers, ShouldResemble, []string{"*"})
+			So(measurement.Metadata["peer-interest"], ShouldEqual, "*")
 		})
 	})
 }

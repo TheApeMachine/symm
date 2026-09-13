@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"math"
+	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
@@ -124,7 +125,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	if m.Metadata == nil {
-		m.Metadata = make(map[string]float64)
+		m.Metadata = make(map[string]string)
 	}
 
 	input := morphologyInput{
@@ -148,15 +149,15 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 
 		if res.HasPrev {
 			m.Metrics["morphology_change"] = m.Metrics["morphology_change"].Write(res.Change)
-			m.Metadata[data.MetadataSupport] = res.Reading.Count
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.Reading.Count, 'f', -1, 64)
 
 			if res.Reading.HasPrior {
 				m.Metrics["morphology_change_baseline"] = m.Metrics["morphology_change_baseline"].Write(res.Reading.Baseline)
 				m.Metrics["morphology_change_zscore"] = m.Metrics["morphology_change_zscore"].Write(res.Reading.ZScore)
-				m.Metadata[data.MetadataDivergence] = res.Reading.Residual
+				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.Reading.Residual, 'f', -1, 64)
 
 				if res.Reading.VarianceDefined {
-					m.Metadata[data.MetadataNoiseVariance] = res.Reading.Variance
+					m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.Reading.Variance, 'f', -1, 64)
 				}
 			}
 		}

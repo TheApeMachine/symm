@@ -3,6 +3,7 @@ package cvd
 import (
 	"errors"
 	"iter"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -176,7 +177,7 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if m.Metadata == nil {
-				m.Metadata = make(map[string]float64, 3)
+				m.Metadata = make(map[string]string, 3)
 			}
 
 			m.Metrics["aggressive_notional:buy"] = m.Metrics["aggressive_notional:buy"].Write(buyTotal)
@@ -194,16 +195,16 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				m.Metrics["signed_net_fraction"] = m.Metrics["signed_net_fraction"].Write(fraction)
 
 				reading := drive[float64, adaptive.BaselineReading](op.reader, &fraction)
-				m.Metadata[data.MetadataSupport] = reading.Count
+				m.Metadata[data.MetadataSupport] = strconv.FormatFloat(reading.Count, 'f', -1, 64)
 
 				if reading.HasPrior {
 					m.Metrics["signed_net_fraction_baseline"] = m.Metrics["signed_net_fraction_baseline"].Write(reading.Baseline)
 					m.Metrics["signed_net_fraction_divergence"] = m.Metrics["signed_net_fraction_divergence"].Write(reading.Residual)
 					m.Metrics["signed_net_fraction_zscore"] = m.Metrics["signed_net_fraction_zscore"].Write(reading.ZScore)
-					m.Metadata[data.MetadataDivergence] = reading.Residual
+					m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(reading.Residual, 'f', -1, 64)
 
 					if reading.VarianceDefined {
-						m.Metadata[data.MetadataNoiseVariance] = reading.Variance
+						m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(reading.Variance, 'f', -1, 64)
 					}
 				}
 			}

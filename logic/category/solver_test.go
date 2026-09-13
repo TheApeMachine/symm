@@ -369,7 +369,7 @@ func TestSolverStep(t *testing.T) {
 	Convey("Given one measurement carrying multiple signal peers", t, func() {
 		solver := NewSolver(t.Context())
 		at := time.Unix(1, 0)
-		m, _ := solver.Register()
+		m := solver.Register()
 		m.Label, m.At, m.From = "BTC/USD", at, at
 
 		cvd := data.NewMeasurement[float64]("cvd", nil)
@@ -398,7 +398,7 @@ func TestSolverStep(t *testing.T) {
 		at1 := time.Unix(10, 0)
 		at2 := at1.Add(5 * time.Millisecond)
 
-		m, _ := solver.Register()
+		m := solver.Register()
 		m.Label, m.At, m.From = "BTC/USD", at1, at1
 
 		cvd := data.NewMeasurement[float64]("cvd", nil)

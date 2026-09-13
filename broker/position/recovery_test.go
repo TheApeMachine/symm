@@ -80,8 +80,8 @@ func newTestRecoveryWithOptions(
 		},
 	})
 
-	instrument := broker.NewInstrumentWithQuote("USD")
-	price := broker.NewPrice(api, instrument)
+	instrument := broker.NewInstrument(api)
+	price := broker.NewPrice(t.Context(), api, instrument)
 
 	for _, symbol := range []string{"AAA/USD", "BBB/USD"} {
 		price.SetFee(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})

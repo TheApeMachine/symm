@@ -1,7 +1,7 @@
 package position
 
 import (
-	venue "github.com/theapemachine/symm/tests/venue"
+	"context"
 	"testing"
 	"time"
 
@@ -10,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	venue "github.com/theapemachine/symm/tests/venue"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -41,8 +42,8 @@ func closeFillPosition(sellable string, entryPrice string, entryFee string) *Reg
 		RealizedPnL: decimal.NewFromInt64(0),
 	}
 
-	instrument := broker.NewInstrumentWithQuote("USD")
-	priceSvc := broker.NewPrice(nil, instrument)
+	instrument := broker.NewInstrument(nil)
+	priceSvc := broker.NewPrice(context.Background(), nil, instrument)
 
 	regulator := &Regulator{
 		Holding: holding,
@@ -200,8 +201,8 @@ func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 
 func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 	Convey("Given an entry that partially fills before Kraken cancels its remainder", t, func() {
-		instrument := broker.NewInstrumentWithQuote("USD")
-		priceSvc := broker.NewPrice(nil, instrument)
+		instrument := broker.NewInstrument(nil)
+		priceSvc := broker.NewPrice(t.Context(), nil, instrument)
 		position := &Regulator{
 			Holding: types.NewHolding("TEST/USD"),
 			price:   priceSvc,

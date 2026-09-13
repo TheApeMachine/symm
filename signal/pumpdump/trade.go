@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -200,7 +201,7 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 	}
 
 	if m.Metadata == nil {
-		m.Metadata = make(map[string]float64)
+		m.Metadata = make(map[string]string)
 	}
 
 	input := tradeEntityInput{
@@ -233,15 +234,15 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 			m.Metrics["notional_rate_baseline"] = m.Metrics["notional_rate_baseline"].Write(res.NotionalReading.Baseline)
 			m.Metrics["notional_rate_ratio"] = m.Metrics["notional_rate_ratio"].Write(res.NotionalRateRatio)
 
-			m.Metadata[data.MetadataSupport] = res.NotionalReading.Count
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.NotionalReading.Count, 'f', -1, 64)
 
 			if res.NotionalReading.HasPrior {
 				m.Metrics["notional_rate_divergence"] = m.Metrics["notional_rate_divergence"].Write(res.NotionalReading.Residual)
 				m.Metrics["notional_rate_zscore"] = m.Metrics["notional_rate_zscore"].Write(res.NotionalReading.ZScore)
-				m.Metadata[data.MetadataDivergence] = res.NotionalReading.Residual
+				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.NotionalReading.Residual, 'f', -1, 64)
 
 				if res.NotionalReading.VarianceDefined {
-					m.Metadata[data.MetadataNoiseVariance] = res.NotionalReading.Variance
+					m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.NotionalReading.Variance, 'f', -1, 64)
 				}
 			}
 		}

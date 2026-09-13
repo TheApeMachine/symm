@@ -219,7 +219,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	if m.Metadata == nil {
-		m.Metadata = make(map[string]float64)
+		m.Metadata = make(map[string]string)
 	}
 
 	input := level3Input{

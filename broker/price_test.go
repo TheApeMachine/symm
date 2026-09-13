@@ -12,8 +12,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	venue "github.com/theapemachine/symm/tests/venue"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	venue "github.com/theapemachine/symm/tests/venue"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -41,7 +41,7 @@ func newTestPrice(t testing.TB, api *websocket.API) *Price {
 		quote: "USD",
 	}
 
-	return NewPrice(api, instrument)
+	return NewPrice(t.Context(), api, instrument)
 }
 
 /* newQuantityPrice creates the executable BTC/USD quantity fixture. */
@@ -320,7 +320,7 @@ the way they size around insufficient depth.
 func TestPriceCrossedBookIsAReading(t *testing.T) {
 	Convey("A crossed touch is unprocessable, not a validation failure", t, func() {
 		touch := &touchBook{}
-		price := NewRecordedPrice(newQuantityPrice(t), touch)
+		price := NewPrice(t.Context(), nil, newTestInstrument(t, nil))
 		touch.quote("BTC/USD", 100000, 99900)
 		quantity := decimal.NewFromFloat64(0.001)
 

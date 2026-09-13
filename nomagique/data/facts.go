@@ -57,10 +57,10 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			value := metric.Raw
 
 			if m.Metadata == nil {
-				m.Metadata = make(map[string]float64, 1)
+				m.Metadata = make(map[string]string, 1)
 			}
 
-			m.Metadata[MetadataSupport] = 0
+			m.Metadata[MetadataSupport] = "0"
 
 			finite := drive[float64, bool](op.finite, &value)
 

@@ -44,8 +44,11 @@ func (tee *Tee) Ring() *wf.RingBuffer[*data.Measurement[float64]] {
 Register identifies the Tee with the runtime register and declares a wildcard peer
 interest so all stage measurements are populated into val.Peers.
 */
-func (tee *Tee) Register() (*data.Measurement[float64], []string) {
-	return data.NewMeasurement[float64]("telemetry.tee", nil), []string{"*"}
+func (tee *Tee) Register() *data.Measurement[float64] {
+	measurement := data.NewMeasurement[float64]("telemetry.tee", nil)
+	measurement.Metadata["peer-interest"] = "*"
+
+	return measurement
 }
 
 /*

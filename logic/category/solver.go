@@ -145,7 +145,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	return measurement
 }
 
-func (solver *Solver) Register() (*data.Measurement[float64], []string) {
+func (solver *Solver) Register() *data.Measurement[float64] {
 	metrics := make(map[string]data.Metric[float64], len(solver.categories))
 
 	for _, catType := range solver.categories {
@@ -155,7 +155,10 @@ func (solver *Solver) Register() (*data.Measurement[float64], []string) {
 		)
 	}
 
-	return data.NewMeasurement[float64]("category", metrics), []string{"*"}
+	measurement := data.NewMeasurement[float64]("category", metrics)
+	measurement.Metadata["peer-interest"] = "*"
+
+	return measurement
 }
 
 /*
@@ -573,7 +576,6 @@ func (solver *Solver) fail(message string, err error) {
 	solver.Error(errnie.Err(errnie.Validation, message, err))
 	solver.Transition(runtime.FATAL)
 }
-
 
 /*
 distinctCategories returns the declared vocabulary in types.CategoryOrder

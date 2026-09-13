@@ -3,6 +3,7 @@ package derivatives
 import (
 	"errors"
 	"iter"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -92,7 +93,7 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 	stamped, advanced := stamp(state.clock, m.Label, m.At, m.Provenance["synthetic_timestamp"] == "true")
 
 	if m.Metadata == nil {
-		m.Metadata = make(map[string]float64)
+		m.Metadata = make(map[string]string)
 	}
 
 	price := m.Metrics["price"].Raw
@@ -161,5 +162,5 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 		state.hasPrevLiqShare = true
 	}
 
-	m.Metadata[data.MetadataSupport] = state.tradeCount
+	m.Metadata[data.MetadataSupport] = strconv.FormatFloat(state.tradeCount, 'f', -1, 64)
 }

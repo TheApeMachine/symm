@@ -1089,7 +1089,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 215,
+      "line": 216,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1101,7 +1101,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 214,
+      "line": 215,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1113,7 +1113,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 219,
+      "line": 220,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1125,7 +1125,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 218,
+      "line": 219,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1137,7 +1137,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 217,
+      "line": 218,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1149,7 +1149,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 216,
+      "line": 217,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1160,7 +1160,7 @@
       "metric": "mutation_activity_imbalance",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 224,
+      "line": 225,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1171,7 +1171,7 @@
       "metric": "mutation_count",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 222,
+      "line": 223,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1183,7 +1183,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 221,
+      "line": 222,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1195,7 +1195,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 220,
+      "line": 221,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1206,7 +1206,7 @@
       "metric": "mutation_count_diff",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 223,
+      "line": 224,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1217,7 +1217,7 @@
       "metric": "observed_notional",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 212,
+      "line": 213,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1229,7 +1229,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 211,
+      "line": 212,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1241,7 +1241,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 210,
+      "line": 211,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1252,7 +1252,7 @@
       "metric": "observed_notional_diff",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 213,
+      "line": 214,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1263,7 +1263,7 @@
       "metric": "observed_notional_imbalance",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 225,
+      "line": 226,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1274,7 +1274,7 @@
       "metric": "observed_notional_imbalance_baseline",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 227,
+      "line": 228,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1285,7 +1285,7 @@
       "metric": "observed_notional_imbalance_divergence",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 228,
+      "line": 229,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1296,7 +1296,7 @@
       "metric": "observed_notional_imbalance_zscore",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 229,
+      "line": 230,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1307,7 +1307,7 @@
       "metric": "observed_notional_rate",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 226,
+      "line": 227,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1318,7 +1318,7 @@
       "metric": "observed_notional_rate_baseline",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 230,
+      "line": 231,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1329,7 +1329,7 @@
       "metric": "observed_notional_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 231,
+      "line": 232,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1340,7 +1340,7 @@
       "metric": "observed_notional_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/depthflow",
       "file": "signal/depthflow/level3.go",
-      "line": 232,
+      "line": 233,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4080,7 +4080,7 @@
       "metric": "book_shape_distance",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 176,
+      "line": 177,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4091,7 +4091,7 @@
       "metric": "book_shape_ks",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 177,
+      "line": 178,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4103,7 +4103,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 179,
+      "line": 180,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4115,7 +4115,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 178,
+      "line": 179,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4127,7 +4127,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 181,
+      "line": 182,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4139,7 +4139,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 180,
+      "line": 181,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4150,7 +4150,7 @@
       "metric": "morphology_change",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 182,
+      "line": 183,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4161,7 +4161,7 @@
       "metric": "morphology_change_baseline",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 183,
+      "line": 184,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4172,7 +4172,7 @@
       "metric": "morphology_change_zscore",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/level3.go",
-      "line": 184,
+      "line": 185,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4238,7 +4238,7 @@
       "metric": "best_ask",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 186,
+      "line": 187,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4249,7 +4249,7 @@
       "metric": "best_bid",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 185,
+      "line": 186,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4260,7 +4260,7 @@
       "metric": "midpoint",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 187,
+      "line": 188,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4271,7 +4271,7 @@
       "metric": "relative_spread",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 189,
+      "line": 190,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4282,7 +4282,7 @@
       "metric": "relative_spread_baseline",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 190,
+      "line": 191,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4293,7 +4293,7 @@
       "metric": "spread",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 188,
+      "line": 189,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4304,7 +4304,7 @@
       "metric": "spread_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 192,
+      "line": 193,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4315,7 +4315,7 @@
       "metric": "spread_ratio",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 191,
+      "line": 192,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4326,7 +4326,7 @@
       "metric": "spread_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 193,
+      "line": 194,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4337,7 +4337,7 @@
       "metric": "completed_volume_bar_ordinal",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 269,
+      "line": 270,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4348,7 +4348,7 @@
       "metric": "notional_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 272,
+      "line": 273,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4359,7 +4359,7 @@
       "metric": "notional_rate_baseline",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 274,
+      "line": 275,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4370,7 +4370,7 @@
       "metric": "notional_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 276,
+      "line": 277,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4381,7 +4381,7 @@
       "metric": "notional_rate_ratio",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 275,
+      "line": 276,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4392,7 +4392,7 @@
       "metric": "notional_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 277,
+      "line": 278,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4403,7 +4403,7 @@
       "metric": "trade_interval_seconds",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 270,
+      "line": 271,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4414,7 +4414,7 @@
       "metric": "trade_notional",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 263,
+      "line": 264,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4425,7 +4425,7 @@
       "metric": "trade_price",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 261,
+      "line": 262,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4436,7 +4436,7 @@
       "metric": "trade_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 262,
+      "line": 263,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4447,7 +4447,7 @@
       "metric": "trade_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 273,
+      "line": 274,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4458,7 +4458,7 @@
       "metric": "volume_bar_duration",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 268,
+      "line": 269,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4469,7 +4469,7 @@
       "metric": "volume_bar_notional",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 266,
+      "line": 267,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4480,7 +4480,7 @@
       "metric": "volume_bar_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 265,
+      "line": 266,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4491,7 +4491,7 @@
       "metric": "volume_bar_target_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 264,
+      "line": 265,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4502,7 +4502,7 @@
       "metric": "volume_bar_trade_count",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 267,
+      "line": 268,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4513,7 +4513,7 @@
       "metric": "volume_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 271,
+      "line": 272,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4524,7 +4524,7 @@
       "metric": "energy",
       "package": "github.com/theapemachine/symm/logic/resonance",
       "file": "logic/resonance/solver.go",
-      "line": 254,
+      "line": 303,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4535,7 +4535,7 @@
       "metric": "surprise",
       "package": "github.com/theapemachine/symm/logic/resonance",
       "file": "logic/resonance/solver.go",
-      "line": 257,
+      "line": 306,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5373,7 +5373,7 @@
       "metric": "bracket_trade_quantity",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 266,
+      "line": 269,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5385,7 +5385,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 276,
+      "line": 279,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5397,7 +5397,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 275,
+      "line": 278,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5409,7 +5409,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 278,
+      "line": 281,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5421,7 +5421,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 277,
+      "line": 280,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5433,7 +5433,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 280,
+      "line": 283,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5445,7 +5445,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 279,
+      "line": 282,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5457,7 +5457,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 268,
+      "line": 271,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5469,7 +5469,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 267,
+      "line": 270,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5481,7 +5481,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 272,
+      "line": 275,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5493,7 +5493,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 271,
+      "line": 274,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5505,7 +5505,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 270,
+      "line": 273,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5517,7 +5517,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 269,
+      "line": 272,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5529,7 +5529,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 274,
+      "line": 277,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5541,7 +5541,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 273,
+      "line": 276,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5552,7 +5552,7 @@
       "metric": "seen",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 278,
+      "line": 292,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5563,7 +5563,7 @@
       "metric": "wealth",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 281,
+      "line": 295,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6285,7 +6285,7 @@
     {
       "package": "github.com/theapemachine/symm/logic/cognition",
       "file": "logic/cognition/solver.go",
-      "line": 931,
+      "line": 934,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {

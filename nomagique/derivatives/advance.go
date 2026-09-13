@@ -4,6 +4,7 @@ import (
 	"errors"
 	"iter"
 	"math"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -103,7 +104,7 @@ func (op *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	m.At = stamped
 
 	if m.Metadata == nil {
-		m.Metadata = make(map[string]float64)
+		m.Metadata = make(map[string]string)
 	}
 
 	last := m.Metrics["last"].Raw
@@ -157,13 +158,13 @@ func (op *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	// with no estimator behind it is a whole direct reading and declares no
 	// support at all.
 	if basisReading.HasPrior {
-		m.Metadata[data.MetadataSupport] = basisReading.Prior.Count
+		m.Metadata[data.MetadataSupport] = strconv.FormatFloat(basisReading.Prior.Count, 'f', -1, 64)
 
 		// basis_zscore is this entity's headline reading, so its estimator
 		// supplies the departure and the noise power Finalize turns into SNR.
 		if basisReading.PriorVariance > 0 {
-			m.Metadata[data.MetadataDivergence] = basisReading.Residual
-			m.Metadata[data.MetadataNoiseVariance] = basisReading.PriorVariance
+			m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(basisReading.Residual, 'f', -1, 64)
+			m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(basisReading.PriorVariance, 'f', -1, 64)
 		}
 	}
 }

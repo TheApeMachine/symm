@@ -86,6 +86,9 @@ func (node *peerAwareNode) Step(state *data.Measurement[float64]) *data.Measurem
 	return state
 }
 
-func (node *peerAwareNode) Register() (*data.Measurement[float64], []string) {
-	return data.NewMeasurement[float64]("solver", nil), []string{"counting"}
+func (node *peerAwareNode) Register() *data.Measurement[float64] {
+	measurement := data.NewMeasurement[float64]("solver", nil)
+	measurement.Metadata["peer-interest"] = "counting"
+
+	return measurement
 }

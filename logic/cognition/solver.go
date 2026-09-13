@@ -170,8 +170,8 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	return measurement
 }
 
-func (solver *Solver) Register() (*data.Measurement[float64], []string) {
-	return data.NewMeasurement("cognition", map[string]data.Metric[float64]{
+func (solver *Solver) Register() *data.Measurement[float64] {
+	measurement := data.NewMeasurement("cognition", map[string]data.Metric[float64]{
 		"surprisal": data.NewMetric[float64](
 			"surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
 		),
@@ -181,7 +181,10 @@ func (solver *Solver) Register() (*data.Measurement[float64], []string) {
 		"ambiguity": data.NewMetric[float64](
 			"ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-	}), []string{"category"}
+	})
+
+	measurement.Metadata["peer-interest"] = "category"
+	return measurement
 }
 
 // StepCategories folds one category batch into the symbol's cognition state

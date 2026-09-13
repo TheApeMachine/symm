@@ -5,6 +5,7 @@ import (
 	"iter"
 	"math"
 	"sort"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -209,9 +210,9 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 							Raw:   dependence.Correlation,
 						},
 					},
-					Metadata: map[string]float64{
-						"support":          dependence.Support,
-						"peer_energy_rate": dependence.RightEnergyRate,
+					Metadata: map[string]string{
+						"support":          strconv.FormatFloat(dependence.Support, 'f', -1, 64),
+						"peer_energy_rate": strconv.FormatFloat(dependence.RightEnergyRate, 'f', -1, 64),
 					},
 				})
 

@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -149,7 +150,9 @@ func TestTickerStep(t *testing.T) {
 
 			// The correlation history is the estimator fact the measurement's
 			// support derives from: a defined pair history means support.
-			So(last.Metadata[data.MetadataSupport], ShouldBeGreaterThan, 0.0)
+			support, parseErr := strconv.ParseFloat(last.Metadata[data.MetadataSupport], 64)
+			So(parseErr, ShouldBeNil)
+			So(support, ShouldBeGreaterThan, 0.0)
 		})
 
 		Convey("the pair history yields defined divergences once a prior exists", func() {
@@ -162,7 +165,9 @@ func TestTickerStep(t *testing.T) {
 			// lag and gain histories carry real divergence and velocity.
 			So(last.Metrics["lag_divergence_seconds"].Raw, ShouldNotEqual, 0.0)
 			So(last.Metrics["correlation_gain_zscore"].Raw, ShouldNotEqual, 0.0)
-			So(last.Metadata[data.MetadataDivergence], ShouldNotEqual, 0.0)
+			divergence, parseErr := strconv.ParseFloat(last.Metadata[data.MetadataDivergence], 64)
+			So(parseErr, ShouldBeNil)
+			So(divergence, ShouldNotEqual, 0.0)
 		})
 
 		Convey("a settled best-lag estimator yields a defined SNR", func() {
@@ -187,7 +192,7 @@ func TestTickerStep(t *testing.T) {
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metadata[data.MetadataSupport], ShouldEqual, 0)
+			So(measurement.Metadata[data.MetadataSupport], ShouldEqual, "0")
 			So(measurement.Provenance["event_time_state"], ShouldEqual, "regressed")
 		})
 

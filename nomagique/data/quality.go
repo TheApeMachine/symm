@@ -3,6 +3,7 @@ package data
 import (
 	"errors"
 	"iter"
+	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -76,7 +77,9 @@ func (op *Quality) Next(
 						reading.SNRDefined = true
 					}
 				}
-			} else if facts.HasMaturity {
+			}
+
+			if !facts.HasSupport && facts.HasMaturity {
 				reading.Maturity = facts.Maturity
 			}
 
@@ -99,31 +102,41 @@ func (op *Quality) Error(errs ...error) error {
 	return op.err
 }
 
-func factsFromMetadata(metadata map[string]float64) QualityFacts {
+func factsFromMetadata(metadata map[string]string) QualityFacts {
 	facts := QualityFacts{}
 
 	if metadata == nil {
 		return facts
 	}
 
-	if value, ok := metadata[MetadataSupport]; ok {
-		facts.Support, facts.HasSupport = value, true
+	if valueStr, ok := metadata[MetadataSupport]; ok {
+		if val, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			facts.Support, facts.HasSupport = val, true
+		}
 	}
 
-	if value, ok := metadata[MetadataDivergence]; ok {
-		facts.Divergence, facts.HasDivergence = value, true
+	if valueStr, ok := metadata[MetadataDivergence]; ok {
+		if val, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			facts.Divergence, facts.HasDivergence = val, true
+		}
 	}
 
-	if value, ok := metadata[MetadataNoiseVariance]; ok {
-		facts.NoiseVariance, facts.HasNoise = value, true
+	if valueStr, ok := metadata[MetadataNoiseVariance]; ok {
+		if val, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			facts.NoiseVariance, facts.HasNoise = val, true
+		}
 	}
 
-	if value, ok := metadata[MetadataMahalanobisSNR]; ok {
-		facts.MahalanobisSNR, facts.HasMahalanobis = value, true
+	if valueStr, ok := metadata[MetadataMahalanobisSNR]; ok {
+		if val, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			facts.MahalanobisSNR, facts.HasMahalanobis = val, true
+		}
 	}
 
-	if value, ok := metadata[MetadataMaturity]; ok {
-		facts.Maturity, facts.HasMaturity = value, true
+	if valueStr, ok := metadata[MetadataMaturity]; ok {
+		if val, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			facts.Maturity, facts.HasMaturity = val, true
+		}
 	}
 
 	return facts

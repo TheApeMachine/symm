@@ -17,8 +17,8 @@ func liftedMeasurements() []*Measurement[float64] {
 	measurementOne.Metrics["arrival_rate"] = Metric[float64]{
 		Label: "arrival_rate", Raw: 100.0,
 	}
-	measurementOne.Metadata = map[string]float64{
-		MetadataSupport: 10,
+	measurementOne.Metadata = map[string]string{
+		MetadataSupport: "10",
 	}
 
 	finalizer := NewFinalizer[float64]()

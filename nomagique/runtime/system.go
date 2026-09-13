@@ -51,6 +51,15 @@ func (system *System) Status() Stage            { return system.status.Current()
 
 func (system *System) Error(errs ...error) error {
 	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+
+		if system.err == nil {
+			system.err = err
+			continue
+		}
+
 		system.err = errors.Join(system.err, err)
 	}
 

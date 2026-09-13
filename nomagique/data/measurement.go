@@ -3,6 +3,7 @@ package data
 import (
 	"errors"
 	"iter"
+	"maps"
 	"time"
 	"unsafe"
 
@@ -33,7 +34,7 @@ type Measurement[T any] struct {
 	Estimated  bool                 `json:"estimated"`
 	Err        error                `json:"-"`
 	Metrics    map[string]Metric[T] `json:"metrics,omitempty"`
-	Metadata   map[string]float64   `json:"metadata,omitempty"`
+	Metadata   map[string]string    `json:"metadata,omitempty"`
 	Provenance map[string]string    `json:"provenance,omitempty"`
 	Peers      []*Measurement[T]    `json:"peers"`
 }
@@ -51,9 +52,10 @@ func NewMeasurement[T any](
 	}
 
 	return &Measurement[T]{
-		ID:      -1,
-		Source:  source,
-		Metrics: metrics,
+		ID:       -1,
+		Source:   source,
+		Metrics:  metrics,
+		Metadata: make(map[string]string),
 	}
 }
 
@@ -71,18 +73,13 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 
 	metrics := make(map[string]Metric[T], len(measurement.Metrics))
 
-	for key, val := range measurement.Metrics {
-		metrics[key] = val
-	}
+	maps.Copy(metrics, measurement.Metrics)
 
-	var metadata map[string]float64
+	var metadata map[string]string
 
 	if measurement.Metadata != nil {
-		metadata = make(map[string]float64, len(measurement.Metadata))
-
-		for key, val := range measurement.Metadata {
-			metadata[key] = val
-		}
+		metadata = make(map[string]string, len(measurement.Metadata))
+		maps.Copy(metadata, measurement.Metadata)
 	}
 
 	var provenance map[string]string
@@ -92,6 +89,16 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 
 		for key, val := range measurement.Provenance {
 			provenance[key] = val
+		}
+	}
+
+	var peers []*Measurement[T]
+
+	if len(measurement.Peers) != 0 {
+		peers = make([]*Measurement[T], len(measurement.Peers))
+
+		for idx, peer := range measurement.Peers {
+			peers[idx] = peer.Clone()
 		}
 	}
 
@@ -110,6 +117,7 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 		Metrics:    metrics,
 		Metadata:   metadata,
 		Provenance: provenance,
+		Peers:      peers,
 	}
 }
 
@@ -279,19 +287,13 @@ func (op *Cloner[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			}
 
 			metrics := make(map[string]Metric[Value], len(measurement.Metrics))
+			maps.Copy(metrics, measurement.Metrics)
 
-			for key, val := range measurement.Metrics {
-				metrics[key] = val
-			}
-
-			var metadata map[string]float64
+			var metadata map[string]string
 
 			if measurement.Metadata != nil {
-				metadata = make(map[string]float64, len(measurement.Metadata))
-
-				for key, val := range measurement.Metadata {
-					metadata[key] = val
-				}
+				metadata = make(map[string]string, len(measurement.Metadata))
+				maps.Copy(metadata, measurement.Metadata)
 			}
 
 			var provenance map[string]string
@@ -301,6 +303,16 @@ func (op *Cloner[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 
 				for key, val := range measurement.Provenance {
 					provenance[key] = val
+				}
+			}
+
+			var peers []*Measurement[Value]
+
+			if len(measurement.Peers) != 0 {
+				peers = make([]*Measurement[Value], len(measurement.Peers))
+
+				for idx, peer := range measurement.Peers {
+					peers[idx] = peer.Clone()
 				}
 			}
 
@@ -319,6 +331,7 @@ func (op *Cloner[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				Metrics:    metrics,
 				Metadata:   metadata,
 				Provenance: provenance,
+				Peers:      peers,
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {

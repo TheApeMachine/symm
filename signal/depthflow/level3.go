@@ -3,6 +3,7 @@ package depthflow
 import (
 	"context"
 	"iter"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -146,7 +147,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	if m.Metadata == nil {
-		m.Metadata = make(map[string]float64)
+		m.Metadata = make(map[string]string)
 	}
 
 	input := depthInput{
@@ -167,16 +168,16 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 
 		if res.Observed > 0 {
 			m.Metrics["observed_notional_imbalance"] = m.Metrics["observed_notional_imbalance"].Write(res.ObservedImbalance)
-			m.Metadata[data.MetadataSupport] = res.ImbalanceReading.Count
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.ImbalanceReading.Count, 'f', -1, 64)
 
 			if res.ImbalanceReading.HasPrior {
 				m.Metrics["observed_notional_imbalance_baseline"] = m.Metrics["observed_notional_imbalance_baseline"].Write(res.ImbalanceReading.Baseline)
 				m.Metrics["observed_notional_imbalance_divergence"] = m.Metrics["observed_notional_imbalance_divergence"].Write(res.ImbalanceReading.Residual)
 				m.Metrics["observed_notional_imbalance_zscore"] = m.Metrics["observed_notional_imbalance_zscore"].Write(res.ImbalanceReading.ZScore)
-				m.Metadata[data.MetadataDivergence] = res.ImbalanceReading.Residual
+				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.ImbalanceReading.Residual, 'f', -1, 64)
 
 				if res.ImbalanceReading.VarianceDefined {
-					m.Metadata[data.MetadataNoiseVariance] = res.ImbalanceReading.Variance
+					m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.ImbalanceReading.Variance, 'f', -1, 64)
 				}
 			}
 		}

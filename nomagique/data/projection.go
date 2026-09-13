@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -135,7 +136,7 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 	}
 
 	if len(op.Facts) != 0 {
-		measurement.Metadata = make(map[string]float64, len(op.Facts))
+		measurement.Metadata = make(map[string]string, len(op.Facts))
 
 		for _, fact := range op.Facts {
 			if len(fact.Defined) != 0 && !flagged(input, fact.Defined) {
@@ -143,7 +144,7 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 			}
 
 			if value, ok := lookupPath(input, fact.Path); ok {
-				measurement.Metadata[fact.Name] = value
+				measurement.Metadata[fact.Name] = strconv.FormatFloat(value, 'f', -1, 64)
 			}
 		}
 	}

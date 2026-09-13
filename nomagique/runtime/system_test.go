@@ -26,7 +26,7 @@ func TestSystemFail(t *testing.T) {
 func TestWorkspaceStatus(t *testing.T) {
 	Convey("Given a freshly initialized workspace with stages", t, func() {
 		node := &countingNode{}
-		workspace := NewWorkspace[*data.Measurement[float64]](
+		workspace := NewWorkspace(
 			t.Context(), "test-workspace", [][]Node[*data.Measurement[float64]]{{node}},
 		)
 		defer workspace.Close()

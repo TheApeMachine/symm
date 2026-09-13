@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -33,21 +32,6 @@ type Instrument struct {
 	// is the only authority on which contracts exist and what they are called.
 	products         map[string]string
 	symbolsByProduct map[string]string
-}
-
-/*
-NewInstrumentWithQuote creates an Instrument initialized with a specific quote
-currency without requiring an active websocket connection.
-*/
-func NewInstrumentWithQuote(quote string) *Instrument {
-	return &Instrument{
-		System:           runtime.NewSystem(context.Background(), "instrument"),
-		cache:            &sync.Map{},
-		symbols:          []string{},
-		quote:            quote,
-		products:         make(map[string]string),
-		symbolsByProduct: make(map[string]string),
-	}
 }
 
 /*

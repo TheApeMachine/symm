@@ -64,7 +64,7 @@ func TestStepIngestsStrandedFamilies(t *testing.T) {
 
 		for _, testCase := range cases {
 			Convey(testCase.name, func() {
-				m, _ := solver.Register()
+				m := solver.Register()
 				m.Label = "TEST/USD"
 				m.At = at
 				m.Peers = []*data.Measurement[float64]{testCase.peer}

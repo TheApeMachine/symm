@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -35,10 +36,12 @@ func EncodeMeasurementsFrame(measurements []*data.Measurement[float64]) []byte {
 
 		metadata := make([]*wire.NamedNumberT, 0, len(m.Metadata))
 		for k, v := range m.Metadata {
-			metadata = append(metadata, &wire.NamedNumberT{
-				Name:  k,
-				Value: v,
-			})
+			if fval, err := strconv.ParseFloat(v, 64); err == nil {
+				metadata = append(metadata, &wire.NamedNumberT{
+					Name:  k,
+					Value: fval,
+				})
+			}
 		}
 
 		rows = append(rows, &wire.MeasurementT{
@@ -128,7 +131,11 @@ func MeasurementsFromState(payload []byte) (measurements []*data.Measurement[flo
 				continue
 			}
 
-			m.Metadata[string(item.Name())] = item.Value()
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			m.Metadata[string(item.Name())] = strconv.FormatFloat(item.Value(), 'f', -1, 64)
 		}
 
 		measurements = append(measurements, m)

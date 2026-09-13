@@ -60,7 +60,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			last := metric.Raw
-			m.Metadata = map[string]float64{data.MetadataSupport: 0}
+			m.Metadata = map[string]string{data.MetadataSupport: "0"}
 
 			if holds := drive[float64, bool](op.finite, &last); !holds || last < 0 {
 				m.Err = fmt.Errorf("%w: correlation: finite non-negative last price required", core.ErrDomain)

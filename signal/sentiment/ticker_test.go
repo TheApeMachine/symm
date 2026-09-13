@@ -63,7 +63,7 @@ func TestTickerStep(t *testing.T) {
 
 			So(up.Metrics["valid_member_count"].Raw, ShouldEqual, 1.0)
 			So(up.Metrics["positive_count"].Raw, ShouldEqual, 1.0)
-			So(up.Metadata[data.MetadataSupport], ShouldEqual, 1.0)
+			So(up.Metadata[data.MetadataSupport], ShouldEqual, "1")
 
 			down := entity.Step(tick("ETH/USD", 150.0, timestamp(2)))
 
@@ -73,7 +73,7 @@ func TestTickerStep(t *testing.T) {
 			So(down.Metrics["signed_fraction"].Raw, ShouldEqual, 0.0)
 			So(down.Metrics["directional_participation"].Raw, ShouldBeZeroValue)
 
-			So(down.Metadata[data.MetadataSupport], ShouldEqual, 2.0)
+			So(down.Metadata[data.MetadataSupport], ShouldEqual, "2")
 
 			So(down.Provenance["extreme_key"], ShouldNotBeEmpty)
 

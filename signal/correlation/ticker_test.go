@@ -149,7 +149,7 @@ func TestTickerStep(t *testing.T) {
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metadata[data.MetadataSupport], ShouldEqual, 0)
+			So(measurement.Metadata[data.MetadataSupport], ShouldEqual, "0")
 			So(measurement.Provenance["event_time_state"], ShouldEqual, "regressed")
 		})
 

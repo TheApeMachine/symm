@@ -3,6 +3,7 @@ package toxicity
 import (
 	"context"
 	"iter"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -193,7 +194,7 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 	}
 
 	if m.Metadata == nil {
-		m.Metadata = make(map[string]float64)
+		m.Metadata = make(map[string]string)
 	}
 
 	input := tradeInput{
@@ -236,18 +237,20 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		}
 
 		if res.BidSupported {
-			m.Metadata[data.MetadataSupport] = res.BidReading.Count
-			m.Metadata[data.MetadataDivergence] = res.BidReading.Residual
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.BidReading.Count, 'f', -1, 64)
+			m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.BidReading.Residual, 'f', -1, 64)
+
 			if res.BidReading.VarianceDefined {
-				m.Metadata[data.MetadataNoiseVariance] = res.BidReading.Variance
+				m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.BidReading.Variance, 'f', -1, 64)
 			}
 		}
 
 		if res.AskSupported {
-			m.Metadata[data.MetadataSupport] = res.AskReading.Count
-			m.Metadata[data.MetadataDivergence] = res.AskReading.Residual
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.AskReading.Count, 'f', -1, 64)
+			m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.AskReading.Residual, 'f', -1, 64)
+
 			if res.AskReading.VarianceDefined {
-				m.Metadata[data.MetadataNoiseVariance] = res.AskReading.Variance
+				m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.AskReading.Variance, 'f', -1, 64)
 			}
 		}
 	}

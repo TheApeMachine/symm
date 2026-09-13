@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"sort"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -54,7 +55,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			metric, traded := m.Metrics["last"]
 
-			m.Metadata = map[string]float64{data.MetadataSupport: 0}
+			m.Metadata = map[string]string{data.MetadataSupport: "0"}
 
 			if !traded {
 				m.Err = fmt.Errorf("%w: leadlag: ticker requires a last price", core.ErrDomain)
@@ -374,14 +375,18 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.Metrics["best_lag_correlation_baseline"] = m.Metrics["best_lag_correlation_baseline"].Write(selected.corr.Baseline)
 			m.Metrics["best_lag_correlation_zscore"] = m.Metrics["best_lag_correlation_zscore"].Write(selected.corr.ZScore)
 
-			m.Metadata[data.MetadataSupport] = selected.corr.Count
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(selected.corr.Count, 'f', -1, 64)
 
 			if selected.corr.HasPrior {
-				m.Metadata[data.MetadataDivergence] = selected.corr.Residual
+				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(selected.corr.Residual, 'f', -1, 64)
 			}
 
 			if selected.corr.VarianceDefined {
-				m.Metadata[data.MetadataNoiseVariance] = selected.corr.Variance
+				m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(selected.corr.Variance, 'f', -1, 64)
 			}
 
 			if !yield(arriving) {

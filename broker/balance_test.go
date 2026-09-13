@@ -36,7 +36,7 @@ func TestBalanceUpdate(t *testing.T) {
 			},
 		})
 
-		balance := NewBalance(api)
+		balance := NewBalance(t.Context(), api)
 
 		Convey("the wallet stores canonical names and exposes quote cash", func() {
 			assets := balance.Assets()
@@ -70,7 +70,7 @@ func BenchmarkBalanceUpdate(b *testing.B) {
 			"XXBT": {AltName: "XBT"},
 		},
 	})
-	balance := NewBalance(api)
+	balance := NewBalance(b.Context(), api)
 
 	for b.Loop() {
 		balance.Update()

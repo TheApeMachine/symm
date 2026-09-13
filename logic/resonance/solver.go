@@ -179,8 +179,30 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	midpoint := 0.0
 
-	for _, peer := range measurement.Peers {
-		if peer != nil && peer.Metrics != nil {
+	if measurement.Label == symbol && measurement.Metrics != nil {
+		if metric, found := measurement.Metrics["midpoint"]; found && metric.Raw > 0 {
+			midpoint = metric.Raw
+		}
+
+		if midpoint == 0.0 {
+			if metric, found := measurement.Metrics["last_price"]; found && metric.Raw > 0 {
+				midpoint = metric.Raw
+			}
+		}
+
+		if midpoint == 0.0 {
+			if metric, found := measurement.Metrics["price"]; found && metric.Raw > 0 {
+				midpoint = metric.Raw
+			}
+		}
+	}
+
+	if midpoint == 0.0 {
+		for _, peer := range measurement.Peers {
+			if peer == nil || peer.Label != symbol || peer.Metrics == nil {
+				continue
+			}
+
 			if metric, found := peer.Metrics["midpoint"]; found && metric.Raw > 0 {
 				midpoint = metric.Raw
 				break
@@ -200,8 +222,35 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	var signals [11]*data.Measurement[float64]
 
+	if measurement.Label == symbol {
+		switch measurement.Source {
+		case "correlation":
+			signals[0] = measurement
+		case "leadlag":
+			signals[1] = measurement
+		case "liquidity":
+			signals[2] = measurement
+		case "sentiment":
+			signals[3] = measurement
+		case "cvd":
+			signals[4] = measurement
+		case "depthflow":
+			signals[5] = measurement
+		case "morphology":
+			signals[6] = measurement
+		case "hawkes":
+			signals[7] = measurement
+		case "pumpdump":
+			signals[8] = measurement
+		case "toxicity":
+			signals[9] = measurement
+		case "derivatives":
+			signals[10] = measurement
+		}
+	}
+
 	for _, peer := range measurement.Peers {
-		if peer == nil {
+		if peer == nil || peer.Label != symbol {
 			continue
 		}
 
@@ -249,17 +298,19 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	return measurement
 }
 
-func (solver *Solver) Register() (*data.Measurement[float64], []string) {
-	return data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+func (solver *Solver) Register() *data.Measurement[float64] {
+	measurement := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
 		"energy": data.NewMetric[float64](
 			"energy", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
 		),
 		"surprise": data.NewMetric[float64](
 			"surprise", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
 		),
-	}), []string{"*"}
-}
+	})
 
+	measurement.Metadata["peer-interest"] = "*"
+	return measurement
+}
 
 /*
 Update steps one feature detector for one symbol and publishes the settled
@@ -355,7 +406,6 @@ func (solver *Solver) Update(
 
 	return solver.publishReturns(symbolName, at, coder, out)
 }
-
 
 func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (float64, bool) {
 	if measurement == nil || measurement.Err != nil || len(measurement.Metrics) == 0 {
@@ -702,4 +752,3 @@ func (solver *Solver) publishReturns(
 
 	return &artifact
 }
-

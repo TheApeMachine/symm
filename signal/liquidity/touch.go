@@ -4,6 +4,7 @@ import (
 	"errors"
 	"iter"
 	"math"
+	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -122,10 +123,14 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.Metadata[data.MetadataSupport] = reading.Channels[0].Count
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64)
 
 			if reading.SNRDefined {
-				m.Metadata[data.MetadataMahalanobisSNR] = reading.SNR
+				m.Metadata[data.MetadataMahalanobisSNR] = strconv.FormatFloat(reading.SNR, 'f', -1, 64)
 			}
 
 			failed := false

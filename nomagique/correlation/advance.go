@@ -3,6 +3,7 @@ package correlation
 import (
 	"errors"
 	"iter"
+	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
@@ -43,10 +44,13 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			admitted := make([]Peer, len(m.Peers))
 
 			for index, peer := range m.Peers {
+				support, _ := strconv.ParseFloat(peer.Metadata["support"], 64)
+				peerEnergy, _ := strconv.ParseFloat(peer.Metadata["peer_energy_rate"], 64)
+
 				admitted[index] = Peer{
 					Correlation: peer.Metrics["signed_correlation"].Raw,
-					Support:     peer.Metadata["support"],
-					PeerEnergy:  peer.Metadata["peer_energy_rate"],
+					Support:     support,
+					PeerEnergy:  peerEnergy,
 				}
 			}
 
@@ -130,11 +134,15 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.Metrics["correlation_zscore"] = m.Metrics["correlation_zscore"].Write(view.ZScore)
 
 			if view.Defined {
-				m.Metadata[data.MetadataDivergence] = view.Divergence
-				m.Metadata[data.MetadataSupport] = view.Count
+				if m.Metadata == nil {
+					m.Metadata = make(map[string]string)
+				}
+
+				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(view.Divergence, 'f', -1, 64)
+				m.Metadata[data.MetadataSupport] = strconv.FormatFloat(view.Count, 'f', -1, 64)
 
 				if view.VarianceDefined {
-					m.Metadata[data.MetadataNoiseVariance] = view.Variance
+					m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(view.Variance, 'f', -1, 64)
 				}
 			}
 

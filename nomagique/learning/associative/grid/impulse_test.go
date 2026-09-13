@@ -20,9 +20,9 @@ func TestSpaceImpulse(t *testing.T) {
 					measurement.Label, measurement.At, measurement.From = "market", at, time.Unix(1, 0)
 					// Repeated observations with known high SNR; maturity derives from the
 					// actual fixture sample count, not a manually assigned maturity field.
-					measurement.Metadata = map[string]float64{data.MetadataSupport: float64(index + 1), data.MetadataMahalanobisSNR: 100}
+					measurement.Metadata = map[string]string{data.MetadataSupport: strconv.Itoa(index + 1), data.MetadataMahalanobisSNR: "100"}
 					if regime == "immature" {
-						measurement.Metadata[data.MetadataSupport] = 1
+						measurement.Metadata[data.MetadataSupport] = "1"
 					}
 					first := float64(index%2)*2 - 1
 					measurement.Metrics["first"] = data.Metric[float64]{Label: "first", Raw: first}
@@ -63,7 +63,7 @@ func BenchmarkSpaceImpulse(b *testing.B) {
 	space := NewSpace().(*Space)
 	measurement := data.NewMeasurement[float64]("source", nil)
 	measurement.Label, measurement.At, measurement.From = "market", time.Unix(1, 0), time.Unix(1, 0)
-	measurement.Metadata = map[string]float64{data.MetadataSupport: 100, data.MetadataMahalanobisSNR: 100}
+	measurement.Metadata = map[string]string{data.MetadataSupport: "100", data.MetadataMahalanobisSNR: "100"}
 	for index := range 64 {
 		measurement.Metrics[strconv.Itoa(index)] = data.Metric[float64]{Label: strconv.Itoa(index), Raw: 1}
 	}

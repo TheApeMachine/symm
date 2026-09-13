@@ -47,21 +47,6 @@ type BookSource interface {
 	Book(string, func(*spotbook.Book))
 }
 
-// NewRecordedPrice reuses venue facts and fees while reading only the supplied
-// captured book. A replay cannot accidentally price against a live book.
-func NewRecordedPrice(authoritative *Price, books BookSource) *Price {
-	price := &Price{
-		System:     runtime.NewSystem(context.Background(), "price"),
-		Instrument: authoritative.Instrument,
-		Books:      books,
-		normalizer: authoritative.normalizer,
-		fees:       authoritative.fees,
-		tickers:    &sync.Map{},
-	}
-	price.Transition(runtime.READY)
-	return price
-}
-
 func NewPrice(
 	ctx context.Context,
 	api *websocket.API,
@@ -71,6 +56,10 @@ func NewPrice(
 
 	if api != nil {
 		normalizer = api.Normalizer()
+	}
+
+	if normalizer == nil {
+		normalizer = spot.NewNormalizer()
 	}
 
 	price := &Price{
@@ -95,9 +84,17 @@ func NewPrice(
 	return price
 }
 
+func (price *Price) normalize(symbol string) string {
+	if price != nil && price.normalizer != nil {
+		return price.normalizer.Name(symbol)
+	}
+
+	return symbol
+}
+
 /* SetFee registers an authoritative fee for a symbol. */
 func (price *Price) SetFee(symbol string, fee kraken.TradeVolumeFee) {
-	price.fees.Store(price.normalizer.Name(symbol), fee)
+	price.fees.Store(price.normalize(symbol), fee)
 }
 
 /* Normalizer returns the normalizer used for symbol and precision resolution. */
@@ -110,11 +107,11 @@ func (price *Price) Normalizer() *spot.Normalizer {
 }
 
 func (price *Price) Update(ticker *kraken.TickerData) {
-	price.tickers.Store(price.normalizer.Name(ticker.Symbol), ticker)
+	price.tickers.Store(price.normalize(ticker.Symbol), ticker)
 }
 
 func (price *Price) Tick(symbol string) *kraken.TickerData {
-	value, found := price.tickers.Load(price.normalizer.Name(symbol))
+	value, found := price.tickers.Load(price.normalize(symbol))
 
 	if !found {
 		return nil

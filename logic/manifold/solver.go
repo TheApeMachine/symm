@@ -295,15 +295,18 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	return measurement
 }
 
-func (solver *Solver) Register() (*data.Measurement[float64], []string) {
-	return data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+func (solver *Solver) Register() *data.Measurement[float64] {
+	measurement := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
 		"divergence": data.NewMetric[float64](
 			"divergence", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
 		),
 		"kuramoto_r": data.NewMetric[float64](
 			"kuramoto_r", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
-	}), []string{"hawkes"}
+	})
+
+	measurement.Metadata["peer-interest"] = "hawkes"
+	return measurement
 }
 
 /*
