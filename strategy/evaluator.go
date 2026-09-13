@@ -259,7 +259,14 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 		return outcome, err
 	}
 
-	outcome.Correctness = -exitOutcome.Correctness
+	aftermathSpan := float64(len(fragment) - 1 - extremumIdx)
+	if aftermathSpan > 0 {
+		drawdownRatio := float64(decisionIdx-extremumIdx) / aftermathSpan
+		outcome.Correctness = -math.Max(0.5, drawdownRatio)
+	} else {
+		outcome.Correctness = -exitOutcome.Correctness
+	}
+
 	outcome.Timing = 0.0
 	outcome.Reinforcement = outcome.Correctness
 

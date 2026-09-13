@@ -11,7 +11,6 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
@@ -35,7 +34,7 @@ type Solver struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
-	status     core.Primitive
+	status     *runtime.Status
 	categories []types.CategoryType
 	states     sync.Map
 	// version is the monotonic committed-classification revision. It is local
@@ -97,7 +96,7 @@ func NewSolver(ctx context.Context) *Solver {
 	solver := &Solver{
 		ctx:        ctx,
 		cancel:     cancel,
-		status:     driveStatus(runtime.NewStatus(), runtime.READY),
+		status:     runtime.NewStatus().Transition(runtime.READY),
 		categories: categories,
 	}
 
@@ -113,7 +112,7 @@ Step folds every signal measurement populated on this envelope into its
 symbol's evidence snapshot. The envelope is one committed observation: all of
 its measurements are applied before Category publishes one distribution.
 */
-func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.err != nil {
 		solver.cancel()
 
@@ -132,6 +131,10 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+func Register() *data.Measurement[float64] {
+	return &data.Measurement[float64]{}
 }
 
 /*
@@ -547,23 +550,9 @@ func (solver *Solver) buildBatch(
 	return categories, nil
 }
 
-/*
-driveStatus commands one status primitive through a transition and returns
-it, so construction and failure share one pipeline.
-*/
-func driveStatus(status core.Primitive, stage runtime.Stage) core.Primitive {
-	command := runtime.StatusCommand{Transition: &stage}
-	source := transport.NewOne(unsafe.Pointer(&command)).Next(nil)
-
-	for range status.Next(source) {
-	}
-
-	return status
-}
-
 func (solver *Solver) fail(message string, err error) {
 	solver.err = errnie.Error(errnie.Err(errnie.Validation, message, err))
-	driveStatus(solver.status, runtime.FATAL)
+	solver.status.Transition(runtime.FATAL)
 	solver.cancel()
 }
 

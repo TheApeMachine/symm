@@ -42,7 +42,7 @@ func TestConsumerHandle(t *testing.T) {
 			So(node.steps, ShouldEqual, 1)
 
 			measurement := data.Read[*data.Measurement[float64]](register.Next(
-				data.NewValue(*store.NewQuery[*data.Measurement[float64]](consumer, data.ActionRead)),
+				data.NewValue(*store.NewQuery(consumer, data.ActionRead)),
 			))
 
 			So(measurement, ShouldNotBeNil)

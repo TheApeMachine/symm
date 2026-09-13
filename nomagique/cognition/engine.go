@@ -37,9 +37,8 @@ import (
 )
 
 const (
-	maxBasinCandidates   = 3  // Candidate actions: enter, exit, wait
 	maxSensoryCandidates = 16 // Sensory transition hypothesis space
-	maxCandidates        = maxBasinCandidates
+	maxCandidates        = 16 // Initial candidate scratch capacity
 )
 
 /*
@@ -324,10 +323,10 @@ func (op *Engine) evaluate(context []byte) (Result, error) {
 	// 1. Attractor Basin Softmax & Contrast (Nomagique Probability)
 	// -------------------------------------------------------------
 	var names [maxCandidates][]byte
-	var logits [maxCandidates]float64
+	var masses [maxCandidates]float64
 	var counts [maxCandidates]uint64
 	var orders [maxCandidates]int
-	acc := classAccumulator{names: names[:0], logits: logits[:0], counts: counts[:0], orders: orders[:0]}
+	acc := classAccumulator{names: names[:0], masses: masses[:0], counts: counts[:0], orders: orders[:0]}
 	// Fast path: direct exact prefix lookup b/<context>/ in O(L) time
 	exactPrefix := make([]byte, 2+len(context)+1)
 	exactPrefix[0] = 'b'
@@ -350,10 +349,8 @@ func (op *Engine) evaluate(context []byte) (Result, error) {
 		}
 
 		state := decodeWeight(v).effective(step, op.decayFactor)
-		denom := float64(state.Count) + op.cfg.DirichletAlpha*float64(maxCandidates)
-		smoothedP := (float64(state.Count)*state.Probability + op.cfg.DirichletAlpha) / denom
-		logP := math.Log(smoothedP)
-		acc.add(class, logP, state.Count, op.cfg.MaxBackoffOrder)
+		mass := float64(state.Count) * state.Probability
+		acc.add(class, mass, state.Count, op.cfg.MaxBackoffOrder)
 	}
 
 	// Fallback: if no exact match, use prefix and suffix backoff via direct SeekPrefix
@@ -379,7 +376,7 @@ func (op *Engine) evaluate(context []byte) (Result, error) {
 			}
 
 			if _, exists := root.Get(sensoryKey); exists {
-				if searchSubPrefix(root, sub, step, op.decayFactor, op.cfg.DirichletAlpha, 1, &acc) {
+				if searchSubPrefix(root, sub, step, op.decayFactor, 1, op.cfg.MaxBackoffOrder, &acc) {
 					break
 				}
 			}
@@ -390,7 +387,7 @@ func (op *Engine) evaluate(context []byte) (Result, error) {
 			order := max(1, op.cfg.MaxBackoffOrder/2)
 
 			for _, sub := range prefixes {
-				if searchSubPrefix(root, sub, step, op.decayFactor, op.cfg.DirichletAlpha, order, &acc) {
+				if searchSubPrefix(root, sub, step, op.decayFactor, order, op.cfg.MaxBackoffOrder, &acc) {
 					break
 				}
 			}
@@ -419,17 +416,23 @@ func (op *Engine) evaluate(context []byte) (Result, error) {
 	// -------------------------------------------------------------
 	sensoryKey := makeSensoryKey(context)
 
+	totalSteps := float64(step)
+	if totalSteps < 1.0 {
+		totalSteps = 1.0
+	}
+
 	if raw, found := root.Get(sensoryKey); found {
 		state := decodeWeight(raw).effective(step, op.decayFactor)
 
-		if state.Probability > 0 {
-			eval.Surprisal = -math.Log2(state.Probability)
+		prob := (float64(state.Count) + op.cfg.DirichletAlpha) / (totalSteps + op.cfg.DirichletAlpha*float64(maxSensoryCandidates))
+		if prob > 0 {
+			eval.Surprisal = -math.Log2(prob)
 		} else {
 			eval.Surprisal = op.cfg.SurprisalBreakBits
 		}
 	} else {
 		// Unseen transition: surprisal derives from Dirichlet baseline over sensory space
-		eval.Surprisal = -math.Log2(op.cfg.DirichletAlpha / (1.0 + op.cfg.DirichletAlpha*float64(maxSensoryCandidates)))
+		eval.Surprisal = -math.Log2(op.cfg.DirichletAlpha / (totalSteps + op.cfg.DirichletAlpha*float64(maxSensoryCandidates)))
 	}
 
 	eval.IsBreak = eval.Surprisal >= op.cfg.SurprisalBreakBits
@@ -464,35 +467,29 @@ reductions for the winner, its share, its contrast and the ambiguity.
 func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 	var reading classification
 
-	// Softmax Logit Normalization
-	maxLogit := acc.logits[0]
-
-	for i := 1; i < acc.count; i++ {
-		if acc.logits[i] > maxLogit {
-			maxLogit = acc.logits[i]
-		}
+	if acc.count == 0 {
+		return reading, nil
 	}
 
-	// Lift to unnormalized positive densities for EvidenceShare
-	densities := make([]float64, acc.count)
-
+	totalMass := 0.0
 	for i := 0; i < acc.count; i++ {
-		density := math.Exp(acc.logits[i] - maxLogit)
-		densities[i] = density * float64(acc.orders[i]) / float64(op.cfg.MaxBackoffOrder)
+		totalMass += acc.masses[i]
 	}
 
-	unobservedCount := maxCandidates - acc.count
+	distinctTotal := op.distinctClasses()
+	k := max(acc.count+1, distinctTotal)
+	unobservedCount := k - acc.count
 
-	if unobservedCount > 0 {
-		baseDenom := float64(acc.counts[0]) + op.cfg.DirichletAlpha*float64(maxCandidates)
-		unseenSmoothed := op.cfg.DirichletAlpha / baseDenom
-		unseenLogit := math.Log(unseenSmoothed)
-		unseenDensity := math.Exp(unseenLogit-maxLogit) / float64(op.cfg.MaxBackoffOrder)
+	alpha := op.cfg.DirichletAlpha
+	denom := totalMass + float64(k)*alpha
 
-		for range unobservedCount {
-			densities = append(densities, unseenDensity)
-		}
+	densities := make([]float64, acc.count)
+	for i := 0; i < acc.count; i++ {
+		densities[i] = (acc.masses[i] + alpha) / denom
 	}
+
+	unseenDensity := float64(unobservedCount) * alpha / denom
+	densities = append(densities, unseenDensity)
 
 	winner, hasWinner := argmax(densities)
 
@@ -588,6 +585,15 @@ func (op *Engine) census() map[string]int32 {
 	})
 
 	return res
+}
+
+func (op *Engine) distinctClasses() int {
+	count := 0
+	op.classCounts.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	return count
 }
 
 func (op *Engine) incrementClass(class string) {
@@ -778,17 +784,17 @@ classAccumulator is the zero-allocation candidate set one evaluation gathers.
 */
 type classAccumulator struct {
 	names  [][]byte
-	logits []float64
+	masses []float64
 	counts []uint64
 	orders []int
 	count  int
 }
 
-func (acc *classAccumulator) add(name []byte, logP float64, count uint64, order int) {
+func (acc *classAccumulator) add(name []byte, mass float64, count uint64, order int) {
 	for i := 0; i < acc.count; i++ {
 		if bytes.Equal(acc.names[i], name) {
-			if order > acc.orders[i] || (order == acc.orders[i] && logP > acc.logits[i]) {
-				acc.logits[i] = logP
+			if order > acc.orders[i] || (order == acc.orders[i] && mass > acc.masses[i]) {
+				acc.masses[i] = mass
 				acc.counts[i] = count
 				acc.orders[i] = order
 			}
@@ -798,7 +804,7 @@ func (acc *classAccumulator) add(name []byte, logP float64, count uint64, order 
 	}
 
 	acc.names = append(acc.names, name)
-	acc.logits = append(acc.logits, logP)
+	acc.masses = append(acc.masses, mass)
 	acc.counts = append(acc.counts, count)
 	acc.orders = append(acc.orders, order)
 	acc.count++
@@ -808,7 +814,7 @@ func (acc *classAccumulator) add(name []byte, logP float64, count uint64, order 
 searchSubPrefix gathers basin candidates under one backoff prefix.
 */
 func searchSubPrefix(
-	root *iradix.Tree[[]byte], sub []byte, step uint64, decayFactor float64, alpha float64, order int, acc *classAccumulator,
+	root *iradix.Tree[[]byte], sub []byte, step uint64, decayFactor float64, order int, maxOrder int, acc *classAccumulator,
 ) bool {
 	if len(sub) == 0 {
 		return false
@@ -836,10 +842,11 @@ func searchSubPrefix(
 		}
 
 		state := decodeWeight(v).effective(step, decayFactor)
-		denom := float64(state.Count) + alpha*float64(maxCandidates)
-		smoothedP := (float64(state.Count)*state.Probability + alpha) / denom
-		logP := math.Log(smoothedP)
-		acc.add(class, logP, state.Count, order)
+		mass := float64(state.Count) * state.Probability
+		if maxOrder > 0 {
+			mass *= float64(order) / float64(maxOrder)
+		}
+		acc.add(class, mass, state.Count, order)
 		found = true
 	}
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -131,12 +132,16 @@ func (solver *Solver) Error() error { return solver.err }
 Step folds this envelope's ranked category batch into the symbol's cognition
 state machine and writes the freshest reading back onto the envelope.
 */
-func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if reading := solver.StepCategories(envelope.Categories); reading != nil {
 		envelope.Cognition = reading
 	}
 
 	return envelope
+}
+
+func Register() *data.Measurement[float64] {
+	return &data.Measurement[float64]{}
 }
 
 // StepCategories folds one category batch into the symbol's cognition state

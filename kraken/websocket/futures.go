@@ -52,16 +52,26 @@ replace the venue connection and restore its feeds; protocol and ingestion
 failures remain terminal and are reported to the process supervisor.
 */
 type FuturesLive struct {
-	*runtime.System
+	ctx            context.Context
+	cancel         context.CancelFunc
+	status         *runtime.Status
+	err            error
 	client         atomic.Pointer[derivatives.WebSocket]
 	queue          *lf.Queue[map[string]any]
 	simulator      *Simulator
 	callbacks      *sync.Map
+	capture        CaptureSink
+	manifestSink   ManifestSink
 	subscriptionMu sync.RWMutex
 	subscriptions  map[string][]string
 	failureMu      sync.RWMutex
 	failure        func(error)
 	observer       atomic.Pointer[func(string, time.Duration)]
+	connected      atomic.Bool
+	released       atomic.Bool
+	reconnecting   atomic.Bool
+	closing        atomic.Bool
+	closeOnce      sync.Once
 
 	// streams owns this session's operational epoch/sequence bookkeeping.
 	streams *Streams
@@ -74,6 +84,93 @@ type FuturesLive struct {
 	// stage downstream keys on the spot symbol, so the frame is attributed
 	// here. The instrument registry owns the mapping and installs it.
 	resolve atomic.Pointer[func(string) (string, bool)]
+}
+
+/*
+Capture returns the underlying capture sink attached to the futures connection.
+*/
+func (futures *FuturesLive) Capture() CaptureSink {
+	if futures == nil {
+		return nil
+	}
+
+	return futures.capture
+}
+
+/*
+Error returns the first terminal futures-session failure.
+*/
+func (futures *FuturesLive) Error() error {
+	if futures == nil {
+		return nil
+	}
+
+	futures.failureMu.RLock()
+	defer futures.failureMu.RUnlock()
+
+	return futures.err
+}
+
+/*
+SetFailure binds this session to its owner. Existing constructor failures are
+replayed when API attaches after the futures transport is constructed.
+*/
+func (futures *FuturesLive) SetFailure(handler func(error)) {
+	if futures == nil {
+		return
+	}
+
+	futures.failureMu.Lock()
+	futures.failure = handler
+	err := futures.err
+	futures.failureMu.Unlock()
+
+	if err != nil && handler != nil {
+		handler(err)
+	}
+}
+
+func (futures *FuturesLive) fail(err error) {
+	if futures == nil || err == nil {
+		return
+	}
+
+	err = errnie.Error(err)
+
+	futures.failureMu.Lock()
+
+	if futures.err != nil {
+		futures.failureMu.Unlock()
+		return
+	}
+
+	futures.err = err
+	handler := futures.failure
+	futures.failureMu.Unlock()
+
+	futures.status.Transition(runtime.ERROR)
+	futures.cancel()
+
+	if handler != nil {
+		handler(err)
+	}
+}
+
+func (futures *FuturesLive) operationalError() error {
+	if err := futures.Error(); err != nil {
+		return err
+	}
+
+	select {
+	case <-futures.ctx.Done():
+		if err := futures.Error(); err != nil {
+			return err
+		}
+
+		return futures.ctx.Err()
+	default:
+		return nil
+	}
 }
 
 /*
@@ -152,9 +249,11 @@ NewFutures opens a futures websocket session and wires SDK callbacks in the
 constructor, mirroring New.
 */
 func NewFutures(
-	ctx context.Context, endpoint string,
+	ctx context.Context,
+	endpoint string,
+	recorders ...CaptureSink,
 ) *FuturesLive {
-	return NewFuturesWithClient(ctx, endpoint, nil)
+	return NewFuturesWithClient(ctx, endpoint, nil, recorders...)
 }
 
 /*
@@ -165,6 +264,7 @@ func NewFuturesWithClient(
 	ctx context.Context,
 	endpoint string,
 	client *derivatives.WebSocket,
+	recorders ...CaptureSink,
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = system.Cfg.WebSocket.Endpoints.Futures
@@ -181,8 +281,12 @@ func NewFuturesWithClient(
 	client.Reconnect = nil
 	client.OnDisconnected.Reset()
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	futures := &FuturesLive{
-		System:        *runtime.NewSystem(ctx, "futures"),
+		ctx:           ctx,
+		cancel:        cancel,
+		status:        runtime.NewStatus(),
 		callbacks:     &sync.Map{},
 		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
@@ -192,6 +296,10 @@ func NewFuturesWithClient(
 
 	futures.pinger = NewPinger("futures", func() error {
 		client := futures.Client()
+
+		if !futures.connected.Load() {
+			return nil
+		}
 
 		err := client.WriteMessage(gorillawebsocket.PingMessage, nil)
 
@@ -210,8 +318,16 @@ func NewFuturesWithClient(
 		))
 	})
 
+	if len(recorders) == 1 {
+		futures.capture = recorders[0]
+
+		if manifestSink, ok := recorders[0].(ManifestSink); ok {
+			futures.manifestSink = manifestSink
+		}
+	}
+
 	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		if futures.Status() != runtime.READY {
+		if futures.operationalError() != nil {
 			return
 		}
 
@@ -223,7 +339,7 @@ func NewFuturesWithClient(
 		feed := futuresFrameIdentity(raw)
 
 		if feed == "" {
-			futures.Error(errnie.Err(
+			futures.fail(errnie.Err(
 				errnie.Validation,
 				"futures: frame has no feed or event identity",
 				nil,
@@ -249,7 +365,7 @@ func NewFuturesWithClient(
 				time.Now().UTC(),
 				streamRef,
 			); captureErr != nil {
-				futures.Error(errnie.Err(
+				futures.fail(errnie.Err(
 					errnie.IO,
 					fmt.Sprintf("futures: capture failed for %s frame: %s", feed, captureErr.Error()),
 					captureErr,
@@ -266,7 +382,7 @@ func NewFuturesWithClient(
 		handler, ok := futuresMap[feed]
 
 		if !ok {
-			futures.Error(errnie.Err(
+			futures.fail(errnie.Err(
 				errnie.NotFound,
 				"futures: unhandled feed "+feed,
 				nil,
@@ -280,7 +396,7 @@ func NewFuturesWithClient(
 			errMessage := utils.GetString(raw, "message")
 
 			if errMessage != "" {
-				futures.Error(errnie.Err(
+				futures.fail(errnie.Err(
 					errnie.IO,
 					fmt.Sprintf("futures: subscription rejected: %s", errMessage),
 					nil,
@@ -309,7 +425,7 @@ func NewFuturesWithClient(
 			// stage downstream keys on the spot symbol, so the frame is
 			// attributed before it becomes envelopes.
 			if err := futures.attribute(out); err != nil {
-				futures.Error(err)
+				futures.fail(err)
 				return
 			}
 
@@ -318,7 +434,7 @@ func NewFuturesWithClient(
 			frame, err := event.Data.Map()
 
 			if err != nil {
-				futures.Error(errnie.Err(
+				futures.fail(errnie.Err(
 					errnie.Validation,
 					"futures: failed to map "+feed+" frame",
 					err,
@@ -370,7 +486,7 @@ func NewFuturesWithClient(
 		// heartbeat is an explicitly subscribable feed, so a quiet session that
 		// wants to hear from the venue must ask for it.
 		if err := futures.Write(kraken.NewFuturesSubscription("heartbeat", nil)); err != nil {
-			futures.Error(errnie.Err(
+			futures.fail(errnie.Err(
 				errnie.IO,
 				"futures: failed to subscribe to heartbeat",
 				err,
@@ -381,7 +497,7 @@ func NewFuturesWithClient(
 
 		if futures.released.Load() {
 			if err := futures.restoreSubscriptions(); err != nil {
-				futures.Error(err)
+				futures.fail(err)
 			}
 		}
 	})
@@ -394,7 +510,7 @@ func NewFuturesWithClient(
 	futures.status.Transition(runtime.WAITING)
 
 	if err := client.Connect(); err != nil {
-		futures.Error(errnie.Err(
+		futures.fail(errnie.Err(
 			errnie.IO,
 			"futures: failed to connect",
 			err,
@@ -555,7 +671,7 @@ func (futures *FuturesLive) MarkReady() {
 	}
 
 	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
-		futures.Error(errnie.Err(
+		futures.fail(errnie.Err(
 			errnie.NotAcceptable,
 			"futures: only a connected session can become ready",
 			nil,
@@ -599,7 +715,7 @@ func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
 			"futures: ticker subscription requires a connected session",
 			nil,
 		)
-		futures.Error(err)
+		futures.fail(err)
 
 		return err
 	}
@@ -610,7 +726,7 @@ func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
 			"futures: failed to subscribe to ticker",
 			err,
 		)
-		futures.Error(err)
+		futures.fail(err)
 
 		return err
 	}
@@ -633,7 +749,7 @@ func (futures *FuturesLive) SubFuturesTrades(productIDs []string) error {
 			"futures: trade subscription requires a connected session",
 			nil,
 		)
-		futures.Error(err)
+		futures.fail(err)
 
 		return err
 	}
@@ -644,7 +760,7 @@ func (futures *FuturesLive) SubFuturesTrades(productIDs []string) error {
 			"futures: failed to subscribe to trades",
 			err,
 		)
-		futures.Error(err)
+		futures.fail(err)
 
 		return err
 	}
@@ -667,7 +783,7 @@ func (futures *FuturesLive) SubFuturesBook(productIDs []string) error {
 			"futures: book subscription requires a connected session",
 			nil,
 		)
-		futures.Error(err)
+		futures.fail(err)
 
 		return err
 	}
@@ -678,7 +794,7 @@ func (futures *FuturesLive) SubFuturesBook(productIDs []string) error {
 			"futures: failed to subscribe to book",
 			err,
 		)
-		futures.Error(err)
+		futures.fail(err)
 
 		return err
 	}
@@ -761,7 +877,7 @@ func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[a
 			"futures: write marshal failed",
 			err,
 		)
-		futures.Error(err)
+		futures.fail(err)
 
 		return err
 	}
@@ -782,7 +898,7 @@ func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[a
 			"futures: write failed",
 			err,
 		)
-		futures.Error(err)
+		futures.fail(err)
 	}
 
 	return err
@@ -810,7 +926,7 @@ func (futures *FuturesLive) Close() error {
 					"futures: failed to disconnect",
 					err,
 				)
-				futures.Error(closeErr)
+				futures.fail(closeErr)
 			}
 		}
 

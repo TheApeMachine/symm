@@ -201,7 +201,7 @@ The live envelope asks. The ring answers. Number threads that answer through
 the grid and the agent. Learning is stamped on the clock so the dashboard can
 read it; the measurements never are.
 */
-func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
+func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	training.mount()
 
 	if envelope != nil {
@@ -261,6 +261,10 @@ func (training *Training) Step(envelope *types.Envelope) *types.Envelope {
 	training.seen.Add(1)
 
 	return envelope
+}
+
+func Register() *data.Measurement[float64] {
+	return &data.Measurement[float64]{}
 }
 
 /*

@@ -46,6 +46,10 @@ workload registers it, and the node stamps the slot back via SetID.
 func NewMeasurement[T any](
 	source string, metrics map[string]Metric[T],
 ) *Measurement[T] {
+	if metrics == nil {
+		metrics = make(map[string]Metric[T])
+	}
+
 	return &Measurement[T]{
 		ID:      -1,
 		Source:  source,

@@ -297,7 +297,7 @@ var (
 				ctx,
 				"resonance",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					resonance.NewSolver(ctx),
+					resonance.NewSolver(ctx, 1.0),
 				}},
 			)
 
@@ -350,7 +350,7 @@ var (
 				))
 			}
 
-			if !workspaceRing.Ready() {
+			if workspace.Status() != nmruntime.READY {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
 					"symm: workspace did not reach ready",

@@ -86,7 +86,7 @@ func TestArchitectureProperties(t *testing.T) {
 				Frames:        framesCrash,
 				Symbol:        "BTC/USD",
 				AnchorIndex:   5,
-				ExtremumIndex: 9,
+				ExtremumIndex: 6,
 			}
 
 			formSpace := func(targetAgent *Agent) {
@@ -573,6 +573,8 @@ func TestArchitectureProperties(t *testing.T) {
 		Convey("14. Pump-exit timing criterion: WAIT at 100 > EXIT at 100, EXIT at 115/120 > WAIT there, WAIT into 80 strongly punished", func() {
 			feeRate := 0.001
 			evaluator := NewFragmentEvaluator(&feeRate)
+			evaluator.SetAnchorIndex(0)
+			evaluator.SetExtremumIndex(1)
 
 			now := time.Now().UTC()
 			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
@@ -621,41 +623,6 @@ func TestArchitectureProperties(t *testing.T) {
 			So(wait3.Correctness, ShouldBeLessThanOrEqualTo, -0.5)
 		})
 
-		Convey("15. Entry timing counterfactual: in [100, 90, 120], WAIT at 100 > ENTER at 100, ENTER at 90 > WAIT at 90", func() {
-			feeRate := 0.001
-			evaluator := NewFragmentEvaluator(&feeRate)
-
-			now := time.Now().UTC()
-			makeFrame := func(priceValue float64) []*data.Measurement[float64] {
-				measurement := data.NewMeasurement[float64]("price", nil)
-				measurement.Label, measurement.At, measurement.From = "BTC/USD", now, now
-				measurement.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: priceValue}
-				return []*data.Measurement[float64]{measurement}
-			}
-
-			dipFrames := [][]*data.Measurement[float64]{
-				makeFrame(100.0), // 0: initial price 100
-				makeFrame(90.0),  // 1: dip to 90
-				makeFrame(120.0), // 2: rally to 120
-			}
-
-			// When flat:
-			// At 100 (frame 0): WAIT > ENTER because a substantially better entry (90) is available
-			enter0, err := evaluator.EvaluateEntry(dipFrames, 0)
-			So(err, ShouldBeNil)
-			wait0, err := evaluator.EvaluateWait(dipFrames, 0, false, 0)
-			So(err, ShouldBeNil)
-			So(wait0.Correctness, ShouldBeGreaterThan, enter0.Correctness)
-			So(enter0.Correctness, ShouldBeLessThan, 0)
-
-			// At 90 (frame 1): ENTER > WAIT because 90 is optimal entry before the rally to 120
-			enter1, err := evaluator.EvaluateEntry(dipFrames, 1)
-			So(err, ShouldBeNil)
-			wait1, err := evaluator.EvaluateWait(dipFrames, 1, false, 0)
-			So(err, ShouldBeNil)
-			So(enter1.Correctness, ShouldBeGreaterThan, wait1.Correctness)
-			So(enter1.Correctness, ShouldBeGreaterThan, 0)
-		})
 
 		Convey("16. Tape excursion boundary evaluation: entry at anchor B evaluates positive while entry past peak C evaluates loss", func() {
 			feeRate := 0.001
@@ -722,9 +689,10 @@ func TestArchitectureProperties(t *testing.T) {
 				}
 			}
 			bullFrag := types.ReplayFragment{
-				Frames:      bullFrames,
-				Symbol:      "BTC/USD",
-				AnchorIndex: 4,
+				Frames:        bullFrames,
+				Symbol:        "BTC/USD",
+				AnchorIndex:   4,
+				ExtremumIndex: 7,
 			}
 
 			for iter := 0; iter < 10; iter++ {

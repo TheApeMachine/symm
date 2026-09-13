@@ -150,12 +150,12 @@ Step advances the symbol's predictive coder over the canonical 11-dimensional
 microstructure sensory features carried on this envelope and writes the
 resulting artifact back onto the envelope.
 */
-func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil {
+func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if measurement == nil {
 		return nil
 	}
 
-	symbol := envelope.Symbol()
+	symbol := measurement.Symbol()
 
 	if symbol == "" {
 		return envelope
@@ -178,6 +178,10 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+func Register() *data.Measurement[float64] {
+	return &data.Measurement[float64]{}
 }
 
 /* SetObserver installs the synchronous observer for producer-owned model state. */

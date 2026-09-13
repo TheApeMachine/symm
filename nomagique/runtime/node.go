@@ -7,12 +7,11 @@ import (
 
 type Node[T any] interface {
 	Step(T) T
-	Register() T
 }
 
 /*
 Consumer binds one Node to the Workload's register. At construction the node
-identifies itself: Register() supplies the initial value, an identify query
+identifies itself: Register() supplies the initial value if supported, an identify query
 appends it and answers the slot, and the node is told its identity so the
 values it produces name their own register slot.
 */
@@ -30,9 +29,11 @@ func NewConsumer[T any](
 		register: register,
 	}
 
-	data.Read[*store.Query[T]](consumer.register.Next(data.NewValue(*store.NewQuery(
-		consumer, data.ActionIdentify, consumer.node.Register(),
-	))))
+	if regNode, ok := node.(interface{ Register() T }); ok && register != nil {
+		data.Read[*store.Query[T]](consumer.register.Next(data.NewValue(*store.NewQuery(
+			consumer, data.ActionIdentify, regNode.Register(),
+		))))
+	}
 
 	return consumer
 }

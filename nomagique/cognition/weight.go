@@ -122,7 +122,6 @@ func (weight PackedWeight) effective(currentStep uint64, decayFactor float64) Pa
 	}
 
 	multiplier := math.Pow(decayFactor, float64(currentStep-weight.WriteStep))
-	weight.Count = uint64(math.Ceil(float64(weight.Count) * multiplier))
 	weight.Probability *= multiplier
 
 	return weight
