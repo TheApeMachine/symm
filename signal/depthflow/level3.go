@@ -2,183 +2,226 @@ package depthflow
 
 import (
 	"context"
-	"fmt"
+	"iter"
 	"time"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
 )
 
+type depthInput struct {
+	ObservedBid float64
+	ObservedAsk float64
+	MutationBid float64
+	MutationAsk float64
+	At          time.Time
+}
+
+type depthResult struct {
+	Observed                  float64
+	ObservedDiff              float64
+	ObservedImbalance         float64
+	MutationCount             float64
+	MutationCountDiff         float64
+	MutationActivityImbalance float64
+	Rate                      float64
+	HasRate                   bool
+	ImbalanceReading          adaptive.BaselineReading
+	RateReading               adaptive.BaselineReading
+}
+
+type depthPipeline struct {
+	*core.PrimitiveError
+	hasPrev   bool
+	prevTime  time.Time
+	imbalance core.Primitive
+	rate      core.Primitive
+	out       depthResult
+}
+
+func newDepthPipeline() core.Primitive {
+	return &depthPipeline{
+		PrimitiveError: core.NewPrimitiveError(),
+		imbalance:      adaptive.NewBaseline(adaptive.NewWindow()),
+		rate:           adaptive.NewBaseline(adaptive.NewWindow()),
+	}
+}
+
+func (op *depthPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			input := (*depthInput)(arriving)
+
+			observed := input.ObservedBid + input.ObservedAsk
+			observedDiff := input.ObservedBid - input.ObservedAsk
+			mutations := input.MutationBid + input.MutationAsk
+			mutationDiff := input.MutationBid - input.MutationAsk
+
+			op.out = depthResult{
+				Observed:          observed,
+				ObservedDiff:      observedDiff,
+				MutationCount:     mutations,
+				MutationCountDiff: mutationDiff,
+			}
+
+			if observed > 0 {
+				imbalance := observedDiff / observed
+				op.out.ObservedImbalance = imbalance
+
+				for rPtr := range op.imbalance.Next(transport.NewOne(unsafe.Pointer(&imbalance)).Next(nil)) {
+					op.out.ImbalanceReading = *(*adaptive.BaselineReading)(rPtr)
+				}
+			}
+
+			if mutations > 0 {
+				op.out.MutationActivityImbalance = mutationDiff / mutations
+			}
+
+			if op.hasPrev {
+				dt := input.At.Sub(op.prevTime).Seconds()
+
+				if dt > 0 {
+					rate := observed / dt
+					op.out.Rate = rate
+					op.out.HasRate = true
+
+					for rPtr := range op.rate.Next(transport.NewOne(unsafe.Pointer(&rate)).Next(nil)) {
+						op.out.RateReading = *(*adaptive.BaselineReading)(rPtr)
+					}
+				}
+			}
+
+			op.prevTime = input.At
+			op.hasPrev = true
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
 /*
-Signal is the depth-flow measuring instrument. It composes its market entity
-in its constructor and exposes the canonical signal structure: Constructor,
-Name, Error, Step, Close.
+Level3 is the depth-flow measuring instrument. It holds no state and no logic of
+its own: its entire behavior is one nomagique pipeline over the measurement itself —
+every stage writes its facts into the measurement where it computes them, and the
+workload's register owns the measurement's lifetime.
 */
-type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-
-	level3 *Level3
-}
-
-/*
-NewSignal composes the Level3 (depth-flow) entity.
-*/
-func NewSignal(ctx context.Context) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
-
-	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		level3: NewLevel3(),
-	}
-}
-
-func (signal *Signal) Name() string { return "depthflow" }
-
-func (signal *Signal) Error() error { return signal.err }
-
-func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
-	if signal.err != nil {
-		errnie.Error(signal.Close())
-		return nil
-	}
-
-	/*
-		A signal observes exactly the envelope kind it consumes. Stepping on any
-		other kind hands the estimator a zero-valued observation, which it
-		correctly rejects — and that rejection becomes a Measurement carrying an
-		Err. data.Lift discards the WHOLE frame on the first failed measurement,
-		so one signal stepped out of turn erased every other signal's metrics
-		from the same envelope, and no advisor could ever assemble a complete
-		feature group.
-	*/
-	if envelope.TypeID != types.EnvelopeLevel3 {
-		return envelope
-	}
-
-	envelope.DepthFlow = signal.level3.Step(envelope.Level3Data)
-
-	return envelope
-}
-
-func (signal *Signal) Close() error {
-	if signal.cancel != nil {
-		signal.cancel()
-	}
-
-	return signal.level3.Close()
-}
-
 type Level3 struct {
-	graphs     map[string]*Depth
-	lastTime   map[string]time.Time
-	projection *data.Projection
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
 }
 
-func NewLevel3() *Level3 {
-	return &Level3{graphs: make(map[string]*Depth), lastTime: make(map[string]time.Time), projection: depthProjection()}
-}
-
-func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
-	if level3 == nil || len(message.Bids)+len(message.Asks) == 0 {
-		return nil
+func NewLevel3(ctx context.Context) *Level3 {
+	return &Level3{
+		System:   runtime.NewSystem(ctx, "depthflow:level3"),
+		pipeline: nomagique.NewNumber(newDepthPipeline()),
 	}
-	observedBid, addBid, modifyBid, deleteBid, err := observeSide(message.Bids)
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	observedAsk, addAsk, modifyAsk, deleteAsk, err := observeSide(message.Asks)
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-
-	last, hasLast := level3.lastTime[message.Symbol]
-	if hasLast && message.Timestamp.Before(last) {
-		return nil
-	}
-	elapsed := 0.0
-	if hasLast {
-		elapsed = message.Timestamp.Sub(last).Seconds()
-	}
-	graph := level3.graphs[message.Symbol]
-	if graph == nil {
-		graph = newDepthGraph()
-		level3.graphs[message.Symbol] = graph
-	}
-	fieldsEval := transport.NewEvaluate(graph)
-	var fields data.ProjectionInput
-
-	for out := range fieldsEval.Next(transport.NewValues(DepthInput{
-		ObservedBid: observedBid, ObservedAsk: observedAsk, AddBid: addBid, AddAsk: addAsk,
-		ModifyBid: modifyBid, ModifyAsk: modifyAsk, DeleteBid: deleteBid, DeleteAsk: deleteAsk,
-		MutationBid: float64(len(message.Bids)), MutationAsk: float64(len(message.Asks)), Elapsed: elapsed,
-	}).Next(nil)) {
-		fields = *(*data.ProjectionInput)(out)
-	}
-
-	err = fieldsEval.Error()
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	level3.lastTime[message.Symbol] = message.Timestamp
-	level3.projection.Identity = func() (string, string, time.Time, time.Time) {
-		return message.Symbol + ":depthflow:" + message.Timestamp.Format(time.RFC3339Nano), message.Symbol, message.Timestamp, message.Timestamp
-	}
-	resultEval := transport.NewEvaluate(level3.projection)
-	var result *data.Measurement[float64]
-
-	for out := range resultEval.Next(transport.NewValues(fields).Next(nil)) {
-		result = *(**data.Measurement[float64])(out)
-	}
-
-	err = resultEval.Error()
-
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-
-	return result
-}
-
-func observeSide(orders []kraken.Level3Order) (observed, added, modified, deleted float64, err error) {
-	for _, order := range orders {
-		if order.LimitPrice == nil || order.OrderQty == nil {
-			return 0, 0, 0, 0, fmt.Errorf("depthflow: level3 order requires price and quantity")
-		}
-
-		price := order.LimitPrice.Float64()
-		quantity := order.OrderQty.Float64()
-
-		if price <= 0 || quantity < 0 {
-			return 0, 0, 0, 0, fmt.Errorf("depthflow: level3 order requires positive price and non-negative quantity")
-		}
-
-		notional := price * quantity
-		observed += notional
-
-		switch order.Event {
-		case "", "add":
-			added += notional
-		case "modify":
-			modified += notional
-		case "delete":
-			deleted++
-		default:
-			return 0, 0, 0, 0, fmt.Errorf("depthflow: unknown level3 event %q", order.Event)
-		}
-	}
-
-	return observed, added, modified, deleted, nil
 }
 
 /*
-Close releases resources held by the Level3 entity.
+Step supplies the arriving measurement to the pipeline and returns it: the
+measurement is the pipeline's state, enriched in place.
 */
-func (level3 *Level3) Close() error {
-	return nil
+func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	if m == nil {
+		return nil
+	}
+
+	if m.Err != nil {
+		return m
+	}
+
+	if m.Metadata == nil {
+		m.Metadata = make(map[string]float64)
+	}
+
+	input := depthInput{
+		ObservedBid: m.Metrics["observed_notional:bid"].Raw,
+		ObservedAsk: m.Metrics["observed_notional:ask"].Raw,
+		MutationBid: m.Metrics["mutation_count:bid"].Raw,
+		MutationAsk: m.Metrics["mutation_count:ask"].Raw,
+		At:          m.At,
+	}
+
+	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+		res := (*depthResult)(out)
+
+		m.Metrics["observed_notional"] = m.Metrics["observed_notional"].Write(res.Observed)
+		m.Metrics["observed_notional_diff"] = m.Metrics["observed_notional_diff"].Write(res.ObservedDiff)
+		m.Metrics["mutation_count"] = m.Metrics["mutation_count"].Write(res.MutationCount)
+		m.Metrics["mutation_count_diff"] = m.Metrics["mutation_count_diff"].Write(res.MutationCountDiff)
+
+		if res.Observed > 0 {
+			m.Metrics["observed_notional_imbalance"] = m.Metrics["observed_notional_imbalance"].Write(res.ObservedImbalance)
+			m.Metadata[data.MetadataSupport] = res.ImbalanceReading.Count
+
+			if res.ImbalanceReading.HasPrior {
+				m.Metrics["observed_notional_imbalance_baseline"] = m.Metrics["observed_notional_imbalance_baseline"].Write(res.ImbalanceReading.Baseline)
+				m.Metrics["observed_notional_imbalance_divergence"] = m.Metrics["observed_notional_imbalance_divergence"].Write(res.ImbalanceReading.Residual)
+				m.Metrics["observed_notional_imbalance_zscore"] = m.Metrics["observed_notional_imbalance_zscore"].Write(res.ImbalanceReading.ZScore)
+				m.Metadata[data.MetadataDivergence] = res.ImbalanceReading.Residual
+
+				if res.ImbalanceReading.VarianceDefined {
+					m.Metadata[data.MetadataNoiseVariance] = res.ImbalanceReading.Variance
+				}
+			}
+		}
+
+		if res.MutationCount > 0 {
+			m.Metrics["mutation_activity_imbalance"] = m.Metrics["mutation_activity_imbalance"].Write(res.MutationActivityImbalance)
+		}
+
+		if res.HasRate {
+			m.Metrics["observed_notional_rate"] = m.Metrics["observed_notional_rate"].Write(res.Rate)
+
+			if res.RateReading.HasPrior {
+				m.Metrics["observed_notional_rate_baseline"] = m.Metrics["observed_notional_rate_baseline"].Write(res.RateReading.Baseline)
+				m.Metrics["observed_notional_rate_divergence"] = m.Metrics["observed_notional_rate_divergence"].Write(res.RateReading.Residual)
+				m.Metrics["observed_notional_rate_zscore"] = m.Metrics["observed_notional_rate_zscore"].Write(res.RateReading.ZScore)
+			}
+		}
+	}
+
+	m.Finalize()
+	return m
+}
+
+/*
+Register returns the measurement declaring this entity's full metric schema.
+Values are empty; the workload uses this at startup to allocate the metric
+schema before feeding streaming records.
+*/
+func (level3 *Level3) Register() *data.Measurement[float64] {
+	return data.NewMeasurement[float64]("depthflow:level3", map[string]data.Metric[float64]{
+		"observed_notional:bid":                 data.NewMetric[float64]("observed_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional:ask":                 data.NewMetric[float64]("observed_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional":                     data.NewMetric[float64]("observed_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_diff":                data.NewMetric[float64]("observed_notional_diff", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"add_notional:bid":                      data.NewMetric[float64]("add_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"add_notional:ask":                      data.NewMetric[float64]("add_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"modify_remaining_notional:bid":         data.NewMetric[float64]("modify_remaining_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"modify_remaining_notional:ask":         data.NewMetric[float64]("modify_remaining_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"delete_count:bid":                      data.NewMetric[float64]("delete_count:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"delete_count:ask":                      data.NewMetric[float64]("delete_count:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"mutation_count:bid":                    data.NewMetric[float64]("mutation_count:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"mutation_count:ask":                    data.NewMetric[float64]("mutation_count:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"mutation_count":                        data.NewMetric[float64]("mutation_count", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"mutation_count_diff":                   data.NewMetric[float64]("mutation_count_diff", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"mutation_activity_imbalance":           data.NewMetric[float64]("mutation_activity_imbalance", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_imbalance":           data.NewMetric[float64]("observed_notional_imbalance", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_rate":                data.NewMetric[float64]("observed_notional_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_imbalance_baseline":   data.NewMetric[float64]("observed_notional_imbalance_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_imbalance_divergence": data.NewMetric[float64]("observed_notional_imbalance_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_imbalance_zscore":     data.NewMetric[float64]("observed_notional_imbalance_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_rate_baseline":       data.NewMetric[float64]("observed_notional_rate_baseline", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_rate_divergence":     data.NewMetric[float64]("observed_notional_rate_divergence", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"observed_notional_rate_zscore":         data.NewMetric[float64]("observed_notional_rate_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+	})
 }

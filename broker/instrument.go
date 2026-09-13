@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -22,10 +20,7 @@ Instrument owns venue pair facts and the subscription universe. Decimal values
 are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	err     error
-	status  core.Primitive
+	*runtime.System
 	api     *websocket.API
 	cache   *sync.Map
 	quote   string
@@ -40,21 +35,6 @@ type Instrument struct {
 }
 
 /*
-NewInstrumentWithQuote creates an Instrument initialized with a specific quote
-currency without requiring an active websocket connection.
-*/
-func NewInstrumentWithQuote(quote string) *Instrument {
-	return &Instrument{
-		status:           runtime.NewStatus(),
-		cache:            &sync.Map{},
-		symbols:          []string{},
-		quote:            quote,
-		products:         make(map[string]string),
-		symbolsByProduct: make(map[string]string),
-	}
-}
-
-/*
 NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
@@ -63,12 +43,8 @@ func NewInstrument(api *websocket.API) *Instrument {
 		panic("broker: api required")
 	}
 
-	ctx, cancel := context.WithCancel(api.Context())
-
 	instrument := &Instrument{
-		ctx:              ctx,
-		cancel:           cancel,
-		status:           runtime.NewStatus(),
+		System:           runtime.NewSystem(api.Context(), "instrument"),
 		api:              api,
 		cache:            &sync.Map{},
 		symbols:          []string{},
@@ -76,13 +52,14 @@ func NewInstrument(api *websocket.API) *Instrument {
 		products:         make(map[string]string),
 		symbolsByProduct: make(map[string]string),
 	}
-	transition(instrument.status, runtime.BUSY)
+
+	instrument.Transition(runtime.BUSY)
 
 	callback := make(chan any, 1)
 	api.SubInstrument(callback)
 
 	if err := api.Error(); err != nil {
-		instrument.fail(errnie.Err(
+		instrument.Error(errnie.Err(
 			errnie.IO,
 			"instrument: snapshot subscription failed",
 			err,
@@ -95,11 +72,11 @@ func NewInstrument(api *websocket.API) *Instrument {
 
 	select {
 	case returned = <-callback:
-	case <-instrument.ctx.Done():
-		instrument.fail(errnie.Err(
+	case <-instrument.Context().Done():
+		instrument.Error(errnie.Err(
 			errnie.IO,
 			"instrument: snapshot unavailable",
-			instrument.operationalError(),
+			instrument.Error(),
 		))
 
 		return instrument
@@ -108,7 +85,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 	snapshot, valid := returned.(*kraken.Instrument)
 
 	if !valid || snapshot == nil {
-		instrument.fail(errnie.Err(
+		instrument.Error(errnie.Err(
 			errnie.Validation,
 			"instrument: invalid snapshot response",
 			nil,
@@ -127,7 +104,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 	}
 
 	if err := instrument.loadFuturesProducts(); err != nil {
-		instrument.fail(err)
+		instrument.Error(err)
 
 		return instrument
 	}
@@ -138,8 +115,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 		api.Futures().SetResolver(instrument.FuturesSymbol)
 	}
 
-	transition(instrument.status, runtime.WAITING)
-
+	instrument.Transition(runtime.WAITING)
 	return instrument
 }
 
@@ -153,47 +129,6 @@ func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 
 		instrument.symbols = append(instrument.symbols, pair.Symbol)
 		instrument.cache.Store(pair.Symbol, pair)
-	}
-}
-
-/*
-Status reports instrument readiness.
-*/
-func (instrument *Instrument) Status() runtime.Stage {
-	return stageOf(instrument.status)
-}
-
-/*
-Error returns the first terminal instrument failure.
-*/
-func (instrument *Instrument) Error() error {
-	return instrument.err
-}
-
-func (instrument *Instrument) fail(err error) {
-	if instrument == nil || err == nil || instrument.err != nil {
-		return
-	}
-
-	instrument.err = errnie.Error(err)
-	transition(instrument.status, runtime.ERROR)
-	instrument.cancel()
-}
-
-func (instrument *Instrument) operationalError() error {
-	if instrument.err != nil {
-		return instrument.err
-	}
-
-	if err := instrument.api.Error(); err != nil {
-		return err
-	}
-
-	select {
-	case <-instrument.ctx.Done():
-		return instrument.ctx.Err()
-	default:
-		return nil
 	}
 }
 
@@ -255,12 +190,6 @@ feed with no consumer would create an exact raw tape that can never influence
 the system.
 */
 func (instrument *Instrument) Subscribe() error {
-	if err := instrument.operationalError(); err != nil {
-		instrument.fail(err)
-
-		return instrument.err
-	}
-
 	errnie.Info("subscribing to instruments")
 
 	subscribers := []func([]string){
@@ -278,13 +207,11 @@ func (instrument *Instrument) Subscribe() error {
 			subscribe(batch)
 
 			if err := instrument.api.Error(); err != nil {
-				instrument.fail(errnie.Err(
+				return instrument.Error(errnie.Err(
 					errnie.IO,
 					"instrument: required spot subscription failed",
 					err,
 				))
-
-				return instrument.err
 			}
 		}
 
@@ -292,16 +219,14 @@ func (instrument *Instrument) Subscribe() error {
 			instrument.api.SubFuturesTicker,
 			instrument.api.SubFuturesTrades,
 		}); err != nil {
-			instrument.fail(err)
-
-			return instrument.err
+			return instrument.Error(err)
 		}
 
 		pace := time.NewTimer(viper.GetViper().GetDuration("market.subscribe.pace"))
 
 		select {
 		case <-pace.C:
-		case <-instrument.ctx.Done():
+		case <-instrument.Context().Done():
 			if !pace.Stop() {
 				select {
 				case <-pace.C:
@@ -309,23 +234,15 @@ func (instrument *Instrument) Subscribe() error {
 				}
 			}
 
-			instrument.fail(errnie.Err(
+			return instrument.Error(errnie.Err(
 				errnie.IO,
 				"instrument: subscription interrupted",
-				instrument.operationalError(),
+				instrument.Error(),
 			))
-
-			return instrument.err
 		}
 	}
 
-	if err := instrument.operationalError(); err != nil {
-		instrument.fail(err)
-
-		return instrument.err
-	}
-
-	transition(instrument.status, runtime.READY)
+	instrument.Transition(runtime.READY)
 	return nil
 }
 
@@ -336,12 +253,6 @@ seam, so a deliberate teardown leaves the venue with no streams pointed at
 sockets that are about to close.
 */
 func (instrument *Instrument) Unsubscribe() error {
-	if err := instrument.operationalError(); err != nil {
-		instrument.fail(err)
-
-		return instrument.err
-	}
-
 	errnie.Info("unsubscribing from instruments")
 
 	unsubscribers := []func([]string){
@@ -357,13 +268,11 @@ func (instrument *Instrument) Unsubscribe() error {
 			unsubscribe(batch)
 
 			if err := instrument.api.Error(); err != nil {
-				instrument.fail(errnie.Err(
+				return instrument.Error(errnie.Err(
 					errnie.IO,
 					"instrument: required spot unsubscription failed",
 					err,
 				))
-
-				return instrument.err
 			}
 		}
 
@@ -371,14 +280,11 @@ func (instrument *Instrument) Unsubscribe() error {
 			instrument.api.UnsubFuturesTicker,
 			instrument.api.UnsubFuturesTrades,
 		}); err != nil {
-			instrument.fail(err)
-
-			return instrument.err
+			return instrument.Error()
 		}
 	}
 
-	transition(instrument.status, runtime.WAITING)
-
+	instrument.Transition(runtime.WAITING)
 	return nil
 }
 
@@ -499,19 +405,4 @@ Symbols returns a copy of the subscribed market universe.
 */
 func (instrument *Instrument) Symbols() []string {
 	return slices.Clone(instrument.symbols)
-}
-
-/*
-Close cancels the instrument registry lifecycle.
-*/
-func (instrument *Instrument) Close() {
-	if instrument == nil {
-		return
-	}
-
-	instrument.cancel()
-
-	if instrument.err == nil {
-		transition(instrument.status, runtime.DONE)
-	}
 }

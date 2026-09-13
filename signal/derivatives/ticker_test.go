@@ -2,7 +2,6 @@ package derivatives
 
 import (
 	"math"
-	"maps"
 	"testing"
 	"time"
 
@@ -23,12 +22,13 @@ symbol, and stamps the venue timestamp. A fabricated timestamp travels as a
 provenance fact; zero or negative prices are an invalid market.
 */
 func row(symbol string, last, index, mark, openInterest float64, at time.Time) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("websocket", maps.Clone(schema))
+	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+		"last":          data.NewMetric[float64]("last", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(last),
+		"index_price":   data.NewMetric[float64]("index_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(index),
+		"mark_price":    data.NewMetric[float64]("mark_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(mark),
+		"open_interest": data.NewMetric[float64]("open_interest", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(openInterest),
+	})
 	m.Label, m.At, m.From = symbol, at, at
-	m.Metrics["last"] = m.Metrics["last"].Write(last)
-	m.Metrics["index_price"] = m.Metrics["index_price"].Write(index)
-	m.Metrics["mark_price"] = m.Metrics["mark_price"].Write(mark)
-	m.Metrics["open_interest"] = m.Metrics["open_interest"].Write(openInterest)
 
 	return m
 }
@@ -110,9 +110,8 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Metrics["reference_log_return"].Raw, ShouldAlmostEqual, math.Log(101.0/100.0), 1e-12)
 			So(measurement.Metrics["return_gap"].Raw, ShouldAlmostEqual, math.Log(102.0/101.0)-math.Log(101.0/100.0), 1e-12)
 
-			// The basis z-score's first dispersion is the residual itself, so a
-			// decline below its seeded baseline scores -1.
-			So(measurement.Metrics["basis_zscore"].Raw, ShouldAlmostEqual, -1.0, 1e-9)
+			// The basis z-score is judged against the two committed samples' dispersion.
+			So(measurement.Metrics["basis_zscore"].Raw, ShouldAlmostEqual, -math.Sqrt(2.0), 1e-9)
 
 			// One retained estimator sample is still immature.
 			So(measurement.Maturity, ShouldEqual, 0.0)

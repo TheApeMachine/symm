@@ -3,11 +3,22 @@ package data
 import (
 	"fmt"
 	"iter"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/logic"
 )
+
+/*
+CrossMember is one member's latest retained change facts.
+*/
+type CrossMember struct {
+	Label  string
+	Change float64
+	At     time.Time
+	From   time.Time
+}
 
 /*
 MetricGate classifies the arrival against one declared metric: the metric must

@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -18,7 +17,7 @@ Balance is a centralized manager of the exchange wallet, and should be called by
 any other object that wants to interact with the balance in any way.
 */
 type Balance struct {
-	system       core.Primitive
+	*runtime.System
 	api          *websocket.API
 	Quote        string
 	wallet       atomic.Pointer[kraken.Balance]
@@ -33,7 +32,7 @@ func NewBalance(api *websocket.API) *Balance {
 	}
 
 	balance := &Balance{
-		system: runtime.NewSystem(ctx, "balance"),
+		System: runtime.NewSystem(ctx, "balance"),
 		api:    api,
 		Quote:  system.Cfg.Market.QuoteCurrency,
 	}
@@ -54,8 +53,8 @@ func (balance *Balance) Update() {
 		return
 	}
 
-	systemTransition(balance.system, runtime.BUSY)
-	defer systemTransition(balance.system, runtime.READY)
+	balance.Transition(runtime.BUSY)
+	defer balance.Transition(runtime.READY)
 
 	result, err := balance.api.Balance()
 
@@ -137,8 +136,8 @@ func (balance *Balance) Refresh(instrument *Instrument) (err error) {
 		return nil
 	}
 
-	systemTransition(balance.system, runtime.BUSY)
-	defer systemTransition(balance.system, runtime.READY)
+	balance.Transition(runtime.BUSY)
+	defer balance.Transition(runtime.READY)
 
 	balance.Update()
 	tradeBalance, err := balance.api.TradeBalance()
@@ -154,25 +153,4 @@ func (balance *Balance) Refresh(instrument *Instrument) (err error) {
 	balance.tradeBalance.Store(tradeBalance)
 
 	return nil
-}
-
-/*
-Transition drives the balance lifecycle's stage machine.
-*/
-func (balance *Balance) Transition(stage runtime.Stage) {
-	systemTransition(balance.system, stage)
-}
-
-/*
-Status reads the balance lifecycle's current stage.
-*/
-func (balance *Balance) Status() runtime.Stage {
-	return systemStage(balance.system)
-}
-
-/*
-Error reports the balance lifecycle's retained failure.
-*/
-func (balance *Balance) Error() error {
-	return balance.system.Error()
 }

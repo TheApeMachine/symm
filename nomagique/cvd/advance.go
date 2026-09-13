@@ -194,6 +194,7 @@ func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				m.Metrics["signed_net_fraction"] = m.Metrics["signed_net_fraction"].Write(fraction)
 
 				reading := drive[float64, adaptive.BaselineReading](op.reader, &fraction)
+				m.Metadata[data.MetadataSupport] = reading.Count
 
 				if reading.HasPrior {
 					m.Metrics["signed_net_fraction_baseline"] = m.Metrics["signed_net_fraction_baseline"].Write(reading.Baseline)

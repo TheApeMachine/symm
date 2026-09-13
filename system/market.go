@@ -5,6 +5,7 @@ import (
 )
 
 type Market struct {
+	Model         string
 	QuoteCurrency string
 	Balance       int
 	Instrument    *Instrument
@@ -20,6 +21,7 @@ type Book struct {
 }
 
 func NewMarket() *Market {
+	viper.SetDefault("market.model", "paper")
 	viper.SetDefault("market.quote_currency", "USD")
 	viper.SetDefault("market.instrument.excluded", []string{
 		"USD", "EUR", "GBP", "AUD", "CAD", "CHF", "JPY", "NZD",
@@ -37,6 +39,7 @@ func NewMarket() *Market {
 	viper.SetDefault("market.l3_depth", 10)
 
 	return &Market{
+		Model:         viper.GetString("market.model"),
 		QuoteCurrency: viper.GetString("market.quote_currency"),
 		Balance:       viper.GetInt("market.balance"),
 		Instrument: &Instrument{

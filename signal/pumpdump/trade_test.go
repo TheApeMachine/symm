@@ -1,30 +1,26 @@
 package pumpdump
 
 import (
-	"math"
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests/venue"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func spotTrade(symbol string, price float64, qty float64, at time.Time) kraken.TradeData {
-	return kraken.TradeData{
-		Symbol:    symbol,
-		Price:     *decimal.NewFromFloat64(price),
-		Qty:       qty,
-		Timestamp: at,
-	}
+func spotTrade(symbol string, price float64, qty float64, at time.Time) *data.Measurement[float64] {
+	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+		"price": data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
+		"qty":   data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
+	})
+	m.Label, m.At, m.From = symbol, at, at
+
+	return m
 }
 
 func TestTradeStep(t *testing.T) {
 	Convey("Given a multi-leg volume-clock sequence", t, func() {
-		entity, _ := tradeFixture(t)
+		entity := NewTrade(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the opening trade seeds an open bar", func() {
@@ -47,11 +43,6 @@ func TestTradeStep(t *testing.T) {
 			So(hasVolumeRate, ShouldBeFalse)
 			_, hasNotionalRate := measurement.Metrics["notional_rate"]
 			So(hasNotionalRate, ShouldBeFalse)
-
-			// This entity has no access to book state, so the midpoint
-			// response family never populates.
-			_, hasMidpoint := measurement.Metrics["midpoint"]
-			So(hasMidpoint, ShouldBeFalse)
 
 			// No previous trade exists yet, so the trade interval is absent.
 			_, hasInterval := measurement.Metrics["trade_interval_seconds"]
@@ -79,120 +70,55 @@ func TestTradeStep(t *testing.T) {
 			// The notional-rate baseline of one value is the value itself.
 			So(measurement.Metrics["notional_rate_baseline"].Raw, ShouldAlmostEqual, 310.0/5.0, 1e-9)
 			So(measurement.Metrics["notional_rate_ratio"].Raw, ShouldAlmostEqual, 1.0, 1e-9)
-
-			// This entity has no access to book state, so the midpoint
-			// response family never populates.
-			_, hasMidpoint := measurement.Metrics["midpoint"]
-			So(hasMidpoint, ShouldBeFalse)
 		})
 	})
 
-	Convey("Given completed volume bars backed by executable quotes", t, func() {
-		entity, conn := tradeFixture(t)
-		midpoint := 100.0
-		at := time.Unix(1_700_000_000, 0)
+	Convey("Given non-positive price or quantity", t, func() {
+		entity := NewTrade(t.Context())
 
-		conn.Mark(midpoint)
+		Convey("measurement carries the error", func() {
+			measurement := entity.Step(spotTrade("BTC/USD", 0, 1, time.Unix(1_700_000_000, 0)))
 
-		Convey("the ordinal advances only when a bar closes and the midpoint records downside then recovery", func() {
-			opening := entity.Step(spotTrade("BTC/USD", 100, 2, at))
-			So(opening.Err, ShouldBeNil)
-			So(opening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 0.0)
-
-			midpoint = 90
-			conn.Mark(midpoint)
-			downside := entity.Step(spotTrade(
-				"BTC/USD", 90, 1, at.Add(5*time.Second),
-			))
-			downsideReturn := math.Log(90.0 / 100.0)
-
-			So(downside.Err, ShouldBeNil)
-			So(downside.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
-			So(downside.Metrics["midpoint:from"].Raw, ShouldEqual, 100.0)
-			So(downside.Metrics["midpoint:at"].Raw, ShouldEqual, 90.0)
-			So(downside.Metrics["midpoint_log_return"].Raw, ShouldAlmostEqual, downsideReturn, 1e-12)
-			So(downside.Metrics["negative_midpoint_return"].Raw, ShouldAlmostEqual, -downsideReturn, 1e-12)
-			So(downside.Metrics["positive_midpoint_return"].Raw, ShouldEqual, 0.0)
-
-			barOpening := entity.Step(spotTrade(
-				"BTC/USD", 90, 0.25, at.Add(6*time.Second),
-			))
-			So(barOpening.Err, ShouldBeNil)
-			So(barOpening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
-
-			midpoint = 95
-			conn.Mark(midpoint)
-			insideBar := entity.Step(spotTrade(
-				"BTC/USD", 95, 0.25, at.Add(7*time.Second),
-			))
-			So(insideBar.Err, ShouldBeNil)
-			So(insideBar.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
-			_, hasIntraBarReturn := insideBar.Metrics["midpoint_log_return"]
-			So(hasIntraBarReturn, ShouldBeFalse)
-
-			midpoint = 105
-			conn.Mark(midpoint)
-			recovery := entity.Step(spotTrade(
-				"BTC/USD", 105, 1, at.Add(10*time.Second),
-			))
-			recoveryReturn := math.Log(105.0 / 90.0)
-
-			So(recovery.Err, ShouldBeNil)
-			So(recovery.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 2.0)
-			So(recovery.Metrics["midpoint:from"].Raw, ShouldEqual, 90.0)
-			So(recovery.Metrics["midpoint:at"].Raw, ShouldEqual, 105.0)
-			So(recovery.Metrics["midpoint_log_return"].Raw, ShouldAlmostEqual, recoveryReturn, 1e-12)
-			So(recovery.Metrics["positive_midpoint_return"].Raw, ShouldAlmostEqual, recoveryReturn, 1e-12)
-			So(recovery.Metrics["negative_midpoint_return"].Raw, ShouldEqual, 0.0)
-			So(recovery.Metrics["midpoint_return_velocity"].Raw, ShouldAlmostEqual, recoveryReturn-downsideReturn, 1e-12)
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldNotBeNil)
 		})
 	})
 }
 
-func BenchmarkTradeStep(b *testing.B) {
-	entity, conn := tradeFixture(b)
-	quotes := [2]struct {
-		bid *decimal.Decimal
-		ask *decimal.Decimal
-	}{
-		{bid: decimal.NewFromFloat64(99), ask: decimal.NewFromFloat64(101)},
-		{bid: decimal.NewFromFloat64(100), ask: decimal.NewFromFloat64(102)},
-	}
-	quoteIndex := 0
+func TestTradeRegister(t *testing.T) {
+	Convey("Given a Trade entity", t, func() {
+		entity := NewTrade(t.Context())
+		schema := entity.Register()
 
-	b.ReportAllocs()
+		So(schema, ShouldNotBeNil)
+		So(schema.Source, ShouldEqual, "pumpdump:trade")
+		So(schema.Metrics, ShouldNotBeEmpty)
 
-	for iteration := 0; b.Loop(); iteration++ {
-		quoteIndex = iteration % len(quotes)
-		conn.Mark(100 + float64(quoteIndex))
-		measurement := entity.Step(spotTrade(
-			"BTC/USD",
-			100+float64(quoteIndex),
-			1,
-			time.Unix(1_700_000_000+int64(iteration), 0),
-		))
-
-		if measurement.Err != nil {
-			b.Fatal(measurement.Err)
+		expected := []string{
+			"trade_price",
+			"trade_quantity",
+			"trade_notional",
+			"volume_bar_target_quantity",
+			"volume_bar_quantity",
+			"volume_bar_notional",
+			"volume_bar_trade_count",
+			"volume_bar_duration",
+			"completed_volume_bar_ordinal",
+			"trade_interval_seconds",
+			"volume_rate",
+			"notional_rate",
+			"trade_rate",
+			"notional_rate_baseline",
+			"notional_rate_ratio",
+			"notional_rate_divergence",
+			"notional_rate_zscore",
 		}
-	}
-}
 
-// tradeBook supplies an actual SDK book through the same API.Book boundary.
-type tradeBook struct {
-	*venue.Conn
-	current *book.Book
-}
-
-func (source *tradeBook) Book(_ string, read func(*book.Book)) { read(source.current) }
-func (source *tradeBook) Mark(midpoint float64) {
-	source.current = book.New()
-	source.current.Update(&book.UpdateOptions{Direction: book.Bid, Price: decimal.NewFromFloat64(midpoint - 1), Quantity: decimal.NewFromInt64(10)})
-	source.current.Update(&book.UpdateOptions{Direction: book.Ask, Price: decimal.NewFromFloat64(midpoint + 1), Quantity: decimal.NewFromInt64(10)})
-}
-
-func tradeFixture(t testing.TB) (*Trade, *tradeBook) {
-	t.Helper()
-	source := &tradeBook{Conn: venue.NewConn()}
-	return NewTrade(websocket.NewAPI(t.Context(), source, source, &websocket.FuturesLive{})), source
+		for _, name := range expected {
+			metric, ok := schema.Metrics[name]
+			So(ok, ShouldBeTrue)
+			So(metric.Label, ShouldEqual, name)
+			So(metric.Raw, ShouldEqual, 0.0)
+		}
+	})
 }

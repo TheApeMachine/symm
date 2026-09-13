@@ -7,7 +7,6 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	nmliquidity "github.com/theapemachine/symm/nomagique/liquidity"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -28,8 +27,8 @@ func NewTicker(ctx context.Context) *Ticker {
 	return &Ticker{
 		System: runtime.NewSystem(ctx, "liquidity:ticker"),
 		pipeline: nomagique.NewNumber(
-			nmliquidity.NewGate(),
-			nmliquidity.NewTouch(),
+			NewGate(),
+			NewTouch(),
 			data.NewFinalizer[float64](),
 		),
 	}

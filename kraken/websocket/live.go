@@ -23,13 +23,11 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
-	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
+	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -58,16 +56,11 @@ the venue connection, authenticate a fresh network session, and restore its
 subscriptions; protocol and ingestion failures remain terminal.
 */
 type Live struct {
+	*runtime.System
 	funding      FundingLedger
-	ctx          context.Context
-	cancel       context.CancelFunc
-	status       *runtime.Status
-	err          error
 	queue        *lf.Queue[map[string]any]
 	schema       map[string]data.Metric[float64]
 	client       atomic.Pointer[spot.WebSocket]
-	receiveMu    sync.Mutex
-	receive      callback.Action[*sdkkraken.WebSocketMessage]
 	endpoint     string
 	quote        string
 	simulator    *Simulator
@@ -75,140 +68,15 @@ type Live struct {
 	book         *Book
 	level3       *sync.Map
 	symbols      []string
-	publicMu     sync.RWMutex
-	public       map[string][][]string
 	auth         bool
 	nonce        *AuthNonce
 	nonceErr     error
-	subscribers  *sync.Map
 	callbacks    *sync.Map
 	paper        *Paper
 	model        string
-	capture      CaptureSink
-	manifestSink ManifestSink
-	failureMu    sync.RWMutex
-	failure      func(error)
-	observer     atomic.Pointer[func(string, time.Duration)]
-	connected    atomic.Bool
-	released     atomic.Bool
-	reconnecting atomic.Bool
-	closing      atomic.Bool
-	closeOnce    sync.Once
-
-	// streams owns this session's operational epoch/sequence bookkeeping.
-	streams *Streams
-
-	// pinger owns this session's keepalive loop.
-	pinger *Pinger
-
-	// level3Client overrides the venue client SubL3 dials when set. Fixtures
-	// inject the level3 listener's client here so a replay's level3 frames
-	// feed the session's book manager instead of dialing the real venue.
+	pinger       *Pinger
 	level3Client func() *spot.WebSocket
-
-	// pingReqID is echoed back on the pong reply, so a response can be tied to
-	// the request that produced it.
-	pingReqID atomic.Int64
-}
-
-/*
-Capture returns the underlying capture sink attached to the live connection.
-*/
-func (live *Live) Capture() CaptureSink {
-	if live == nil {
-		return nil
-	}
-
-	return live.capture
-}
-
-/*
-Error returns the first terminal session failure.
-*/
-func (live *Live) Error() error {
-	if live == nil {
-		return nil
-	}
-
-	live.failureMu.RLock()
-	defer live.failureMu.RUnlock()
-
-	return live.err
-}
-
-/*
-SetFailure binds this session to its owner. Existing failures are replayed so a
-constructor failure cannot be lost before API attaches the supervisor.
-*/
-func (live *Live) SetFailure(handler func(error)) {
-	if live == nil {
-		return
-	}
-
-	live.failureMu.Lock()
-	live.failure = handler
-	err := live.err
-	live.failureMu.Unlock()
-
-	if live.level3 != nil {
-		live.level3.Range(func(_, value any) bool {
-			child, valid := value.(*Live)
-
-			if valid && child != nil {
-				child.SetFailure(live.fail)
-			}
-
-			return true
-		})
-	}
-
-	if err != nil && handler != nil {
-		handler(err)
-	}
-}
-
-func (live *Live) fail(err error) {
-	if live == nil || err == nil {
-		return
-	}
-
-	err = errnie.Error(err)
-
-	live.failureMu.Lock()
-
-	if live.err != nil {
-		live.failureMu.Unlock()
-		return
-	}
-
-	live.err = err
-	handler := live.failure
-	live.failureMu.Unlock()
-
-	live.status.Transition(runtime.ERROR)
-	live.cancel()
-
-	if handler != nil {
-		handler(err)
-	}
-}
-
-func (live *Live) operationalError() error {
-	if err := live.Error(); err != nil {
-		return err
-	}
-
-	select {
-	case <-live.ctx.Done():
-
-		if err := live.Error(); err != nil {
-			return err
-		}
-
-		return live.ctx.Err()
-	default:
-		return nil
-	}
+	pingReqID    atomic.Int64
 }
 
 /*
@@ -219,10 +87,9 @@ func New(
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
-	recorders ...CaptureSink,
 ) *Live {
 	return NewWithClient(
-		ctx, simulator, auth, endpoint, nil, recorders...,
+		ctx, simulator, auth, endpoint, nil,
 	)
 }
 
@@ -237,7 +104,6 @@ func NewWithClient(
 	auth bool,
 	endpoint string,
 	client *spot.WebSocket,
-	recorders ...CaptureSink,
 ) *Live {
 	if client == nil {
 		client = spot.NewWebSocket()
@@ -250,31 +116,34 @@ func NewWithClient(
 	client.Reconnect = nil
 	client.OnDisconnected.Reset()
 
-	ctx, cancel := context.WithCancel(ctx)
+	name := "noname"
+
+	switch endpoint {
+	case system.Cfg.WebSocket.Endpoints.Public:
+		name = "public"
+	case system.Cfg.WebSocket.Endpoints.Private:
+		name = "private"
+	case system.Cfg.WebSocket.Endpoints.Level3:
+		name = "level3"
+	}
 
 	live := &Live{
-		ctx:         ctx,
-		cancel:      cancel,
-		status:      runtime.NewStatus(),
-		simulator:   simulator,
-		endpoint:    endpoint,
-		normalizer:  spot.NewNormalizer(),
-		auth:        auth,
-		subscribers: &sync.Map{},
-		callbacks:   &sync.Map{},
-		public:      make(map[string][][]string),
-		queue:       lf.NewQueue[map[string]any](),
-		schema:      ingestSchema(),
-		paper:       NewPaper(ctx, simulator),
-		model:       viper.GetViper().GetString("trading.model"),
-		quote:       viper.GetViper().GetString("market.quote_currency"),
-		streams:     NewStreams(client.URL),
+		System:     runtime.NewSystem(ctx, name),
+		simulator:  simulator,
+		endpoint:   endpoint,
+		normalizer: spot.NewNormalizer(),
+		auth:       auth,
+		callbacks:  &sync.Map{},
+		queue:      lf.NewQueue[map[string]any](),
+		paper:      NewPaper(ctx, simulator),
+		model:      system.Cfg.Market.Model,
+		quote:      system.Cfg.Market.QuoteCurrency,
 	}
 
 	live.client.Store(client)
 
 	live.pinger = NewPinger("websocket", func() error {
-		if !live.connected.Load() {
+		if live.Status() != runtime.READY {
 			return nil
 		}
 
@@ -284,7 +153,7 @@ func NewWithClient(
 			return err
 		}
 
-		return live.Client().WriteMessage(gorillawebsocket.TextMessage, ping)
+		return live.client.Load().WriteMessage(gorillawebsocket.TextMessage, ping)
 	})
 
 	// A failed ping is the only evidence a half-open socket may produce. Treat it
@@ -293,16 +162,8 @@ func NewWithClient(
 		go live.reconnect(err)
 	})
 
-	if len(recorders) == 1 {
-		live.capture = recorders[0]
-
-		if manifestSink, ok := recorders[0].(ManifestSink); ok {
-			live.manifestSink = manifestSink
-		}
-	}
-
-	if err := live.normalizer.Use(live.Client().REST); err != nil {
-		live.fail(errnie.Err(
+	if err := live.normalizer.Use(live.client.Load().REST); err != nil {
+		live.Error(errnie.Err(
 			errnie.Validation,
 			"websocket: failed to initialize normalizer",
 			err,
@@ -315,11 +176,11 @@ func NewWithClient(
 		nonce, err := processAuthNonce()
 		live.nonce = nonce
 		live.nonceErr = err
-		live.Client().REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
-		live.Client().REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+		live.client.Load().REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
+		live.client.Load().REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
 
 		if live.nonceErr != nil || live.nonce == nil {
-			live.fail(errnie.Err(
+			live.Error(errnie.Err(
 				errnie.Validation,
 				"websocket: auth nonce unavailable",
 				live.nonceErr,
@@ -331,80 +192,16 @@ func NewWithClient(
 		// Private and every Level3 batch authenticate with the same key; they
 		// must share one monotonic nonce sequence or concurrent token fetches
 		// collide (EAPI:Invalid nonce).
-		live.Client().REST.Nonce = live.nonce.Next
+		live.client.Load().REST.Nonce = live.nonce.Next
 	}
-
-	var bookFrame *kraken.Level3
-	var bookStream hindsight.StreamRef
-	var bookCapture hindsight.CaptureIdentity
 
 	if endpoint == system.Cfg.WebSocket.Endpoints.Level3 {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
-		live.book.SetResync(live.resyncLevel3)
-
-		/*
-			The verified top of book is captured as its own observation.
-
-			Discovery needs a price series, and the venue's spot ticker cannot
-			be one for most of this universe: it publishes on change, which for
-			an illiquid pair is a handful of frames across a whole session. The
-			book carries the same price continuously and is the price the desk
-			would actually trade at, so it is recorded once the venue's own
-			checksum has confirmed the state it was read from.
-		*/
-		live.book.SetTouch(func(touches []kraken.Level3Touch) {
-			payload, err := json.Marshal(kraken.Level3TouchFrame{
-				Channel: "level3", Type: "touch", Data: touches,
-			})
-
-			if err != nil {
-				live.fail(errnie.Err(errnie.Internal, "websocket: encode level3 touch", err))
-				return
-			}
-
-			if err := live.captureFrame("l3_touch", endpoint, payload); err != nil {
-				live.fail(err)
-			}
-		})
-		live.book.SetNotify(func(symbol string, _ time.Time) {
-			ordinal := uint64(slices.IndexFunc(bookFrame.Data, func(data kraken.Level3Data) bool {
-				return data.Symbol == symbol
-			}))
-
-			if live.Status() != runtime.READY {
-				return
-			}
-
-			if live.manifestSink != nil {
-				notification := types.NewEnvelope(types.EnvelopeLevel3)
-				notification.Level3Data = bookFrame.Data[ordinal]
-				notification.Stream, notification.CaptureID = bookStream, bookCapture
-				notification.CaptureOrdinal = ordinal
-
-				if err := live.manifestSink.WriteManifest(manifestFor(
-					notification, bookCapture, ordinal, "level3", symbol,
-				)); err != nil {
-					live.fail(errnie.Err(errnie.IO, "websocket: persist book notification manifest", err))
-					return
-				}
-			}
-
-			// The accepted delta travels through the ingest queue as its own row.
-			// The resident book remains owned by this transport; no full book
-			// snapshot is copied. The typed delta rides alongside the row so the
-			// level3 consumer keeps venue-exact fields.
-			row := map[string]any{
-				"channel": "level3",
-				"symbol":  symbol,
-				"data":    bookFrame.Data[ordinal],
-			}
-			live.queue.Enqueue(row)
-		})
 	}
 
-	live.receive = func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		if live.operationalError() != nil {
+	client.OnReceived.Recurring(func(event *callback.Event[*sdk.WebSocketMessage]) {
+		if live.Status() != runtime.READY {
 			return
 		}
 
@@ -417,47 +214,14 @@ func NewWithClient(
 			}
 		}
 
-		// Every spot frame — public, private, or level3 — reaches the same
-		// capture sink as the futures stream, so the events store sees the
-		// whole system rather than futures alone. Capture mints the Hindsight
-		// capture identity, persists the raw frame with it, and returns it so
-		// every envelope parsed from this frame carries the exact same origin.
-		// A failed capture fails loudly and skips this frame's dispatch: no
-		// envelope may carry a zero/ambiguous identity while Hindsight is on.
-		// The transport mints the operational StreamRef first — independent of
-		// capture — so the same epoch/sequence fact exists with Hindsight both
-		// on and off.
-		streamRef := live.streams.Next(channel)
-
-		var captureID hindsight.CaptureIdentity
-
-		if live.capture != nil {
-			var captureErr error
-
-			captureID, captureErr = live.capture.Capture(
-				channel,
-				live.Client().URL,
-				raw,
-				time.Now().UTC(),
-				streamRef,
-			)
-
-			if captureErr != nil {
-				live.fail(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("websocket: capture failed for %s frame: %s", channel, captureErr.Error()),
-					captureErr,
-				))
-				return
-			}
-		}
-
 		// An unsubscribe acknowledgement answers the instrument's paced
 		// recovery of a checksum-diverged symbol; there is nothing to
 		// dispatch for it.
 		if channel == "unsubscribe" {
 			if message := utils.GetString(raw, "error"); message != "" {
-				live.fail(errnie.Err(errnie.IO, "websocket: unsubscribe rejected: "+message, nil))
+				live.Error(errnie.Err(
+					errnie.IO, "websocket: unsubscribe rejected: "+message, nil,
+				))
 			}
 
 			return
@@ -465,19 +229,13 @@ func NewWithClient(
 
 		switch channel {
 		case "ticker", "trade", "executions":
-			// Connected sessions capture but do not feed the pipeline until the
-			// complete consumer graph has crossed its READY boundary.
-			if live.Status() != runtime.READY {
-				return
-			}
-
 			// One queue row per venue record: the callback splits the frame's
 			// data array so Step converts exactly one measurement per dequeue.
 			// The typed entity parse is skipped; the row map is the payload.
 			frame, err := event.Data.Map()
 
 			if err != nil {
-				live.fail(errnie.Err(
+				live.Error(errnie.Err(
 					errnie.Validation,
 					"websocket: failed to map "+channel+" frame",
 					err,
@@ -509,7 +267,7 @@ func NewWithClient(
 		handler, ok := entityMap[channel]
 
 		if !ok {
-			live.fail(errnie.Err(
+			live.Error(errnie.Err(
 				errnie.NotFound,
 				"websocket: unhandled channel "+channel,
 				nil,
@@ -523,7 +281,7 @@ func NewWithClient(
 			errMessage := utils.GetString(raw, "error")
 
 			if errMessage != "" {
-				live.fail(errnie.Err(
+				live.Error(errnie.Err(
 					errnie.IO,
 					fmt.Sprintf("websocket: subscription rejected: %s", errMessage),
 					nil,
@@ -553,13 +311,10 @@ func NewWithClient(
 				return
 			}
 
-			bookFrame, bookStream, bookCapture = level3, streamRef, captureID
-
 			if err := live.book.Update(event, level3); err != nil {
 				errnie.Error(err)
 			}
 
-			bookFrame = nil
 			return
 		}
 
@@ -567,7 +322,7 @@ func NewWithClient(
 		case "pong":
 
 			if errMsg := utils.GetString(raw, "error"); errMsg != "" {
-				live.fail(errnie.Err(
+				live.Error(errnie.Err(
 					errnie.IO,
 					fmt.Sprintf("websocket: pong error: %s", errMsg),
 					nil,
@@ -578,21 +333,19 @@ func NewWithClient(
 
 			return
 		}
-	}
+	})
 
-	live.bind(client)
+	errnie.Info(fmt.Sprintf("websocket: connecting to %s", live.client.Load().URL))
+	live.Transition(runtime.WAITING)
 
-	errnie.Info(fmt.Sprintf("websocket: connecting to %s", live.Client().URL))
-	live.status.Transition(runtime.WAITING)
-
-	if err := live.Client().Connect(); err != nil {
-		live.fail(errnie.Err(
+	if err := live.client.Load().Connect(); err != nil {
+		live.Error(errnie.Err(
 			errnie.IO,
 			"websocket: failed to connect",
 			err,
 		))
 	} else if err := live.resume(); err != nil {
-		live.fail(err)
+		live.Error(err)
 	}
 
 	return live
@@ -668,165 +421,15 @@ Register implements the runtime.Node interface: it declares every numeric field
 the venue's spot rows can produce, none valued.
 */
 func (live *Live) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("websocket", maps.Clone(live.schema))
-}
-
-/*
-ingestSchema declares the numeric fields the venue's ticker and trade rows
-carry, with each field's market unit. Row keys outside this schema (symbol,
-timestamp, side) are identity or categorical facts, not metrics.
-*/
-func ingestSchema() map[string]data.Metric[float64] {
-	fields := []struct {
-		label string
-		unit  data.Unit
-	}{
-		{"bid", data.UnitRate},
-		{"bid_qty", data.UnitCount},
-		{"ask", data.UnitRate},
-		{"ask_qty", data.UnitCount},
-		{"last", data.UnitRate},
-		{"volume", data.UnitCount},
-		{"vwap", data.UnitRate},
-		{"low", data.UnitRate},
-		{"high", data.UnitRate},
-		{"change", data.UnitRate},
-		{"change_pct", data.UnitDimensionless},
-		{"trades", data.UnitCount},
-		{"price", data.UnitRate},
-		{"qty", data.UnitCount},
-		{"trade_id", data.UnitCount},
-	}
-
-	schema := make(map[string]data.Metric[float64], len(fields))
-
-	for _, field := range fields {
-		schema[field.label] = data.NewMetric[float64](
-			field.label, field.unit, data.TimescaleInstantaneous, 0, 1,
-		)
-	}
-
-	return schema
-}
-
-/*
-captureFrame records one untouched websocket payload with its origin kind,
-receive order, and canonical endpoint so the live feed is directly consumable by
-market replay.
-*/
-func (live *Live) captureFrame(kind, endpoint string, payload []byte) error {
-	if live.capture == nil {
-		return nil
-	}
-
-	if endpoint == "" || len(payload) == 0 {
-		return fmt.Errorf("websocket: capture endpoint and payload required")
-	}
-
-	// Capture persists synchronously before this callback returns, so the SDK's
-	// frame view remains valid for the complete write and needs no clone.
-	_, err := live.capture.Capture(
-		kind,
-		endpoint,
-		payload,
-		time.Now().UTC(),
-		live.streams.Next(kind),
-	)
-
-	return err
-}
-
-/*
-CaptureSink receives one untouched transport payload with its origin kind,
-endpoint, arrival time, and the operational StreamRef the transport minted for
-that frame, and returns the CaptureIdentity it minted for that frame. kind
-identifies the frame's channel/method/feed (e.g. "ticker", "trade", "book",
-"level3", "pong"); endpoint names the stream it arrived on; ref is the
-transport-owned epoch/sequence fact the returned identity must record/copy. The
-returned identity is what the caller stamps onto every envelope parsed from the
-frame. Implementations own persistence; the transport only reports.
-*/
-type CaptureSink interface {
-	Capture(kind, endpoint string, payload []byte, receivedAt time.Time, ref hindsight.StreamRef) (hindsight.CaptureIdentity, error)
-}
-
-/*
-ManifestSink receives one EnvelopeManifest — how a raw frame entered Workspace —
-keyed by its EnvelopeRef. A capture recorder that also implements this interface
-gets the manifests for the envelopes it produced a capture identity for, so raw
-capture and semantic ingress are persisted together and joinable by identity.
-*/
-type ManifestSink interface {
-	WriteManifest(manifest hindsight.EnvelopeManifest) error
-}
-
-/*
-	bind admits callbacks only from the current SDK session. Retired sockets cannot
-
-apply old frames to replacement books or change the replacement's readiness.
-*/
-func (live *Live) bind(client *spot.WebSocket) {
-	client.OnDisconnected.Reset()
-	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		live.receiveMu.Lock()
-		defer live.receiveMu.Unlock()
-
-		if live.Client() != client {
-			return
-		}
-
-		live.receive(event)
-	})
-
-	client.OnConnected.Recurring(func(event *callback.Event[any]) {
-		if live.Client() != client {
-			return
-		}
-
-		if live.operationalError() != nil {
-			return
-		}
-
-		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.Client().URL))
-
-		live.connected.Store(true)
-		live.status.Transition(runtime.BUSY)
-		live.pinger.Start(live.ctx)
-	})
-
-	client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
-		live.receiveMu.Lock()
-		defer live.receiveMu.Unlock()
-
-		if live.Client() != client {
-			return
-		}
-		live.connected.Store(false)
-
-		if live.closing.Load() {
-			return
-		}
-
-		select {
-		case <-live.ctx.Done():
-			return
-		default:
-		}
-
-		go live.reconnect(event.Data)
-	})
-}
-
-func (live *Live) Status() runtime.Stage {
-	return live.status.Current()
+	return data.NewMeasurement("websocket", map[string]data.Metric[float64]{})
 }
 
 func (live *Live) authenticate() (err error) {
-	client := live.Client()
+	client := live.client.Load()
 	errnie.Info(fmt.Sprintf("websocket[%s]: authenticating", client.URL))
 
 	if live.nonceErr != nil {
-		return errnie.Error(errnie.Err(
+		return live.Error(errnie.Err(
 			errnie.Validation,
 			"websocket: auth nonce unavailable",
 			live.nonceErr,
@@ -836,7 +439,7 @@ func (live *Live) authenticate() (err error) {
 	if err = client.Authenticate(); err != nil && !strings.Contains(
 		err.Error(), "Invalid nonce",
 	) {
-		return errnie.Error(errnie.Err(
+		return live.Error(errnie.Err(
 			errnie.Validation,
 			"websocket: authentication failed",
 			err,
@@ -869,11 +472,13 @@ func (live *Live) resume() error {
 			)
 		}
 
-		errnie.Info(fmt.Sprintf("websocket: authenticated to %s", live.Client().URL))
+		errnie.Info(fmt.Sprintf(
+			"websocket: authenticated to %s", live.client.Load().URL,
+		))
 	}
 
 	if live.endpoint == system.Cfg.WebSocket.Endpoints.Private {
-		if err := live.subscribeAccount(live.Client().Token); err != nil {
+		if err := live.subscribeAccount(live.client.Load().Token); err != nil {
 			return errnie.Err(
 				errnie.IO,
 				"websocket: failed to restore private account subscriptions",
@@ -881,20 +486,10 @@ func (live *Live) resume() error {
 			)
 		}
 
-		if live.released.Load() {
-			live.status.Transition(runtime.READY)
-		}
 		return nil
 	}
 
-	if !live.released.Load() {
-		return nil
-	}
-
-	if err := live.restoreSubscriptions(); err != nil {
-		return err
-	}
-	live.status.Transition(runtime.READY)
+	live.Transition(runtime.READY)
 	return nil
 }
 
@@ -904,28 +499,17 @@ ready or the owning context is canceled. Every attempt uses the SDK's configured
 retry cadence and, for authenticated sockets, obtains a new websocket token.
 */
 func (live *Live) reconnect(err error) {
-	if live.closing.Load() || live.ctx.Err() != nil {
-		return
-	}
-
-	if !live.reconnecting.CompareAndSwap(false, true) {
-		return
-	}
-
-	defer live.reconnecting.Store(false)
-
-	live.connected.Store(false)
 	live.pinger.Stop()
-	live.status.Transition(runtime.WAITING)
-	retryWait := live.Client().ReconnectWait
+	live.Transition(runtime.WAITING)
+	retryWait := live.client.Load().ReconnectWait
 	errnie.Error(errnie.Err(
 		errnie.IO,
 		fmt.Sprintf("websocket %s disconnected; reconnecting with a fresh session", live.endpoint),
 		err,
 	))
 
-	for live.ctx.Err() == nil {
-		client := live.Client()
+	for live.Context().Err() == nil {
+		client := live.client.Load()
 		replacement := spot.NewWebSocket()
 		replacement.REST = client.REST
 		replacement.URL = client.URL
@@ -934,11 +518,7 @@ func (live *Live) reconnect(err error) {
 		replacement.Insecure = client.Insecure
 		replacement.OnAuthenticated = client.OnAuthenticated
 		replacement.OnSent = client.OnSent
-		live.bind(replacement)
-		live.receiveMu.Lock()
 		live.client.Store(replacement)
-		live.streams.Advance()
-		live.receiveMu.Unlock()
 
 		// Ask a still-readable retired peer to close. SDK Disconnect cannot be
 		// used after a failed write: v2.0.0 leaves a callback sending to a closed
@@ -959,10 +539,10 @@ func (live *Live) reconnect(err error) {
 			return
 		}
 
-		live.connected.Store(false)
 		live.pinger.Stop()
-		live.status.Transition(runtime.WAITING)
-		errnie.Error(errnie.Err(
+		live.Transition(runtime.WAITING)
+
+		live.Error(errnie.Err(
 			errnie.IO,
 			fmt.Sprintf("websocket %s fresh-session reconnect failed", live.endpoint),
 			err,
@@ -972,7 +552,7 @@ func (live *Live) reconnect(err error) {
 
 		select {
 		case <-retry.C:
-		case <-live.ctx.Done():
+		case <-live.Context().Done():
 			retry.Stop()
 			return
 		}
@@ -999,15 +579,6 @@ func (live *Live) subscribeAccount(token string) error {
 		return err
 	}
 
-	// A previously admitted account restores executions before READY returns.
-	if live.released.Load() {
-		return live.Write(kraken.NewExecutionSubscription(token))
-	}
-
-	// Initial boot authenticates before the execution workload is ready. Wait
-	// asynchronously there so authentication does not stall the readiness gate.
-	go live.subscribeExecutionsWhenReady(token)
-
 	return nil
 }
 
@@ -1017,19 +588,9 @@ executions ingress workload is ready. It owns the gate so the initial
 authenticate returns immediately (and the balance subscription already satisfied
 the token deadline), while execution frames cannot arrive before their consumer.
 */
-func (live *Live) subscribeExecutionsWhenReady(token string) {
-	if err := live.waitReady(); err != nil {
-		live.fail(errnie.Err(
-			errnie.IO,
-			"websocket: execution subscription readiness failed",
-			err,
-		))
-
-		return
-	}
-
-	if err := live.Write(kraken.NewExecutionSubscription(token)); err != nil {
-		live.fail(errnie.Err(
+func (live *Live) SubExecutions(token string) {
+	if err := live.client.Load().SubExecutions(); err != nil {
+		live.Error(errnie.Err(
 			errnie.IO,
 			"websocket: failed to subscribe to executions",
 			err,
@@ -1037,108 +598,14 @@ func (live *Live) subscribeExecutionsWhenReady(token string) {
 	}
 }
 
-/*
-MarkReady releases a connected session after the complete consumer graph has
-been admitted. Level3 child sessions already attached to this parent cross the
-same boundary.
-*/
-func (live *Live) MarkReady() {
-	if live == nil {
-		return
-	}
-
-	if live.operationalError() != nil {
-		return
-	}
-
-	if live.Status() != runtime.BUSY && live.Status() != runtime.READY {
-		live.fail(errnie.Err(
-			errnie.NotAcceptable,
-			"websocket: only a connected session can become ready",
-			nil,
-		))
-
-		return
-	}
-
-	if live.level3 != nil {
-		live.level3.Range(func(_, value any) bool {
-			child, valid := value.(*Live)
-
-			if !valid || child == nil {
-				return true
-			}
-
-			child.MarkReady()
-
-			if err := child.operationalError(); err != nil {
-				live.fail(errnie.Err(
-					errnie.IO,
-					"websocket: level3 child unavailable at readiness barrier",
-					err,
-				))
-
-				return false
-			}
-
-			return true
-		})
-	}
-
-	if live.operationalError() != nil {
-		return
-	}
-
-	live.released.Store(true)
-	live.status.Transition(runtime.READY)
-}
-
-/*
-waitReady blocks until this session is READY, or the session context ends. It
-waits on the session's own status rather than polling the shared ingress map,
-so it never reads a map another goroutine is writing.
-*/
-func (live *Live) waitReady() error {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		if err := live.Error(); err != nil {
-			return err
-		}
-
-		if live.Status() == runtime.READY {
-			return nil
-		}
-
-		select {
-		case <-live.ctx.Done():
-			return live.operationalError()
-		case <-ticker.C:
-		}
-	}
-}
-
-func (live *Live) Client() *spot.WebSocket {
-	if live == nil {
-		return nil
-	}
-
-	return live.client.Load()
-}
-
 func (live *Live) SubInstrument(callback chan any) {
-	if live.operationalError() != nil {
-		return
-	}
-
 	errnie.Info("websocket: subscribing to instrument")
 
 	if err := live.Write(kraken.NewInstrumentSubscription(), Callback[any]{
 		Channel: "instrument",
 		Message: callback,
 	}); err != nil {
-		live.fail(errnie.Err(
+		live.Error(errnie.Err(
 			errnie.IO,
 			"websocket: failed to subscribe to instruments",
 			err,
@@ -1147,12 +614,8 @@ func (live *Live) SubInstrument(callback chan any) {
 }
 
 func (live *Live) SubTicker(symbols []string) {
-	if err := live.operationalError(); err != nil {
-		return
-	}
-
 	if live.Status() != runtime.BUSY && live.Status() != runtime.READY {
-		live.fail(errnie.Err(
+		live.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"websocket: ticker subscription requires a connected session",
 			nil,
@@ -1161,8 +624,8 @@ func (live *Live) SubTicker(symbols []string) {
 		return
 	}
 
-	if err := live.Client().SubTicker(symbols); err != nil {
-		live.fail(errnie.Err(
+	if err := live.client.Load().SubTicker(symbols); err != nil {
+		live.Error(errnie.Err(
 			errnie.IO,
 			"websocket: failed to subscribe to ticker",
 			err,
@@ -1170,19 +633,11 @@ func (live *Live) SubTicker(symbols []string) {
 
 		return
 	}
-
-	live.publicMu.Lock()
-	live.public["ticker"] = append(live.public["ticker"], slices.Clone(symbols))
-	live.publicMu.Unlock()
 }
 
 func (live *Live) SubTrades(symbols []string) {
-	if err := live.operationalError(); err != nil {
-		return
-	}
-
 	if live.Status() != runtime.BUSY && live.Status() != runtime.READY {
-		live.fail(errnie.Err(
+		live.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"websocket: trade subscription requires a connected session",
 			nil,
@@ -1191,8 +646,8 @@ func (live *Live) SubTrades(symbols []string) {
 		return
 	}
 
-	if err := live.Client().SubTrades(symbols); err != nil {
-		live.fail(errnie.Err(
+	if err := live.client.Load().SubTrades(symbols); err != nil {
+		live.Error(errnie.Err(
 			errnie.IO,
 			"websocket: failed to subscribe to trades",
 			err,
@@ -1200,146 +655,11 @@ func (live *Live) SubTrades(symbols []string) {
 
 		return
 	}
-
-	live.publicMu.Lock()
-	live.public["trade"] = append(live.public["trade"], slices.Clone(symbols))
-	live.publicMu.Unlock()
-}
-
-/*
-UnsubTicker and UnsubTrades withdraw the ticker/trade streams for the given
-symbols. They mirror SubTicker/SubTrades so the instrument — which owns the
-market universe — drives teardown through the same batched seam it drives
-setup, rather than the transport keeping a second copy of the universe.
-*/
-func (live *Live) UnsubTicker(symbols []string) {
-	live.unsubscribe("ticker", symbols, 100)
-}
-
-func (live *Live) UnsubTrades(symbols []string) {
-	live.unsubscribe("trade", symbols, 100)
-}
-
-/*
-UnsubL3 withdraws level3 for the given symbols. Level3 fans out across child
-sessions, each holding its own socket and its own slice of the universe, so the
-request is routed to whichever child actually holds each symbol.
-*/
-func (live *Live) UnsubL3(symbols []string) {
-	if live == nil || live.level3 == nil || len(symbols) == 0 {
-		return
-	}
-
-	wanted := make(map[string]struct{}, len(symbols))
-
-	for _, symbol := range symbols {
-		wanted[symbol] = struct{}{}
-	}
-
-	live.level3.Range(func(_, value any) bool {
-		child, valid := value.(*Live)
-
-		if !valid || child == nil {
-			return true
-		}
-
-		mine := make([]string, 0, len(child.symbols))
-
-		for _, symbol := range child.symbols {
-			if _, held := wanted[symbol]; held {
-				mine = append(mine, symbol)
-			}
-		}
-
-		child.unsubscribe("level3", mine, 40)
-
-		return true
-	})
-}
-
-/*
-unsubscribe writes the batched unsubscribe requests for one channel. A session
-whose socket is already gone has nothing to withdraw, which is not an error:
-the venue drops the subscriptions along with the connection.
-*/
-func (live *Live) unsubscribe(channel string, symbols []string, batch int) {
-	if live == nil || live.Client() == nil || len(symbols) == 0 {
-		return
-	}
-
-	if !live.connected.Load() {
-		live.forgetSubscription(channel, symbols)
-
-		return
-	}
-
-	for group := range slices.Chunk(symbols, batch) {
-		if err := live.Write(kraken.NewChannelUnsubscription(channel, group)); err != nil {
-			live.fail(errnie.Err(
-				errnie.IO,
-				fmt.Sprintf("websocket: unsubscribe %s failed", channel),
-				err,
-			))
-		}
-	}
-
-	live.forgetSubscription(channel, symbols)
-}
-
-func (live *Live) forgetSubscription(channel string, symbols []string) {
-	live.publicMu.Lock()
-	defer live.publicMu.Unlock()
-
-	groups := live.public[channel]
-
-	for index := range groups {
-		groups[index] = slices.DeleteFunc(groups[index], func(symbol string) bool {
-			return slices.Contains(symbols, symbol)
-		})
-	}
-
-	live.public[channel] = slices.DeleteFunc(groups, func(group []string) bool {
-		return len(group) == 0
-	})
-}
-
-func (live *Live) restoreSubscriptions() error {
-	client := live.Client()
-
-	if len(live.symbols) > 0 {
-		return live.subscribeLevel3Group(live)
-	}
-
-	live.publicMu.RLock()
-	defer live.publicMu.RUnlock()
-
-	for channel, groups := range live.public {
-		for _, group := range groups {
-			var err error
-
-			switch channel {
-			case "ticker":
-				err = client.SubTicker(group)
-			case "trade":
-				err = client.SubTrades(group)
-			}
-
-			if err != nil {
-				return errnie.Err(errnie.IO, "websocket: failed to restore "+channel+" subscription", err)
-			}
-		}
-	}
-
-	return nil
 }
 
 func (live *Live) SubL3(symbols []string) {
-	if live.operationalError() != nil {
-		return
-	}
-
 	if live.Status() != runtime.BUSY && live.Status() != runtime.READY {
-		live.fail(errnie.Err(
+		live.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"websocket: level3 subscription requires a connected session",
 			nil,
@@ -1362,7 +682,7 @@ func (live *Live) SubL3(symbols []string) {
 
 			if valid && conn != nil && conn.Error() == nil {
 				if err := live.subscribeLevel3Group(conn); err != nil {
-					live.fail(err)
+					live.Error(err)
 				}
 
 				continue
@@ -1370,12 +690,11 @@ func (live *Live) SubL3(symbols []string) {
 		}
 
 		conn := NewWithClient(
-			live.ctx,
+			live.Context(),
 			live.simulator,
 			live.auth,
 			system.Cfg.WebSocket.Endpoints.Level3,
 			live.level3ClientFor(),
-			live.capture,
 		)
 
 		if conn.Error() != nil {
@@ -1386,27 +705,9 @@ func (live *Live) SubL3(symbols []string) {
 		live.AttachLevel3(groupKey, conn)
 
 		if err := live.subscribeLevel3Group(conn); err != nil {
-			live.fail(err)
+			live.Error(err)
 			return
 		}
-	}
-}
-
-/*
-resyncLevel3 replaces one divergent subscription on its owning socket. The
-ordered writes withdraw the old stream before requesting an authoritative
-snapshot. A failed write is a visible transport failure; it is never ignored.
-*/
-func (live *Live) resyncLevel3(symbol string) {
-	if err := live.Write(kraken.NewChannelUnsubscription("level3", []string{symbol})); err != nil {
-		live.fail(errnie.Err(errnie.IO, "websocket: level3 recovery unsubscribe failed", err))
-		return
-	}
-
-	if err := live.Client().SubPrivate("level3", map[string]any{
-		"params": map[string]any{"symbol": []string{symbol}, "depth": viper.GetInt("market.l3_depth"), "snapshot": true},
-	}); err != nil {
-		live.fail(errnie.Err(errnie.IO, "websocket: level3 recovery snapshot request failed", err))
 	}
 }
 
@@ -1430,7 +731,7 @@ func (live *Live) subscribeLevel3Group(conn *Live) error {
 
 	for group := range slices.Chunk(conn.symbols, 40) {
 		conn.book.Expect(group)
-		if err := conn.Client().SubPrivate("level3", map[string]any{
+		if err := conn.client.Load().SubPrivate("level3", map[string]any{
 			"params": map[string]any{"symbol": group, "depth": viper.GetInt("market.l3_depth"), "snapshot": true},
 		}); err != nil {
 			err = errnie.Err(
@@ -1467,13 +768,7 @@ func (live *Live) AttachLevel3(groupKey string, conn *Live) {
 		live.level3 = &sync.Map{}
 	}
 
-	childFailure := live.fail
-	conn.SetFailure(childFailure)
 	live.level3.Store(groupKey, conn)
-
-	if live.Status() == runtime.READY {
-		conn.MarkReady()
-	}
 }
 
 /*
@@ -1542,7 +837,7 @@ func (live *Live) Book(symbol string, read func(*book.Book)) {
 
 func (live *Live) Balance() (*kraken.Balance, error) {
 	if live.model == "real" {
-		response, err := live.Client().REST.Balances()
+		response, err := live.client.Load().REST.Balances()
 
 		if err != nil {
 			return nil, errnie.Error(errnie.Err(
@@ -1564,7 +859,7 @@ func (live *Live) TradesHistory() (spot.TradesHistoryResult, error) {
 		offset := 0
 
 		for {
-			response, err := live.Client().REST.TradesHistory(&spot.TradesHistoryRequest{
+			response, err := live.client.Load().REST.TradesHistory(&spot.TradesHistoryRequest{
 				Type:             "all",
 				Trades:           true,
 				Start:            0,
@@ -1600,33 +895,33 @@ func (live *Live) TradesHistory() (spot.TradesHistoryResult, error) {
 }
 
 func (live *Live) OpenOrders() (spot.OpenOrdersResult, error) {
-	if live.model != "real" {
-		return live.paper.OpenOrders()
+	if live.model == "real" {
+		response, err := live.client.Load().REST.OpenOrders(&spot.OpenOrdersRequest{Trades: true})
+
+		if err != nil {
+			return spot.OpenOrdersResult{}, errnie.Error(err)
+		}
+
+		return response.Result, nil
 	}
 
-	response, err := live.Client().REST.OpenOrders(&spot.OpenOrdersRequest{Trades: true})
-
-	if err != nil {
-		return spot.OpenOrdersResult{}, errnie.Error(err)
-	}
-
-	return response.Result, nil
+	return live.paper.OpenOrders()
 }
 
 func (live *Live) CancelOrder(
 	request *spot.CancelOrderRequest,
 ) (spot.CancelResult, error) {
-	if live.model != "real" {
-		return live.paper.CancelOrder(request)
+	if live.model == "real" {
+		response, err := live.client.Load().REST.CancelOrder(request)
+
+		if err != nil {
+			return spot.CancelResult{}, errnie.Error(err)
+		}
+
+		return response.Result, nil
 	}
 
-	response, err := live.Client().REST.CancelOrder(request)
-
-	if err != nil {
-		return spot.CancelResult{}, errnie.Error(err)
-	}
-
-	return response.Result, nil
+	return live.paper.CancelOrder(request)
 }
 
 func (live *Live) TradeBalance() (*kraken.TradeBalanceResult, error) {
@@ -1700,20 +995,6 @@ func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 		kraken.NewTradeVolumeRequest(symbols),
 	)
 
-	if len(response) > 0 {
-		err := live.captureFrame(
-			"trade_volume", system.Cfg.WebSocket.Endpoints.TradeVolume, response,
-		)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.IO,
-				"[live] capture frame error",
-				err,
-			))
-		}
-	}
-
 	return kraken.NewTradeVolume(response), errnie.Error(err)
 }
 
@@ -1722,7 +1003,7 @@ func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, er
 	// which sent paper orders to Kraken over REST and routed real ones into
 	// the simulator.
 	if live.model == "real" {
-		response, err := live.Client().REST.AddOrder(order)
+		response, err := live.client.Load().REST.AddOrder(order)
 
 		if err != nil {
 			return spot.AddOrderResult{}, errnie.Error(errnie.Err(
@@ -1739,14 +1020,6 @@ func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, er
 }
 
 func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error {
-	if err := live.operationalError(); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[live] write error",
-			err,
-		))
-	}
-
 	for _, callback := range callbacks {
 		live.callbacks.Store(callback.Channel, callback.Message)
 	}
@@ -1754,40 +1027,37 @@ func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error
 	raw, err := params.MarshalJSON()
 
 	if err != nil {
-		live.err = errnie.Err(
+		return live.Error(errnie.Err(
 			errnie.Validation,
 			"[live] write marshal failed",
 			err,
-		)
-		live.fail(err)
-
-		return err
+		))
 	}
 
 	started := time.Now()
 
-	err = live.Client().WriteMessage(
+	err = live.client.Load().WriteMessage(
 		gorillawebsocket.TextMessage, raw,
 	)
+
+	if err != nil {
+		return live.Error(errnie.Err(
+			errnie.IO,
+			"[live] write failed",
+			err,
+		))
+	}
 
 	if live.simulator != nil {
 		live.simulator.Record(WEBSOCKET, time.Since(started))
 	}
 
-	if err != nil {
-		err = errnie.Err(
-			errnie.IO,
-			"[live] write failed",
-			err,
-		)
-	}
-
-	return err
+	return nil
 }
 
 func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
 	started := time.Now()
-	request, err := live.Client().REST.NewRequest(options)
+	request, err := live.client.Load().REST.NewRequest(options)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -1844,36 +1114,5 @@ func (live *Live) Post(
 		Path:   path,
 		Method: "POST",
 		Body:   params,
-	})
-}
-
-func (live *Live) Close() {
-	live.closeOnce.Do(func() {
-		live.closing.Store(true)
-		live.cancel()
-
-		if live.pinger != nil {
-			live.pinger.Stop()
-		}
-
-		if live.level3 != nil {
-			live.level3.Range(func(_, value any) bool {
-				child, valid := value.(*Live)
-
-				if valid && child != nil {
-					child.Close()
-				}
-
-				return true
-			})
-		}
-
-		if live.connected.Load() && live.Error() == nil && live.Client() != nil {
-			errnie.Error(live.Client().Disconnect())
-		}
-
-		if live.Error() == nil && live.status != nil {
-			live.status.Transition(runtime.DONE)
-		}
 	})
 }

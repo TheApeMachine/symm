@@ -2,298 +2,274 @@ package toxicity
 
 import (
 	"context"
-	"fmt"
+	"iter"
 	"time"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
 )
 
-/*
-Signal is the book-touch liquidity-disposition instrument. It composes its
-market entities in its constructor and exposes the canonical signal structure:
-Constructor, Name, Error, Step, Close. It satisfies
-nomagique/runtime.Node[*types.Envelope], dispatching on the envelope's TypeID:
-a Level3 envelope updates the retained per-symbol touch and projects the
-book-touch disposition measurement; a Trade envelope matches against that
-symbol's last retained touch to attribute fill.
-*/
-type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-
-	level3 *Level3
-	trade  *Trade
+type tradeInput struct {
+	Price    float64
+	Qty      float64
+	Side     string
+	BidPrice float64
+	AskPrice float64
+	BidQty   float64
+	AskQty   float64
+	At       time.Time
 }
 
-/*
-NewSignal composes the Level3 (book-touch) and Trade (executed-flow) entities.
-*/
-func NewSignal(ctx context.Context) *Signal {
-	ctx, cancel := context.WithCancel(ctx)
-
-	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		level3: NewLevel3(),
-		trade:  NewTrade(),
-	}
+type tradeResult struct {
+	BracketQty       float64
+	MatchedBidQty    float64
+	MatchedAskQty    float64
+	TouchFillBidQty  float64
+	TouchFillAskQty  float64
+	TouchFillBidFrac float64
+	TouchFillAskFrac float64
+	TouchFillBidRate float64
+	TouchFillAskRate float64
+	HasRate          bool
+	BidReading       adaptive.BaselineReading
+	AskReading       adaptive.BaselineReading
+	BidSupported     bool
+	AskSupported     bool
 }
 
-func (signal *Signal) Name() string { return "toxicity" }
-
-func (signal *Signal) Error() error { return signal.err }
-
-func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
-	if signal.err != nil {
-		errnie.Error(signal.Close())
-		return nil
-	}
-
-	switch envelope.TypeID {
-	case types.EnvelopeLevel3:
-		if envelope.Level3Data.Bids == nil && envelope.Level3Data.Asks == nil {
-			return envelope
-		}
-
-		envelope.Toxicity = signal.StepLevel3(envelope.Level3Data)
-	case types.EnvelopeTrade:
-		envelope.Toxicity = signal.StepTrade(envelope.TradeData)
-	}
-
-	return envelope
-}
-
-func (signal *Signal) StepLevel3(message kraken.Level3Data) *data.Measurement[float64] {
-	measurement := signal.level3.Step(message)
-
-	if measurement != nil {
-		if measurement.Provenance == nil {
-			measurement.Provenance = map[string]string{}
-		}
-
-		// README §11.1: preserve the attribution source. This entity observes
-		// the book touch only, so the attribution is always touch-only
-		// bracketing; full-book previous-level observation would be recorded
-		// here when a full-book feed supplies Q_1(P_0).
-		measurement.Provenance["previous_level_disposition"] = "touch_only_bracketing"
-	}
-
-	return measurement
-}
-
-func (signal *Signal) StepTrade(tick kraken.TradeData) *data.Measurement[float64] {
-	bidPrice, askPrice, bidQty, askQty, found := signal.level3.Touch(tick.Symbol)
-
-	if !found {
-		return nil
-	}
-
-	return signal.trade.Step(tick, bidPrice, askPrice, bidQty, askQty)
-}
-
-func (signal *Signal) Close() error {
-	if signal.cancel != nil {
-		signal.cancel()
-	}
-
-	if err := signal.level3.Close(); err != nil {
-		return err
-	}
-
-	return signal.trade.Close()
-}
-
-type tradeState struct {
-	graph              *TradeGraph
+type tradePipeline struct {
+	*core.PrimitiveError
 	bracketQty         float64
 	matchedBidQty      float64
 	matchedAskQty      float64
-	lastSec            float64
-	lastNsec           float64
-	prevSec            float64
-	prevNsec           float64
-	hasTime            bool
+	touchFillBidQty    float64
+	touchFillAskQty    float64
 	hasPrevTime        bool
+	prevTime           time.Time
+	bidBaseline        core.Primitive
+	askBaseline        core.Primitive
 	bidFractionSamples int
 	askFractionSamples int
+	out                tradeResult
+}
+
+func newTradePipeline() core.Primitive {
+	return &tradePipeline{
+		PrimitiveError: core.NewPrimitiveError(),
+		bidBaseline:    adaptive.NewBaseline(adaptive.NewWindow()),
+		askBaseline:    adaptive.NewBaseline(adaptive.NewWindow()),
+	}
+}
+
+func (op *tradePipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			input := (*tradeInput)(arriving)
+
+			if input.Price <= 0 || input.Qty <= 0 {
+				continue
+			}
+
+			inBracket := (input.Price >= input.BidPrice && input.Price <= input.AskPrice)
+			if inBracket {
+				op.bracketQty += input.Qty
+			}
+
+			var bidFillFrac, askFillFrac float64
+
+			if input.Side == "sell" && input.Price == input.BidPrice {
+				op.matchedBidQty += input.Qty
+				op.touchFillBidQty += input.Qty
+				if input.BidQty > 0 {
+					bidFillFrac = op.touchFillBidQty / input.BidQty
+				}
+			}
+
+			if input.Side == "buy" && input.Price == input.AskPrice {
+				op.matchedAskQty += input.Qty
+				op.touchFillAskQty += input.Qty
+				if input.AskQty > 0 {
+					askFillFrac = op.touchFillAskQty / input.AskQty
+				}
+			}
+
+			var bidRate, askRate float64
+			var hasRate bool
+
+			if op.hasPrevTime {
+				dt := input.At.Sub(op.prevTime).Seconds()
+				if dt > 0 {
+					bidRate = op.touchFillBidQty / dt
+					askRate = op.touchFillAskQty / dt
+					hasRate = true
+				}
+			}
+
+			op.prevTime = input.At
+			op.hasPrevTime = true
+
+			var bidReading, askReading adaptive.BaselineReading
+
+			if bidFillFrac > 0 {
+				for rPtr := range op.bidBaseline.Next(transport.NewOne(unsafe.Pointer(&bidFillFrac)).Next(nil)) {
+					bidReading = *(*adaptive.BaselineReading)(rPtr)
+				}
+				op.bidFractionSamples++
+			}
+
+			if askFillFrac > 0 {
+				for rPtr := range op.askBaseline.Next(transport.NewOne(unsafe.Pointer(&askFillFrac)).Next(nil)) {
+					askReading = *(*adaptive.BaselineReading)(rPtr)
+				}
+				op.askFractionSamples++
+			}
+
+			op.out = tradeResult{
+				BracketQty:       op.bracketQty,
+				MatchedBidQty:    op.matchedBidQty,
+				MatchedAskQty:    op.matchedAskQty,
+				TouchFillBidQty:  op.touchFillBidQty,
+				TouchFillAskQty:  op.touchFillAskQty,
+				TouchFillBidFrac: bidFillFrac,
+				TouchFillAskFrac: askFillFrac,
+				TouchFillBidRate: bidRate,
+				TouchFillAskRate: askRate,
+				HasRate:          hasRate,
+				BidReading:       bidReading,
+				AskReading:       askReading,
+				BidSupported:     op.bidFractionSamples >= 3,
+				AskSupported:     op.askFractionSamples >= 3,
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
 }
 
 /*
-Trade matches incoming trades against the symbol's retained book touch.
-It owns one Primitive graph per symbol.
+Trade matches incoming trades against the symbol's book touch. It holds no
+state and no logic of its own: its entire behavior is one nomagique pipeline
+over the measurement itself — every stage writes its facts into the measurement
+where it computes them, and the workload's register owns the measurement's lifetime.
 */
 type Trade struct {
-	states     map[string]*tradeState
-	symbol     string
-	at         time.Time
-	projection *data.Projection
-	finite     core.Primitive
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
+}
+
+func NewTrade(ctx context.Context) *Trade {
+	return &Trade{
+		System:   runtime.NewSystem(ctx, "toxicity:trade"),
+		pipeline: nomagique.NewNumber(newTradePipeline()),
+	}
 }
 
 /*
-NewTrade constructs the Trade entity with per-symbol Primitive compositions.
+Step supplies the arriving measurement to the pipeline and returns it: the
+measurement is the pipeline's state, enriched in place.
 */
-func NewTrade() *Trade {
-	entity := &Trade{states: make(map[string]*tradeState), projection: tradeProjection(), finite: logic.NewFinite()}
-	entity.projection.Identity = entity.identity
-	return entity
-}
-
-func (trade *Trade) Close() error { return nil }
-
-/*
-Step matches one trade against the given touch and projects the fill attribution.
-*/
-func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQty float64) *data.Measurement[float64] {
-	if bidPrice == 0 || askPrice == 0 {
+func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	if m == nil {
 		return nil
 	}
 
-	for _, value := range []float64{tick.Price.Float64(), tick.Qty, bidPrice, askPrice, bidQty, askQty} {
-		if !finiteHolds(trade.finite, value) || value < 0 {
-			return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: finite non-negative trade and touch values required")}
+	if m.Err != nil {
+		return m
+	}
+
+	if m.Metadata == nil {
+		m.Metadata = make(map[string]float64)
+	}
+
+	input := tradeInput{
+		Price:    m.Metrics["price"].Raw,
+		Qty:      m.Metrics["qty"].Raw,
+		Side:     m.Provenance["side"],
+		BidPrice: m.Metrics["best_price:bid"].Raw,
+		AskPrice: m.Metrics["best_price:ask"].Raw,
+		BidQty:   m.Metrics["touch_quantity:bid"].Raw,
+		AskQty:   m.Metrics["touch_quantity:ask"].Raw,
+		At:       m.At,
+	}
+
+	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+		res := (*tradeResult)(out)
+
+		m.Metrics["bracket_trade_quantity"] = m.Metrics["bracket_trade_quantity"].Write(res.BracketQty)
+		m.Metrics["matched_touch_trade_quantity:bid"] = m.Metrics["matched_touch_trade_quantity:bid"].Write(res.MatchedBidQty)
+		m.Metrics["matched_touch_trade_quantity:ask"] = m.Metrics["matched_touch_trade_quantity:ask"].Write(res.MatchedAskQty)
+		m.Metrics["touch_fill_quantity:bid"] = m.Metrics["touch_fill_quantity:bid"].Write(res.TouchFillBidQty)
+		m.Metrics["touch_fill_quantity:ask"] = m.Metrics["touch_fill_quantity:ask"].Write(res.TouchFillAskQty)
+		m.Metrics["touch_fill_fraction:bid"] = m.Metrics["touch_fill_fraction:bid"].Write(res.TouchFillBidFrac)
+		m.Metrics["touch_fill_fraction:ask"] = m.Metrics["touch_fill_fraction:ask"].Write(res.TouchFillAskFrac)
+
+		if res.HasRate {
+			m.Metrics["touch_fill_rate:bid"] = m.Metrics["touch_fill_rate:bid"].Write(res.TouchFillBidRate)
+			m.Metrics["touch_fill_rate:ask"] = m.Metrics["touch_fill_rate:ask"].Write(res.TouchFillAskRate)
+		}
+
+		if res.TouchFillBidFrac > 0 && res.BidReading.HasPrior {
+			m.Metrics["fill_fraction_baseline:bid"] = m.Metrics["fill_fraction_baseline:bid"].Write(res.BidReading.Baseline)
+			m.Metrics["fill_fraction_divergence:bid"] = m.Metrics["fill_fraction_divergence:bid"].Write(res.BidReading.Residual)
+			m.Metrics["fill_fraction_zscore:bid"] = m.Metrics["fill_fraction_zscore:bid"].Write(res.BidReading.ZScore)
+		}
+
+		if res.TouchFillAskFrac > 0 && res.AskReading.HasPrior {
+			m.Metrics["fill_fraction_baseline:ask"] = m.Metrics["fill_fraction_baseline:ask"].Write(res.AskReading.Baseline)
+			m.Metrics["fill_fraction_divergence:ask"] = m.Metrics["fill_fraction_divergence:ask"].Write(res.AskReading.Residual)
+			m.Metrics["fill_fraction_zscore:ask"] = m.Metrics["fill_fraction_zscore:ask"].Write(res.AskReading.ZScore)
+		}
+
+		if res.BidSupported {
+			m.Metadata[data.MetadataSupport] = res.BidReading.Count
+			m.Metadata[data.MetadataDivergence] = res.BidReading.Residual
+			if res.BidReading.VarianceDefined {
+				m.Metadata[data.MetadataNoiseVariance] = res.BidReading.Variance
+			}
+		}
+
+		if res.AskSupported {
+			m.Metadata[data.MetadataSupport] = res.AskReading.Count
+			m.Metadata[data.MetadataDivergence] = res.AskReading.Residual
+			if res.AskReading.VarianceDefined {
+				m.Metadata[data.MetadataNoiseVariance] = res.AskReading.Variance
+			}
 		}
 	}
-	if tick.Qty <= 0 || tick.Price.Sign() <= 0 || (tick.Side != "buy" && tick.Side != "sell") {
-		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: positive execution and known aggressor side required")}
-	}
-	sec := float64(tick.Timestamp.Unix())
-	nsec := float64(tick.Timestamp.Nanosecond())
 
-	state, found := trade.states[tick.Symbol]
-
-	if !found {
-		state = &tradeState{graph: newTradeGraph()}
-		trade.states[tick.Symbol] = state
-	}
-
-	if state.hasTime {
-		if sec < state.lastSec || (sec == state.lastSec && nsec < state.lastNsec) {
-			return nil
-		}
-	}
-
-	if state.hasTime {
-		state.prevSec = state.lastSec
-		state.prevNsec = state.lastNsec
-		state.hasPrevTime = true
-	}
-
-	if !state.hasTime {
-		state.prevSec = sec
-		state.prevNsec = nsec
-		state.hasPrevTime = false
-	}
-
-	state.lastSec = sec
-	state.lastNsec = nsec
-	state.hasTime = true
-
-	tradePrice := tick.Price.Float64()
-	tradeQty := tick.Qty
-
-	state.bracketQty += tradeQty
-
-	if tick.Side == "sell" && tradePrice == bidPrice {
-		state.matchedBidQty += tradeQty
-	}
-
-	if tick.Side == "buy" && tradePrice == askPrice {
-		state.matchedAskQty += tradeQty
-	}
-
-	bidFillQty := state.matchedBidQty
-	askFillQty := state.matchedAskQty
-
-	bidFillFraction := 0.0
-
-	if bidQty > 0 {
-		bidFillFraction = bidFillQty / bidQty
-	}
-
-	askFillFraction := 0.0
-
-	if askQty > 0 {
-		askFillFraction = askFillQty / askQty
-	}
-
-	trade.symbol = tick.Symbol
-	trade.at = tick.Timestamp
-
-	input := TradeInput{
-		BracketQty: state.bracketQty, MatchedBidQty: state.matchedBidQty, MatchedAskQty: state.matchedAskQty,
-		TouchFillBidQty: bidFillQty, TouchFillAskQty: askFillQty,
-		TouchFillBidFrac: bidFillFraction, TouchFillAskFrac: askFillFraction,
-	}
-	deltaT := (sec - state.prevSec) + (nsec-state.prevNsec)*1e-9
-
-	if state.hasPrevTime && deltaT > 0 {
-		input.TouchFillBidRate = bidFillQty / deltaT
-		input.TouchFillAskRate = askFillQty / deltaT
-		input.HasRate = true
-	}
-
-	if bidFillFraction > 0 {
-		state.bidFractionSamples++
-	}
-
-	if askFillFraction > 0 {
-		state.askFractionSamples++
-	}
-
-	input.BidSupported = state.bidFractionSamples >= 3
-	input.AskSupported = state.askFractionSamples >= 3
-	fieldsEval := transport.NewEvaluate(state.graph)
-	var fields data.ProjectionInput
-
-	for out := range fieldsEval.Next(transport.NewValues(input).Next(nil)) {
-		fields = *(*data.ProjectionInput)(out)
-	}
-
-	err := fieldsEval.Error()
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	resultEval := transport.NewEvaluate(trade.projection)
-	var measurement *data.Measurement[float64]
-
-	for out := range resultEval.Next(transport.NewValues(fields).Next(nil)) {
-		measurement = *(**data.Measurement[float64])(out)
-	}
-
-	err = resultEval.Error()
-
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-
-	return measurement
-}
-
-func (trade *Trade) identity() (string, string, time.Time, time.Time) {
-	return fmt.Sprintf("toxicity:trade:%s:%d", trade.symbol, trade.at.UnixNano()),
-		trade.symbol,
-		trade.at,
-		trade.at
+	m.Finalize()
+	return m
 }
 
 /*
-finiteHolds reports whether one value passes the Finite primitive.
+Register returns the measurement declaring this entity's full metric schema.
+Values are empty; the workload uses this at startup to allocate the metric
+schema before feeding streaming records.
 */
-func finiteHolds(finite core.Primitive, value float64) bool {
-	holdsEval := transport.NewEvaluate(finite)
-	var holds bool
-
-	for out := range holdsEval.Next(transport.NewValues(value).Next(nil)) {
-		holds = *(*bool)(out)
-	}
-
-	return holdsEval.Error() == nil && holds
+func (trade *Trade) Register() *data.Measurement[float64] {
+	return data.NewMeasurement[float64]("toxicity:trade", map[string]data.Metric[float64]{
+		"bracket_trade_quantity":             data.NewMetric[float64]("bracket_trade_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"matched_touch_trade_quantity:bid":   data.NewMetric[float64]("matched_touch_trade_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"matched_touch_trade_quantity:ask":   data.NewMetric[float64]("matched_touch_trade_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"touch_fill_quantity:bid":            data.NewMetric[float64]("touch_fill_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"touch_fill_quantity:ask":            data.NewMetric[float64]("touch_fill_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"touch_fill_fraction:bid":            data.NewMetric[float64]("touch_fill_fraction:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"touch_fill_fraction:ask":            data.NewMetric[float64]("touch_fill_fraction:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"touch_fill_rate:bid":                data.NewMetric[float64]("touch_fill_rate:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"touch_fill_rate:ask":                data.NewMetric[float64]("touch_fill_rate:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"fill_fraction_baseline:bid":         data.NewMetric[float64]("fill_fraction_baseline:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"fill_fraction_baseline:ask":         data.NewMetric[float64]("fill_fraction_baseline:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"fill_fraction_divergence:bid":       data.NewMetric[float64]("fill_fraction_divergence:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"fill_fraction_divergence:ask":       data.NewMetric[float64]("fill_fraction_divergence:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"fill_fraction_zscore:bid":           data.NewMetric[float64]("fill_fraction_zscore:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"fill_fraction_zscore:ask":           data.NewMetric[float64]("fill_fraction_zscore:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+	})
 }

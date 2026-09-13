@@ -133,6 +133,7 @@ cognitive:
   reset_on_boot: true
 
 market:
+  model: paper
   quote_currency: USD
   balance: 200 # No, this is not a typo, or test amoutn, this is the exact amount I found in my 
                # Kraken account, and it is the only money I am willing to trade with.

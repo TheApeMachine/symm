@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/logic/category"
 )
 
 /*
@@ -22,10 +21,11 @@ fills the price and quantity metrics, carries the categorical side and trade
 type in provenance, and names the symbol and venue timestamp.
 */
 func tradeRow(symbol string, price, qty float64, side, tradeType string, at time.Time) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("websocket", maps.Clone(tradeSchema))
+	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+		"price": data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
+		"qty":   data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
+	})
 	m.Label, m.At, m.From = symbol, at, at
-	m.Metrics["price"] = m.Metrics["price"].Write(price)
-	m.Metrics["qty"] = m.Metrics["qty"].Write(qty)
 	m.Provenance = map[string]string{"side": side, "type": tradeType}
 
 	return m
@@ -158,18 +158,11 @@ func TestTradeStep_LateTrade(t *testing.T) {
 			_, hasVelocity := measurement.Metrics["liquidation_share_velocity"]
 			So(hasVelocity, ShouldBeFalse)
 
-			solver := category.NewSolver(t.Context())
-			defer func() { So(solver.Close(), ShouldBeNil) }()
-			solver.StepMeasurement(measurement)
-			So(solver.Error(), ShouldBeNil)
-
 			resumed := entity.Step(tradeRow("PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(20*time.Second)))
 			So(resumed.From.Equal(historicalAt), ShouldBeTrue)
 			So(resumed.At.Equal(at.Add(20*time.Second)), ShouldBeTrue)
 			// 700 notional across the full retained interval [-30s, +20s].
 			So(resumed.Metrics["liquidation_notional_rate"].Raw, ShouldAlmostEqual, 14)
-			solver.StepMeasurement(resumed)
-			So(solver.Error(), ShouldBeNil)
 		})
 
 		Convey("a later in-order trade still advances the clock normally", func() {

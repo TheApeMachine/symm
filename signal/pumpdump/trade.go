@@ -1,319 +1,272 @@
 package pumpdump
 
 import (
+	"context"
 	"fmt"
-	"math"
+	"iter"
 	"time"
+	"unsafe"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-type tradeState struct {
-	quantityTarget      *QuantityTarget
-	rateReading         adaptive.BaselineReading
-	rateResidual        core.Primitive
-	returnResidual      core.Primitive
-	returnRateResidual  core.Primitive
-	accumulatedQty      float64
-	accumulatedNotional float64
-	barTradeCount       float64
-	barStart            time.Time
-	hasBarStart         bool
-	prevTradeTime       time.Time
-	hasPrevTradeTime    bool
-	barOrdinal          float64
-	barOpenMidpoint     float64
-	hasBarOpenMidpoint  bool
-	prevLogReturn       float64
-	hasPrevLogReturn    bool
-	prevNotionalRate    float64
-	hasPrevNotionalRate bool
+type tradeEntityInput struct {
+	Price float64
+	Qty   float64
+	At    time.Time
 }
 
-/*
-Trade owns the volume-clock activity pipeline.
-It accumulates trades into volume bars sized adaptively by median transaction size,
-measuring throughput rates and response price dynamics without Frame or Wire blocks.
-*/
-type Trade struct {
-	api    *websocket.API
-	states map[string]*tradeState
+type tradeEntityResult struct {
+	TradePrice        float64
+	TradeQty          float64
+	TradeNotional     float64
+	TargetQty         float64
+	BarQty            float64
+	BarNotional       float64
+	BarTradeCount     float64
+	BarDuration       float64
+	Interval          float64
+	HasInterval       bool
+	VolumeRate        float64
+	NotionalRate      float64
+	TradeRate         float64
+	HasRates          bool
+	CompletedBars     float64
+	NotionalReading   adaptive.BaselineReading
+	NotionalRateRatio float64
 }
 
-func NewTrade(api *websocket.API) *Trade {
-	return &Trade{
-		api:    api,
-		states: make(map[string]*tradeState),
+type tradeEntityPipeline struct {
+	*core.PrimitiveError
+	hasTrade         bool
+	prevTradeTime    time.Time
+	barStartTime     time.Time
+	targetQty        float64
+	tradeCount       float64
+	barQty           float64
+	barNotional      float64
+	barTradeCount    float64
+	completedBars    float64
+	notionalBaseline core.Primitive
+	out              tradeEntityResult
+}
+
+func newTradeEntityPipeline() core.Primitive {
+	return &tradeEntityPipeline{
+		PrimitiveError:   core.NewPrimitiveError(),
+		notionalBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
 	}
 }
 
-func (trade *Trade) Close() error {
-	return nil
-}
+func (op *tradeEntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			input := (*tradeEntityInput)(arriving)
 
-func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
-	price := tick.Price.Float64()
-	qty := tick.Qty
+			notional := input.Price * input.Qty
 
-	if price <= 0 || qty <= 0 {
-		return &data.Measurement[float64]{Err: fmt.Errorf(
-			"pumpdump: non-positive trade (price=%f, qty=%f)", price, qty,
-		)}
-	}
+			if !op.hasTrade {
+				op.targetQty = input.Qty
+				op.barStartTime = input.At
+			}
+			if op.hasTrade {
+				op.targetQty = (op.targetQty*op.tradeCount + input.Qty) / (op.tradeCount + 1)
+			}
+			op.tradeCount++
 
-	state, found := trade.states[tick.Symbol]
+			var interval float64
+			var hasInterval bool
 
-	if !found {
-		state = &tradeState{
-			quantityTarget:     newQuantityTarget(),
-			rateResidual:       adaptive.NewBaseline(adaptive.NewWindow()),
-			returnResidual:     adaptive.NewBaseline(adaptive.NewWindow()),
-			returnRateResidual: adaptive.NewBaseline(adaptive.NewWindow()),
-		}
-		trade.states[tick.Symbol] = state
-	}
-
-	if state.hasPrevTradeTime && tick.Timestamp.Before(state.prevTradeTime) {
-		return nil
-	}
-	notional := price * qty
-	targetQtyEval := transport.NewEvaluate(state.quantityTarget)
-	var targetQty float64
-
-	for out := range targetQtyEval.Next(transport.NewValues(qty).Next(nil)) {
-		targetQty = *(*float64)(out)
-	}
-
-	err := targetQtyEval.Error()
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	if targetQty <= 0 {
-		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: invalid observed quantity target %g", targetQty)}
-	}
-
-	if !state.hasBarStart {
-		state.barStart = tick.Timestamp
-		state.hasBarStart = true
-	}
-
-	state.accumulatedQty += qty
-	state.accumulatedNotional += notional
-	state.barTradeCount++
-
-	var intervalSeconds float64
-	hasInterval := state.hasPrevTradeTime
-
-	if hasInterval {
-		intervalSeconds = tick.Timestamp.Sub(state.prevTradeTime).Seconds()
-	}
-
-	state.prevTradeTime = tick.Timestamp
-	state.hasPrevTradeTime = true
-
-	duration := tick.Timestamp.Sub(state.barStart).Seconds()
-	id := fmt.Sprintf("pumpdump:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64]("pumpdump", nil)
-	measurement.Label, measurement.At, measurement.From = tick.Symbol, tick.Timestamp, tick.Timestamp
-	measurement.Metadata = make(map[string]float64)
-
-	putPumpDumpMetric(measurement, "trade_price", price, data.UnitRate)
-	putPumpDumpMetric(measurement, "trade_quantity", qty, data.UnitCount)
-	putPumpDumpMetric(measurement, "trade_notional", notional, data.UnitCount)
-	putPumpDumpMetric(measurement, "volume_bar_target_quantity", targetQty, data.UnitCount)
-	putPumpDumpMetric(measurement, "volume_bar_quantity", state.accumulatedQty, data.UnitCount)
-	putPumpDumpMetric(measurement, "volume_bar_notional", state.accumulatedNotional, data.UnitCount)
-	putPumpDumpMetric(measurement, "volume_bar_trade_count", state.barTradeCount, data.UnitCount)
-	putPumpDumpMetric(measurement, "volume_bar_duration", duration, data.UnitSecond)
-
-	if hasInterval {
-		putPumpDumpMetric(measurement, "trade_interval_seconds", intervalSeconds, data.UnitSecond)
-	}
-
-	putPumpDumpMetric(measurement, "completed_volume_bar_ordinal", state.barOrdinal, data.UnitCount)
-
-	// Midpoint quote resolution
-	var currentMidpoint float64
-	var hasMidpoint bool
-
-	trade.api.Book(tick.Symbol, func(spotbook *book.Book) {
-		if spotbook == nil || spotbook.BestBid() == nil || spotbook.BestAsk() == nil {
-			return
-		}
-
-		// SDK Midpoint rounds its 0.5 multiplier to the bid scale; an
-		// integral-price book therefore needs working decimal precision.
-		currentMidpoint = spotbook.BestBid().Price.SetScale(decimal.DefaultScale).
-			Add(spotbook.BestAsk().Price).Div(decimal.NewFromInt64(2)).Float64()
-		hasMidpoint = true
-	})
-
-	if hasMidpoint && !state.hasBarOpenMidpoint {
-		state.barOpenMidpoint = currentMidpoint
-		state.hasBarOpenMidpoint = true
-	}
-
-	// Closure: accumulated >= targetQty && duration > 0
-	if state.accumulatedQty >= targetQty && duration > 0 {
-		state.barOrdinal++
-		putPumpDumpMetric(measurement, "completed_volume_bar_ordinal", state.barOrdinal, data.UnitCount)
-
-		volumeRate := state.accumulatedQty / duration
-		notionalRate := state.accumulatedNotional / duration
-		tradeRate := state.barTradeCount / duration
-
-		putPumpDumpMetric(measurement, "volume_rate", volumeRate, data.UnitPerSecond)
-		putPumpDumpMetric(measurement, "notional_rate", notionalRate, data.UnitPerSecond)
-		putPumpDumpMetric(measurement, "trade_rate", tradeRate, data.UnitPerSecond)
-
-		rateEval := transport.NewEvaluate(state.rateResidual)
-
-		for out := range rateEval.Next(transport.NewValues(notionalRate).Next(nil)) {
-			state.rateReading = *(*adaptive.BaselineReading)(out)
-		}
-
-		err = rateEval.Error()
-		if err != nil {
-			measurement.Err = err
-			return measurement
-		}
-		putPumpDumpMetric(measurement, "notional_rate_baseline", state.rateReading.Baseline, data.UnitPerSecond)
-		putPumpDumpMetric(measurement, "notional_rate_ratio", notionalRate/state.rateReading.Baseline, data.UnitDimensionless)
-
-		// notional_rate_zscore is this entity's headline throughput reading and
-		// the evidence VerticalIgnition reads. The ratio above says how many
-		// times the baseline this bar ran at; the z-score says whether that
-		// distance is large against the estimator's own noise.
-		putResidualReadings(
-			measurement, "notional_rate", state.rateReading, data.UnitPerSecond,
-		)
-
-		// notional_rate says how fast capital is moving through this bar;
-		// notional_rate_velocity says whether that is accelerating. Momentum
-		// and ProfitRun both read the acceleration, not the level.
-		if state.hasPrevNotionalRate {
-			putPumpDumpMetric(
-				measurement, "notional_rate_velocity",
-				notionalRate-state.prevNotionalRate, data.UnitPerSecond,
-			)
-		}
-
-		state.prevNotionalRate = notionalRate
-		state.hasPrevNotionalRate = true
-
-		if hasMidpoint {
-			putPumpDumpMetric(measurement, "midpoint", currentMidpoint, data.UnitRate)
-			putPumpDumpMetric(measurement, "midpoint:at", currentMidpoint, data.UnitRate)
-
-			if state.hasBarOpenMidpoint && state.barOpenMidpoint > 0 {
-				putPumpDumpMetric(measurement, "midpoint:from", state.barOpenMidpoint, data.UnitRate)
-				logReturn := math.Log(currentMidpoint / state.barOpenMidpoint)
-				returnRate := logReturn / duration
-
-				putPumpDumpMetric(measurement, "midpoint_log_return", logReturn, data.UnitDimensionless)
-				putPumpDumpMetric(measurement, "midpoint_return_rate", returnRate, data.UnitPerSecond)
-
-				// OrganicTrend and FadedExhaustion read these two standardized
-				// forms: a bar's move, and that move per second, each against
-				// the run of bars this symbol has already produced.
-				returnsEval := transport.NewEvaluate(state.returnResidual)
-				var returns adaptive.BaselineReading
-
-				for out := range returnsEval.Next(transport.NewValues(logReturn).Next(nil)) {
-					returns = *(*adaptive.BaselineReading)(out)
-				}
-
-				err = returnsEval.Error()
-				if err != nil {
-					measurement.Err = err
-					return measurement
-				}
-				returnRatesEval := transport.NewEvaluate(state.returnRateResidual)
-				var returnRates adaptive.BaselineReading
-
-				for out := range returnRatesEval.Next(transport.NewValues(returnRate).Next(nil)) {
-					returnRates = *(*adaptive.BaselineReading)(out)
-				}
-
-				err = returnRatesEval.Error()
-				if err != nil {
-					measurement.Err = err
-					return measurement
-				}
-				putPumpDumpMetric(measurement, "midpoint_return_baseline", returns.Baseline, data.UnitDimensionless)
-				putResidualReadings(measurement, "midpoint_return", returns, data.UnitDimensionless)
-				putResidualReadings(measurement, "midpoint_return_rate", returnRates, data.UnitPerSecond)
-
-				posReturn := 0.0
-				negReturn := 0.0
-
-				if logReturn > 0 {
-					posReturn = logReturn
-				}
-
-				if logReturn < 0 {
-					negReturn = -logReturn
-				}
-
-				putPumpDumpMetric(measurement, "positive_midpoint_return", posReturn, data.UnitDimensionless)
-				putPumpDumpMetric(measurement, "negative_midpoint_return", negReturn, data.UnitDimensionless)
-
-				if state.hasPrevLogReturn {
-					velocity := logReturn - state.prevLogReturn
-					putPumpDumpMetric(measurement, "midpoint_return_velocity", velocity, data.UnitPerSecond)
-				}
-
-				state.prevLogReturn = logReturn
-				state.hasPrevLogReturn = true
+			if op.hasTrade {
+				interval = input.At.Sub(op.prevTradeTime).Seconds()
+				hasInterval = true
 			}
 
-			state.barOpenMidpoint = currentMidpoint
+			op.prevTradeTime = input.At
+			op.hasTrade = true
+
+			op.barQty += input.Qty
+			op.barNotional += notional
+			op.barTradeCount++
+
+			duration := input.At.Sub(op.barStartTime).Seconds()
+
+			var volumeRate, notionalRate, tradeRate float64
+			var hasRates bool
+			var reading adaptive.BaselineReading
+			var notionalRatio float64
+
+			if hasInterval && duration > 0 && op.barQty >= op.targetQty {
+				volumeRate = op.barQty / duration
+				notionalRate = op.barNotional / duration
+				tradeRate = op.barTradeCount / duration
+				hasRates = true
+				op.completedBars++
+
+				for rPtr := range op.notionalBaseline.Next(transport.NewOne(unsafe.Pointer(&notionalRate)).Next(nil)) {
+					reading = *(*adaptive.BaselineReading)(rPtr)
+				}
+
+				notionalRatio = 1.0
+				if reading.Baseline > 0 {
+					notionalRatio = notionalRate / reading.Baseline
+				}
+			}
+
+			op.out = tradeEntityResult{
+				TradePrice:        input.Price,
+				TradeQty:          input.Qty,
+				TradeNotional:     notional,
+				TargetQty:         op.targetQty,
+				BarQty:            op.barQty,
+				BarNotional:       op.barNotional,
+				BarTradeCount:     op.barTradeCount,
+				BarDuration:       duration,
+				Interval:          interval,
+				HasInterval:       hasInterval,
+				VolumeRate:        volumeRate,
+				NotionalRate:      notionalRate,
+				TradeRate:         tradeRate,
+				HasRates:          hasRates,
+				CompletedBars:     op.completedBars,
+				NotionalReading:   reading,
+				NotionalRateRatio: notionalRatio,
+			}
+
+			if hasRates {
+				op.barQty = 0
+				op.barNotional = 0
+				op.barTradeCount = 0
+				op.barStartTime = input.At
+			}
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
 		}
-
-		// Reset bar state
-		state.accumulatedQty = 0
-		state.accumulatedNotional = 0
-		state.barTradeCount = 0
-		state.barStart = tick.Timestamp
 	}
-
-	// Quality is derived by Finalize from the measurement's own facts. This
-	// entity always carries a throughput estimator, so it always declares its
-	// support: an absent support slot would tell Finalize this is a stateless
-	// direct reading and mark it whole, when in truth it may still be immature.
-	measurement.Metadata[data.MetadataSupport] = state.rateReading.Count
-	if state.rateReading.HasPrior && state.rateReading.VarianceDefined && state.rateReading.Variance > 0 {
-		measurement.Metadata[data.MetadataDivergence] = state.rateReading.Residual
-		measurement.Metadata[data.MetadataNoiseVariance] = state.rateReading.Variance
-	}
-
-	measurement.Finalize()
-
-	return measurement
 }
 
 /*
-putResidualReadings publishes the standardized forms of one metric: its
-divergence from the estimator's prior mean, and that divergence in units of
-the estimator's own dispersion. Both are undefined until a prior exists, so
-nothing is emitted on the first observation rather than a fabricated zero.
-
-The estimator must already have observed this sample; the caller drains its delivery run, so
-that a metric whose raw form is emitted conditionally cannot silently skip the
-update and leave the baseline behind the tape.
+Trade owns the volume-clock activity pipeline. It holds no state and no logic of
+its own: its entire behavior is one nomagique pipeline over the measurement itself —
+every stage writes its facts into the measurement where it computes them, and the
+workload's register owns the measurement's lifetime.
 */
-func putResidualReadings(measurement *data.Measurement[float64], name string, reading adaptive.BaselineReading, unit data.Unit) {
-	if !reading.HasPrior {
-		return
+type Trade struct {
+	*runtime.System
+	pipeline core.Primitive
+	ID       int
+}
+
+func NewTrade(ctx context.Context) *Trade {
+	return &Trade{
+		System:   runtime.NewSystem(ctx, "pumpdump:trade"),
+		pipeline: nomagique.NewNumber(newTradeEntityPipeline()),
+	}
+}
+
+/*
+Step supplies the arriving measurement to the pipeline and returns it: the
+measurement is the pipeline's state, enriched in place.
+*/
+func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	if m == nil {
+		return nil
 	}
 
-	putPumpDumpMetric(measurement, name+"_divergence", reading.Residual, unit)
-	putPumpDumpMetric(measurement, name+"_zscore", reading.ZScore, data.UnitDimensionless)
+	if m.Err != nil {
+		return m
+	}
+
+	price := m.Metrics["price"].Raw
+	qty := m.Metrics["qty"].Raw
+
+	if price <= 0 || qty <= 0 {
+		m.Err = fmt.Errorf("pumpdump: non-positive price or quantity")
+		return m
+	}
+
+	if m.Metadata == nil {
+		m.Metadata = make(map[string]float64)
+	}
+
+	input := tradeEntityInput{
+		Price: price,
+		Qty:   qty,
+		At:    m.At,
+	}
+
+	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+		res := (*tradeEntityResult)(out)
+
+		m.Metrics["trade_price"] = m.Metrics["trade_price"].Write(res.TradePrice)
+		m.Metrics["trade_quantity"] = m.Metrics["trade_quantity"].Write(res.TradeQty)
+		m.Metrics["trade_notional"] = m.Metrics["trade_notional"].Write(res.TradeNotional)
+		m.Metrics["volume_bar_target_quantity"] = m.Metrics["volume_bar_target_quantity"].Write(res.TargetQty)
+		m.Metrics["volume_bar_quantity"] = m.Metrics["volume_bar_quantity"].Write(res.BarQty)
+		m.Metrics["volume_bar_notional"] = m.Metrics["volume_bar_notional"].Write(res.BarNotional)
+		m.Metrics["volume_bar_trade_count"] = m.Metrics["volume_bar_trade_count"].Write(res.BarTradeCount)
+		m.Metrics["volume_bar_duration"] = m.Metrics["volume_bar_duration"].Write(res.BarDuration)
+
+		if res.HasInterval {
+			m.Metrics["trade_interval_seconds"] = m.Metrics["trade_interval_seconds"].Write(res.Interval)
+		}
+
+		if res.HasRates {
+			m.Metrics["volume_rate"] = m.Metrics["volume_rate"].Write(res.VolumeRate)
+			m.Metrics["notional_rate"] = m.Metrics["notional_rate"].Write(res.NotionalRate)
+			m.Metrics["trade_rate"] = m.Metrics["trade_rate"].Write(res.TradeRate)
+			m.Metrics["completed_volume_bar_ordinal"] = m.Metrics["completed_volume_bar_ordinal"].Write(res.CompletedBars)
+			m.Metrics["notional_rate_baseline"] = m.Metrics["notional_rate_baseline"].Write(res.NotionalReading.Baseline)
+			m.Metrics["notional_rate_ratio"] = m.Metrics["notional_rate_ratio"].Write(res.NotionalRateRatio)
+
+			m.Metadata[data.MetadataSupport] = res.NotionalReading.Count
+
+			if res.NotionalReading.HasPrior {
+				m.Metrics["notional_rate_divergence"] = m.Metrics["notional_rate_divergence"].Write(res.NotionalReading.Residual)
+				m.Metrics["notional_rate_zscore"] = m.Metrics["notional_rate_zscore"].Write(res.NotionalReading.ZScore)
+				m.Metadata[data.MetadataDivergence] = res.NotionalReading.Residual
+
+				if res.NotionalReading.VarianceDefined {
+					m.Metadata[data.MetadataNoiseVariance] = res.NotionalReading.Variance
+				}
+			}
+		}
+	}
+
+	m.Finalize()
+	return m
+}
+
+/*
+Register returns the measurement declaring this entity's full metric schema.
+Values are empty; the workload uses this at startup to allocate the metric
+schema before feeding streaming records.
+*/
+func (trade *Trade) Register() *data.Measurement[float64] {
+	return data.NewMeasurement[float64]("pumpdump:trade", map[string]data.Metric[float64]{
+		"trade_price":                  data.NewMetric[float64]("trade_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"trade_quantity":               data.NewMetric[float64]("trade_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"trade_notional":               data.NewMetric[float64]("trade_notional", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"volume_bar_target_quantity":   data.NewMetric[float64]("volume_bar_target_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"volume_bar_quantity":          data.NewMetric[float64]("volume_bar_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"volume_bar_notional":          data.NewMetric[float64]("volume_bar_notional", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"volume_bar_trade_count":       data.NewMetric[float64]("volume_bar_trade_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"volume_bar_duration":          data.NewMetric[float64]("volume_bar_duration", data.UnitSecond, data.TimescaleInstantaneous, 0, 1),
+		"completed_volume_bar_ordinal": data.NewMetric[float64]("completed_volume_bar_ordinal", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"trade_interval_seconds":       data.NewMetric[float64]("trade_interval_seconds", data.UnitSecond, data.TimescaleInstantaneous, 0, 1),
+		"volume_rate":                  data.NewMetric[float64]("volume_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"notional_rate":                data.NewMetric[float64]("notional_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"trade_rate":                   data.NewMetric[float64]("trade_rate", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"notional_rate_baseline":       data.NewMetric[float64]("notional_rate_baseline", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"notional_rate_ratio":          data.NewMetric[float64]("notional_rate_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"notional_rate_divergence":     data.NewMetric[float64]("notional_rate_divergence", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"notional_rate_zscore":         data.NewMetric[float64]("notional_rate_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+	})
 }

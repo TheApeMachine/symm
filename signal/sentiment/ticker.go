@@ -6,8 +6,10 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/crosssection"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -25,10 +27,18 @@ type Ticker struct {
 }
 
 func NewTicker(ctx context.Context) *Ticker {
+	prices := store.NewLatest[string, float64]()
+	changes := store.NewLatest[string, data.CrossMember]()
+
 	return &Ticker{
 		System: runtime.NewSystem(ctx, "sentiment:ticker"),
 		pipeline: nomagique.NewNumber(
 			data.NewMetricGate("last"),
+			crosssection.NewUpdateMember("last", prices, changes),
+			crosssection.NewStampPeers(changes),
+			crosssection.NewChangeCounts(),
+			crosssection.NewChangeMedian(),
+			crosssection.NewChangeBaseline(),
 			data.NewFinalizer[float64](),
 		),
 	}
