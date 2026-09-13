@@ -29,7 +29,6 @@ func NewTicker(ctx context.Context) *Ticker {
 		System: runtime.NewSystem(ctx, "sentiment:ticker"),
 		pipeline: nomagique.NewNumber(
 			data.NewMetricGate("last"),
-			data.NewCrossSectionFacts("last"),
 			data.NewFinalizer[float64](),
 		),
 	}

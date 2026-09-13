@@ -9,36 +9,37 @@ import (
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
 /*
-flowState is one symbol's cumulative execution accounting and its causal
-timeline head.
+Quantity owns the signed executed-quantity arithmetic: each arrival's
+aggressor-signed quantity accumulates into the running sums, and the sums'
+facts are written where they are computed.
 */
-type flowState struct {
-	buyQty, sellQty, buyNotional, sellNotional float64
-	buyCount, sellCount                        float64
-	from, at                                   time.Time
-	baseline                                   core.Primitive
-	velocity                                   core.Primitive
+type Quantity struct {
+	err       error
+	buyQty    core.Primitive
+	sellQty   core.Primitive
+	grossQty  core.Primitive
+	netQty    core.Primitive
+	buyCount  core.Primitive
+	sellCount core.Primitive
 }
 
-/*
-Flow owns the cumulative executed-flow arithmetic for every symbol. Each
-arrival is accounted where it is computed: every metric is written into the
-measurement at computation time, and undefined facts stay unwritten.
-*/
-type Flow struct {
-	err    error
-	states map[string]*flowState
+func NewQuantity() core.Primitive {
+	return &Quantity{
+		buyQty:    statistic.NewSum(),
+		sellQty:   statistic.NewSum(),
+		grossQty:  statistic.NewSum(),
+		netQty:    statistic.NewSum(),
+		buyCount:  statistic.NewSum(),
+		sellCount: statistic.NewSum(),
+	}
 }
 
-func NewFlow() core.Primitive {
-	return &Flow{states: make(map[string]*flowState)}
-}
-
-func (op *Flow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Quantity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
@@ -51,30 +52,47 @@ func (op *Flow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			state, existing := op.states[m.Label]
+			quantity := m.Metrics["qty"].Raw
+			buy := m.Provenance["side"] == "buy"
 
-			if !existing {
-				state = &flowState{
-					from:     m.At,
-					baseline: adaptive.NewBaseline(adaptive.NewWindow()),
-					velocity: temporal.NewVelocity(),
-				}
-				op.states[m.Label] = state
+			one, zero := 1.0, 0.0
+			signed := quantity
+			if !buy {
+				signed = -quantity
 			}
 
-			// A genuinely late event's facts are already accounted in the
-			// cumulative totals it preceded; it advances nothing.
-			if existing && m.At.Before(state.at) {
-				if !yield(arriving) {
-					return
-				}
+			net := drive[float64, float64](op.netQty, &signed)
+			gross := drive[float64, float64](op.grossQty, &quantity)
 
-				continue
+			buyCount, sellCount := 0.0, 0.0
+			buyTotal, sellTotal := 0.0, 0.0
+
+			if buy {
+				buyCount = drive[float64, float64](op.buyCount, &one)
+				sellCount = drive[float64, float64](op.sellCount, &zero)
+				buyTotal = drive[float64, float64](op.buyQty, &quantity)
+				sellTotal = drive[float64, float64](op.sellQty, &zero)
 			}
 
-			op.observe(m, state)
+			if !buy {
+				buyCount = drive[float64, float64](op.buyCount, &zero)
+				sellCount = drive[float64, float64](op.sellCount, &one)
+				buyTotal = drive[float64, float64](op.buyQty, &zero)
+				sellTotal = drive[float64, float64](op.sellQty, &quantity)
+			}
 
-			state.at = m.At
+			m.Metrics["trade_count:buy"] = m.Metrics["trade_count:buy"].Write(buyCount)
+			m.Metrics["trade_count:sell"] = m.Metrics["trade_count:sell"].Write(sellCount)
+			m.Metrics["trade_count"] = m.Metrics["trade_count"].Write(buyCount + sellCount)
+			m.Metrics["executed_quantity:buy"] = m.Metrics["executed_quantity:buy"].Write(buyTotal)
+			m.Metrics["executed_quantity:sell"] = m.Metrics["executed_quantity:sell"].Write(sellTotal)
+			m.Metrics["gross_executed_quantity"] = m.Metrics["gross_executed_quantity"].Write(gross)
+			m.Metrics["net_executed_quantity"] = m.Metrics["net_executed_quantity"].Write(net)
+			m.Metrics["cumulative_volume_delta"] = m.Metrics["cumulative_volume_delta"].Write(net)
+
+			if gross > 0 {
+				m.Metrics["signed_count_fraction"] = m.Metrics["signed_count_fraction"].Write((buyCount - sellCount) / (buyCount + sellCount))
+			}
 
 			if !yield(arriving) {
 				return
@@ -83,7 +101,7 @@ func (op *Flow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 }
 
-func (op *Flow) Error(errs ...error) error {
+func (op *Quantity) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {
 			op.err = errors.Join(op.err, err)
@@ -94,82 +112,194 @@ func (op *Flow) Error(errs ...error) error {
 }
 
 /*
-observe accounts one execution into the symbol's cumulative state and writes
-every defined flow metric into the measurement where it is computed.
+Notional owns the signed executed-notional arithmetic and its causal view:
+each arrival's aggressor-signed price×quantity accumulates into the running
+sums, the fractions derive from the sums, and the signed net fraction is
+tracked against its own adaptive baseline.
 */
-func (op *Flow) observe(m *data.Measurement[float64], state *flowState) {
-	price := m.Metrics["price"].Raw
-	quantity := m.Metrics["qty"].Raw
-	notional := price * quantity
-	buy := m.Provenance["side"] == "buy"
+type Notional struct {
+	err    error
+	from   time.Time
+	at     time.Time
+	buy    core.Primitive
+	sell   core.Primitive
+	gross  core.Primitive
+	net    core.Primitive
+	reader core.Primitive
+}
 
-	if buy {
-		state.buyQty += quantity
-		state.buyNotional += notional
-		state.buyCount++
+func NewNotional() core.Primitive {
+	return &Notional{
+		buy:    statistic.NewSum(),
+		sell:   statistic.NewSum(),
+		gross:  statistic.NewSum(),
+		net:    statistic.NewSum(),
+		reader: adaptive.NewBaseline(adaptive.NewWindow()),
 	}
+}
 
-	if !buy {
-		state.sellQty += quantity
-		state.sellNotional += notional
-		state.sellCount++
+func (op *Notional) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			m := *(**data.Measurement[float64])(arriving)
+
+			if m.Err != nil {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			notional := m.Metrics["price"].Raw * m.Metrics["qty"].Raw
+			buy := m.Provenance["side"] == "buy"
+
+			zero := 0.0
+			signed := notional
+			if !buy {
+				signed = -notional
+			}
+
+			net := drive[float64, float64](op.net, &signed)
+			gross := drive[float64, float64](op.gross, &notional)
+
+			buyTotal, sellTotal := 0.0, 0.0
+
+			if buy {
+				buyTotal = drive[float64, float64](op.buy, &notional)
+				sellTotal = drive[float64, float64](op.sell, &zero)
+			}
+
+			if !buy {
+				buyTotal = drive[float64, float64](op.buy, &zero)
+				sellTotal = drive[float64, float64](op.sell, &notional)
+			}
+
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]float64, 3)
+			}
+
+			m.Metrics["aggressive_notional:buy"] = m.Metrics["aggressive_notional:buy"].Write(buyTotal)
+			m.Metrics["aggressive_notional:sell"] = m.Metrics["aggressive_notional:sell"].Write(sellTotal)
+			m.Metrics["gross_notional"] = m.Metrics["gross_notional"].Write(gross)
+			m.Metrics["net_notional"] = m.Metrics["net_notional"].Write(net)
+			m.Metrics["cumulative_notional_delta"] = m.Metrics["cumulative_notional_delta"].Write(net)
+
+			if tradeCount := m.Metrics["trade_count"].Raw; tradeCount > 0 {
+				m.Metrics["mean_trade_notional"] = m.Metrics["mean_trade_notional"].Write(gross / tradeCount)
+			}
+
+			if gross > 0 {
+				fraction := net / gross
+				m.Metrics["signed_net_fraction"] = m.Metrics["signed_net_fraction"].Write(fraction)
+
+				reading := drive[float64, adaptive.BaselineReading](op.reader, &fraction)
+
+				if reading.HasPrior {
+					m.Metrics["signed_net_fraction_baseline"] = m.Metrics["signed_net_fraction_baseline"].Write(reading.Baseline)
+					m.Metrics["signed_net_fraction_divergence"] = m.Metrics["signed_net_fraction_divergence"].Write(reading.Residual)
+					m.Metrics["signed_net_fraction_zscore"] = m.Metrics["signed_net_fraction_zscore"].Write(reading.ZScore)
+					m.Metadata[data.MetadataDivergence] = reading.Residual
+
+					if reading.VarianceDefined {
+						m.Metadata[data.MetadataNoiseVariance] = reading.Variance
+					}
+				}
+			}
+
+			if !yield(arriving) {
+				return
+			}
+		}
 	}
+}
 
-	tradeCount := state.buyCount + state.sellCount
-	gross := state.buyNotional + state.sellNotional
-	net := state.buyNotional - state.sellNotional
-	grossQty := state.buyQty + state.sellQty
-	netQty := state.buyQty - state.sellQty
-	elapsed := float64(m.At.Sub(state.from)) / float64(time.Second)
-	signedCount := (state.buyCount - state.sellCount) / tradeCount
-	signedNet := net / gross
-	reading := drive[float64, adaptive.BaselineReading](state.baseline, &signedNet)
-
-	m.Metrics["trade_count"] = m.Metrics["trade_count"].Write(tradeCount)
-	m.Metrics["trade_count:buy"] = m.Metrics["trade_count:buy"].Write(state.buyCount)
-	m.Metrics["trade_count:sell"] = m.Metrics["trade_count:sell"].Write(state.sellCount)
-	m.Metrics["executed_quantity:buy"] = m.Metrics["executed_quantity:buy"].Write(state.buyQty)
-	m.Metrics["executed_quantity:sell"] = m.Metrics["executed_quantity:sell"].Write(state.sellQty)
-	m.Metrics["gross_executed_quantity"] = m.Metrics["gross_executed_quantity"].Write(grossQty)
-	m.Metrics["net_executed_quantity"] = m.Metrics["net_executed_quantity"].Write(netQty)
-	m.Metrics["cumulative_volume_delta"] = m.Metrics["cumulative_volume_delta"].Write(netQty)
-	m.Metrics["aggressive_notional:buy"] = m.Metrics["aggressive_notional:buy"].Write(state.buyNotional)
-	m.Metrics["aggressive_notional:sell"] = m.Metrics["aggressive_notional:sell"].Write(state.sellNotional)
-	m.Metrics["gross_notional"] = m.Metrics["gross_notional"].Write(gross)
-	m.Metrics["net_notional"] = m.Metrics["net_notional"].Write(net)
-	m.Metrics["mean_trade_notional"] = m.Metrics["mean_trade_notional"].Write(gross / tradeCount)
-	m.Metrics["cumulative_notional_delta"] = m.Metrics["cumulative_notional_delta"].Write(net)
-	m.Metrics["signed_count_fraction"] = m.Metrics["signed_count_fraction"].Write(signedCount)
-	m.Metrics["signed_net_fraction"] = m.Metrics["signed_net_fraction"].Write(signedNet)
-	m.Metrics["cvd_epoch_from"] = m.Metrics["cvd_epoch_from"].Write(float64(state.from.UnixNano()) / float64(time.Second))
-
-	m.From = state.from
-
-	m.Metadata[data.MetadataSupport] = reading.Count
-
-	if reading.HasPrior {
-		m.Metrics["signed_net_fraction_baseline"] = m.Metrics["signed_net_fraction_baseline"].Write(reading.Baseline)
-		m.Metrics["signed_net_fraction_divergence"] = m.Metrics["signed_net_fraction_divergence"].Write(reading.Residual)
-		m.Metrics["signed_net_fraction_zscore"] = m.Metrics["signed_net_fraction_zscore"].Write(reading.ZScore)
-		m.Metadata[data.MetadataDivergence] = reading.Residual
-
-		if reading.VarianceDefined {
-			m.Metadata[data.MetadataNoiseVariance] = reading.Variance
+func (op *Notional) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
 
-	if elapsed > 0 {
-		m.Metrics["trade_rate"] = m.Metrics["trade_rate"].Write(tradeCount / elapsed)
-		m.Metrics["gross_notional_rate"] = m.Metrics["gross_notional_rate"].Write(gross / elapsed)
-		m.Metrics["net_notional_rate"] = m.Metrics["net_notional_rate"].Write(net / elapsed)
-		m.Metrics["buy_notional_rate"] = m.Metrics["buy_notional_rate"].Write(state.buyNotional / elapsed)
-		m.Metrics["sell_notional_rate"] = m.Metrics["sell_notional_rate"].Write(state.sellNotional / elapsed)
+	return op.err
+}
 
-		observation := temporal.Observation{Value: net / elapsed, At: m.At.UnixNano()}
-		velocity := drive[temporal.Observation, temporal.VelocityReading](state.velocity, &observation)
+/*
+Rates owns the elapsed-time derivations of the cumulative accounting: rates
+per second and the net notional rate's velocity.
+*/
+type Rates struct {
+	err      error
+	from     time.Time
+	velocity core.Primitive
+}
 
-		if velocity.Defined {
-			m.Metrics["net_notional_rate_velocity"] = m.Metrics["net_notional_rate_velocity"].Write(velocity.Rate)
+func NewRates() core.Primitive {
+	return &Rates{velocity: temporal.NewVelocity()}
+}
+
+func (op *Rates) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			m := *(**data.Measurement[float64])(arriving)
+
+			if m.Err != nil {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			if op.from.IsZero() {
+				op.from = m.At
+			}
+
+			m.From = op.from
+
+			m.Metrics["cvd_epoch_from"] = m.Metrics["cvd_epoch_from"].Write(float64(op.from.UnixNano()) / float64(time.Second))
+
+			elapsed := m.At.Sub(op.from).Seconds()
+
+			if elapsed <= 0 {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			tradeCount := m.Metrics["trade_count"].Raw
+			gross := m.Metrics["gross_notional"].Raw
+			net := m.Metrics["net_notional"].Raw
+
+			m.Metrics["trade_rate"] = m.Metrics["trade_rate"].Write(tradeCount / elapsed)
+			m.Metrics["gross_notional_rate"] = m.Metrics["gross_notional_rate"].Write(gross / elapsed)
+			m.Metrics["net_notional_rate"] = m.Metrics["net_notional_rate"].Write(net / elapsed)
+			m.Metrics["buy_notional_rate"] = m.Metrics["buy_notional_rate"].Write(m.Metrics["aggressive_notional:buy"].Raw / elapsed)
+			m.Metrics["sell_notional_rate"] = m.Metrics["sell_notional_rate"].Write(m.Metrics["aggressive_notional:sell"].Raw / elapsed)
+
+			rate := net / elapsed
+			observation := temporal.Observation{Value: rate, At: m.At.UnixNano()}
+			velocity := drive[temporal.Observation, temporal.VelocityReading](op.velocity, &observation)
+
+			if velocity.Defined {
+				m.Metrics["net_notional_rate_velocity"] = m.Metrics["net_notional_rate_velocity"].Write(velocity.Rate)
+			}
+
+			if !yield(arriving) {
+				return
+			}
 		}
 	}
+}
+
+func (op *Rates) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

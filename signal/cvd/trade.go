@@ -29,7 +29,9 @@ func NewTrade(ctx context.Context) *Trade {
 		System: runtime.NewSystem(ctx, "cvd:trade"),
 		pipeline: nomagique.NewNumber(
 			nmcvd.NewGate(),
-			nmcvd.NewFlow(),
+			nmcvd.NewQuantity(),
+			nmcvd.NewNotional(),
+			nmcvd.NewRates(),
 			data.NewFinalizer[float64](),
 		),
 	}

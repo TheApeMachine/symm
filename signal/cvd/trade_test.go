@@ -1,13 +1,11 @@
 package cvd
 
 import (
-	"context"
 	"math"
 	"maps"
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 )
