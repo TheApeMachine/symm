@@ -3,25 +3,11 @@ package data
 import (
 	"fmt"
 	"iter"
-	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/logic"
 )
-
-/*
-drive evaluates one scalar payload through one primitive.
-*/
-func drive[From, To any](op core.Primitive, payload *From) To {
-	var answer To
-
-	for out := range op.Next(NewValue(payload)) {
-		answer = *(*To)(out)
-	}
-
-	return answer
-}
 
 /*
 MetricGate classifies the arrival against one declared metric: the metric must
@@ -107,15 +93,4 @@ func (op *MetricGate) Error(errs ...error) error {
 	}
 
 	return op.err
-}
-
-/*
-CrossMember is one member's latest retained change facts. It is a plain
-payload: it carries facts between primitives and computes nothing.
-*/
-type CrossMember struct {
-	Label  string
-	Change float64
-	At     time.Time
-	From   time.Time
 }

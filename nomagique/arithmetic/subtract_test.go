@@ -3,21 +3,22 @@ package arithmetic
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestSubtractNext(t *testing.T) {
-	tests.Check(
-		t, tests.Case[float64, float64]{
-			Name: "subtract",
-			Seed: 0.0,
-			Factory: func() core.Primitive {
-				return NewSubtract(0.0)
-			},
-			Reference: func(acc, val float64) float64 {
-				return acc - val
-			},
-		},
-	)
+	Convey("Given the binary subtraction primitive", t, func() {
+		op := NewSubtract()
+
+		Convey("it maps each pair to its difference", func() {
+			So(drive[[2]float64, float64](op, &[2]float64{5, 3}), ShouldEqual, 2)
+			So(drive[[2]float64, float64](op, &[2]float64{3, 5}), ShouldEqual, -2)
+			So(drive[[2]float64, float64](op, &[2]float64{0, 0}), ShouldEqual, 0)
+		})
+
+		Convey("each arrival maps independently: the primitive holds no state", func() {
+			So(drive[[2]float64, float64](op, &[2]float64{1, 1}), ShouldEqual, 0)
+			So(drive[[2]float64, float64](op, &[2]float64{1, 1}), ShouldEqual, 0)
+		})
+	})
 }

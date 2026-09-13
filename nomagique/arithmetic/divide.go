@@ -9,44 +9,41 @@ import (
 )
 
 /*
-Divide owns one field operation. Configuration supplies the value a run starts
-from; recurrence and delivery remain separate Primitives.
+Divide owns one field operation. What arrives is already a pair: the dividend
+and divisor as [2]float64. A zero divisor has no quotient, so the primitive
+yields no fact rather than an infinity; undefined stays unwritten. Each
+arrival maps independently, so the primitive holds no state.
 */
 type Divide struct {
 	err error
-	acc float64
+	out float64
 }
 
 /*
-NewDivide creates a new Divide primitive with the given initial value.
+NewDivide creates the binary division primitive.
 */
-func NewDivide(current float64) core.Primitive {
-	return &Divide{
-		acc: current,
-	}
+func NewDivide() core.Primitive {
+	return &Divide{}
 }
 
-/*
-Next folds the incoming run into the value it was configured with and hands
-that value over after every arrival, operating in-place on the wire pointer.
-*/
 func (op *Divide) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			in := (*float64)(arriving)
-			op.acc /= *in
-			*in = op.acc
+			pair := (*[2]float64)(arriving)
 
-			if !yield(arriving) {
+			if pair[1] == 0 {
+				return
+			}
+
+			op.out = pair[0] / pair[1]
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
 func (op *Divide) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {

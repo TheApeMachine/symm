@@ -9,44 +9,35 @@ import (
 )
 
 /*
-Multiply owns one field operation. Configuration supplies the value a run starts
-from; recurrence and delivery remain separate Primitives.
+Multiply owns one field operation. What arrives is already a pair: the left
+and right operand as [2]float64. Each arrival maps independently, so the
+primitive holds no state.
 */
 type Multiply struct {
 	err error
-	acc float64
+	out float64
 }
 
 /*
-NewMultiply creates a new Multiply primitive with the given initial value.
+NewMultiply creates the binary multiplication primitive.
 */
-func NewMultiply(current float64) core.Primitive {
-	return &Multiply{
-		acc: current,
-	}
+func NewMultiply() core.Primitive {
+	return &Multiply{}
 }
 
-/*
-Next folds the incoming run into the value it was configured with and hands
-that value over after every arrival, operating in-place on the wire pointer.
-*/
 func (op *Multiply) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			in := (*float64)(arriving)
-			op.acc *= *in
-			*in = op.acc
+			pair := (*[2]float64)(arriving)
+			op.out = pair[0] * pair[1]
 
-			if !yield(arriving) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
 }
 
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
 func (op *Multiply) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {

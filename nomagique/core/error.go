@@ -3,12 +3,11 @@ package core
 import "errors"
 
 var (
-	ErrNotHeld      = errors.New("primitive held no value")
-	ErrWrongType    = errors.New("primitive held the wrong type")
-	ErrConversion   = errors.New("primitive failed to convert")
-	ErrDomain       = errors.New("primitive received a value outside its domain")
-	ErrShape        = errors.New("primitive received an incompatible shape")
-	ErrDivideByZero = errors.New("primitive received a zero value for division")
+	ErrNotHeld    = errors.New("primitive held no value")
+	ErrWrongType  = errors.New("primitive held the wrong type")
+	ErrConversion = errors.New("primitive failed to convert")
+	ErrDomain     = errors.New("primitive received a value outside its domain")
+	ErrShape      = errors.New("primitive received an incompatible shape")
 )
 
 type PrimitiveError struct {
