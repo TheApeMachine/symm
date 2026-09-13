@@ -15,12 +15,8 @@ func decimalString(value *decimal.Decimal) string {
 	return value.String()
 }
 
-func floatPointer(value *float64) float64 {
-	if value == nil {
-		return 0
-	}
-
-	return *value
+func timeNs(at time.Time) int64 {
+	return at.UnixNano()
 }
 
 func timePointerNano(at *time.Time) int64 {
@@ -54,25 +50,5 @@ func HoldingWire(holding *Holding) *wire.HoldingT {
 		Mark:            decimalString(holding.Mark),
 		IsOpportunity:   holding.IsOpportunity,
 		ReservationId:   holding.ReservationID,
-	}
-}
-
-func entryCostWire(cost *EntryCost) *wire.EntryCostT {
-	if cost == nil {
-		return nil
-	}
-
-	return &wire.EntryCostT{
-		EntryPrice:         decimalString(cost.EntryPrice),
-		BestAsk:            decimalString(cost.BestAsk),
-		BestBid:            decimalString(cost.BestBid),
-		Midpoint:           decimalString(cost.Midpoint),
-		GrossNotional:      decimalString(cost.GrossNotional),
-		EntryFee:           decimalString(cost.EntryFee),
-		ExitFeeAtBreakEven: decimalString(cost.ExitFeeAtBreakEven),
-		RoundTripFees:      decimalString(cost.RoundTripFees),
-		Spread:             decimalString(cost.Spread),
-		Impact:             decimalString(cost.Impact),
-		BreakEven:          decimalString(cost.BreakEven),
 	}
 }

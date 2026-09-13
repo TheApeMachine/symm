@@ -1,10 +1,7 @@
-import * as flatbuffers from "flatbuffers";
 import { Fragment, useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
-import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import type {
 	HindsightCapture,
 	HindsightEnvelope,
@@ -35,21 +32,7 @@ Nothing here recomputes an artifact. If the live code emitted an incorrect
 value, this shows the incorrect value. That is the evidence.
 */
 
-export const decodeEnvelopeState = (payload: unknown): EnvelopeState | null => {
-	if (typeof payload !== "string" || payload === "") {
-		return null;
-	}
-
-	try {
-		const bytes = Uint8Array.from(atob(payload), (char) => char.charCodeAt(0));
-
-		return EnvelopeState.getRootAsEnvelopeState(
-			new flatbuffers.ByteBuffer(bytes),
-		);
-	} catch {
-		return null;
-	}
-};
+export const decodeEnvelopeState = (_payload: unknown): null => null;
 
 const Field = ({ label, value }: { label: string; value: React.ReactNode }) => (
 	<Flex.Column className="min-w-0">
@@ -383,79 +366,6 @@ type MeasurementReading = {
 	provenance: Array<{ id: string; name: string; value: string }>;
 };
 
-const readMeasurement = (
-	signal: string,
-	measurement: EnvelopeMeasurement,
-): MeasurementReading => {
-	const metrics: MetricReading[] = [];
-
-	for (let position = 0; position < measurement.metricsLength(); position++) {
-		const entry = measurement.metrics(position);
-		const metric = entry?.value();
-
-		if (entry === null || metric === null || metric === undefined) continue;
-
-		const key = entry.key() ?? "";
-
-		metrics.push({
-			id: `${position}:${key}`,
-			key,
-			label: metric.label() ?? "",
-			raw: metric.raw(),
-			normalized: metric.hasNormalized() ? metric.normalized() : null,
-			standardized: metric.hasStandardized() ? metric.standardized() : null,
-			unit: metric.unit() ?? "",
-			timescale: metric.timescale() ?? "",
-		});
-	}
-
-	const metadata: MeasurementReading["metadata"] = [];
-
-	for (let position = 0; position < measurement.metadataLength(); position++) {
-		const entry = measurement.metadata(position);
-
-		if (entry === null) continue;
-
-		metadata.push({
-			id: `${position}:${entry.name()}`,
-			name: entry.name() ?? "",
-			value: entry.value(),
-		});
-	}
-
-	const provenance: MeasurementReading["provenance"] = [];
-
-	for (
-		let position = 0;
-		position < measurement.provenanceLength();
-		position++
-	) {
-		const entry = measurement.provenance(position);
-
-		if (entry === null) continue;
-
-		provenance.push({
-			id: `${position}:${entry.name()}`,
-			name: entry.name() ?? "",
-			value: entry.value() ?? "",
-		});
-	}
-
-	return {
-		signal,
-		id: measurement.id() ?? signal,
-		label: measurement.label() ?? "",
-		source: measurement.source() ?? "",
-		seqIdx: measurement.seqIdx().toString(),
-		at: Number(measurement.atNs()),
-		from: measurement.hasFrom() ? Number(measurement.fromNs()) : null,
-		maturity: measurement.maturity(),
-		snr: measurement.snrDefined() ? measurement.snr() : null,
-		metrics,
-		metadata,
-		provenance,
-	};
-};
 
 /*
 formatValue keeps a metric legible across the range these estimators actually
@@ -1018,15 +928,13 @@ frame's observe boundary. It is Historical Witness: what SYMM actually held,
 not what today's build would now compute.
 */
 export const StatePanel = ({
-	state,
 	resident,
-	envelope,
 	semantics,
 	plain = true,
 }: {
-	state: EnvelopeState | null;
+	state?: unknown;
 	resident: HindsightResident | null;
-	envelope: HindsightEnvelope | null;
+	envelope?: HindsightEnvelope | null;
 	semantics: HindsightMetricMap | null;
 	plain?: boolean;
 }) => {
@@ -1096,319 +1004,60 @@ export const StatePanel = ({
 		return byMetric;
 	}, [resident]);
 
-	const rows = useMemo(() => {
-		if (state === null) {
-			return { categories: [], perspectives: [], boundaries: [] };
-		}
-
-		const categories = Array.from(
-			{ length: state.categoriesLength() },
-			(_, position) => {
-				const category = state.categories(position);
-
-				return category === null
-					? null
-					: {
-							id: `${position}:${category.type()}`,
-							type: category.type() ?? "—",
-							confidence: category.confidence(),
-						};
-			},
-		).filter((row) => row !== null);
-
-		const perspectives = Array.from(
-			{ length: state.perspectiveFramesLength() },
-			(_, position) => {
-				const perspective = state.perspectiveFrames(position);
-
-				return perspective === null
-					? null
-					: {
-							id: `${position}:${perspective.symbol()}`,
-							symbol: perspective.symbol() ?? "—",
-							readings: perspective.readingsLength(),
-						};
-			},
-		).filter((row) => row !== null);
-
-		const boundaries = Array.from(
-			{ length: state.boundariesLength() },
-			(_, position) => {
-				const stamp = state.boundaries(position);
-
-				return stamp === null
-					? null
-					: {
-							id: `${position}:${stamp.label()}`,
-							label: stamp.label() ?? "—",
-							seqCount: stamp.seqCount().toString(),
-						};
-			},
-		).filter((row) => row !== null);
-
-		return { categories, perspectives, boundaries };
-	}, [state]);
-
-	const measurements = useMemo(() => {
-		if (state === null) return [];
-
+	if (resident !== null && residentMeasurements.length > 0) {
 		return (
-			[
-				{ signal: "cvd", value: state.cvd() },
-				{ signal: "hawkes", value: state.hawkes() },
-				{ signal: "depthFlow", value: state.depthFlow() },
-				{ signal: "morphology", value: state.morphology() },
-				{ signal: "liquidity", value: state.liquidity() },
-				{ signal: "correlation", value: state.correlation() },
-				{ signal: "leadLag", value: state.leadLag() },
-				{ signal: "sentiment", value: state.sentiment() },
-				{ signal: "pumpDump", value: state.pumpDump() },
-				{ signal: "toxicity", value: state.toxicity() },
-				{ signal: "derivatives", value: state.derivatives() },
-			] as Array<{ signal: string; value: EnvelopeMeasurement | null }>
-		)
-			.filter(
-				(entry): entry is { signal: string; value: EnvelopeMeasurement } =>
-					entry.value !== null,
-			)
-			.map(({ signal, value }) => readMeasurement(signal, value));
-	}, [state]);
+			<Flex.Column gap={3} className="p-3">
+				<div className="font-mono text-[9px] text-(--f4) leading-relaxed">
+					<span className="text-(--acc)">
+						Resident state as-of this envelope
+					</span>
+					{" · "}latest causally available values, with their exact origins
+					and ages. Examined {resident.examined} envelopes and reached back{" "}
+					{resident.reachedBack} captures.
+				</div>
 
-	/*
-		A measurement's component state version lives on its witness, not in the
-		state payload — the witness is what recorded which resident version
-		actually participated (§19). They are joined here by artifact identity,
-		never by position or by timestamp.
-	*/
-	const versions = useMemo(() => {
-		const byIdentity = new Map<
-			string,
-			{ component: string; version: number }
-		>();
+				<MeasurementPanel
+					measurements={residentMeasurements}
+					semantics={semantics}
+					versions={new Map()}
+					evidence={residentEvidence}
+					plain={plain}
+				/>
 
-		for (const witness of envelope?.witnesses ?? []) {
-			if (witness.artifact.kind !== "measurement") continue;
+				{resident.categories.length > 0 ? (
+					<Section fit="content" surface="sunken">
+						<Section.Header title="Resident categories" size="s" rule />
+						<Section.Body>
+							{resident.categories.map((category) => (
+								<div
+									key={`${category.type}:${category.origin.origin.sequence}:${category.origin.ordinal}`}
+									className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
+								>
+									<span className="text-(--f1)">{category.type}</span>
+									<span className="text-(--f4) tabular-nums">
+										conf {category.confidence.toFixed(3)} · origin{" "}
+										{category.origin.origin.sequence}:
+										{category.origin.ordinal}
+									</span>
+								</div>
+							))}
+						</Section.Body>
+					</Section>
+				) : null}
 
-			byIdentity.set(witness.artifact.identity, {
-				component: witness.component ?? "",
-				version: witness.componentStateVersion ?? 0,
-			});
-		}
-
-		return byIdentity;
-	}, [envelope]);
-
-	/*
-		Category evidence names the metrics it consumed as "source:metric" — the
-		same pair a metric row carries — so the forward edge from a value to the
-		categories that referenced it is an exact identity join, not a guess.
-	*/
-	const evidence = useMemo(() => {
-		const byMetric = new Map<
-			string,
-			Array<{ category: string; stance: string }>
-		>();
-
-		if (state === null) return byMetric;
-
-		for (let position = 0; position < state.categoriesLength(); position++) {
-			const category = state.categories(position);
-
-			if (category === null) continue;
-
-			const name = category.type() ?? "";
-			const add = (identity: string | null, stance: string) => {
-				if (identity === null || identity === "") return;
-
-				const existing = byMetric.get(identity) ?? [];
-				existing.push({ category: name, stance });
-				byMetric.set(identity, existing);
-			};
-
-			for (let index = 0; index < category.supportingLength(); index++) {
-				add(category.supporting(index), "supports");
-			}
-
-			for (let index = 0; index < category.opposingLength(); index++) {
-				add(category.opposing(index), "contradicts");
-			}
-
-			for (let index = 0; index < category.missingLength(); index++) {
-				add(category.missing(index), "missing");
-			}
-		}
-
-		return byMetric;
-	}, [state]);
-
-	if (state === null) {
-		if (resident !== null && residentMeasurements.length > 0) {
-			return (
-				<Flex.Column gap={3} className="p-3">
-					<div className="font-mono text-[9px] text-(--f4) leading-relaxed">
-						<span className="text-(--acc)">
-							Resident state as-of this envelope
-						</span>
-						{" · "}latest causally available values, with their exact origins
-						and ages. Examined {resident.examined} envelopes and reached back{" "}
-						{resident.reachedBack} captures.
-					</div>
-
-					<MeasurementPanel
-						measurements={residentMeasurements}
-						semantics={semantics}
-						versions={new Map()}
-						evidence={residentEvidence}
-						plain={plain}
-					/>
-
-					{resident.categories.length > 0 ? (
-						<Section fit="content" surface="sunken">
-							<Section.Header title="Resident categories" size="s" rule />
-							<Section.Body>
-								{resident.categories.map((category) => (
-									<div
-										key={`${category.type}:${category.origin.origin.sequence}:${category.origin.ordinal}`}
-										className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
-									>
-										<span className="text-(--f1)">{category.type}</span>
-										<span className="text-(--f4) tabular-nums">
-											conf {category.confidence.toFixed(3)} · origin{" "}
-											{category.origin.origin.sequence}:
-											{category.origin.ordinal}
-										</span>
-									</div>
-								))}
-							</Section.Body>
-						</Section>
-					) : null}
-
-					{(resident.unresolved?.length ?? 0) > 0 ? (
-						<p className="font-mono text-[9px] text-(--warn)">
-							Unresolved within this causal walk:{" "}
-							{resident.unresolved?.join(", ")}.
-						</p>
-					) : null}
-				</Flex.Column>
-			);
-		}
-
-		return (
-			<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-				No exact or resident historical state was found at this envelope.
-			</p>
+				{(resident.unresolved?.length ?? 0) > 0 ? (
+					<p className="font-mono text-[9px] text-(--warn)">
+						Unresolved within this causal walk:{" "}
+						{resident.unresolved?.join(", ")}.
+					</p>
+				) : null}
+			</Flex.Column>
 		);
 	}
 
-	const strategy = state.strategy();
-
 	return (
-		<Flex.Column gap={3} className="p-3">
-			<Flex.Row gap={4} className="flex-wrap font-mono text-[9px] text-(--f4)">
-				<span>
-					seq{" "}
-					<span className="text-(--f1) tabular-nums">
-						{state.captureSeq().toString()}
-					</span>
-				</span>
-				<span>
-					ordinal{" "}
-					<span className="text-(--f1) tabular-nums">
-						{state.captureOrdinal().toString()}
-					</span>
-				</span>
-				<span>
-					type <span className="text-(--f1)">{state.typeId()}</span>
-				</span>
-				<span>
-					tick{" "}
-					<span className="text-(--f1) tabular-nums">
-						{state.tick().toString()}
-					</span>
-				</span>
-				<span>
-					key <span className="text-(--f1)">{state.key() ?? "—"}</span>
-				</span>
-			</Flex.Row>
-
-			{measurements.length > 0 ? (
-				<MeasurementPanel
-					measurements={measurements}
-					semantics={semantics}
-					versions={versions}
-					evidence={evidence}
-					plain={plain}
-				/>
-			) : null}
-
-			{rows.categories.length > 0 ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Categories" size="s" rule />
-					<Section.Body>
-						{rows.categories.map((category) => (
-							<div
-								key={category.id}
-								className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
-							>
-								<span className="text-(--f1)">{category.type}</span>
-								<span className="tabular-nums text-(--f4)">
-									conf {category.confidence.toFixed(3)}
-								</span>
-							</div>
-						))}
-					</Section.Body>
-				</Section>
-			) : null}
-
-			{rows.perspectives.length > 0 ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Legacy advisor readings" size="s" rule />
-					<Section.Body>
-						{rows.perspectives.map((perspective) => (
-							<div
-								key={perspective.id}
-								className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
-							>
-								<span className="text-(--f1)">{perspective.symbol}</span>
-								<span className="tabular-nums text-(--f4)">
-									{perspective.readings} readings
-								</span>
-							</div>
-						))}
-					</Section.Body>
-				</Section>
-			) : null}
-
-			{strategy !== null ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Strategy" size="s" rule />
-					<Section.Body>
-						<div className="px-2.5 py-1 font-mono text-[9px] text-(--f1)">
-							{strategy.outcome() ?? "—"} · {strategy.decisionsLength()}{" "}
-							decisions
-						</div>
-					</Section.Body>
-				</Section>
-			) : null}
-
-			{rows.boundaries.length > 0 ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Boundary trace" size="s" rule />
-					<Section.Body>
-						{rows.boundaries.map((stamp) => (
-							<div
-								key={stamp.id}
-								className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
-							>
-								<span className="text-(--f1)">{stamp.label}</span>
-								<span className="tabular-nums text-(--f4)">
-									{stamp.seqCount} seq
-								</span>
-							</div>
-						))}
-					</Section.Body>
-				</Section>
-			) : null}
-		</Flex.Column>
+		<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
+			No exact or resident historical state was found at this envelope.
+		</p>
 	);
 };

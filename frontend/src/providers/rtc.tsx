@@ -8,9 +8,8 @@ import {
 } from "#/collections/app";
 import { topologyStore } from "#/collections/topology";
 import { FluidRecordReader } from "#/components/fluid-3d/record";
-import { Envelope } from "#/providers/telemetry/telemetry/envelope";
-import { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
-import { EnvelopeStateFrame } from "#/providers/telemetry/telemetry/envelope-state-frame";
+import { Message } from "#/providers/telemetry/telemetry/message";
+import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 
 const resonanceChannel = "resonance";
 const diagnosticsChannel = "diagnostics";
@@ -59,34 +58,6 @@ const waitForIceGathering = (connection: RTCPeerConnection) => {
 	});
 };
 
-/*
-decodeEnvelopeState reads the SYMM-identified Envelope wrapper each WebRTC
-record carries and returns the lean EnvelopeState inside its state frame. The
-resonance and diagnostics publishers each build this shape with exactly one
-field populated, so the accessor below is the single shared decode.
-*/
-const decodeState = (bytes: Uint8Array) => {
-	const buffer = new flatbuffers.ByteBuffer(bytes);
-
-	if (!Envelope.bufferHasIdentifier(buffer)) {
-		throw new Error("rtc record is missing its SYMM identifier");
-	}
-
-	const envelope = Envelope.getRootAsEnvelope(buffer);
-	const frame = envelope.frame(new EnvelopeStateFrame());
-
-	if (frame === null) {
-		throw new Error("rtc record is not an EnvelopeStateFrame");
-	}
-
-	const state = frame.state();
-
-	if (state === null) {
-		throw new Error("EnvelopeStateFrame is missing its state");
-	}
-
-	return state;
-};
 
 /*
 RtcFeed owns the global WebRTC transport for the two payload families that left
@@ -223,35 +194,27 @@ export const RtcFeed = () => {
 			});
 
 			openChannel(resonanceChannel, (record) => {
-				const state = decodeState(new Uint8Array(record as ArrayBuffer));
-				const resonance = state.resonance();
+				const bytes = new Uint8Array(record as ArrayBuffer);
+				const buffer = new flatbuffers.ByteBuffer(bytes);
 
-				if (resonance) {
-					storeBatch(() => {
-						addResonanceReading(resonance);
-					});
-				}
-			});
-
-			openChannel(diagnosticsChannel, (record) => {
-				const state = decodeState(new Uint8Array(record as ArrayBuffer));
-				const count = state.boundariesLength();
-
-				if (count === 0) {
+				if (!Message.bufferHasIdentifier(buffer)) {
 					return;
 				}
 
-				const stamps: EnvelopeBoundaryStamp[] = [];
+				const message = Message.getRootAsMessage(buffer);
+				const frame = message.frame(new ResonanceFrame());
 
+				if (!frame) return;
+
+				const count = frame.rowsLength();
 				for (let index = 0; index < count; index += 1) {
-					const stamp = state.boundaries(index, new EnvelopeBoundaryStamp());
-
-					if (stamp) {
-						stamps.push(stamp);
+					const row = frame.rows(index);
+					if (row) {
+						storeBatch(() => {
+							addResonanceReading(row);
+						});
 					}
 				}
-
-				topologyStore.actions.ingest(stamps);
 			});
 
 			try {

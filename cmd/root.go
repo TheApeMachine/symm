@@ -21,8 +21,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/hindsight/recording"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
@@ -31,6 +29,7 @@ import (
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -44,7 +43,6 @@ import (
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -112,58 +110,15 @@ var (
 				return err
 			}
 
-			writer := tables.NewWriter(catalog)
-
 			// The Hindsight inspection reads (runs / captures / persisted states)
 			// are served by the hub over this catalog.
 			hub.SetHindsightStore(catalog)
-
-			// The Hindsight Run identity distinguishes this process capture
-			// session from every other run. It is derived from the process start
-			// instant plus a nonce, so two runs can never share an identity, and
-			// it carries the config digest actually loaded for this run.
-			runID, err := hindsight.NewRunID(processStartedAt)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: derive run identity",
-					err,
-				))
-			}
-
-			rawCapture, err := recording.NewSession(
-				ctx, writer, hindsight.RunIdentity{
-					StartedAt:      processStartedAt,
-					CodeCommit:     buildCodeCommit(),
-					BuildID:        buildBuildID(),
-					ConfigDigest:   configDigest(),
-					SchemaVersions: hindsightSchemaVersions(),
-				}.Resolve(runID),
-				viper.GetInt("hindsight.capture.batch_size"),
-				viper.GetDuration("hindsight.capture.flush_interval"),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"[root] failed to initialize raw capture",
-					err,
-				))
-			}
-
-			defer func() {
-				if err := rawCapture.Close(); err != nil {
-					errnie.Error(err)
-				}
-			}()
 
 			public := websocket.New(
 				ctx,
 				websocket.NewSimulator(),
 				false,
 				system.Cfg.WebSocket.Endpoints.Public,
-				rawCapture,
 			)
 
 			defer public.Close()
@@ -173,7 +128,6 @@ var (
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
-				rawCapture,
 			)
 
 			defer private.Close()
@@ -181,7 +135,6 @@ var (
 			futures := websocket.NewFutures(
 				ctx,
 				system.Cfg.WebSocket.Endpoints.Futures,
-				rawCapture,
 			)
 
 			defer futures.Close()
@@ -209,12 +162,9 @@ var (
 			// Stateful analytical stages are constructed once and mounted directly
 			// in each Workload that produces their inputs. The Workloads themselves
 			// remain the complete topology; there is no secondary observation store.
-			marketState := types.NewMarketState()
-
 			manifoldSolver := manifold.NewSolver(ctx, api)
 			defer manifoldSolver.Close()
 
-			manifoldSolver.SetMarketState(marketState)
 			manifoldSolver.SetViewer(hub)
 			manifoldSolver.Start()
 
@@ -234,6 +184,8 @@ var (
 				))
 			}
 
+			workspaceRegister := store.NewRegister[*data.Measurement[float64]]()
+
 			tickerRing := nmruntime.NewWorkload(
 				ctx, "ticker",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
@@ -245,10 +197,11 @@ var (
 					sentiment.NewTicker(ctx),
 					pumpdump.NewTicker(ctx),
 				}},
+				workspaceRegister,
 			)
 
 			tradeRing := nmruntime.NewWorkload(
-				ctx, "ticker",
+				ctx, "trade",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
 					public,
 				}, {
@@ -257,6 +210,7 @@ var (
 					toxicity.NewTrade(ctx),
 					pumpdump.NewTrade(ctx),
 				}},
+				workspaceRegister,
 			)
 
 			level3Ring := nmruntime.NewWorkload(
@@ -267,6 +221,7 @@ var (
 					toxicity.NewLevel3(ctx),
 					pumpdump.NewLevel3(ctx),
 				}},
+				workspaceRegister,
 			)
 
 			futuresTicker := nmruntime.NewWorkload(
@@ -274,6 +229,7 @@ var (
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
 					derivatives.NewTicker(ctx),
 				}},
+				workspaceRegister,
 			)
 
 			futuresTrade := nmruntime.NewWorkload(
@@ -281,6 +237,7 @@ var (
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
 					derivatives.NewTrade(ctx),
 				}},
+				workspaceRegister,
 			)
 
 			classificationRing := nmruntime.NewWorkload(
@@ -291,6 +248,7 @@ var (
 				}, {
 					cognition.NewSolver(ctx),
 				}},
+				workspaceRegister,
 			)
 
 			resonanceRing := nmruntime.NewWorkload(
@@ -299,6 +257,7 @@ var (
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
 					resonance.NewSolver(ctx, 1.0),
 				}},
+				workspaceRegister,
 			)
 
 			// One training. Nodes in a stage run concurrently against the
@@ -306,7 +265,7 @@ var (
 			// shown — seven of those on one envelope is a concurrent map
 			// write. The tape arrives on a channel because walking the
 			// record is a long read against an object store.
-			tape := measurements(ctx, catalog, runID)
+			tape := strategy.NewTape()
 
 			training := strategy.NewTraining(ctx, tape, instrument, price, balance, api)
 			hub.SetTradeStore(training)
@@ -316,8 +275,9 @@ var (
 				ctx,
 				"trainer",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					strategy.NewTraining(ctx, tape),
+					training,
 				}},
+				workspaceRegister,
 			)
 
 			workspace := nmruntime.NewWorkspace(
@@ -330,6 +290,7 @@ var (
 				}, {
 					trainerRing,
 				}},
+				workspaceRegister,
 			)
 
 			// Subscribe and seed while transports remain BUSY. Only a complete

@@ -197,8 +197,88 @@ taskForecast():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
+forwardCurve(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
+}
+
+forwardCurveLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+forwardCurveArray():Float64Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
+}
+
+forwardRetention(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
+}
+
+forwardRetentionLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+forwardRetentionArray():Float64Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
+}
+
+supportedHorizon():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 58);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+calibrated():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 60);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+resolvedSteps():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 62);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+readout(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 64);
+  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
+}
+
+readoutLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 64);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+readoutArray():Float64Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 64);
+  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
+}
+
+confidence():number {
+  const offset = this.bb!.__offset(this.bb_pos, 66);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+lastResolutionPrediction():number {
+  const offset = this.bb!.__offset(this.bb_pos, 68);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+lastResolutionTarget():number {
+  const offset = this.bb!.__offset(this.bb_pos, 70);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+lastResolutionError():number {
+  const offset = this.bb!.__offset(this.bb_pos, 72);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
 static startResonance(builder:flatbuffers.Builder) {
-  builder.startObject(25);
+  builder.startObject(35);
 }
 
 static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
@@ -364,9 +444,99 @@ static addTaskForecast(builder:flatbuffers.Builder, taskForecast:number) {
   builder.addFieldFloat64(24, taskForecast, 0.0);
 }
 
+static addForwardCurve(builder:flatbuffers.Builder, forwardCurveOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(25, forwardCurveOffset, 0);
+}
+
+static createForwardCurveVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
+/**
+ * @deprecated This Uint8Array overload will be removed in the future.
+ */
+static createForwardCurveVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
+static createForwardCurveVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
+  builder.startVector(8, data.length, 8);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addFloat64(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startForwardCurveVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(8, numElems, 8);
+}
+
+static addForwardRetention(builder:flatbuffers.Builder, forwardRetentionOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(26, forwardRetentionOffset, 0);
+}
+
+static createForwardRetentionVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
+/**
+ * @deprecated This Uint8Array overload will be removed in the future.
+ */
+static createForwardRetentionVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
+static createForwardRetentionVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
+  builder.startVector(8, data.length, 8);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addFloat64(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startForwardRetentionVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(8, numElems, 8);
+}
+
+static addSupportedHorizon(builder:flatbuffers.Builder, supportedHorizon:bigint) {
+  builder.addFieldInt64(27, supportedHorizon, BigInt('0'));
+}
+
+static addCalibrated(builder:flatbuffers.Builder, calibrated:boolean) {
+  builder.addFieldInt8(28, +calibrated, +false);
+}
+
+static addResolvedSteps(builder:flatbuffers.Builder, resolvedSteps:bigint) {
+  builder.addFieldInt64(29, resolvedSteps, BigInt('0'));
+}
+
+static addReadout(builder:flatbuffers.Builder, readoutOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(30, readoutOffset, 0);
+}
+
+static createReadoutVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
+/**
+ * @deprecated This Uint8Array overload will be removed in the future.
+ */
+static createReadoutVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
+static createReadoutVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
+  builder.startVector(8, data.length, 8);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addFloat64(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startReadoutVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(8, numElems, 8);
+}
+
+static addConfidence(builder:flatbuffers.Builder, confidence:number) {
+  builder.addFieldFloat64(31, confidence, 0.0);
+}
+
+static addLastResolutionPrediction(builder:flatbuffers.Builder, lastResolutionPrediction:number) {
+  builder.addFieldFloat64(32, lastResolutionPrediction, 0.0);
+}
+
+static addLastResolutionTarget(builder:flatbuffers.Builder, lastResolutionTarget:number) {
+  builder.addFieldFloat64(33, lastResolutionTarget, 0.0);
+}
+
+static addLastResolutionError(builder:flatbuffers.Builder, lastResolutionError:number) {
+  builder.addFieldFloat64(34, lastResolutionError, 0.0);
+}
+
 static endResonance(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
-  builder.requiredField(offset, 4) // source
   builder.requiredField(offset, 6) // symbol
   return offset;
 }
@@ -398,7 +568,17 @@ unpack(): ResonanceT {
     (this.forecast() !== null ? this.forecast()!.unpack() : null),
     (this.dynamics() !== null ? this.dynamics()!.unpack() : null),
     (this.verdict() !== null ? this.verdict()!.unpack() : null),
-    this.taskForecast()
+    this.taskForecast(),
+    this.bb!.createScalarList<number>(this.forwardCurve.bind(this), this.forwardCurveLength()),
+    this.bb!.createScalarList<number>(this.forwardRetention.bind(this), this.forwardRetentionLength()),
+    this.supportedHorizon(),
+    this.calibrated(),
+    this.resolvedSteps(),
+    this.bb!.createScalarList<number>(this.readout.bind(this), this.readoutLength()),
+    this.confidence(),
+    this.lastResolutionPrediction(),
+    this.lastResolutionTarget(),
+    this.lastResolutionError()
   );
 }
 
@@ -429,6 +609,16 @@ unpackTo(_o: ResonanceT): void {
   _o.dynamics = (this.dynamics() !== null ? this.dynamics()!.unpack() : null);
   _o.verdict = (this.verdict() !== null ? this.verdict()!.unpack() : null);
   _o.taskForecast = this.taskForecast();
+  _o.forwardCurve = this.bb!.createScalarList<number>(this.forwardCurve.bind(this), this.forwardCurveLength());
+  _o.forwardRetention = this.bb!.createScalarList<number>(this.forwardRetention.bind(this), this.forwardRetentionLength());
+  _o.supportedHorizon = this.supportedHorizon();
+  _o.calibrated = this.calibrated();
+  _o.resolvedSteps = this.resolvedSteps();
+  _o.readout = this.bb!.createScalarList<number>(this.readout.bind(this), this.readoutLength());
+  _o.confidence = this.confidence();
+  _o.lastResolutionPrediction = this.lastResolutionPrediction();
+  _o.lastResolutionTarget = this.lastResolutionTarget();
+  _o.lastResolutionError = this.lastResolutionError();
 }
 }
 
@@ -458,7 +648,17 @@ constructor(
   public forecast: ResonanceForecastT|null = null,
   public dynamics: ResonanceDynamicsT|null = null,
   public verdict: ResonanceVerdictT|null = null,
-  public taskForecast: number = 0.0
+  public taskForecast: number = 0.0,
+  public forwardCurve: (number)[] = [],
+  public forwardRetention: (number)[] = [],
+  public supportedHorizon: bigint = BigInt('0'),
+  public calibrated: boolean = false,
+  public resolvedSteps: bigint = BigInt('0'),
+  public readout: (number)[] = [],
+  public confidence: number = 0.0,
+  public lastResolutionPrediction: number = 0.0,
+  public lastResolutionTarget: number = 0.0,
+  public lastResolutionError: number = 0.0
 ){}
 
 
@@ -474,6 +674,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const forecast = (this.forecast !== null ? this.forecast!.pack(builder) : 0);
   const dynamics = (this.dynamics !== null ? this.dynamics!.pack(builder) : 0);
   const verdict = (this.verdict !== null ? this.verdict!.pack(builder) : 0);
+  const forwardCurve = Resonance.createForwardCurveVector(builder, this.forwardCurve);
+  const forwardRetention = Resonance.createForwardRetentionVector(builder, this.forwardRetention);
+  const readout = Resonance.createReadoutVector(builder, this.readout);
 
   Resonance.startResonance(builder);
   Resonance.addSource(builder, source);
@@ -501,6 +704,16 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   Resonance.addDynamics(builder, dynamics);
   Resonance.addVerdict(builder, verdict);
   Resonance.addTaskForecast(builder, this.taskForecast);
+  Resonance.addForwardCurve(builder, forwardCurve);
+  Resonance.addForwardRetention(builder, forwardRetention);
+  Resonance.addSupportedHorizon(builder, this.supportedHorizon);
+  Resonance.addCalibrated(builder, this.calibrated);
+  Resonance.addResolvedSteps(builder, this.resolvedSteps);
+  Resonance.addReadout(builder, readout);
+  Resonance.addConfidence(builder, this.confidence);
+  Resonance.addLastResolutionPrediction(builder, this.lastResolutionPrediction);
+  Resonance.addLastResolutionTarget(builder, this.lastResolutionTarget);
+  Resonance.addLastResolutionError(builder, this.lastResolutionError);
 
   return Resonance.endResonance(builder);
 }

@@ -5,20 +5,18 @@ import { equityStore } from "#/collections/app";
 import { learningStore } from "#/collections/learning";
 import { learningFixture } from "#/components/learning/fixture";
 import { Balance } from "#/components/balance";
-import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 
 /*
-encodeStateWithEquity builds a real EnvelopeState buffer carrying an equity
-frame, the same shape types.Envelope.EncodeBytes produces on the Go side. The
-test decodes it back rather than hand-building a stub, so a schema field that
-stopped being written would actually fail here.
+encodeEquityFrame builds a real EquityFrame buffer, the same shape the wire
+produces on the Go side. The test decodes it back rather than hand-building a stub,
+so a schema field that stopped being written would actually fail here.
 */
-const encodeStateWithEquity = (
+const encodeEquityFrame = (
 	cash: string,
 	unrealized: string,
 	equity: string,
-): EnvelopeState => {
+): EquityFrame => {
 	const builder = new flatbuffers.Builder(0);
 
 	const cashOffset = builder.createString(cash);
@@ -31,13 +29,9 @@ const encodeStateWithEquity = (
 	EquityFrame.addEquity(builder, equityOffset);
 	const frame = EquityFrame.endEquityFrame(builder);
 
-	EnvelopeState.startEnvelopeState(builder);
-	EnvelopeState.addEquity(builder, frame);
-	const state = EnvelopeState.endEnvelopeState(builder);
+	builder.finish(frame);
 
-	builder.finish(state);
-
-	return EnvelopeState.getRootAsEnvelopeState(
+	return EquityFrame.getRootAsEquityFrame(
 		new flatbuffers.ByteBuffer(builder.asUint8Array()),
 	);
 };
@@ -70,12 +64,11 @@ describe("Balance", () => {
 		expect(markup).toContain("—");
 	});
 
-	it("renders the valuation carried on an envelope state", () => {
-		const state = encodeStateWithEquity("1000", "-25.5", "974.5");
-		const equity = state.equity(new EquityFrame());
+	it("renders the valuation carried on an equity frame", () => {
+		const equity = encodeEquityFrame("1000", "-25.5", "974.5");
 
 		expect(equity).not.toBeNull();
-		equityStore.actions.add(equity as EquityFrame);
+		equityStore.actions.add(equity);
 
 		const markup = renderToStaticMarkup(<Balance />);
 
@@ -91,9 +84,7 @@ describe("Balance", () => {
 	*/
 	it("hides the lambo while the book is down", () => {
 		equityStore.actions.add(
-			encodeStateWithEquity("1000", "-25.5", "974.5").equity(
-				new EquityFrame(),
-			) as EquityFrame,
+			encodeEquityFrame("1000", "-25.5", "974.5"),
 		);
 
 		expect(renderToStaticMarkup(<Balance />)).not.toContain("lambo.png");
@@ -101,9 +92,7 @@ describe("Balance", () => {
 
 	it("rides the lambo behind equity while the book is up", () => {
 		equityStore.actions.add(
-			encodeStateWithEquity("1000", "25.5", "1025.5").equity(
-				new EquityFrame(),
-			) as EquityFrame,
+			encodeEquityFrame("1000", "25.5", "1025.5"),
 		);
 
 		const markup = renderToStaticMarkup(<Balance />);
@@ -115,9 +104,7 @@ describe("Balance", () => {
 
 	it("hides the lambo at exactly flat", () => {
 		equityStore.actions.add(
-			encodeStateWithEquity("1000", "0", "1000").equity(
-				new EquityFrame(),
-			) as EquityFrame,
+			encodeEquityFrame("1000", "0", "1000"),
 		);
 
 		expect(renderToStaticMarkup(<Balance />)).not.toContain("lambo.png");
@@ -125,17 +112,13 @@ describe("Balance", () => {
 
 	it("keeps the last known valuation when a later frame omits it", () => {
 		equityStore.actions.add(
-			encodeStateWithEquity("1000", "-25.5", "974.5").equity(
-				new EquityFrame(),
-			) as EquityFrame,
+			encodeEquityFrame("1000", "-25.5", "974.5"),
 		);
 
-		// An envelope with an empty equity frame must not blank a balance the
+		// A message with an empty equity frame must not blank a balance the
 		// dashboard has already been shown.
 		equityStore.actions.add(
-			encodeStateWithEquity("", "", "").equity(
-				new EquityFrame(),
-			) as EquityFrame,
+			encodeEquityFrame("", "", ""),
 		);
 
 		const markup = renderToStaticMarkup(<Balance />);

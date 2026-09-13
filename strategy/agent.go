@@ -651,6 +651,10 @@ func (agent *Agent) stepLocked(measurements []*data.Measurement[float64], symbol
 		return grid.Impulse{}, err
 	}
 
+	if result.Impulse.Label == "" {
+		result.Impulse.Label = symbol
+	}
+
 	return result.Impulse, nil
 }
 

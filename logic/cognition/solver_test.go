@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -38,19 +39,17 @@ func TestSolverStep(t *testing.T) {
 							categoryType = types.CategoryOrganicTrend
 						}
 
-						envelope := types.NewEnvelope(types.EnvelopeUnknown)
-						envelope.Categories = []types.Category{
-							{
-								At:         time.Now(),
-								Symbol:     sym,
-								Type:       categoryType,
-								Confidence: 0.95,
-								Strength:   0.9,
-								Maturity:   1.0,
-							},
+						m := data.NewMeasurement[float64]("cognition", nil)
+						m.Label = sym
+						cat := data.NewMeasurement[float64]("category", nil)
+						cat.Label = sym
+						cat.Metrics[string(categoryType)] = data.Metric[float64]{
+							Label: string(categoryType),
+							Raw:   0.95,
 						}
+						m.Peers = []*data.Measurement[float64]{cat}
 
-						_ = solver.Step(envelope)
+						_ = solver.Step(m)
 					}
 				}(symbol)
 			}

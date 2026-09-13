@@ -6,141 +6,182 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
-/*
-The row types below are this package's own vocabulary, deliberately free of
-hindsight and strategy types. Both of those packages need to read these tables,
-so importing either here would close a dependency cycle; callers convert their
-records into these rows instead.
-
-A zero time.Time encodes as null, and a nil pointer encodes as null. Optional
-columns in the schemas correspond exactly to those two cases.
-*/
-
-// EnvelopeRefRow names one Workspace Envelope: the raw input it came from and
-// its deterministic ordinal within that input.
-type EnvelopeRefRow struct {
-	Run      string
-	Sequence int64
-	Ordinal  int64
+// SpotLevel3Row is one order add/modify/delete event on spot level 3.
+type SpotLevel3Row struct {
+	Epoch      int64     `json:"epoch"`
+	Tick       int64     `json:"tick"`
+	Symbol     string    `json:"symbol"`
+	VenueAt    time.Time `json:"venueAt"`
+	ReceivedAt time.Time `json:"receivedAt"`
+	Side       string    `json:"side"` // "bid" or "ask"
+	Event      string    `json:"event"` // "add", "modify", "delete"
+	OrderID    string    `json:"orderId"`
+	LimitPrice float64   `json:"limitPrice"`
+	OrderQty   float64   `json:"orderQty"`
+	Checksum   int64     `json:"checksum"`
 }
 
-// RunRow is one process capture session.
-type RunRow struct {
-	ID             string            `json:"id"`
-	StartedAt      time.Time         `json:"startedAt"`
-	CodeCommit     string            `json:"codeCommit"`
-	BuildID        string            `json:"buildId"`
-	ConfigDigest   string            `json:"configDigest"`
-	Integrity      string            `json:"integrity"`
-	Positions      int32             `json:"positions"`
-	SchemaVersions map[string]string `json:"schemaVersions,omitempty"`
+// SpotTickerRow is one spot ticker update containing full venue facts.
+type SpotTickerRow struct {
+	Epoch      int64     `json:"epoch"`
+	Tick       int64     `json:"tick"`
+	Symbol     string    `json:"symbol"`
+	VenueAt    time.Time `json:"venueAt"`
+	ReceivedAt time.Time `json:"receivedAt"`
+	Bid        float64   `json:"bid"`
+	BidQty     float64   `json:"bidQty"`
+	Ask        float64   `json:"ask"`
+	AskQty     float64   `json:"askQty"`
+	Last       float64   `json:"last"`
+	Volume     float64   `json:"volume"`
+	VWAP       float64   `json:"vwap"`
+	Low        float64   `json:"low"`
+	High       float64   `json:"high"`
+	Change     float64   `json:"change"`
+	ChangePct  float64   `json:"changePct"`
 }
 
-// CaptureRow is one raw external input exactly as it arrived.
-type CaptureRow struct {
-	Run            string
-	Sequence       int64
-	Stream         string
-	StreamEpoch    int64
-	StreamSequence int64
-	ReceivedAt     time.Time
-	Endpoint       string
-	Kind           string
-	PayloadHash    string
-	Payload        []byte
+// SpotTradeRow is one executed spot trade on venue.
+type SpotTradeRow struct {
+	Epoch      int64     `json:"epoch"`
+	Tick       int64     `json:"tick"`
+	Symbol     string    `json:"symbol"`
+	VenueAt    time.Time `json:"venueAt"`
+	ReceivedAt time.Time `json:"receivedAt"`
+	Price      float64   `json:"price"`
+	Qty        float64   `json:"qty"`
+	Side       string    `json:"side"`
+	OrdType    string    `json:"ordType"`
+	TradeID    int64     `json:"tradeId"`
 }
 
-// ManifestRow records how one raw frame entered Workspace.
-type ManifestRow struct {
-	Run           string
-	Envelope      EnvelopeRefRow
-	Workload      string
-	DomainKind    string
-	Symbol        string
-	VenueAt       time.Time
-	VenueSequence string
+// FuturesTickerRow is one futures ticker update with derivative marks.
+type FuturesTickerRow struct {
+	Epoch        int64     `json:"epoch"`
+	Tick         int64     `json:"tick"`
+	Symbol       string    `json:"symbol"`
+	VenueAt      time.Time `json:"venueAt"`
+	ReceivedAt   time.Time `json:"receivedAt"`
+	Bid          float64   `json:"bid"`
+	BidQty       float64   `json:"bidQty"`
+	Ask          float64   `json:"ask"`
+	AskQty       float64   `json:"askQty"`
+	Last         float64   `json:"last"`
+	Volume       float64   `json:"volume"`
+	VWAP         float64   `json:"vwap"`
+	Low          float64   `json:"low"`
+	High         float64   `json:"high"`
+	Change       float64   `json:"change"`
+	ChangePct    float64   `json:"changePct"`
+	MarkPrice    float64   `json:"markPrice"`
+	IndexPrice   float64   `json:"indexPrice"`
+	OpenInterest float64   `json:"openInterest"`
 }
 
-// WitnessRow is evidence of what the running binary produced at one boundary.
-type WitnessRow struct {
-	Run                   string
-	Envelope              EnvelopeRefRow
-	Boundary              string
-	ArtifactKind          string
-	ArtifactIdentity      string
-	ArtifactKindLabel     string
-	ProducedAt            time.Time
-	Component             string
-	ComponentStateVersion int64
-	ImmediateParents      []EnvelopeRefRow
-	SemanticParents       []string
-	Payload               []byte
+// FuturesTradeRow is one executed futures contract trade.
+type FuturesTradeRow struct {
+	Epoch      int64     `json:"epoch"`
+	Tick       int64     `json:"tick"`
+	Symbol     string    `json:"symbol"`
+	VenueAt    time.Time `json:"venueAt"`
+	ReceivedAt time.Time `json:"receivedAt"`
+	Price      float64   `json:"price"`
+	Qty        float64   `json:"qty"`
+	Side       string    `json:"side"`
+	OrdType    string    `json:"ordType"`
+	TradeID    int64     `json:"tradeId"`
 }
 
-// ExecutionRow carries the venue's authoritative economics for one execution.
+// ExecutionRow captures one venue execution update (channel: executions).
 type ExecutionRow struct {
-	OrderID       string           `json:"orderId"`
-	ClientOrderID string           `json:"clientOrderId"`
-	ExecID        string           `json:"execId"`
-	ExecType      string           `json:"execType"`
-	TradeID       int64            `json:"tradeId"`
-	Side          string           `json:"side"`
-	OrderType     string           `json:"orderType"`
-	OrderStatus   string           `json:"orderStatus"`
-	LiquidityInd  string           `json:"liquidityInd"`
-	At            time.Time        `json:"fillAt"`
-	LastQty       *decimal.Decimal `json:"lastQty,omitempty"`
-	LastPrice     *decimal.Decimal `json:"lastPrice,omitempty"`
-	Cost          *decimal.Decimal `json:"cost,omitempty"`
-	CumQty        *decimal.Decimal `json:"cumQty,omitempty"`
-	CumCost       *decimal.Decimal `json:"cumCost,omitempty"`
-	AvgPrice      *decimal.Decimal `json:"avgPrice,omitempty"`
-	FeeUsdEquiv   *decimal.Decimal `json:"feeUsdEquiv,omitempty"`
-	Fees          string           `json:"fees,omitempty"`
+	Epoch        int64            `json:"epoch"`
+	Tick         int64            `json:"tick"`
+	Symbol       string           `json:"symbol"`
+	VenueAt      time.Time        `json:"venueAt"`
+	ReceivedAt   time.Time        `json:"receivedAt"`
+	OrderID      string           `json:"orderId"`
+	OrderUserRef int64            `json:"orderUserref"`
+	ExecID       string           `json:"execId"`
+	ExecType     string           `json:"execType"`
+	TradeID      int64            `json:"tradeId"`
+	Side         string           `json:"side"`
+	LastQty      *decimal.Decimal `json:"lastQty"`
+	LastPrice    *decimal.Decimal `json:"lastPrice"`
+	LiquidityInd string           `json:"liquidityInd"`
+	Cost         *decimal.Decimal `json:"cost"`
+	OrderType    string           `json:"orderType"`
+	OrderStatus  string           `json:"orderStatus"`
+	CumQty       *decimal.Decimal `json:"cumQty"`
+	CumCost      *decimal.Decimal `json:"cumCost"`
+	AvgPrice     *decimal.Decimal `json:"avgPrice"`
+	FeeUsdEquiv  *decimal.Decimal `json:"feeUsdEquiv"`
+	Fees         string           `json:"fees"`
 }
 
-// LifecycleRow is one position or order transition. Exec is nil for position
-// open and close events, which carry no execution fact.
-type LifecycleRow struct {
-	Run                 string        `json:"run"`
-	DecisionID          string        `json:"decisionId"`
-	ActionCorrelationID string        `json:"actionCorrelationId"`
-	Symbol              string        `json:"symbol"`
-	Kind                string        `json:"kind"`
-	Action              string        `json:"action"`
-	At                  time.Time     `json:"at"`
-	CaptureSeq          int64         `json:"captureSeq"`
-	Exec                *ExecutionRow `json:"execution,omitempty"`
+// MeasurementRow captures one canonical *data.Measurement[float64].
+type MeasurementRow struct {
+	Epoch      int64              `json:"epoch"`
+	Tick       int64              `json:"tick"`
+	Source     string             `json:"source"`
+	Symbol     string             `json:"symbol"`
+	VenueAt    time.Time          `json:"venueAt"`
+	ObservedAt time.Time          `json:"observedAt"`
+	Maturity   float64            `json:"maturity"`
+	SNR        float64            `json:"snr"`
+	SNRDefined bool               `json:"snrDefined"`
+	Metrics    map[string]float64 `json:"metrics"`
+	Metadata   map[string]float64 `json:"metadata"`
+	Payload    []byte             `json:"payload,omitempty"`
 }
 
-// OutcomeRow is one graded decision.
+// ModelRow is an atomic point-in-time snapshot of the trained cognitive radix trie.
+type ModelRow struct {
+	Epoch      int64  `json:"epoch"`
+	Tick       int64  `json:"tick"`
+	AgentID    int32  `json:"agentId"`
+	StepCount  int64  `json:"stepCount"`
+	NodesCount int64  `json:"nodesCount"`
+	Payload    []byte `json:"payload"`
+}
+
+// GridRow is an atomic point-in-time snapshot of the associative perception grid.
+type GridRow struct {
+	Epoch        int64  `json:"epoch"`
+	Tick         int64  `json:"tick"`
+	AgentID      int32  `json:"agentId"`
+	ContextLabel string `json:"contextLabel"`
+	Payload      []byte `json:"payload"`
+}
+
+// PositionRow records one position transition with authoritative inventory and basis.
+type PositionRow struct {
+	Epoch       int64            `json:"epoch"`
+	Tick        int64            `json:"tick"`
+	Symbol      string           `json:"symbol"`
+	Status      string           `json:"status"`
+	Qty         *decimal.Decimal `json:"qty"`
+	Basis       *decimal.Decimal `json:"basis,omitempty"`
+	EntryPrice  *decimal.Decimal `json:"entryPrice,omitempty"`
+	EntryFee    *decimal.Decimal `json:"entryFee,omitempty"`
+	ExitPrice   *decimal.Decimal `json:"exitPrice,omitempty"`
+	ExitFee     *decimal.Decimal `json:"exitFee,omitempty"`
+	Mark        *decimal.Decimal `json:"mark,omitempty"`
+	PnL         *decimal.Decimal `json:"pnl,omitempty"`
+	RealizedPnL *decimal.Decimal `json:"realizedPnl,omitempty"`
+	EntryAt     *time.Time       `json:"entryAt,omitempty"`
+	ExitAt      *time.Time       `json:"exitAt,omitempty"`
+}
+
+// OutcomeRow records one agent action decision and its post-hoc outcome.
 type OutcomeRow struct {
-	Run          string
-	DecisionID   int64
-	Trader       int32
-	Label        string
-	At           time.Time
-	ActionKind   string
-	ActionPower  int32
-	ActionReduce bool
-	Authority    float64
-	Outcome      *float64
-	Context      []int64
-	Through      time.Time
-	Value        float64
-	Complete     bool
-	Forced       bool
-	Initial      *decimal.Decimal
-	Reference    *decimal.Decimal
-	Quantity     *decimal.Decimal
-	Cost         *decimal.Decimal
-	Fee          *decimal.Decimal
-	Opportunity  *decimal.Decimal
-}
-
-// GapRow marks one place where a run's capture is known to be incomplete.
-type GapRow struct {
-	Run      string `json:"runId"`
-	Sequence int64  `json:"sequence"`
-	Encoding string `json:"encoding"`
+	Epoch        int64     `json:"epoch"`
+	Tick         int64     `json:"tick"`
+	DecisionID   int64     `json:"decisionId"`
+	Symbol       string    `json:"symbol"`
+	At           time.Time `json:"at"`
+	ActionKind   string    `json:"actionKind"`
+	ActionPower  int32     `json:"actionPower"`
+	ActionReduce bool      `json:"actionReduce"`
+	Authority    float64   `json:"authority"`
+	Outcome      *float64  `json:"outcome,omitempty"`
 }

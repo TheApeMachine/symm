@@ -196,7 +196,7 @@ func (held *replay) rehearsal(
 		Tracks:       make([]*telemetry.LearningTrackT, 0, len(learners)),
 	}
 
-	for index, learner := range learners {
+	for index := range learners {
 		steps, symbol, entry, exit := held.tapeSteps(index)
 		var individual *Agent
 
@@ -205,7 +205,7 @@ func (held *replay) rehearsal(
 		}
 
 		rehearsal.Tracks = append(
-			rehearsal.Tracks, learnerTrack(index, individual, learner, steps, symbol, entry, exit, frames),
+			rehearsal.Tracks, learnerTrack(index, individual, steps, symbol, entry, exit, frames),
 		)
 	}
 
@@ -283,7 +283,6 @@ func frameValue(frame []*data.Measurement[float64]) (float64, bool) {
 func learnerTrack(
 	index int,
 	individual *Agent,
-	learner *telemetry.LearningLearnerT,
 	steps []*telemetry.LearningStepT,
 	symbol string,
 	entry, exit int32,

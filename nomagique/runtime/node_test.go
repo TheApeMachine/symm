@@ -55,4 +55,37 @@ func TestConsumerHandle(t *testing.T) {
 			So(node.steps, ShouldEqual, 4)
 		})
 	})
+
+	Convey("Given a peer-aware node registered alongside a source node", t, func() {
+		register := store.NewRegister[*data.Measurement[float64]]()
+		sourceNode := &countingNode{}
+		sourceConsumer := NewConsumer(sourceNode, register)
+
+		peerNode := &peerAwareNode{}
+		peerConsumer := NewConsumer(peerNode, register)
+
+		So(sourceConsumer.Identity(), ShouldEqual, 0)
+		So(peerConsumer.Identity(), ShouldEqual, 1)
+
+		Convey("Handle packages requested peer measurements into Peers", func() {
+			sourceConsumer.Handle(0, 0)
+			peerConsumer.Handle(0, 0)
+
+			So(len(peerNode.lastPeers), ShouldEqual, 1)
+			So(peerNode.lastPeers[0].Source, ShouldEqual, "counting")
+		})
+	})
+}
+
+type peerAwareNode struct {
+	lastPeers []*data.Measurement[float64]
+}
+
+func (node *peerAwareNode) Step(state *data.Measurement[float64]) *data.Measurement[float64] {
+	node.lastPeers = append([]*data.Measurement[float64](nil), state.Peers...)
+	return state
+}
+
+func (node *peerAwareNode) Register() (*data.Measurement[float64], []string) {
+	return data.NewMeasurement[float64]("solver", nil), []string{"counting"}
 }

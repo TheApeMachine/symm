@@ -13,6 +13,14 @@ type ResonanceForecastT struct {
 	ProbeHorizon int64 `json:"probeHorizon"`
 	Aggregate *PosteriorT `json:"aggregate"`
 	Posterior []*PosteriorT `json:"posterior"`
+	Distribution *PosteriorT `json:"distribution"`
+	Horizon int64 `json:"horizon"`
+	CandidateCall float64 `json:"candidateCall"`
+	Call float64 `json:"call"`
+	StableCall float64 `json:"stableCall"`
+	Held bool `json:"held"`
+	SwitchConfidence float64 `json:"switchConfidence"`
+	SwitchThreshold float64 `json:"switchThreshold"`
 }
 
 func (t *ResonanceForecastT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -51,6 +59,7 @@ func (t *ResonanceForecastT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 		}
 		posteriorOffset = builder.EndVector(posteriorLength)
 	}
+	distributionOffset := t.Distribution.Pack(builder)
 	ResonanceForecastStart(builder)
 	ResonanceForecastAddForwardCurve(builder, forwardCurveOffset)
 	ResonanceForecastAddForwardRetention(builder, forwardRetentionOffset)
@@ -58,6 +67,14 @@ func (t *ResonanceForecastT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	ResonanceForecastAddProbeHorizon(builder, t.ProbeHorizon)
 	ResonanceForecastAddAggregate(builder, aggregateOffset)
 	ResonanceForecastAddPosterior(builder, posteriorOffset)
+	ResonanceForecastAddDistribution(builder, distributionOffset)
+	ResonanceForecastAddHorizon(builder, t.Horizon)
+	ResonanceForecastAddCandidateCall(builder, t.CandidateCall)
+	ResonanceForecastAddCall(builder, t.Call)
+	ResonanceForecastAddStableCall(builder, t.StableCall)
+	ResonanceForecastAddHeld(builder, t.Held)
+	ResonanceForecastAddSwitchConfidence(builder, t.SwitchConfidence)
+	ResonanceForecastAddSwitchThreshold(builder, t.SwitchThreshold)
 	return ResonanceForecastEnd(builder)
 }
 
@@ -82,6 +99,14 @@ func (rcv *ResonanceForecast) UnPackTo(t *ResonanceForecastT) {
 		rcv.Posterior(&x, j)
 		t.Posterior[j] = x.UnPack()
 	}
+	t.Distribution = rcv.Distribution(nil).UnPack()
+	t.Horizon = rcv.Horizon()
+	t.CandidateCall = rcv.CandidateCall()
+	t.Call = rcv.Call()
+	t.StableCall = rcv.StableCall()
+	t.Held = rcv.Held()
+	t.SwitchConfidence = rcv.SwitchConfidence()
+	t.SwitchThreshold = rcv.SwitchThreshold()
 }
 
 func (rcv *ResonanceForecast) UnPack() *ResonanceForecastT {
@@ -237,8 +262,105 @@ func (rcv *ResonanceForecast) PosteriorLength() int {
 	return 0
 }
 
+func (rcv *ResonanceForecast) Distribution(obj *Posterior) *Posterior {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(Posterior)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *ResonanceForecast) Horizon() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *ResonanceForecast) MutateHorizon(n int64) bool {
+	return rcv._tab.MutateInt64Slot(18, n)
+}
+
+func (rcv *ResonanceForecast) CandidateCall() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ResonanceForecast) MutateCandidateCall(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(20, n)
+}
+
+func (rcv *ResonanceForecast) Call() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ResonanceForecast) MutateCall(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(22, n)
+}
+
+func (rcv *ResonanceForecast) StableCall() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ResonanceForecast) MutateStableCall(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(24, n)
+}
+
+func (rcv *ResonanceForecast) Held() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *ResonanceForecast) MutateHeld(n bool) bool {
+	return rcv._tab.MutateBoolSlot(26, n)
+}
+
+func (rcv *ResonanceForecast) SwitchConfidence() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ResonanceForecast) MutateSwitchConfidence(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(28, n)
+}
+
+func (rcv *ResonanceForecast) SwitchThreshold() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ResonanceForecast) MutateSwitchThreshold(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(30, n)
+}
+
 func ResonanceForecastStart(builder *flatbuffers.Builder) {
-	builder.StartObject(6)
+	builder.StartObject(14)
 }
 func ResonanceForecastAddForwardCurve(builder *flatbuffers.Builder, forwardCurve flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(forwardCurve), 0)
@@ -266,6 +388,30 @@ func ResonanceForecastAddPosterior(builder *flatbuffers.Builder, posterior flatb
 }
 func ResonanceForecastStartPosteriorVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
+}
+func ResonanceForecastAddDistribution(builder *flatbuffers.Builder, distribution flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(distribution), 0)
+}
+func ResonanceForecastAddHorizon(builder *flatbuffers.Builder, horizon int64) {
+	builder.PrependInt64Slot(7, horizon, 0)
+}
+func ResonanceForecastAddCandidateCall(builder *flatbuffers.Builder, candidateCall float64) {
+	builder.PrependFloat64Slot(8, candidateCall, 0.0)
+}
+func ResonanceForecastAddCall(builder *flatbuffers.Builder, call float64) {
+	builder.PrependFloat64Slot(9, call, 0.0)
+}
+func ResonanceForecastAddStableCall(builder *flatbuffers.Builder, stableCall float64) {
+	builder.PrependFloat64Slot(10, stableCall, 0.0)
+}
+func ResonanceForecastAddHeld(builder *flatbuffers.Builder, held bool) {
+	builder.PrependBoolSlot(11, held, false)
+}
+func ResonanceForecastAddSwitchConfidence(builder *flatbuffers.Builder, switchConfidence float64) {
+	builder.PrependFloat64Slot(12, switchConfidence, 0.0)
+}
+func ResonanceForecastAddSwitchThreshold(builder *flatbuffers.Builder, switchThreshold float64) {
+	builder.PrependFloat64Slot(13, switchThreshold, 0.0)
 }
 func ResonanceForecastEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

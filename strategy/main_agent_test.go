@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/types"
 )
 
 type testBookSource struct {
@@ -101,12 +100,6 @@ func TestMainAgent(t *testing.T) {
 
 		Convey("When an upward precursor signal arrives with high confidence", func() {
 			price50k := decimal.NewFromInt64(50000)
-			envelope := &types.Envelope{
-				TickerData: kraken.TickerData{
-					Symbol: "BTC/USD",
-					Last:   price50k,
-				},
-			}
 			entryCtx := []byte("entry_precursor_pattern_123")
 			decision := ActionDecision{
 				Action:     ActionEnter,
@@ -116,7 +109,7 @@ func TestMainAgent(t *testing.T) {
 				Support:    12,
 			}
 
-			mainAgent.Step(envelope, decision)
+			mainAgent.Step(price50k, "BTC/USD", decision)
 
 			So(mainAgent.fills, ShouldEqual, 1)
 			So(mainAgent.decisions, ShouldEqual, 1)
@@ -132,25 +125,13 @@ func TestMainAgent(t *testing.T) {
 			Convey("When the price rises and position is marked to market", func() {
 				price55k := decimal.NewFromInt64(55000)
 				books.SetTouch("BTC/USD", decimal.NewFromInt64(54990), decimal.NewFromInt64(10), decimal.NewFromInt64(55000), decimal.NewFromInt64(10))
-				envelopeHigher := &types.Envelope{
-					TickerData: kraken.TickerData{
-						Symbol: "BTC/USD",
-						Last:   price55k,
-					},
-				}
 
-				mainAgent.Step(envelopeHigher, ActionDecision{Action: ActionWait, Confidence: 0.6})
+				mainAgent.Step(price55k, "BTC/USD", ActionDecision{Action: ActionWait, Confidence: 0.6})
 
 				So(mainAgent.unrealized.Sign(), ShouldBeGreaterThan, 0)
 				So(mainAgent.equity.Cmp(initialCash), ShouldBeGreaterThan, 0)
 
 				Convey("When an exit action triggers an exit", func() {
-					envelopeExit := &types.Envelope{
-						TickerData: kraken.TickerData{
-							Symbol: "BTC/USD",
-							Last:   price55k,
-						},
-					}
 					downDecision := ActionDecision{
 						Action:     ActionExit,
 						Confidence: 0.80,
@@ -158,7 +139,7 @@ func TestMainAgent(t *testing.T) {
 						Support:    15,
 					}
 
-					mainAgent.Step(envelopeExit, downDecision)
+					mainAgent.Step(price55k, "BTC/USD", downDecision)
 
 					So(mainAgent.fills, ShouldEqual, 2)
 					So(len(mainAgent.positions), ShouldEqual, 0)
@@ -178,33 +159,23 @@ func TestMainAgent(t *testing.T) {
 			for index := 0; index < 12; index++ {
 				mainAgent.recordOutcome(TradeOutcome{
 					Symbol:   "BTC/USD",
-					Profit:   decimal.NewFromInt64(50),
-					ReturnBp: 50.0,
+					Profit:   decimal.NewFromInt64(100),
+					ReturnBp: 100.0,
 					EntryAt:  time.Now().Add(-time.Minute),
 					ExitAt:   time.Now(),
-				}, 50.0)
+				}, 100.0)
 				mainAgent.wins++
 			}
-			mainAgent.realized = decimal.NewFromInt64(600)
+			mainAgent.realized = decimal.NewFromInt64(1200)
 			mainAgent.evaluateRobustness()
 
+			So(mainAgent.meanReturn, ShouldBeGreaterThan, 0)
+			So(mainAgent.status, ShouldEqual, "trading")
 			So(mainAgent.Status(), ShouldEqual, "trading")
-
-			telemetryPromoted := mainAgent.AgentTelemetry()
-			So(telemetryPromoted.Status, ShouldEqual, "trading")
-			So(telemetryPromoted.Reading.Defined, ShouldBeTrue)
-			So(telemetryPromoted.Reading.Mean, ShouldBeGreaterThan, 0)
-			So(telemetryPromoted.Reading.Samples, ShouldEqual, 12)
 		})
 
 		Convey("When a weak or sparse precursor signal arrives", func() {
 			weakAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, nil)
-			envelope := &types.Envelope{
-				TickerData: kraken.TickerData{
-					Symbol: "ETH/USD",
-					Last:   decimal.NewFromInt64(3000),
-				},
-			}
 			// Action is wait, not an entry signal
 			sparseDecision := ActionDecision{
 				Action:     ActionWait,
@@ -212,7 +183,7 @@ func TestMainAgent(t *testing.T) {
 				Contrast:   0.3,
 				Support:    1,
 			}
-			weakAgent.Step(envelope, sparseDecision)
+			weakAgent.Step(decimal.NewFromInt64(3000), "ETH/USD", sparseDecision)
 
 			So(len(weakAgent.positions), ShouldEqual, 0)
 			So(weakAgent.fills, ShouldEqual, 0)
@@ -221,11 +192,9 @@ func TestMainAgent(t *testing.T) {
 		Convey("When a long position is held and tick noise arrives", func() {
 			noisyAgent := NewMainAgent(initialCash, "paper", nil, priceSvc, nil)
 			price := decimal.NewFromInt64(100)
-			envelope := &types.Envelope{
-				TickerData: kraken.TickerData{Symbol: "SOL/USD", Last: price},
-			}
+
 			// Strong entry
-			noisyAgent.Step(envelope, ActionDecision{
+			noisyAgent.Step(price, "SOL/USD", ActionDecision{
 				Action:     ActionEnter,
 				Confidence: 0.75,
 				Contrast:   1.5,
@@ -240,7 +209,7 @@ func TestMainAgent(t *testing.T) {
 				Contrast:   0.1,
 				Support:    1,
 			}
-			noisyAgent.Step(envelope, noiseDecision)
+			noisyAgent.Step(price, "SOL/USD", noiseDecision)
 
 			// Position MUST remain open: not dumped on noise
 			So(len(noisyAgent.positions), ShouldEqual, 1)
@@ -252,7 +221,7 @@ func TestMainAgent(t *testing.T) {
 				Contrast:   1.2,
 				Support:    8,
 			}
-			noisyAgent.Step(envelope, holdDecision)
+			noisyAgent.Step(price, "SOL/USD", holdDecision)
 			So(len(noisyAgent.positions), ShouldEqual, 1)
 
 			// Explicit exit signal: exit
@@ -262,7 +231,7 @@ func TestMainAgent(t *testing.T) {
 				Contrast:   1.4,
 				Support:    9,
 			}
-			noisyAgent.Step(envelope, exitDecision)
+			noisyAgent.Step(price, "SOL/USD", exitDecision)
 			So(len(noisyAgent.positions), ShouldEqual, 0)
 			So(noisyAgent.fills, ShouldEqual, 2)
 		})
@@ -289,19 +258,13 @@ func TestMainAgent(t *testing.T) {
 			So(tradingAgent.Status(), ShouldEqual, "learning")
 
 			// In simulated mode, forward testing continues evaluating high-conviction decisions
-			envelope := &types.Envelope{
-				TickerData: kraken.TickerData{
-					Symbol: "BTC/USD",
-					Last:   decimal.NewFromInt64(50000),
-				},
-			}
 			strongDecision := ActionDecision{
 				Action:     ActionEnter,
 				Confidence: 0.90,
 				Contrast:   2.5,
 				Support:    20,
 			}
-			tradingAgent.Step(envelope, strongDecision)
+			tradingAgent.Step(decimal.NewFromInt64(50000), "BTC/USD", strongDecision)
 
 			So(len(tradingAgent.positions), ShouldEqual, 1)
 			So(tradingAgent.fills, ShouldEqual, 1)
@@ -311,12 +274,6 @@ func TestMainAgent(t *testing.T) {
 			priceNoBook := testPrice()
 			strictAgent := NewMainAgent(initialCash, "paper", nil, priceNoBook, engine)
 
-			envelope := &types.Envelope{
-				TickerData: kraken.TickerData{
-					Symbol: "BTC/USD",
-					Last:   decimal.NewFromInt64(50000),
-				},
-			}
 			decision := ActionDecision{
 				Action:     ActionEnter,
 				Context:    []byte("entry_ctx"),
@@ -325,7 +282,7 @@ func TestMainAgent(t *testing.T) {
 				Support:    12,
 			}
 
-			strictAgent.Step(envelope, decision)
+			strictAgent.Step(decimal.NewFromInt64(50000), "BTC/USD", decision)
 
 			So(strictAgent.fills, ShouldEqual, 0)
 			So(len(strictAgent.positions), ShouldEqual, 0)

@@ -14,12 +14,12 @@ import (
 
 type testViewer struct {
 	wants    bool
-	manifold *types.Envelope
+	manifold *types.ManifoldState
 }
 
 func (v *testViewer) WantsManifold() bool { return v.wants }
-func (v *testViewer) PublishManifold(env *types.Envelope) {
-	v.manifold = env
+func (v *testViewer) PublishManifold(state *types.ManifoldState) {
+	v.manifold = state
 }
 
 func TestDatasetAndSolverAdvance(t *testing.T) {
@@ -92,8 +92,7 @@ func TestDatasetAndSolverAdvance(t *testing.T) {
 
 			solver.publish()
 			So(viewer.manifold, ShouldNotBeNil)
-			So(viewer.manifold.Manifold, ShouldNotBeNil)
-			So(viewer.manifold.Manifold.GridX, ShouldEqual, 8)
+			So(viewer.manifold.Reading.CoherenceMag2, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }

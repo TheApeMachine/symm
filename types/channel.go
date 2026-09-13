@@ -20,7 +20,6 @@ const (
 	ChannelFuturesTrades  = "futures_trades"
 
 	ChannelSignals      = "signals"
-	ChannelEnvelopes    = "envelopes"
 	ChannelPerspectives = "perspectives"
 	ChannelDecisions    = "decisions"
 	ChannelExecutions   = "executions"
@@ -41,7 +40,7 @@ type ResonanceArtifact struct {
 	At       time.Time
 	Snapshot *learning.ManifoldReading
 	Forecast *ResonanceReturnForecast
-	Dynamics *telemetry.EnvelopeResonanceDynamicsT
+	Dynamics *telemetry.ResonanceDynamicsT
 
 	// Predictive-head projection data. The workspace observer projects these
 	// into the dashboard ResonanceFrame, so the domain payload carries the wire

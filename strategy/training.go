@@ -204,67 +204,79 @@ read it; the measurements never are.
 func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	training.mount()
 
-	if envelope != nil {
-		envelope.Learning = training
-
+	if measurement != nil {
 		if len(training.agents) > 0 {
-			liveMeasurements := envelope.Measurements()
+			liveMeasurements := measurement.Peers
 
-			if len(liveMeasurements) > 0 {
-				symbol := envelope.Symbol()
+			if len(liveMeasurements) == 0 {
+				liveMeasurements = []*data.Measurement[float64]{measurement}
+			}
 
-				if symbol == "" {
-					for _, measurement := range liveMeasurements {
-						if measurement != nil && measurement.Label != "" {
-							symbol = measurement.Label
-							break
-						}
+			symbol := measurement.Label
+
+			if symbol == "" {
+				for _, m := range liveMeasurements {
+					if m != nil && m.Label != "" {
+						symbol = m.Label
+						break
 					}
 				}
+			}
 
-				if symbol != "" {
-					impulse, err := training.agents[0].Step(liveMeasurements, symbol)
+			if symbol != "" {
+				impulse, err := training.agents[0].Step(liveMeasurements, symbol)
 
-					if err != nil {
-						errnie.Error(err)
+				if err != nil {
+					errnie.Error(err)
+				}
+
+				if training.main != nil {
+					if !impulse.Ready {
+						training.main.Step(nil, symbol, ActionDecision{
+							Action: ActionWait,
+						})
 					}
 
-					if training.main != nil {
-						if !impulse.Ready {
-							training.main.Step(envelope, ActionDecision{
-								Action: ActionWait,
-							})
+					if impulse.Ready {
+						holding := training.main.IsHolding(symbol)
+						decision, err := training.agents[0].ChooseAction(impulse, holding)
+
+						if err != nil {
+							errnie.Error(errnie.Err(errnie.Internal, "training: cognition evaluation failed", err))
+							decision = ActionDecision{Action: ActionWait}
 						}
 
-						if impulse.Ready {
-							holding := training.main.IsHolding(symbol)
-							decision, err := training.agents[0].ChooseAction(impulse, holding)
-
-							if err != nil {
-								errnie.Error(errnie.Err(errnie.Internal, "training: cognition evaluation failed", err))
-								decision = ActionDecision{Action: ActionWait}
-							}
-
-							training.main.Step(envelope, decision)
-						}
+						training.main.Step(nil, symbol, decision)
 					}
 				}
 			}
 		}
 	}
 
-	if training.main != nil && envelope.Positions == nil {
-		envelope.Positions = training.main.exportPositions()
-		envelope.Equity = training.main.exportEquity()
-	}
-
 	training.seen.Add(1)
 
-	return envelope
+	if m, ok := measurement.Metrics["seen"]; ok {
+		measurement.Metrics["seen"] = m.Write(float64(training.seen.Load()))
+	}
+
+	if training.main != nil {
+		if m, ok := measurement.Metrics["wealth"]; ok {
+			measurement.Metrics["wealth"] = m.Write(training.main.wealth)
+		}
+	}
+
+	return measurement
 }
 
-func Register() *data.Measurement[float64] {
-	return &data.Measurement[float64]{}
+func (training *Training) Register() (*data.Measurement[float64], []string) {
+	return data.NewMeasurement("training", map[string]data.Metric[float64]{
+		"seen": data.NewMetric[float64](
+			"seen", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
+		),
+		"wealth": data.NewMetric[float64](
+			"wealth", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+	}), []string{"resonance", "cognition", "category", "websocket"}
 }
 
 /*

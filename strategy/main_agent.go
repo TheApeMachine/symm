@@ -368,32 +368,30 @@ func (agent *MainAgent) IsHolding(symbol string) bool {
 Step evaluates the learned action decision, manages simulated positions, and
 executes forward-testing trades.
 */
-func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) {
-	if envelope == nil {
+func (agent *MainAgent) Step(price *decimal.Decimal, symbol string, decision ActionDecision) {
+	if symbol == "" {
 		return
 	}
 
 	agent.mu.Lock()
 	defer agent.mu.Unlock()
 
-	symbol := envelope.Symbol()
+	currentPrice := price
 
-	if symbol == "" {
-		for _, measurement := range envelope.Measurements() {
-			if measurement != nil && measurement.Label != "" {
-				symbol = measurement.Label
-				break
+	if currentPrice == nil || currentPrice.Sign() <= 0 {
+		if agent.price != nil {
+			if tick := agent.price.Tick(symbol); tick != nil && tick.Last != nil && tick.Last.Sign() > 0 {
+				currentPrice = tick.Last
 			}
 		}
 	}
 
-	if symbol == "" {
-		envelope.Positions = agent.exportPositions()
-		envelope.Equity = agent.exportEquity()
-		return
+	if currentPrice == nil || currentPrice.Sign() <= 0 {
+		if cached, ok := agent.lastPrice[symbol]; ok && cached != nil && cached.Sign() > 0 {
+			currentPrice = cached
+		}
 	}
 
-	currentPrice := agent.extractPrice(envelope, symbol)
 	now := time.Now().UTC()
 	holding := agent.positions[symbol]
 
@@ -404,7 +402,7 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 		agent.markPositions()
 
 		// 2. Score candidate actions against learned decision
-		agent.buildCandidates(symbol, decision)
+		agent.buildCandidates(decision)
 
 		currentAction := "wait"
 		reduce := false
@@ -440,7 +438,7 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 
 			// Enter when precursor model has developed positive skill/edge
 			if agent.canEnter(decision) {
-				agent.enterLong(envelope, symbol, currentPrice, decision, now)
+				agent.enterLong(symbol, currentPrice, decision, now)
 			}
 		}
 
@@ -475,7 +473,7 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 			}
 
 			if shouldExit {
-				agent.exitLong(envelope, symbol, currentPrice, now)
+				agent.exitLong(symbol, currentPrice, now)
 			}
 		}
 
@@ -485,86 +483,6 @@ func (agent *MainAgent) Step(envelope *types.Envelope, decision ActionDecision) 
 		// 5. Evaluate robustness threshold for paper/live promotion
 		agent.evaluateRobustness()
 	}
-
-	// 6. Ensure continuous decision round telemetry on every evaluation step
-	if envelope.StrategyRound == nil {
-		agent.attachContinuousDecision(envelope, symbol, currentPrice, decision, holding, now)
-	}
-
-	envelope.Positions = agent.exportPositions()
-	envelope.Equity = agent.exportEquity()
-}
-
-func (agent *MainAgent) attachContinuousDecision(
-	envelope *types.Envelope,
-	symbol string,
-	price *decimal.Decimal,
-	decision ActionDecision,
-	holding *types.Holding,
-	now time.Time,
-) {
-	action := types.ActionHold
-	outcome := "hold"
-	reason := "holding open position"
-
-	if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
-		action = types.ActionNothing
-		outcome = "wait"
-		reason = string(decision.Action)
-
-		if reason == "" {
-			reason = "scanning for precursor opportunity"
-		}
-	}
-
-	if decision.Action == ActionEnter {
-		action = types.ActionEnter
-		outcome = "enter"
-		reason = "precursor opportunity qualified"
-	}
-
-	if decision.Action == ActionExit && holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
-		action = types.ActionExit
-		outcome = "exit"
-		reason = "learned exit trigger"
-	}
-
-	decisionRecord := &types.Decision{
-		ID:               uuid.NewString(),
-		Action:           action,
-		Symbol:           symbol,
-		At:               now,
-		Direction:        0.0,
-		ReferencePrice:   price,
-		Confidence:       decision.Confidence,
-		AvailableCapital: agent.cash,
-		OpenPositions:    len(agent.positions),
-		Cause:            "learned_policy",
-		Reason:           reason,
-	}
-
-	envelope.StrategyRound = &types.StrategyRound{
-		Symbol:    symbol,
-		Evaluated: true,
-		Outcome:   outcome,
-		Decisions: []*types.Decision{decisionRecord},
-	}
-}
-
-func (agent *MainAgent) extractPrice(envelope *types.Envelope, symbol string) *decimal.Decimal {
-	if envelope.TickerData.Last != nil && envelope.TickerData.Last.Sign() > 0 {
-		return envelope.TickerData.Last
-	}
-
-	if envelope.TickerData.Bid != nil && envelope.TickerData.Bid.Sign() > 0 {
-		return envelope.TickerData.Bid
-	}
-
-	if cached, ok := agent.lastPrice[symbol]; ok && cached != nil && cached.Sign() > 0 {
-		return cached
-	}
-
-	return nil
 }
 
 func (agent *MainAgent) markPositions() {
@@ -592,7 +510,6 @@ func (agent *MainAgent) markPositions() {
 }
 
 func (agent *MainAgent) enterLong(
-	envelope *types.Envelope,
 	symbol string,
 	price *decimal.Decimal,
 	decision ActionDecision,
@@ -696,30 +613,6 @@ func (agent *MainAgent) enterLong(
 	agent.posQuantities[symbol] = quantity
 	agent.posCosts[symbol] = notional
 
-	if envelope != nil {
-		decisionRecord := &types.Decision{
-			ID:               uuid.NewString(),
-			Action:           types.ActionEnter,
-			Symbol:           symbol,
-			At:               now,
-			Direction:        1.0,
-			ProposedNotional: notional,
-			ProposedQuantity: quantity,
-			ReferencePrice:   price,
-			Confidence:       decision.Confidence,
-			AvailableCapital: agent.cash,
-			OpenPositions:    len(agent.positions),
-			Cause:            "learned_policy",
-			Reason:           string(decision.Action),
-		}
-		envelope.StrategyRound = &types.StrategyRound{
-			Symbol:    symbol,
-			Evaluated: true,
-			Outcome:   "buy",
-			Decisions: []*types.Decision{decisionRecord},
-		}
-	}
-
 	agent.lastDecision = &telemetry.LearningDecisionT{
 		Id:       agent.decisions,
 		Agent:    0,
@@ -741,7 +634,6 @@ func (agent *MainAgent) enterLong(
 }
 
 func (agent *MainAgent) exitLong(
-	envelope *types.Envelope,
 	symbol string,
 	price *decimal.Decimal,
 	now time.Time,
@@ -906,31 +798,6 @@ func (agent *MainAgent) exitLong(
 	delete(agent.posQuantities, symbol)
 	delete(agent.posCosts, symbol)
 
-	if envelope != nil {
-		decision := &types.Decision{
-			ID:               uuid.NewString(),
-			Action:           types.ActionExit,
-			Symbol:           symbol,
-			At:               now,
-			Direction:        -1.0,
-			ProposedNotional: cost,
-			ProposedQuantity: qty,
-			ReferencePrice:   price,
-			AvailableCapital: agent.cash,
-			OpenPositions:    len(agent.positions),
-			Cause:            "position_exit",
-			EntryPrice:       entryPrice,
-			ExitPrice:        price,
-			PnL:              netProfit,
-		}
-		envelope.StrategyRound = &types.StrategyRound{
-			Symbol:    symbol,
-			Evaluated: true,
-			Outcome:   "sell",
-			Decisions: []*types.Decision{decision},
-		}
-	}
-
 	agent.lastDecision = &telemetry.LearningDecisionT{
 		Id:       agent.decisions,
 		Agent:    0,
@@ -965,7 +832,7 @@ func (agent *MainAgent) recordOutcome(outcome TradeOutcome, returnBp float64) {
 	}
 }
 
-func (agent *MainAgent) buildCandidates(symbol string, decision ActionDecision) {
+func (agent *MainAgent) buildCandidates(decision ActionDecision) {
 	samples := uint64(len(agent.outcomes))
 	meanFraction := agent.meanReturn / 10000.0
 	varFraction := agent.variance / 100000000.0
@@ -1162,87 +1029,6 @@ func (agent *MainAgent) AgentTelemetry() *telemetry.LearningAgentT {
 		Reading:      reading,
 		Open:         int32(len(agent.positions)),
 	}
-}
-
-func (agent *MainAgent) exportEquity() *types.EquityReading {
-	return &types.EquityReading{
-		Cash:       agent.cash.String(),
-		Unrealized: agent.unrealized.String(),
-		Equity:     agent.equity.String(),
-		Complete:   true,
-	}
-}
-
-func (agent *MainAgent) exportPositions() []*telemetry.PositionT {
-	positions := make([]*telemetry.PositionT, 0, len(agent.positions)+len(agent.recentClosed))
-
-	for _, holding := range agent.positions {
-		entryAt := int64(0)
-
-		if holding.EntryAt != nil {
-			entryAt = holding.EntryAt.UnixNano()
-		}
-
-		markStr := ""
-
-		if holding.Mark != nil {
-			markStr = holding.Mark.String()
-		}
-
-		entryPriceStr := ""
-
-		if holding.EntryPrice != nil {
-			entryPriceStr = holding.EntryPrice.String()
-		}
-
-		entryFeeStr := "0"
-
-		if holding.EntryFee != nil {
-			entryFeeStr = holding.EntryFee.String()
-		}
-
-		pnlStr := "0"
-
-		if holding.PnL != nil {
-			pnlStr = holding.PnL.String()
-		}
-
-		qtyStr := ""
-
-		if holding.Qty != nil {
-			qtyStr = holding.Qty.String()
-		}
-
-		positions = append(positions, &telemetry.PositionT{
-			Status: "open",
-			Holding: &telemetry.HoldingT{
-				Symbol:     holding.Symbol,
-				Status:     "open",
-				Qty:        qtyStr,
-				EntryPrice: entryPriceStr,
-				EntryAt:    entryAt,
-				EntryFee:   entryFeeStr,
-				Pnl:        pnlStr,
-				ReturnPct:  holding.ReturnPct,
-				Mark:       markStr,
-			},
-			Decision: &telemetry.DecisionT{
-				Id:               uuid.NewString(),
-				Action:           "enter",
-				Symbol:           holding.Symbol,
-				At:               entryAt,
-				Confidence:       1.0,
-				Reason:           "learned_policy",
-				OpportunityType:  "precursor",
-				OpportunityPhase: "enter",
-				PredictiveStatus: "open",
-			},
-		})
-	}
-
-	positions = append(positions, agent.recentClosed...)
-
-	return positions
 }
 
 /*

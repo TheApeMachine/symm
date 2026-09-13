@@ -82,8 +82,7 @@ type Solver struct {
 	reading atomic.Pointer[State]
 	version uint64 // Owned by advanceMu, together with the published reading.
 
-	viewer      Viewer
-	marketState *types.MarketState
+	viewer Viewer
 }
 
 /*
@@ -94,7 +93,7 @@ frame — never pays for a full field readout it would only discard.
 */
 type Viewer interface {
 	WantsManifold() bool
-	PublishManifold(*types.Envelope)
+	PublishManifold(*types.ManifoldState)
 }
 
 /*
@@ -170,14 +169,6 @@ SetViewer attaches the publication boundary the advance loop renders into. It
 is set once during construction, before any envelope is stepped.
 */
 func (solver *Solver) SetViewer(viewer Viewer) { solver.viewer = viewer }
-
-/*
-SetMarketState attaches the central lock-free market state where fresh manifold
-physics advances are recorded for training and downstream evaluation.
-*/
-func (solver *Solver) SetMarketState(marketState *types.MarketState) {
-	solver.marketState = marketState
-}
 
 /*
 RecordForcing records Hawkes excitation fractions for the given symbol directly.
@@ -297,53 +288,50 @@ Step dispatches on the envelope kind:
     field is not stepped here.
   - Any other kind is a no-op.
 */
-func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Error() != nil {
 		solver.cancel()
 
 		return nil
 	}
 
-	if envelope == nil {
-		return envelope
+	if measurement == nil {
+		return nil
 	}
 
-	switch envelope.TypeID {
-	case types.EnvelopeTrade:
-		symbol := ""
+	symbol := measurement.Label
 
-		if envelope.Hawkes != nil {
-			symbol = envelope.Hawkes.Label
-		}
+	if measurement.Source == "hawkes" {
+		solver.recordForcing(symbol, measurement)
 
-		if symbol == "" {
-			symbol = envelope.TradeData.Symbol
-		}
-
-		solver.recordForcing(symbol, envelope.Hawkes)
-
-		return envelope
-
-	case types.EnvelopeLevel3:
-		// A Level3 envelope is a semaphore: it says a symbol's book moved, and
-		// carries no orders. So there is nothing to project here — the ring's
-		// whole obligation is to wake the advance, which then reads the book
-		// itself. Every message between two advances collapses into the one
-		// book state the next advance sees, which is what makes a field far
-		// slower than the firehose feeding it a non-problem.
-		solver.markDirty(envelope.Symbol())
-
-		select {
-		case solver.wake <- struct{}{}:
-		default:
-		}
-
-		envelope.Manifold = solver.liveReading()
-
-		return envelope
+		return measurement
 	}
 
-	return envelope
+	for _, peer := range measurement.Peers {
+		if peer != nil && peer.Source == "hawkes" {
+			solver.recordForcing(peer.Label, peer)
+		}
+	}
+
+	solver.markDirty(symbol)
+
+	select {
+	case solver.wake <- struct{}{}:
+	default:
+	}
+
+	return measurement
+}
+
+func (solver *Solver) Register() (*data.Measurement[float64], []string) {
+	return data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+		"divergence": data.NewMetric[float64](
+			"divergence", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"kuramoto_r": data.NewMetric[float64](
+			"kuramoto_r", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+	}), []string{"hawkes"}
 }
 
 /*
@@ -638,17 +626,6 @@ func (solver *Solver) publishReading(state *sensorium.State) *State {
 	}
 	solver.reading.Store(&reading)
 
-	if solver.marketState != nil && solver.api != nil {
-		if symbols := solver.api.Books(); symbols != nil {
-			symbols.Range(func(key, _ any) bool {
-				if symbol, ok := key.(string); ok && symbol != "" {
-					solver.marketState.UpdateManifold(symbol, &reading)
-				}
-				return true
-			})
-		}
-	}
-
 	return &reading
 }
 
@@ -696,10 +673,7 @@ func (solver *Solver) publish() {
 		return
 	}
 
-	envelope := types.NewEnvelope(types.EnvelopeManifold)
-	envelope.Manifold = snapshot
-
-	solver.viewer.PublishManifold(envelope)
+	solver.viewer.PublishManifold(snapshot)
 }
 
 /*

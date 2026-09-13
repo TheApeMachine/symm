@@ -32,13 +32,26 @@ type ResonanceT struct {
 	Dynamics *ResonanceDynamicsT `json:"dynamics"`
 	Verdict *ResonanceVerdictT `json:"verdict"`
 	TaskForecast float64 `json:"taskForecast"`
+	ForwardCurve []float64 `json:"forwardCurve"`
+	ForwardRetention []float64 `json:"forwardRetention"`
+	SupportedHorizon int64 `json:"supportedHorizon"`
+	Calibrated bool `json:"calibrated"`
+	ResolvedSteps int64 `json:"resolvedSteps"`
+	Readout []float64 `json:"readout"`
+	Confidence float64 `json:"confidence"`
+	LastResolutionPrediction float64 `json:"lastResolutionPrediction"`
+	LastResolutionTarget float64 `json:"lastResolutionTarget"`
+	LastResolutionError float64 `json:"lastResolutionError"`
 }
 
 func (t *ResonanceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	sourceOffset := builder.CreateString(t.Source)
+	sourceOffset := flatbuffers.UOffsetT(0)
+	if t.Source != "" {
+		sourceOffset = builder.CreateString(t.Source)
+	}
 	symbolOffset := builder.CreateString(t.Symbol)
 	taskCalibrationOffset := flatbuffers.UOffsetT(0)
 	if t.TaskCalibration != "" {
@@ -91,6 +104,33 @@ func (t *ResonanceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	forecastOffset := t.Forecast.Pack(builder)
 	dynamicsOffset := t.Dynamics.Pack(builder)
 	verdictOffset := t.Verdict.Pack(builder)
+	forwardCurveOffset := flatbuffers.UOffsetT(0)
+	if t.ForwardCurve != nil {
+		forwardCurveLength := len(t.ForwardCurve)
+		ResonanceStartForwardCurveVector(builder, forwardCurveLength)
+		for j := forwardCurveLength - 1; j >= 0; j-- {
+			builder.PrependFloat64(t.ForwardCurve[j])
+		}
+		forwardCurveOffset = builder.EndVector(forwardCurveLength)
+	}
+	forwardRetentionOffset := flatbuffers.UOffsetT(0)
+	if t.ForwardRetention != nil {
+		forwardRetentionLength := len(t.ForwardRetention)
+		ResonanceStartForwardRetentionVector(builder, forwardRetentionLength)
+		for j := forwardRetentionLength - 1; j >= 0; j-- {
+			builder.PrependFloat64(t.ForwardRetention[j])
+		}
+		forwardRetentionOffset = builder.EndVector(forwardRetentionLength)
+	}
+	readoutOffset := flatbuffers.UOffsetT(0)
+	if t.Readout != nil {
+		readoutLength := len(t.Readout)
+		ResonanceStartReadoutVector(builder, readoutLength)
+		for j := readoutLength - 1; j >= 0; j-- {
+			builder.PrependFloat64(t.Readout[j])
+		}
+		readoutOffset = builder.EndVector(readoutLength)
+	}
 	ResonanceStart(builder)
 	ResonanceAddSource(builder, sourceOffset)
 	ResonanceAddSymbol(builder, symbolOffset)
@@ -117,6 +157,16 @@ func (t *ResonanceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	ResonanceAddDynamics(builder, dynamicsOffset)
 	ResonanceAddVerdict(builder, verdictOffset)
 	ResonanceAddTaskForecast(builder, t.TaskForecast)
+	ResonanceAddForwardCurve(builder, forwardCurveOffset)
+	ResonanceAddForwardRetention(builder, forwardRetentionOffset)
+	ResonanceAddSupportedHorizon(builder, t.SupportedHorizon)
+	ResonanceAddCalibrated(builder, t.Calibrated)
+	ResonanceAddResolvedSteps(builder, t.ResolvedSteps)
+	ResonanceAddReadout(builder, readoutOffset)
+	ResonanceAddConfidence(builder, t.Confidence)
+	ResonanceAddLastResolutionPrediction(builder, t.LastResolutionPrediction)
+	ResonanceAddLastResolutionTarget(builder, t.LastResolutionTarget)
+	ResonanceAddLastResolutionError(builder, t.LastResolutionError)
 	return ResonanceEnd(builder)
 }
 
@@ -164,6 +214,28 @@ func (rcv *Resonance) UnPackTo(t *ResonanceT) {
 	t.Dynamics = rcv.Dynamics(nil).UnPack()
 	t.Verdict = rcv.Verdict(nil).UnPack()
 	t.TaskForecast = rcv.TaskForecast()
+	forwardCurveLength := rcv.ForwardCurveLength()
+	t.ForwardCurve = make([]float64, forwardCurveLength)
+	for j := 0; j < forwardCurveLength; j++ {
+		t.ForwardCurve[j] = rcv.ForwardCurve(j)
+	}
+	forwardRetentionLength := rcv.ForwardRetentionLength()
+	t.ForwardRetention = make([]float64, forwardRetentionLength)
+	for j := 0; j < forwardRetentionLength; j++ {
+		t.ForwardRetention[j] = rcv.ForwardRetention(j)
+	}
+	t.SupportedHorizon = rcv.SupportedHorizon()
+	t.Calibrated = rcv.Calibrated()
+	t.ResolvedSteps = rcv.ResolvedSteps()
+	readoutLength := rcv.ReadoutLength()
+	t.Readout = make([]float64, readoutLength)
+	for j := 0; j < readoutLength; j++ {
+		t.Readout[j] = rcv.Readout(j)
+	}
+	t.Confidence = rcv.Confidence()
+	t.LastResolutionPrediction = rcv.LastResolutionPrediction()
+	t.LastResolutionTarget = rcv.LastResolutionTarget()
+	t.LastResolutionError = rcv.LastResolutionError()
 }
 
 func (rcv *Resonance) UnPack() *ResonanceT {
@@ -547,8 +619,170 @@ func (rcv *Resonance) MutateTaskForecast(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
 
+func (rcv *Resonance) ForwardCurve(j int) float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
+	}
+	return 0
+}
+
+func (rcv *Resonance) ForwardCurveLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *Resonance) MutateForwardCurve(j int, n float64) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
+	}
+	return false
+}
+
+func (rcv *Resonance) ForwardRetention(j int) float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
+	}
+	return 0
+}
+
+func (rcv *Resonance) ForwardRetentionLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *Resonance) MutateForwardRetention(j int, n float64) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
+	}
+	return false
+}
+
+func (rcv *Resonance) SupportedHorizon() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *Resonance) MutateSupportedHorizon(n int64) bool {
+	return rcv._tab.MutateInt64Slot(58, n)
+}
+
+func (rcv *Resonance) Calibrated() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *Resonance) MutateCalibrated(n bool) bool {
+	return rcv._tab.MutateBoolSlot(60, n)
+}
+
+func (rcv *Resonance) ResolvedSteps() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *Resonance) MutateResolvedSteps(n int64) bool {
+	return rcv._tab.MutateInt64Slot(62, n)
+}
+
+func (rcv *Resonance) Readout(j int) float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
+	}
+	return 0
+}
+
+func (rcv *Resonance) ReadoutLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *Resonance) MutateReadout(j int, n float64) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
+	}
+	return false
+}
+
+func (rcv *Resonance) Confidence() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateConfidence(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(66, n)
+}
+
+func (rcv *Resonance) LastResolutionPrediction() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateLastResolutionPrediction(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(68, n)
+}
+
+func (rcv *Resonance) LastResolutionTarget() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateLastResolutionTarget(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(70, n)
+}
+
+func (rcv *Resonance) LastResolutionError() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateLastResolutionError(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(72, n)
+}
+
 func ResonanceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(25)
+	builder.StartObject(35)
 }
 func ResonanceAddSource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(source), 0)
@@ -636,6 +870,45 @@ func ResonanceAddVerdict(builder *flatbuffers.Builder, verdict flatbuffers.UOffs
 }
 func ResonanceAddTaskForecast(builder *flatbuffers.Builder, taskForecast float64) {
 	builder.PrependFloat64Slot(24, taskForecast, 0.0)
+}
+func ResonanceAddForwardCurve(builder *flatbuffers.Builder, forwardCurve flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(forwardCurve), 0)
+}
+func ResonanceStartForwardCurveVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(8, numElems, 8)
+}
+func ResonanceAddForwardRetention(builder *flatbuffers.Builder, forwardRetention flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(forwardRetention), 0)
+}
+func ResonanceStartForwardRetentionVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(8, numElems, 8)
+}
+func ResonanceAddSupportedHorizon(builder *flatbuffers.Builder, supportedHorizon int64) {
+	builder.PrependInt64Slot(27, supportedHorizon, 0)
+}
+func ResonanceAddCalibrated(builder *flatbuffers.Builder, calibrated bool) {
+	builder.PrependBoolSlot(28, calibrated, false)
+}
+func ResonanceAddResolvedSteps(builder *flatbuffers.Builder, resolvedSteps int64) {
+	builder.PrependInt64Slot(29, resolvedSteps, 0)
+}
+func ResonanceAddReadout(builder *flatbuffers.Builder, readout flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(30, flatbuffers.UOffsetT(readout), 0)
+}
+func ResonanceStartReadoutVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(8, numElems, 8)
+}
+func ResonanceAddConfidence(builder *flatbuffers.Builder, confidence float64) {
+	builder.PrependFloat64Slot(31, confidence, 0.0)
+}
+func ResonanceAddLastResolutionPrediction(builder *flatbuffers.Builder, lastResolutionPrediction float64) {
+	builder.PrependFloat64Slot(32, lastResolutionPrediction, 0.0)
+}
+func ResonanceAddLastResolutionTarget(builder *flatbuffers.Builder, lastResolutionTarget float64) {
+	builder.PrependFloat64Slot(33, lastResolutionTarget, 0.0)
+}
+func ResonanceAddLastResolutionError(builder *flatbuffers.Builder, lastResolutionError float64) {
+	builder.PrependFloat64Slot(34, lastResolutionError, 0.0)
 }
 func ResonanceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

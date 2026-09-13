@@ -18,6 +18,8 @@ type MeasurementT struct {
 	PeerAt int64 `json:"peerAt"`
 	PeerObservedFrom int64 `json:"peerObservedFrom"`
 	Maturity float64 `json:"maturity"`
+	Snr float64 `json:"snr"`
+	SnrDefined bool `json:"snrDefined"`
 	Metrics []*MetricT `json:"metrics"`
 	Metadata []*NamedNumberT `json:"metadata"`
 }
@@ -74,6 +76,8 @@ func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	MeasurementAddPeerAt(builder, t.PeerAt)
 	MeasurementAddPeerObservedFrom(builder, t.PeerObservedFrom)
 	MeasurementAddMaturity(builder, t.Maturity)
+	MeasurementAddSnr(builder, t.Snr)
+	MeasurementAddSnrDefined(builder, t.SnrDefined)
 	MeasurementAddMetrics(builder, metricsOffset)
 	MeasurementAddMetadata(builder, metadataOffset)
 	return MeasurementEnd(builder)
@@ -91,6 +95,8 @@ func (rcv *Measurement) UnPackTo(t *MeasurementT) {
 	t.PeerAt = rcv.PeerAt()
 	t.PeerObservedFrom = rcv.PeerObservedFrom()
 	t.Maturity = rcv.Maturity()
+	t.Snr = rcv.Snr()
+	t.SnrDefined = rcv.SnrDefined()
 	metricsLength := rcv.MetricsLength()
 	t.Metrics = make([]*MetricT, metricsLength)
 	for j := 0; j < metricsLength; j++ {
@@ -267,8 +273,32 @@ func (rcv *Measurement) MutateMaturity(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
 
-func (rcv *Measurement) Metrics(obj *Metric, j int) bool {
+func (rcv *Measurement) Snr() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Measurement) MutateSnr(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(26, n)
+}
+
+func (rcv *Measurement) SnrDefined() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *Measurement) MutateSnrDefined(n bool) bool {
+	return rcv._tab.MutateBoolSlot(28, n)
+}
+
+func (rcv *Measurement) Metrics(obj *Metric, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -280,7 +310,7 @@ func (rcv *Measurement) Metrics(obj *Metric, j int) bool {
 }
 
 func (rcv *Measurement) MetricsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -288,7 +318,7 @@ func (rcv *Measurement) MetricsLength() int {
 }
 
 func (rcv *Measurement) Metadata(obj *NamedNumber, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -300,7 +330,7 @@ func (rcv *Measurement) Metadata(obj *NamedNumber, j int) bool {
 }
 
 func (rcv *Measurement) MetadataLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -308,7 +338,7 @@ func (rcv *Measurement) MetadataLength() int {
 }
 
 func MeasurementStart(builder *flatbuffers.Builder) {
-	builder.StartObject(13)
+	builder.StartObject(15)
 }
 func MeasurementAddId(builder *flatbuffers.Builder, id flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(id), 0)
@@ -343,14 +373,20 @@ func MeasurementAddPeerObservedFrom(builder *flatbuffers.Builder, peerObservedFr
 func MeasurementAddMaturity(builder *flatbuffers.Builder, maturity float64) {
 	builder.PrependFloat64Slot(10, maturity, 0.0)
 }
+func MeasurementAddSnr(builder *flatbuffers.Builder, snr float64) {
+	builder.PrependFloat64Slot(11, snr, 0.0)
+}
+func MeasurementAddSnrDefined(builder *flatbuffers.Builder, snrDefined bool) {
+	builder.PrependBoolSlot(12, snrDefined, false)
+}
 func MeasurementAddMetrics(builder *flatbuffers.Builder, metrics flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(metrics), 0)
+	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(metrics), 0)
 }
 func MeasurementStartMetricsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func MeasurementAddMetadata(builder *flatbuffers.Builder, metadata flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(metadata), 0)
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(metadata), 0)
 }
 func MeasurementStartMetadataVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

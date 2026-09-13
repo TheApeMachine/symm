@@ -10,7 +10,7 @@ import (
 )
 
 func toxicityTouch(symbol string, at time.Time, bidPrice, bidQty, askPrice, askQty float64) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 		"best_price:bid":     data.NewMetric[float64]("best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(bidPrice),
 		"best_price:ask":     data.NewMetric[float64]("best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(askPrice),
 		"touch_quantity:bid": data.NewMetric[float64]("touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(bidQty),

@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -52,26 +53,13 @@ replace the venue connection and restore its feeds; protocol and ingestion
 failures remain terminal and are reported to the process supervisor.
 */
 type FuturesLive struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	status         *runtime.Status
-	err            error
+	*runtime.System
 	client         atomic.Pointer[derivatives.WebSocket]
 	queue          *lf.Queue[map[string]any]
 	simulator      *Simulator
 	callbacks      *sync.Map
-	capture        CaptureSink
-	manifestSink   ManifestSink
 	subscriptionMu sync.RWMutex
 	subscriptions  map[string][]string
-	failureMu      sync.RWMutex
-	failure        func(error)
-	observer       atomic.Pointer[func(string, time.Duration)]
-	connected      atomic.Bool
-	released       atomic.Bool
-	reconnecting   atomic.Bool
-	closing        atomic.Bool
-	closeOnce      sync.Once
 
 	// streams owns this session's operational epoch/sequence bookkeeping.
 	streams *Streams
@@ -86,74 +74,12 @@ type FuturesLive struct {
 	resolve atomic.Pointer[func(string) (string, bool)]
 }
 
-/*
-Capture returns the underlying capture sink attached to the futures connection.
-*/
-func (futures *FuturesLive) Capture() CaptureSink {
-	if futures == nil {
-		return nil
-	}
-
-	return futures.capture
-}
-
-/*
-Error returns the first terminal futures-session failure.
-*/
-func (futures *FuturesLive) Error() error {
-	if futures == nil {
-		return nil
-	}
-
-	futures.failureMu.RLock()
-	defer futures.failureMu.RUnlock()
-
-	return futures.err
-}
-
-/*
-SetFailure binds this session to its owner. Existing constructor failures are
-replayed when API attaches after the futures transport is constructed.
-*/
-func (futures *FuturesLive) SetFailure(handler func(error)) {
-	if futures == nil {
-		return
-	}
-
-	futures.failureMu.Lock()
-	futures.failure = handler
-	err := futures.err
-	futures.failureMu.Unlock()
-
-	if err != nil && handler != nil {
-		handler(err)
-	}
-}
-
 func (futures *FuturesLive) fail(err error) {
 	if futures == nil || err == nil {
 		return
 	}
 
-	err = errnie.Error(err)
-
-	futures.failureMu.Lock()
-
-	if futures.err != nil {
-		futures.failureMu.Unlock()
-		return
-	}
-
-	futures.err = err
-	handler := futures.failure
-	futures.failureMu.Unlock()
-
-	futures.status.Transition(runtime.ERROR)
-	futures.cancel()
-
-	if handler != nil {
-		handler(err)
-	}
+	futures.Fail(err)
 }
 
 func (futures *FuturesLive) operationalError() error {
@@ -162,12 +88,12 @@ func (futures *FuturesLive) operationalError() error {
 	}
 
 	select {
-	case <-futures.ctx.Done():
+	case <-futures.Context().Done():
 		if err := futures.Error(); err != nil {
 			return err
 		}
 
-		return futures.ctx.Err()
+		return futures.Context().Err()
 	default:
 		return nil
 	}
@@ -251,9 +177,8 @@ constructor, mirroring New.
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
-	recorders ...CaptureSink,
 ) *FuturesLive {
-	return NewFuturesWithClient(ctx, endpoint, nil, recorders...)
+	return NewFuturesWithClient(ctx, endpoint, nil)
 }
 
 /*
@@ -264,7 +189,6 @@ func NewFuturesWithClient(
 	ctx context.Context,
 	endpoint string,
 	client *derivatives.WebSocket,
-	recorders ...CaptureSink,
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = system.Cfg.WebSocket.Endpoints.Futures
@@ -281,12 +205,8 @@ func NewFuturesWithClient(
 	client.Reconnect = nil
 	client.OnDisconnected.Reset()
 
-	ctx, cancel := context.WithCancel(ctx)
-
 	futures := &FuturesLive{
-		ctx:           ctx,
-		cancel:        cancel,
-		status:        runtime.NewStatus(),
+		System:        runtime.NewSystem(ctx, "websocket:futures"),
 		callbacks:     &sync.Map{},
 		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
@@ -297,7 +217,7 @@ func NewFuturesWithClient(
 	futures.pinger = NewPinger("futures", func() error {
 		client := futures.Client()
 
-		if !futures.connected.Load() {
+		if futures.Status() != runtime.READY && futures.Status() != runtime.BUSY {
 			return nil
 		}
 
@@ -317,14 +237,6 @@ func NewFuturesWithClient(
 			err,
 		))
 	})
-
-	if len(recorders) == 1 {
-		futures.capture = recorders[0]
-
-		if manifestSink, ok := recorders[0].(ManifestSink); ok {
-			futures.manifestSink = manifestSink
-		}
-	}
 
 	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
 		if futures.operationalError() != nil {
@@ -348,31 +260,7 @@ func NewFuturesWithClient(
 			return
 		}
 
-		// Every futures frame reaches the same capture sink as the spot stream,
-		// so the events store sees the whole system. Capture mints the
-		// Hindsight capture identity, persists the raw frame with it, and
-		// returns it so every envelope parsed from this frame carries the exact
-		// same origin. The transport mints the operational StreamRef first —
-		// independent of capture — so the same epoch/sequence fact exists with
-		// Hindsight both on and off.
-		streamRef := futures.streams.Next(feed)
 
-		if futures.capture != nil {
-			if _, captureErr := futures.capture.Capture(
-				feed,
-				futures.Client().URL,
-				raw,
-				time.Now().UTC(),
-				streamRef,
-			); captureErr != nil {
-				futures.fail(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("futures: capture failed for %s frame: %s", feed, captureErr.Error()),
-					captureErr,
-				))
-				return
-			}
-		}
 
 		// An unsubscribe acknowledgement answers a teardown; nothing to dispatch.
 		if feed == "unsubscribed" || feed == "unsubscribe" {
@@ -471,15 +359,13 @@ func NewFuturesWithClient(
 
 		errnie.Info(fmt.Sprintf("futures: connected to %s", futures.Client().URL))
 
-		futures.connected.Store(true)
-
-		if futures.released.Load() {
-			futures.status.Transition(runtime.READY)
+		if futures.Status() == runtime.READY {
+			futures.Transition(runtime.READY)
 		} else {
-			futures.status.Transition(runtime.BUSY)
+			futures.Transition(runtime.BUSY)
 		}
 
-		futures.pinger.Start(futures.ctx)
+		futures.pinger.Start(futures.Context())
 
 		// Kraken Futures sends nothing at all on an idle socket — unlike spot,
 		// which generates heartbeats automatically on any subscription. Its
@@ -495,7 +381,7 @@ func NewFuturesWithClient(
 			return
 		}
 
-		if futures.released.Load() {
+		if futures.Status() == runtime.READY {
 			if err := futures.restoreSubscriptions(); err != nil {
 				futures.fail(err)
 			}
@@ -507,7 +393,7 @@ func NewFuturesWithClient(
 	})
 
 	errnie.Info(fmt.Sprintf("futures: connecting to %s", client.URL))
-	futures.status.Transition(runtime.WAITING)
+	futures.Transition(runtime.WAITING)
 
 	if err := client.Connect(); err != nil {
 		futures.fail(errnie.Err(
@@ -526,19 +412,12 @@ The retry cadence comes from the official SDK client, while this session owns
 context cancellation, subscription restoration, and stream epoch boundaries.
 */
 func (futures *FuturesLive) reconnect(err error) {
-	if futures.closing.Load() || futures.ctx.Err() != nil {
+	if futures.Status() == runtime.DONE || futures.Context().Err() != nil {
 		return
 	}
 
-	if !futures.reconnecting.CompareAndSwap(false, true) {
-		return
-	}
-
-	defer futures.reconnecting.Store(false)
-
-	futures.connected.Store(false)
 	futures.pinger.Stop()
-	futures.status.Transition(runtime.WAITING)
+	futures.Transition(runtime.WAITING)
 	futures.streams.Advance()
 	client := futures.Client()
 	replacement := derivatives.NewWebSocket()
@@ -564,11 +443,11 @@ func (futures *FuturesLive) reconnect(err error) {
 		err,
 	))
 
-	for futures.ctx.Err() == nil {
+	for futures.Context().Err() == nil {
 		err = replacement.Connect()
 
 		if err == nil {
-			if futures.ctx.Err() != nil {
+			if futures.Context().Err() != nil {
 				_ = replacement.Disconnect()
 			}
 
@@ -585,7 +464,7 @@ func (futures *FuturesLive) reconnect(err error) {
 
 		select {
 		case <-retry.C:
-		case <-futures.ctx.Done():
+		case <-futures.Context().Done():
 			retry.Stop()
 
 			return
@@ -653,37 +532,6 @@ func futuresFrameIdentity(raw []byte) string {
 
 func (futures *FuturesLive) Name() string { return "kraken_futures" }
 
-func (futures *FuturesLive) Status() runtime.Stage {
-	return futures.status.Current()
-}
-
-/*
-MarkReady releases this connected session after the complete consumer graph has
-been admitted, mirroring Live.MarkReady.
-*/
-func (futures *FuturesLive) MarkReady() {
-	if futures == nil {
-		return
-	}
-
-	if futures.operationalError() != nil {
-		return
-	}
-
-	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
-		futures.fail(errnie.Err(
-			errnie.NotAcceptable,
-			"futures: only a connected session can become ready",
-			nil,
-		))
-
-		return
-	}
-
-	futures.released.Store(true)
-	futures.status.Transition(runtime.READY)
-}
-
 func (futures *FuturesLive) Client() *derivatives.WebSocket {
 	if futures == nil {
 		return nil
@@ -692,16 +540,16 @@ func (futures *FuturesLive) Client() *derivatives.WebSocket {
 	return futures.client.Load()
 }
 
-/*
-SetObserver installs the latency observer this session reports transport timings
-to, mirroring the spot session's observer seam.
-*/
-func (futures *FuturesLive) SetObserver(observer func(string, time.Duration)) {
-	if futures == nil {
+func (futures *FuturesLive) MarkReady() {
+	if futures == nil || futures.operationalError() != nil {
 		return
 	}
 
-	futures.observer.Store(&observer)
+	futures.Transition(runtime.READY)
+
+	if err := futures.restoreSubscriptions(); err != nil {
+		futures.fail(err)
+	}
 }
 
 func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
@@ -834,7 +682,7 @@ func (futures *FuturesLive) unsubscribe(feed string, productIDs []string) error 
 		return nil
 	}
 
-	if !futures.connected.Load() {
+	if futures.Status() != runtime.READY && futures.Status() != runtime.BUSY {
 		return nil
 	}
 
@@ -909,31 +757,28 @@ func (futures *FuturesLive) Close() error {
 		return nil
 	}
 
+	if futures.Status() == runtime.DONE {
+		return nil
+	}
+
+	futures.Transition(runtime.DONE)
+
+	if futures.pinger != nil {
+		futures.pinger.Stop()
+	}
+
 	var closeErr error
 
-	futures.closeOnce.Do(func() {
-		futures.closing.Store(true)
-		futures.cancel()
-
-		if futures.pinger != nil {
-			futures.pinger.Stop()
+	if client := futures.Client(); client != nil {
+		if err := client.Disconnect(); err != nil {
+			closeErr = errnie.Err(
+				errnie.IO,
+				"futures: failed to disconnect",
+				err,
+			)
+			futures.fail(closeErr)
 		}
+	}
 
-		if futures.connected.Load() && futures.Error() == nil && futures.Client() != nil {
-			if err := futures.Client().Disconnect(); err != nil {
-				closeErr = errnie.Err(
-					errnie.IO,
-					"futures: failed to disconnect",
-					err,
-				)
-				futures.fail(closeErr)
-			}
-		}
-
-		if futures.Error() == nil && futures.status != nil {
-			futures.status.Transition(runtime.DONE)
-		}
-	})
-
-	return closeErr
+	return errors.Join(closeErr, futures.System.Close())
 }

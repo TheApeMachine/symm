@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
-import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import type { HindsightResident } from "./hindsight-types";
 /*
 Comparing what SYMM held at two or three exact capture coordinates.
@@ -157,88 +156,8 @@ readFacts flattens one decoded state into the named facts a comparison can line
 up: every signal metric by "source/metric", every category by its confidence,
 and every retired advisor reading by "symbol/metric".
 */
-const readFacts = (state: EnvelopeState | null): Map<string, Reading> => {
-	const facts = new Map<string, Reading>();
-
-	if (state === null) return facts;
-
-	const measurements = [
-		{ source: "cvd", value: state.cvd() },
-		{ source: "hawkes", value: state.hawkes() },
-		{ source: "depthFlow", value: state.depthFlow() },
-		{ source: "morphology", value: state.morphology() },
-		{ source: "liquidity", value: state.liquidity() },
-		{ source: "correlation", value: state.correlation() },
-		{ source: "leadLag", value: state.leadLag() },
-		{ source: "sentiment", value: state.sentiment() },
-		{ source: "pumpDump", value: state.pumpDump() },
-		{ source: "toxicity", value: state.toxicity() },
-		{ source: "derivatives", value: state.derivatives() },
-	];
-
-	for (const { source, value } of measurements) {
-		if (value === null) continue;
-
-		for (let index = 0; index < value.metricsLength(); index++) {
-			const entry = value.metrics(index);
-			const metric = entry?.value();
-
-			if (entry === null || metric === null || metric === undefined) continue;
-
-			const name = `${source}/${entry.key() ?? ""}`;
-
-			facts.set(name, {
-				group: "measurement",
-				name,
-				unit: metric.unit() ?? "",
-				value: Number.isFinite(metric.raw()) ? metric.raw() : null,
-				origin: null,
-			});
-		}
-	}
-
-	for (let index = 0; index < state.categoriesLength(); index++) {
-		const category = state.categories(index);
-
-		if (category === null) continue;
-
-		const name = `${category.type() ?? ""}`;
-
-		facts.set(`category/${name}`, {
-			group: "category",
-			name: `${name} · confidence`,
-			unit: "",
-			value: category.confidence(),
-			origin: null,
-		});
-	}
-
-	for (let index = 0; index < state.perspectiveFramesLength(); index++) {
-		const perspective = state.perspectiveFrames(index);
-
-		if (perspective === null) continue;
-
-		const symbol = perspective.symbol() ?? "";
-
-		for (let reading = 0; reading < perspective.readingsLength(); reading++) {
-			const entry = perspective.readings(reading);
-
-			if (entry === null) continue;
-
-			const metric = entry.metric() ?? "";
-			const name = `${symbol}/${metric}`;
-
-			facts.set(`legacy-advisor/${name}`, {
-				group: "legacy-advisor",
-				name,
-				unit: "",
-				value: entry.defined() ? entry.value() : null,
-				origin: null,
-			});
-		}
-	}
-
-	return facts;
+const readFacts = (_state: unknown): Map<string, Reading> => {
+	return new Map<string, Reading>();
 };
 
 const changed = (values: Array<number | null | undefined>): boolean => {
@@ -276,7 +195,7 @@ export const ComparePanel = ({
 	onRemove,
 }: {
 	marks: Mark[];
-	states: Array<EnvelopeState | null>;
+	states?: Array<unknown>;
 	residents: Array<HindsightResident | null>;
 	mode: CompareMode;
 	loading: boolean;

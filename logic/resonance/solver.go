@@ -82,7 +82,6 @@ type Solver struct {
 	// duration so the wiring diagram can profile the resonance stage like
 	// every other pipeline node.
 	ObserveModule func(string, time.Duration)
-	observe       func(*types.Envelope)
 }
 
 /*
@@ -146,48 +145,118 @@ func (solver *Solver) Status() types.Status {
 }
 
 /*
-Step advances the symbol's predictive coder over the canonical 11-dimensional
-microstructure sensory features carried on this envelope and writes the
-resulting artifact back onto the envelope.
+Step advances the symbol's predictive coder over the canonical microstructure
+sensory features carried in Peers and writes the resulting resonance metrics
+onto the measurement.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if measurement == nil {
 		return nil
 	}
 
-	symbol := measurement.Symbol()
+	symbol := measurement.Label
 
 	if symbol == "" {
-		return envelope
+		for _, peer := range measurement.Peers {
+			if peer != nil && peer.Label != "" {
+				symbol = peer.Label
+				break
+			}
+		}
 	}
 
-	at := extractTimestamp(envelope)
-	midpoint := extractMidpoint(envelope)
+	if symbol == "" {
+		return measurement
+	}
+
+	at := measurement.At
+
+	if at.IsZero() {
+		for _, peer := range measurement.Peers {
+			if peer != nil && !peer.At.IsZero() {
+				at = peer.At
+				break
+			}
+		}
+	}
+
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	midpoint := 0.0
+
+	for _, peer := range measurement.Peers {
+		if peer != nil && peer.Metrics != nil {
+			if metric, found := peer.Metrics["midpoint"]; found && metric.Raw > 0 {
+				midpoint = metric.Raw
+				break
+			}
+		}
+	}
+
+	var signals [11]*data.Measurement[float64]
+
+	for _, peer := range measurement.Peers {
+		if peer == nil {
+			continue
+		}
+
+		switch peer.Source {
+		case "correlation":
+			signals[0] = peer
+		case "leadlag":
+			signals[1] = peer
+		case "liquidity":
+			signals[2] = peer
+		case "sentiment":
+			signals[3] = peer
+		case "cvd":
+			signals[4] = peer
+		case "depthflow":
+			signals[5] = peer
+		case "morphology":
+			signals[6] = peer
+		case "hawkes":
+			signals[7] = peer
+		case "pumpdump":
+			signals[8] = peer
+		case "toxicity":
+			signals[9] = peer
+		case "derivatives":
+			signals[10] = peer
+		}
+	}
 
 	scorer := solver.scorer(symbol)
-	features := scorer.Step(envelope.SignalMeasurements())
+	features := scorer.Step(signals)
 
-	envelope.Resonance = solver.Update(symbol, at, features, midpoint)
+	resonance := solver.Update(symbol, at, features, midpoint)
 
-	if envelope.Resonance == nil {
-		return envelope
+	if resonance != nil && resonance.Snapshot != nil {
+		if m, ok := measurement.Metrics["energy"]; ok {
+			measurement.Metrics["energy"] = m.Write(resonance.Snapshot.Energy)
+		}
+
+		if m, ok := measurement.Metrics["surprise"]; ok {
+			measurement.Metrics["surprise"] = m.Write(resonance.Snapshot.Surprise)
+		}
 	}
 
-	if solver.observe != nil {
-		solver.observe(envelope)
-	}
-
-	return envelope
+	return measurement
 }
 
-func Register() *data.Measurement[float64] {
-	return &data.Measurement[float64]{}
+func (solver *Solver) Register() (*data.Measurement[float64], []string) {
+	return data.NewMeasurement[float64]("resonance", map[string]data.Metric[float64]{
+		"energy": data.NewMetric[float64](
+			"energy", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"surprise": data.NewMetric[float64](
+			"surprise", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+	}), []string{"*"}
 }
 
-/* SetObserver installs the synchronous observer for producer-owned model state. */
-func (solver *Solver) SetObserver(observer func(*types.Envelope)) {
-	solver.observe = observer
-}
 
 /*
 Update steps one feature detector for one symbol and publishes the settled
@@ -284,95 +353,6 @@ func (solver *Solver) Update(
 	return solver.publishReturns(symbolName, at, coder, out)
 }
 
-func extractMidpoint(envelope *types.Envelope) float64 {
-	if envelope == nil {
-		return 0
-	}
-
-	switch envelope.TypeID {
-	case types.EnvelopeTicker:
-		if envelope.TickerData.Bid != nil && envelope.TickerData.Ask != nil &&
-			envelope.TickerData.Bid.Sign() > 0 && envelope.TickerData.Ask.Sign() > 0 {
-			return (envelope.TickerData.Bid.Float64() + envelope.TickerData.Ask.Float64()) / 2
-		}
-
-		if envelope.TickerData.Last != nil && envelope.TickerData.Last.Sign() > 0 {
-			return envelope.TickerData.Last.Float64()
-		}
-
-	case types.EnvelopeTrade:
-		if envelope.TradeData.Price.Sign() > 0 {
-			return envelope.TradeData.Price.Float64()
-		}
-
-	case types.EnvelopeFuturesTicker:
-		if envelope.FuturesTickerData.Last != nil && envelope.FuturesTickerData.Last.Sign() > 0 {
-			return envelope.FuturesTickerData.Last.Float64()
-		}
-
-	case types.EnvelopeFuturesTrade:
-		if envelope.FuturesTradeData.Price.Sign() > 0 {
-			return envelope.FuturesTradeData.Price.Float64()
-		}
-	}
-
-	if envelope.Liquidity != nil && envelope.Liquidity.Metrics != nil {
-		if metric, found := envelope.Liquidity.Metrics["midpoint"]; found && metric.Raw > 0 {
-			return metric.Raw
-		}
-	}
-
-	if envelope.PumpDump != nil && envelope.PumpDump.Metrics != nil {
-		if metric, found := envelope.PumpDump.Metrics["midpoint"]; found && metric.Raw > 0 {
-			return metric.Raw
-		}
-	}
-
-	return 0
-}
-
-func extractTimestamp(envelope *types.Envelope) time.Time {
-	if envelope == nil {
-		return time.Now()
-	}
-
-	switch envelope.TypeID {
-	case types.EnvelopeTicker:
-		if !envelope.TickerData.Timestamp.IsZero() {
-			return envelope.TickerData.Timestamp
-		}
-
-	case types.EnvelopeTrade:
-		if !envelope.TradeData.Timestamp.IsZero() {
-			return envelope.TradeData.Timestamp
-		}
-
-	case types.EnvelopeLevel3:
-		if !envelope.Level3Data.Timestamp.IsZero() {
-			return envelope.Level3Data.Timestamp
-		}
-
-	case types.EnvelopeFuturesTicker:
-		if !envelope.FuturesTickerData.Timestamp.IsZero() {
-			return envelope.FuturesTickerData.Timestamp
-		}
-
-	case types.EnvelopeFuturesTrade:
-		if !envelope.FuturesTradeData.Timestamp.IsZero() {
-			return envelope.FuturesTradeData.Timestamp
-		}
-	}
-
-	measurements := envelope.SignalMeasurements()
-
-	for _, measurement := range measurements {
-		if measurement != nil && !measurement.At.IsZero() {
-			return measurement.At
-		}
-	}
-
-	return time.Now()
-}
 
 func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (float64, bool) {
 	if measurement == nil || measurement.Err != nil || len(measurement.Metrics) == 0 {
@@ -632,12 +612,12 @@ the domain boundary.
 */
 func resonanceDynamics(
 	dynamics *learning.ResonanceDynamics,
-) *wire.EnvelopeResonanceDynamicsT {
+) *wire.ResonanceDynamicsT {
 	if dynamics == nil {
 		return nil
 	}
 
-	return &wire.EnvelopeResonanceDynamicsT{
+	return &wire.ResonanceDynamicsT{
 		Ready:            1,
 		StoredEnergy:     dynamics.Energy,
 		SuppliedPower:    dynamics.PredictionEnergy,

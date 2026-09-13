@@ -7,22 +7,22 @@ import * as flatbuffers from 'flatbuffers';
 
 
 
-export class EnvelopeBoundaryStamp implements flatbuffers.IUnpackableObject<EnvelopeBoundaryStampT> {
+export class BoundaryStamp implements flatbuffers.IUnpackableObject<BoundaryStampT> {
   bb: flatbuffers.ByteBuffer|null = null;
   bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeBoundaryStamp {
+  __init(i:number, bb:flatbuffers.ByteBuffer):BoundaryStamp {
   this.bb_pos = i;
   this.bb = bb;
   return this;
 }
 
-static getRootAsEnvelopeBoundaryStamp(bb:flatbuffers.ByteBuffer, obj?:EnvelopeBoundaryStamp):EnvelopeBoundaryStamp {
-  return (obj || new EnvelopeBoundaryStamp()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+static getRootAsBoundaryStamp(bb:flatbuffers.ByteBuffer, obj?:BoundaryStamp):BoundaryStamp {
+  return (obj || new BoundaryStamp()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-static getSizePrefixedRootAsEnvelopeBoundaryStamp(bb:flatbuffers.ByteBuffer, obj?:EnvelopeBoundaryStamp):EnvelopeBoundaryStamp {
+static getSizePrefixedRootAsBoundaryStamp(bb:flatbuffers.ByteBuffer, obj?:BoundaryStamp):BoundaryStamp {
   bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeBoundaryStamp()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+  return (obj || new BoundaryStamp()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
 label():string|null
@@ -69,7 +69,7 @@ stage():number {
   return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
 }
 
-static startEnvelopeBoundaryStamp(builder:flatbuffers.Builder) {
+static startBoundaryStamp(builder:flatbuffers.Builder) {
   builder.startObject(8);
 }
 
@@ -105,27 +105,27 @@ static addStage(builder:flatbuffers.Builder, stage:number) {
   builder.addFieldInt32(7, stage, 0);
 }
 
-static endEnvelopeBoundaryStamp(builder:flatbuffers.Builder):flatbuffers.Offset {
+static endBoundaryStamp(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // label
   return offset;
 }
 
-static createEnvelopeBoundaryStamp(builder:flatbuffers.Builder, labelOffset:flatbuffers.Offset, atNs:bigint, seqCount:bigint, avgGapNs:bigint, lastGapNs:bigint, backlog:bigint, groupOffset:flatbuffers.Offset, stage:number):flatbuffers.Offset {
-  EnvelopeBoundaryStamp.startEnvelopeBoundaryStamp(builder);
-  EnvelopeBoundaryStamp.addLabel(builder, labelOffset);
-  EnvelopeBoundaryStamp.addAtNs(builder, atNs);
-  EnvelopeBoundaryStamp.addSeqCount(builder, seqCount);
-  EnvelopeBoundaryStamp.addAvgGapNs(builder, avgGapNs);
-  EnvelopeBoundaryStamp.addLastGapNs(builder, lastGapNs);
-  EnvelopeBoundaryStamp.addBacklog(builder, backlog);
-  EnvelopeBoundaryStamp.addGroup(builder, groupOffset);
-  EnvelopeBoundaryStamp.addStage(builder, stage);
-  return EnvelopeBoundaryStamp.endEnvelopeBoundaryStamp(builder);
+static createBoundaryStamp(builder:flatbuffers.Builder, labelOffset:flatbuffers.Offset, atNs:bigint, seqCount:bigint, avgGapNs:bigint, lastGapNs:bigint, backlog:bigint, groupOffset:flatbuffers.Offset, stage:number):flatbuffers.Offset {
+  BoundaryStamp.startBoundaryStamp(builder);
+  BoundaryStamp.addLabel(builder, labelOffset);
+  BoundaryStamp.addAtNs(builder, atNs);
+  BoundaryStamp.addSeqCount(builder, seqCount);
+  BoundaryStamp.addAvgGapNs(builder, avgGapNs);
+  BoundaryStamp.addLastGapNs(builder, lastGapNs);
+  BoundaryStamp.addBacklog(builder, backlog);
+  BoundaryStamp.addGroup(builder, groupOffset);
+  BoundaryStamp.addStage(builder, stage);
+  return BoundaryStamp.endBoundaryStamp(builder);
 }
 
-unpack(): EnvelopeBoundaryStampT {
-  return new EnvelopeBoundaryStampT(
+unpack(): BoundaryStampT {
+  return new BoundaryStampT(
     this.label(),
     this.atNs(),
     this.seqCount(),
@@ -138,7 +138,7 @@ unpack(): EnvelopeBoundaryStampT {
 }
 
 
-unpackTo(_o: EnvelopeBoundaryStampT): void {
+unpackTo(_o: BoundaryStampT): void {
   _o.label = this.label();
   _o.atNs = this.atNs();
   _o.seqCount = this.seqCount();
@@ -150,7 +150,7 @@ unpackTo(_o: EnvelopeBoundaryStampT): void {
 }
 }
 
-export class EnvelopeBoundaryStampT implements flatbuffers.IGeneratedObject {
+export class BoundaryStampT implements flatbuffers.IGeneratedObject {
 constructor(
   public label: string|Uint8Array|null = null,
   public atNs: bigint = BigInt('0'),
@@ -167,7 +167,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const label = (this.label !== null ? builder.createString(this.label!) : 0);
   const group = (this.group !== null ? builder.createString(this.group!) : 0);
 
-  return EnvelopeBoundaryStamp.createEnvelopeBoundaryStamp(builder,
+  return BoundaryStamp.createBoundaryStamp(builder,
     label,
     this.atNs,
     this.seqCount,

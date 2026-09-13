@@ -33,7 +33,7 @@ func categoryMeasurement(symbol string, normalized bool, value float64) *data.Me
 	}
 
 	return &data.Measurement[float64]{
-		ID:       "test",
+		ID:       1,
 		Source:   "cvd",
 		Label:    symbol,
 		At:       time.Unix(0, 1),
@@ -137,7 +137,7 @@ func TestCategorySolverCorroboration(t *testing.T) {
 		// signed_net_fraction_divergence also maps to aggressive_drive.
 		divergenceVal := 0.16
 		So(solver.accumulateLocked(state, &data.Measurement[float64]{
-			ID:       "test2",
+			ID:       2,
 			Source:   "cvd",
 			Label:    "BTC/USD",
 			At:       time.Unix(0, 1),
@@ -283,7 +283,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 
 		Convey("wall-clock distance does not invent a generic expiry", func() {
 			trigger := &data.Measurement[float64]{
-				ID: "trigger", Source: "unmapped", Label: "BTC/USD",
+				ID: 3, Source: "unmapped", Label: "BTC/USD",
 				At: time.Unix(86_400, 0), Metrics: map[string]data.Metric[float64]{},
 			}
 			categories := solver.StepMeasurement(trigger)
@@ -312,7 +312,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 
 		divergenceVal := 0.5
 		valid := &data.Measurement[float64]{
-			ID:       "valid-test",
+			ID:       4,
 			Source:   "cvd",
 			Label:    "BTC/USD",
 			At:       time.Unix(0, 1),
@@ -340,7 +340,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 			2026, time.September, 1, 22, 27, 48, 113_331_000, time.UTC,
 		)
 		trade := &data.Measurement[float64]{
-			ID: "hawkes", Source: "hawkes", Label: "MLN/USD", At: newerTradeAt,
+			ID: 5, Source: "hawkes", Label: "MLN/USD", At: newerTradeAt,
 			Metrics: map[string]data.Metric[float64]{
 				"arrival_rate": {
 					Label: "arrival_rate",
@@ -349,7 +349,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 			},
 		}
 		delayedTicker := &data.Measurement[float64]{
-			ID: "correlation", Source: "correlation", Label: "MLN/USD",
+			ID: 6, Source: "correlation", Label: "MLN/USD",
 			At: olderTickerAt, Metrics: map[string]data.Metric[float64]{},
 		}
 
@@ -366,24 +366,28 @@ func TestSolverStepMeasurement(t *testing.T) {
 }
 
 func TestSolverStep(t *testing.T) {
-	Convey("Given one envelope carrying multiple signal measurements", t, func() {
+	Convey("Given one measurement carrying multiple signal peers", t, func() {
 		solver := NewSolver(t.Context())
 		at := time.Unix(1, 0)
-		envelope := types.NewEnvelope(types.EnvelopeTrade)
-		envelope.CVD = data.NewMeasurement[float64]("cvd", nil)
-		envelope.CVD.Label, envelope.CVD.At, envelope.CVD.From = "BTC/USD", at, at
-		envelope.CVD.Maturity = 1
-		envelope.CVD.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: 0.8}
-		envelope.Hawkes = data.NewMeasurement[float64]("hawkes", nil)
-		envelope.Hawkes.Label, envelope.Hawkes.At, envelope.Hawkes.From = "BTC/USD", at, at
-		envelope.Hawkes.Maturity = 1
-		envelope.Hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
+		m, _ := solver.Register()
+		m.Label, m.At, m.From = "BTC/USD", at, at
 
-		result := solver.Step(envelope)
+		cvd := data.NewMeasurement[float64]("cvd", nil)
+		cvd.Label, cvd.At, cvd.From = "BTC/USD", at, at
+		cvd.Maturity = 1
+		cvd.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: 0.8}
+
+		hawkes := data.NewMeasurement[float64]("hawkes", nil)
+		hawkes.Label, hawkes.At, hawkes.From = "BTC/USD", at, at
+		hawkes.Maturity = 1
+		hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
+
+		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
+
+		result := solver.Step(m)
 
 		Convey("the observation commits one classification revision", func() {
-			So(result, ShouldEqual, envelope)
-			So(result.Categories, ShouldNotBeNil)
+			So(result, ShouldEqual, m)
 			So(solver.Version(), ShouldEqual, uint64(1))
 			So(solver.Error(), ShouldBeNil)
 		})
@@ -394,23 +398,27 @@ func TestSolverStep(t *testing.T) {
 		at1 := time.Unix(10, 0)
 		at2 := at1.Add(5 * time.Millisecond)
 
-		envelope := types.NewEnvelope(types.EnvelopeTrade)
-		envelope.CVD = data.NewMeasurement[float64]("cvd", nil)
-		envelope.CVD.Label, envelope.CVD.At, envelope.CVD.From = "BTC/USD", at1, at1
-		envelope.CVD.Maturity = 1
-		envelope.CVD.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: -3.5}
-		envelope.Hawkes = data.NewMeasurement[float64]("hawkes", nil)
-		envelope.Hawkes.Label, envelope.Hawkes.At, envelope.Hawkes.From = "BTC/USD", at2, at2
-		envelope.Hawkes.Maturity = 1
-		envelope.Hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
+		m, _ := solver.Register()
+		m.Label, m.At, m.From = "BTC/USD", at1, at1
 
-		result := solver.Step(envelope)
+		cvd := data.NewMeasurement[float64]("cvd", nil)
+		cvd.Label, cvd.At, cvd.From = "BTC/USD", at1, at1
+		cvd.Maturity = 1
+		cvd.Metrics["signed_net_fraction_zscore"] = data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: -3.5}
+
+		hawkes := data.NewMeasurement[float64]("hawkes", nil)
+		hawkes.Label, hawkes.At, hawkes.From = "BTC/USD", at2, at2
+		hawkes.Maturity = 1
+		hawkes.Metrics["arrival_rate"] = data.Metric[float64]{Label: "arrival_rate", Raw: 0.6}
+
+		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
+
+		result := solver.Step(m)
 
 		Convey("timestamp skew within tolerance is accepted and negative z-scores are retained", func() {
 			So(solver.Error(), ShouldBeNil)
 			So(result, ShouldNotBeNil)
-			So(len(result.Categories), ShouldBeGreaterThan, 0)
-			So(result.Categories[0].Type, ShouldEqual, types.AggressiveDrive)
+			So(result.Metrics[string(types.AggressiveDrive)].Raw, ShouldBeGreaterThan, 0)
 		})
 	})
 }

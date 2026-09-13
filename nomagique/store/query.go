@@ -52,16 +52,25 @@ func (op *Query[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 }
 
 func (op *Query[T]) Identity() int {
-	return op.subject.Identity()
+	if op.subject != nil {
+		return op.subject.Identity()
+	}
+
+	return -1
 }
 
 func (op *Query[T]) Identify(id int) data.Identifiable[T] {
-	return op.subject.Identify(id)
+	if op.subject != nil {
+		return op.subject.Identify(id)
+	}
+
+	return op
 }
 
 func (op *Query[T]) First() T {
 	return op.payload[0]
 }
+
 
 func (op *Query[T]) Error(errs ...error) error {
 	for _, err := range errs {

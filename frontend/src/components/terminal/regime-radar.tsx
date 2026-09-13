@@ -4,10 +4,10 @@ import type { FrameBuffer } from "#/collections/app";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
-import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 
-const metricObj = new EnvelopeMeasurementMetric();
+const metricObj = new Metric();
 
 const radarAxes = [
 	{
@@ -37,7 +37,7 @@ export const RadarPanel = () => {
 		const subscriptions = radarAxes.map((axis) => {
 			const store = getMeasurementStore(axis.source, focusSymbol);
 
-			const apply = (state: FrameBuffer<EnvelopeMeasurement>) => {
+			const apply = (state: FrameBuffer<Measurement>) => {
 				if (!root.current) return;
 
 				const row = state.getLast();
@@ -46,8 +46,8 @@ export const RadarPanel = () => {
 				if (row) {
 					for (let j = 0; j < row.metricsLength(); j++) {
 						const m = row.metrics(j, metricObj);
-						if (m && m.key() === axis.metric) {
-							normalized = m.value()?.normalized() ?? 0;
+						if (m && m.name() === axis.metric) {
+							normalized = m.normalized();
 							break;
 						}
 					}

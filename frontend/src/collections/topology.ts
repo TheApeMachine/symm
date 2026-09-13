@@ -1,5 +1,5 @@
 import { createStore } from "@tanstack/react-store";
-import type { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
+import type { BoundaryStamp } from "#/providers/telemetry/telemetry/boundary-stamp";
 
 /*
 NodeStats is one diagnostics stage's live health, read straight off its own
@@ -94,7 +94,7 @@ export const topologyStore = createStore(
 		O(stamps) per envelope plus the group fan-out, no allocation beyond the
 		occasional new Map entry for a label/hop seen for the first time.
 		*/
-		ingest: (stamps: EnvelopeBoundaryStamp[]) => {
+		ingest: (stamps: BoundaryStamp[]) => {
 			if (stamps.length === 0) return;
 
 			setState((prev) => {

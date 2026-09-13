@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -19,13 +20,9 @@ import (
 )
 
 /*
-scan reads one table, optionally restricted to a single run, and yields its
-record batches. Batches are borrowed for the duration of each yield; retained
-values must be copied before advancing the iterator.
-
-Iceberg guarantees no row order: a scan returns files in plan order and rows in
-file order. Callers that need capture order sort explicitly rather than relying
-on the layout, because a compaction or a re-append would silently change it.
+scan reads one table, optionally restricted to an epoch and tick range, and
+yields its record batches. Batches are borrowed for the duration of each yield;
+retained values must be copied before advancing the iterator.
 */
 func (catalog *Catalog) scan(
 	ctx context.Context, name string, fields []string, filters ...iceberg.BooleanExpression,
@@ -72,15 +69,11 @@ func (catalog *Catalog) scan(
 		}
 
 		if bound > 0 {
-			// A column chunk bounds one flat payload, including dictionary
-			// entries. It does not bound a decoded batch of repeated entries.
 			batchSize = min(batchSize, max(1, math.MaxInt32/bound))
 			break
 		}
 	}
 
-	// Iceberg 0.6 reads batch size from table metadata, not scan options.
-	// Apply it to this scan's metadata copy without committing a table change.
 	metadata, err := icetable.MetadataBuilderFromBase(loaded.Metadata(), loaded.MetadataLocation())
 
 	if err != nil {
@@ -123,12 +116,14 @@ func (catalog *Catalog) scan(
 	}, nil
 }
 
-// forRun restricts a scan to one run.
-func forRun(run string) iceberg.BooleanExpression {
-	return iceberg.EqualTo(iceberg.Reference("run"), run)
+func forEpoch(epoch int64) iceberg.BooleanExpression {
+	return iceberg.EqualTo(iceberg.Reference("epoch"), epoch)
 }
 
-// str reads an optional string column, returning "" for null.
+func afterTick(tick int64) iceberg.BooleanExpression {
+	return iceberg.GreaterThan(iceberg.Reference("tick"), tick)
+}
+
 func str(column arrow.Array, row int) string {
 	if column.IsNull(row) {
 		return ""
@@ -137,7 +132,6 @@ func str(column arrow.Array, row int) string {
 	return strings.Clone(column.(*array.String).Value(row))
 }
 
-// num reads an optional int64 column, returning 0 for null.
 func num(column arrow.Array, row int) int64 {
 	if column.IsNull(row) {
 		return 0
@@ -146,7 +140,39 @@ func num(column arrow.Array, row int) int64 {
 	return column.(*array.Int64).Value(row)
 }
 
-// when reads an optional timestamp column as a UTC time, zero for null.
+func num32(column arrow.Array, row int) int32 {
+	if column.IsNull(row) {
+		return 0
+	}
+
+	return column.(*array.Int32).Value(row)
+}
+
+func flt(column arrow.Array, row int) float64 {
+	if column.IsNull(row) {
+		return 0
+	}
+
+	return column.(*array.Float64).Value(row)
+}
+
+func fltPtr(column arrow.Array, row int) *float64 {
+	if column.IsNull(row) {
+		return nil
+	}
+
+	val := column.(*array.Float64).Value(row)
+	return &val
+}
+
+func boolean(column arrow.Array, row int) bool {
+	if column.IsNull(row) {
+		return false
+	}
+
+	return column.(*array.Boolean).Value(row)
+}
+
 func when(column arrow.Array, row int) (value arrow.Timestamp, ok bool) {
 	if column.IsNull(row) {
 		return 0, false
@@ -155,7 +181,27 @@ func when(column arrow.Array, row int) (value arrow.Timestamp, ok bool) {
 	return column.(*array.Timestamp).Value(row), true
 }
 
-// bin reads an optional binary column, returning nil for null.
+func timeVal(column arrow.Array, row int) time.Time {
+	micros, ok := when(column, row)
+
+	if !ok {
+		return time.Time{}
+	}
+
+	return micros.ToTime(arrow.Microsecond).UTC()
+}
+
+func timePtr(column arrow.Array, row int) *time.Time {
+	micros, ok := when(column, row)
+
+	if !ok {
+		return nil
+	}
+
+	t := micros.ToTime(arrow.Microsecond).UTC()
+	return &t
+}
+
 func bin(column arrow.Array, row int) []byte {
 	if column.IsNull(row) {
 		return nil
@@ -164,419 +210,24 @@ func bin(column arrow.Array, row int) []byte {
 	return bytes.Clone(column.(*array.Binary).Value(row))
 }
 
-// rawBin borrows the Arrow binary value. Valid only until the batch is released.
-func rawBin(column arrow.Array, row int) []byte {
+func mapStrFlt(column arrow.Array, row int) map[string]float64 {
 	if column.IsNull(row) {
 		return nil
 	}
 
-	return column.(*array.Binary).Value(row)
+	mapArr := column.(*array.Map)
+	start, end := mapArr.ValueOffsets(row)
+	result := make(map[string]float64, end-start)
+	keys := mapArr.Keys().(*array.String)
+	items := mapArr.Items().(*array.Float64)
+
+	for element := int(start); element < int(end); element++ {
+		result[keys.Value(element)] = items.Value(element)
+	}
+
+	return result
 }
 
-/*
-Captures returns a run's captures strictly after the consumed sequence, sorted
-in capture order. Sequences start at one; after zero reads the whole run.
-Both predicates reach Iceberg before reading payloads, so tail followers avoid
-reloading consumed files. Only the selected suffix is collected for sorting.
-*/
-func (c *Catalog) Captures(ctx context.Context, run string, after int64) ([]CaptureRow, error) {
-	return c.captures(ctx, run, iceberg.GreaterThan(iceberg.Reference("sequence"), after))
-}
-
-/*
-MarketKinds are the capture kinds that carry a market fact. Every other kind —
-book and depth frames above all, which are the overwhelming majority of a run —
-decodes to no observation at all.
-*/
-var MarketKinds = []string{"ticker", "trade", "trade_snapshot", "l3_touch"}
-
-func (c *Catalog) captures(ctx context.Context, run string, filters ...iceberg.BooleanExpression) ([]CaptureRow, error) {
-	rows := []CaptureRow{}
-
-	if err := c.eachCapture(ctx, run, func(row CaptureRow) error {
-		rows = append(rows, row)
-
-		return nil
-	}, filters...); err != nil {
-		return nil, err
-	}
-
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Sequence < rows[j].Sequence })
-
-	return rows, nil
-}
-
-/*
-EachMarketCapture hands every capture that can carry a market fact to fn, one
-at a time, without ever holding the run.
-
-Collecting first is what a whole-run read cannot afford: a few minutes of one
-run is over a million captures, and it is their payloads — book frames above
-all — that make the collection gigabytes rather than megabytes. Streaming them
-past a decoder keeps only what the decoder kept.
-
-Rows arrive in the order Iceberg planned them, not in capture order. Nothing
-here can sort without holding the run, which is precisely the cost being
-avoided, so ordering is the caller's to apply to whatever it derives — which
-is smaller than the payloads it derived them from.
-*/
-func (c *Catalog) EachMarketCapture(
-	ctx context.Context, run string, after int64, fn func(CaptureRow) error,
-) error {
-	return c.eachCapture(
-		ctx, run, fn,
-		iceberg.GreaterThan(iceberg.Reference("sequence"), after),
-		iceberg.IsIn(iceberg.Reference("kind"), MarketKinds...),
-	)
-}
-
-func (c *Catalog) eachCapture(
-	ctx context.Context, run string, fn func(CaptureRow) error, filters ...iceberg.BooleanExpression,
-) error {
-	batches, err := c.scan(ctx, Captures, nil, append(filters, forRun(run))...)
-
-	if err != nil {
-		return err
-	}
-
-	for batch, err := range batches {
-		if err != nil {
-			return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] captures batch", err))
-		}
-
-		for index := range int(batch.NumRows()) {
-			row := CaptureRow{
-				Run:            str(batch.Column(0), index),
-				Sequence:       num(batch.Column(1), index),
-				Stream:         str(batch.Column(2), index),
-				StreamEpoch:    num(batch.Column(3), index),
-				StreamSequence: num(batch.Column(4), index),
-				Endpoint:       str(batch.Column(6), index),
-				Kind:           str(batch.Column(7), index),
-				PayloadHash:    str(batch.Column(8), index),
-				Payload:        bin(batch.Column(9), index),
-			}
-
-			if micros, ok := when(batch.Column(5), index); ok {
-				row.ReceivedAt = micros.ToTime(arrow.Microsecond).UTC()
-			}
-
-			if err := fn(row); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// Runs yields every recorded process capture session, newest first.
-func (c *Catalog) Runs(ctx context.Context) ([]RunRow, error) {
-	batches, err := c.scan(ctx, Runs, nil)
-
-	if err != nil {
-		return nil, err
-	}
-
-	rows := []RunRow{}
-
-	for batch, err := range batches {
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] runs batch", err))
-		}
-
-		for index := range int(batch.NumRows()) {
-			row := RunRow{
-				ID:           str(batch.Column(0), index),
-				CodeCommit:   str(batch.Column(2), index),
-				BuildID:      str(batch.Column(3), index),
-				ConfigDigest: str(batch.Column(4), index),
-				Integrity:    str(batch.Column(5), index),
-			}
-
-			if !batch.Column(6).IsNull(index) {
-				row.Positions = batch.Column(6).(*array.Int32).Value(index)
-			}
-
-			versions := batch.Column(7).(*array.Map)
-
-			if !versions.IsNull(index) {
-				start, end := versions.ValueOffsets(index)
-				row.SchemaVersions = make(map[string]string, end-start)
-
-				for element := int(start); element < int(end); element++ {
-					row.SchemaVersions[str(versions.Keys(), element)] = str(versions.Items(), element)
-				}
-			}
-
-			if micros, ok := when(batch.Column(1), index); ok {
-				row.StartedAt = micros.ToTime(arrow.Microsecond).UTC()
-			}
-
-			rows = append(rows, row)
-		}
-	}
-
-	sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.After(rows[j].StartedAt) })
-
-	return rows, nil
-}
-
-// ref reads a nested envelope reference column.
-func ref(column arrow.Array, row int) EnvelopeRefRow {
-	if column.IsNull(row) {
-		return EnvelopeRefRow{}
-	}
-
-	fields := column.(*array.Struct)
-
-	return EnvelopeRefRow{
-		Run:      str(fields.Field(0), row),
-		Sequence: num(fields.Field(1), row),
-		Ordinal:  num(fields.Field(2), row),
-	}
-}
-
-// listBounds returns the half-open element range one list row occupies in the
-// list's flattened value array.
-func listBounds(column *array.List, row int) (start, end int) {
-	if column.IsNull(row) {
-		return 0, 0
-	}
-
-	offsets := column.Offsets()
-
-	return int(offsets[row]), int(offsets[row+1])
-}
-
-/*
-Witnesses yields the artifact witnesses of one run.
-
-Passing a non-empty kind selects a single artifact family; "state" reproduces
-what the old states/ key prefix held, which is now a predicate rather than a
-separate table.
-*/
-func (c *Catalog) Witnesses(ctx context.Context, run, kind string) ([]WitnessRow, error) {
-	return c.witnesses(ctx, run, kind, nil, nil, nil)
-}
-
-func (c *Catalog) witnesses(ctx context.Context, run, kind string, sequence, ordinal *int64, seen map[EnvelopeRefRow]bool) ([]WitnessRow, error) {
-	filters := []iceberg.BooleanExpression{forRun(run)}
-
-	if kind != "" {
-		filters = append(filters, iceberg.EqualTo(iceberg.Reference("artifact_kind"), kind))
-	}
-
-	batches, err := c.scan(ctx, Witnesses, nil, filters...)
-
-	if err != nil {
-		return nil, err
-	}
-
-	rows := []WitnessRow{}
-
-	for batch, err := range batches {
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] witnesses batch", err))
-		}
-
-		parents, _ := batch.Column(9).(*array.List)
-		semantic, _ := batch.Column(10).(*array.List)
-
-		for index := range int(batch.NumRows()) {
-			reference := ref(batch.Column(1), index)
-
-			if seen[reference] {
-				continue
-			}
-
-			if sequence != nil && reference.Sequence != *sequence {
-				continue
-			}
-			if ordinal != nil && reference.Ordinal != *ordinal {
-				continue
-			}
-
-			row := WitnessRow{
-				Run:                   str(batch.Column(0), index),
-				Envelope:              ref(batch.Column(1), index),
-				Boundary:              str(batch.Column(2), index),
-				ArtifactKind:          str(batch.Column(3), index),
-				ArtifactIdentity:      str(batch.Column(4), index),
-				ArtifactKindLabel:     str(batch.Column(5), index),
-				Component:             str(batch.Column(7), index),
-				ComponentStateVersion: num(batch.Column(8), index),
-				Payload:               bin(batch.Column(11), index),
-			}
-
-			if micros, ok := when(batch.Column(6), index); ok {
-				row.ProducedAt = micros.ToTime(arrow.Microsecond).UTC()
-			}
-
-			if parents != nil {
-				start, end := listBounds(parents, index)
-				values := parents.ListValues()
-
-				for element := start; element < end; element++ {
-					row.ImmediateParents = append(row.ImmediateParents, ref(values, element))
-				}
-			}
-
-			if semantic != nil {
-				start, end := listBounds(semantic, index)
-				values := semantic.ListValues()
-
-				for element := start; element < end; element++ {
-					row.SemanticParents = append(row.SemanticParents, str(values, element))
-				}
-			}
-
-			rows = append(rows, row)
-		}
-	}
-
-	return rows, nil
-}
-
-// Manifests yields the envelope manifests of one run.
-func (c *Catalog) Manifests(ctx context.Context, run string) ([]ManifestRow, error) {
-	return c.manifests(ctx, run, nil)
-}
-
-func (c *Catalog) manifests(ctx context.Context, run string, sequence *int64) ([]ManifestRow, error) {
-	batches, err := c.scan(ctx, Manifests, nil, forRun(run))
-
-	if err != nil {
-		return nil, err
-	}
-
-	rows := []ManifestRow{}
-
-	for batch, err := range batches {
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] manifests batch", err))
-		}
-
-		for index := range int(batch.NumRows()) {
-			if sequence != nil && ref(batch.Column(1), index).Sequence != *sequence {
-				continue
-			}
-
-			row := ManifestRow{
-				Run:           str(batch.Column(0), index),
-				Envelope:      ref(batch.Column(1), index),
-				Workload:      str(batch.Column(2), index),
-				DomainKind:    str(batch.Column(3), index),
-				Symbol:        str(batch.Column(4), index),
-				VenueSequence: str(batch.Column(6), index),
-			}
-
-			if micros, ok := when(batch.Column(5), index); ok {
-				row.VenueAt = micros.ToTime(arrow.Microsecond).UTC()
-			}
-
-			rows = append(rows, row)
-		}
-	}
-
-	return rows, nil
-}
-
-// Lifecycle yields the position and order transitions of one run, in time order.
-func (c *Catalog) Lifecycle(ctx context.Context, run string) ([]LifecycleRow, error) {
-	batches, err := c.scan(ctx, Lifecycle, nil, forRun(run))
-
-	if err != nil {
-		return nil, err
-	}
-
-	rows := []LifecycleRow{}
-
-	for batch, err := range batches {
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] lifecycle batch", err))
-		}
-
-		for index := range int(batch.NumRows()) {
-			row := LifecycleRow{
-				Run:                 str(batch.Column(0), index),
-				DecisionID:          str(batch.Column(1), index),
-				ActionCorrelationID: str(batch.Column(2), index),
-				Symbol:              str(batch.Column(3), index),
-				Kind:                str(batch.Column(4), index),
-				Action:              str(batch.Column(5), index),
-				CaptureSeq:          num(batch.Column(7), index),
-			}
-
-			if micros, ok := when(batch.Column(6), index); ok {
-				row.At = micros.ToTime(arrow.Microsecond).UTC()
-			}
-
-			// All execution columns are null for position-only transitions.
-			if hasExecution(batch, index) {
-				row.Exec = &ExecutionRow{
-					OrderID: str(batch.Column(8), index), ClientOrderID: str(batch.Column(9), index),
-					ExecID: str(batch.Column(10), index), ExecType: str(batch.Column(11), index),
-					TradeID: num(batch.Column(12), index), Side: str(batch.Column(13), index),
-					OrderType: str(batch.Column(14), index), OrderStatus: str(batch.Column(15), index),
-					LiquidityInd: str(batch.Column(16), index), LastQty: dec(batch.Column(18), index),
-					LastPrice: dec(batch.Column(19), index), Cost: dec(batch.Column(20), index),
-					CumQty: dec(batch.Column(21), index), CumCost: dec(batch.Column(22), index),
-					AvgPrice: dec(batch.Column(23), index), FeeUsdEquiv: dec(batch.Column(24), index),
-					Fees: str(batch.Column(25), index),
-				}
-
-				if micros, ok := when(batch.Column(17), index); ok {
-					row.Exec.At = micros.ToTime(arrow.Microsecond).UTC()
-				}
-			}
-
-			rows = append(rows, row)
-		}
-	}
-
-	sort.Slice(rows, func(i, j int) bool { return rows[i].At.Before(rows[j].At) })
-
-	return rows, nil
-}
-
-// Gaps yields the capture-integrity gaps recorded for one run.
-func (c *Catalog) Gaps(ctx context.Context, run string) ([]GapRow, error) {
-	batches, err := c.scan(ctx, Gaps, nil, forRun(run))
-
-	if err != nil {
-		return nil, err
-	}
-
-	rows := []GapRow{}
-
-	for batch, err := range batches {
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] gaps batch", err))
-		}
-
-		for index := range int(batch.NumRows()) {
-			rows = append(rows, GapRow{
-				Run:      str(batch.Column(0), index),
-				Sequence: num(batch.Column(1), index),
-				Encoding: str(batch.Column(2), index),
-			})
-		}
-	}
-
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Sequence < rows[j].Sequence })
-
-	return rows, nil
-}
-
-/*
-dec reads an optional decimal column back into a Kraken decimal.
-
-The value is reconstructed through its decimal text rather than through
-NewFromBigInt, which treats its argument as a whole number and would rescale
-it: what Arrow hands back is an unscaled integer at DecimalScale, so the point
-has to be placed explicitly.
-*/
 func dec(column arrow.Array, row int) *decimal.Decimal {
 	if column.IsNull(row) {
 		return nil
@@ -606,9 +257,424 @@ func dec(column arrow.Array, row int) *decimal.Decimal {
 	return value
 }
 
-// Outcomes yields the graded decisions of one run.
-func (c *Catalog) Outcomes(ctx context.Context, run string) ([]OutcomeRow, error) {
-	batches, err := c.scan(ctx, Outcomes, nil, forRun(run))
+// Measurements scans canonical measurements strictly after afterTick for a given epoch.
+func (c *Catalog) Measurements(ctx context.Context, epoch int64, afterTickSeq int64) ([]MeasurementRow, error) {
+	rows := []MeasurementRow{}
+
+	err := c.EachMeasurement(ctx, epoch, afterTickSeq, func(row MeasurementRow) error {
+		rows = append(rows, row)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// EachMeasurement streams canonical measurements strictly after afterTick for a given epoch.
+func (c *Catalog) EachMeasurement(
+	ctx context.Context, epoch int64, afterTickSeq int64, fn func(MeasurementRow) error,
+) error {
+	batches, err := c.scan(ctx, Measurements, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return err
+	}
+
+	for batch, err := range batches {
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] measurements batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			row := MeasurementRow{
+				Epoch:      num(batch.Column(0), index),
+				Tick:       num(batch.Column(1), index),
+				Source:     str(batch.Column(2), index),
+				Symbol:     str(batch.Column(3), index),
+				VenueAt:    timeVal(batch.Column(4), index),
+				ObservedAt: timeVal(batch.Column(5), index),
+				Maturity:   flt(batch.Column(6), index),
+				SNR:        flt(batch.Column(7), index),
+				SNRDefined: boolean(batch.Column(8), index),
+				Metrics:    mapStrFlt(batch.Column(9), index),
+				Metadata:   mapStrFlt(batch.Column(10), index),
+				Payload:    bin(batch.Column(11), index),
+			}
+
+			if err := fn(row); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// SpotLevel3 scans book touch updates strictly after afterTick for a given epoch.
+func (c *Catalog) SpotLevel3(ctx context.Context, epoch int64, afterTickSeq int64) ([]SpotLevel3Row, error) {
+	batches, err := c.scan(ctx, SpotLevel3, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []SpotLevel3Row{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] spot_level3 batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, SpotLevel3Row{
+				Epoch:      num(batch.Column(0), index),
+				Tick:       num(batch.Column(1), index),
+				Symbol:     str(batch.Column(2), index),
+				VenueAt:    timeVal(batch.Column(3), index),
+				ReceivedAt: timeVal(batch.Column(4), index),
+				Side:       str(batch.Column(5), index),
+				Event:      str(batch.Column(6), index),
+				OrderID:    str(batch.Column(7), index),
+				LimitPrice: flt(batch.Column(8), index),
+				OrderQty:   flt(batch.Column(9), index),
+				Checksum:   num(batch.Column(10), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// SpotTicker scans spot ticker updates strictly after afterTick for a given epoch.
+func (c *Catalog) SpotTicker(ctx context.Context, epoch int64, afterTickSeq int64) ([]SpotTickerRow, error) {
+	batches, err := c.scan(ctx, SpotTicker, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []SpotTickerRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] spot_ticker batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, SpotTickerRow{
+				Epoch:      num(batch.Column(0), index),
+				Tick:       num(batch.Column(1), index),
+				Symbol:     str(batch.Column(2), index),
+				VenueAt:    timeVal(batch.Column(3), index),
+				ReceivedAt: timeVal(batch.Column(4), index),
+				Bid:        flt(batch.Column(5), index),
+				BidQty:     flt(batch.Column(6), index),
+				Ask:        flt(batch.Column(7), index),
+				AskQty:     flt(batch.Column(8), index),
+				Last:       flt(batch.Column(9), index),
+				Volume:     flt(batch.Column(10), index),
+				VWAP:       flt(batch.Column(11), index),
+				Low:        flt(batch.Column(12), index),
+				High:       flt(batch.Column(13), index),
+				Change:     flt(batch.Column(14), index),
+				ChangePct:  flt(batch.Column(15), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// SpotTrade scans spot trades strictly after afterTick for a given epoch.
+func (c *Catalog) SpotTrade(ctx context.Context, epoch int64, afterTickSeq int64) ([]SpotTradeRow, error) {
+	batches, err := c.scan(ctx, SpotTrade, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []SpotTradeRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] spot_trade batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, SpotTradeRow{
+				Epoch:      num(batch.Column(0), index),
+				Tick:       num(batch.Column(1), index),
+				Symbol:     str(batch.Column(2), index),
+				VenueAt:    timeVal(batch.Column(3), index),
+				ReceivedAt: timeVal(batch.Column(4), index),
+				Price:      flt(batch.Column(5), index),
+				Qty:        flt(batch.Column(6), index),
+				Side:       str(batch.Column(7), index),
+				OrdType:    str(batch.Column(8), index),
+				TradeID:    num(batch.Column(9), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// FuturesTicker scans futures ticker updates strictly after afterTick for a given epoch.
+func (c *Catalog) FuturesTicker(ctx context.Context, epoch int64, afterTickSeq int64) ([]FuturesTickerRow, error) {
+	batches, err := c.scan(ctx, FuturesTicker, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []FuturesTickerRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] futures_ticker batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, FuturesTickerRow{
+				Epoch:        num(batch.Column(0), index),
+				Tick:         num(batch.Column(1), index),
+				Symbol:       str(batch.Column(2), index),
+				VenueAt:      timeVal(batch.Column(3), index),
+				ReceivedAt:   timeVal(batch.Column(4), index),
+				Bid:          flt(batch.Column(5), index),
+				BidQty:       flt(batch.Column(6), index),
+				Ask:          flt(batch.Column(7), index),
+				AskQty:       flt(batch.Column(8), index),
+				Last:         flt(batch.Column(9), index),
+				Volume:       flt(batch.Column(10), index),
+				VWAP:         flt(batch.Column(11), index),
+				Low:          flt(batch.Column(12), index),
+				High:         flt(batch.Column(13), index),
+				Change:       flt(batch.Column(14), index),
+				ChangePct:    flt(batch.Column(15), index),
+				MarkPrice:    flt(batch.Column(16), index),
+				IndexPrice:   flt(batch.Column(17), index),
+				OpenInterest: flt(batch.Column(18), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// FuturesTrade scans futures trades strictly after afterTick for a given epoch.
+func (c *Catalog) FuturesTrade(ctx context.Context, epoch int64, afterTickSeq int64) ([]FuturesTradeRow, error) {
+	batches, err := c.scan(ctx, FuturesTrade, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []FuturesTradeRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] futures_trade batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, FuturesTradeRow{
+				Epoch:      num(batch.Column(0), index),
+				Tick:       num(batch.Column(1), index),
+				Symbol:     str(batch.Column(2), index),
+				VenueAt:    timeVal(batch.Column(3), index),
+				ReceivedAt: timeVal(batch.Column(4), index),
+				Price:      flt(batch.Column(5), index),
+				Qty:        flt(batch.Column(6), index),
+				Side:       str(batch.Column(7), index),
+				OrdType:    str(batch.Column(8), index),
+				TradeID:    num(batch.Column(9), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// Executions scans executions updates strictly after afterTick for a given epoch.
+func (c *Catalog) Executions(ctx context.Context, epoch int64, afterTickSeq int64) ([]ExecutionRow, error) {
+	batches, err := c.scan(ctx, Executions, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []ExecutionRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] executions batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, ExecutionRow{
+				Epoch:        num(batch.Column(0), index),
+				Tick:         num(batch.Column(1), index),
+				Symbol:       str(batch.Column(2), index),
+				VenueAt:      timeVal(batch.Column(3), index),
+				ReceivedAt:   timeVal(batch.Column(4), index),
+				OrderID:      str(batch.Column(5), index),
+				OrderUserRef: num(batch.Column(6), index),
+				ExecID:       str(batch.Column(7), index),
+				ExecType:     str(batch.Column(8), index),
+				TradeID:      num(batch.Column(9), index),
+				Side:         str(batch.Column(10), index),
+				LastQty:      dec(batch.Column(11), index),
+				LastPrice:    dec(batch.Column(12), index),
+				LiquidityInd: str(batch.Column(13), index),
+				Cost:         dec(batch.Column(14), index),
+				OrderType:    str(batch.Column(15), index),
+				OrderStatus:  str(batch.Column(16), index),
+				CumQty:       dec(batch.Column(17), index),
+				CumCost:      dec(batch.Column(18), index),
+				AvgPrice:     dec(batch.Column(19), index),
+				FeeUsdEquiv:  dec(batch.Column(20), index),
+				Fees:         str(batch.Column(21), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// Models scans model snapshots strictly after afterTick for a given epoch.
+func (c *Catalog) Models(ctx context.Context, epoch int64, afterTickSeq int64) ([]ModelRow, error) {
+	batches, err := c.scan(ctx, Models, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []ModelRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] models batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, ModelRow{
+				Epoch:      num(batch.Column(0), index),
+				Tick:       num(batch.Column(1), index),
+				AgentID:    num32(batch.Column(2), index),
+				StepCount:  num(batch.Column(3), index),
+				NodesCount: num(batch.Column(4), index),
+				Payload:    bin(batch.Column(5), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// Grids scans perception grid snapshots strictly after afterTick for a given epoch.
+func (c *Catalog) Grids(ctx context.Context, epoch int64, afterTickSeq int64) ([]GridRow, error) {
+	batches, err := c.scan(ctx, Grids, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []GridRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] grids batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, GridRow{
+				Epoch:        num(batch.Column(0), index),
+				Tick:         num(batch.Column(1), index),
+				AgentID:      num32(batch.Column(2), index),
+				ContextLabel: str(batch.Column(3), index),
+				Payload:      bin(batch.Column(4), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// Positions scans position records strictly after afterTick for a given epoch.
+func (c *Catalog) Positions(ctx context.Context, epoch int64, afterTickSeq int64) ([]PositionRow, error) {
+	batches, err := c.scan(ctx, Positions, nil, forEpoch(epoch), afterTick(afterTickSeq))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []PositionRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] positions batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, PositionRow{
+				Epoch:       num(batch.Column(0), index),
+				Tick:        num(batch.Column(1), index),
+				Symbol:      str(batch.Column(2), index),
+				Status:      str(batch.Column(3), index),
+				Qty:         dec(batch.Column(4), index),
+				Basis:       dec(batch.Column(5), index),
+				EntryPrice:  dec(batch.Column(6), index),
+				EntryFee:    dec(batch.Column(7), index),
+				ExitPrice:   dec(batch.Column(8), index),
+				ExitFee:     dec(batch.Column(9), index),
+				Mark:        dec(batch.Column(10), index),
+				PnL:         dec(batch.Column(11), index),
+				RealizedPnL: dec(batch.Column(12), index),
+				EntryAt:     timePtr(batch.Column(13), index),
+				ExitAt:      timePtr(batch.Column(14), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
+
+	return rows, nil
+}
+
+// Decisions scans agent action decisions strictly after afterTick for a given epoch.
+func (c *Catalog) Decisions(ctx context.Context, epoch int64, afterTickSeq int64) ([]OutcomeRow, error) {
+	return c.outcomes(ctx, Decisions, epoch, afterTickSeq)
+}
+
+// Outcomes scans graded outcomes strictly after afterTick for a given epoch.
+func (c *Catalog) Outcomes(ctx context.Context, epoch int64, afterTickSeq int64) ([]OutcomeRow, error) {
+	return c.outcomes(ctx, Outcomes, epoch, afterTickSeq)
+}
+
+func (c *Catalog) outcomes(ctx context.Context, tableName string, epoch int64, afterTickSeq int64) ([]OutcomeRow, error) {
+	batches, err := c.scan(ctx, tableName, nil, forEpoch(epoch), afterTick(afterTickSeq))
 
 	if err != nil {
 		return nil, err
@@ -618,70 +684,26 @@ func (c *Catalog) Outcomes(ctx context.Context, run string) ([]OutcomeRow, error
 
 	for batch, err := range batches {
 		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] outcomes batch", err))
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] "+tableName+" batch", err))
 		}
-
-		context, _ := batch.Column(10).(*array.List)
 
 		for index := range int(batch.NumRows()) {
-			row := OutcomeRow{
-				Run:          str(batch.Column(0), index),
-				DecisionID:   num(batch.Column(1), index),
-				Label:        str(batch.Column(3), index),
+			rows = append(rows, OutcomeRow{
+				Epoch:        num(batch.Column(0), index),
+				Tick:         num(batch.Column(1), index),
+				DecisionID:   num(batch.Column(2), index),
+				Symbol:       str(batch.Column(3), index),
+				At:           timeVal(batch.Column(4), index),
 				ActionKind:   str(batch.Column(5), index),
-				ActionReduce: batch.Column(7).(*array.Boolean).Value(index),
-				Authority:    batch.Column(8).(*array.Float64).Value(index),
-				Value:        batch.Column(12).(*array.Float64).Value(index),
-				Complete:     batch.Column(13).(*array.Boolean).Value(index),
-				Forced:       batch.Column(14).(*array.Boolean).Value(index),
-				Initial:      dec(batch.Column(15), index),
-				Reference:    dec(batch.Column(16), index),
-				Quantity:     dec(batch.Column(17), index),
-				Cost:         dec(batch.Column(18), index),
-				Fee:          dec(batch.Column(19), index),
-				Opportunity:  dec(batch.Column(20), index),
-			}
-
-			row.Trader = batch.Column(2).(*array.Int32).Value(index)
-			row.ActionPower = batch.Column(6).(*array.Int32).Value(index)
-
-			if !batch.Column(9).IsNull(index) {
-				outcome := batch.Column(9).(*array.Float64).Value(index)
-				row.Outcome = &outcome
-			}
-
-			if micros, ok := when(batch.Column(4), index); ok {
-				row.At = micros.ToTime(arrow.Microsecond).UTC()
-			}
-
-			if micros, ok := when(batch.Column(11), index); ok {
-				row.Through = micros.ToTime(arrow.Microsecond).UTC()
-			}
-
-			if context != nil {
-				start, end := listBounds(context, index)
-				values := context.ListValues()
-
-				for element := start; element < end; element++ {
-					row.Context = append(row.Context, num(values, element))
-				}
-			}
-
-			rows = append(rows, row)
+				ActionPower:  num32(batch.Column(6), index),
+				ActionReduce: boolean(batch.Column(7), index),
+				Authority:    flt(batch.Column(8), index),
+				Outcome:      fltPtr(batch.Column(9), index),
+			})
 		}
 	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
 
 	return rows, nil
-}
-
-// hasExecution distinguishes absent execution facts from present facts whose
-// optional order ID, trade ID or quantity was not supplied by the venue.
-func hasExecution(batch arrow.RecordBatch, row int) bool {
-	// Lifecycle schema columns 8 through 25 are the execution fact.
-	for column := 8; column <= 25; column++ {
-		if !batch.Column(column).IsNull(row) {
-			return true
-		}
-	}
-	return false
 }

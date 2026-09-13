@@ -24,11 +24,18 @@ func NewWorkload[T any](
 	ctx context.Context,
 	label string,
 	stages [][]Node[T],
+	registers ...*store.Register[T],
 ) *Workload[T] {
+	reg := store.NewRegister[T]()
+
+	if len(registers) > 0 && registers[0] != nil {
+		reg = registers[0]
+	}
+
 	workload := &Workload[T]{
 		System:   NewSystem(ctx, label),
 		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
-		register: store.NewRegister[T](),
+		register: reg,
 	}
 
 	opts := optionList(

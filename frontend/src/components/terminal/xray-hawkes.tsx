@@ -3,17 +3,15 @@ import { useEffect, useRef } from "react";
 import type { FrameBuffer } from "#/collections/app";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
-import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
-import { EnvelopeMetric } from "#/providers/telemetry/telemetry/envelope-metric";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 import {
 	type HawkesTracePoint,
 	type HawkesTraceSample,
 	hawkesTrace,
 } from "./xray-hawkes-trace";
 
-const metricObj = new EnvelopeMeasurementMetric();
-const valueObj = new EnvelopeMetric();
+const metricObj = new Metric();
 
 /*
 latestMetrics holds the last known value of every metric name seen anywhere
@@ -25,7 +23,7 @@ happen to report them, even though a recent tick did. This holds the last
 real value per key instead of treating that absence as "no data."
 */
 const latestMetrics = (
-	state: FrameBuffer<EnvelopeMeasurement>,
+	state: FrameBuffer<Measurement>,
 ): Record<string, number> => {
 	const values: Record<string, number> = {};
 	const count = state.getBufferLength();
@@ -36,10 +34,9 @@ const latestMetrics = (
 
 		for (let j = 0; j < row.metricsLength(); j++) {
 			const m = row.metrics(j, metricObj);
-			const value = m?.value(valueObj);
-			const key = m?.key() ?? "";
-			if (m && value && !(key in values)) {
-				values[key] = value.raw();
+			const key = m?.name() ?? "";
+			if (m && !(key in values)) {
+				values[key] = m.raw();
 			}
 		}
 	}
@@ -63,15 +60,14 @@ rowObservation reads one fitted Hawkes observation and the exact model
 parameters needed to render the event that follows its pre-arrival intensity.
 An empirical arrival rate is not a substitute for a fitted λ(t).
 */
-const rowObservation = (row: EnvelopeMeasurement): HawkesObservation | null => {
+const rowObservation = (row: Measurement): HawkesObservation | null => {
 	const metrics: Record<string, number> = {};
 
 	for (let j = 0; j < row.metricsLength(); j++) {
 		const m = row.metrics(j, metricObj);
-		const value = m?.value(valueObj);
-		if (!m || !value) continue;
+		if (!m) continue;
 
-		metrics[m.key() ?? ""] = value.raw();
+		metrics[m.name() ?? ""] = m.raw();
 	}
 
 	const required = [
@@ -144,7 +140,7 @@ export const XrayHawkesPanel = () => {
 	useEffect(() => {
 		const hawkesStore = getMeasurementStore("hawkes", focusSymbol);
 
-		const updateFromState = (state: FrameBuffer<EnvelopeMeasurement>) => {
+		const updateFromState = (state: FrameBuffer<Measurement>) => {
 			if (!root.current) return;
 			const retained = latestMetrics(state);
 

@@ -2,65 +2,70 @@ package tables_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/compute"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"time"
-
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 )
 
-func TestCatalogCaptures(t *testing.T) {
-	Convey("Given captures appended out of sequence order", t, func() {
+func TestCatalogMeasurements(t *testing.T) {
+	Convey("Given measurements appended out of tick order", t, func() {
 		catalog := tablestest.New(t)
 		writer := tables.NewWriter(catalog)
-		received := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+		observed := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 
-		for _, sequence := range []int64{3, 1, 2} {
-			writer.AddCapture(tables.CaptureRow{
-				Run:            "run-a",
-				Sequence:       sequence,
-				Stream:         "spot-public",
-				StreamEpoch:    1,
-				StreamSequence: sequence,
-				ReceivedAt:     received.Add(time.Duration(sequence) * time.Second),
-				Endpoint:       "wss://spot",
-				Kind:           "trade",
-				PayloadHash:    "hash",
-				Payload:        []byte(`{"n":` + string(rune('0'+sequence)) + `}`),
+		for _, tick := range []int64{3, 1, 2} {
+			writer.AddMeasurement(tables.MeasurementRow{
+				Epoch:      100,
+				Tick:       tick,
+				Source:     "strategy",
+				Symbol:     "BTC/USD",
+				VenueAt:    observed.Add(time.Duration(tick) * time.Second),
+				ObservedAt: observed.Add(time.Duration(tick) * time.Second),
+				Maturity:   0.85,
+				SNR:        2.5,
+				SNRDefined: true,
+				Metrics:    map[string]float64{"cvd": 12.5, "imbalance": -0.3},
+				Metadata:   map[string]float64{"regime": 1.0},
+				Payload:    []byte(`{"tick":` + string(rune('0'+tick)) + `}`),
 			})
 		}
 
 		So(writer.Commit(t.Context()), ShouldBeNil)
 
-		Convey("They read back in capture sequence order", func() {
-			rows, err := catalog.Captures(t.Context(), "run-a", 0)
+		Convey("They read back in tick sequence order", func() {
+			rows, err := catalog.Measurements(t.Context(), 100, 0)
 
 			So(err, ShouldBeNil)
 			So(len(rows), ShouldEqual, 3)
-			So(rows[0].Sequence, ShouldEqual, 1)
-			So(rows[1].Sequence, ShouldEqual, 2)
-			So(rows[2].Sequence, ShouldEqual, 3)
+			So(rows[0].Tick, ShouldEqual, 1)
+			So(rows[1].Tick, ShouldEqual, 2)
+			So(rows[2].Tick, ShouldEqual, 3)
 		})
 
 		Convey("Every column survives the round trip", func() {
-			rows, err := catalog.Captures(t.Context(), "run-a", 0)
+			rows, err := catalog.Measurements(t.Context(), 100, 0)
 
 			So(err, ShouldBeNil)
-			So(rows[0].Run, ShouldEqual, "run-a")
-			So(rows[0].Stream, ShouldEqual, "spot-public")
-			So(rows[0].StreamEpoch, ShouldEqual, 1)
-			So(rows[0].Kind, ShouldEqual, "trade")
-			So(rows[0].PayloadHash, ShouldEqual, "hash")
-			So(string(rows[0].Payload), ShouldEqual, `{"n":1}`)
-			So(rows[0].ReceivedAt.Equal(received.Add(time.Second)), ShouldBeTrue)
+			So(rows[0].Epoch, ShouldEqual, 100)
+			So(rows[0].Source, ShouldEqual, "strategy")
+			So(rows[0].Symbol, ShouldEqual, "BTC/USD")
+			So(rows[0].Maturity, ShouldEqual, 0.85)
+			So(rows[0].SNR, ShouldEqual, 2.5)
+			So(rows[0].SNRDefined, ShouldBeTrue)
+			So(rows[0].Metrics["cvd"], ShouldEqual, 12.5)
+			So(rows[0].Metrics["imbalance"], ShouldEqual, -0.3)
+			So(rows[0].Metadata["regime"], ShouldEqual, 1.0)
+			So(string(rows[0].Payload), ShouldEqual, `{"tick":1}`)
+			So(rows[0].ObservedAt.Equal(observed.Add(time.Second)), ShouldBeTrue)
 		})
 
-		Convey("A different run is pruned out", func() {
-			rows, err := catalog.Captures(t.Context(), "run-b", 0)
+		Convey("A different epoch is pruned out", func() {
+			rows, err := catalog.Measurements(t.Context(), 200, 0)
 
 			So(err, ShouldBeNil)
 			So(len(rows), ShouldEqual, 0)
@@ -69,139 +74,146 @@ func TestCatalogCaptures(t *testing.T) {
 		Convey("Successive reads release Arrow storage and retain owned payloads", func() {
 			allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)
 			ctx := compute.WithAllocator(t.Context(), allocator)
-			rows, err := catalog.Captures(ctx, "run-a", 0)
+			rows, err := catalog.Measurements(ctx, 100, 0)
 
 			So(err, ShouldBeNil)
 			allocator.AssertSize(t, 0)
 
-			writer.AddCapture(tables.CaptureRow{
-				Run: "run-b", Sequence: 4, Kind: "trade", Payload: []byte("other run"),
+			writer.AddMeasurement(tables.MeasurementRow{
+				Epoch: 200, Tick: 4, Source: "strategy", Symbol: "BTC/USD", Payload: []byte("other epoch"),
 			})
-			writer.AddCapture(tables.CaptureRow{
-				Run: "run-a", Sequence: 4, Kind: "trade", Payload: []byte("new bytes"),
+			writer.AddMeasurement(tables.MeasurementRow{
+				Epoch: 100, Tick: 4, Source: "strategy", Symbol: "BTC/USD", Payload: []byte("new bytes"),
 			})
 			So(writer.Commit(t.Context()), ShouldBeNil)
-			tail, err := catalog.Captures(ctx, "run-a", 3)
+			tail, err := catalog.Measurements(ctx, 100, 3)
 
 			So(err, ShouldBeNil)
 			So(len(tail), ShouldEqual, 1)
-			So(tail[0].Run, ShouldEqual, "run-a")
+			So(tail[0].Epoch, ShouldEqual, 100)
 			So(string(tail[0].Payload), ShouldEqual, "new bytes")
-			So(string(rows[0].Payload), ShouldEqual, `{"n":1}`)
+			So(string(rows[0].Payload), ShouldEqual, `{"tick":1}`)
 			allocator.AssertSize(t, 0)
 
-			empty, err := catalog.Captures(ctx, "run-a", 4)
+			empty, err := catalog.Measurements(ctx, 100, 4)
 
 			So(err, ShouldBeNil)
 			So(len(empty), ShouldEqual, 0)
 			allocator.AssertSize(t, 0)
 		})
 
-		Convey("An incremental read returns only what is newer", func() {
-			rows, err := catalog.Captures(t.Context(), "run-a", 1)
+		Convey("An incremental read returns only what is newer than afterTick", func() {
+			rows, err := catalog.Measurements(t.Context(), 100, 1)
 
 			So(err, ShouldBeNil)
 			So(len(rows), ShouldEqual, 2)
-			So(rows[0].Sequence, ShouldEqual, 2)
+			So(rows[0].Tick, ShouldEqual, 2)
+		})
+	})
+}
+
+func TestCatalogPositions(t *testing.T) {
+	Convey("Given a position carrying venue decimals", t, func() {
+		catalog := tablestest.New(t)
+		writer := tables.NewWriter(catalog)
+
+		qty, err := decimal.NewFromString("1.50000000")
+		So(err, ShouldBeNil)
+		basis, err := decimal.NewFromString("75000.25000000")
+		So(err, ShouldBeNil)
+		pnl, err := decimal.NewFromString("123.45678901234567")
+		So(err, ShouldBeNil)
+		entryAt := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+
+		zero, err := decimal.NewFromString("0")
+		So(err, ShouldBeNil)
+
+		writer.AddPosition(tables.PositionRow{
+			Epoch:       1,
+			Tick:        10,
+			Symbol:      "BTC/USD",
+			Status:      "open",
+			Qty:         qty,
+			Basis:       basis,
+			EntryPrice:  basis,
+			PnL:         pnl,
+			RealizedPnL: zero,
+			EntryAt:     &entryAt,
+		})
+
+		So(writer.Commit(t.Context()), ShouldBeNil)
+
+		Convey("The decimals survive without float round trip", func() {
+			rows, err := catalog.Positions(t.Context(), 1, 0)
+
+			So(err, ShouldBeNil)
+			So(len(rows), ShouldEqual, 1)
+			So(rows[0].Tick, ShouldEqual, 10)
+			So(rows[0].Symbol, ShouldEqual, "BTC/USD")
+			So(rows[0].Status, ShouldEqual, "open")
+			So(rows[0].Qty.Cmp(qty), ShouldEqual, 0)
+			So(rows[0].Basis.Cmp(basis), ShouldEqual, 0)
+			So(rows[0].PnL.Cmp(pnl), ShouldEqual, 0)
+			So(rows[0].PnL.String(), ShouldStartWith, "123.45678901234567")
+			So(rows[0].EntryAt.Equal(entryAt), ShouldBeTrue)
 		})
 	})
 }
 
 func TestCatalogOutcomes(t *testing.T) {
-	Convey("Given a graded decision carrying venue decimals", t, func() {
+	Convey("Given an outcome row", t, func() {
 		catalog := tablestest.New(t)
 		writer := tables.NewWriter(catalog)
-
-		// A price with more fractional digits than a float64 can hold exactly,
-		// which is the whole reason these columns are decimal and not double.
-		price, err := decimal.NewFromString("12345.678901234567")
-
-		So(err, ShouldBeNil)
-		outcome := 0.25
+		outcome := 0.75
+		at := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 
 		writer.AddOutcome(tables.OutcomeRow{
-			Run: "run-a", DecisionID: 7, Trader: 1, Label: "BTC/USD",
-			At:         time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC),
-			ActionKind: "enter", ActionPower: 3, ActionReduce: false,
-			Authority: 0.5, Outcome: &outcome, Context: []int64{11, 12},
-			Value: 1.5, Complete: true, Forced: false,
-			Reference: price,
+			Epoch:        1,
+			Tick:         5,
+			DecisionID:   42,
+			Symbol:       "BTC/USD",
+			At:           at,
+			ActionKind:   "buy",
+			ActionPower:  2,
+			ActionReduce: false,
+			Authority:    0.9,
+			Outcome:      &outcome,
 		})
 
 		So(writer.Commit(t.Context()), ShouldBeNil)
 
-		Convey("The decimal is stored without a float round trip", func() {
-			rows, err := catalog.Outcomes(t.Context(), "run-a")
+		Convey("It reads back accurately", func() {
+			rows, err := catalog.Outcomes(t.Context(), 1, 0)
 
 			So(err, ShouldBeNil)
 			So(len(rows), ShouldEqual, 1)
-
-			// The column has a fixed scale, so the value comes back padded to
-			// it. That is a change of representation, not of value: every
-			// significant digit survives, which a float64 column would not
-			// have managed.
-			So(rows[0].Reference.Cmp(price), ShouldEqual, 0)
-			So(rows[0].Reference.String(), ShouldStartWith, "12345.678901234567")
-			So(rows[0].DecisionID, ShouldEqual, 7)
-			So(rows[0].Context, ShouldResemble, []int64{11, 12})
-			So(*rows[0].Outcome, ShouldEqual, 0.25)
+			So(rows[0].Tick, ShouldEqual, 5)
+			So(rows[0].DecisionID, ShouldEqual, 42)
+			So(rows[0].Symbol, ShouldEqual, "BTC/USD")
+			So(rows[0].ActionKind, ShouldEqual, "buy")
+			So(rows[0].ActionPower, ShouldEqual, 2)
+			So(rows[0].ActionReduce, ShouldBeFalse)
+			So(rows[0].Authority, ShouldEqual, 0.9)
+			So(*rows[0].Outcome, ShouldEqual, 0.75)
 		})
 	})
 }
 
-func TestCatalogWitnesses(t *testing.T) {
-	Convey("Given witnesses of mixed artifact kind", t, func() {
-		catalog := tablestest.New(t)
-		writer := tables.NewWriter(catalog)
-
-		for _, kind := range []string{"state", "observe", "state"} {
-			writer.AddWitness(tables.WitnessRow{
-				Run:              "run-a",
-				Envelope:         tables.EnvelopeRefRow{Run: "run-a", Sequence: 1, Ordinal: 0},
-				Boundary:         "workspace",
-				ArtifactKind:     kind,
-				ArtifactIdentity: kind + "-1",
-				ImmediateParents: []tables.EnvelopeRefRow{{Run: "run-a", Sequence: 0, Ordinal: 0}},
-				SemanticParents:  []string{"cvd"},
-				Payload:          []byte("bytes"),
-			})
-		}
-
-		So(writer.Commit(t.Context()), ShouldBeNil)
-
-		Convey("Resident state selects by predicate, not by a separate table", func() {
-			writer.AddWitness(tables.WitnessRow{
-				Run: "run-b", ArtifactKind: "state", Payload: []byte("another run"),
-			})
-			So(writer.Commit(t.Context()), ShouldBeNil)
-
-			states, err := catalog.Witnesses(t.Context(), "run-a", "state")
-
-			So(err, ShouldBeNil)
-			So(len(states), ShouldEqual, 2)
-			So(states[0].SemanticParents, ShouldResemble, []string{"cvd"})
-			So(len(states[0].ImmediateParents), ShouldEqual, 1)
-		})
-
-		Convey("An empty kind returns every witness", func() {
-			all, err := catalog.Witnesses(t.Context(), "run-a", "")
-
-			So(err, ShouldBeNil)
-			So(len(all), ShouldEqual, 3)
-		})
-	})
-}
-
-func BenchmarkCatalogCaptures(b *testing.B) {
-	// Two committed files model a consumed archive prefix and newly landed
-	// frames. The fixture sizes describe storage shapes, not market windows.
+func BenchmarkCatalogMeasurements(b *testing.B) {
 	catalog := tablestest.New(b)
 	writer := tables.NewWriter(catalog)
+	now := time.Now()
 
-	for sequence := int64(1); sequence <= 4096; sequence++ {
-		writer.AddCapture(tables.CaptureRow{
-			Run: "bench", Sequence: sequence, Kind: "trade",
-			Payload: []byte(`{"channel":"trade","data":[{"symbol":"BTC/USD","price":50000,"qty":0.01}]}`),
+	for tick := int64(1); tick <= 4096; tick++ {
+		writer.AddMeasurement(tables.MeasurementRow{
+			Epoch:      1,
+			Tick:       tick,
+			Source:     "benchmark",
+			Symbol:     "BTC/USD",
+			VenueAt:    now,
+			ObservedAt: now,
+			Maturity:   1.0,
+			Payload:    []byte(`{"sample":123}`),
 		})
 	}
 
@@ -209,9 +221,15 @@ func BenchmarkCatalogCaptures(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for sequence := int64(4097); sequence <= 4112; sequence++ {
-		writer.AddCapture(tables.CaptureRow{
-			Run: "bench", Sequence: sequence, Kind: "trade", Payload: []byte(`{"data":[]}`),
+	for tick := int64(4097); tick <= 4112; tick++ {
+		writer.AddMeasurement(tables.MeasurementRow{
+			Epoch:      1,
+			Tick:       tick,
+			Source:     "benchmark",
+			Symbol:     "BTC/USD",
+			VenueAt:    now,
+			ObservedAt: now,
+			Maturity:   1.0,
 		})
 	}
 
@@ -224,7 +242,7 @@ func BenchmarkCatalogCaptures(b *testing.B) {
 		after int64
 		rows  int
 	}{
-		{"whole_run", 0, 4112},
+		{"whole_epoch", 0, 4112},
 		{"new_suffix", 4096, 16},
 		{"caught_up", 4112, 0},
 	} {
@@ -232,7 +250,7 @@ func BenchmarkCatalogCaptures(b *testing.B) {
 			b.ReportAllocs()
 
 			for b.Loop() {
-				rows, err := catalog.Captures(b.Context(), "bench", fixture.after)
+				rows, err := catalog.Measurements(b.Context(), 1, fixture.after)
 
 				if err != nil {
 					b.Fatal(err)

@@ -23,9 +23,9 @@ import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
 import { Typography } from "#/components/ui/typography";
-import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 
-const metricObj = new EnvelopeMeasurementMetric();
+const metricObj = new Metric();
 
 const isResonance = (source: string) => source === "resonance";
 
@@ -78,8 +78,8 @@ const metricValues = (
 		metricsLength: () => number;
 		metrics: (
 			index: number,
-			obj: EnvelopeMeasurementMetric,
-		) => EnvelopeMeasurementMetric | null;
+			obj: Metric,
+		) => Metric | null;
 	},
 	names: string[],
 ): Record<string, { raw: number; normalized: number } | null> => {
@@ -95,15 +95,12 @@ const metricValues = (
 
 		if (!m) continue;
 
-		const name = m.key();
+		const name = m.name();
 		if (!name || !names.includes(name)) continue;
 
-		const body = m.value();
-		if (!body) continue;
-
 		out[name] = {
-			raw: body.raw(),
-			normalized: body.normalized(),
+			raw: m.raw(),
+			normalized: m.normalized(),
 		};
 	}
 

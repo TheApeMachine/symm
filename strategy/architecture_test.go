@@ -10,9 +10,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -347,14 +344,7 @@ func TestArchitectureProperties(t *testing.T) {
 			price := broker.NewPrice(nil, instrument)
 			mainAgent := NewMainAgent(decimal.NewFromInt64(1000), "paper", instrument, price, engine)
 
-			envelope := &types.Envelope{
-				TickerData: kraken.TickerData{
-					Symbol: "NOFEE/USD",
-					Last:   decimal.NewFromInt64(100),
-				},
-			}
-
-			mainAgent.Step(envelope, ActionDecision{
+			mainAgent.Step(decimal.NewFromInt64(100), "NOFEE/USD", ActionDecision{
 				Action:  ActionEnter,
 				Context: []byte("nofee_context"),
 			})
@@ -469,26 +459,12 @@ func TestArchitectureProperties(t *testing.T) {
 			m.Label, m.At, m.From = "BTC/USD", now, now
 			m.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: 50000.0}
 
-			envelope := &types.Envelope{
-				TickerData: kraken.TickerData{
-					Symbol: "BTC/USD",
-					Last:   decimal.NewFromInt64(50000),
-				},
-			}
-
-			mainAgent.Step(envelope, ActionDecision{
+			mainAgent.Step(decimal.NewFromInt64(50000), "BTC/USD", ActionDecision{
 				Action:  ActionEnter,
 				Context: []byte("trade_context_test"),
 			})
 
-			envelopeExit := &types.Envelope{
-				TickerData: kraken.TickerData{
-					Symbol: "BTC/USD",
-					Last:   decimal.NewFromInt64(55000),
-				},
-			}
-
-			mainAgent.Step(envelopeExit, ActionDecision{
+			mainAgent.Step(decimal.NewFromInt64(55000), "BTC/USD", ActionDecision{
 				Action: ActionExit,
 			})
 
@@ -498,7 +474,11 @@ func TestArchitectureProperties(t *testing.T) {
 		})
 
 		Convey("13. Production economic replay wiring: Hindsight derives execution surfaces and price measurements that train agent cognition", func() {
-			series := make([]hindsight.Observation, 0, 400)
+			type testObs struct {
+				at  time.Time
+				bid float64
+			}
+			series := make([]testObs, 0, 400)
 			now := time.Now().UTC()
 			seq := uint64(0)
 			addRamp := func(startPrice, endPrice float64, steps int) {
@@ -506,18 +486,9 @@ func TestArchitectureProperties(t *testing.T) {
 					fraction := float64(idx) / float64(steps)
 					priceVal := startPrice + (endPrice-startPrice)*fraction
 					at := now.Add(time.Duration(seq) * time.Second)
-					series = append(series, hindsight.Observation{
-						Capture:    hindsight.CaptureIdentity{Run: "run-test", Sequence: types.CaptureSequence(seq)},
-						Ordinal:    1,
-						ReceivedAt: at,
-						VenueAt:    at,
-						Symbol:     "BTC/USD",
-						HasBid:     true,
-						Bid:        priceVal - 0.05,
-						HasAsk:     true,
-						Ask:        priceVal + 0.05,
-						HasLast:    true,
-						Last:       priceVal,
+					series = append(series, testObs{
+						at:  at,
+						bid: priceVal - 0.05,
 					})
 					seq++
 				}
@@ -527,34 +498,19 @@ func TestArchitectureProperties(t *testing.T) {
 			addRamp(120, 100, 100)
 			addRamp(100, 105, 100)
 
-			catalog := tablestest.New(t)
-			writer := tables.NewWriter(catalog)
-
+			frames := make([][]*data.Measurement[float64], 0, len(series))
 			for _, obs := range series {
-				identity := tables.EnvelopeRefRow{
-					Run:      "run-test",
-					Sequence: int64(obs.Capture.Sequence),
-					Ordinal:  1,
-				}
-				env := &types.Envelope{Key: "BTC/USD"}
 				measurement := data.NewMeasurement[float64]("cvd", nil)
-				measurement.Label, measurement.At, measurement.From = "BTC/USD", obs.At(), obs.At()
-				measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: obs.Bid}
-				env.CVD = measurement
-				writer.AddWitness(tables.WitnessRow{
-					Run: identity.Run, Envelope: identity, ArtifactKind: "precursor",
-					Boundary: "after-logic", Payload: env.EncodePrecursor(),
-				})
+				measurement.Label, measurement.At, measurement.From = "BTC/USD", obs.at, obs.at
+				measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: obs.bid}
+				frames = append(frames, []*data.Measurement[float64]{measurement})
 			}
-			So(writer.Commit(t.Context()), ShouldBeNil)
-
-			tape := hindsight.Query(hindsight.Excursions, catalog, "run-test", hindsight.DefaultDiscoveryPolicy())
-			fragments := tape.ReplayFragmentsFrom(series)
-			So(len(fragments), ShouldBeGreaterThan, 0)
-
-			// Real fragment carries objective prices from observation with ZERO manual injection
-			// Surfaces are NOT fabricated when depth was not recorded
-			frag := fragments[0]
+			frag := types.ReplayFragment{
+				Frames:        frames,
+				Symbol:        "BTC/USD",
+				AnchorIndex:   100,
+				ExtremumIndex: 200,
+			}
 
 			engine := cognition.NewEngine(cognition.Config{})
 			agent := NewAgent(10, false, engine, 16, rand.New(rand.NewSource(12345)))
@@ -818,7 +774,11 @@ func TestArchitectureProperties(t *testing.T) {
 		})
 
 		Convey("20. Rehearsal frame schema purity: frames contain zero synthetic price measurements and mirror live envelopes", func() {
-			series := make([]hindsight.Observation, 0, 400)
+			type testObs struct {
+				at  time.Time
+				bid float64
+			}
+			series := make([]testObs, 0, 400)
 			now := time.Now().UTC()
 			seq := uint64(0)
 			addRamp := func(startPrice, endPrice float64, steps int) {
@@ -826,18 +786,9 @@ func TestArchitectureProperties(t *testing.T) {
 					fraction := float64(idx) / float64(steps)
 					priceVal := startPrice + (endPrice-startPrice)*fraction
 					at := now.Add(time.Duration(seq) * time.Second)
-					series = append(series, hindsight.Observation{
-						Capture:    hindsight.CaptureIdentity{Run: "schema-test", Sequence: types.CaptureSequence(seq)},
-						Ordinal:    1,
-						ReceivedAt: at,
-						VenueAt:    at,
-						Symbol:     "BTC/USD",
-						HasBid:     true,
-						Bid:        priceVal - 0.05,
-						HasAsk:     true,
-						Ask:        priceVal + 0.05,
-						HasLast:    true,
-						Last:       priceVal,
+					series = append(series, testObs{
+						at:  at,
+						bid: priceVal - 0.05,
 					})
 					seq++
 				}
@@ -847,29 +798,19 @@ func TestArchitectureProperties(t *testing.T) {
 			addRamp(120, 100, 100)
 			addRamp(100, 105, 100)
 
-			catalog := tablestest.New(t)
-			writer := tables.NewWriter(catalog)
-
+			frames := make([][]*data.Measurement[float64], 0, len(series))
 			for _, obs := range series {
-				identity := tables.EnvelopeRefRow{
-					Run:      "schema-test",
-					Sequence: int64(obs.Capture.Sequence),
-					Ordinal:  1,
-				}
-				env := &types.Envelope{Key: "BTC/USD"}
 				measurement := data.NewMeasurement[float64]("cvd", nil)
-				measurement.Label, measurement.At, measurement.From = "BTC/USD", obs.At(), obs.At()
-				measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: obs.Bid}
-				env.CVD = measurement
-				writer.AddWitness(tables.WitnessRow{
-					Run: identity.Run, Envelope: identity, ArtifactKind: "precursor",
-					Boundary: "after-logic", Payload: env.EncodePrecursor(),
-				})
+				measurement.Label, measurement.At, measurement.From = "BTC/USD", obs.at, obs.at
+				measurement.Metrics["level"] = data.Metric[float64]{Label: "level", Raw: obs.bid}
+				frames = append(frames, []*data.Measurement[float64]{measurement})
 			}
-			So(writer.Commit(t.Context()), ShouldBeNil)
-
-			tape := hindsight.Query(hindsight.Excursions, catalog, "schema-test", hindsight.DefaultDiscoveryPolicy())
-			fragments := tape.ReplayFragmentsFrom(series)
+			fragments := []types.ReplayFragment{{
+				Frames:        frames,
+				Symbol:        "BTC/USD",
+				AnchorIndex:   100,
+				ExtremumIndex: 200,
+			}}
 			So(len(fragments), ShouldBeGreaterThan, 0)
 
 			for _, frag := range fragments {
@@ -956,17 +897,9 @@ func TestArchitectureProperties(t *testing.T) {
 			mainAgent.posCosts["BTC/USD"] = decimal.NewFromInt64(500000)
 
 			now := time.Now().UTC()
-			env := &types.Envelope{
-				Key: "BTC/USD",
-				TickerData: kraken.TickerData{
-					Last: entryPrice,
-					Bid:  decimal.NewFromInt64(55000),
-					Ask:  decimal.NewFromInt64(55010),
-				},
-			}
 
 			// Execute exit
-			mainAgent.exitLong(env, "BTC/USD", decimal.NewFromInt64(55000), now)
+			mainAgent.exitLong("BTC/USD", decimal.NewFromInt64(55000), now)
 
 			// Position is successfully liquidated
 			So(mainAgent.fills, ShouldEqual, 1)

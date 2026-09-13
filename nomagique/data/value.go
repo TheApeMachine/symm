@@ -31,3 +31,17 @@ func Read[T any](value iter.Seq[unsafe.Pointer]) T {
 
 	return zero
 }
+
+/*
+ReadSeq walks all values of a run out of the wire as typed values.
+*/
+func ReadSeq[T any](value iter.Seq[unsafe.Pointer]) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for val := range value {
+			if !yield(*(*T)(val)) {
+				return
+			}
+		}
+	}
+}
+

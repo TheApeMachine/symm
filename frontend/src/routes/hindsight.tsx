@@ -56,7 +56,6 @@ import {
 } from "#/components/hindsight/timeline-scale";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
-import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 
 /*
 Hindsight — a microscope over a captured running system.
@@ -126,14 +125,14 @@ const HindsightRoute = () => {
 	const [episode, setEpisode] = useState<string | null>(null);
 	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
 	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
-	const [state, setState] = useState<EnvelopeState | null>(null);
+	const [state, setState] = useState<unknown>(null);
 	const [resident, setResident] = useState<HindsightResident | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [semantics, setSemantics] = useState<HindsightMetricMap | null>(null);
 	const [position, setPosition] = useState<string | null>(null);
 	const [marks, setMarks] = useState<Mark[]>([]);
-	const [markStates, setMarkStates] = useState<Array<EnvelopeState | null>>([]);
+	const [markStates, setMarkStates] = useState<Array<unknown>>([]);
 	const [residents, setResidents] = useState<Array<HindsightResident | null>>(
 		[],
 	);

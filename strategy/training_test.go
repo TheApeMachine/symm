@@ -11,13 +11,12 @@ import (
 )
 
 func TestTrainingStep(t *testing.T) {
-	Convey("An empty pipeline returns the envelope without panicking", t, func() {
+	Convey("An empty pipeline returns the measurement without panicking", t, func() {
 		tape := NewTape()
 		tape.Close()
 		training := NewTraining(context.Background(), tape)
-		envelope := &types.Envelope{}
-		So(training.Step(envelope), ShouldEqual, envelope)
-		So(envelope.Learning, ShouldEqual, training)
+		measurement := data.NewMeasurement("training", map[string]data.Metric[float64]{})
+		So(training.Step(measurement), ShouldEqual, measurement)
 		So(training.Error(), ShouldBeNil)
 	})
 
@@ -36,8 +35,8 @@ func TestTrainingStep(t *testing.T) {
 		})
 		tape.Close()
 		training := NewTraining(context.Background(), tape)
-		envelope := &types.Envelope{}
-		So(training.Step(envelope), ShouldEqual, envelope)
+		input := data.NewMeasurement("training", map[string]data.Metric[float64]{})
+		So(training.Step(input), ShouldEqual, input)
 		So(spaceState(training.agents[1].Space()).Updated, ShouldEqual, "BTC/USD")
 		So(spaceState(training.space).Updated, ShouldEqual, "")
 		So(training.Error(), ShouldBeNil)
@@ -64,24 +63,17 @@ func TestTrainingStep(t *testing.T) {
 		So(len(state.Recognition.Learners), ShouldEqual, 8)
 	})
 
-	Convey("Live step with empty symbol falls back to measurement label and emits decision frame", t, func() {
+	Convey("Live step with empty symbol falls back to measurement label and updates state", t, func() {
 		tape := NewTape()
 		tape.Close()
 		training := NewTraining(context.Background(), tape)
-		cvd := data.NewMeasurement[float64]("cvd", map[string]data.Metric[float64]{})
+		cvd := data.NewMeasurement("cvd", map[string]data.Metric[float64]{})
 		cvd.Label, cvd.At, cvd.From = "BTC/USD", time.Now().UTC(), time.Now().UTC()
-		envelope := &types.Envelope{
-			CVD: cvd,
-		}
-		So(envelope.Symbol(), ShouldEqual, "")
-		So(training.Step(envelope), ShouldEqual, envelope)
+		measurement := data.NewMeasurement("training", map[string]data.Metric[float64]{})
+		measurement.Peers = []*data.Measurement[float64]{cvd}
+		So(training.Step(measurement), ShouldEqual, measurement)
 		So(spaceState(training.space).Updated, ShouldEqual, "BTC/USD")
 		So(training.Error(), ShouldBeNil)
-		So(envelope.StrategyRound, ShouldNotBeNil)
-		So(envelope.StrategyRound.Evaluated, ShouldBeTrue)
-		So(envelope.StrategyRound.Symbol, ShouldEqual, "BTC/USD")
-		So(len(envelope.StrategyRound.Decisions), ShouldEqual, 1)
-		So(envelope.StrategyRound.Decisions[0].Action, ShouldEqual, types.ActionNothing)
 	})
 
 	Convey("Ring-of-rings rehearsal ingests fragments with random slots and plays with random offsets", t, func() {

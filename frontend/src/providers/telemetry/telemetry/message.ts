@@ -9,7 +9,6 @@ import { BalancesFrame, BalancesFrameT } from '../telemetry/balances-frame.js';
 import { CausalFrame, CausalFrameT } from '../telemetry/causal-frame.js';
 import { CognitionFrame, CognitionFrameT } from '../telemetry/cognition-frame.js';
 import { DiagnosticsFrame, DiagnosticsFrameT } from '../telemetry/diagnostics-frame.js';
-import { EnvelopeStateFrame, EnvelopeStateFrameT } from '../telemetry/envelope-state-frame.js';
 import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
 import { ErrorFrame, ErrorFrameT } from '../telemetry/error-frame.js';
 import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-frame.js';
@@ -24,22 +23,22 @@ import { StrategyFrame, StrategyFrameT } from '../telemetry/strategy-frame.js';
 import { TickFrame, TickFrameT } from '../telemetry/tick-frame.js';
 
 
-export class Envelope implements flatbuffers.IUnpackableObject<EnvelopeT> {
+export class Message implements flatbuffers.IUnpackableObject<MessageT> {
   bb: flatbuffers.ByteBuffer|null = null;
   bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Envelope {
+  __init(i:number, bb:flatbuffers.ByteBuffer):Message {
   this.bb_pos = i;
   this.bb = bb;
   return this;
 }
 
-static getRootAsEnvelope(bb:flatbuffers.ByteBuffer, obj?:Envelope):Envelope {
-  return (obj || new Envelope()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+static getRootAsMessage(bb:flatbuffers.ByteBuffer, obj?:Message):Message {
+  return (obj || new Message()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-static getSizePrefixedRootAsEnvelope(bb:flatbuffers.ByteBuffer, obj?:Envelope):Envelope {
+static getSizePrefixedRootAsMessage(bb:flatbuffers.ByteBuffer, obj?:Message):Message {
   bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Envelope()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+  return (obj || new Message()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
 static bufferHasIdentifier(bb:flatbuffers.ByteBuffer):boolean {
@@ -61,7 +60,7 @@ frame<T extends flatbuffers.Table>(obj:any):any|null {
   return offset ? this.bb!.__union(obj, this.bb_pos + offset) : null;
 }
 
-static startEnvelope(builder:flatbuffers.Builder) {
+static startMessage(builder:flatbuffers.Builder) {
   builder.startObject(3);
 }
 
@@ -77,30 +76,30 @@ static addFrame(builder:flatbuffers.Builder, frameOffset:flatbuffers.Offset) {
   builder.addFieldOffset(2, frameOffset, 0);
 }
 
-static endEnvelope(builder:flatbuffers.Builder):flatbuffers.Offset {
+static endMessage(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 8) // frame
   return offset;
 }
 
-static finishEnvelopeBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
+static finishMessageBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
   builder.finish(offset, 'SYMM');
 }
 
-static finishSizePrefixedEnvelopeBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
+static finishSizePrefixedMessageBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
   builder.finish(offset, 'SYMM', true);
 }
 
-static createEnvelope(builder:flatbuffers.Builder, sequence:bigint, frameType:Frame, frameOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Envelope.startEnvelope(builder);
-  Envelope.addSequence(builder, sequence);
-  Envelope.addFrameType(builder, frameType);
-  Envelope.addFrame(builder, frameOffset);
-  return Envelope.endEnvelope(builder);
+static createMessage(builder:flatbuffers.Builder, sequence:bigint, frameType:Frame, frameOffset:flatbuffers.Offset):flatbuffers.Offset {
+  Message.startMessage(builder);
+  Message.addSequence(builder, sequence);
+  Message.addFrameType(builder, frameType);
+  Message.addFrame(builder, frameOffset);
+  return Message.endMessage(builder);
 }
 
-unpack(): EnvelopeT {
-  return new EnvelopeT(
+unpack(): MessageT {
+  return new MessageT(
     this.sequence(),
     this.frameType(),
     (() => {
@@ -112,7 +111,7 @@ unpack(): EnvelopeT {
 }
 
 
-unpackTo(_o: EnvelopeT): void {
+unpackTo(_o: MessageT): void {
   _o.sequence = this.sequence();
   _o.frameType = this.frameType();
   _o.frame = (() => {
@@ -123,18 +122,18 @@ unpackTo(_o: EnvelopeT): void {
 }
 }
 
-export class EnvelopeT implements flatbuffers.IGeneratedObject {
+export class MessageT implements flatbuffers.IGeneratedObject {
 constructor(
   public sequence: bigint = BigInt('0'),
   public frameType: Frame = Frame.NONE,
-  public frame: BalancesFrameT|CausalFrameT|CognitionFrameT|DiagnosticsFrameT|EnvelopeStateFrameT|EquityFrameT|ErrorFrameT|FluidPhaseFrameT|GraphFrameT|ManifoldFrameT|MeasurementsFrameT|PositionsFrameT|RegulatorFrameT|ResonanceFrameT|StrategyFrameT|TickFrameT|null = null
+  public frame: BalancesFrameT|CausalFrameT|CognitionFrameT|DiagnosticsFrameT|EquityFrameT|ErrorFrameT|FluidPhaseFrameT|GraphFrameT|ManifoldFrameT|MeasurementsFrameT|PositionsFrameT|RegulatorFrameT|ResonanceFrameT|StrategyFrameT|TickFrameT|null = null
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const frame = builder.createObjectOffset(this.frame);
 
-  return Envelope.createEnvelope(builder,
+  return Message.createMessage(builder,
     this.sequence,
     this.frameType,
     frame

@@ -81,8 +81,48 @@ posteriorLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+distribution(obj?:Posterior):Posterior|null {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? (obj || new Posterior()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+horizon():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+candidateCall():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+call():number {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+stableCall():number {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+held():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+switchConfidence():number {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+switchThreshold():number {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
 static startResonanceForecast(builder:flatbuffers.Builder) {
-  builder.startObject(6);
+  builder.startObject(14);
 }
 
 static addForwardCurve(builder:flatbuffers.Builder, forwardCurveOffset:flatbuffers.Offset) {
@@ -155,6 +195,38 @@ static startPosteriorVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addDistribution(builder:flatbuffers.Builder, distributionOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(6, distributionOffset, 0);
+}
+
+static addHorizon(builder:flatbuffers.Builder, horizon:bigint) {
+  builder.addFieldInt64(7, horizon, BigInt('0'));
+}
+
+static addCandidateCall(builder:flatbuffers.Builder, candidateCall:number) {
+  builder.addFieldFloat64(8, candidateCall, 0.0);
+}
+
+static addCall(builder:flatbuffers.Builder, call:number) {
+  builder.addFieldFloat64(9, call, 0.0);
+}
+
+static addStableCall(builder:flatbuffers.Builder, stableCall:number) {
+  builder.addFieldFloat64(10, stableCall, 0.0);
+}
+
+static addHeld(builder:flatbuffers.Builder, held:boolean) {
+  builder.addFieldInt8(11, +held, +false);
+}
+
+static addSwitchConfidence(builder:flatbuffers.Builder, switchConfidence:number) {
+  builder.addFieldFloat64(12, switchConfidence, 0.0);
+}
+
+static addSwitchThreshold(builder:flatbuffers.Builder, switchThreshold:number) {
+  builder.addFieldFloat64(13, switchThreshold, 0.0);
+}
+
 static endResonanceForecast(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -168,7 +240,15 @@ unpack(): ResonanceForecastT {
     this.supportedHorizon(),
     this.probeHorizon(),
     (this.aggregate() !== null ? this.aggregate()!.unpack() : null),
-    this.bb!.createObjList<Posterior, PosteriorT>(this.posterior.bind(this), this.posteriorLength())
+    this.bb!.createObjList<Posterior, PosteriorT>(this.posterior.bind(this), this.posteriorLength()),
+    (this.distribution() !== null ? this.distribution()!.unpack() : null),
+    this.horizon(),
+    this.candidateCall(),
+    this.call(),
+    this.stableCall(),
+    this.held(),
+    this.switchConfidence(),
+    this.switchThreshold()
   );
 }
 
@@ -180,6 +260,14 @@ unpackTo(_o: ResonanceForecastT): void {
   _o.probeHorizon = this.probeHorizon();
   _o.aggregate = (this.aggregate() !== null ? this.aggregate()!.unpack() : null);
   _o.posterior = this.bb!.createObjList<Posterior, PosteriorT>(this.posterior.bind(this), this.posteriorLength());
+  _o.distribution = (this.distribution() !== null ? this.distribution()!.unpack() : null);
+  _o.horizon = this.horizon();
+  _o.candidateCall = this.candidateCall();
+  _o.call = this.call();
+  _o.stableCall = this.stableCall();
+  _o.held = this.held();
+  _o.switchConfidence = this.switchConfidence();
+  _o.switchThreshold = this.switchThreshold();
 }
 }
 
@@ -190,7 +278,15 @@ constructor(
   public supportedHorizon: bigint = BigInt('0'),
   public probeHorizon: bigint = BigInt('0'),
   public aggregate: PosteriorT|null = null,
-  public posterior: (PosteriorT)[] = []
+  public posterior: (PosteriorT)[] = [],
+  public distribution: PosteriorT|null = null,
+  public horizon: bigint = BigInt('0'),
+  public candidateCall: number = 0.0,
+  public call: number = 0.0,
+  public stableCall: number = 0.0,
+  public held: boolean = false,
+  public switchConfidence: number = 0.0,
+  public switchThreshold: number = 0.0
 ){}
 
 
@@ -199,6 +295,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const forwardRetention = ResonanceForecast.createForwardRetentionVector(builder, this.forwardRetention);
   const aggregate = (this.aggregate !== null ? this.aggregate!.pack(builder) : 0);
   const posterior = ResonanceForecast.createPosteriorVector(builder, builder.createObjectOffsetList(this.posterior));
+  const distribution = (this.distribution !== null ? this.distribution!.pack(builder) : 0);
 
   ResonanceForecast.startResonanceForecast(builder);
   ResonanceForecast.addForwardCurve(builder, forwardCurve);
@@ -207,6 +304,14 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   ResonanceForecast.addProbeHorizon(builder, this.probeHorizon);
   ResonanceForecast.addAggregate(builder, aggregate);
   ResonanceForecast.addPosterior(builder, posterior);
+  ResonanceForecast.addDistribution(builder, distribution);
+  ResonanceForecast.addHorizon(builder, this.horizon);
+  ResonanceForecast.addCandidateCall(builder, this.candidateCall);
+  ResonanceForecast.addCall(builder, this.call);
+  ResonanceForecast.addStableCall(builder, this.stableCall);
+  ResonanceForecast.addHeld(builder, this.held);
+  ResonanceForecast.addSwitchConfidence(builder, this.switchConfidence);
+  ResonanceForecast.addSwitchThreshold(builder, this.switchThreshold);
 
   return ResonanceForecast.endResonanceForecast(builder);
 }

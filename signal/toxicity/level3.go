@@ -271,7 +271,7 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (level3 *Level3) Register() *data.Measurement[float64] {
-	return data.NewMeasurement[float64]("toxicity:level3", map[string]data.Metric[float64]{
+	return data.NewMeasurement("toxicity:level3", map[string]data.Metric[float64]{
 		"best_price:bid":                 data.NewMetric[float64]("best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"best_price:ask":                 data.NewMetric[float64]("best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"touch_quantity:bid":             data.NewMetric[float64]("touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1),

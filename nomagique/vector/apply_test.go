@@ -4,7 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/vector"
 )
@@ -14,14 +15,14 @@ func TestApplyNext(t *testing.T) {
 		for _, values := range [][]float64{{4, 5}, {-2, 7}} {
 			orig0, orig1 := values[0], values[1]
 			node := vector.NewApply(
-				arithmetic.NewAdd(2),
-				arithmetic.NewMultiply(3),
+				calculus.NewSquare(),
+				calculus.NewNegate(),
 			)
 			out := tests.CollectSeq[float64](node.Next(tests.SliceToSeq(values)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 2)
-			So(out[0], ShouldEqual, orig0+2)
-			So(out[1], ShouldEqual, orig1*3)
+			So(out[0], ShouldEqual, orig0*orig0)
+			So(out[1], ShouldEqual, -orig1)
 		}
 	})
 }
@@ -29,21 +30,25 @@ func TestApplyNext(t *testing.T) {
 func TestApplyIndependentState(t *testing.T) {
 	Convey("Each coordinate owns independent recurrence", t, func() {
 		node := vector.NewApply(
-			arithmetic.NewAdd(0),
-			arithmetic.NewAdd(10),
+			statistic.NewSum(),
+			statistic.NewSum(),
 		)
 
-		for _, pair := range [][2]float64{{2, 20}, {4, 40}, {6, 60}} {
+		expected := [][2]float64{{2, 20}, {6, 60}, {12, 120}}
+
+		for i, pair := range [][2]float64{{2, 20}, {4, 40}, {6, 60}} {
 			out := tests.CollectSeq[float64](node.Next(tests.SliceToSeq([]float64{pair[0], pair[1]})))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 2)
+			So(out[0], ShouldEqual, expected[i][0])
+			So(out[1], ShouldEqual, expected[i][1])
 		}
 	})
 }
 
 func TestApplyShape(t *testing.T) {
 	Convey("Unequal endpoint cardinalities are a shape error", t, func() {
-		node := vector.NewApply(arithmetic.NewAdd(0))
+		node := vector.NewApply(calculus.NewSquare())
 		tests.CollectSeq[float64](node.Next(tests.SliceToSeq([]float64{1.0, 2.0})))
 		So(node.Error(), ShouldNotBeNil)
 	})

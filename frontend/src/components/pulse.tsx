@@ -56,9 +56,7 @@ export const Pulse = () => {
 				which="tick"
 				value={
 					lastTick
-						? new Date(Number(lastTick.timestampNs() / 1000000n))
-								.toISOString()
-								.slice(11, 19)
+						? String(lastTick.count())
 						: "—"
 				}
 			/>

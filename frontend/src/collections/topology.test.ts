@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
+import type { BoundaryStamp } from "#/providers/telemetry/telemetry/boundary-stamp";
 import { topologyStore } from "./topology";
 
 /*
-Stamp is the slice of EnvelopeBoundaryStamp that ingest actually reads. The
+Stamp is the slice of BoundaryStamp that ingest actually reads. The
 generated flatbuffer accessor carries far more surface than the store touches,
 so the fakes implement exactly what is used and are narrowed to it.
 */
 type Stamp = Pick<
-	EnvelopeBoundaryStamp,
+	BoundaryStamp,
 	| "label"
 	| "group"
 	| "stage"
@@ -40,7 +40,7 @@ const stamp = (
 });
 
 const ingest = (stamps: Stamp[]) => {
-	topologyStore.actions.ingest(stamps as EnvelopeBoundaryStamp[]);
+	topologyStore.actions.ingest(stamps as BoundaryStamp[]);
 };
 
 const edgeKeys = () => [...topologyStore.state.edges.keys()].sort();

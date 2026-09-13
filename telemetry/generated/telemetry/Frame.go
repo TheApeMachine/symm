@@ -10,63 +10,60 @@ import (
 type Frame byte
 
 const (
-	FrameNONE               Frame = 0
-	FrameMeasurementsFrame  Frame = 1
-	FrameTickFrame          Frame = 2
-	FrameEquityFrame        Frame = 3
-	FrameBalancesFrame      Frame = 4
-	FrameResonanceFrame     Frame = 5
-	FrameCognitionFrame     Frame = 6
-	FrameCausalFrame        Frame = 7
-	FrameGraphFrame         Frame = 8
-	FrameStrategyFrame      Frame = 9
-	FramePositionsFrame     Frame = 10
-	FrameRegulatorFrame     Frame = 11
-	FrameErrorFrame         Frame = 12
-	FrameFluidPhaseFrame    Frame = 13
-	FrameDiagnosticsFrame   Frame = 14
-	FrameManifoldFrame      Frame = 15
-	FrameEnvelopeStateFrame Frame = 16
+	FrameNONE              Frame = 0
+	FrameMeasurementsFrame Frame = 1
+	FrameTickFrame         Frame = 2
+	FrameEquityFrame       Frame = 3
+	FrameBalancesFrame     Frame = 4
+	FrameResonanceFrame    Frame = 5
+	FrameCognitionFrame    Frame = 6
+	FrameCausalFrame       Frame = 7
+	FrameGraphFrame        Frame = 8
+	FrameStrategyFrame     Frame = 9
+	FramePositionsFrame    Frame = 10
+	FrameRegulatorFrame    Frame = 11
+	FrameErrorFrame        Frame = 12
+	FrameFluidPhaseFrame   Frame = 13
+	FrameDiagnosticsFrame  Frame = 14
+	FrameManifoldFrame     Frame = 15
 )
 
 var EnumNamesFrame = map[Frame]string{
-	FrameNONE:               "NONE",
-	FrameMeasurementsFrame:  "MeasurementsFrame",
-	FrameTickFrame:          "TickFrame",
-	FrameEquityFrame:        "EquityFrame",
-	FrameBalancesFrame:      "BalancesFrame",
-	FrameResonanceFrame:     "ResonanceFrame",
-	FrameCognitionFrame:     "CognitionFrame",
-	FrameCausalFrame:        "CausalFrame",
-	FrameGraphFrame:         "GraphFrame",
-	FrameStrategyFrame:      "StrategyFrame",
-	FramePositionsFrame:     "PositionsFrame",
-	FrameRegulatorFrame:     "RegulatorFrame",
-	FrameErrorFrame:         "ErrorFrame",
-	FrameFluidPhaseFrame:    "FluidPhaseFrame",
-	FrameDiagnosticsFrame:   "DiagnosticsFrame",
-	FrameManifoldFrame:      "ManifoldFrame",
-	FrameEnvelopeStateFrame: "EnvelopeStateFrame",
+	FrameNONE:              "NONE",
+	FrameMeasurementsFrame: "MeasurementsFrame",
+	FrameTickFrame:         "TickFrame",
+	FrameEquityFrame:       "EquityFrame",
+	FrameBalancesFrame:     "BalancesFrame",
+	FrameResonanceFrame:    "ResonanceFrame",
+	FrameCognitionFrame:    "CognitionFrame",
+	FrameCausalFrame:       "CausalFrame",
+	FrameGraphFrame:        "GraphFrame",
+	FrameStrategyFrame:     "StrategyFrame",
+	FramePositionsFrame:    "PositionsFrame",
+	FrameRegulatorFrame:    "RegulatorFrame",
+	FrameErrorFrame:        "ErrorFrame",
+	FrameFluidPhaseFrame:   "FluidPhaseFrame",
+	FrameDiagnosticsFrame:  "DiagnosticsFrame",
+	FrameManifoldFrame:     "ManifoldFrame",
 }
 
 var EnumValuesFrame = map[string]Frame{
-	"NONE":               FrameNONE,
-	"MeasurementsFrame":  FrameMeasurementsFrame,
-	"TickFrame":          FrameTickFrame,
-	"EquityFrame":        FrameEquityFrame,
-	"BalancesFrame":      FrameBalancesFrame,
-	"ResonanceFrame":     FrameResonanceFrame,
-	"CognitionFrame":     FrameCognitionFrame,
-	"CausalFrame":        FrameCausalFrame,
-	"GraphFrame":         FrameGraphFrame,
-	"StrategyFrame":      FrameStrategyFrame,
-	"PositionsFrame":     FramePositionsFrame,
-	"RegulatorFrame":     FrameRegulatorFrame,
-	"ErrorFrame":         FrameErrorFrame,
-	"FluidPhaseFrame":    FrameFluidPhaseFrame,
-	"DiagnosticsFrame":   FrameDiagnosticsFrame,
-	"ManifoldFrame":      FrameManifoldFrame,
-	"EnvelopeStateFrame": FrameEnvelopeStateFrame,
+	"NONE":              FrameNONE,
+	"MeasurementsFrame": FrameMeasurementsFrame,
+	"TickFrame":         FrameTickFrame,
+	"EquityFrame":       FrameEquityFrame,
+	"BalancesFrame":     FrameBalancesFrame,
+	"ResonanceFrame":    FrameResonanceFrame,
+	"CognitionFrame":    FrameCognitionFrame,
+	"CausalFrame":       FrameCausalFrame,
+	"GraphFrame":        FrameGraphFrame,
+	"StrategyFrame":     FrameStrategyFrame,
+	"PositionsFrame":    FramePositionsFrame,
+	"RegulatorFrame":    FrameRegulatorFrame,
+	"ErrorFrame":        FrameErrorFrame,
+	"FluidPhaseFrame":   FrameFluidPhaseFrame,
+	"DiagnosticsFrame":  FrameDiagnosticsFrame,
+	"ManifoldFrame":     FrameManifoldFrame,
 }
 
 func (v Frame) String() string {
@@ -116,8 +113,6 @@ func (t *FrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		return t.Value.(*DiagnosticsFrameT).Pack(builder)
 	case FrameManifoldFrame:
 		return t.Value.(*ManifoldFrameT).Pack(builder)
-	case FrameEnvelopeStateFrame:
-		return t.Value.(*EnvelopeStateFrameT).Pack(builder)
 	}
 	return 0
 }
@@ -184,10 +179,6 @@ func (rcv Frame) UnPack(table flatbuffers.Table) *FrameT {
 		var x ManifoldFrame
 		x.Init(table.Bytes, table.Pos)
 		return &FrameT{Type: FrameManifoldFrame, Value: x.UnPack()}
-	case FrameEnvelopeStateFrame:
-		var x EnvelopeStateFrame
-		x.Init(table.Bytes, table.Pos)
-		return &FrameT{Type: FrameEnvelopeStateFrame, Value: x.UnPack()}
 	}
 	return nil
 }

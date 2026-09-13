@@ -13,12 +13,9 @@ export { RingBuffer };
 import type { FluidFields } from "#/components/fluid-3d/wire";
 import type { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
 import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
-import type { EnvelopeCategory } from "#/providers/telemetry/telemetry/envelope-category";
-import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
-import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import type { EnvelopeOpportunityCandidate } from "#/providers/telemetry/telemetry/envelope-opportunity-candidate";
-import type { EnvelopeResonanceArtifact } from "#/providers/telemetry/telemetry/envelope-resonance-artifact";
-import type { EnvelopeTickerData } from "#/providers/telemetry/telemetry/envelope-ticker-data";
+import type { Cognition } from "#/providers/telemetry/telemetry/cognition";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import type { Resonance } from "#/providers/telemetry/telemetry/resonance";
 import type { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import type { ErrorFrame } from "#/providers/telemetry/telemetry/error-frame";
 import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
@@ -26,6 +23,7 @@ import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
+import type { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
 import type { TradeRecord } from "./types";
 
 export const DEFAULT_KERNELS = [
@@ -203,24 +201,12 @@ Typed FlatBuffer Frame Stores (RingBuffer instances with TanStack Store actions)
 */
 
 /*
-One FrameStore per measurement source, not per source+symbol. The backend
-already focus-gates every measurement to the currently focused symbol before
-it ever reaches the browser (cmd/boot.go's ChannelMeasurements -> ChannelUI
-wire drops anything not matching types.Focus()), so a symbol-keyed lookup on
-the frontend was dead weight: it never needed to hold more than one symbol's
-readings at a time, and its nested-map shape made every read and write pay
-for a lookup that could never disambiguate anything. This mirrors every
-other store in this file — a plain Record<string, FrameStore<T>> — and
-avoids the whole "which source, which symbol, does either sub-map exist yet"
-bookkeeping that came with the previous nested-map shape.
-
-Sources are created lazily on first sight rather than pre-seeded from
-DEFAULT_KERNELS, so a source the frontend doesn't yet know about by name
-(e.g. a newly added kernel) still gets its own ring instead of being dropped.
+measurementStores holds each kernel's raw FlatBuffer Measurement rows, keyed by
+`${source}\0${symbol}` so per-symbol time series are separated from the start.
 */
 const measurementStores: Record<
 	string,
-	ReturnType<typeof createFrameStore<EnvelopeMeasurement>>
+	ReturnType<typeof createFrameStore<Measurement>>
 > = {};
 
 export const measurementSourcesStore = createStore<string[]>([]);
@@ -240,7 +226,7 @@ export const getMeasurementStore = (source: string, symbol: string) => {
 	const key = measurementKey(source, symbol);
 	let store = measurementStores[key];
 	if (!store) {
-		store = createFrameStore<EnvelopeMeasurement>(50);
+		store = createFrameStore<Measurement>(50);
 		measurementStores[key] = store;
 		measurementSourcesStore.setState((prev) =>
 			prev.includes(source) ? prev : [...prev, source],
@@ -280,11 +266,11 @@ export const getKernelReadingStore = (source: string) => {
 	return store;
 };
 
-export const addMeasurement = (source: string, row: EnvelopeMeasurement) => {
-	// Label is the measured symbol on a Measurement (Source names the kernel
+export const addMeasurement = (source: string, row: Measurement) => {
+	// Symbol is the measured symbol on a Measurement (Source names the kernel
 	// that produced it), so the row itself says which symbol's ring it belongs
 	// in — no need to thread the envelope key down here.
-	getMeasurementStore(source, row.label() ?? "").actions.add(row);
+	getMeasurementStore(source, row.symbol() ?? "").actions.add(row);
 
 	// SNRDefined is the backend's own "this reading is real" flag (see
 	// data.Measurement.Finalize): an undefined SNR is absent, not zero, so a row
@@ -322,7 +308,7 @@ export const getResonanceReadingStore = (symbol: string) => {
 	return store;
 };
 
-export const addResonanceReading = (row: EnvelopeResonanceArtifact) => {
+export const addResonanceReading = (row: Resonance) => {
 	resonanceArtifactStore.actions.add(row);
 
 	// Confidence is produced on the coder's very first step; it flows from the
@@ -336,24 +322,14 @@ export const addResonanceReading = (row: EnvelopeResonanceArtifact) => {
 	}
 };
 
-export const tickStore = createFrameStore<EnvelopeTickerData>(50);
+export const tickStore = createFrameStore<TickFrame>(50);
 export const regulatorStore = createFrameStore<RegulatorFrame>(50);
-// resonanceArtifactStore carries types.Envelope.Resonance, which rides every
-// envelope like every other measurement. It is the whole resonance surface:
-// the predictive coder's per-layer states, latent vector, task-head quality,
-// and forward curve, alongside the confidence/calibrated pair the kernel row
-// reads. There is no second, curated resonance frame — the hub broadcasts the
-// envelope as-is and never reshapes it per consumer.
-export const resonanceArtifactStore =
-	createFrameStore<EnvelopeResonanceArtifact>(50);
+export const resonanceArtifactStore = createFrameStore<Resonance>(50);
 /*
 Cognition is read per symbol on every surface that shows it, so it is keyed by
 symbol rather than sharing one ring across the universe.
 */
-export const cognitionStore = createKeyedFrameStore<EnvelopeCognition>(50);
-export const categoryStore = createFrameStore<EnvelopeCategory>(50);
-export const opportunityStore =
-	createFrameStore<EnvelopeOpportunityCandidate>(50);
+export const cognitionStore = createKeyedFrameStore<Cognition>(50);
 export const graphStore = createFrameStore<GraphFrame>(50);
 export const strategyStore = createFrameStore<StrategyFrame>(50);
 

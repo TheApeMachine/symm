@@ -4,17 +4,17 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestEvaluate(t *testing.T) {
 	Convey("Evaluate returns the single observation of a persisting fold", t, func() {
-		add := arithmetic.NewAdd(0.0)
+		sum := statistic.NewSum()
 
 		for index, expected := range []float64{1, 3, 6, 10} {
-			eval := transport.NewEvaluate(add)
+			eval := transport.NewEvaluate(sum)
 			var actual float64
 
 			for out := range eval.Next(

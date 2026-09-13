@@ -82,14 +82,3 @@ type StopEvidence struct {
 	HollowReady bool `json:"hollow_ready"`
 	Present     bool `json:"present"`
 }
-
-/*
-hollowMateriality is how much of the touch must be pulled before a quote is
-treated as untrustworthy.
-
-Some cancellation is ordinary market making, and gating on any positive value at
-all suppressed peaks continuously in a normally functioning book — which quietly
-pinned the trail at entry for the whole life of a position. A fifth of the touch
-disappearing is a different claim from a few percent.
-*/
-const hollowMateriality = 0.2

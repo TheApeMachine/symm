@@ -129,19 +129,64 @@ func (solver *Solver) Name() string {
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step folds this envelope's ranked category batch into the symbol's cognition
-state machine and writes the freshest reading back onto the envelope.
+Step folds the category observations in Peers into the symbol's cognition
+state machine and writes the freshest reading back onto the measurement.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if reading := solver.StepCategories(envelope.Categories); reading != nil {
-		envelope.Cognition = reading
+	if measurement == nil {
+		return nil
 	}
 
-	return envelope
+	var categories []types.Category
+
+	for _, peer := range measurement.Peers {
+		if peer != nil && peer.Source == "category" {
+			for catName, metric := range peer.Metrics {
+				categories = append(categories, types.Category{
+					Symbol:     peer.Label,
+					Type:       types.CategoryType(catName),
+					Confidence: metric.Raw,
+				})
+			}
+		}
+	}
+
+	if reading := solver.StepCategories(categories); reading != nil {
+		if m, ok := measurement.Metrics["surprisal"]; ok {
+			measurement.Metrics["surprisal"] = m.Write(reading.InterpolatedSurprisal)
+		}
+
+		if m, ok := measurement.Metrics["stability"]; ok {
+			measurement.Metrics["stability"] = m.Write(reading.Confidence)
+		}
+
+		if m, ok := measurement.Metrics["ambiguity"]; ok {
+			ambiguityVal := 0.0
+			if reading.Ambiguous {
+				ambiguityVal = 1.0
+			}
+			if reading.EntropyBits != nil {
+				ambiguityVal = *reading.EntropyBits
+			}
+			measurement.Metrics["ambiguity"] = m.Write(ambiguityVal)
+		}
+	}
+
+	return measurement
 }
 
-func Register() *data.Measurement[float64] {
-	return &data.Measurement[float64]{}
+func (solver *Solver) Register() (*data.Measurement[float64], []string) {
+	return data.NewMeasurement("cognition", map[string]data.Metric[float64]{
+		"surprisal": data.NewMetric[float64](
+			"surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
+		),
+		"stability": data.NewMetric[float64](
+			"stability", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"ambiguity": data.NewMetric[float64](
+			"ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+	}), []string{"category"}
 }
 
 // StepCategories folds one category batch into the symbol's cognition state

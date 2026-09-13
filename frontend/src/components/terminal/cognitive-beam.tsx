@@ -6,7 +6,7 @@ import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
-import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
+import type { Cognition } from "#/providers/telemetry/telemetry/cognition";
 
 export const cognitiveScopes = (readings: CognitiveReading[]): string[] =>
 	[
@@ -41,19 +41,19 @@ const METERS = [
 	{
 		key: "confidence",
 		label: "Class confidence",
-		getter: (c: EnvelopeCognition) => c.confidence(),
+		getter: (c: Cognition) => c.confidence(),
 		variant: "info",
 	},
 	{
 		key: "lookahead",
-		label: "Lookahead beam",
-		getter: (c: EnvelopeCognition) => c.lookaheadScore(),
-		variant: "warning",
+		label: "Lookahead score",
+		getter: (c: Cognition) => c.lookaheadScore(),
+		variant: "default",
 	},
 	{
 		key: "contrast",
-		label: "Class contrast",
-		getter: (c: EnvelopeCognition) => c.contrast(),
+		label: "Contrast margin",
+		getter: (c: Cognition) => c.contrast(),
 		variant: "success",
 	},
 ] as const;
@@ -68,7 +68,7 @@ export const CognitiveBeam = () => {
 		const apply = (state: typeof cognitionStore.state) => {
 			if (!root.current) return;
 
-			const targetRow: EnvelopeCognition | undefined = state.getLast(symbol);
+			const targetRow: Cognition | undefined = state.getLast(symbol);
 
 			const set = (q: string, value: string) => {
 				const els = root.current?.querySelectorAll<HTMLElement>(

@@ -10,7 +10,7 @@ import (
 )
 
 /*
-Writer accumulates rows per record family and commits them as Iceberg appends.
+Writer accumulates rows per canonical table family and commits them as Iceberg appends.
 
 Every append is a snapshot plus a metadata write, so rows are buffered rather
 than written as they arrive. Callers decide the cadence; this type guarantees
@@ -21,16 +21,20 @@ and that a family which never reached the catalog is still here afterwards.
 type Writer struct {
 	catalog *Catalog
 
-	mutex       sync.Mutex
-	appendBytes int
-	runs        []RunRow
-	captures    []CaptureRow
-	manifests   []ManifestRow
-	witnesses   []WitnessRow
-	lifecycle   []LifecycleRow
-	decisions   []OutcomeRow
-	outcomes    []OutcomeRow
-	gaps        []GapRow
+	mutex         sync.Mutex
+	appendBytes   int
+	spotLevel3    []SpotLevel3Row
+	spotTicker    []SpotTickerRow
+	spotTrade     []SpotTradeRow
+	futuresTicker []FuturesTickerRow
+	futuresTrade  []FuturesTradeRow
+	executions    []ExecutionRow
+	measurements  []MeasurementRow
+	models        []ModelRow
+	grids         []GridRow
+	positions     []PositionRow
+	decisions     []OutcomeRow
+	outcomes      []OutcomeRow
 }
 
 // NewWriter returns a Writer appending into the given catalog.
@@ -41,80 +45,91 @@ func NewWriter(catalog *Catalog) *Writer {
 	}
 }
 
-// AddRun buffers one process capture session.
-func (w *Writer) AddRun(row RunRow) {
+func (w *Writer) AddSpotLevel3(row SpotLevel3Row) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-	w.runs = append(w.runs, row)
+	w.spotLevel3 = append(w.spotLevel3, row)
 }
 
-// AddCapture buffers one raw external input.
-func (w *Writer) AddCapture(row CaptureRow) {
+func (w *Writer) AddSpotTicker(row SpotTickerRow) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-	w.captures = append(w.captures, row)
+	w.spotTicker = append(w.spotTicker, row)
 }
 
-// AddManifest buffers one envelope manifest.
-func (w *Writer) AddManifest(row ManifestRow) {
+func (w *Writer) AddSpotTrade(row SpotTradeRow) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-	w.manifests = append(w.manifests, row)
+	w.spotTrade = append(w.spotTrade, row)
 }
 
-// AddWitness buffers one artifact witness.
-func (w *Writer) AddWitness(row WitnessRow) {
+func (w *Writer) AddFuturesTicker(row FuturesTickerRow) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-	w.witnesses = append(w.witnesses, row)
+	w.futuresTicker = append(w.futuresTicker, row)
 }
 
-// AddLifecycle buffers one position or order transition.
-func (w *Writer) AddLifecycle(row LifecycleRow) {
+func (w *Writer) AddFuturesTrade(row FuturesTradeRow) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-	w.lifecycle = append(w.lifecycle, row)
+	w.futuresTrade = append(w.futuresTrade, row)
 }
 
-// AddDecision buffers one decision as the agent made it, before grading.
+func (w *Writer) AddExecution(row ExecutionRow) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.executions = append(w.executions, row)
+}
+
+func (w *Writer) AddMeasurement(row MeasurementRow) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.measurements = append(w.measurements, row)
+}
+
+func (w *Writer) AddModel(row ModelRow) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.models = append(w.models, row)
+}
+
+func (w *Writer) AddGrid(row GridRow) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.grids = append(w.grids, row)
+}
+
+func (w *Writer) AddPosition(row PositionRow) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.positions = append(w.positions, row)
+}
+
 func (w *Writer) AddDecision(row OutcomeRow) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	w.decisions = append(w.decisions, row)
 }
 
-// AddOutcome buffers one graded decision.
 func (w *Writer) AddOutcome(row OutcomeRow) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	w.outcomes = append(w.outcomes, row)
 }
 
-// AddGap buffers one capture-integrity gap.
-func (w *Writer) AddGap(row GapRow) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-	w.gaps = append(w.gaps, row)
-}
-
-// Pending reports how many rows are buffered across every family, so a caller
-// can drive commit cadence on volume rather than only on time.
+// Pending reports how many rows are buffered across every family.
 func (w *Writer) Pending() int {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	return len(w.runs) + len(w.captures) + len(w.manifests) +
-		len(w.witnesses) + len(w.lifecycle) + len(w.decisions) + len(w.outcomes) + len(w.gaps)
+	return len(w.spotLevel3) + len(w.spotTicker) + len(w.spotTrade) +
+		len(w.futuresTicker) + len(w.futuresTrade) + len(w.executions) + len(w.measurements) +
+		len(w.models) + len(w.grids) + len(w.positions) +
+		len(w.decisions) + len(w.outcomes)
 }
 
 /*
 Commit appends every buffered family, one family at a time.
-
-A family is detached only for the append, and only the suffix that has not
-been acknowledged is restored. Earlier families that already committed stay
-committed. Iceberg retries explicit commit conflicts using the table's
-configured budget. A timeout or other unknown outcome on a snapshot that was
-already sent is not retried here: repeating it could duplicate that snapshot.
 */
 func (w *Writer) Commit(ctx context.Context) error {
 	if w.appendBytes < 0 {
@@ -125,44 +140,85 @@ func (w *Writer) Commit(ctx context.Context) error {
 		))
 	}
 
-	if err := commitFamily(w, ctx, Runs,
-		func() []RunRow { rows := w.runs; w.runs = nil; return rows },
-		func(rows []RunRow) { w.runs = append(rows, w.runs...) },
-		nil, fillRuns,
+	if err := commitFamily(w, ctx, SpotLevel3,
+		func() []SpotLevel3Row { rows := w.spotLevel3; w.spotLevel3 = nil; return rows },
+		func(rows []SpotLevel3Row) { w.spotLevel3 = append(rows, w.spotLevel3...) },
+		nil, fillSpotLevel3,
 	); err != nil {
 		return err
 	}
 
-	if err := commitFamily(w, ctx, Captures,
-		func() []CaptureRow { rows := w.captures; w.captures = nil; return rows },
-		func(rows []CaptureRow) { w.captures = append(rows, w.captures...) },
-		func(row CaptureRow) int { return len(row.Payload) },
-		fillCaptures,
+	if err := commitFamily(w, ctx, SpotTicker,
+		func() []SpotTickerRow { rows := w.spotTicker; w.spotTicker = nil; return rows },
+		func(rows []SpotTickerRow) { w.spotTicker = append(rows, w.spotTicker...) },
+		nil, fillSpotTicker,
 	); err != nil {
 		return err
 	}
 
-	if err := commitFamily(w, ctx, Manifests,
-		func() []ManifestRow { rows := w.manifests; w.manifests = nil; return rows },
-		func(rows []ManifestRow) { w.manifests = append(rows, w.manifests...) },
-		nil, fillManifests,
+	if err := commitFamily(w, ctx, SpotTrade,
+		func() []SpotTradeRow { rows := w.spotTrade; w.spotTrade = nil; return rows },
+		func(rows []SpotTradeRow) { w.spotTrade = append(rows, w.spotTrade...) },
+		nil, fillSpotTrade,
 	); err != nil {
 		return err
 	}
 
-	if err := commitFamily(w, ctx, Witnesses,
-		func() []WitnessRow { rows := w.witnesses; w.witnesses = nil; return rows },
-		func(rows []WitnessRow) { w.witnesses = append(rows, w.witnesses...) },
-		func(row WitnessRow) int { return len(row.Payload) },
-		fillWitnesses,
+	if err := commitFamily(w, ctx, FuturesTicker,
+		func() []FuturesTickerRow { rows := w.futuresTicker; w.futuresTicker = nil; return rows },
+		func(rows []FuturesTickerRow) { w.futuresTicker = append(rows, w.futuresTicker...) },
+		nil, fillFuturesTicker,
 	); err != nil {
 		return err
 	}
 
-	if err := commitFamily(w, ctx, Lifecycle,
-		func() []LifecycleRow { rows := w.lifecycle; w.lifecycle = nil; return rows },
-		func(rows []LifecycleRow) { w.lifecycle = append(rows, w.lifecycle...) },
-		nil, fillLifecycle,
+	if err := commitFamily(w, ctx, FuturesTrade,
+		func() []FuturesTradeRow { rows := w.futuresTrade; w.futuresTrade = nil; return rows },
+		func(rows []FuturesTradeRow) { w.futuresTrade = append(rows, w.futuresTrade...) },
+		nil, fillFuturesTrade,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Executions,
+		func() []ExecutionRow { rows := w.executions; w.executions = nil; return rows },
+		func(rows []ExecutionRow) { w.executions = append(rows, w.executions...) },
+		nil, fillExecutions,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Measurements,
+		func() []MeasurementRow { rows := w.measurements; w.measurements = nil; return rows },
+		func(rows []MeasurementRow) { w.measurements = append(rows, w.measurements...) },
+		func(row MeasurementRow) int { return len(row.Payload) },
+		fillMeasurements,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Models,
+		func() []ModelRow { rows := w.models; w.models = nil; return rows },
+		func(rows []ModelRow) { w.models = append(rows, w.models...) },
+		func(row ModelRow) int { return len(row.Payload) },
+		fillModels,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Grids,
+		func() []GridRow { rows := w.grids; w.grids = nil; return rows },
+		func(rows []GridRow) { w.grids = append(rows, w.grids...) },
+		func(row GridRow) int { return len(row.Payload) },
+		fillGrids,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Positions,
+		func() []PositionRow { rows := w.positions; w.positions = nil; return rows },
+		func(rows []PositionRow) { w.positions = append(rows, w.positions...) },
+		nil, fillPositions,
 	); err != nil {
 		return err
 	}
@@ -175,18 +231,10 @@ func (w *Writer) Commit(ctx context.Context) error {
 		return err
 	}
 
-	if err := commitFamily(w, ctx, Outcomes,
+	return commitFamily(w, ctx, Outcomes,
 		func() []OutcomeRow { rows := w.outcomes; w.outcomes = nil; return rows },
 		func(rows []OutcomeRow) { w.outcomes = append(rows, w.outcomes...) },
 		nil, fillOutcomes,
-	); err != nil {
-		return err
-	}
-
-	return commitFamily(w, ctx, Gaps,
-		func() []GapRow { rows := w.gaps; w.gaps = nil; return rows },
-		func(rows []GapRow) { w.gaps = append(rows, w.gaps...) },
-		nil, fillGaps,
 	)
 }
 
@@ -226,16 +274,6 @@ func commitFamily[T any](
 	return err
 }
 
-/*
-append writes one family's rows as successive Iceberg snapshots, each small
-enough for the catalog HTTP call to finish.
-
-The record is built from the loaded table's schema, not from the local schema
-literal. A catalog assigns its own field IDs when it creates a table, and the
-writer matches columns to the table by ID: building from the literal produces
-records whose IDs disagree with the table's, which surfaces as a column being
-resolved against the wrong one entirely.
-*/
 func (w *Writer) append(
 	ctx context.Context,
 	name string,
@@ -252,59 +290,32 @@ func (w *Writer) append(
 			return committed, err
 		}
 
-		sent, err := w.appendRange(ctx, name, payloadSize, committed, end, fill)
+		tbl, err := w.catalog.Load(ctx, name)
 
 		if err != nil {
-			if sent {
-				return end, err
-			}
-
 			return committed, err
+		}
+
+		reader, err := records(tbl.Schema(), end-committed, payloadSize, func(builder *array.RecordBuilder, s, e int) {
+			fill(builder, committed+s, committed+e)
+		})
+
+		if err != nil {
+			return committed, err
+		}
+
+		defer reader.Release()
+
+		if _, err := tbl.Append(ctx, reader, nil); err != nil {
+			return committed, errnie.Error(errnie.Err(
+				errnie.BadGateway,
+				"[iceberg] failed to commit append to "+name,
+				err,
+			))
 		}
 
 		committed = end
 	}
 
 	return committed, nil
-}
-
-func (w *Writer) appendRange(
-	ctx context.Context,
-	name string,
-	payloadSize func(int) int,
-	start, end int,
-	fill func(*array.RecordBuilder, int, int),
-) (bool, error) {
-	loaded, err := w.catalog.Load(ctx, name)
-
-	if err != nil {
-		return false, err
-	}
-
-	count := end - start
-	var sizeOf func(int) int
-
-	if payloadSize != nil {
-		sizeOf = func(index int) int { return payloadSize(start + index) }
-	}
-
-	reader, err := records(loaded.Schema(), count, sizeOf, func(builder *array.RecordBuilder, from, to int) {
-		fill(builder, start+from, start+to)
-	})
-
-	if err != nil {
-		return false, err
-	}
-
-	defer reader.Release()
-
-	if _, err := loaded.Append(ctx, reader, nil); err != nil {
-		return true, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to append to "+name,
-			err,
-		))
-	}
-
-	return true, nil
 }

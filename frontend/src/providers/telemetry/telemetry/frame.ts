@@ -7,7 +7,6 @@ import { BalancesFrame, BalancesFrameT } from '../telemetry/balances-frame.js';
 import { CausalFrame, CausalFrameT } from '../telemetry/causal-frame.js';
 import { CognitionFrame, CognitionFrameT } from '../telemetry/cognition-frame.js';
 import { DiagnosticsFrame, DiagnosticsFrameT } from '../telemetry/diagnostics-frame.js';
-import { EnvelopeStateFrame, EnvelopeStateFrameT } from '../telemetry/envelope-state-frame.js';
 import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
 import { ErrorFrame, ErrorFrameT } from '../telemetry/error-frame.js';
 import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-frame.js';
@@ -37,14 +36,13 @@ export enum Frame {
   ErrorFrame = 12,
   FluidPhaseFrame = 13,
   DiagnosticsFrame = 14,
-  ManifoldFrame = 15,
-  EnvelopeStateFrame = 16
+  ManifoldFrame = 15
 }
 
 export function unionToFrame(
   type: Frame,
-  accessor: (obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null
-): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
+  accessor: (obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null
+): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
   switch(Frame[type]) {
     case 'NONE': return null; 
     case 'MeasurementsFrame': return accessor(new MeasurementsFrame())! as MeasurementsFrame;
@@ -62,16 +60,15 @@ export function unionToFrame(
     case 'FluidPhaseFrame': return accessor(new FluidPhaseFrame())! as FluidPhaseFrame;
     case 'DiagnosticsFrame': return accessor(new DiagnosticsFrame())! as DiagnosticsFrame;
     case 'ManifoldFrame': return accessor(new ManifoldFrame())! as ManifoldFrame;
-    case 'EnvelopeStateFrame': return accessor(new EnvelopeStateFrame())! as EnvelopeStateFrame;
     default: return null;
   }
 }
 
 export function unionListToFrame(
   type: Frame, 
-  accessor: (index: number, obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
+  accessor: (index: number, obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
   index: number
-): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
+): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
   switch(Frame[type]) {
     case 'NONE': return null; 
     case 'MeasurementsFrame': return accessor(index, new MeasurementsFrame())! as MeasurementsFrame;
@@ -89,7 +86,6 @@ export function unionListToFrame(
     case 'FluidPhaseFrame': return accessor(index, new FluidPhaseFrame())! as FluidPhaseFrame;
     case 'DiagnosticsFrame': return accessor(index, new DiagnosticsFrame())! as DiagnosticsFrame;
     case 'ManifoldFrame': return accessor(index, new ManifoldFrame())! as ManifoldFrame;
-    case 'EnvelopeStateFrame': return accessor(index, new EnvelopeStateFrame())! as EnvelopeStateFrame;
     default: return null;
   }
 }

@@ -14,9 +14,9 @@ import {
 } from "#/components/terminal/kernel-meta";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 
-const metricObj = new EnvelopeMeasurementMetric();
+const metricObj = new Metric();
 
 export const SignalDetail = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
@@ -47,9 +47,9 @@ export const SignalDetail = () => {
 			set("symbol", focusSymbol);
 			set(
 				"at",
-				row?.atNs() === undefined
+				row?.at() === undefined
 					? "—"
-					: new Date(Number(row.atNs() / 1000000n)).toISOString().slice(11, 19),
+					: new Date(Number(row.at() / 1000000n)).toISOString().slice(11, 19),
 			);
 			set(
 				"maturity",
@@ -62,9 +62,9 @@ export const SignalDetail = () => {
 				for (let j = 0; j < row.metricsLength(); j++) {
 					const m = row.metrics(j, metricObj);
 					if (!m) continue;
-					const name = m.key() ?? "";
-					const raw = m.value()?.raw() ?? 0;
-					const normalized = m.value()?.normalized() ?? 0;
+					const name = m.name() ?? "";
+					const raw = m.raw();
+					const normalized = m.normalized();
 
 					set(`m:${name}`, raw.toFixed(4));
 					const bar = root.current?.querySelector<HTMLElement>(

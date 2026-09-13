@@ -1,24 +1,28 @@
 import * as flatbuffers from "flatbuffers";
 import { describe, expect, it } from "vitest";
 import { addMeasurement, getKernelReadingStore } from "#/collections/app";
-import { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
+import { Measurement } from "#/providers/telemetry/telemetry/measurement";
 
 /*
-measurement builds a real EnvelopeMeasurement the way the wire delivers one, so
+measurement builds a real Measurement the way the wire delivers one, so
 these tests exercise the same snrDefined() gate the dispatcher reads rather than
 a stub that could drift from it.
 */
-const measurement = (snr: number, snrDefined: boolean): EnvelopeMeasurement => {
+const measurement = (snr: number, snrDefined: boolean): Measurement => {
 	const builder = new flatbuffers.Builder(0);
+	const sourceOffset = builder.createString("test");
+	const symbolOffset = builder.createString("TEST/USD");
 
-	EnvelopeMeasurement.startEnvelopeMeasurement(builder);
-	EnvelopeMeasurement.addSnr(builder, snr);
-	EnvelopeMeasurement.addSnrDefined(builder, snrDefined);
-	const offset = EnvelopeMeasurement.endEnvelopeMeasurement(builder);
+	Measurement.startMeasurement(builder);
+	Measurement.addSource(builder, sourceOffset);
+	Measurement.addSymbol(builder, symbolOffset);
+	Measurement.addSnr(builder, snr);
+	Measurement.addSnrDefined(builder, snrDefined);
+	const offset = Measurement.endMeasurement(builder);
 
 	builder.finish(offset);
 
-	return EnvelopeMeasurement.getRootAsEnvelopeMeasurement(
+	return Measurement.getRootAsMeasurement(
 		new flatbuffers.ByteBuffer(builder.asUint8Array()),
 	);
 };

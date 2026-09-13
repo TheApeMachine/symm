@@ -108,9 +108,8 @@ func (solver *Solver) Name() string { return "category" }
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step folds every signal measurement populated on this envelope into its
-symbol's evidence snapshot. The envelope is one committed observation: all of
-its measurements are applied before Category publishes one distribution.
+Step folds every signal measurement populated in Peers into its
+symbol's evidence snapshot and returns the updated category measurement.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.err != nil {
@@ -119,23 +118,42 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return nil
 	}
 
-	if envelope == nil {
+	if measurement == nil {
 		return nil
 	}
 
-	measurements := envelope.SignalMeasurements()
-	envelope.Categories = solver.stepMeasurements(measurements[:])
+	categories := solver.stepMeasurements(measurement.Peers)
 
 	if solver.err != nil {
 		return nil
 	}
 
-	return envelope
+	for _, cat := range categories {
+		if cat.Type != "" {
+			name := string(cat.Type)
+
+			if m, ok := measurement.Metrics[name]; ok {
+				measurement.Metrics[name] = m.Write(cat.Confidence)
+			}
+		}
+	}
+
+	return measurement
 }
 
-func Register() *data.Measurement[float64] {
-	return &data.Measurement[float64]{}
+func (solver *Solver) Register() (*data.Measurement[float64], []string) {
+	metrics := make(map[string]data.Metric[float64], len(solver.categories))
+
+	for _, catType := range solver.categories {
+		name := string(catType)
+		metrics[name] = data.NewMetric[float64](
+			name, data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		)
+	}
+
+	return data.NewMeasurement[float64]("category", metrics), []string{"*"}
 }
+
 
 /*
 StepMeasurement consumes one measurement observation, updates the symbol's
@@ -316,7 +334,7 @@ func (solver *Solver) accumulateLocked(
 
 	if !measurement.From.IsZero() && measurement.From.After(measurement.At) {
 		return fmt.Errorf(
-			"%s %s/%s interval begins at %s after event time %s",
+			"%d %s/%s interval begins at %s after event time %s",
 			measurement.ID,
 			measurement.Source,
 			measurement.Label,

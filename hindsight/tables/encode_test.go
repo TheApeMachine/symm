@@ -48,15 +48,15 @@ func TestSpan(t *testing.T) {
 
 func TestRecords(t *testing.T) {
 	Convey("Arrow records preserve variable payload lengths and nulls", t, func() {
-		rows := []CaptureRow{
-			{Run: "test", Sequence: 1, Payload: []byte("one")},
-			{Run: "test", Sequence: 2},
-			{Run: "test", Sequence: 3, Payload: bytes.Repeat([]byte("x"), 4096)},
+		rows := []MeasurementRow{
+			{Epoch: 1, Tick: 1, Source: "kraken", Symbol: "BTC/USD", Payload: []byte("one")},
+			{Epoch: 1, Tick: 2, Source: "kraken", Symbol: "BTC/USD"},
+			{Epoch: 1, Tick: 3, Source: "kraken", Symbol: "BTC/USD", Payload: bytes.Repeat([]byte("x"), 4096)},
 		}
-		reader, err := records(CapturesSchema(), len(rows),
+		reader, err := records(MeasurementsSchema(), len(rows),
 			func(index int) int { return len(rows[index].Payload) },
 			func(builder *array.RecordBuilder, start, end int) {
-				fillCaptures(builder, rows[start:end])
+				fillMeasurements(builder, rows[start:end])
 			})
 		So(err, ShouldBeNil)
 		defer reader.Release()
@@ -66,8 +66,8 @@ func TestRecords(t *testing.T) {
 			batch := reader.RecordBatch()
 
 			for row := range int(batch.NumRows()) {
-				So(num(batch.Column(1), row), ShouldEqual, rows[index].Sequence)
-				So(bin(batch.Column(9), row), ShouldResemble, rows[index].Payload)
+				So(num(batch.Column(1), row), ShouldEqual, rows[index].Tick)
+				So(bin(batch.Column(11), row), ShouldResemble, rows[index].Payload)
 				index++
 			}
 		}
@@ -77,23 +77,25 @@ func TestRecords(t *testing.T) {
 }
 
 func BenchmarkRecords(b *testing.B) {
-	// A drain of 256 varied precursor payloads models the configured capture
-	// drain shape. The bytes are real; no Arrow work is replaced by a mock.
-	rows := make([]WitnessRow, 256)
+	rows := make([]MeasurementRow, 256)
 
 	for index := range rows {
-		rows[index] = WitnessRow{Run: "bench", ArtifactKind: "precursor",
-			Envelope: EnvelopeRefRow{Run: "bench", Sequence: int64(index + 1)},
-			Payload:  bytes.Repeat([]byte("x"), (index%4+1)*4096)}
+		rows[index] = MeasurementRow{
+			Epoch:   1,
+			Tick:    int64(index + 1),
+			Source:  "kraken",
+			Symbol:  "BTC/USD",
+			Payload: bytes.Repeat([]byte("x"), (index%4+1)*4096),
+		}
 	}
-	schema := WitnessesSchema()
+	schema := MeasurementsSchema()
 	b.ReportAllocs()
 
 	for b.Loop() {
 		reader, err := records(schema, len(rows),
 			func(index int) int { return len(rows[index].Payload) },
 			func(builder *array.RecordBuilder, start, end int) {
-				fillWitnesses(builder, rows[start:end])
+				fillMeasurements(builder, rows[start:end])
 			})
 
 		if err != nil {
@@ -102,3 +104,4 @@ func BenchmarkRecords(b *testing.B) {
 		reader.Release()
 	}
 }
+

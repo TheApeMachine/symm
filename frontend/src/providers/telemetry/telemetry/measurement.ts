@@ -90,28 +90,38 @@ maturity():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-metrics(index: number, obj?:Metric):Metric|null {
+snr():number {
   const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+snrDefined():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+metrics(index: number, obj?:Metric):Metric|null {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? (obj || new Metric()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 metricsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 metadata(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 metadataLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startMeasurement(builder:flatbuffers.Builder) {
-  builder.startObject(13);
+  builder.startObject(15);
 }
 
 static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
@@ -158,8 +168,16 @@ static addMaturity(builder:flatbuffers.Builder, maturity:number) {
   builder.addFieldFloat64(10, maturity, 0.0);
 }
 
+static addSnr(builder:flatbuffers.Builder, snr:number) {
+  builder.addFieldFloat64(11, snr, 0.0);
+}
+
+static addSnrDefined(builder:flatbuffers.Builder, snrDefined:boolean) {
+  builder.addFieldInt8(12, +snrDefined, +false);
+}
+
 static addMetrics(builder:flatbuffers.Builder, metricsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, metricsOffset, 0);
+  builder.addFieldOffset(13, metricsOffset, 0);
 }
 
 static createMetricsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -175,7 +193,7 @@ static startMetricsVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addMetadata(builder:flatbuffers.Builder, metadataOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, metadataOffset, 0);
+  builder.addFieldOffset(14, metadataOffset, 0);
 }
 
 static createMetadataVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -197,7 +215,7 @@ static endMeasurement(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createMeasurement(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, sourceOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, tick:bigint, peerOffset:flatbuffers.Offset, at:bigint, observedFrom:bigint, horizon:bigint, peerAt:bigint, peerObservedFrom:bigint, maturity:number, metricsOffset:flatbuffers.Offset, metadataOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createMeasurement(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, sourceOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, tick:bigint, peerOffset:flatbuffers.Offset, at:bigint, observedFrom:bigint, horizon:bigint, peerAt:bigint, peerObservedFrom:bigint, maturity:number, snr:number, snrDefined:boolean, metricsOffset:flatbuffers.Offset, metadataOffset:flatbuffers.Offset):flatbuffers.Offset {
   Measurement.startMeasurement(builder);
   Measurement.addId(builder, idOffset);
   Measurement.addSource(builder, sourceOffset);
@@ -210,6 +228,8 @@ static createMeasurement(builder:flatbuffers.Builder, idOffset:flatbuffers.Offse
   Measurement.addPeerAt(builder, peerAt);
   Measurement.addPeerObservedFrom(builder, peerObservedFrom);
   Measurement.addMaturity(builder, maturity);
+  Measurement.addSnr(builder, snr);
+  Measurement.addSnrDefined(builder, snrDefined);
   Measurement.addMetrics(builder, metricsOffset);
   Measurement.addMetadata(builder, metadataOffset);
   return Measurement.endMeasurement(builder);
@@ -228,6 +248,8 @@ unpack(): MeasurementT {
     this.peerAt(),
     this.peerObservedFrom(),
     this.maturity(),
+    this.snr(),
+    this.snrDefined(),
     this.bb!.createObjList<Metric, MetricT>(this.metrics.bind(this), this.metricsLength()),
     this.bb!.createObjList<NamedNumber, NamedNumberT>(this.metadata.bind(this), this.metadataLength())
   );
@@ -246,6 +268,8 @@ unpackTo(_o: MeasurementT): void {
   _o.peerAt = this.peerAt();
   _o.peerObservedFrom = this.peerObservedFrom();
   _o.maturity = this.maturity();
+  _o.snr = this.snr();
+  _o.snrDefined = this.snrDefined();
   _o.metrics = this.bb!.createObjList<Metric, MetricT>(this.metrics.bind(this), this.metricsLength());
   _o.metadata = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.metadata.bind(this), this.metadataLength());
 }
@@ -264,6 +288,8 @@ constructor(
   public peerAt: bigint = BigInt('0'),
   public peerObservedFrom: bigint = BigInt('0'),
   public maturity: number = 0.0,
+  public snr: number = 0.0,
+  public snrDefined: boolean = false,
   public metrics: (MetricT)[] = [],
   public metadata: (NamedNumberT)[] = []
 ){}
@@ -289,6 +315,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.peerAt,
     this.peerObservedFrom,
     this.maturity,
+    this.snr,
+    this.snrDefined,
     metrics,
     metadata
   );

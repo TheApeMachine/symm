@@ -44,21 +44,41 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 		case data.ActionIdentify:
 			op.slots = append(op.slots, query.payload...)
 			query.Identify(len(op.slots) - 1)
-		case data.ActionRead, data.ActionWrite:
+
+			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
+				return
+			}
+		case data.ActionWrite:
 			if query.Identity() < 0 || query.Identity() >= len(op.slots) {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			if query.Action() == data.ActionWrite {
-				op.slots[query.Identity()] = query.payload[0]
+			op.slots[query.Identity()] = query.payload[0]
+
+			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
+				return
+			}
+		case data.ActionRead:
+			if query.Identity() < 0 {
+				for index := range op.slots {
+					if !yield(unsafe.Pointer(&op.slots[index])) {
+						return
+					}
+				}
+				return
+			}
+
+			if query.Identity() >= len(op.slots) {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
+				return
 			}
 		default:
 			op.Error(core.ErrShape)
-			return
-		}
-
-		if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
 			return
 		}
 	}

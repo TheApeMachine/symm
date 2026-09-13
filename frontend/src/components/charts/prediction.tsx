@@ -2,8 +2,8 @@ import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
 import { focusStore, resonanceArtifactStore } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import type { EnvelopeResonanceArtifact } from "#/providers/telemetry/telemetry/envelope-resonance-artifact";
-import { EnvelopeResonanceLayer } from "#/providers/telemetry/telemetry/envelope-resonance-layer";
+import type { Resonance } from "#/providers/telemetry/telemetry/resonance";
+import { ResonanceLayer } from "#/providers/telemetry/telemetry/resonance-layer";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
 	`translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
@@ -31,7 +31,7 @@ const dir = (value: number | undefined | null): string => {
 	return "flat";
 };
 
-const layerObj = new EnvelopeResonanceLayer();
+const layerObj = new ResonanceLayer();
 
 /*
 The resonance artifact rides every envelope (types.Envelope.Resonance), and the
@@ -39,7 +39,7 @@ artifact store is not pre-scoped to one symbol — the solver keys its coder per
 symbol across the cross-section — so the focused symbol is selected here, the
 same way the other resonance surfaces do it.
 */
-const useArtifact = (): EnvelopeResonanceArtifact | undefined => {
+const useArtifact = (): Resonance | undefined => {
 	const symbol = useSelector(focusStore, (state) => state);
 
 	const row = useSelector(resonanceArtifactStore, (state) =>
@@ -57,7 +57,7 @@ const useArtifact = (): EnvelopeResonanceArtifact | undefined => {
 	*/
 	const held = useRef<{
 		symbol: string | undefined;
-		row: EnvelopeResonanceArtifact | undefined;
+		row: Resonance | undefined;
 	}>({ symbol, row: undefined });
 
 	if (held.current.symbol !== symbol) {
@@ -77,10 +77,10 @@ They were assembled backend-side when the panel had a curated frame of its own;
 with the artifact carrying the raw quantities, the wording belongs here — it is
 presentation, and the envelope stays the numbers it measured.
 */
-const taskCalibration = (artifact: EnvelopeResonanceArtifact): string =>
+const taskCalibration = (artifact: Resonance): string =>
 	artifact.calibrated() ? "calibrated" : "calibrating";
 
-const taskSkillStatus = (artifact: EnvelopeResonanceArtifact): string => {
+const taskSkillStatus = (artifact: Resonance): string => {
 	if (!artifact.taskSkillReady()) return "calibrating";
 
 	const skill = artifact.taskSkill();
@@ -96,7 +96,7 @@ The forward curve is cumulative per horizon: element k predicts the direction of
 the move over the next k+1 ticks, so the call for the supported horizon is the
 curve's last element.
 */
-const horizonCall = (artifact: EnvelopeResonanceArtifact): number | null => {
+const horizonCall = (artifact: Resonance): number | null => {
 	const length = artifact.forwardCurveLength();
 
 	return length === 0 ? null : artifact.forwardCurve(length - 1);

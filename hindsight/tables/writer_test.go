@@ -4,15 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
-
-	"github.com/apache/iceberg-go/catalog"
-	"github.com/apache/iceberg-go/table"
-	"github.com/spf13/viper"
 	"math"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/apache/iceberg-go/catalog"
+	"github.com/apache/iceberg-go/table"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 )
@@ -25,54 +25,54 @@ func TestWriterCommit(t *testing.T) {
 	Convey("One snapshot preserves binary payloads exceeding a signed 32-bit offset in total", t, func() {
 		catalog := tablestest.New(t)
 		writer := tables.NewWriter(catalog)
-		// Repeating a one-MiB payload crosses the actual Arrow Binary boundary
-		// without retaining separate copies in the input fixture.
 		payload := bytes.Repeat([]byte("x"), 1<<20)
 		count := math.MaxInt32/len(payload) + 2
 
 		for index := range count {
-			writer.AddWitness(tables.WitnessRow{
-				Run: "large", ArtifactKind: "precursor",
-				Envelope: tables.EnvelopeRefRow{Run: "large", Sequence: int64(index + 1)},
-				Payload:  payload,
+			writer.AddMeasurement(tables.MeasurementRow{
+				Epoch:   1,
+				Tick:    int64(index + 1),
+				Source:  "large",
+				Symbol:  "BTC/USD",
+				Payload: payload,
 			})
 		}
 		So(writer.Commit(t.Context()), ShouldBeNil)
-		loaded, err := catalog.Load(t.Context(), tables.Witnesses)
+		loaded, err := catalog.Load(t.Context(), tables.Measurements)
 		So(err, ShouldBeNil)
 		So(len(loaded.Metadata().Snapshots()), ShouldEqual, 1)
-		rows, err := catalog.Witnesses(t.Context(), "large", "precursor")
+		rows, err := catalog.Measurements(t.Context(), 1, 0)
 		So(err, ShouldBeNil)
 		So(len(rows), ShouldEqual, count)
 
 		seen := make(map[int64]bool, count)
 		for _, row := range rows {
-			So(seen[row.Envelope.Sequence], ShouldBeFalse)
-			seen[row.Envelope.Sequence] = true
+			So(seen[row.Tick], ShouldBeFalse)
+			seen[row.Tick] = true
 			So(bytes.Equal(row.Payload, payload), ShouldBeTrue)
 		}
-		after, err := catalog.Load(t.Context(), tables.Witnesses)
+		after, err := catalog.Load(t.Context(), tables.Measurements)
 		So(err, ShouldBeNil)
 		So(after.MetadataLocation(), ShouldEqual, loaded.MetadataLocation())
 
 		Convey("A single unrepresentable payload fails before another snapshot is committed", func() {
-			writer.AddWitness(tables.WitnessRow{
-				Run: "large", ArtifactKind: "precursor",
+			writer.AddMeasurement(tables.MeasurementRow{
+				Epoch:   1,
+				Tick:    int64(count + 1),
+				Source:  "large",
+				Symbol:  "BTC/USD",
 				Payload: make([]byte, int64(math.MaxInt32)+1),
 			})
 			err := writer.Commit(t.Context())
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "one payload exceeds Arrow Binary")
-			after, err := catalog.Load(t.Context(), tables.Witnesses)
+			after, err := catalog.Load(t.Context(), tables.Measurements)
 			So(err, ShouldBeNil)
 			So(after.MetadataLocation(), ShouldEqual, loaded.MetadataLocation())
 		})
 	})
 }
 
-// competingCatalog keeps real files and catalog transactions, injecting the
-// REST catalog's explicit rejected-commit signal at the stale-head boundary.
-// SQLite's catalog does not classify its conflict as table.ErrCommitFailed.
 type competingCatalog struct {
 	catalog.Catalog
 	beforeCommit func(context.Context) error
@@ -142,18 +142,20 @@ func TestWriterCommitChunks(t *testing.T) {
 		payload := bytes.Repeat([]byte("w"), 2000)
 
 		for index := range 5 {
-			writer.AddWitness(tables.WitnessRow{
-				Run: "chunks", ArtifactKind: "precursor",
-				Envelope: tables.EnvelopeRefRow{Run: "chunks", Sequence: int64(index + 1)},
-				Payload:  payload,
+			writer.AddMeasurement(tables.MeasurementRow{
+				Epoch:   1,
+				Tick:    int64(index + 1),
+				Source:  "chunks",
+				Symbol:  "BTC/USD",
+				Payload: payload,
 			})
 		}
 		So(writer.Commit(t.Context()), ShouldBeNil)
 		So(writer.Pending(), ShouldEqual, 0)
-		loaded, err := catalog.Load(t.Context(), tables.Witnesses)
+		loaded, err := catalog.Load(t.Context(), tables.Measurements)
 		So(err, ShouldBeNil)
 		So(len(loaded.Metadata().Snapshots()), ShouldEqual, 3)
-		rows, err := catalog.Witnesses(t.Context(), "chunks", "precursor")
+		rows, err := catalog.Measurements(t.Context(), 1, 0)
 		So(err, ShouldBeNil)
 		So(len(rows), ShouldEqual, 5)
 	})
@@ -165,25 +167,23 @@ func TestWriterCommitRestores(t *testing.T) {
 		peer := tables.Wrap(underlying)
 		So(peer.Ensure(t.Context()), ShouldBeNil)
 		writer := tables.NewWriter(tables.Wrap(&refusingCatalog{
-			Catalog: underlying, name: tables.Witnesses,
+			Catalog: underlying, name: tables.Measurements,
 		}))
-		writer.AddCapture(tables.CaptureRow{
-			Run: "restore", Sequence: 1, Payload: []byte("capture"),
+		writer.AddSpotTrade(tables.SpotTradeRow{
+			Epoch: 1, Tick: 1, Symbol: "BTC/USD", Price: 50000, Qty: 0.1, Side: "buy",
 		})
-		writer.AddWitness(tables.WitnessRow{
-			Run: "restore", ArtifactKind: "precursor",
-			Envelope: tables.EnvelopeRefRow{Run: "restore", Sequence: 1},
-			Payload:  []byte("witness"),
+		writer.AddMeasurement(tables.MeasurementRow{
+			Epoch: 1, Tick: 1, Source: "restore", Symbol: "BTC/USD", Payload: []byte("measurement"),
 		})
 		So(writer.Commit(t.Context()), ShouldNotBeNil)
 		So(writer.Pending(), ShouldEqual, 1)
-		rows, err := peer.Captures(t.Context(), "restore", 0)
+		trades, err := peer.SpotTrade(t.Context(), 1, 0)
 		So(err, ShouldBeNil)
-		So(len(rows), ShouldEqual, 1)
-		So(string(rows[0].Payload), ShouldEqual, "capture")
-		witnesses, err := peer.Witnesses(t.Context(), "restore", "")
+		So(len(trades), ShouldEqual, 1)
+		So(trades[0].Symbol, ShouldEqual, "BTC/USD")
+		measurements, err := peer.Measurements(t.Context(), 1, 0)
 		So(err, ShouldBeNil)
-		So(len(witnesses), ShouldEqual, 0)
+		So(len(measurements), ShouldEqual, 0)
 	})
 }
 
@@ -191,24 +191,22 @@ func TestWriterAppend(t *testing.T) {
 	Convey("An append handles known conflicts without repeating a batch", t, func() {
 		previous := viper.Get("storage.iceberg.commit_retries")
 		t.Cleanup(func() { viper.Set("storage.iceberg.commit_retries", previous) })
-		// Two retries allow the fixture to distinguish success, exhaustion,
-		// and an error that must never be retried.
 		viper.Set("storage.iceberg.commit_retries", 2)
 		underlying := tablestest.Underlying(t)
 		peerCatalog := tables.Wrap(underlying)
 		So(peerCatalog.Ensure(t.Context()), ShouldBeNil)
 		competing := &competingCatalog{Catalog: underlying}
 		writer := tables.NewWriter(tables.Wrap(competing))
-		writer.AddCapture(tables.CaptureRow{
-			Run: "writer", Sequence: 1, Payload: []byte("writer payload"),
+		writer.AddSpotTrade(tables.SpotTradeRow{
+			Epoch: 1, Tick: 1, Symbol: "BTC/USD", Price: 50000, Qty: 0.1, Side: "buy",
 		})
 
 		Convey("A peer advances the branch before this writer commits", func() {
 			competing.beforeCommit = func(ctx context.Context) error {
 				competing.beforeCommit = nil
 				peer := tables.NewWriter(peerCatalog)
-				peer.AddCapture(tables.CaptureRow{
-					Run: "peer", Sequence: 1, Payload: []byte("peer payload"),
+				peer.AddSpotTrade(tables.SpotTradeRow{
+					Epoch: 1, Tick: 2, Symbol: "ETH/USD", Price: 3000, Qty: 1.0, Side: "sell",
 				})
 
 				if err := peer.Commit(ctx); err != nil {
@@ -220,12 +218,9 @@ func TestWriterAppend(t *testing.T) {
 			So(writer.Commit(t.Context()), ShouldBeNil)
 			So(competing.attempts, ShouldEqual, 2)
 
-			for _, run := range []string{"writer", "peer"} {
-				rows, err := peerCatalog.Captures(t.Context(), run, 0)
-				So(err, ShouldBeNil)
-				So(len(rows), ShouldEqual, 1)
-				So(string(rows[0].Payload), ShouldEqual, run+" payload")
-			}
+			rows, err := peerCatalog.SpotTrade(t.Context(), 1, 0)
+			So(err, ShouldBeNil)
+			So(len(rows), ShouldEqual, 2)
 		})
 
 		Convey("A non-conflict error is returned after one attempt", func() {
@@ -239,7 +234,7 @@ func TestWriterAppend(t *testing.T) {
 			competing.afterCommit = errors.New("response lost after acceptance")
 			So(writer.Commit(t.Context()), ShouldNotBeNil)
 			So(competing.attempts, ShouldEqual, 1)
-			rows, err := peerCatalog.Captures(t.Context(), "writer", 0)
+			rows, err := peerCatalog.SpotTrade(t.Context(), 1, 0)
 			So(err, ShouldBeNil)
 			So(len(rows), ShouldEqual, 1)
 		})
@@ -248,7 +243,7 @@ func TestWriterAppend(t *testing.T) {
 			competing.beforeCommit = func(context.Context) error { return table.ErrCommitFailed }
 			So(writer.Commit(t.Context()), ShouldNotBeNil)
 			So(competing.attempts, ShouldEqual, 3)
-			rows, err := peerCatalog.Captures(t.Context(), "writer", 0)
+			rows, err := peerCatalog.SpotTrade(t.Context(), 1, 0)
 			So(err, ShouldBeNil)
 			So(len(rows), ShouldEqual, 0)
 		})
@@ -258,15 +253,20 @@ func TestWriterAppend(t *testing.T) {
 func BenchmarkWriterCommit(b *testing.B) {
 	catalog := tablestest.New(b)
 	writer := tables.NewWriter(catalog)
-	// One raw book-shaped payload per append measures the actual file and
-	// metadata commit path; no catalog calls or data writes are substituted.
-	payload := bytes.Repeat([]byte("captured order book"), 4096)
+	now := time.Now()
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for index := 0; index < b.N; index++ {
-		writer.AddCapture(tables.CaptureRow{
-			Run: "benchmark", Sequence: int64(index + 1), Payload: payload,
+		writer.AddSpotTrade(tables.SpotTradeRow{
+			Epoch:      1,
+			Tick:       int64(index + 1),
+			Symbol:     "BTC/USD",
+			VenueAt:    now,
+			ReceivedAt: now,
+			Price:      50000,
+			Qty:        0.01,
+			Side:       "buy",
 		})
 
 		if err := writer.Commit(b.Context()); err != nil {

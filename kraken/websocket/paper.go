@@ -755,7 +755,7 @@ func (paper *Paper) placeOrder(
 	return model, nil
 }
 
-func (paper *Paper) publish(channel string, message any) {
+func (paper *Paper) publish(channel string, _ any) {
 	switch channel {
 	case "executions":
 		// A paper fill lands synchronously through AddOrder; its records are

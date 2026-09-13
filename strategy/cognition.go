@@ -242,7 +242,7 @@ func ringWriteSlot[T any](ring core.Primitive, slot int, value *T, child core.Pr
 ringLen reads the ring's parent length.
 */
 func ringLen[T any](ring core.Primitive) int {
-	result, err := ringCommand[T](ring, &store.RingCommand[T]{Len: true})
+	result, err := ringCommand(ring, &store.RingCommand[T]{Len: true})
 
 	if err != nil {
 		return 0
@@ -255,14 +255,14 @@ func ringLen[T any](ring core.Primitive) int {
 ringAdvance moves the ring to the next child sequence.
 */
 func ringAdvance[T any](ring core.Primitive) {
-	_, _ = ringCommand[T](ring, &store.RingCommand[T]{Advance: true})
+	_, _ = ringCommand(ring, &store.RingCommand[T]{Advance: true})
 }
 
 /*
 ringCurrent reads the parent's current element.
 */
 func ringCurrent[T any](ring core.Primitive) (T, bool) {
-	result, err := ringCommand[T](ring, &store.RingCommand[T]{Current: true})
+	result, err := ringCommand(ring, &store.RingCommand[T]{Current: true})
 
 	if err != nil {
 		var zero T
@@ -276,7 +276,7 @@ func ringCurrent[T any](ring core.Primitive) (T, bool) {
 ringChildLen reads the current child sequence's length.
 */
 func ringChildLen[T any](ring core.Primitive) int {
-	result, err := ringCommand[T](ring, &store.RingCommand[T]{ChildLen: true})
+	result, err := ringCommand(ring, &store.RingCommand[T]{ChildLen: true})
 
 	if err != nil {
 		return 0

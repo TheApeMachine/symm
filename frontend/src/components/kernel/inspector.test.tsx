@@ -2,9 +2,8 @@ import * as flatbuffers from "flatbuffers";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { terminalStore } from "#/collections/terminal";
-import { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
-import { EnvelopeMetric } from "#/providers/telemetry/telemetry/envelope-metric";
+import { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 
 /*
 The inspector calls useNavigate purely for the footer action. Stubbing it keeps
@@ -22,7 +21,7 @@ const { KernelInspector } = await import("#/components/kernel/inspector");
 const renderInspector = () => renderToStaticMarkup(<KernelInspector />);
 
 /*
-metricMeasurement builds a real EnvelopeMeasurement row naming a single metric
+metricMeasurement builds a real Measurement row naming a single metric
 with raw and normalized values, exactly as the wire serializes one, so the
 inspector's metric grid reads the same data the live dispatcher delivers.
 */
@@ -31,60 +30,57 @@ const metricMeasurement = (
 	key: string,
 	raw: number,
 	normalized: number,
-): EnvelopeMeasurement => {
+): Measurement => {
 	const builder = new flatbuffers.Builder(0);
-	const keyOffset = builder.createString(key);
-	const labelOffset = builder.createString(key);
-	// Label is the measured symbol on a Measurement, and it is what keys the
-	// per-symbol measurement ring the inspector reads.
+	const nameOffset = builder.createString(key);
 	const symbolOffset = builder.createString(DEFAULT_FOCUS_SYMBOL);
+	const sourceOffset = builder.createString("hawkes");
 
-	EnvelopeMetric.startEnvelopeMetric(builder);
-	EnvelopeMetric.addLabel(builder, labelOffset);
-	EnvelopeMetric.addRaw(builder, raw);
-	EnvelopeMetric.addNormalized(builder, normalized);
-	EnvelopeMetric.addHasNormalized(builder, true);
-	const metricValue = EnvelopeMetric.endEnvelopeMetric(builder);
+	Metric.startMetric(builder);
+	Metric.addName(builder, nameOffset);
+	Metric.addRaw(builder, raw);
+	Metric.addNormalized(builder, normalized);
+	Metric.addHasNormalized(builder, true);
+	const metric = Metric.endMetric(builder);
 
-	EnvelopeMeasurementMetric.startEnvelopeMeasurementMetric(builder);
-	EnvelopeMeasurementMetric.addKey(builder, keyOffset);
-	EnvelopeMeasurementMetric.addValue(builder, metricValue);
-	const metric =
-		EnvelopeMeasurementMetric.endEnvelopeMeasurementMetric(builder);
+	const metrics = Measurement.createMetricsVector(builder, [metric]);
 
-	const metrics = EnvelopeMeasurement.createMetricsVector(builder, [metric]);
-
-	EnvelopeMeasurement.startEnvelopeMeasurement(builder);
-	EnvelopeMeasurement.addLabel(builder, symbolOffset);
-	EnvelopeMeasurement.addSnr(builder, snr);
-	EnvelopeMeasurement.addSnrDefined(builder, true);
-	EnvelopeMeasurement.addMetrics(builder, metrics);
-	const offset = EnvelopeMeasurement.endEnvelopeMeasurement(builder);
+	Measurement.startMeasurement(builder);
+	Measurement.addSource(builder, sourceOffset);
+	Measurement.addSymbol(builder, symbolOffset);
+	Measurement.addSnr(builder, snr);
+	Measurement.addSnrDefined(builder, true);
+	Measurement.addMetrics(builder, metrics);
+	const offset = Measurement.endMeasurement(builder);
 
 	builder.finish(offset);
 
-	return EnvelopeMeasurement.getRootAsEnvelopeMeasurement(
+	return Measurement.getRootAsMeasurement(
 		new flatbuffers.ByteBuffer(builder.asUint8Array()),
 	);
 };
 
 /*
-sparseMeasurement builds a real EnvelopeMeasurement row carrying no metrics at
+sparseMeasurement builds a real Measurement row carrying no metrics at
 all — exactly a backend update that omits a measurement's vocabulary for that
 tick. It exercises the grid's hold-last-value behavior: a sparse row landing
 after a populated one must not flicker the readout back to a dash.
 */
-const sparseMeasurement = (snr: number): EnvelopeMeasurement => {
+const sparseMeasurement = (snr: number): Measurement => {
 	const builder = new flatbuffers.Builder(0);
+	const symbolOffset = builder.createString(DEFAULT_FOCUS_SYMBOL);
+	const sourceOffset = builder.createString("hawkes");
 
-	EnvelopeMeasurement.startEnvelopeMeasurement(builder);
-	EnvelopeMeasurement.addSnr(builder, snr);
-	EnvelopeMeasurement.addSnrDefined(builder, true);
-	const offset = EnvelopeMeasurement.endEnvelopeMeasurement(builder);
+	Measurement.startMeasurement(builder);
+	Measurement.addSource(builder, sourceOffset);
+	Measurement.addSymbol(builder, symbolOffset);
+	Measurement.addSnr(builder, snr);
+	Measurement.addSnrDefined(builder, true);
+	const offset = Measurement.endMeasurement(builder);
 
 	builder.finish(offset);
 
-	return EnvelopeMeasurement.getRootAsEnvelopeMeasurement(
+	return Measurement.getRootAsMeasurement(
 		new flatbuffers.ByteBuffer(builder.asUint8Array()),
 	);
 };

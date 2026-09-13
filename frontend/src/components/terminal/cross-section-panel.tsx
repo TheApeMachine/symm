@@ -3,10 +3,10 @@ import { useEffect, useRef } from "react";
 import type { FrameBuffer } from "#/collections/app";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
-import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 
-const metricObj = new EnvelopeMeasurementMetric();
+const metricObj = new Metric();
 
 const fmt = (value: unknown, digits: number): string =>
 	typeof value === "number" ? value.toFixed(digits) : "—";
@@ -31,7 +31,7 @@ export const CrossSectionPanel = () => {
 
 	useEffect(() => {
 		const store = getMeasurementStore("liquidity", focusSymbol);
-		const apply = (state: FrameBuffer<EnvelopeMeasurement>) => {
+		const apply = (state: FrameBuffer<Measurement>) => {
 			if (!root.current) return;
 			const row = state.getLast();
 
@@ -46,9 +46,9 @@ export const CrossSectionPanel = () => {
 				for (let j = 0; j < row.metricsLength(); j++) {
 					const m = row.metrics(j, metricObj);
 					if (m) {
-						metricsMap[m.key() ?? ""] = {
-							raw: m.value()?.raw() ?? 0,
-							normalized: m.value()?.normalized() ?? 0,
+						metricsMap[m.name() ?? ""] = {
+							raw: m.raw(),
+							normalized: m.normalized(),
 						};
 					}
 				}

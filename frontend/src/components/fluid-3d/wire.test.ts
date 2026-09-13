@@ -1,6 +1,6 @@
 import * as flatbuffers from "flatbuffers";
 import { describe, expect, it } from "vitest";
-import { Envelope } from "#/providers/telemetry/telemetry/envelope";
+import { Message } from "#/providers/telemetry/telemetry/message";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
 import { ManifoldFrameT } from "#/providers/telemetry/telemetry/manifold-frame";
 import { ManifoldReadingT } from "#/providers/telemetry/telemetry/manifold-reading";
@@ -10,13 +10,13 @@ import { decodeManifold } from "./wire";
 const encode = (frame: ManifoldFrameT): Uint8Array => {
 	const builder = new flatbuffers.Builder(1024);
 	const offset = frame.pack(builder);
-	const envelope = Envelope.createEnvelope(
+	const message = Message.createMessage(
 		builder,
 		BigInt(0),
 		Frame.ManifoldFrame,
 		offset,
 	);
-	Envelope.finishEnvelopeBuffer(builder, envelope);
+	Message.finishMessageBuffer(builder, message);
 	return builder.asUint8Array();
 };
 

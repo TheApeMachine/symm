@@ -5,10 +5,10 @@ import {
 	DiagnosticsGraph,
 	type DiagnosticsSelection,
 } from "#/components/dashboard/diagnostics-graph";
-import type { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
+import type { BoundaryStamp } from "#/providers/telemetry/telemetry/boundary-stamp";
 
 /*
-FakeStamp mimics only the EnvelopeBoundaryStamp accessors topologyStore.ingest
+FakeStamp mimics only the BoundaryStamp accessors topologyStore.ingest
 reads (label/atNs/seqCount/avgGapNs/lastGapNs/backlog/group/stage) — the
 generated FlatBuffers view class needs a real backing buffer to construct, so
 tests build the same shape by hand rather than encoding one.
@@ -68,9 +68,9 @@ const ingest = (trace: [string, number, number?, string?, number?][]) => {
 
 	// FakeStamp satisfies the accessor shape ingest() actually calls
 	// (label/atNs/seqCount/avgGapNs/lastGapNs/backlog) but isn't the real
-	// generated EnvelopeBoundaryStamp class, so it can only be asserted via
+	// generated BoundaryStamp class, so it can only be asserted via
 	// unknown rather than structurally matching the type.
-	topologyStore.actions.ingest(stamps as unknown as EnvelopeBoundaryStamp[]);
+	topologyStore.actions.ingest(stamps as unknown as BoundaryStamp[]);
 };
 
 const render = async (

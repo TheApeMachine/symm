@@ -3,14 +3,14 @@ import { cognitionStore } from "#/collections/app";
 import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
-import { EnvelopeCognitionPrediction } from "#/providers/telemetry/telemetry/envelope-cognition-prediction";
+import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
 
 type PredictionEntry = {
 	name: string;
 	value: number;
 };
 
-const predObj = new EnvelopeCognitionPrediction();
+const predObj = new NamedNumber();
 
 export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 	const [predictions, setPredictions] = useState<PredictionEntry[]>([]);
@@ -27,7 +27,7 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 				const prediction = targetRow.predictions(index, predObj);
 				if (!prediction) continue;
 
-				const name = prediction.key() ?? "";
+				const name = prediction.name() ?? "";
 				if (!name) continue;
 
 				currentPreds.push({ name, value: prediction.value() });

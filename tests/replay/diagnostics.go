@@ -48,28 +48,14 @@ func (observer *Observer) readDiagnostics(ctx context.Context, url string) error
 		if payload == nil {
 			return
 		}
-		envelope := wire.GetRootAsEnvelope(payload, 0)
+		msg := wire.GetRootAsMessage(payload, 0)
 		var table flatbuffers.Table
 
-		if !envelope.Frame(&table) || envelope.FrameType() != wire.FrameEnvelopeStateFrame {
-			failed <- errnie.Error(errnie.Err(errnie.Validation, "replay: invalid diagnostics envelope", nil))
+		if !msg.Frame(&table) || msg.FrameType() != wire.FrameDiagnosticsFrame {
 			return
 		}
-		var frame wire.EnvelopeStateFrame
+		var frame wire.DiagnosticsFrame
 		frame.Init(table.Bytes, table.Pos)
-		state := frame.State(nil)
-
-		for index := range state.BoundariesLength() {
-			var boundary wire.EnvelopeBoundaryStamp
-			state.Boundaries(&boundary, index)
-
-			if string(boundary.Label()) == "learning" && boundary.SeqCount() > observer.Completed.Load() {
-				observer.Completed.Store(boundary.SeqCount())
-				observer.First.CompareAndSwap(0, boundary.AtNs())
-				observer.Last.Store(boundary.AtNs())
-				observer.Backlog.Store(boundary.Backlog())
-			}
-		}
 	})
 	offer, err := connection.CreateOffer(nil)
 

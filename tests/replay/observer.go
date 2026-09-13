@@ -95,10 +95,8 @@ func (observer *Observer) readWebsocket(ctx context.Context, url string, cadence
 			}
 			return errnie.Error(err)
 		}
-		state := wire.GetRootAsEnvelopeState(payload, 0)
-
-		if reading := state.LearningBytes(); len(reading) > 0 {
-			learning := wire.GetRootAsLearningState(reading, 0)
+		learning := wire.GetRootAsLearningState(payload, 0)
+		if learning != nil {
 			observer.Steps.Store(learning.Steps())
 			observer.Decisions.Store(learning.Decisions())
 			observer.Markets.Store(int64(learning.MarketsLength()))

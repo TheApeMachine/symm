@@ -16,8 +16,8 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -50,11 +50,10 @@ type Hub struct {
 	frontend         *websocket.Conn
 	frontendMu       sync.Mutex
 	store            *tables.Catalog
-	warehouse        *workbench.Warehouse
-	tradeStore       TradeJournalSource
-	exitHandler      func(symbol string)
-	timelines        *timelineCache
-	fluid            *FluidRTC
+	warehouse   *workbench.Warehouse
+	tradeStore  TradeJournalSource
+	exitHandler func(symbol string)
+	fluid       *FluidRTC
 	learningInterval time.Duration
 	lastLearning     time.Time
 }
@@ -80,7 +79,6 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		timelines: newTimelineCache(),
 		warehouse: workbench.New(),
 		fluid:     NewFluidRTC(ctx, "hub"),
 	}
@@ -137,234 +135,198 @@ func NewHub(ctx context.Context) *Hub {
 		return c.JSON(trades)
 	})
 
-	// Hindsight inspection reads: the capture tape and its persisted
-	// historical EnvelopeStates, joined by identity for scrub-and-inspect.
-	hub.app.Get("/hindsight/runs", func(c fiber.Ctx) error {
+	// Hindsight canonical table reads
+	hub.app.Get("/hindsight/measurements", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		runs, err := hub.store.Runs(hub.ctx)
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.Measurements(hub.ctx, epoch, after)
 
 		if err != nil {
 			return err
 		}
 
-		for index := range runs {
-			events, err := hub.store.Lifecycle(hub.ctx, runs[index].ID)
-			if err != nil {
-				return err
-			}
-			positions := make(map[string]struct{})
-			for _, event := range events {
-				if event.Kind == "position_open" {
-					positions[event.DecisionID] = struct{}{}
-				}
-			}
-			runs[index].Positions = int32(len(positions))
-		}
-		return c.JSON(runs)
+		return c.JSON(rows)
 	})
 
-	hub.app.Get("/hindsight/captures", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/spot_level3", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		after := parseUintQuery(c.Query("after"))
-
-		rows, err := hub.store.Captures(hub.ctx, c.Query("run"), int64(after))
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.SpotLevel3(hub.ctx, epoch, after)
 
 		if err != nil {
 			return err
 		}
 
-		// The index never renders payloads, and they dominate the response, so
-		// they are dropped rather than serialized and discarded by the client.
-		captures := make([]hindsight.RawFrame, 0, len(rows))
-
-		for _, row := range rows {
-			frame := hindsight.FrameFromRow(row)
-			frame.Payload = nil
-			captures = append(captures, frame)
-		}
-
-		return c.JSON(captures)
+		return c.JSON(rows)
 	})
 
-	// /hindsight/states returns every persisted historical EnvelopeState of a
-	// run as the raw flatbuffer bytes, one per record, so the dashboard decodes
-	// them with the same EnvelopeState class it uses for the live stream.
-	hub.app.Get("/hindsight/states", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/spot_ticker", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		states, err := hub.store.Witnesses(hub.ctx, c.Query("run"), "state")
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.SpotTicker(hub.ctx, epoch, after)
 
 		if err != nil {
 			return err
 		}
 
-		reader := newInspection(hub.ctx, hub.store)
-		projected := make([]hindsight.ArtifactWitness, 0, len(states))
-		for _, row := range states {
-			witness, err := reader.witness(row)
-			if err != nil {
-				return err
-			}
-			projected = append(projected, witness)
-		}
-		return c.JSON(projected)
+		return c.JSON(rows)
 	})
 
-	// /hindsight/gaps returns every concrete capture/integrity defect recorded
-	// for a run, so the UI can show why a run is not COMPLETE.
-	hub.app.Get("/hindsight/gaps", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/spot_trade", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		gaps, err := hub.store.Gaps(hub.ctx, c.Query("run"))
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.SpotTrade(hub.ctx, epoch, after)
 
 		if err != nil {
 			return err
 		}
 
-		return c.JSON(gaps)
+		return c.JSON(rows)
 	})
 
-	// /hindsight/envelope returns a single EnvelopeRef's full inspection record:
-	// the exact CaptureIdentity, raw payload, its manifests, and its artifact
-	// witnesses — matched by identity within the stored batches.
-	hub.app.Get("/hindsight/envelope", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/futures_ticker", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		run := c.Query("run")
-		sequence := parseUintQuery(c.Query("seq"))
-
-		// The URL carries the run-local coordinate, which already names one
-		// external input; the frame read answers with the complete identity
-		// rather than requiring the caller to already hold the transport
-		// fields it came here to look up.
-		row, found, err := hub.store.Capture(hub.ctx, run, int64(sequence))
-		if err != nil {
-			return err
-		}
-		if !found {
-			return fiber.ErrNotFound
-		}
-		capture := hindsight.FrameFromRow(row)
-		payload := capture.Payload
-		capture.Payload = nil
-
-		manifestRows, err := hub.store.ManifestsAt(hub.ctx, run, int64(sequence))
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.FuturesTicker(hub.ctx, epoch, after)
 
 		if err != nil {
 			return err
 		}
 
-		reader := newInspection(hub.ctx, hub.store)
-		reader.captures[tables.EnvelopeRefRow{Run: run, Sequence: int64(sequence)}] = capture.Identity
-		manifests := make([]hindsight.EnvelopeManifest, 0, len(manifestRows))
-		for _, record := range manifestRows {
-			manifest, err := reader.manifest(record)
-			if err != nil {
-				return err
-			}
-			manifests = append(manifests, manifest)
-		}
-
-		// Witnesses and resident state are one table now, distinguished by
-		// artifact_kind, so a single read covers what used to be two prefixes.
-		witnessRows, err := hub.store.WitnessesAt(hub.ctx, run, "", int64(sequence), nil)
-
-		if err != nil {
-			return err
-		}
-
-		witnesses := make([]hindsight.ArtifactWitness, 0, len(witnessRows))
-		for _, record := range witnessRows {
-			record.Payload = nil
-			witness, err := reader.witness(record)
-			if err != nil {
-				return err
-			}
-			witnesses = append(witnesses, witness)
-		}
-
-		// The provenance view needs the shape of what was witnessed, not the
-		// artifacts' bytes: one observe witness alone carries a serialized
-		// EnvelopeState that has averaged megabytes on real runs. /hindsight/state
-		// serves that payload for the exact envelope a reader asked to open.
-		for index := range witnesses {
-			witnesses[index].Payload = nil
-		}
-
-		return c.JSON(struct {
-			Run       string                       `json:"run"`
-			Sequence  uint64                       `json:"sequence"`
-			Capture   hindsight.RawFrame           `json:"capture"`
-			Payload   []byte                       `json:"payload"`
-			Manifests []hindsight.EnvelopeManifest `json:"manifests"`
-			Witnesses []hindsight.ArtifactWitness  `json:"witnesses"`
-		}{
-			Run:       run,
-			Sequence:  sequence,
-			Capture:   capture,
-			Payload:   payload,
-			Manifests: manifests,
-			Witnesses: witnesses,
-		})
+		return c.JSON(rows)
 	})
 
-	// /hindsight/state returns the single EnvelopeState for one exact capture
-	// + ordinal, instead of shipping every state of the run.
-	hub.app.Get("/hindsight/state", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/futures_trade", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		run := c.Query("run")
-		sequence := parseUintQuery(c.Query("seq"))
-		ordinal := parseUintQuery(c.Query("ordinal"))
-
-		state, found, err := hub.store.StateAt(hub.ctx, run, sequence, ordinal)
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.FuturesTrade(hub.ctx, epoch, after)
 
 		if err != nil {
 			return err
 		}
 
-		if !found {
-			return fiber.ErrNotFound
-		}
-
-		projected, err := newInspection(hub.ctx, hub.store).witness(state)
-		if err != nil {
-			return err
-		}
-		return c.JSON(projected)
+		return c.JSON(rows)
 	})
 
-	// /hindsight/lifecycle returns every trading-lifecycle transition of a run,
-	// correlated by decision ID.
-	hub.app.Get("/hindsight/lifecycle", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/executions", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		events, err := hub.store.Lifecycle(hub.ctx, c.Query("run"))
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.Executions(hub.ctx, epoch, after)
 
 		if err != nil {
 			return err
 		}
 
-		return c.JSON(events)
+		return c.JSON(rows)
 	})
 
-	hub.registerTimeline()
+	hub.app.Get("/hindsight/models", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.Models(hub.ctx, epoch, after)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(rows)
+	})
+
+	hub.app.Get("/hindsight/grids", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.Grids(hub.ctx, epoch, after)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(rows)
+	})
+
+	hub.app.Get("/hindsight/positions", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.Positions(hub.ctx, epoch, after)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(rows)
+	})
+
+	hub.app.Get("/hindsight/decisions", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.Decisions(hub.ctx, epoch, after)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(rows)
+	})
+
+	hub.app.Get("/hindsight/outcomes", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("epoch"))
+		after := parseInt64Query(c.Query("after"))
+		rows, err := hub.store.Outcomes(hub.ctx, epoch, after)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(rows)
+	})
 	hub.registerWorkbench()
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
@@ -421,60 +383,69 @@ publisher mounted as a Node runs that work on the ring's own goroutine at
 ingress rate. It reads from the ring instead, on one goroutine that owns the
 frontend connection and every publication decision outright.
 */
-func (hub *Hub) Consume(envelopes <-chan *types.Envelope) {
-	go hub.publish(envelopes)
+/*
+Step satisfies nmruntime.Node[*data.Measurement[float64]].
+*/
+func (hub *Hub) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if measurement == nil {
+		return nil
+	}
+
+	hub.writeFrontend(measurement)
+	return measurement
 }
 
 /*
-publish serves the ring's envelopes: the websocket frame first, then the
-boundary trace if a viewer's diagnostics channel is ready for another one.
-
-One goroutine does both because both are the same kind of work — encoding a
-replaceable observation for whoever is watching — and serializing them here is
-what keeps either from being paid on the ring. Envelopes the sink dropped were
-dropped because this goroutine was busy, which is the correct answer for a live
-view: it shows the present, not a backlog.
+Consume attaches the hub to a runtime stream channel and starts the goroutine
+that serves it.
 */
-func (hub *Hub) publish(envelopes <-chan *types.Envelope) {
+func (hub *Hub) Consume(measurements <-chan *data.Measurement[float64]) {
+	go hub.publish(measurements)
+}
+
+/*
+publish serves the incoming stream of measurements to the frontend.
+*/
+func (hub *Hub) publish(measurements <-chan *data.Measurement[float64]) {
 	for {
-		var envelope *types.Envelope
+		var measurement *data.Measurement[float64]
 
 		select {
 		case <-hub.ctx.Done():
 			return
-		case envelope = <-envelopes:
+		case measurement = <-measurements:
 		}
 
-		if envelope == nil {
+		if measurement == nil {
 			continue
 		}
 
-		hub.writeFrontend(envelope)
-
-		if !hub.fluid.Wants(types.DiagnosticsChannel) {
-			continue
-		}
-
-		if err := hub.fluid.PublishDiagnostics(envelope); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"hub: publish diagnostics frame",
-				err,
-			))
-		}
+		hub.writeFrontend(measurement)
 	}
 }
 
 /*
-writeFrontend encodes one envelope and writes it to the dashboard socket.
-
-The connection is resolved and written under the same lock the /ws handler uses
-to install and detach clients — the one thing here that genuinely has two
-goroutines: this publisher and a connecting or vanishing browser. A failed
-write detaches and closes that client immediately; the reader handler then
-exits without clearing any replacement connection.
+PublishMeasurement writes one measurement to the dashboard socket.
 */
-func (hub *Hub) writeFrontend(envelope *types.Envelope) {
+func (hub *Hub) PublishMeasurement(measurement *data.Measurement[float64]) {
+	hub.writeFrontend(measurement)
+}
+
+/*
+PublishMeasurements writes a batch of measurements to the dashboard socket.
+*/
+func (hub *Hub) PublishMeasurements(measurements []*data.Measurement[float64]) {
+	hub.writeMeasurements(measurements)
+}
+
+/*
+writeFrontend encodes one measurement as a MeasurementsFrame and writes it to the dashboard socket.
+*/
+func (hub *Hub) writeFrontend(measurement *data.Measurement[float64]) {
+	if measurement == nil {
+		return
+	}
+
 	hub.frontendMu.Lock()
 	defer hub.frontendMu.Unlock()
 
@@ -482,12 +453,7 @@ func (hub *Hub) writeFrontend(envelope *types.Envelope) {
 		return
 	}
 
-	includeLearning := envelope.Learning != nil && time.Since(hub.lastLearning) >= hub.learningInterval
-
-	if includeLearning {
-		hub.lastLearning = time.Now()
-	}
-	payload := envelope.EncodeWebsocket(includeLearning)
+	payload := types.EncodeMeasurementsFrame([]*data.Measurement[float64]{measurement})
 
 	if len(payload) == 0 {
 		return
@@ -499,6 +465,41 @@ func (hub *Hub) writeFrontend(envelope *types.Envelope) {
 		failed := hub.frontend
 		hub.frontend = nil
 		errnie.Warn(fmt.Sprintf("hub: websocket write message failed; detaching client: %v", err))
+
+		if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
+		}
+	}
+}
+
+/*
+writeMeasurements encodes a batch of measurements as a MeasurementsFrame and writes it to the dashboard socket.
+*/
+func (hub *Hub) writeMeasurements(measurements []*data.Measurement[float64]) {
+	if len(measurements) == 0 {
+		return
+	}
+
+	hub.frontendMu.Lock()
+	defer hub.frontendMu.Unlock()
+
+	if hub.frontend == nil {
+		return
+	}
+
+	payload := types.EncodeMeasurementsFrame(measurements)
+
+	if len(payload) == 0 {
+		return
+	}
+
+	if err := hub.frontend.WriteMessage(
+		websocket.BinaryMessage, payload,
+	); err != nil {
+		failed := hub.frontend
+		hub.frontend = nil
+		errnie.Warn(fmt.Sprintf("hub: websocket write message failed; detaching client: %v", err))
+
 		if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
 		}
@@ -519,16 +520,16 @@ PublishManifold fans one advance's resident particles and fields to the manifold
 viewers. It is called from the manifold solver's own advance goroutine, never
 from the ingress path.
 */
-func (hub *Hub) PublishManifold(envelope *types.Envelope) {
-	if envelope == nil || envelope.Manifold == nil {
+func (hub *Hub) PublishManifold(state *types.ManifoldState) {
+	if state == nil {
 		return
 	}
 
 	snapshot, err := sensorium.NewPhysicsSnapshot(
-		envelope.Manifold.Version,
-		envelope.Manifold.At,
-		envelope.Manifold.State.N,
-		envelope.Manifold.Reading,
+		state.Version,
+		state.At,
+		state.State.N,
+		state.Reading,
 	)
 
 	if err == nil {
@@ -544,7 +545,7 @@ func (hub *Hub) PublishManifold(envelope *types.Envelope) {
 		return
 	}
 
-	if err := hub.fluid.Publish(envelope.Manifold); err != nil {
+	if err := hub.fluid.Publish(state); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"hub: publish manifold frame",
@@ -557,13 +558,12 @@ func (hub *Hub) PublishManifold(envelope *types.Envelope) {
 PublishResonance synchronously observes producer-owned resonance state before
 the resonance Workload advances its coder to the next ticker.
 */
-func (hub *Hub) PublishResonance(envelope *types.Envelope) {
-	if envelope == nil || envelope.Resonance == nil ||
-		!hub.fluid.Wants(types.ResonanceChannel) {
+func (hub *Hub) PublishResonance(artifact *types.ResonanceArtifact) {
+	if artifact == nil || !hub.fluid.Wants(types.ResonanceChannel) {
 		return
 	}
 
-	if err := hub.fluid.PublishResonance(envelope); err != nil {
+	if err := hub.fluid.PublishResonance(artifact); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"hub: publish resonance frame",
@@ -619,6 +619,16 @@ handler.
 */
 func parseUintQuery(raw string) uint64 {
 	value, err := strconv.ParseUint(raw, 10, 64)
+
+	if err != nil {
+		return 0
+	}
+
+	return value
+}
+
+func parseInt64Query(raw string) int64 {
+	value, err := strconv.ParseInt(raw, 10, 64)
 
 	if err != nil {
 		return 0

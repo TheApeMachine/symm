@@ -1,5 +1,5 @@
 import * as flatbuffers from "flatbuffers";
-import { Envelope } from "#/providers/telemetry/telemetry/envelope";
+import { Message } from "#/providers/telemetry/telemetry/message";
 import { ManifoldFrame } from "#/providers/telemetry/telemetry/manifold-frame";
 import { WaveMode as WaveModeTable } from "#/providers/telemetry/telemetry/wave-mode";
 
@@ -139,15 +139,15 @@ mirrored it, field for field. bytes is one complete WebRTC record payload
 export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 	const buffer = new flatbuffers.ByteBuffer(bytes);
 
-	if (!Envelope.bufferHasIdentifier(buffer)) {
-		throw new Error("manifold frame is missing its envelope identifier");
+	if (!Message.bufferHasIdentifier(buffer)) {
+		throw new Error("manifold frame is missing its message identifier");
 	}
 
-	const envelope = Envelope.getRootAsEnvelope(buffer);
-	const frame = envelope.frame(new ManifoldFrame());
+	const message = Message.getRootAsMessage(buffer);
+	const frame = message.frame(new ManifoldFrame());
 
 	if (frame === null) {
-		throw new Error("envelope does not carry a ManifoldFrame");
+		throw new Error("message does not carry a ManifoldFrame");
 	}
 
 	const sequence = frame.sequence();

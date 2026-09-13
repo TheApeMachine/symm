@@ -119,45 +119,32 @@ func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
 }
 
 /*
-PublishResonance fans one envelope's resonance artifact to every viewer owning
-the resonance channel, wrapped in a lean EnvelopeState the frontend decodes
-with the same EnvelopeState accessor it already uses for the websocket.
+PublishResonance fans one resonance artifact to every viewer owning
+the resonance channel, wrapped in a canonical ResonanceFrame.
 */
-func (fluidTransport *FluidRTC) PublishResonance(envelope *types.Envelope) error {
-	if envelope == nil || envelope.Resonance == nil {
+func (fluidTransport *FluidRTC) PublishResonance(artifact *types.ResonanceArtifact) error {
+	if artifact == nil {
 		return nil
 	}
 
-	state := &telemetry.EnvelopeStateT{
-		Resonance: envelope.EncodeResonanceArtifactWire(),
+	wireRow := artifact.EncodeWire()
+
+	if wireRow == nil {
+		return nil
 	}
-	payload := wrapStateFrame(state)
+
+	frame := &telemetry.ResonanceFrameT{
+		Rows: []*telemetry.ResonanceT{wireRow},
+	}
+	msg := &telemetry.MessageT{
+		Frame: &telemetry.FrameT{
+			Type:  telemetry.FrameResonanceFrame,
+			Value: frame,
+		},
+	}
+	payload := wrapMessage(msg)
 
 	return fluidTransport.publishBytes(types.ResonanceChannel, payload)
-}
-
-/*
-PublishDiagnostics fans one envelope's ordered boundary trace to every viewer
-owning the diagnostics channel, wrapped in a lean EnvelopeState carrying only
-the boundaries the topology page ingests.
-*/
-func (fluidTransport *FluidRTC) PublishDiagnostics(envelope *types.Envelope) error {
-	if envelope == nil {
-		return nil
-	}
-
-	boundaries := envelope.EncodeBoundariesWire()
-
-	if len(boundaries) == 0 {
-		return nil
-	}
-
-	state := &telemetry.EnvelopeStateT{
-		Boundaries: boundaries,
-	}
-	payload := wrapStateFrame(state)
-
-	return fluidTransport.publishBytes(types.DiagnosticsChannel, payload)
 }
 
 /*
@@ -189,11 +176,11 @@ var webrtcBuilders = sync.Pool{
 }
 
 /*
-wrapStateFrame wraps a lean EnvelopeState mirror in the SYMM-identified Envelope
-envelope the browser uses for every WebRTC channel, so resonance and diagnostics
-share the manifold transport's framing and identifier.
+wrapMessage wraps a message in the SYMM-identified Message buffer the browser
+uses for every WebRTC channel, so resonance and manifold share the transport's
+framing and identifier.
 */
-func wrapStateFrame(state *telemetry.EnvelopeStateT) []byte {
+func wrapMessage(msg *telemetry.MessageT) []byte {
 	builder := webrtcBuilders.Get().(*flatbuffers.Builder)
 
 	defer func() {
@@ -201,16 +188,8 @@ func wrapStateFrame(state *telemetry.EnvelopeStateT) []byte {
 		webrtcBuilders.Put(builder)
 	}()
 
-	frame := &telemetry.EnvelopeStateFrameT{State: state}
-	envelope := &telemetry.EnvelopeT{
-		Frame: &telemetry.FrameT{
-			Type:  telemetry.FrameEnvelopeStateFrame,
-			Value: frame,
-		},
-	}
-
-	offset := envelope.Pack(builder)
-	telemetry.FinishEnvelopeBuffer(builder, offset)
+	offset := msg.Pack(builder)
+	telemetry.FinishMessageBuffer(builder, offset)
 
 	encoded := builder.FinishedBytes()
 	frameBytes := make([]byte, len(encoded))
@@ -221,7 +200,7 @@ func wrapStateFrame(state *telemetry.EnvelopeStateT) []byte {
 
 /*
 encodeManifold mirrors one *types.ManifoldState into the ManifoldFrame the
-browser decodes, wrapped in the SYMM-identified Envelope the frontend's
+browser decodes, wrapped in the SYMM-identified Message the frontend's
 decodeManifold expects: the resident sensorium State and Reading, the packed
 Eulerian grid fields, and the spectral mode lattice, field for field.
 */
@@ -286,7 +265,7 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 		Modes:         modes,
 	}
 
-	envelope := &telemetry.EnvelopeT{
+	msg := &telemetry.MessageT{
 		Sequence: sequence,
 		Frame: &telemetry.FrameT{
 			Type:  telemetry.FrameManifoldFrame,
@@ -294,8 +273,8 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 		},
 	}
 
-	offset := envelope.Pack(builder)
-	telemetry.FinishEnvelopeBuffer(builder, offset)
+	offset := msg.Pack(builder)
+	telemetry.FinishMessageBuffer(builder, offset)
 
 	encoded := builder.FinishedBytes()
 	frameBytes := make([]byte, len(encoded))

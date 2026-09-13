@@ -119,13 +119,6 @@ func text(builder *array.StringBuilder, value string) {
 	builder.Append(value)
 }
 
-// envelope fills one nested envelope reference.
-func envelope(builder *array.StructBuilder, ref EnvelopeRefRow) {
-	builder.Append(true)
-	builder.FieldBuilder(0).(*array.StringBuilder).Append(ref.Run)
-	builder.FieldBuilder(1).(*array.Int64Builder).Append(ref.Sequence)
-	builder.FieldBuilder(2).(*array.Int64Builder).Append(ref.Ordinal)
-}
 
 /*
 span is the next row range whose binary payloads fit in limit bytes and inside

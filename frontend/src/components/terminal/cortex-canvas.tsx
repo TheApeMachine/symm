@@ -5,17 +5,17 @@ import {
 	drawCortexTree,
 } from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
-import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
-import { EnvelopeCognitionBeam } from "#/providers/telemetry/telemetry/envelope-cognition-beam";
-import { EnvelopeCognitionBranch } from "#/providers/telemetry/telemetry/envelope-cognition-branch";
-import { EnvelopeCognitionClass } from "#/providers/telemetry/telemetry/envelope-cognition-class";
+import type { Cognition } from "#/providers/telemetry/telemetry/cognition";
+import { CognitionBeam } from "#/providers/telemetry/telemetry/cognition-beam";
+import { CognitionBranch } from "#/providers/telemetry/telemetry/cognition-branch";
+import { CognitionClass } from "#/providers/telemetry/telemetry/cognition-class";
 
-const branchObj = new EnvelopeCognitionBranch();
-const beamObj = new EnvelopeCognitionBeam();
-const classObj = new EnvelopeCognitionClass();
+const branchObj = new CognitionBranch();
+const beamObj = new CognitionBeam();
+const classObj = new CognitionClass();
 
 const cognitionToRecord = (
-	cog: EnvelopeCognition | null,
+	cog: Cognition | null,
 ): Record<string, unknown> | null => {
 	if (!cog) return null;
 
@@ -121,7 +121,7 @@ export const CortexCanvas = ({
 		};
 
 		const apply = (state: typeof cognitionStore.state) => {
-			const targetRow: EnvelopeCognition | undefined = state.getLast(symbol);
+			const targetRow: Cognition | undefined = state.getLast(symbol);
 
 			if (!targetRow) return;
 			paint(cognitionToRecord(targetRow));

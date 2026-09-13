@@ -141,14 +141,18 @@ func (c *Catalog) Ensure(ctx context.Context) error {
 		schema       *iceberg.Schema
 		partitioning iceberg.PartitionSpec
 	}{
-		{Runs, RunsSchema(), RunsPartitioning()},
-		{Captures, CapturesSchema(), CapturesPartitioning()},
-		{Manifests, ManifestsSchema(), ManifestsPartitioning()},
-		{Witnesses, WitnessesSchema(), WitnessesPartitioning()},
-		{Lifecycle, LifecycleSchema(), LifecyclePartitioning()},
+		{SpotLevel3, SpotLevel3Schema(), SpotLevel3Partitioning()},
+		{SpotTicker, SpotTickerSchema(), SpotTickerPartitioning()},
+		{SpotTrade, SpotTradeSchema(), SpotTradePartitioning()},
+		{FuturesTicker, FuturesTickerSchema(), FuturesTickerPartitioning()},
+		{FuturesTrade, FuturesTradeSchema(), FuturesTradePartitioning()},
+		{Executions, ExecutionsSchema(), ExecutionsPartitioning()},
+		{Measurements, MeasurementsSchema(), MeasurementsPartitioning()},
+		{Models, ModelsSchema(), ModelsPartitioning()},
+		{Grids, GridsSchema(), GridsPartitioning()},
+		{Positions, PositionsSchema(), PositionsPartitioning()},
 		{Decisions, DecisionsSchema(), DecisionsPartitioning()},
 		{Outcomes, OutcomesSchema(), OutcomesPartitioning()},
-		{Gaps, GapsSchema(), GapsPartitioning()},
 	}
 
 	for _, family := range families {

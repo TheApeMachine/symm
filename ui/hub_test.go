@@ -1,17 +1,20 @@
 package ui
 
 import (
-	"encoding/base64"
 	"encoding/json"
-	fastws "github.com/fasthttp/websocket"
-	fiberws "github.com/gofiber/contrib/v3/websocket"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	fastws "github.com/fasthttp/websocket"
+	fiberws "github.com/gofiber/contrib/v3/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/hindsight/tables/tablestest"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -28,15 +31,16 @@ which the allocation count proves.
 func TestHubWriteFrontend(t *testing.T) {
 	Convey("Given a hub with no dashboard clients", t, func() {
 		hub := &Hub{}
-		envelope := &types.Envelope{Key: "TEST/USD"}
+		measurement := data.NewMeasurement[float64]("cvd", nil)
+		measurement.Label = "TEST/USD"
 
 		Convey("Writing returns without panicking", func() {
-			So(func() { hub.writeFrontend(envelope) }, ShouldNotPanic)
+			So(func() { hub.writeFrontend(measurement) }, ShouldNotPanic)
 		})
 
 		Convey("Writing does not allocate a discarded FlatBuffer snapshot", func() {
 			allocations := testing.AllocsPerRun(100, func() {
-				hub.writeFrontend(envelope)
+				hub.writeFrontend(measurement)
 			})
 
 			So(allocations, ShouldEqual, 0)
@@ -63,16 +67,58 @@ func TestHubWriteFrontend(t *testing.T) {
 		connection := <-accepted
 		So(connection.Close(), ShouldBeNil)
 		hub := &Hub{frontend: &fiberws.Conn{Conn: connection}}
-		hub.writeFrontend(&types.Envelope{Key: "TEST/USD"})
+		measurement := data.NewMeasurement[float64]("cvd", nil)
+		measurement.Label = "TEST/USD"
+		hub.writeFrontend(measurement)
 		So(hub.frontend, ShouldBeNil)
-		So(testing.AllocsPerRun(10, func() { hub.writeFrontend(&types.Envelope{Key: "TEST/USD"}) }), ShouldEqual, 0)
+		So(testing.AllocsPerRun(10, func() { hub.writeFrontend(measurement) }), ShouldEqual, 0)
 	})
-
 }
 
 func TestHubSetHindsightStore(t *testing.T) {
-	Convey("The Hindsight HTTP contract survives an Iceberg round trip", t, func() {
-		hub := inspectionArchive(t)
+	Convey("The Hindsight canonical HTTP contract survives an Iceberg round trip", t, func() {
+		catalog := tablestest.New(t)
+		writer := tables.NewWriter(catalog)
+		at := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+		price, err := decimal.NewFromString("50000.5")
+		So(err, ShouldBeNil)
+		qty, err := decimal.NewFromString("1.5")
+		So(err, ShouldBeNil)
+		fee, err := decimal.NewFromString("0.15")
+		So(err, ShouldBeNil)
+
+		writer.AddSpotTicker(tables.SpotTickerRow{
+			Epoch: 1, Tick: 10, Symbol: "BTC/USD", VenueAt: at, ReceivedAt: at,
+			Bid: 50000, Ask: 50001, Last: 50000.5,
+		})
+		writer.AddSpotTrade(tables.SpotTradeRow{
+			Epoch: 1, Tick: 11, Symbol: "BTC/USD", VenueAt: at, ReceivedAt: at,
+			Price: 50000.5, Qty: 1.5, Side: "buy", OrdType: "limit", TradeID: 12345,
+		})
+		writer.AddSpotLevel3(tables.SpotLevel3Row{
+			Epoch: 1, Tick: 12, Symbol: "BTC/USD", VenueAt: at, ReceivedAt: at,
+			Side: "buy", Event: "add", OrderID: "O1", LimitPrice: 50000, OrderQty: 2.0,
+		})
+		writer.AddExecution(tables.ExecutionRow{
+			Epoch: 1, Tick: 13, Symbol: "BTC/USD", OrderID: "ord-1", Side: "buy",
+			OrderStatus: "filled", LastPrice: price, LastQty: qty, Cost: price, FeeUsdEquiv: fee,
+		})
+		writer.AddMeasurement(tables.MeasurementRow{
+			Epoch: 1, Tick: 14, Source: "cvd", Symbol: "BTC/USD", VenueAt: at,
+			ObservedAt: at, Maturity: 1.0, SNR: 2.5, SNRDefined: true,
+			Metrics: map[string]float64{"delta": 100.0},
+		})
+
+		So(writer.Commit(t.Context()), ShouldBeNil)
+
+		hub := NewHub(t.Context())
+		hub.SetHindsightStore(catalog)
+		t.Cleanup(func() {
+			if err := hub.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+
 		read := func(path string, target any) {
 			response, err := hub.app.Test(httptest.NewRequest("GET", path, nil))
 			So(err, ShouldBeNil)
@@ -80,71 +126,45 @@ func TestHubSetHindsightStore(t *testing.T) {
 			So(json.NewDecoder(response.Body).Decode(target), ShouldBeNil)
 			So(response.Body.Close(), ShouldBeNil)
 		}
-		Convey("Run dates, identities, schema versions and position counts are readable", func() {
-			var runs []map[string]any
-			read("/hindsight/runs", &runs)
-			So(runs[0]["id"], ShouldEqual, "run")
-			So(runs[0]["startedAt"], ShouldEqual, "2026-09-09T00:00:00Z")
-			So(runs[0]["positions"], ShouldEqual, 1)
-			So(runs[0]["schemaVersions"], ShouldResemble, map[string]any{"state": "v1"})
+
+		Convey("Spot ticker records are queryable by epoch and tick", func() {
+			var tickers []tables.SpotTickerRow
+			read("/hindsight/spot_ticker?epoch=1&after=0", &tickers)
+			So(len(tickers), ShouldEqual, 1)
+			So(tickers[0].Symbol, ShouldEqual, "BTC/USD")
+			So(tickers[0].Last, ShouldEqual, 50000.5)
 		})
-		Convey("Lifecycle economics retain decimal precision and absent execution stays absent", func() {
-			var events []map[string]any
-			read("/hindsight/lifecycle?run=run", &events)
-			So(events[0], ShouldNotContainKey, "execution")
-			fill := events[1]["execution"].(map[string]any)
-			So(fill["avgPrice"], ShouldEqual, "123.456789012300000000")
-			So(fill["feeUsdEquiv"], ShouldEqual, "0.012300000000000000")
-			So(fill, ShouldNotContainKey, "cumQty")
+
+		Convey("Spot trade records are queryable by epoch and tick", func() {
+			var trades []tables.SpotTradeRow
+			read("/hindsight/spot_trade?epoch=1&after=0", &trades)
+			So(len(trades), ShouldEqual, 1)
+			So(trades[0].Symbol, ShouldEqual, "BTC/USD")
+			So(trades[0].TradeID, ShouldEqual, 12345)
 		})
-		Convey("An exact ordinal returns its own payload and complete origin", func() {
-			var state map[string]any
-			read("/hindsight/state?run=run&seq=2&ordinal=1", &state)
-			So(state["payload"], ShouldEqual, base64.StdEncoding.EncodeToString([]byte{2}))
-			envelope := state["envelope"].(map[string]any)
-			So(envelope["ordinal"], ShouldEqual, 1)
-			So(envelope["origin"].(map[string]any)["streamSequence"], ShouldEqual, 12)
+
+		Convey("Spot Level3 records are queryable by epoch and tick", func() {
+			var level3Rows []tables.SpotLevel3Row
+			read("/hindsight/spot_level3?epoch=1&after=0", &level3Rows)
+			So(len(level3Rows), ShouldEqual, 1)
+			So(level3Rows[0].OrderID, ShouldEqual, "O1")
+			So(level3Rows[0].LimitPrice, ShouldEqual, 50000)
 		})
-		Convey("Envelope inspection resolves parents and strips witness payloads", func() {
-			var result map[string]any
-			read("/hindsight/envelope?run=run&seq=2", &result)
-			So(len(result["manifests"].([]any)), ShouldEqual, 1)
-			witnesses := result["witnesses"].([]any)
-			So(len(witnesses), ShouldEqual, 2)
-			witness := witnesses[0].(map[string]any)
-			So(witness, ShouldNotContainKey, "payload")
-			So(witness["artifact"].(map[string]any)["kind"], ShouldEqual, "state")
-			parent := witness["immediateParents"].([]any)[0].(map[string]any)
-			So(parent["origin"].(map[string]any)["sequence"], ShouldEqual, 1)
+
+		Convey("Execution records are queryable by epoch and tick", func() {
+			var execs []tables.ExecutionRow
+			read("/hindsight/executions?epoch=1&after=0", &execs)
+			So(len(execs), ShouldEqual, 1)
+			So(execs[0].OrderID, ShouldEqual, "ord-1")
+			So(execs[0].Side, ShouldEqual, "buy")
 		})
-		Convey("Timeline reads actual captured market observations", func() {
-			var timeline map[string]any
-			read("/hindsight/timeline?run=run&symbol=BTC%2FUSD&symbols=1", &timeline)
-			So(timeline["totalObservations"], ShouldEqual, 3)
-			So(timeline["totalSymbols"], ShouldEqual, 1)
-		})
-		Convey("Gaps use the inspection field names", func() {
-			var gaps []map[string]any
-			read("/hindsight/gaps?run=run", &gaps)
-			So(gaps[0]["runId"], ShouldEqual, "run")
-			So(gaps[0]["sequence"], ShouldEqual, 3)
-		})
-		Convey("An absent ordinal reports not found", func() {
-			response, err := hub.app.Test(httptest.NewRequest("GET", "/hindsight/state?run=run&seq=2&ordinal=9", nil))
-			So(err, ShouldBeNil)
-			So(response.StatusCode, ShouldEqual, 404)
-			So(response.Body.Close(), ShouldBeNil)
+
+		Convey("Measurement records are queryable by epoch and tick", func() {
+			var measurements []tables.MeasurementRow
+			read("/hindsight/measurements?epoch=1&after=0", &measurements)
+			So(len(measurements), ShouldEqual, 1)
+			So(measurements[0].Source, ShouldEqual, "cvd")
+			So(measurements[0].Metrics["delta"], ShouldEqual, 100.0)
 		})
 	})
-}
-
-func BenchmarkCatalogStateAt(b *testing.B) {
-	hub := inspectionArchive(b)
-	b.ReportAllocs()
-	for b.Loop() {
-		state, found, err := hub.store.StateAt(hub.ctx, "run", 2, 1)
-		if err != nil || !found || len(state.Payload) != 1 || state.Payload[0] != 2 {
-			b.Fatal(state, found, err)
-		}
-	}
 }

@@ -5,20 +5,20 @@ import (
 	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestSpreadSquareAdd(t *testing.T) {
 	Convey("Nested Next is the pipeline: spread, square, add", t, func() {
-		add := arithmetic.NewAdd(0.0)
+		sum := statistic.NewSum()
 		slice := []float64{4, 7, 9, 8}
 		in := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&slice))
 		}
-		out := tests.CollectSeq[float64](add.Next(
+		out := tests.CollectSeq[float64](sum.Next(
 			calculus.NewSquare().Next(
 				transport.NewSpread[float64]().Next(in),
 			),

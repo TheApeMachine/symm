@@ -45,8 +45,18 @@ ready():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
+innovation():number {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+reset():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
 static startPosterior(builder:flatbuffers.Builder) {
-  builder.startObject(4);
+  builder.startObject(6);
 }
 
 static addValue(builder:flatbuffers.Builder, value:number) {
@@ -65,17 +75,27 @@ static addReady(builder:flatbuffers.Builder, ready:boolean) {
   builder.addFieldInt8(3, +ready, +false);
 }
 
+static addInnovation(builder:flatbuffers.Builder, innovation:number) {
+  builder.addFieldFloat64(4, innovation, 0.0);
+}
+
+static addReset(builder:flatbuffers.Builder, reset:boolean) {
+  builder.addFieldInt8(5, +reset, +false);
+}
+
 static endPosterior(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createPosterior(builder:flatbuffers.Builder, value:number, scale:number, degreesOfFreedom:number, ready:boolean):flatbuffers.Offset {
+static createPosterior(builder:flatbuffers.Builder, value:number, scale:number, degreesOfFreedom:number, ready:boolean, innovation:number, reset:boolean):flatbuffers.Offset {
   Posterior.startPosterior(builder);
   Posterior.addValue(builder, value);
   Posterior.addScale(builder, scale);
   Posterior.addDegreesOfFreedom(builder, degreesOfFreedom);
   Posterior.addReady(builder, ready);
+  Posterior.addInnovation(builder, innovation);
+  Posterior.addReset(builder, reset);
   return Posterior.endPosterior(builder);
 }
 
@@ -84,7 +104,9 @@ unpack(): PosteriorT {
     this.value(),
     this.scale(),
     this.degreesOfFreedom(),
-    this.ready()
+    this.ready(),
+    this.innovation(),
+    this.reset()
   );
 }
 
@@ -94,6 +116,8 @@ unpackTo(_o: PosteriorT): void {
   _o.scale = this.scale();
   _o.degreesOfFreedom = this.degreesOfFreedom();
   _o.ready = this.ready();
+  _o.innovation = this.innovation();
+  _o.reset = this.reset();
 }
 }
 
@@ -102,7 +126,9 @@ constructor(
   public value: number = 0.0,
   public scale: number = 0.0,
   public degreesOfFreedom: number = 0.0,
-  public ready: boolean = false
+  public ready: boolean = false,
+  public innovation: number = 0.0,
+  public reset: boolean = false
 ){}
 
 
@@ -111,7 +137,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.value,
     this.scale,
     this.degreesOfFreedom,
-    this.ready
+    this.ready,
+    this.innovation,
+    this.reset
   );
 }
 }

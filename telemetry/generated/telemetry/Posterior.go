@@ -11,6 +11,8 @@ type PosteriorT struct {
 	Scale float64 `json:"scale"`
 	DegreesOfFreedom float64 `json:"degreesOfFreedom"`
 	Ready bool `json:"ready"`
+	Innovation float64 `json:"innovation"`
+	Reset bool `json:"reset"`
 }
 
 func (t *PosteriorT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -22,6 +24,8 @@ func (t *PosteriorT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	PosteriorAddScale(builder, t.Scale)
 	PosteriorAddDegreesOfFreedom(builder, t.DegreesOfFreedom)
 	PosteriorAddReady(builder, t.Ready)
+	PosteriorAddInnovation(builder, t.Innovation)
+	PosteriorAddReset(builder, t.Reset)
 	return PosteriorEnd(builder)
 }
 
@@ -30,6 +34,8 @@ func (rcv *Posterior) UnPackTo(t *PosteriorT) {
 	t.Scale = rcv.Scale()
 	t.DegreesOfFreedom = rcv.DegreesOfFreedom()
 	t.Ready = rcv.Ready()
+	t.Innovation = rcv.Innovation()
+	t.Reset = rcv.Reset()
 }
 
 func (rcv *Posterior) UnPack() *PosteriorT {
@@ -124,8 +130,32 @@ func (rcv *Posterior) MutateReady(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
 
+func (rcv *Posterior) Innovation() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Posterior) MutateInnovation(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(12, n)
+}
+
+func (rcv *Posterior) Reset() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *Posterior) MutateReset(n bool) bool {
+	return rcv._tab.MutateBoolSlot(14, n)
+}
+
 func PosteriorStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+	builder.StartObject(6)
 }
 func PosteriorAddValue(builder *flatbuffers.Builder, value float64) {
 	builder.PrependFloat64Slot(0, value, 0.0)
@@ -138,6 +168,12 @@ func PosteriorAddDegreesOfFreedom(builder *flatbuffers.Builder, degreesOfFreedom
 }
 func PosteriorAddReady(builder *flatbuffers.Builder, ready bool) {
 	builder.PrependBoolSlot(3, ready, false)
+}
+func PosteriorAddInnovation(builder *flatbuffers.Builder, innovation float64) {
+	builder.PrependFloat64Slot(4, innovation, 0.0)
+}
+func PosteriorAddReset(builder *flatbuffers.Builder, reset bool) {
+	builder.PrependBoolSlot(5, reset, false)
 }
 func PosteriorEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
