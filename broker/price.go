@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -30,9 +32,9 @@ var (
 
 /* Price owns fee state and economic calculations using the SDK's decimals. */
 type Price struct {
+	*runtime.System
 	Instrument *Instrument
 	Books      BookSource
-	status     types.Status
 	api        *websocket.API
 	fees       *sync.Map
 	tickers    *sync.Map
@@ -48,31 +50,49 @@ type BookSource interface {
 // NewRecordedPrice reuses venue facts and fees while reading only the supplied
 // captured book. A replay cannot accidentally price against a live book.
 func NewRecordedPrice(authoritative *Price, books BookSource) *Price {
-	return &Price{Instrument: authoritative.Instrument, Books: books,
-		normalizer: authoritative.normalizer, fees: authoritative.fees,
-		tickers: &sync.Map{}, status: types.READY}
+	price := &Price{
+		System:     runtime.NewSystem(context.Background(), "price"),
+		Instrument: authoritative.Instrument,
+		Books:      books,
+		normalizer: authoritative.normalizer,
+		fees:       authoritative.fees,
+		tickers:    &sync.Map{},
+	}
+	price.Transition(runtime.READY)
+	return price
 }
 
-func NewPrice(api *websocket.API, instrument *Instrument) *Price {
+func NewPrice(
+	ctx context.Context,
+	api *websocket.API,
+	instrument *Instrument,
+) *Price {
 	var normalizer *spot.Normalizer
 
 	if api != nil {
 		normalizer = api.Normalizer()
 	}
 
-	if normalizer == nil {
-		normalizer = spot.NewNormalizer()
-	}
-
-	return &Price{
+	price := &Price{
+		System:     runtime.NewSystem(ctx, "price"),
 		Instrument: instrument,
 		api:        api,
 		Books:      api,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
-		status:     types.PENDING,
 	}
+
+	if err := errnie.Require(map[string]any{
+		"api":        api,
+		"instrument": instrument,
+	}); err != nil {
+		price.Error(err)
+		return price
+	}
+
+	price.Transition(runtime.WAITING)
+	return price
 }
 
 /* SetFee registers an authoritative fee for a symbol. */
@@ -88,8 +108,6 @@ func (price *Price) Normalizer() *spot.Normalizer {
 
 	return price.normalizer
 }
-
-func (price *Price) Status() types.Status { return price.status }
 
 func (price *Price) Update(ticker *kraken.TickerData) {
 	price.tickers.Store(price.normalizer.Name(ticker.Symbol), ticker)
@@ -494,21 +512,27 @@ func (price *Price) FeeIfAvailable(symbol string) *kraken.TradeVolumeFee {
 
 /* GetFees normalizes the venue's fee keys once and publishes a complete batch. */
 func (price *Price) GetFees(symbols []string) error {
+	price.Transition(runtime.BUSY)
 	result, err := price.api.TradeVolume(symbols)
 
 	if err != nil {
+		price.Error(err)
 		return errnie.Error(errnie.Err(errnie.IO, "trade volume: failed to fetch", err))
 	}
 
 	if result == nil {
-		return errnie.Error(errnie.Err(errnie.UnprocessableContent, "trade volume: response required", nil))
+		validationErr := errnie.Err(errnie.UnprocessableContent, "trade volume: response required", nil)
+		price.Error(validationErr)
+		return errnie.Error(validationErr)
 	}
 
 	fees := make(map[string]kraken.TradeVolumeFee, len(result.Fees))
 
 	for identifier, fee := range result.Fees {
 		if fee.Fee == nil || fee.Fee.Sign() < 0 || fee.Fee.Cmp(decimalHundred) >= 0 {
-			return errnie.Error(errnie.Err(errnie.Validation, "trade volume: invalid taker fee for "+identifier, nil))
+			validationErr := errnie.Err(errnie.Validation, "trade volume: invalid taker fee for "+identifier, nil)
+			price.Error(validationErr)
+			return errnie.Error(validationErr)
 		}
 
 		fees[price.normalizer.Name(identifier)] = fee
@@ -516,7 +540,9 @@ func (price *Price) GetFees(symbols []string) error {
 
 	for _, symbol := range symbols {
 		if _, found := fees[price.normalizer.Name(symbol)]; !found {
-			return errnie.Error(errnie.Err(errnie.NotFound, "trade volume: taker fee missing for "+symbol, nil))
+			notFoundErr := errnie.Err(errnie.NotFound, "trade volume: taker fee missing for "+symbol, nil)
+			price.Error(notFoundErr)
+			return errnie.Error(notFoundErr)
 		}
 	}
 
@@ -524,7 +550,7 @@ func (price *Price) GetFees(symbols []string) error {
 		price.fees.Store(symbol, fee)
 	}
 
-	price.status = types.READY
+	price.Transition(runtime.READY)
 	return nil
 }
 

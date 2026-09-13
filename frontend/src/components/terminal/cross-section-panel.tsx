@@ -60,8 +60,8 @@ export const CrossSectionPanel = () => {
 			set(
 				"at",
 				(() => {
-					if (row?.atNs() === undefined) return "—";
-					const parsed = new Date(Number(row.atNs() / 1000000n));
+					if (row?.at() === undefined || row.at() === 0n) return "—";
+					const parsed = new Date(Number(row.at() / 1000000n));
 					return Number.isNaN(parsed.getTime())
 						? "—"
 						: parsed.toISOString().slice(11, 19);

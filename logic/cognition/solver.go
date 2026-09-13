@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -36,9 +37,7 @@ Solver uses dmt.Tree to learn, score, and forecast market category transition se
 classify macro regimes via attractor basins, and predict future category paths using beam search.
 */
 type Solver struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
+	*runtime.System
 	treeMu         sync.RWMutex
 	tree           *dmt.Tree
 	states         sync.Map // string (symbol) -> *symbolCognitionState
@@ -102,13 +101,10 @@ NewSolver returns a new cognition solver bound to a radix tree.
 func NewSolver(
 	ctx context.Context,
 ) *Solver {
-	ctx, cancel := context.WithCancel(ctx)
-
 	tree, _ := dmt.NewTree("")
 
 	solver := &Solver{
-		ctx:            ctx,
-		cancel:         cancel,
+		System:         runtime.NewSystem(ctx, "cognition"),
 		tree:           tree,
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break
@@ -118,21 +114,20 @@ func NewSolver(
 		branchDepth:    5,
 		maxBranchNodes: 192,
 	}
+	solver.Transition(runtime.READY)
 
 	return solver
 }
-
-func (solver *Solver) Name() string {
-	return "cognition"
-}
-
-func (solver *Solver) Error() error { return solver.err }
 
 /*
 Step folds the category observations in Peers into the symbol's cognition
 state machine and writes the freshest reading back onto the measurement.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if solver.Status() != runtime.READY || solver.Error() != nil {
+		return measurement
+	}
+
 	if measurement == nil {
 		return nil
 	}
@@ -206,11 +201,12 @@ func (solver *Solver) StepCategories(categories []types.Category) *types.Cogniti
 	switchThreshold, err := system.Cfg.CognitionSwitchConfidence()
 
 	if err != nil {
-		solver.err = errnie.Error(errnie.Err(
+		solver.Error(errnie.Err(
 			errnie.Validation,
 			"cognition: switch confidence unavailable",
 			err,
 		))
+
 		return nil
 	}
 
@@ -222,7 +218,7 @@ func (solver *Solver) StepCategories(categories []types.Category) *types.Cogniti
 		switchThreshold,
 		rows,
 	); err != nil {
-		solver.err = errnie.Error(err)
+		solver.Error(err)
 		return nil
 	}
 
@@ -1075,13 +1071,6 @@ func (solver *Solver) Reset() {
 	})
 }
 
-/*
-Close cleans up the solver.
-*/
-func (solver *Solver) Close() error {
-	solver.cancel()
-	return nil
-}
 
 /*
 Reading returns the freshest cognition reading for a symbol in a thread-safe manner.

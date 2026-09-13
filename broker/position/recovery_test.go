@@ -22,7 +22,6 @@ type recoveryConn struct {
 	*venue.Conn
 }
 
-func (conn *recoveryConn) MarkReady() {}
 
 func (conn *recoveryConn) SubInstrument(callback chan any) {
 	callback <- &kraken.Instrument{Data: kraken.InstrumentData{

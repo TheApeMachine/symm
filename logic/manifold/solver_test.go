@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -9,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -60,17 +60,15 @@ func TestDatasetAndSolverAdvance(t *testing.T) {
 
 		Convey("And a solver stepping this state", func() {
 			physics := sensorium.NewManifold(8, 8, 8)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
 			solver := &Solver{
-				ctx:     ctx,
-				cancel:  cancel,
+				System:  runtime.NewSystem(t.Context(), "manifold"),
 				physics: physics,
 				dataset: ds,
 				loaded:  make(map[int64]struct{}),
 				dirty:   make(map[string]struct{}),
 				wake:    make(chan struct{}, 1),
 			}
+			solver.Transition(runtime.READY)
 			defer solver.Close()
 
 			viewer := &testViewer{wants: true}

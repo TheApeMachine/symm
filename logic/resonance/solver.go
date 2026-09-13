@@ -20,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
@@ -68,9 +69,7 @@ by adaptive.Window). Starting with span 1 on observation #1, each channel normal
 empirical z-scores without static windows, hardcoded sigmas, or arbitrary magic constants.
 */
 type Solver struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
+	*runtime.System
 	detectors     *sync.Map
 	standardizers *sync.Map
 	references    *sync.Map
@@ -120,11 +119,8 @@ func NewSolver(
 	ctx context.Context,
 	pace float64,
 ) *Solver {
-	ctx, cancel := context.WithCancel(ctx)
-
-	return &Solver{
-		ctx:           ctx,
-		cancel:        cancel,
+	solver := &Solver{
+		System:        runtime.NewSystem(ctx, "resonance"),
 		detectors:     &sync.Map{},
 		standardizers: &sync.Map{},
 		references:    &sync.Map{},
@@ -132,16 +128,9 @@ func NewSolver(
 		steps:         &sync.Map{},
 		pace:          pace,
 	}
-}
+	solver.Transition(runtime.READY)
 
-func (solver *Solver) Name() string {
-	return "resonance"
-}
-
-func (solver *Solver) Error() error { return solver.err }
-
-func (solver *Solver) Status() types.Status {
-	return types.READY
+	return solver
 }
 
 /*
@@ -150,6 +139,10 @@ sensory features carried in Peers and writes the resulting resonance metrics
 onto the measurement.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if solver.Status() != runtime.READY || solver.Error() != nil {
+		return measurement
+	}
+
 	if measurement == nil {
 		return nil
 	}
@@ -189,6 +182,16 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	for _, peer := range measurement.Peers {
 		if peer != nil && peer.Metrics != nil {
 			if metric, found := peer.Metrics["midpoint"]; found && metric.Raw > 0 {
+				midpoint = metric.Raw
+				break
+			}
+
+			if metric, found := peer.Metrics["last_price"]; found && metric.Raw > 0 {
+				midpoint = metric.Raw
+				break
+			}
+
+			if metric, found := peer.Metrics["price"]; found && metric.Raw > 0 {
 				midpoint = metric.Raw
 				break
 			}
@@ -319,7 +322,7 @@ func (solver *Solver) Update(
 		return nil
 	}
 
-	hasReference := priorMidpoint > 0
+	hasReference := priorMidpoint > 0 && midpoint > 0
 	loadedStep, _ := solver.steps.LoadOrStore(symbolName, &atomic.Int64{})
 	step := loadedStep.(*atomic.Int64).Add(1)
 
@@ -700,13 +703,3 @@ func (solver *Solver) publishReturns(
 	return &artifact
 }
 
-/*
-Close stops the solver context.
-*/
-func (solver *Solver) Close() error {
-	if solver.cancel != nil {
-		solver.cancel()
-	}
-
-	return nil
-}

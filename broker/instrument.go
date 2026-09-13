@@ -121,6 +121,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 
 	if err := instrument.loadFuturesProducts(); err != nil {
 		instrument.Error(err)
+		instrument.Transition(runtime.ERROR)
 
 		return instrument
 	}
@@ -327,11 +328,11 @@ func (instrument *Instrument) futuresLegs(
 
 	for _, feed := range feeds {
 		if err := feed(products); err != nil {
-			return errnie.Err(
+			return instrument.Error(errnie.Err(
 				errnie.IO,
 				fmt.Sprintf("instrument: failed to %s futures feed", action),
 				err,
-			)
+			))
 		}
 	}
 
@@ -345,8 +346,8 @@ no credentials, and it is read once here alongside the spot instrument snapshot
 so one construction settles the whole universe.
 */
 func (instrument *Instrument) loadFuturesProducts() error {
-	// No derivative feed consumes this mapping when Futures is absent.
-	if instrument.api.Futures() == nil {
+	// No derivative feed consumes this mapping when Futures is absent or unconfigured.
+	if instrument.api.Futures() == nil || instrument.api.Futures().Client() == nil {
 		return nil
 	}
 	response, err := derivatives.NewREST().Instruments()

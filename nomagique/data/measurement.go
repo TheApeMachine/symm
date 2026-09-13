@@ -62,6 +62,58 @@ func (measurement *Measurement[T]) Identify() int {
 }
 
 /*
+Clone returns an independent deep copy of the measurement and its mappings.
+*/
+func (measurement *Measurement[T]) Clone() *Measurement[T] {
+	if measurement == nil {
+		return nil
+	}
+
+	metrics := make(map[string]Metric[T], len(measurement.Metrics))
+
+	for key, val := range measurement.Metrics {
+		metrics[key] = val
+	}
+
+	var metadata map[string]float64
+
+	if measurement.Metadata != nil {
+		metadata = make(map[string]float64, len(measurement.Metadata))
+
+		for key, val := range measurement.Metadata {
+			metadata[key] = val
+		}
+	}
+
+	var provenance map[string]string
+
+	if measurement.Provenance != nil {
+		provenance = make(map[string]string, len(measurement.Provenance))
+
+		for key, val := range measurement.Provenance {
+			provenance[key] = val
+		}
+	}
+
+	return &Measurement[T]{
+		ID:         measurement.ID,
+		Label:      measurement.Label,
+		Source:     measurement.Source,
+		SeqIdx:     measurement.SeqIdx,
+		At:         measurement.At,
+		From:       measurement.From,
+		Maturity:   measurement.Maturity,
+		SNR:        measurement.SNR,
+		SNRDefined: measurement.SNRDefined,
+		Estimated:  measurement.Estimated,
+		Err:        measurement.Err,
+		Metrics:    metrics,
+		Metadata:   metadata,
+		Provenance: provenance,
+	}
+}
+
+/*
 Standardize walks the measurement's metrics as pointers, so a standardization
 stage can fill each metric's normalized and standardized forms in place.
 */

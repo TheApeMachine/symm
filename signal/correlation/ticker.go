@@ -26,7 +26,7 @@ type Ticker struct {
 }
 
 func NewTicker(ctx context.Context) *Ticker {
-	return &Ticker{
+	ticker := &Ticker{
 		System: runtime.NewSystem(ctx, "correlation:ticker"),
 		pipeline: nomagique.NewNumber(
 			nmcorrelation.NewGate(),
@@ -39,6 +39,9 @@ func NewTicker(ctx context.Context) *Ticker {
 			data.NewFinalizer[float64](),
 		),
 	}
+
+	ticker.Transition(runtime.READY)
+	return ticker
 }
 
 /*
@@ -46,6 +49,10 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if ticker.Status() != runtime.READY {
+		return measurement
+	}
+
 	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
 		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))

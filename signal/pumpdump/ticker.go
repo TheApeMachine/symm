@@ -103,10 +103,13 @@ type Ticker struct {
 }
 
 func NewTicker(ctx context.Context) *Ticker {
-	return &Ticker{
+	ticker := &Ticker{
 		System:   runtime.NewSystem(ctx, "pumpdump:ticker"),
 		pipeline: nomagique.NewNumber(newTickerPipeline()),
 	}
+
+	ticker.Transition(runtime.READY)
+	return ticker
 }
 
 /*
@@ -114,6 +117,10 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	if ticker.Status() != runtime.READY {
+		return m
+	}
+
 	if m == nil {
 		return nil
 	}

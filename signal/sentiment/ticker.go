@@ -30,7 +30,7 @@ func NewTicker(ctx context.Context) *Ticker {
 	prices := store.NewLatest[string, float64]()
 	changes := store.NewLatest[string, data.CrossMember]()
 
-	return &Ticker{
+	ticker := &Ticker{
 		System: runtime.NewSystem(ctx, "sentiment:ticker"),
 		pipeline: nomagique.NewNumber(
 			data.NewMetricGate("last"),
@@ -42,14 +42,21 @@ func NewTicker(ctx context.Context) *Ticker {
 			data.NewFinalizer[float64](),
 		),
 	}
+
+	ticker.Transition(runtime.READY)
+	return ticker
 }
 
 /*
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&m)).Next(nil)))
+func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if ticker.Status() != runtime.READY {
+		return measurement
+	}
+
+	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
 }
 
 /*

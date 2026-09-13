@@ -3,22 +3,22 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
-
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/derivatives"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/utils"
 	"golang.design/x/lockfree/lf"
 )
@@ -72,31 +72,6 @@ type FuturesLive struct {
 	// stage downstream keys on the spot symbol, so the frame is attributed
 	// here. The instrument registry owns the mapping and installs it.
 	resolve atomic.Pointer[func(string) (string, bool)]
-}
-
-func (futures *FuturesLive) fail(err error) {
-	if futures == nil || err == nil {
-		return
-	}
-
-	futures.Fail(err)
-}
-
-func (futures *FuturesLive) operationalError() error {
-	if err := futures.Error(); err != nil {
-		return err
-	}
-
-	select {
-	case <-futures.Context().Done():
-		if err := futures.Error(); err != nil {
-			return err
-		}
-
-		return futures.Context().Err()
-	default:
-		return nil
-	}
 }
 
 /*
@@ -206,7 +181,6 @@ func NewFuturesWithClient(
 	client.OnDisconnected.Reset()
 
 	futures := &FuturesLive{
-		System:        runtime.NewSystem(ctx, "websocket:futures"),
 		callbacks:     &sync.Map{},
 		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
@@ -230,6 +204,14 @@ func NewFuturesWithClient(
 		return err
 	})
 
+	futures.System = runtime.NewSystem(
+		ctx,
+		"websocket:futures",
+		futures.pinger,
+		runtime.Closer(client.Disconnect),
+	)
+
+
 	futures.pinger.OnFailed(func(err error) {
 		go futures.reconnect(errnie.Err(
 			errnie.IO,
@@ -238,122 +220,10 @@ func NewFuturesWithClient(
 		))
 	})
 
-	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		if futures.operationalError() != nil {
-			return
-		}
-
-		raw := event.Data.Bytes()
-
-		// Lifecycle acknowledgements carry both event and feed. Event owns the
-		// frame identity when present; otherwise a ticker subscription ack would
-		// be parsed and attributed as a ticker observation with no product_id.
-		feed := futuresFrameIdentity(raw)
-
-		if feed == "" {
-			futures.fail(errnie.Err(
-				errnie.Validation,
-				"futures: frame has no feed or event identity",
-				nil,
-			))
-
-			return
-		}
-
-
-
-		// An unsubscribe acknowledgement answers a teardown; nothing to dispatch.
-		if feed == "unsubscribed" || feed == "unsubscribe" {
-			return
-		}
-
-		handler, ok := futuresMap[feed]
-
-		if !ok {
-			futures.fail(errnie.Err(
-				errnie.NotFound,
-				"futures: unhandled feed "+feed,
-				nil,
-			))
-			return
-		}
-
-		out := handler(raw)
-
-		if feed == "subscribed" || feed == "error" || feed == "alert" {
-			errMessage := utils.GetString(raw, "message")
-
-			if errMessage != "" {
-				futures.fail(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("futures: subscription rejected: %s", errMessage),
-					nil,
-				))
-
-				return
-			}
-		}
-
-		// Dispatch one-shot callbacks.
-		if cb, ok := futures.callbacks.LoadAndDelete(feed); ok {
-			if msgChan, ok := cb.(chan any); ok {
-				msgChan <- out
-			}
-		}
-
-		switch feed {
-		case "ticker", "ticker_lite", "trade", "trade_snapshot":
-			// Connected sessions capture but do not feed the pipeline until the
-			// complete consumer graph has crossed its READY boundary.
-			if futures.Status() != runtime.READY {
-				return
-			}
-
-			// Futures frames identify themselves by product_id, where every
-			// stage downstream keys on the spot symbol, so the frame is
-			// attributed before it becomes envelopes.
-			if err := futures.attribute(out); err != nil {
-				futures.fail(err)
-				return
-			}
-
-			// One queue row per venue record; conversion to measurements
-			// happens in Step, exactly like the spot transport.
-			frame, err := event.Data.Map()
-
-			if err != nil {
-				futures.fail(errnie.Err(
-					errnie.Validation,
-					"futures: failed to map "+feed+" frame",
-					err,
-				))
-
-				return
-			}
-
-			rows, rowsOk := frame["data"].([]any)
-
-			if !rowsOk {
-				return
-			}
-
-			channel := "futures." + futuresKey(feed)
-
-			for _, entry := range rows {
-				row, rowOk := entry.(map[string]any)
-
-				if !rowOk {
-					continue
-				}
-
-				row["channel"] = channel
-				futures.queue.Enqueue(row)
-			}
-		}
-	})
+	client.OnReceived.Recurring(futures.onReceived)
 
 	client.OnConnected.Recurring(func(event *callback.Event[any]) {
-		if futures.operationalError() != nil {
+		if futures.Error() != nil {
 			return
 		}
 
@@ -372,7 +242,7 @@ func NewFuturesWithClient(
 		// heartbeat is an explicitly subscribable feed, so a quiet session that
 		// wants to hear from the venue must ask for it.
 		if err := futures.Write(kraken.NewFuturesSubscription("heartbeat", nil)); err != nil {
-			futures.fail(errnie.Err(
+			futures.Error(errnie.Err(
 				errnie.IO,
 				"futures: failed to subscribe to heartbeat",
 				err,
@@ -383,7 +253,7 @@ func NewFuturesWithClient(
 
 		if futures.Status() == runtime.READY {
 			if err := futures.restoreSubscriptions(); err != nil {
-				futures.fail(err)
+				futures.Error(err)
 			}
 		}
 	})
@@ -396,7 +266,7 @@ func NewFuturesWithClient(
 	futures.Transition(runtime.WAITING)
 
 	if err := client.Connect(); err != nil {
-		futures.fail(errnie.Err(
+		futures.Error(errnie.Err(
 			errnie.IO,
 			"futures: failed to connect",
 			err,
@@ -540,43 +410,267 @@ func (futures *FuturesLive) Client() *derivatives.WebSocket {
 	return futures.client.Load()
 }
 
-func (futures *FuturesLive) MarkReady() {
-	if futures == nil || futures.operationalError() != nil {
+func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+	if futures.Error() != nil {
 		return
 	}
 
-	futures.Transition(runtime.READY)
+	raw := event.Data.Bytes()
 
-	if err := futures.restoreSubscriptions(); err != nil {
-		futures.fail(err)
+	// Lifecycle acknowledgements carry both event and feed. Event owns the
+	// frame identity when present; otherwise a ticker subscription ack would
+	// be parsed and attributed as a ticker observation with no product_id.
+	feed := futuresFrameIdentity(raw)
+
+	if feed == "" {
+		futures.Error(errnie.Err(
+			errnie.Validation,
+			"futures: frame has no feed or event identity",
+			nil,
+		))
+
+		return
+	}
+
+	// An unsubscribe acknowledgement answers a teardown; nothing to dispatch.
+	if feed == "unsubscribed" || feed == "unsubscribe" {
+		return
+	}
+
+	handler, ok := futuresMap[feed]
+
+	if !ok {
+		futures.Error(errnie.Err(
+			errnie.NotFound,
+			"futures: unhandled feed "+feed,
+			nil,
+		))
+		return
+	}
+
+	out := handler(raw)
+
+	if feed == "error" {
+		errMessage := utils.GetString(raw, "message")
+
+		futures.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("futures: subscription rejected: %s", errMessage),
+			nil,
+		))
+
+		return
+	}
+
+	if feed == "alert" {
+		errMessage := utils.GetString(raw, "message")
+
+		errnie.Info(fmt.Sprintf("futures: alert: %s", errMessage))
+		return
+	}
+
+	// Dispatch one-shot callbacks.
+	if cb, ok := futures.callbacks.LoadAndDelete(feed); ok {
+		if msgChan, ok := cb.(chan any); ok {
+			msgChan <- out
+		}
+	}
+
+	switch feed {
+	case "ticker", "ticker_lite":
+		// Connected sessions capture but do not feed the pipeline until the
+		// complete consumer graph has crossed its READY boundary.
+		if futures.Status() != runtime.READY {
+			return
+		}
+
+		if err := futures.attribute(out); err != nil {
+			futures.Error(err)
+			return
+		}
+
+		ticker, ok := out.(*kraken.FuturesTicker)
+
+		if !ok || ticker == nil {
+			return
+		}
+
+		row := map[string]any{
+			"channel":             "futures." + futuresKey(feed),
+			"symbol":              ticker.Data.Symbol,
+			"product_id":          ticker.Data.ProductID,
+			"open_interest":       ticker.Data.OpenInterest,
+			"volume":              ticker.Data.Volume,
+			"timestamp":           ticker.Data.Timestamp,
+			"synthetic_timestamp": ticker.Data.SyntheticTimestamp,
+		}
+
+		if ticker.Data.Last != nil {
+			row["last"] = ticker.Data.Last
+			row["last_price"] = ticker.Data.Last
+		}
+
+		if ticker.Data.IndexPrice != nil {
+			row["index_price"] = ticker.Data.IndexPrice
+		}
+
+		if ticker.Data.MarkPrice != nil {
+			row["mark_price"] = ticker.Data.MarkPrice
+		}
+
+		if ticker.Data.Bid != nil {
+			row["bid"] = ticker.Data.Bid
+		}
+
+		if ticker.Data.Ask != nil {
+			row["ask"] = ticker.Data.Ask
+		}
+
+		futures.queue.Enqueue(row)
+
+	case "trade", "trade_snapshot":
+		if futures.Status() != runtime.READY {
+			return
+		}
+
+		if err := futures.attribute(out); err != nil {
+			futures.Error(err)
+			return
+		}
+
+		trades, ok := out.(*kraken.FuturesTrade)
+
+		if !ok || trades == nil {
+			return
+		}
+
+		for _, item := range trades.Data {
+			row := map[string]any{
+				"channel":             "futures." + futuresKey(feed),
+				"symbol":              item.Symbol,
+				"product_id":          item.ProductID,
+				"price":               item.Price,
+				"qty":                 item.Qty,
+				"side":                item.Side,
+				"type":                item.Type,
+				"uid":                 item.UID,
+				"timestamp":           item.Timestamp,
+				"synthetic_timestamp": item.SyntheticTimestamp,
+			}
+
+			futures.queue.Enqueue(row)
+		}
 	}
 }
 
+/*
+Step implements the runtime.Node interface: one dequeued futures record becomes
+one measurement.
+*/
+func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if futures.Status() != runtime.READY {
+		return measurement
+	}
+
+	row, ok := futures.queue.Dequeue()
+
+	if !ok {
+		return measurement
+	}
+
+	if symbol, ok := row["symbol"].(string); ok {
+		measurement.Label = symbol
+	}
+
+	if measurement.Provenance == nil {
+		measurement.Provenance = make(map[string]string)
+	}
+
+	if side, ok := row["side"].(string); ok {
+		measurement.Provenance["side"] = side
+	}
+
+	if tradeType, ok := row["type"].(string); ok {
+		measurement.Provenance["type"] = tradeType
+	}
+
+	if synthetic, ok := row["synthetic_timestamp"].(bool); ok && synthetic {
+		measurement.Provenance["synthetic_timestamp"] = "true"
+	}
+
+	if at, ok := row["timestamp"].(time.Time); ok {
+		measurement.At = at
+	}
+
+	for key, value := range row {
+		switch val := value.(type) {
+		case *decimal.Decimal:
+			if val != nil {
+				metric := measurement.Metrics[key]
+				metric.Label = key
+				metric.Raw = val.Float64()
+				metric.Exact = val
+				measurement.Metrics[key] = metric
+			}
+
+		case decimal.Decimal:
+			dec := val
+			metric := measurement.Metrics[key]
+			metric.Label = key
+			metric.Raw = dec.Float64()
+			metric.Exact = &dec
+			measurement.Metrics[key] = metric
+
+		case float64:
+			metric := measurement.Metrics[key]
+			metric.Label = key
+			metric.Raw = val
+			metric.Exact = decimal.NewFromFloat64(val)
+			measurement.Metrics[key] = metric
+		}
+	}
+
+	return measurement
+}
+
+/*
+Register implements the runtime.Node interface: it declares every numeric field
+the venue's futures rows can produce, none valued.
+*/
+func (futures *FuturesLive) Register() *data.Measurement[float64] {
+	return data.NewMeasurement("futures", map[string]data.Metric[float64]{})
+}
+
+/*
+Pending reports the count of unprocessed rows waiting in the inbound queue.
+*/
+func (futures *FuturesLive) Pending() uint64 {
+	if futures == nil || futures.queue == nil {
+		return 0
+	}
+
+	return futures.queue.Length()
+}
+
 func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
-	if err := futures.operationalError(); err != nil {
+	if err := futures.Error(); err != nil {
 		return err
 	}
 
 	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
-		err := errnie.Err(
+		return futures.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"futures: ticker subscription requires a connected session",
 			nil,
-		)
-		futures.fail(err)
-
-		return err
+		))
 	}
 
 	if err := futures.Client().SubTicker(productIDs...); err != nil {
-		err = errnie.Err(
+		return futures.Error(errnie.Err(
 			errnie.IO,
 			"futures: failed to subscribe to ticker",
 			err,
-		)
-		futures.fail(err)
-
-		return err
+		))
 	}
 
 	futures.subscriptionMu.Lock()
@@ -587,30 +681,24 @@ func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
 }
 
 func (futures *FuturesLive) SubFuturesTrades(productIDs []string) error {
-	if err := futures.operationalError(); err != nil {
+	if err := futures.Error(); err != nil {
 		return err
 	}
 
 	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
-		err := errnie.Err(
+		return futures.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"futures: trade subscription requires a connected session",
 			nil,
-		)
-		futures.fail(err)
-
-		return err
+		))
 	}
 
 	if err := futures.Client().SubTrade(productIDs...); err != nil {
-		err = errnie.Err(
+		return futures.Error(errnie.Err(
 			errnie.IO,
 			"futures: failed to subscribe to trades",
 			err,
-		)
-		futures.fail(err)
-
-		return err
+		))
 	}
 
 	futures.subscriptionMu.Lock()
@@ -621,30 +709,24 @@ func (futures *FuturesLive) SubFuturesTrades(productIDs []string) error {
 }
 
 func (futures *FuturesLive) SubFuturesBook(productIDs []string) error {
-	if err := futures.operationalError(); err != nil {
+	if err := futures.Error(); err != nil {
 		return err
 	}
 
 	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
-		err := errnie.Err(
+		return futures.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"futures: book subscription requires a connected session",
 			nil,
-		)
-		futures.fail(err)
-
-		return err
+		))
 	}
 
 	if err := futures.Client().SubBook(productIDs...); err != nil {
-		err = errnie.Err(
+		return futures.Error(errnie.Err(
 			errnie.IO,
 			"futures: failed to subscribe to book",
 			err,
-		)
-		futures.fail(err)
-
-		return err
+		))
 	}
 
 	futures.subscriptionMu.Lock()
@@ -709,7 +791,7 @@ func (futures *FuturesLive) unsubscribe(feed string, productIDs []string) error 
 }
 
 func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[any]) error {
-	if err := futures.operationalError(); err != nil {
+	if err := futures.Error(); err != nil {
 		return err
 	}
 
@@ -720,14 +802,11 @@ func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[a
 	raw, err := params.MarshalJSON()
 
 	if err != nil {
-		err = errnie.Err(
+		return futures.Error(errnie.Err(
 			errnie.Validation,
 			"futures: write marshal failed",
 			err,
-		)
-		futures.fail(err)
-
-		return err
+		))
 	}
 
 	started := time.Now()
@@ -741,44 +820,12 @@ func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[a
 	}
 
 	if err != nil {
-		err = errnie.Err(
+		futures.Error(errnie.Err(
 			errnie.IO,
 			"futures: write failed",
 			err,
-		)
-		futures.fail(err)
+		))
 	}
 
-	return err
-}
-
-func (futures *FuturesLive) Close() error {
-	if futures == nil {
-		return nil
-	}
-
-	if futures.Status() == runtime.DONE {
-		return nil
-	}
-
-	futures.Transition(runtime.DONE)
-
-	if futures.pinger != nil {
-		futures.pinger.Stop()
-	}
-
-	var closeErr error
-
-	if client := futures.Client(); client != nil {
-		if err := client.Disconnect(); err != nil {
-			closeErr = errnie.Err(
-				errnie.IO,
-				"futures: failed to disconnect",
-				err,
-			)
-			futures.fail(closeErr)
-		}
-	}
-
-	return errors.Join(closeErr, futures.System.Close())
+	return nil
 }

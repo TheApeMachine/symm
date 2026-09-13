@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func (source *testBookSource) SetTouch(symbol string, bidPrice, bidQty, askPrice
 
 func testPrice() *broker.Price {
 	instrument := broker.NewInstrumentWithQuote("USD")
-	price := broker.NewPrice(nil, instrument)
+	price := broker.NewPrice(context.Background(), nil, instrument)
 	feeRate := decimal.NewFromFloat64(0.26)
 	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: feeRate})
 	price.SetFee("ETH/USD", kraken.TradeVolumeFee{Fee: feeRate})
@@ -54,7 +55,7 @@ func testPrice() *broker.Price {
 
 func testExecutablePrice() (*broker.Price, *testBookSource) {
 	instrument := broker.NewInstrumentWithQuote("USD")
-	price := broker.NewPrice(nil, instrument)
+	price := broker.NewPrice(context.Background(), nil, instrument)
 	feeRate := decimal.NewFromFloat64(0.26)
 	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: feeRate})
 	price.SetFee("ETH/USD", kraken.TradeVolumeFee{Fee: feeRate})

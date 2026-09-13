@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 	"github.com/theapemachine/symm/nomagique/data"
+	"golang.design/x/lockfree/wf"
 )
 
 /*
@@ -168,3 +169,44 @@ func TestHubSetHindsightStore(t *testing.T) {
 		})
 	})
 }
+
+func TestHubDrain(t *testing.T) {
+	Convey("Given a hub draining from a wait-free ring buffer", t, func() {
+		hub := NewHub(t.Context())
+		t.Cleanup(func() {
+			if err := hub.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+
+		Convey("A nil ring buffer returns immediately without panicking", func() {
+			So(func() { hub.Drain(nil) }, ShouldNotPanic)
+		})
+
+		Convey("Measurements placed on the ring are drained without leaking", func() {
+			ring := wf.NewRingBuffer[*data.Measurement[float64]](64)
+
+			for index := 0; index < 10; index++ {
+				measurement := data.NewMeasurement[float64]("cvd", nil)
+				measurement.Label = "BTC/USD"
+				measurement.SeqIdx = int64(index + 1)
+				ring.Put(measurement)
+			}
+
+			So(ring.IsEmpty(), ShouldBeFalse)
+
+			done := make(chan struct{})
+			go func() {
+				hub.Drain(ring)
+				close(done)
+			}()
+
+			time.Sleep(50 * time.Millisecond)
+			So(ring.IsEmpty(), ShouldBeTrue)
+
+			hub.cancel()
+			<-done
+		})
+	})
+}
+

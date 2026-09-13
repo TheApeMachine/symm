@@ -166,10 +166,13 @@ type Trade struct {
 }
 
 func NewTrade(ctx context.Context) *Trade {
-	return &Trade{
+	trade := &Trade{
 		System:   runtime.NewSystem(ctx, "toxicity:trade"),
 		pipeline: nomagique.NewNumber(newTradePipeline()),
 	}
+
+	trade.Transition(runtime.READY)
+	return trade
 }
 
 /*
@@ -177,6 +180,10 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	if trade.Status() != runtime.READY {
+		return m
+	}
+
 	if m == nil {
 		return nil
 	}

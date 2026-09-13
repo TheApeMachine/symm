@@ -234,9 +234,11 @@ func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
 /*
 Close cancels the paper transport context.
 */
-func (paper *Paper) Close() {
+func (paper *Paper) Close() error {
 	paper.cancel()
+	return nil
 }
+
 
 /*
 ResetPaperAccount calls `kraken paper reset --yes` via the system shell to restore

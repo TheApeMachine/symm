@@ -341,7 +341,7 @@ func TestArchitectureProperties(t *testing.T) {
 		Convey("7. Missing economics prevents action: MainAgent takes zero economic action when fees are absent", func() {
 			engine := cognition.NewEngine(cognition.Config{})
 			instrument := broker.NewInstrumentWithQuote("USD")
-			price := broker.NewPrice(nil, instrument)
+			price := broker.NewPrice(t.Context(), nil, instrument)
 			mainAgent := NewMainAgent(decimal.NewFromInt64(1000), "paper", instrument, price, engine)
 
 			mainAgent.Step(decimal.NewFromInt64(100), "NOFEE/USD", ActionDecision{
@@ -450,7 +450,7 @@ func TestArchitectureProperties(t *testing.T) {
 		Convey("12. Absence of second reinforcement path: forward testing does not pollute cognition", func() {
 			engine := cognition.NewEngine(cognition.Config{})
 			instrument := broker.NewInstrumentWithQuote("USD")
-			price := broker.NewPrice(nil, instrument)
+			price := broker.NewPrice(t.Context(), nil, instrument)
 			price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.26)})
 			mainAgent := NewMainAgent(decimal.NewFromInt64(1000), "paper", instrument, price, engine)
 
@@ -578,7 +578,6 @@ func TestArchitectureProperties(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(wait3.Correctness, ShouldBeLessThanOrEqualTo, -0.5)
 		})
-
 
 		Convey("16. Tape excursion boundary evaluation: entry at anchor B evaluates positive while entry past peak C evaluates loss", func() {
 			feeRate := 0.001

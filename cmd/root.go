@@ -146,8 +146,8 @@ var (
 			defer api.Close()
 
 			instrument := broker.NewInstrument(api)
-			price := broker.NewPrice(api, instrument)
-			balance := broker.NewBalance(api)
+			price := broker.NewPrice(ctx, api, instrument)
+			balance := broker.NewBalance(ctx, api)
 
 			defer instrument.Close()
 
@@ -176,6 +176,14 @@ var (
 				))
 			}
 
+			if price.Status() != nmruntime.READY {
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"[symm] initial price fees are not ready",
+					nil,
+				))
+			}
+
 			if balance.Status() != nmruntime.READY {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
@@ -186,11 +194,33 @@ var (
 
 			workspaceRegister := store.NewRegister[*data.Measurement[float64]]()
 
+			publicWorkload := nmruntime.NewWorkload(
+				ctx, "public",
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					public,
+				}},
+				workspaceRegister,
+			)
+
+			privateWorkload := nmruntime.NewWorkload(
+				ctx, "private",
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					private,
+				}},
+				workspaceRegister,
+			)
+
+			futuresWorkload := nmruntime.NewWorkload(
+				ctx, "futures",
+				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					futures,
+				}},
+				workspaceRegister,
+			)
+
 			tickerRing := nmruntime.NewWorkload(
 				ctx, "ticker",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					public,
-				}, {
 					correlation.NewTicker(ctx),
 					leadlag.NewTicker(ctx),
 					liquidity.NewTicker(ctx),
@@ -203,8 +233,6 @@ var (
 			tradeRing := nmruntime.NewWorkload(
 				ctx, "trade",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
-					public,
-				}, {
 					cvd.NewTrade(ctx),
 					hawkes.NewTrade(ctx),
 					toxicity.NewTrade(ctx),
@@ -225,7 +253,7 @@ var (
 			)
 
 			futuresTicker := nmruntime.NewWorkload(
-				ctx, "futures",
+				ctx, "futures_ticker",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
 					derivatives.NewTicker(ctx),
 				}},
@@ -233,7 +261,7 @@ var (
 			)
 
 			futuresTrade := nmruntime.NewWorkload(
-				ctx, "futures",
+				ctx, "futures_trade",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
 					derivatives.NewTrade(ctx),
 				}},
@@ -280,18 +308,38 @@ var (
 				workspaceRegister,
 			)
 
+			telemetryTee := nmruntime.NewTee(131072)
+			go hub.Drain(telemetryTee.Ring())
+
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				"workspace",
 				[][]nmruntime.Node[*data.Measurement[float64]]{{
+					publicWorkload, privateWorkload, futuresWorkload,
+				}, {
 					tickerRing, tradeRing, level3Ring, futuresTicker, futuresTrade,
 				}, {
 					classificationRing, resonanceRing,
 				}, {
 					trainerRing,
+				}, {
+					telemetryTee,
 				}},
 				workspaceRegister,
 			)
+
+			defer workspace.Close()
+			defer trainerRing.Close()
+			defer resonanceRing.Close()
+			defer classificationRing.Close()
+			defer futuresTrade.Close()
+			defer futuresTicker.Close()
+			defer level3Ring.Close()
+			defer tradeRing.Close()
+			defer tickerRing.Close()
+			defer futuresWorkload.Close()
+			defer privateWorkload.Close()
+			defer publicWorkload.Close()
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
@@ -311,15 +359,7 @@ var (
 				))
 			}
 
-			if workspace.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"symm: workspace did not reach ready",
-					nil,
-				))
-			}
-
-			api.MarkReady()
+			api.Transition(nmruntime.READY)
 
 			if err := api.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -336,6 +376,51 @@ var (
 					nil,
 				))
 			}
+
+			if workspace.Status() != nmruntime.READY {
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"symm: workspace did not reach ready",
+					nil,
+				))
+			}
+
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					if api.Status() != nmruntime.READY ||
+						instrument.Status() != nmruntime.READY ||
+						price.Status() != nmruntime.READY {
+						if workspace.Status() == nmruntime.READY {
+							workspace.Transition(nmruntime.WAITING)
+						}
+
+						time.Sleep(10 * time.Millisecond)
+						continue
+					}
+
+					if workspace.Status() == nmruntime.WAITING {
+						workspace.Transition(nmruntime.READY)
+					}
+
+					if workspace.Status() != nmruntime.READY {
+						time.Sleep(10 * time.Millisecond)
+						continue
+					}
+
+					if public.Pending() > 0 || private.Pending() > 0 || futures.Pending() > 0 {
+						workspace.Step(nil)
+						continue
+					}
+
+					time.Sleep(100 * time.Microsecond)
+				}
+			}()
 
 			return hub.Run()
 		},

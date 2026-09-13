@@ -28,8 +28,8 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 			set("contrast", targetRow ? targetRow.contrast().toFixed(3) : "—");
 			set("entropy", targetRow ? targetRow.entropyBits().toFixed(3) : "—");
 			set("ambiguous", targetRow ? String(targetRow.ambiguous()) : "—");
-			set("remFrom", targetRow ? String(targetRow.remFromNs()) : "—");
-			set("remThrough", targetRow ? String(targetRow.remThroughNs()) : "—");
+			set("remFrom", targetRow ? String(targetRow.remFrom()) : "—");
+			set("remThrough", targetRow ? String(targetRow.remThrough()) : "—");
 			set("remReplays", targetRow ? String(targetRow.remReplays()) : "—");
 
 			const replays = root.current.querySelector<HTMLElement>("[data-replays]");

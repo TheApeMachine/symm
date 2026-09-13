@@ -19,7 +19,6 @@ type instrumentConn struct {
 	marketSubscriptions int
 }
 
-func (conn *instrumentConn) MarkReady() {}
 
 func (conn *instrumentConn) SubInstrument(callback chan any) {
 	callback <- &kraken.Instrument{Data: kraken.InstrumentData{

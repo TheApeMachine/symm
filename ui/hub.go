@@ -22,6 +22,7 @@ import (
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/workbench"
+	"golang.design/x/lockfree/wf"
 )
 
 /*
@@ -401,6 +402,52 @@ that serves it.
 */
 func (hub *Hub) Consume(measurements <-chan *data.Measurement[float64]) {
 	go hub.publish(measurements)
+}
+
+/*
+Drain runs the asynchronous micro-batching drain loop against a wait-free SPSC
+ring buffer. It drains available measurements and flushes them to the connected
+frontend in consolidated FlatBuffer batches.
+*/
+func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
+	if ring == nil {
+		return
+	}
+
+	ticker := time.NewTicker(16 * time.Millisecond)
+	defer ticker.Stop()
+
+	batch := make([]*data.Measurement[float64], 0, 512)
+
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		for {
+			measurement, ok := ring.Get()
+
+			if !ok {
+				break
+			}
+
+			if measurement != nil {
+				batch = append(batch, measurement)
+			}
+
+			if len(batch) >= 512 {
+				hub.writeMeasurements(batch)
+				batch = batch[:0]
+			}
+		}
+
+		if len(batch) > 0 {
+			hub.writeMeasurements(batch)
+			batch = batch[:0]
+		}
+	}
 }
 
 /*

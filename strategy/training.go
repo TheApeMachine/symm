@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"errors"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -16,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -94,7 +94,7 @@ Agents 1..N-1 operate as rehearsal workers practicing on historical tape
 excursions. All agents share the underlying cognition memory trie.
 */
 type Training struct {
-	ctx    context.Context
+	*runtime.System
 	mu     sync.Mutex
 	tape   *Tape
 	space  core.Primitive
@@ -182,12 +182,13 @@ func NewTraining(
 	}
 
 	training := &Training{
+		System: runtime.NewSystem(ctx, "training"),
 		tape:   tape,
 		space:  agents[0].Space(),
 		agents: agents,
 		main:   NewMainAgent(initialCash, targetAccount, inst, prc, sharedEngine, api, bal),
-		ctx:    ctx,
 	}
+	training.Transition(runtime.READY)
 
 	go training.rehearseLoop()
 
@@ -202,6 +203,10 @@ the grid and the agent. Learning is stamped on the clock so the dashboard can
 read it; the measurements never are.
 */
 func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if training.Status() != runtime.READY || training.Error() != nil {
+		return measurement
+	}
+
 	training.mount()
 
 	if measurement != nil {
@@ -333,7 +338,7 @@ func (training *Training) rehearseLoop() {
 
 	for {
 		select {
-		case <-training.ctx.Done():
+		case <-training.Context().Done():
 			return
 		case <-ticker.C:
 			training.rehearseCycle()
@@ -400,20 +405,6 @@ func (training *Training) snapshot() *replay {
 		observations: observations,
 		budget:       budget,
 	}
-}
-
-/* Error joins the pipeline's failure for the runtime node protocol. */
-func (training *Training) Error() error {
-	training.mu.Lock()
-	defer training.mu.Unlock()
-
-	var errs []error
-
-	for _, individual := range training.agents {
-		errs = append(errs, individual.space.Error(), individual.learner.Error())
-	}
-
-	return errors.Join(errs...)
 }
 
 /*

@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/relation"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -42,11 +43,8 @@ never latency on the market pipeline, and the accumulator is bounded by the
 number of live orders rather than by the message rate.
 */
 type Solver struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
+	*runtime.System
 	advanceMu     sync.Mutex
-	errMu         sync.RWMutex
-	err           error
 	api           *websocket.API
 	dataset       *Dataset
 	physics       *sensorium.Manifold
@@ -133,11 +131,7 @@ var (
 )
 
 func NewSolver(ctx context.Context, api *websocket.API) *Solver {
-	ctx, cancel := context.WithCancel(ctx)
-
 	solver := &Solver{
-		ctx:     ctx,
-		cancel:  cancel,
 		api:     api,
 		dataset: NewDataset(),
 		forcing: make(map[string]forcingState),
@@ -150,6 +144,10 @@ func NewSolver(ctx context.Context, api *websocket.API) *Solver {
 			system.Cfg.Manifold.Grid.Z,
 		),
 	}
+
+	solver.System = runtime.NewSystem(ctx, "manifold", solver.physics)
+	solver.Transition(runtime.READY)
+
 
 	return solver
 }
@@ -210,7 +208,7 @@ func (solver *Solver) run() {
 
 	for {
 		select {
-		case <-solver.ctx.Done():
+		case <-solver.Context().Done():
 			return
 		case <-solver.wake:
 		case <-ticker.C:
@@ -242,37 +240,13 @@ func (solver *Solver) run() {
 			pause.Reset(spent)
 
 			select {
-			case <-solver.ctx.Done():
+			case <-solver.Context().Done():
 				return
 			case <-pause.C:
 			}
 		default:
 		}
 	}
-}
-
-func (solver *Solver) Name() string { return "manifold" }
-
-func (solver *Solver) Error() error {
-	solver.errMu.RLock()
-	defer solver.errMu.RUnlock()
-
-	return solver.err
-}
-
-func (solver *Solver) halt(err error) {
-	if err == nil {
-		return
-	}
-
-	solver.errMu.Lock()
-
-	if solver.err == nil {
-		solver.err = err
-		solver.cancel()
-	}
-
-	solver.errMu.Unlock()
 }
 
 /*
@@ -289,9 +263,7 @@ Step dispatches on the envelope kind:
   - Any other kind is a no-op.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if solver.Error() != nil {
-		solver.cancel()
-
+	if solver.Status() != runtime.READY || solver.Error() != nil {
 		return nil
 	}
 
@@ -551,7 +523,7 @@ func (solver *Solver) Advance() *State {
 
 	departures, batch := solver.project()
 	if err := solver.dataset.Error(); err != nil {
-		solver.halt(err)
+		solver.Error(err)
 		return nil
 	}
 
@@ -566,7 +538,7 @@ func (solver *Solver) Advance() *State {
 
 	if err != nil {
 		solver.advanceMu.Unlock()
-		solver.halt(err)
+		solver.Error(err)
 
 		return nil
 	}
@@ -581,8 +553,6 @@ func (solver *Solver) Advance() *State {
 
 	if err != nil {
 		solver.advanceMu.Unlock()
-		solver.halt(err)
-
 		return nil
 	}
 
@@ -717,7 +687,6 @@ func (solver *Solver) Crystallize(
 		for _, state := range states {
 			sensorium.StatePool.Put(state)
 		}
-		solver.halt(err)
 		return nil, nil
 	}
 	batch := collectStates(states)
@@ -735,7 +704,6 @@ func (solver *Solver) Crystallize(
 		}
 
 		if err := solver.injectProbeParticle(batch, price, symbol); err != nil {
-			solver.halt(err)
 			return nil, nil
 		}
 	}
@@ -755,8 +723,6 @@ func (solver *Solver) Crystallize(
 		state, err = solver.physics.Step(batch)
 
 		if err != nil {
-			solver.halt(err)
-
 			return nil, nil
 		}
 
@@ -1013,24 +979,4 @@ func cloneState(state *sensorium.State) sensorium.State {
 		Clamped:    append([]bool(nil), state.Clamped[:n]...),
 		Dark:       append([]bool(nil), state.Dark[:n]...),
 	}
-}
-
-func (solver *Solver) Close() error {
-	if solver == nil {
-		return nil
-	}
-
-	solver.advanceMu.Lock()
-	defer solver.advanceMu.Unlock()
-
-	if solver.cancel != nil {
-		solver.cancel()
-	}
-
-	if solver.physics != nil {
-		solver.physics.Close()
-		solver.physics = nil
-	}
-
-	return nil
 }

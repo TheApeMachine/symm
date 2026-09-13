@@ -48,7 +48,7 @@ const METERS = [
 		key: "lookahead",
 		label: "Lookahead score",
 		getter: (c: Cognition) => c.lookaheadScore(),
-		variant: "default",
+		variant: "brand",
 	},
 	{
 		key: "contrast",

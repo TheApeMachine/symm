@@ -39,7 +39,7 @@ type Conn struct {
 	wsBook              *websocket.Book
 }
 
-func (conn *Conn) MarkReady() {}
+func (conn *Conn) Transition(stage runtime.Stage) { conn.status = stage }
 
 func NewConn() *Conn {
 	return &Conn{
@@ -48,7 +48,8 @@ func NewConn() *Conn {
 	}
 }
 
-func (conn *Conn) Close() {}
+func (conn *Conn) Close() error { return nil }
+
 
 func (conn *Conn) Client() *spot.WebSocket { return nil }
 

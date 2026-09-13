@@ -6,13 +6,11 @@ import {
 	resonanceTransportDetailStore,
 	resonanceTransportStore,
 } from "#/collections/app";
-import { topologyStore } from "#/collections/topology";
 import { FluidRecordReader } from "#/components/fluid-3d/record";
 import { Message } from "#/providers/telemetry/telemetry/message";
 import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 
 const resonanceChannel = "resonance";
-const diagnosticsChannel = "diagnostics";
 
 // Backoff policy mirrors the websocket worker so both transports degrade at the
 // same pace instead of one silently giving up on a transient failure.

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"io"
 
 	"github.com/theapemachine/errnie"
 )
@@ -13,14 +14,25 @@ type System struct {
 	name    string
 	err     error
 	status  *Status
-	closers []func() error
+	closers []io.Closer
+}
+
+type Closer func() error
+
+func (closer Closer) Close() error {
+	if closer == nil {
+		return nil
+	}
+
+	return closer()
 }
 
 func NewSystem(
 	ctx context.Context,
 	name string,
-	closers ...func() error,
+	closers ...io.Closer,
 ) *System {
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &System{
@@ -36,23 +48,40 @@ func (system *System) Name() string             { return system.name }
 func (system *System) Context() context.Context { return system.ctx }
 func (system *System) Transition(stage Stage)   { system.status.Transition(stage) }
 func (system *System) Status() Stage            { return system.status.Current() }
-func (system *System) Error(...error) error     { return system.err }
-func (system *System) Close() error {
-	system.cancel()
 
-	for _, closer := range system.closers {
-		system.err = errors.Join(system.err, closer())
+func (system *System) Error(errs ...error) error {
+	for _, err := range errs {
+		system.err = errors.Join(system.err, err)
+	}
+
+	if system.err != nil {
+		system.Transition(ERROR)
+		errnie.Error(system.err)
+
+		errnieErr, ok := errnie.AsErrnie(system.err)
+
+		if ok && errnie.IsInternal(errnieErr) {
+			system.Close()
+		}
 	}
 
 	return system.err
 }
 
-// Fail retains the stage failure on the runtime owner. Processing must stop
-// until the owner is replaced or explicitly recovered.
-func (system *System) Fail(err error) {
-	if err == nil {
-		return
+func (system *System) AddCloser(closer io.Closer) {
+	system.closers = append(system.closers, closer)
+}
+
+func (system *System) Close() error {
+	system.cancel()
+
+	for _, closer := range system.closers {
+		if closer == nil {
+			continue
+		}
+
+		system.err = errors.Join(system.err, closer.Close())
 	}
-	system.err = errnie.Error(err)
-	system.Transition(ERROR)
+
+	return system.err
 }

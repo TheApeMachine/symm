@@ -102,10 +102,13 @@ type Level3 struct {
 }
 
 func NewLevel3(ctx context.Context) *Level3 {
-	return &Level3{
+	level3 := &Level3{
 		System:   runtime.NewSystem(ctx, "pumpdump:level3"),
 		pipeline: nomagique.NewNumber(newLevel3EntityPipeline()),
 	}
+
+	level3.Transition(runtime.READY)
+	return level3
 }
 
 /*
@@ -113,6 +116,10 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
+	if level3.Status() != runtime.READY {
+		return m
+	}
+
 	if m == nil {
 		return nil
 	}

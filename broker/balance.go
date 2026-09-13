@@ -24,13 +24,7 @@ type Balance struct {
 	tradeBalance atomic.Pointer[kraken.TradeBalanceResult]
 }
 
-func NewBalance(api *websocket.API) *Balance {
-	ctx := context.Background()
-
-	if api != nil && api.Context() != nil {
-		ctx = api.Context()
-	}
-
+func NewBalance(ctx context.Context, api *websocket.API) *Balance {
 	balance := &Balance{
 		System: runtime.NewSystem(ctx, "balance"),
 		api:    api,
@@ -54,12 +48,10 @@ func (balance *Balance) Update() {
 	}
 
 	balance.Transition(runtime.BUSY)
-	defer balance.Transition(runtime.READY)
-
 	result, err := balance.api.Balance()
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		balance.Error(errnie.Err(
 			errnie.IO,
 			"[balance] failed to retrieve account balance",
 			err,
@@ -71,6 +63,8 @@ func (balance *Balance) Update() {
 	if result != nil {
 		balance.wallet.Store(result)
 	}
+
+	balance.Transition(runtime.READY)
 }
 
 /*

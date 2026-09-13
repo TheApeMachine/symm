@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	venue "github.com/theapemachine/symm/tests/venue"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -22,6 +23,7 @@ func newPriceSurface(t testing.TB, symbol string) (*Price, *websocket.API) {
 
 	conn := venue.NewConn()
 	api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
+	api.Transition(runtime.READY)
 	price := newTestPrice(t, api)
 	price.fees.Store(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.25),
@@ -281,6 +283,7 @@ func TestPriceGetFees(t *testing.T) {
 			},
 		}
 		api := websocket.NewAPI(t.Context(), conn, conn, &websocket.FuturesLive{})
+		api.Transition(runtime.READY)
 		api.Normalizer().Update(&spot.AssetsManagerUpdate{
 			NewAssets: map[string]spot.AssetInfo{
 				"BTC": {AltName: "BTC"},
@@ -300,7 +303,7 @@ func TestPriceGetFees(t *testing.T) {
 		Convey("GetFees normalizes the key once and records it under canonical symbol", func() {
 			err := price.GetFees([]string{"BTC/USD"})
 			So(err, ShouldBeNil)
-			So(price.Status(), ShouldEqual, types.READY)
+			So(price.Status(), ShouldEqual, runtime.READY)
 			fee := price.Fee("BTC/USD")
 			So(fee, ShouldNotBeNil)
 			So(fee.Fee.Float64(), ShouldAlmostEqual, 0.26, 1e-12)

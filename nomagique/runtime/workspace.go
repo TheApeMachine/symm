@@ -24,7 +24,7 @@ type Workspace[T any] struct {
 	channel  disruptor.Disruptor
 	buffer   []T
 	register *store.Register[T]
-	workers  []Node[T]
+	stages   [][]Node[T]
 }
 
 func NewWorkspace[T any](
@@ -38,10 +38,12 @@ func NewWorkspace[T any](
 	}
 
 	workload := &Workspace[T]{
-		System:   NewSystem(ctx, label),
 		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
 		register: reg,
+		stages:   stages,
 	}
+
+	workload.System = NewSystem(ctx, label)
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(
@@ -61,15 +63,48 @@ func NewWorkspace[T any](
 		}
 	}
 
-	workload.channel, workload.err = disruptor.New(
-		opts...,
-	)
+	channel, err := disruptor.New(opts...)
 
+	if err != nil {
+		workload.Error(err)
+		return workload
+	}
+
+	workload.channel = channel
+	workload.AddCloser(channel)
+	workload.Transition(READY)
 	go workload.channel.Listen()
 	return workload
 }
 
-func (workspace *Workspace[T]) Close() error {
-	workspace.cancel()
-	return nil
+
+func (workspace *Workspace[T]) Step(payload T) T {
+	select {
+	case <-workspace.Context().Done():
+		workspace.Error(workspace.Context().Err())
+		return payload
+	default:
+		if workspace.Error() != nil || workspace.Status() != READY {
+			return payload
+		}
+	}
+
+	seq := workspace.channel.Reserve(1)
+	slot := &workspace.buffer[seq&system.Cfg.Runtime.Workspace.Mask]
+	*slot = payload
+	workspace.channel.Commit(seq, seq)
+
+	return payload
+}
+
+func (workspace *Workspace[T]) Transition(stage Stage) {
+	workspace.System.Transition(stage)
+
+	for _, stageGroup := range workspace.stages {
+		for _, node := range stageGroup {
+			if sys, ok := any(node).(interface{ Transition(Stage) }); ok {
+				sys.Transition(stage)
+			}
+		}
+	}
 }

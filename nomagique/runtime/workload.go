@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/symm/nomagique/store"
@@ -18,6 +17,7 @@ type Workload[T any] struct {
 	channel  disruptor.Disruptor
 	buffer   []T
 	register *store.Register[T]
+	stages   [][]Node[T]
 }
 
 func NewWorkload[T any](
@@ -33,10 +33,12 @@ func NewWorkload[T any](
 	}
 
 	workload := &Workload[T]{
-		System:   NewSystem(ctx, label),
 		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
 		register: reg,
+		stages:   stages,
 	}
+
+	workload.System = NewSystem(ctx, label)
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(
@@ -56,24 +58,28 @@ func NewWorkload[T any](
 		}
 	}
 
-	workload.channel, workload.err = disruptor.New(
-		opts...,
-	)
+	channel, err := disruptor.New(opts...)
 
+	if err != nil {
+		workload.Error(err)
+		return workload
+	}
+
+	workload.channel = channel
+	workload.AddCloser(channel)
+	workload.Transition(READY)
 	go workload.channel.Listen()
 	return workload
 }
 
+
 func (workload *Workload[T]) Step(payload T) T {
 	select {
-	case <-workload.ctx.Done():
-		workload.err = errors.Join(
-			workload.err, workload.ctx.Err(),
-		)
-
+	case <-workload.Context().Done():
+		workload.Error(workload.Context().Err())
 		return payload
 	default:
-		if workload.err != nil {
+		if workload.Error() != nil || workload.Status() != READY {
 			return payload
 		}
 	}
@@ -95,13 +101,14 @@ func (workload *Workload[T]) Register() T {
 	return zero
 }
 
-/*
-Close shuts the ring down and then closes the embedded system's lifecycle.
-*/
-func (workload *Workload[T]) Close() error {
-	if err := workload.channel.Close(); err != nil {
-		workload.err = errors.Join(workload.err, err)
-	}
+func (workload *Workload[T]) Transition(stage Stage) {
+	workload.System.Transition(stage)
 
-	return workload.System.Close()
+	for _, stageGroup := range workload.stages {
+		for _, node := range stageGroup {
+			if sys, ok := any(node).(interface{ Transition(Stage) }); ok {
+				sys.Transition(stage)
+			}
+		}
+	}
 }

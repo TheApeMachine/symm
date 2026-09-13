@@ -210,7 +210,7 @@ export const ComparePanel = ({
 
 	const facts = useMemo(() => {
 		const perMark =
-			mode === "resident" ? residents.map(readResident) : states.map(readFacts);
+			mode === "resident" ? residents.map(readResident) : (states ?? []).map(readFacts);
 		const identities = new Set<string>();
 
 		for (const mark of perMark) {

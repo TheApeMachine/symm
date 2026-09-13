@@ -90,6 +90,10 @@ using store.Query and packages them into Peers before calling Step.
 */
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
+		if sys, ok := any(consumer.node).(interface{ Status() Stage }); ok && sys.Status() != READY {
+			continue
+		}
+
 		query := store.NewQuery(consumer, data.ActionRead)
 		val := data.Read[T](consumer.register.Next(data.NewValue(*query)))
 
@@ -98,9 +102,14 @@ func (consumer *Consumer[T]) Handle(lower, upper int64) {
 		}
 
 		result := consumer.node.Step(val)
+		toWrite := result
+
+		if measurement, ok := any(result).(*data.Measurement[float64]); ok && measurement != nil {
+			toWrite = any(measurement.Clone()).(T)
+		}
 
 		data.Read[T](consumer.register.Next(data.NewValue(*store.NewQuery(
-			consumer, data.ActionWrite, result,
+			consumer, data.ActionWrite, toWrite,
 		))))
 	}
 }

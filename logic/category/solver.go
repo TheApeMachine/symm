@@ -31,10 +31,7 @@ measurements jointly support. It never predicts, never consults Cognition, and
 never lets signal publication cadence count as extra evidence.
 */
 type Solver struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	status     *runtime.Status
+	*runtime.System
 	categories []types.CategoryType
 	states     sync.Map
 	// version is the monotonic committed-classification revision. It is local
@@ -89,51 +86,58 @@ set of categories appearing in types.CategorySchemas, in deterministic
 types.CategoryOrder order.
 */
 func NewSolver(ctx context.Context) *Solver {
-	ctx, cancel := context.WithCancel(ctx)
-
 	categories := distinctCategories(types.CategorySchemas)
 
 	solver := &Solver{
-		ctx:        ctx,
-		cancel:     cancel,
-		status:     runtime.NewStatus().Transition(runtime.READY),
+		System:     runtime.NewSystem(ctx, "category"),
 		categories: categories,
 	}
+	solver.Transition(runtime.READY)
 
 	return solver
 }
-
-func (solver *Solver) Name() string { return "category" }
-
-func (solver *Solver) Error() error { return solver.err }
 
 /*
 Step folds every signal measurement populated in Peers into its
 symbol's evidence snapshot and returns the updated category measurement.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if solver.err != nil {
-		solver.cancel()
-
-		return nil
+	if solver.Status() != runtime.READY || solver.Error() != nil {
+		return measurement
 	}
 
 	if measurement == nil {
 		return nil
 	}
 
-	categories := solver.stepMeasurements(measurement.Peers)
-
-	if solver.err != nil {
-		return nil
+	if len(measurement.Peers) == 0 {
+		return measurement
 	}
 
-	for _, cat := range categories {
-		if cat.Type != "" {
-			name := string(cat.Type)
+	bySymbol := make(map[string][]*data.Measurement[float64])
 
-			if m, ok := measurement.Metrics[name]; ok {
-				measurement.Metrics[name] = m.Write(cat.Confidence)
+	for _, peer := range measurement.Peers {
+		if peer != nil && peer.Label != "" && peer.Err == nil {
+			bySymbol[peer.Label] = append(bySymbol[peer.Label], peer)
+		}
+	}
+
+	for sym, symMeasurements := range bySymbol {
+		categories := solver.stepMeasurements(symMeasurements)
+
+		if solver.Error() != nil {
+			return nil
+		}
+
+		measurement.Label = sym
+
+		for _, cat := range categories {
+			if cat.Type != "" {
+				name := string(cat.Type)
+
+				if m, ok := measurement.Metrics[name]; ok {
+					measurement.Metrics[name] = m.Write(cat.Confidence)
+				}
 			}
 		}
 	}
@@ -153,7 +157,6 @@ func (solver *Solver) Register() (*data.Measurement[float64], []string) {
 
 	return data.NewMeasurement[float64]("category", metrics), []string{"*"}
 }
-
 
 /*
 StepMeasurement consumes one measurement observation, updates the symbol's
@@ -177,9 +180,7 @@ compared inside the observation that produced them.
 func (solver *Solver) stepMeasurements(
 	measurements []*data.Measurement[float64],
 ) []types.Category {
-	if solver.err != nil {
-		solver.cancel()
-
+	if solver.Error() != nil {
 		return nil
 	}
 
@@ -569,15 +570,10 @@ func (solver *Solver) buildBatch(
 }
 
 func (solver *Solver) fail(message string, err error) {
-	solver.err = errnie.Error(errnie.Err(errnie.Validation, message, err))
-	solver.status.Transition(runtime.FATAL)
-	solver.cancel()
+	solver.Error(errnie.Err(errnie.Validation, message, err))
+	solver.Transition(runtime.FATAL)
 }
 
-func (solver *Solver) Close() error {
-	solver.cancel()
-	return nil
-}
 
 /*
 distinctCategories returns the declared vocabulary in types.CategoryOrder

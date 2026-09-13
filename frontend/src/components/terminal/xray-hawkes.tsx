@@ -87,7 +87,7 @@ const rowObservation = (row: Measurement): HawkesObservation | null => {
 	}
 
 	return {
-		at: row.atNs(),
+		at: row.at(),
 		intensity: metrics.conditional_intensity as number,
 		baseline: metrics.background_rate as number,
 		decay: metrics["excitation_decay:buy_from_buy"] as number,

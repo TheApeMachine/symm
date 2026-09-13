@@ -128,7 +128,6 @@ func NewWithClient(
 	}
 
 	live := &Live{
-		System:     runtime.NewSystem(ctx, name),
 		simulator:  simulator,
 		endpoint:   endpoint,
 		normalizer: spot.NewNormalizer(),
@@ -155,6 +154,13 @@ func NewWithClient(
 
 		return live.client.Load().WriteMessage(gorillawebsocket.TextMessage, ping)
 	})
+
+	live.System = runtime.NewSystem(
+		ctx,
+		name,
+		live.pinger,
+		runtime.Closer(client.Disconnect),
+	)
 
 	// A failed ping is the only evidence a half-open socket may produce. Treat it
 	// exactly like a read-side disconnect and replace the venue session.
@@ -201,10 +207,6 @@ func NewWithClient(
 	}
 
 	client.OnReceived.Recurring(func(event *callback.Event[*sdk.WebSocketMessage]) {
-		if live.Status() != runtime.READY {
-			return
-		}
-
 		raw := event.Data.Bytes()
 		channel := utils.GetString(raw, "channel")
 
@@ -229,6 +231,10 @@ func NewWithClient(
 
 		switch channel {
 		case "ticker", "trade", "executions":
+			if live.Status() != runtime.READY {
+				return
+			}
+
 			// One queue row per venue record: the callback splits the frame's
 			// data array so Step converts exactly one measurement per dequeue.
 			// The typed entity parse is skipped; the row map is the payload.
@@ -344,7 +350,11 @@ func NewWithClient(
 			"websocket: failed to connect",
 			err,
 		))
-	} else if err := live.resume(); err != nil {
+
+		return live
+	}
+
+	if err := live.resume(); err != nil {
 		live.Error(err)
 	}
 
@@ -358,6 +368,10 @@ metric keeps the exact decimal the venue printed in Exact while Raw carries the
 float64 the mathematics runs on.
 */
 func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if live.Status() != runtime.READY {
+		return measurement
+	}
+
 	row, ok := live.queue.Dequeue()
 
 	if !ok {
@@ -422,6 +436,17 @@ the venue's spot rows can produce, none valued.
 */
 func (live *Live) Register() *data.Measurement[float64] {
 	return data.NewMeasurement("websocket", map[string]data.Metric[float64]{})
+}
+
+/*
+Pending reports the count of unprocessed rows waiting in the inbound queue.
+*/
+func (live *Live) Pending() uint64 {
+	if live == nil || live.queue == nil {
+		return 0
+	}
+
+	return live.queue.Length()
 }
 
 func (live *Live) authenticate() (err error) {
@@ -489,7 +514,12 @@ func (live *Live) resume() error {
 		return nil
 	}
 
-	live.Transition(runtime.READY)
+	if live.Status() == runtime.READY {
+		live.Transition(runtime.READY)
+		return nil
+	}
+
+	live.Transition(runtime.BUSY)
 	return nil
 }
 
@@ -1159,35 +1189,6 @@ func (live *Live) Client() *spot.WebSocket {
 	}
 
 	return live.client.Load()
-}
-
-func (live *Live) MarkReady() {
-	if live == nil {
-		return
-	}
-
-	live.Transition(runtime.READY)
-}
-
-func (live *Live) Close() {
-	if live == nil {
-		return
-	}
-
-	if live.pinger != nil {
-		live.pinger.Stop()
-	}
-
-	if live.level3 != nil {
-		live.level3.Range(func(_, value any) bool {
-			if child, valid := value.(*Live); valid && child != nil {
-				child.Close()
-			}
-			return true
-		})
-	}
-
-	_ = live.System.Close()
 }
 
 var _ Conn = (*Live)(nil)

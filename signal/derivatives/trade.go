@@ -26,7 +26,7 @@ type Trade struct {
 }
 
 func NewTrade(ctx context.Context) *Trade {
-	return &Trade{
+	trade := &Trade{
 		System: runtime.NewSystem(ctx, "derivatives:trade"),
 		pipeline: nomagique.NewNumber(
 			nmderivatives.NewTradeGate(),
@@ -34,14 +34,21 @@ func NewTrade(ctx context.Context) *Trade {
 			data.NewFinalizer[float64](),
 		),
 	}
+
+	trade.Transition(runtime.READY)
+	return trade
 }
 
 /*
 Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	return data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&m)).Next(nil)))
+func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if trade.Status() != runtime.READY {
+		return measurement
+	}
+
+	return data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
 }
 
 /*

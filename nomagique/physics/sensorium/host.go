@@ -56,9 +56,9 @@ func NewManifold(gridX, gridY, gridZ int, datasets ...Dataset) *Manifold {
 	}
 }
 
-func (manifold *Manifold) Close() {
+func (manifold *Manifold) Close() error {
 	if manifold == nil {
-		return
+		return nil
 	}
 
 	manifold.mu.Lock()
@@ -68,7 +68,10 @@ func (manifold *Manifold) Close() {
 		manifold.work.Close()
 		manifold.work = nil
 	}
+
+	return nil
 }
+
 
 func (manifold *Manifold) State() *State {
 	if manifold == nil {

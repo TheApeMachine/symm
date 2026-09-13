@@ -108,12 +108,11 @@ func (pinger *Pinger) Start(ctx context.Context) {
 }
 
 /*
-Stop halts the keepalive loop. A session that is closing stops pinging a socket
-it is about to disconnect.
+Close halts the keepalive loop, satisfying io.Closer.
 */
-func (pinger *Pinger) Stop() {
+func (pinger *Pinger) Close() error {
 	if pinger == nil {
-		return
+		return nil
 	}
 
 	pinger.mu.Lock()
@@ -123,4 +122,15 @@ func (pinger *Pinger) Stop() {
 		close(pinger.stop)
 		pinger.stop = nil
 	}
+
+	return nil
 }
+
+/*
+Stop halts the keepalive loop. A session that is closing stops pinging a socket
+it is about to disconnect.
+*/
+func (pinger *Pinger) Stop() {
+	_ = pinger.Close()
+}
+

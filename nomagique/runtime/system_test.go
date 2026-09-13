@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestSystemFail(t *testing.T) {
@@ -12,12 +13,31 @@ func TestSystemFail(t *testing.T) {
 		system := NewSystem(t.Context(), "agent")
 		system.Transition(READY)
 		err := errors.New("execution acceptance unknown")
-		system.Fail(err)
+		system.Error(err)
 		So(system.Error(), ShouldEqual, err)
 		So(system.Status(), ShouldEqual, ERROR)
-		system.Fail(nil)
+		system.Error(nil)
 		So(system.Error(), ShouldEqual, err)
 		So(system.Status(), ShouldEqual, ERROR)
 		So(system.Close(), ShouldNotBeNil)
+	})
+}
+
+func TestWorkspaceStatus(t *testing.T) {
+	Convey("Given a freshly initialized workspace with stages", t, func() {
+		node := &countingNode{}
+		workspace := NewWorkspace[*data.Measurement[float64]](
+			t.Context(), "test-workspace", [][]Node[*data.Measurement[float64]]{{node}},
+		)
+		defer workspace.Close()
+
+		So(workspace.Status(), ShouldEqual, READY)
+	})
+
+	Convey("Given a workspace with no handlers", t, func() {
+		workspace := NewWorkspace[int](t.Context(), "test-workspace", nil)
+		defer workspace.Close()
+
+		So(workspace.Status(), ShouldEqual, ERROR)
 	})
 }
