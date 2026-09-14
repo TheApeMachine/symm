@@ -8,7 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/hindsight/tables/tablestest"
+	"github.com/theapemachine/symm/tests/tablestest"
 )
 
 func TestCatalogRuns(t *testing.T) {

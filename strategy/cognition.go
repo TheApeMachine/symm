@@ -247,8 +247,11 @@ func ringLen[T any](ring core.Primitive) int {
 ringAdvance moves the ring to the next child sequence.
 */
 func ringAdvance[T any](ring core.Primitive) {
-	_, _ = ringCommand(ring, &store.RingCommand[T]{Advance: true})
+	if _, err := ringCommand(ring, &store.RingCommand[T]{Advance: true}); err != nil {
+		errnie.Error(err)
+	}
 }
+
 
 /*
 ringCurrent reads the parent's current element.

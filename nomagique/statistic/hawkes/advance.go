@@ -44,6 +44,15 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
+
+			if m.Err != nil {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
 			p := op.history.at(m.Label)
 
 			side := m.Provenance["side"]

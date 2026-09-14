@@ -53,7 +53,17 @@ func (hub *Hub) registerFluidWebRTC() {
 }
 
 func setFluidCORS(ctx fiber.Ctx) {
-	ctx.Set(fiber.HeaderAccessControlAllowOrigin, "*")
+	origin := ctx.Get(fiber.HeaderOrigin)
+
+	if origin != "" {
+		ctx.Set(fiber.HeaderAccessControlAllowOrigin, origin)
+	}
+
+	if origin == "" {
+		ctx.Set(fiber.HeaderAccessControlAllowOrigin, "*")
+	}
+
 	ctx.Set(fiber.HeaderAccessControlAllowHeaders, fiber.HeaderContentType)
 	ctx.Set(fiber.HeaderAccessControlAllowMethods, fiber.MethodPost+", "+fiber.MethodOptions)
+	ctx.Set("Access-Control-Allow-Private-Network", "true")
 }

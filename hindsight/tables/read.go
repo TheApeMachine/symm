@@ -27,6 +27,7 @@ retained values must be copied before advancing the iterator.
 func (catalog *Catalog) scan(
 	ctx context.Context, name string, fields []string, filters ...iceberg.BooleanExpression,
 ) (iter.Seq2[arrow.RecordBatch, error], error) {
+	ctx = catalog.Context(ctx)
 	loaded, err := catalog.Load(ctx, name)
 
 	if err != nil {

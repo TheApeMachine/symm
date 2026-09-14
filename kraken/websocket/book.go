@@ -3,11 +3,14 @@ package websocket
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"maps"
+	"math/big"
 	"slices"
 	"strconv"
 	"sync"
 	"time"
+	"unsafe"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -421,7 +424,7 @@ func (book *Book) apply(
 		symbolBook.EnforceDepth()
 
 		payload.Data[index] = data
-		if data.Checksum != 0 {
+		if data.Checksum != 0 && !fastL3Checksum(symbolBook, data.Checksum) {
 			checksum := symbolBook.L3Checksum(strconv.FormatUint(
 				uint64(data.Checksum),
 				10,
@@ -524,3 +527,55 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 		out.Store(symbol, book.manager.GetBook(symbol))
 	}
 }
+
+type decimalLayout struct {
+	integer *big.Int
+}
+
+func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
+	if d == nil {
+		return buf
+	}
+
+	raw := (*decimalLayout)(unsafe.Pointer(d)).integer
+
+	if raw == nil || raw.Sign() == 0 {
+		return buf
+	}
+
+	return raw.Append(buf, 10)
+}
+
+func fastL3Checksum(b *spotbook.Book, expected uint32) bool {
+	var crc uint32
+	var buf [64]byte
+
+	cursor := b.BestAsk()
+
+	for count := 0; count < 10 && cursor != nil; count++ {
+		for _, order := range cursor.Queue() {
+			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
+			crc = crc32.Update(crc, crc32.IEEETable, digits)
+			digits = appendDecimalDigits(buf[:0], order.Quantity)
+			crc = crc32.Update(crc, crc32.IEEETable, digits)
+		}
+
+		cursor = cursor.Higher
+	}
+
+	cursor = b.BestBid()
+
+	for count := 0; count < 10 && cursor != nil; count++ {
+		for _, order := range cursor.Queue() {
+			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
+			crc = crc32.Update(crc, crc32.IEEETable, digits)
+			digits = appendDecimalDigits(buf[:0], order.Quantity)
+			crc = crc32.Update(crc, crc32.IEEETable, digits)
+		}
+
+		cursor = cursor.Lower
+	}
+
+	return crc == expected
+}
+

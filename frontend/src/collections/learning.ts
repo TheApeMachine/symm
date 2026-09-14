@@ -2,6 +2,7 @@ import { createStore } from "@tanstack/react-store";
 import { ByteBuffer } from "flatbuffers";
 import {
 	candidatesAtom,
+	observeSymbols,
 	phaseAtom,
 	positionCountAtom,
 	updateEquity,
@@ -20,6 +21,15 @@ export const receiveLearning = (bytes: Uint8Array) => {
 	).unpack();
 
 	learningStore.setState(() => state);
+
+	if (state.markets && state.markets.length > 0) {
+		const syms = state.markets
+			.map((m) => String(m.symbol ?? ""))
+			.filter(Boolean);
+		if (syms.length > 0) {
+			observeSymbols(syms);
+		}
+	}
 
 	if (state.status) {
 		phaseAtom.set(typeof state.status === "string" ? state.status : String(state.status));

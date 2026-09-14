@@ -3,6 +3,8 @@ package tables
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -11,6 +13,11 @@ import (
 	"github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/catalog/rest"
 	icebergio "github.com/apache/iceberg-go/io"
+	"github.com/apache/iceberg-go/utils"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 
 	// The catalog hands back s3:// metadata locations, and iceberg resolves
 	// those through its own FileIO registry rather than through this project's
@@ -42,6 +49,7 @@ type Catalog struct {
 	cachedEpochs  []int64
 	epochsLoaded  time.Time
 	timelineIndex map[int64]*runTimelineIndex
+	awsConfig     *aws.Config
 }
 
 /*
@@ -55,6 +63,18 @@ func Wrap(underlying catalog.Catalog) *Catalog {
 		catalog:       underlying,
 		timelineIndex: make(map[int64]*runTimelineIndex),
 	}
+}
+
+/*
+Context enriches ctx with the catalog's pooled AWS configuration so internal
+FileIO operations reuse the same HTTP transport and avoid TCP port exhaustion.
+*/
+func (c *Catalog) Context(ctx context.Context) context.Context {
+	if c == nil || c.awsConfig == nil {
+		return ctx
+	}
+
+	return utils.WithAwsConfig(ctx, c.awsConfig)
 }
 
 /*
@@ -75,30 +95,84 @@ func Open(ctx context.Context) *Catalog {
 		return nil
 	}
 
-	// The FileIO reads the data files directly, so it needs the same endpoint
-	// and credential posture as the object store rather than the AWS defaults.
-	properties := iceberg.Properties{
-		icebergio.S3EndpointURL: viper.GetString("storage.s3.endpoint"),
-		icebergio.S3Region:      viper.GetString("storage.s3.region"),
-	}
+	s3Endpoint := viper.GetString("storage.s3.endpoint")
+	s3Region := viper.GetString("storage.s3.region")
+	accessKey := viper.GetString("storage.s3.access_key_id")
+	secretKey := viper.GetString("storage.s3.secret_access_key")
 
-	properties[icebergio.S3AccessKeyID] = viper.GetString("storage.s3.access_key_id")
-	properties[icebergio.S3SecretAccessKey] = viper.GetString("storage.s3.secret_access_key")
-
-	// An unauthenticated venue verifies no signature, but the SDK still needs
-	// credentials to exist: given none it walks its whole provider chain and
-	// ends up waiting on the EC2 instance metadata service, which is not there.
-	// Static placeholders keep the request signed and local.
 	if viper.GetBool("storage.s3.anonymous") {
-		properties[icebergio.S3AccessKeyID] = anonymousCredential
-		properties[icebergio.S3SecretAccessKey] = anonymousCredential
+		accessKey = anonymousCredential
+		secretKey = anonymousCredential
 	}
 
-	connected, err := rest.NewCatalog(
-		ctx, "seaweed", uri,
+	properties := iceberg.Properties{
+		icebergio.S3EndpointURL:     s3Endpoint,
+		icebergio.S3Region:          s3Region,
+		icebergio.S3AccessKeyID:     accessKey,
+		icebergio.S3SecretAccessKey: secretKey,
+	}
+
+	// Shared HTTP transport for both REST catalog and S3 blob operations.
+	// Reusing connections prevents ephemeral TCP port exhaustion under high concurrency.
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:        512,
+		MaxIdleConnsPerHost: 256,
+		MaxConnsPerHost:     256,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
+	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+		t.Proxy = http.ProxyFromEnvironment
+		t.DialContext = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+		t.MaxIdleConns = 512
+		t.MaxIdleConnsPerHost = 256
+		t.MaxConnsPerHost = 256
+		t.IdleConnTimeout = 90 * time.Second
+	})
+
+	awsOpts := []func(*config.LoadOptions) error{
+		config.WithHTTPClient(httpClient),
+	}
+
+	if s3Region != "" {
+		awsOpts = append(awsOpts, config.WithRegion(s3Region))
+	}
+
+	if accessKey != "" || secretKey != "" {
+		awsOpts = append(awsOpts, config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		))
+	}
+
+	awsCfg, err := config.LoadDefaultConfig(ctx, awsOpts...)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[iceberg] failed to load AWS configuration",
+			err,
+		))
+	}
+
+	restOpts := []rest.Option{
 		rest.WithWarehouseLocation(warehouse),
 		rest.WithAdditionalProps(properties),
-	)
+		rest.WithCustomTransport(transport),
+	}
+
+	if err == nil {
+		restOpts = append(restOpts, rest.WithAwsConfig(awsCfg))
+	}
+
+	connected, err := rest.NewCatalog(ctx, "seaweed", uri, restOpts...)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -110,10 +184,10 @@ func Open(ctx context.Context) *Catalog {
 		return nil
 	}
 
-	return &Catalog{
-		catalog:       connected,
-		timelineIndex: make(map[int64]*runTimelineIndex),
-	}
+	cat := Wrap(connected)
+	cat.awsConfig = &awsCfg
+
+	return cat
 }
 
 /*
@@ -187,6 +261,7 @@ func (c *Catalog) ensureTable(
 	partitioning iceberg.PartitionSpec,
 	properties iceberg.Properties,
 ) error {
+	ctx = c.Context(ctx)
 	identifier := table.Identifier{Namespace, name}
 	exists, err := c.catalog.CheckTableExists(ctx, identifier)
 
@@ -199,7 +274,7 @@ func (c *Catalog) ensureTable(
 	}
 
 	if exists {
-		return c.configure(ctx, name, properties)
+		return c.configure(ctx, name, schema, properties)
 	}
 
 	if _, err := c.catalog.CreateTable(
@@ -207,7 +282,7 @@ func (c *Catalog) ensureTable(
 		catalog.WithPartitionSpec(&partitioning), catalog.WithProperties(properties),
 	); err != nil {
 		if errors.Is(err, catalog.ErrTableAlreadyExists) {
-			return c.configure(ctx, name, properties)
+			return c.configure(ctx, name, schema, properties)
 		}
 
 		return errnie.Error(errnie.Err(
@@ -220,30 +295,70 @@ func (c *Catalog) ensureTable(
 	return nil
 }
 
-// configure updates existing tables only when their retry budget differs.
-func (c *Catalog) configure(ctx context.Context, name string, properties iceberg.Properties) error {
-	if len(properties) == 0 {
-		return nil
-	}
-
+// configure updates existing tables when schema requires evolution or retry budget differs.
+func (c *Catalog) configure(
+	ctx context.Context,
+	name string,
+	schema *iceberg.Schema,
+	properties iceberg.Properties,
+) error {
 	loaded, err := c.Load(ctx, name)
 
 	if err != nil {
 		return err
 	}
 
-	if loaded.Properties()[table.CommitNumRetriesKey] == properties[table.CommitNumRetriesKey] {
+	transaction := loaded.NewTransaction()
+	needsCommit := false
+
+	var missingFields []iceberg.NestedField
+
+	for _, field := range schema.Fields() {
+		if _, found := loaded.Schema().FindFieldByName(field.Name); !found {
+			missingFields = append(missingFields, field)
+		}
+	}
+
+	if len(missingFields) > 0 {
+		updater := transaction.UpdateSchema(false, true)
+
+		for _, field := range missingFields {
+			updater.AddColumn([]string{field.Name}, field.Type, field.Doc, false, nil)
+		}
+
+		if err := updater.Commit(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[iceberg] evolve schema "+name,
+				err,
+			))
+		}
+
+		needsCommit = true
+	}
+
+	if len(properties) > 0 && loaded.Properties()[table.CommitNumRetriesKey] != properties[table.CommitNumRetriesKey] {
+		if err := transaction.SetProperties(properties); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[iceberg] configure "+name,
+				err,
+			))
+		}
+
+		needsCommit = true
+	}
+
+	if !needsCommit {
 		return nil
 	}
 
-	transaction := loaded.NewTransaction()
-
-	if err := transaction.SetProperties(properties); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "[iceberg] configure "+name, err))
-	}
-
 	if _, err := transaction.Commit(ctx); err != nil {
-		return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] configure "+name, err))
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] commit table updates "+name,
+			err,
+		))
 	}
 
 	return nil
@@ -251,7 +366,7 @@ func (c *Catalog) configure(ctx context.Context, name string, properties iceberg
 
 // Load returns one of the Hindsight tables for reading or appending.
 func (c *Catalog) Load(ctx context.Context, name string) (*table.Table, error) {
-	loaded, err := c.catalog.LoadTable(ctx, table.Identifier{Namespace, name})
+	loaded, err := c.catalog.LoadTable(c.Context(ctx), table.Identifier{Namespace, name})
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

@@ -108,7 +108,7 @@ is skipped; a fully-booked channel returns an error so the caller can observe
 backpressure rather than silently dropping a state.
 */
 func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
-	if state == nil {
+	if state == nil || !fluidTransport.Wants(types.ManifoldChannel) {
 		return nil
 	}
 
@@ -123,7 +123,7 @@ PublishResonance fans one resonance artifact to every viewer owning
 the resonance channel, wrapped in a canonical ResonanceFrame.
 */
 func (fluidTransport *FluidRTC) PublishResonance(artifact *types.ResonanceArtifact) error {
-	if artifact == nil {
+	if artifact == nil || !fluidTransport.Wants(types.ResonanceChannel) {
 		return nil
 	}
 
@@ -161,7 +161,7 @@ func (fluidTransport *FluidRTC) publishBytes(channelName string, payload []byte)
 		channel := peer.channels[channelName]
 		peer.mutex.RUnlock()
 
-		if channel == nil {
+		if channel == nil || !channel.idle() {
 			continue
 		}
 
@@ -172,7 +172,7 @@ func (fluidTransport *FluidRTC) publishBytes(channelName string, payload []byte)
 }
 
 var webrtcBuilders = sync.Pool{
-	New: func() any { return flatbuffers.NewBuilder(16384) },
+	New: func() any { return flatbuffers.NewBuilder(262144) },
 }
 
 /*

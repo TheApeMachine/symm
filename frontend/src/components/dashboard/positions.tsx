@@ -36,84 +36,26 @@ type PositionCardData = {
 	returnPct: string;
 };
 
-export const Positions = () => {
-	const positions = useSelector(learningStore, (learningState) => {
-		const currentPositions: PositionCardData[] = [];
-		const policy = learningState?.agents?.[0];
+const selectPositions = (learningState: any): PositionCardData[] => {
+	const currentPositions: PositionCardData[] = [];
+	const policy = learningState?.agents?.[0];
 
-		if (policy?.positions && policy.positions.length > 0) {
-			for (const currentPosition of policy.positions) {
-				const currentHolding = currentPosition.holding;
-				if (!currentHolding) continue;
-
-				const currentSymbol = String(currentHolding.symbol ?? "");
-				if (!currentSymbol) continue;
-
-				const positionStatus = String(
-					currentHolding.status ?? currentPosition.status ?? "—",
-				);
-				if (positionStatus === "closed") {
-					continue;
-				}
-
-				const rawPnl = currentHolding.pnl;
-				const pnlNum =
-					typeof rawPnl === "number"
-						? rawPnl
-						: typeof rawPnl === "string" && Number.isFinite(Number(rawPnl))
-							? Number(rawPnl)
-							: 0;
-
-				const entryPrice = currentHolding.entryPrice;
-				const mark = currentHolding.mark;
-				const returnPct = currentHolding.returnPct;
-
-				currentPositions.push({
-					symbol: currentSymbol,
-					status: positionStatus,
-					pnl: `${formatValue(rawPnl, 4)} USD`,
-					pnlValue: pnlNum,
-					entryPrice: formatValue(entryPrice, 6),
-					mark: formatValue(mark, 6),
-					returnPct: `${formatValue(returnPct, 2)}%`,
-				});
-			}
-
-			if (currentPositions.length > 0) {
-				return currentPositions.sort((leftPosition, rightPosition) =>
-					leftPosition.symbol.localeCompare(rightPosition.symbol),
-				);
-			}
-		}
-
-		const state: any = positionStore.state;
-		const latestFrame =
-			typeof state?.findLast === "function"
-				? state.findLast(() => true)
-				: Array.isArray(state)
-					? state[state.length - 1]
-					: state;
-		if (!latestFrame || typeof latestFrame.rowsLength !== "function") return [];
-
-		const fallbackPositions: PositionCardData[] = [];
-
-		for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
-			const currentPosition = latestFrame.rows(rowIndex, positionObject);
-			if (!currentPosition) continue;
-
-			const currentHolding = currentPosition.holding(holdingObject);
+	if (policy?.positions && policy.positions.length > 0) {
+		for (const currentPosition of policy.positions) {
+			const currentHolding = currentPosition.holding;
 			if (!currentHolding) continue;
 
-			const currentSymbol = currentHolding.symbol() ?? "";
+			const currentSymbol = String(currentHolding.symbol ?? "");
 			if (!currentSymbol) continue;
 
-			const positionStatus =
-				currentHolding.status() ?? currentPosition.status() ?? "—";
+			const positionStatus = String(
+				currentHolding.status ?? currentPosition.status ?? "—",
+			);
 			if (positionStatus === "closed") {
 				continue;
 			}
 
-			const rawPnl = currentHolding.pnl();
+			const rawPnl = currentHolding.pnl;
 			const pnlNum =
 				typeof rawPnl === "number"
 					? rawPnl
@@ -121,20 +63,106 @@ export const Positions = () => {
 						? Number(rawPnl)
 						: 0;
 
-			fallbackPositions.push({
+			const entryPrice = currentHolding.entryPrice;
+			const mark = currentHolding.mark;
+			const returnPct = currentHolding.returnPct;
+
+			currentPositions.push({
 				symbol: currentSymbol,
 				status: positionStatus,
-				pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
+				pnl: `${formatValue(rawPnl, 4)} USD`,
 				pnlValue: pnlNum,
-				entryPrice: formatValue(currentHolding.entryPrice(), 6),
-				mark: formatValue(currentHolding.mark(), 6),
-				returnPct: `${formatValue(currentHolding.returnPct(), 2)}%`,
+				entryPrice: formatValue(entryPrice, 6),
+				mark: formatValue(mark, 6),
+				returnPct: `${formatValue(returnPct, 2)}%`,
 			});
 		}
 
-		return fallbackPositions.sort((leftPosition, rightPosition) =>
-			leftPosition.symbol.localeCompare(rightPosition.symbol),
-		);
+		if (currentPositions.length > 0) {
+			return currentPositions.sort((leftPosition, rightPosition) =>
+				leftPosition.symbol.localeCompare(rightPosition.symbol),
+			);
+		}
+	}
+
+	const state: any = positionStore.state;
+	const latestFrame =
+		typeof state?.findLast === "function"
+			? state.findLast(() => true)
+			: Array.isArray(state)
+				? state[state.length - 1]
+				: state;
+	if (!latestFrame || typeof latestFrame.rowsLength !== "function") return [];
+
+	const fallbackPositions: PositionCardData[] = [];
+
+	for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
+		const currentPosition = latestFrame.rows(rowIndex, positionObject);
+		if (!currentPosition) continue;
+
+		const currentHolding = currentPosition.holding(holdingObject);
+		if (!currentHolding) continue;
+
+		const currentSymbol = currentHolding.symbol() ?? "";
+		if (!currentSymbol) continue;
+
+		const positionStatus =
+			currentHolding.status() ?? currentPosition.status() ?? "—";
+		if (positionStatus === "closed") {
+			continue;
+		}
+
+		const rawPnl = currentHolding.pnl();
+		const pnlNum =
+			typeof rawPnl === "number"
+				? rawPnl
+				: typeof rawPnl === "string" && Number.isFinite(Number(rawPnl))
+					? Number(rawPnl)
+					: 0;
+
+		fallbackPositions.push({
+			symbol: currentSymbol,
+			status: positionStatus,
+			pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
+			pnlValue: pnlNum,
+			entryPrice: formatValue(currentHolding.entryPrice(), 6),
+			mark: formatValue(currentHolding.mark(), 6),
+			returnPct: `${formatValue(currentHolding.returnPct(), 2)}%`,
+		});
+	}
+
+	return fallbackPositions.sort((leftPosition, rightPosition) =>
+		leftPosition.symbol.localeCompare(rightPosition.symbol),
+	);
+};
+
+const positionsEqual = (
+	left: PositionCardData[],
+	right: PositionCardData[],
+): boolean => {
+	if (left === right) return true;
+	if (left.length !== right.length) return false;
+	for (let index = 0; index < left.length; index++) {
+		const l = left[index];
+		const r = right[index];
+		if (
+			l.symbol !== r.symbol ||
+			l.status !== r.status ||
+			l.pnl !== r.pnl ||
+			l.pnlValue !== r.pnlValue ||
+			l.entryPrice !== r.entryPrice ||
+			l.mark !== r.mark ||
+			l.returnPct !== r.returnPct
+		) {
+			return false;
+		}
+	}
+	return true;
+};
+
+export const Positions = () => {
+	const positions = useSelector(learningStore, selectPositions, {
+		compare: positionsEqual,
 	});
 	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(
 		new Set(),
@@ -144,15 +172,16 @@ export const Positions = () => {
 	// otherwise linger forever — clear it the moment the symbol is no longer
 	// open.
 	useEffect(() => {
-		const openSymbols = new Set(positions.map((pos) => pos.symbol));
+		if (pendingExits.size === 0) return;
 
-		setPendingExits((current) => {
-			const next = new Set(
-				[...current].filter((symbol) => openSymbols.has(symbol)),
-			);
-			return next.size === current.size ? current : next;
-		});
-	}, [positions]);
+		const openSymbols = new Set(positions.map((pos) => pos.symbol));
+		const next = new Set(
+			[...pendingExits].filter((symbol) => openSymbols.has(symbol)),
+		);
+		if (next.size !== pendingExits.size) {
+			setPendingExits(next);
+		}
+	}, [positions, pendingExits]);
 
 	const requestExit = (symbol: string) => {
 		if (pendingExits.has(symbol)) {

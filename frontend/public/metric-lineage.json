@@ -638,7 +638,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 116,
+      "line": 144,
       "consumers": [
         {
           "kind": "bound",
@@ -658,7 +658,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 119,
+      "line": 147,
       "consumers": [
         {
           "kind": "bound",
@@ -677,7 +677,7 @@
       "metric": "buy_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 143,
+      "line": 171,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -688,7 +688,7 @@
       "metric": "cumulative_notional_delta",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 131,
+      "line": 159,
       "consumers": [
         {
           "kind": "bound",
@@ -707,7 +707,7 @@
       "metric": "cumulative_volume_delta",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 113,
+      "line": 141,
       "consumers": [
         {
           "kind": "bound",
@@ -726,7 +726,7 @@
       "metric": "cvd_epoch_from",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 158,
+      "line": 186,
       "consumers": [
         {
           "kind": "bound",
@@ -746,7 +746,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 101,
+      "line": 129,
       "consumers": [
         {
           "kind": "bound",
@@ -766,7 +766,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 104,
+      "line": 132,
       "consumers": [
         {
           "kind": "bound",
@@ -785,7 +785,7 @@
       "metric": "gross_executed_quantity",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 107,
+      "line": 135,
       "consumers": [
         {
           "kind": "bound",
@@ -804,7 +804,7 @@
       "metric": "gross_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 122,
+      "line": 150,
       "consumers": [
         {
           "kind": "bound",
@@ -823,7 +823,7 @@
       "metric": "gross_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 137,
+      "line": 165,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -834,7 +834,7 @@
       "metric": "mean_trade_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 128,
+      "line": 156,
       "consumers": [
         {
           "kind": "bound",
@@ -853,7 +853,7 @@
       "metric": "net_executed_quantity",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 110,
+      "line": 138,
       "consumers": [
         {
           "kind": "bound",
@@ -872,7 +872,7 @@
       "metric": "net_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 125,
+      "line": 153,
       "consumers": [
         {
           "kind": "bound",
@@ -891,7 +891,7 @@
       "metric": "net_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 140,
+      "line": 168,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -902,7 +902,7 @@
       "metric": "net_notional_rate_velocity",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 149,
+      "line": 177,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -913,7 +913,7 @@
       "metric": "sell_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 146,
+      "line": 174,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -924,7 +924,7 @@
       "metric": "signed_count_fraction",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 152,
+      "line": 180,
       "consumers": [
         {
           "kind": "bound",
@@ -943,7 +943,7 @@
       "metric": "signed_net_fraction",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 155,
+      "line": 183,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -954,7 +954,7 @@
       "metric": "signed_net_fraction_baseline",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 161,
+      "line": 189,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -965,7 +965,7 @@
       "metric": "signed_net_fraction_divergence",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 164,
+      "line": 192,
       "consumers": [
         {
           "kind": "bound",
@@ -984,7 +984,7 @@
       "metric": "signed_net_fraction_zscore",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 167,
+      "line": 195,
       "consumers": [
         {
           "kind": "bound",
@@ -1010,7 +1010,7 @@
       "metric": "trade_count",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 92,
+      "line": 120,
       "consumers": [
         {
           "kind": "bound",
@@ -1030,7 +1030,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 95,
+      "line": 123,
       "consumers": [
         {
           "kind": "bound",
@@ -1050,7 +1050,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 98,
+      "line": 126,
       "consumers": [
         {
           "kind": "bound",
@@ -1069,7 +1069,7 @@
       "metric": "trade_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 134,
+      "line": 162,
       "consumers": [
         {
           "kind": "bound",
@@ -1809,7 +1809,7 @@
       "metric": "arrival_rate",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 119,
+      "line": 130,
       "consumers": [
         {
           "kind": "bound",
@@ -1829,7 +1829,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 113,
+      "line": 124,
       "consumers": [
         {
           "kind": "bound",
@@ -1849,7 +1849,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 116,
+      "line": 127,
       "consumers": [
         {
           "kind": "bound",
@@ -1868,7 +1868,7 @@
       "metric": "background_rate",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 137,
+      "line": 148,
       "consumers": [
         {
           "kind": "bound",
@@ -1888,7 +1888,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 131,
+      "line": 142,
       "consumers": [
         {
           "kind": "bound",
@@ -1908,7 +1908,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 134,
+      "line": 145,
       "consumers": [
         {
           "kind": "bound",
@@ -1927,7 +1927,7 @@
       "metric": "branching_spectral_radius",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 206,
+      "line": 217,
       "consumers": [
         {
           "kind": "bound",
@@ -1954,7 +1954,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 239,
+      "line": 250,
       "consumers": [
         {
           "kind": "bound",
@@ -1974,7 +1974,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 242,
+      "line": 253,
       "consumers": [
         {
           "kind": "bound",
@@ -1993,7 +1993,7 @@
       "metric": "conditional_intensity",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 128,
+      "line": 139,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2005,7 +2005,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 122,
+      "line": 133,
       "consumers": [
         {
           "kind": "bound",
@@ -2025,7 +2025,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 125,
+      "line": 136,
       "consumers": [
         {
           "kind": "bound",
@@ -2045,7 +2045,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 245,
+      "line": 256,
       "consumers": [
         {
           "kind": "bound",
@@ -2065,7 +2065,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 248,
+      "line": 259,
       "consumers": [
         {
           "kind": "bound",
@@ -2095,7 +2095,7 @@
       "metric": "event_count",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 98,
+      "line": 109,
       "consumers": [
         {
           "kind": "bound",
@@ -2115,7 +2115,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 101,
+      "line": 112,
       "consumers": [
         {
           "kind": "bound",
@@ -2135,7 +2135,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 104,
+      "line": 115,
       "consumers": [
         {
           "kind": "bound",
@@ -2155,7 +2155,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 107,
+      "line": 118,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2167,7 +2167,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 110,
+      "line": 121,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2179,7 +2179,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 152,
+      "line": 163,
       "consumers": [
         {
           "kind": "bound",
@@ -2199,7 +2199,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 155,
+      "line": 166,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2211,7 +2211,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 158,
+      "line": 169,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2223,7 +2223,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 161,
+      "line": 172,
       "consumers": [
         {
           "kind": "bound",
@@ -2242,7 +2242,7 @@
       "metric": "excitation_decay",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 164,
+      "line": 175,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2254,7 +2254,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 167,
+      "line": 178,
       "consumers": [
         {
           "kind": "bound",
@@ -2274,7 +2274,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 170,
+      "line": 181,
       "consumers": [
         {
           "kind": "bound",
@@ -2294,7 +2294,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 173,
+      "line": 184,
       "consumers": [
         {
           "kind": "bound",
@@ -2314,7 +2314,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 176,
+      "line": 187,
       "consumers": [
         {
           "kind": "bound",
@@ -2334,7 +2334,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 146,
+      "line": 157,
       "consumers": [
         {
           "kind": "catalog",
@@ -2354,7 +2354,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 149,
+      "line": 160,
       "consumers": [
         {
           "kind": "catalog",
@@ -2374,7 +2374,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 140,
+      "line": 151,
       "consumers": [
         {
           "kind": "bound",
@@ -2394,7 +2394,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 143,
+      "line": 154,
       "consumers": [
         {
           "kind": "bound",
@@ -2414,7 +2414,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 257,
+      "line": 268,
       "consumers": [
         {
           "kind": "bound",
@@ -2434,7 +2434,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 260,
+      "line": 271,
       "consumers": [
         {
           "kind": "bound",
@@ -2453,7 +2453,7 @@
       "metric": "excitation_share",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 269,
+      "line": 280,
       "consumers": [
         {
           "kind": "bound",
@@ -2473,7 +2473,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 263,
+      "line": 274,
       "consumers": [
         {
           "kind": "bound",
@@ -2493,7 +2493,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 266,
+      "line": 277,
       "consumers": [
         {
           "kind": "bound",
@@ -2512,7 +2512,7 @@
       "metric": "excitation_timescale",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 179,
+      "line": 190,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2524,7 +2524,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 182,
+      "line": 193,
       "consumers": [
         {
           "kind": "bound",
@@ -2544,7 +2544,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 185,
+      "line": 196,
       "consumers": [
         {
           "kind": "bound",
@@ -2564,7 +2564,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 188,
+      "line": 199,
       "consumers": [
         {
           "kind": "bound",
@@ -2584,7 +2584,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 191,
+      "line": 202,
       "consumers": [
         {
           "kind": "bound",
@@ -2603,7 +2603,7 @@
       "metric": "expected_descendants_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 209,
+      "line": 220,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2614,7 +2614,7 @@
       "metric": "expected_descendants_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 212,
+      "line": 223,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2637,7 +2637,7 @@
       "side": "hawkes",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 215,
+      "line": 226,
       "consumers": [
         {
           "kind": "bound",
@@ -2657,7 +2657,7 @@
       "side": "poisson",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 218,
+      "line": 229,
       "consumers": [
         {
           "kind": "bound",
@@ -2677,7 +2677,7 @@
       "side": "self_only",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 221,
+      "line": 232,
       "consumers": [
         {
           "kind": "bound",
@@ -2696,7 +2696,7 @@
       "metric": "log_likelihood_gain_per_event_vs_poisson",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 230,
+      "line": 241,
       "consumers": [
         {
           "kind": "bound",
@@ -2715,7 +2715,7 @@
       "metric": "log_likelihood_gain_per_event_vs_self_only",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 236,
+      "line": 247,
       "consumers": [
         {
           "kind": "bound",
@@ -2734,7 +2734,7 @@
       "metric": "log_likelihood_gain_vs_poisson",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 227,
+      "line": 238,
       "consumers": [
         {
           "kind": "bound",
@@ -2753,7 +2753,7 @@
       "metric": "log_likelihood_gain_vs_self_only",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 233,
+      "line": 244,
       "consumers": [
         {
           "kind": "bound",
@@ -2773,7 +2773,7 @@
       "side": "hawkes",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 224,
+      "line": 235,
       "consumers": [
         {
           "kind": "bound",
@@ -2793,7 +2793,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 194,
+      "line": 205,
       "consumers": [
         {
           "kind": "bound",
@@ -2813,7 +2813,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 197,
+      "line": 208,
       "consumers": [
         {
           "kind": "bound",
@@ -2833,7 +2833,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 200,
+      "line": 211,
       "consumers": [
         {
           "kind": "bound",
@@ -2853,7 +2853,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 203,
+      "line": 214,
       "consumers": [
         {
           "kind": "bound",
@@ -2872,7 +2872,7 @@
       "metric": "snr",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 272,
+      "line": 283,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2884,7 +2884,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 251,
+      "line": 262,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2896,7 +2896,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
-      "line": 254,
+      "line": 265,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4070,6 +4070,30 @@
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
       "line": 311,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "market/price",
+      "source": "market",
+      "metric": "price",
+      "package": "github.com/theapemachine/symm/hindsight/tables",
+      "file": "hindsight/tables/rehearsal.go",
+      "line": 306,
+      "unit": "item.price",
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "market/qty",
+      "source": "market",
+      "metric": "qty",
+      "package": "github.com/theapemachine/symm/hindsight/tables",
+      "file": "hindsight/tables/rehearsal.go",
+      "line": 307,
+      "unit": "item.qty",
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5552,7 +5576,7 @@
       "metric": "seen",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 292,
+      "line": 312,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -5563,7 +5587,7 @@
       "metric": "wealth",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/training.go",
-      "line": 295,
+      "line": 315,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6291,25 +6315,25 @@
     {
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/recognition.go",
-      "line": 569,
+      "line": 634,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/recognition.go",
-      "line": 617,
+      "line": 682,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/recognition.go",
-      "line": 648,
+      "line": 713,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     }
   ],
   "summary": {
-    "totalProducers": 375,
-    "deadProducers": 213,
+    "totalProducers": 377,
+    "deadProducers": 215,
     "referencedProducers": 162,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,

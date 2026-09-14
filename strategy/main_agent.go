@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"sync"
@@ -13,11 +14,13 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
+
 
 /*
 TradeOutcome records one completed simulated trade leg with its duration
@@ -98,12 +101,14 @@ type MainAgent struct {
 	m2Return   float64
 	variance   float64
 
-	recentClosed []*telemetry.PositionT
-	exitRequests map[string]bool
+	recentClosed  []*telemetry.PositionT
+	exitRequests  map[string]bool
+	entryContexts map[string][]byte
 
 	lastDecision *telemetry.LearningDecisionT
 	alternatives []*telemetry.LearningActionT
 }
+
 
 func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...any) *MainAgent {
 	if initialCash == nil || initialCash.Sign() <= 0 {
@@ -131,17 +136,17 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...an
 	var bal *broker.Balance
 
 	for _, dep := range deps {
-		switch v := dep.(type) {
+		switch dependency := dep.(type) {
 		case *broker.Instrument:
-			inst = v
+			inst = dependency
 		case *broker.Price:
-			prc = v
+			prc = dependency
 		case core.Primitive:
-			eng = v
+			eng = dependency
 		case *websocket.API:
-			api = v
+			api = dependency
 		case *broker.Balance:
-			bal = v
+			bal = dependency
 		}
 	}
 
@@ -175,8 +180,10 @@ func NewMainAgent(initialCash *decimal.Decimal, targetAccount string, deps ...an
 		symbolMaturity: make(map[string]int),
 		recentClosed:   make([]*telemetry.PositionT, 0, 50),
 		exitRequests:   make(map[string]bool),
+		entryContexts:  make(map[string][]byte),
 	}
 }
+
 
 func (agent *MainAgent) RequestExit(symbol string) {
 	agent.mu.Lock()
@@ -408,11 +415,15 @@ func (agent *MainAgent) Step(price *decimal.Decimal, symbol string, decision Act
 		reduce := false
 
 		if holding != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
+			currentAction = "hold"
+
 			if decision.Action == ActionExit {
 				currentAction = "sell"
 				reduce = true
 			}
-		} else if decision.Action == ActionEnter {
+		}
+
+		if (holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0) && decision.Action == ActionEnter {
 			currentAction = "buy"
 		}
 
@@ -425,6 +436,7 @@ func (agent *MainAgent) Step(price *decimal.Decimal, symbol string, decision Act
 			},
 			AtNs: now.UnixNano(),
 		}
+
 
 		// 3. Evaluate trading action
 		if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
@@ -473,8 +485,9 @@ func (agent *MainAgent) Step(price *decimal.Decimal, symbol string, decision Act
 			}
 
 			if shouldExit {
-				agent.exitLong(symbol, currentPrice, now)
+				agent.exitLong(symbol, currentPrice, decision, now)
 			}
+
 		}
 
 		// 4. Update overall portfolio valuation
@@ -547,12 +560,15 @@ func (agent *MainAgent) enterLong(
 				totalCost = entryCost.Total
 			}
 		}
-	} else if price != nil && price.Sign() > 0 && allocatedCash.Sign() > 0 {
+	}
+
+	if agent.price == nil && price != nil && price.Sign() > 0 && allocatedCash.Sign() > 0 {
 		quantity = allocatedCash.Div(price)
 		notional = allocatedCash
 		fee = decimal.NewFromInt64(0)
 		totalCost = allocatedCash
 	}
+
 
 	if quantity == nil || notional == nil || totalCost == nil {
 		return
@@ -613,6 +629,10 @@ func (agent *MainAgent) enterLong(
 	agent.posQuantities[symbol] = quantity
 	agent.posCosts[symbol] = notional
 
+	if len(decision.Context) > 0 {
+		agent.entryContexts[symbol] = bytes.Clone(decision.Context)
+	}
+
 	agent.lastDecision = &telemetry.LearningDecisionT{
 		Id:       agent.decisions,
 		Agent:    0,
@@ -636,8 +656,10 @@ func (agent *MainAgent) enterLong(
 func (agent *MainAgent) exitLong(
 	symbol string,
 	price *decimal.Decimal,
+	decision ActionDecision,
 	now time.Time,
 ) {
+
 	qty := agent.posQuantities[symbol]
 	cost := agent.posCosts[symbol]
 	holding := agent.positions[symbol]
@@ -768,6 +790,37 @@ func (agent *MainAgent) exitLong(
 		ExitAt:     now,
 		Decision:   decisionRecord,
 	}, returnBp)
+
+	// Economic refinement: commit mature PnL feedback to cognition (REQ-32, REQ-33, REQ-34)
+	if agent.engine != nil {
+		feedback := math.Tanh(returnBp / 100.0)
+		entryCtx := agent.entryContexts[symbol]
+
+		if len(entryCtx) > 0 {
+			if err := observeContext(agent.engine, cognition.Association{
+				Context:  entryCtx,
+				Class:    []byte(ActionEnter),
+				Feedback: feedback,
+				Graded:   true,
+			}); err != nil {
+				errnie.Error(errnie.Err(errnie.Internal, "main_agent: economic entry reinforcement failed", err))
+			}
+		}
+
+		if len(decision.Context) > 0 {
+			if err := observeContext(agent.engine, cognition.Association{
+				Context:  decision.Context,
+				Class:    []byte(ActionExit),
+				Feedback: feedback,
+				Graded:   true,
+			}); err != nil {
+				errnie.Error(errnie.Err(errnie.Internal, "main_agent: economic exit reinforcement failed", err))
+			}
+		}
+	}
+
+	delete(agent.entryContexts, symbol)
+
 
 	closedPosition := &telemetry.PositionT{
 		Status: "closed",

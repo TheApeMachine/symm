@@ -39,6 +39,7 @@ type Price struct {
 	fees       *sync.Map
 	tickers    *sync.Map
 	normalizer *spot.Normalizer
+	anomalies  *AnomalyMonitor
 }
 
 // BookSource is the resident book boundary shared by live and captured tapes.
@@ -70,6 +71,7 @@ func NewPrice(
 		normalizer: normalizer,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
+		anomalies:  NewAnomalyMonitor(ctx, 0),
 	}
 
 	if err := errnie.Require(map[string]any{
@@ -338,6 +340,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 			around insufficient depth.
 		*/
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
+			price.recordAnomaly(symbol, AnomalyCrossedBook)
 			err = errnie.Err(errnie.UnprocessableContent, "entry cost: crossed book for "+symbol, nil)
 			return
 		}
@@ -345,6 +348,10 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 		filled, gross, walkErr := price.Walk(book, quantity, BUY)
 
 		if walkErr != nil {
+			if errnie.IsUnprocessableContent(walkErr) {
+				price.recordAnomaly(symbol, AnomalyInsufficientDepth)
+			}
+
 			err = walkErr
 			return
 		}
@@ -380,6 +387,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 	})
 
 	if cost == nil && err == nil {
+		price.recordAnomaly(symbol, AnomalyIncompleteBook)
 		err = errnie.Err(errnie.UnprocessableContent, "entry cost: complete executable book required for "+symbol, nil)
 	}
 
@@ -425,6 +433,7 @@ func (price *Price) Surface(
 		// A crossed or touching book prices no liquidation; it reads as
 		// book shape, not as a fault. See EntryCost above.
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
+			price.recordAnomaly(symbol, AnomalyCrossedBook)
 			err = errnie.Err(errnie.UnprocessableContent, "price: crossed book for "+symbol, nil)
 			return
 		}
@@ -440,6 +449,10 @@ func (price *Price) Surface(
 		filled, gross, walkErr := price.Walk(book, quantity, SELL)
 
 		if walkErr != nil {
+			if errnie.IsUnprocessableContent(walkErr) {
+				price.recordAnomaly(symbol, AnomalyInsufficientDepth)
+			}
+
 			err = walkErr
 			return
 		}
@@ -728,4 +741,39 @@ func (price *Price) ApplyFill(
 	}
 
 	return nil
+}
+
+func (price *Price) recordAnomaly(symbol string, kind AnomalyKind) {
+	if price == nil || price.anomalies == nil {
+		return
+	}
+
+	price.anomalies.Record(price.normalize(symbol), kind)
+}
+
+/* Anomalies returns the anomaly monitor recording degraded market shapes. */
+func (price *Price) Anomalies() *AnomalyMonitor {
+	if price == nil {
+		return nil
+	}
+
+	return price.anomalies
+}
+
+/* MarketHealth returns the continuous health score in [0.0, 1.0] for a symbol. */
+func (price *Price) MarketHealth(symbol string) float64 {
+	if price == nil || price.anomalies == nil {
+		return 1.0
+	}
+
+	return price.anomalies.Health(price.normalize(symbol))
+}
+
+/* Close releases any resources owned by Price, including its anomaly monitor. */
+func (price *Price) Close() error {
+	if price == nil || price.anomalies == nil {
+		return nil
+	}
+
+	return price.anomalies.Close()
 }

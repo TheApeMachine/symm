@@ -25,7 +25,6 @@ import (
 	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/workbench"
 	"golang.design/x/lockfree/wf"
 )
 
@@ -45,6 +44,10 @@ type LearningSource interface {
 	MarshalFlatbuffer(focus string) []byte
 }
 
+type StreamableLearningSource interface {
+	MarshalFlatbufferWith(focus string, fn func([]byte) error) error
+}
+
 /*
 Hub owns the dashboard websocket and broadcasts schema-tagged binary frames.
 It is an ordinary Workspace stage: it registers to ChannelUI through NewHub,
@@ -62,7 +65,6 @@ type Hub struct {
 	frontend         *websocket.Conn
 	frontendMu       sync.Mutex
 	store            *tables.Catalog
-	warehouse        *workbench.Warehouse
 	tradeStore       TradeJournalSource
 	learningSource   LearningSource
 	exitHandler      func(symbol string)
@@ -92,8 +94,7 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		warehouse: workbench.New(),
-		fluid:     NewFluidRTC(ctx, "hub"),
+		fluid: NewFluidRTC(ctx, "hub"),
 	}
 
 	// The dashboard is a separate origin from the hub (vite dev server on
@@ -102,6 +103,11 @@ func NewHub(ctx context.Context) *Hub {
 	// Access-Control-Allow-Origin header. Permit loopback origins on any port
 	// so a locally-served dashboard can always read it without opening CORS to
 	// arbitrary remote origins.
+	hub.app.Use(func(c fiber.Ctx) error {
+		c.Set("Access-Control-Allow-Private-Network", "true")
+		return c.Next()
+	})
+
 	hub.app.Use(cors.New(cors.Config{
 		AllowOriginsFunc: func(origin string) bool {
 			parsed, err := neturl.Parse(origin)
@@ -488,11 +494,7 @@ func NewHub(ctx context.Context) *Hub {
 		hub.frontendMu.Unlock()
 		errnie.Info("hub: frontend websocket connected")
 
-		if hub.learningSource != nil {
-			if payload := hub.learningSource.MarshalFlatbuffer(""); len(payload) > 0 {
-				hub.writeLearning(payload)
-			}
-		}
+		hub.broadcastLearning()
 
 		defer func() {
 			hub.frontendMu.Lock()
@@ -586,6 +588,16 @@ func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
 		case <-ticker.C:
 		}
 
+		if !hub.hasFrontend() {
+			for {
+				if _, ok := ring.Get(); !ok {
+					break
+				}
+			}
+
+			continue
+		}
+
 		for {
 			measurement, ok := ring.Get()
 
@@ -593,7 +605,7 @@ func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
 				break
 			}
 
-			if measurement != nil && !IsRawMarketData(measurement) {
+			if hub.isWireAllowed(measurement) {
 				batch = append(batch, measurement)
 			}
 
@@ -608,12 +620,9 @@ func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
 			batch = batch[:0]
 		}
 
-		if hub.learningSource != nil && hub.hasFrontend() && time.Since(hub.lastLearning) >= hub.learningInterval {
+		if hub.learningSource != nil && time.Since(hub.lastLearning) >= hub.learningInterval {
 			hub.lastLearning = time.Now()
-
-			if payload := hub.learningSource.MarshalFlatbuffer(""); len(payload) > 0 {
-				hub.writeLearning(payload)
-			}
+			hub.broadcastLearning()
 		}
 	}
 }
@@ -703,10 +712,27 @@ func IsAllowedTelemetry(measurement *data.Measurement[float64]) bool {
 }
 
 /*
+isWireAllowed reports whether a measurement is permitted for dashboard telemetry broadcast
+given the current focus symbol. Raw market data is rejected, training/system metrics are
+permitted, and symbol-tagged metrics must match the active focus gate.
+*/
+func (hub *Hub) isWireAllowed(measurement *data.Measurement[float64]) bool {
+	if measurement == nil || IsRawMarketData(measurement) {
+		return false
+	}
+
+	if strings.HasPrefix(strings.ToLower(measurement.Source), "training") {
+		return true
+	}
+
+	return types.Allows(measurement.Label)
+}
+
+/*
 writeFrontend encodes one measurement as a MeasurementsFrame and writes it to the dashboard socket.
 */
 func (hub *Hub) writeFrontend(measurement *data.Measurement[float64]) {
-	if measurement == nil || IsRawMarketData(measurement) {
+	if !hub.isWireAllowed(measurement) {
 		return
 	}
 
@@ -717,23 +743,25 @@ func (hub *Hub) writeFrontend(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	payload := types.EncodeMeasurementsFrame([]*data.Measurement[float64]{measurement})
-
-	if len(payload) == 0 {
-		return
-	}
-
-	if err := hub.frontend.WriteMessage(
-		websocket.BinaryMessage, payload,
-	); err != nil {
-		failed := hub.frontend
-		hub.frontend = nil
-		errnie.Warn(fmt.Sprintf("hub: websocket write message failed; detaching client: %v", err))
-
-		if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
+	_ = types.EncodeMeasurementsFrameWith([]*data.Measurement[float64]{measurement}, func(payload []byte) error {
+		if len(payload) == 0 {
+			return nil
 		}
-	}
+
+		if err := hub.frontend.WriteMessage(
+			websocket.BinaryMessage, payload,
+		); err != nil {
+			failed := hub.frontend
+			hub.frontend = nil
+			errnie.Warn(fmt.Sprintf("hub: websocket write message failed; detaching client: %v", err))
+
+			if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
+			}
+		}
+
+		return nil
+	})
 }
 
 /*
@@ -744,10 +772,17 @@ func (hub *Hub) writeMeasurements(measurements []*data.Measurement[float64]) {
 		return
 	}
 
+	hub.frontendMu.Lock()
+	defer hub.frontendMu.Unlock()
+
+	if hub.frontend == nil {
+		return
+	}
+
 	filtered := make([]*data.Measurement[float64], 0, len(measurements))
 
 	for _, measurement := range measurements {
-		if measurement == nil || IsRawMarketData(measurement) {
+		if !hub.isWireAllowed(measurement) {
 			continue
 		}
 
@@ -758,31 +793,45 @@ func (hub *Hub) writeMeasurements(measurements []*data.Measurement[float64]) {
 		return
 	}
 
-	hub.frontendMu.Lock()
-	defer hub.frontendMu.Unlock()
-
-	if hub.frontend == nil {
-		return
-	}
-
-	payload := types.EncodeMeasurementsFrame(filtered)
-
-	if len(payload) == 0 {
-		return
-	}
-
-	if err := hub.frontend.WriteMessage(
-		websocket.BinaryMessage, payload,
-	); err != nil {
-		failed := hub.frontend
-		hub.frontend = nil
-		errnie.Warn(fmt.Sprintf("hub: websocket write message failed; detaching client: %v", err))
-
-		if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
+	_ = types.EncodeMeasurementsFrameWith(filtered, func(payload []byte) error {
+		if len(payload) == 0 {
+			return nil
 		}
 
+		if err := hub.frontend.WriteMessage(
+			websocket.BinaryMessage, payload,
+		); err != nil {
+			failed := hub.frontend
+			hub.frontend = nil
+			errnie.Warn(fmt.Sprintf("hub: websocket write message failed; detaching client: %v", err))
+
+			if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
+			}
+		}
+
+		return nil
+	})
+}
+
+func (hub *Hub) broadcastLearning() {
+	if hub.learningSource == nil {
 		return
+	}
+
+	focus := types.Focus()
+
+	if streamable, ok := hub.learningSource.(StreamableLearningSource); ok {
+		_ = streamable.MarshalFlatbufferWith(focus, func(payload []byte) error {
+			hub.writeLearning(payload)
+			return nil
+		})
+
+		return
+	}
+
+	if payload := hub.learningSource.MarshalFlatbuffer(focus); len(payload) > 0 {
+		hub.writeLearning(payload)
 	}
 }
 
@@ -975,6 +1024,7 @@ func (hub *Hub) handleCommand(payload []byte) {
 	switch request.Type {
 	case "focus":
 		types.SetFocus(request.Symbol)
+		hub.broadcastLearning()
 	case "position.exit":
 		if hub.exitHandler != nil && request.Symbol != "" {
 			hub.exitHandler(request.Symbol)
@@ -1014,10 +1064,6 @@ func (hub *Hub) Close() error {
 
 	if hub.app != nil {
 		err = errors.Join(err, hub.app.Shutdown())
-	}
-
-	if hub.warehouse != nil {
-		err = errors.Join(err, hub.warehouse.Close())
 	}
 
 	if errors.Is(err, net.ErrClosed) {

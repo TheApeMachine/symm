@@ -47,19 +47,61 @@ FluidWebRTCFeed owns one peer connection carrying the manifold channel and
 decodes each ManifoldFrame once into the fields/particles/phase views the
 viewer paints.
 */
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 5_000;
+const TERMINAL_CONNECTION_STATES: ReadonlySet<RTCPeerConnectionState> = new Set(
+	["failed", "disconnected", "closed"],
+);
+
 export class FluidWebRTCFeed {
 	private connection: RTCPeerConnection | null = null;
+	private disposed = false;
+	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	private reconnectAttempts = 0;
 
 	constructor(private readonly handlers: FluidFeedHandlers) {}
 
+	private scheduleReconnect() {
+		if (this.disposed || this.reconnectTimer !== null) {
+			return;
+		}
+
+		const delay = Math.min(
+			RECONNECT_BASE_MS * 2 ** this.reconnectAttempts,
+			RECONNECT_MAX_MS,
+		);
+		this.reconnectAttempts += 1;
+		this.handlers.onState("connecting");
+
+		this.reconnectTimer = setTimeout(() => {
+			this.reconnectTimer = null;
+			void this.connect();
+		}, delay);
+	}
+
 	async connect() {
-		this.close();
+		if (this.disposed) {
+			return;
+		}
+
+		this.destroyConnection();
 		this.handlers.onState("connecting");
 		const connection = new RTCPeerConnection();
 		this.connection = connection;
+
 		connection.addEventListener("connectionstatechange", () => {
-			if (this.connection === connection) {
-				this.handlers.onState(connection.connectionState);
+			if (this.connection !== connection) {
+				return;
+			}
+
+			this.handlers.onState(connection.connectionState);
+
+			if (connection.connectionState === "connected") {
+				this.reconnectAttempts = 0;
+			}
+
+			if (TERMINAL_CONNECTION_STATES.has(connection.connectionState)) {
+				this.scheduleReconnect();
 			}
 		});
 
@@ -69,15 +111,38 @@ export class FluidWebRTCFeed {
 		});
 		const reader = new FluidRecordReader();
 		channel.binaryType = "arraybuffer";
+		channel.addEventListener("open", () => {
+			console.log("[FluidRTC] data channel opened:", channel.label);
+			this.reconnectAttempts = 0;
+		});
+		channel.addEventListener("close", () => {
+			console.log("[FluidRTC] data channel closed:", channel.label);
+			this.scheduleReconnect();
+		});
+		channel.addEventListener("error", (event) => {
+			console.error("[FluidRTC] data channel error:", event);
+		});
+
+		let chunksReceived = 0;
 		channel.addEventListener("message", (event) => {
 			try {
 				if (!(event.data instanceof ArrayBuffer)) {
 					throw new Error(`${channel.label} received a non-binary message`);
 				}
 
+				chunksReceived += 1;
+				if (chunksReceived === 1 || chunksReceived % 50 === 0) {
+					console.log(
+						`[FluidRTC] chunk ${chunksReceived} received (${event.data.byteLength} bytes)`,
+					);
+				}
+
 				const record = reader.push(event.data);
 
 				if (record !== null) {
+					console.log(
+						`[FluidRTC] full frame reassembled (${record.byteLength} bytes)`,
+					);
 					const { fields, particles, phase } = decodeManifold(
 						new Uint8Array(record),
 					);
@@ -86,6 +151,7 @@ export class FluidWebRTCFeed {
 					this.handlers.onPhase(phase);
 				}
 			} catch (error) {
+				console.error("[FluidRTC] message error:", error);
 				this.handlers.onError(errorValue(error));
 			}
 		});
@@ -124,14 +190,26 @@ export class FluidWebRTCFeed {
 		} catch (error) {
 			if (this.connection === connection) {
 				this.handlers.onError(errorValue(error));
-				this.close();
+				this.destroyConnection();
+				this.scheduleReconnect();
 			}
 		}
 	}
 
-	close() {
+	private destroyConnection() {
 		const connection = this.connection;
 		this.connection = null;
 		connection?.close();
+	}
+
+	close() {
+		this.disposed = true;
+
+		if (this.reconnectTimer !== null) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+
+		this.destroyConnection();
 	}
 }

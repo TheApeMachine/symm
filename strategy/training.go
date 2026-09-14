@@ -43,12 +43,17 @@ func NewTape() *Tape {
 }
 
 func (tape *Tape) Publish(fragment types.ReplayFragment) {
-	if len(fragment.Frames) == 0 || fragment.AnchorIndex <= 0 || fragment.AnchorIndex >= len(fragment.Frames) {
+	if len(fragment.Frames) == 0 {
+		return
+	}
+
+	if fragment.AnchorIndex >= len(fragment.Frames) {
 		return
 	}
 
 	tape.queue.Enqueue(fragment)
 }
+
 
 func (tape *Tape) Close() {
 	tape.done.Store(true)
@@ -95,13 +100,13 @@ excursions. All agents share the underlying cognition memory trie.
 */
 type Training struct {
 	*runtime.System
-	mu     sync.Mutex
-	tape   *Tape
-	space  core.Primitive
-	agents []*Agent
-	main   *MainAgent
-	legs   []types.ReplayFragment
-	seen   atomic.Uint64
+	mu            sync.Mutex
+	tape          *Tape
+	space     core.Primitive
+	agents    []*Agent
+	main      *MainAgent
+	legs      []types.ReplayFragment
+	seen      atomic.Uint64
 }
 
 /* replay is the dashboard's reading of this pipeline. */
@@ -141,21 +146,22 @@ func NewTraining(
 	var initialCash *decimal.Decimal
 
 	for _, dep := range deps {
-		switch v := dep.(type) {
+		switch dependency := dep.(type) {
 		case *broker.Instrument:
-			inst = v
+			inst = dependency
 		case *broker.Price:
-			prc = v
+			prc = dependency
 		case *broker.Balance:
-			bal = v
+			bal = dependency
 		case *websocket.API:
-			api = v
+			api = dependency
 		case *rand.Rand:
-			rng = v
+			rng = dependency
 		case *decimal.Decimal:
-			initialCash = v
+			initialCash = dependency
 		}
 	}
+
 
 	if initialCash == nil && bal != nil {
 		initialCash = bal.Cash()
@@ -232,12 +238,12 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 				symbolMeasurements := make([]*data.Measurement[float64], 0, len(liveMeasurements))
 
 				for _, peerMeas := range liveMeasurements {
-					if peerMeas != nil && peerMeas.Label == symbol {
+					if peerMeas != nil && peerMeas.Err == nil && peerMeas.Label == symbol {
 						symbolMeasurements = append(symbolMeasurements, peerMeas)
 					}
 				}
 
-				if len(symbolMeasurements) == 0 && measurement.Label == symbol {
+				if len(symbolMeasurements) == 0 && measurement.Label == symbol && measurement.Err == nil {
 					symbolMeasurements = []*data.Measurement[float64]{measurement}
 				}
 
@@ -249,19 +255,32 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 					}
 
 					if training.main != nil {
+						holding := training.main.IsHolding(symbol)
+
 						if !impulse.Ready {
+							defaultAction := ActionWait
+
+							if holding {
+								defaultAction = ActionHold
+							}
+
 							training.main.Step(nil, symbol, ActionDecision{
-								Action: ActionWait,
+								Action: defaultAction,
 							})
 						}
 
 						if impulse.Ready {
-							holding := training.main.IsHolding(symbol)
 							decision, err := training.agents[0].ChooseAction(impulse, holding)
 
 							if err != nil {
 								errnie.Error(errnie.Err(errnie.Internal, "training: cognition evaluation failed", err))
-								decision = ActionDecision{Action: ActionWait}
+								defaultAction := ActionWait
+
+								if holding {
+									defaultAction = ActionHold
+								}
+
+								decision = ActionDecision{Action: defaultAction}
 							}
 
 							training.main.Step(nil, symbol, decision)
@@ -274,18 +293,19 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 
 	training.seen.Add(1)
 
-	if m, ok := measurement.Metrics["seen"]; ok {
-		measurement.Metrics["seen"] = m.Write(float64(training.seen.Load()))
+	if seenMetric, ok := measurement.Metrics["seen"]; ok {
+		measurement.Metrics["seen"] = seenMetric.Write(float64(training.seen.Load()))
 	}
 
 	if training.main != nil {
-		if m, ok := measurement.Metrics["wealth"]; ok {
-			measurement.Metrics["wealth"] = m.Write(training.main.wealth)
+		if wealthMetric, ok := measurement.Metrics["wealth"]; ok {
+			measurement.Metrics["wealth"] = wealthMetric.Write(training.main.wealth)
 		}
 	}
 
 	return measurement
 }
+
 
 func (training *Training) Register() *data.Measurement[float64] {
 	measurement := data.NewMeasurement("training", map[string]data.Metric[float64]{
@@ -323,9 +343,10 @@ func (training *Training) mount() {
 			return
 		}
 
-		if len(fragment.Frames) == 0 || fragment.AnchorIndex <= 0 || fragment.AnchorIndex >= len(fragment.Frames) {
+		if len(fragment.Frames) == 0 || fragment.AnchorIndex >= len(fragment.Frames) {
 			continue
 		}
+
 
 		training.mu.Lock()
 		training.legs = append(training.legs, fragment)
@@ -334,8 +355,12 @@ func (training *Training) mount() {
 		for _, worker := range rehearsalWorkers {
 			randSlot := 0
 
-			if worker.ring != nil && ringLen[[]*data.Measurement[float64]](worker.ring) > 0 {
-				randSlot = rand.Intn(ringLen[[]*data.Measurement[float64]](worker.ring))
+			if worker.ring != nil {
+				ringCount := ringLen[[]*data.Measurement[float64]](worker.ring)
+
+				if ringCount > 0 {
+					randSlot = rand.Intn(ringCount)
+				}
 			}
 
 			worker.IngestReplay(fragment, randSlot)
@@ -411,15 +436,15 @@ func (training *Training) snapshot() *replay {
 	}
 
 	return &replay{
-		space:        activeSpace,
-		memories:     memories,
-		cohort:       training.agents,
-		mainAgent:    training.main,
-		fragments:    len(training.legs),
-		tape:         training.legs,
-		loading:      loading,
-		runs:         runs,
-		observations: observations,
+		space:           activeSpace,
+		memories:        memories,
+		cohort:          training.agents,
+		mainAgent:       training.main,
+		fragments:       len(training.legs),
+		tape:            training.legs,
+		loading:         loading,
+		runs:            runs,
+		observations:    observations,
 		budget:       budget,
 	}
 }

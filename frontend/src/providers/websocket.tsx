@@ -2,6 +2,8 @@ import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
+	evictStaleSymbols,
+	evictSymbol,
 	focusAtom,
 	observeSymbols,
 	onlineAtom,
@@ -110,6 +112,11 @@ export const WsFeed = () => {
 				return;
 			}
 
+			if (data.type === "UNSUBSCRIBE" && typeof data.symbol === "string") {
+				evictSymbol(data.symbol);
+				return;
+			}
+
 			if (data.type === "ERROR") {
 				console.error("WS error:", data.error);
 				return;
@@ -143,7 +150,12 @@ export const WsFeed = () => {
 			wsWorker.postMessage({ type: "FOCUS", symbol });
 		});
 
+		const evictionInterval = setInterval(() => {
+			evictStaleSymbols();
+		}, 60_000);
+
 		return () => {
+			clearInterval(evictionInterval);
 			unsubscribeFocus.unsubscribe();
 			wsWorker.postMessage({ type: "DISCONNECT" });
 			wsWorker.terminate();

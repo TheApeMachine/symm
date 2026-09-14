@@ -166,6 +166,23 @@ func TestTradeStep(t *testing.T) {
 			_, hasMidpoint := measurement.Metrics["midpoint_log_return"]
 			So(hasMidpoint, ShouldBeFalse)
 		})
+
+		Convey("multiple symbols maintain independent pipelines and epochs", func() {
+			btc := row("BTC/USD", "buy", 100, 2, timestamp(10))
+			resBTC := entity.Step(btc)
+			So(resBTC.Err, ShouldBeNil)
+			So(resBTC.From, ShouldEqual, timestamp(10))
+			So(resBTC.At, ShouldEqual, timestamp(10))
+			So(resBTC.Metrics["cumulative_volume_delta"].Raw, ShouldEqual, 2.0)
+
+			etc := row("ETC/USD", "buy", 10, 5, timestamp(0))
+			resETC := entity.Step(etc)
+			So(resETC.Err, ShouldBeNil)
+			So(resETC.From, ShouldEqual, timestamp(0))
+			So(resETC.At, ShouldEqual, timestamp(0))
+			So(resETC.From.After(resETC.At), ShouldBeFalse)
+			So(resETC.Metrics["cumulative_volume_delta"].Raw, ShouldEqual, 5.0)
+		})
 	})
 
 	Convey("Given a non-positive execution price", t, func() {

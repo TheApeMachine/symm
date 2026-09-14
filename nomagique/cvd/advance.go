@@ -253,7 +253,7 @@ func (op *Rates) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			if op.from.IsZero() {
+			if op.from.IsZero() || m.At.Before(op.from) {
 				op.from = m.At
 			}
 

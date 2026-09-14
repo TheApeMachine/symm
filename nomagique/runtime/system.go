@@ -51,16 +51,23 @@ func (system *System) Context() context.Context { return system.ctx }
 func (system *System) Transition(stage Stage) {
 	old := system.status.Current()
 	system.status.Transition(stage)
-	errnie.Info(fmt.Sprintf("%s: %s -> %s", system.name, old, stage))
+
+	if system.status.Current() == stage && old != stage {
+		errnie.Info(fmt.Sprintf("%s: %s -> %s", system.name, old, stage))
+	}
 }
 
 func (system *System) Status() Stage { return system.status.Current() }
 
 func (system *System) Error(errs ...error) error {
+	var added bool
+
 	for _, err := range errs {
 		if err == nil {
 			continue
 		}
+
+		added = true
 
 		if system.err == nil {
 			system.err = err
@@ -70,8 +77,11 @@ func (system *System) Error(errs ...error) error {
 		system.err = errors.Join(system.err, err)
 	}
 
-	if system.err != nil {
-		system.Transition(ERROR)
+	if added && system.err != nil {
+		if system.status.Current() != FATAL {
+			system.Transition(ERROR)
+		}
+
 		errnie.Error(system.err)
 
 		errnieErr, ok := errnie.AsErrnie(system.err)

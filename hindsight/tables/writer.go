@@ -87,20 +87,6 @@ func (w *Writer) AddMeasurement(row MeasurementRow) {
 	w.measurements = append(w.measurements, row)
 }
 
-
-func (w *Writer) AddPosition(row PositionRow) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-	w.positions = append(w.positions, row)
-}
-
-
-func (w *Writer) AddOutcome(row OutcomeRow) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-	w.outcomes = append(w.outcomes, row)
-}
-
 // Pending reports how many rows are buffered across every family.
 func (w *Writer) Pending() int {
 	w.mutex.Lock()

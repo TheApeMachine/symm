@@ -209,12 +209,105 @@ export type MeasurementStore = Store<RingBuffer<MeasurementT>> & {
 	add: (item: any) => void;
 };
 
+export const MAX_CACHED_SYMBOLS = 64;
+
 const measurementStoreCache: Record<string, Store<RingBuffer<MeasurementT>>> = {};
+const measurementSubscribers: Record<string, () => void> = {};
+
+const resonanceReadingStoreCache: Record<string, Store<RingBuffer<MeasurementT | ResonanceT>>> = {};
+const resonanceSubscribers: Record<string, () => void> = {};
+
+const symbolAccessTimes = new Map<string, number>();
+
+export const getCachedSymbolCount = (): number => symbolAccessTimes.size;
+
+export const touchSymbol = (symbol: string) => {
+	if (!symbol) return;
+	symbolAccessTimes.set(symbol, Date.now());
+
+	if (symbolAccessTimes.size > MAX_CACHED_SYMBOLS) {
+		const focused = focusAtom.get();
+		let oldestSymbol: string | null = null;
+		let oldestTime = Number.POSITIVE_INFINITY;
+
+		for (const [sym, at] of symbolAccessTimes.entries()) {
+			if (sym === focused || sym === DEFAULT_FOCUS_SYMBOL) {
+				continue;
+			}
+			if (at < oldestTime) {
+				oldestTime = at;
+				oldestSymbol = sym;
+			}
+		}
+
+		if (oldestSymbol) {
+			evictSymbol(oldestSymbol);
+		}
+	}
+};
+
+export const evictSymbol = (symbol: string) => {
+	if (!symbol) return;
+
+	symbolAccessTimes.delete(symbol);
+
+	for (const source of Object.keys(signals)) {
+		const key = `${source}::${symbol}`;
+		if (measurementSubscribers[key]) {
+			measurementSubscribers[key]();
+			delete measurementSubscribers[key];
+		}
+		delete measurementStoreCache[key];
+
+		const signalStore = signals[source];
+		if (signalStore?.state?.[symbol]) {
+			delete signalStore.state[symbol];
+		}
+	}
+
+	if (resonanceSubscribers[symbol]) {
+		resonanceSubscribers[symbol]();
+		delete resonanceSubscribers[symbol];
+	}
+	delete resonanceReadingStoreCache[symbol];
+	if (resonanceStore.state[symbol]) {
+		delete resonanceStore.state[symbol];
+	}
+
+	if ((cognitionStore.state as any)?.[symbol]) {
+		delete (cognitionStore.state as any)[symbol];
+	}
+
+	const current = symbolsAtom.get();
+	if (current.includes(symbol) && symbol !== DEFAULT_FOCUS_SYMBOL && symbol !== focusAtom.get()) {
+		symbolsAtom.set(current.filter((s) => s !== symbol));
+	}
+};
+
+export const evictStaleSymbols = (maxAgeMs = 60_000) => {
+	const now = Date.now();
+	const focused = focusAtom.get();
+	const toEvict: string[] = [];
+
+	for (const [sym, at] of symbolAccessTimes.entries()) {
+		if (sym === focused || sym === DEFAULT_FOCUS_SYMBOL) {
+			continue;
+		}
+		if (now - at >= maxAgeMs) {
+			toEvict.push(sym);
+		}
+	}
+
+	for (const sym of toEvict) {
+		evictSymbol(sym);
+	}
+};
 
 export const getMeasurementStore = (
 	source: string,
 	symbol: string,
 ): MeasurementStore => {
+	touchSymbol(symbol);
 	const key = `${source}::${symbol}`;
 	let store = measurementStoreCache[key];
 	if (!store) {
@@ -233,12 +326,13 @@ export const getMeasurementStore = (
 		measurementStoreCache[key] = store;
 
 		if (signalStore) {
-			signalStore.subscribe((state) => {
+			const sub = signalStore.subscribe((state) => {
 				const ring = state[symbol];
 				if (ring) {
 					store.setState(() => ring);
 				}
 			});
+			measurementSubscribers[key] = () => sub.unsubscribe();
 		}
 	}
 	return Object.assign(store, {
@@ -255,9 +349,8 @@ export const getMeasurementStore = (
 	}) as MeasurementStore;
 };
 
-const resonanceReadingStoreCache: Record<string, Store<RingBuffer<MeasurementT | ResonanceT>>> = {};
-
 export const getResonanceReadingStore = (symbol: string) => {
+	touchSymbol(symbol);
 	let store = resonanceReadingStoreCache[symbol];
 	if (!store) {
 		const getRing = () => {
@@ -271,12 +364,13 @@ export const getResonanceReadingStore = (symbol: string) => {
 		store = createStore(getRing());
 		resonanceReadingStoreCache[symbol] = store;
 
-		resonanceStore.subscribe((state) => {
+		const sub = resonanceStore.subscribe((state) => {
 			const ring = state[symbol];
 			if (ring) {
 				store.setState(() => ring);
 			}
 		});
+		resonanceSubscribers[symbol] = () => sub.unsubscribe();
 	}
 	return store;
 };

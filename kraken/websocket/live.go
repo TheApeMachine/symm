@@ -291,6 +291,8 @@ func NewWithClient(
 				return
 			}
 
+			frameTimestamp, _ := frame["timestamp"].(string)
+
 			for _, entry := range rows {
 				row, rowOk := entry.(map[string]any)
 
@@ -299,6 +301,11 @@ func NewWithClient(
 				}
 
 				row["channel"] = channel
+
+				if _, hasTimestamp := row["timestamp"]; !hasTimestamp && frameTimestamp != "" {
+					row["timestamp"] = frameTimestamp
+				}
+
 				live.queue.Enqueue(row)
 			}
 
@@ -492,9 +499,11 @@ func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement
 		return measurement
 	}
 
-	if measurement.Provenance == nil {
-		measurement.Provenance = make(map[string]string, 4)
-	}
+	measurement.Provenance = make(map[string]string, 4)
+	measurement.Metrics = make(map[string]data.Metric[float64], len(row))
+	measurement.Err = nil
+	measurement.At = time.Time{}
+	measurement.From = time.Time{}
 
 	if live.Name() != "" && (measurement.Source == "" || measurement.Source == "websocket") {
 		measurement.Source = live.Name()
@@ -533,6 +542,10 @@ func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement
 		}
 
 		measurement.At = at
+	}
+
+	if measurement.At.IsZero() {
+		measurement.At = time.Now().UTC()
 	}
 
 	for key, value := range row {

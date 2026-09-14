@@ -138,6 +138,24 @@ func (agent *Agent) LastMarks() []*telemetry.LearningMarkT {
 	return marks
 }
 
+/* CurrentReplay returns the replay fragment currently mounted at the agent's ring playhead. */
+func (agent *Agent) CurrentReplay() (types.ReplayFragment, bool) {
+	agent.mu.RLock()
+	defer agent.mu.RUnlock()
+
+	if agent.replays == nil || ringLen[types.ReplayFragment](agent.replays) == 0 {
+		return types.ReplayFragment{}, false
+	}
+
+	val, ok := ringCurrent[types.ReplayFragment](agent.replays)
+
+	if !ok || len(val.Frames) == 0 {
+		return types.ReplayFragment{}, false
+	}
+
+	return val, true
+}
+
 /* PreseedColumns allocates storage for all expected columns across signal sources upfront. */
 func (agent *Agent) PreseedColumns(sources map[string][]string) {
 	agent.mu.Lock()
@@ -273,11 +291,17 @@ func selectLegalAction(
 	}
 
 	// Case 1: Fresh or unseen context. No legal action has evidence in cognitive memory.
-	// In live mode (isLive == true or rng == nil), strictly default to ActionWait.
+	// In live mode (isLive == true or rng == nil), strictly default to ActionWait (or ActionHold when holding).
 	// In rehearsal exploration (!isLive and rng != nil), explore among currently legal actions with symmetric uniform sampling.
 	if supportedCount == 0 {
 		if isLive || rng == nil {
-			return ActionWait, 0, 0, 0
+			defaultAction := ActionWait
+
+			if len(legal) > 0 && legal[0] == ActionExit {
+				defaultAction = ActionHold
+			}
+
+			return defaultAction, 0, 0, 0
 		}
 
 		chosenIdx := 0
@@ -343,7 +367,7 @@ func selectLegalAction(
 ChooseAction evaluates the cognitive memory for the active impulse regions and
 chooses one of the currently legal actions:
 When flat:    {ActionEnter, ActionWait}
-When holding: {ActionExit, ActionWait}
+When holding: {ActionExit, ActionHold}
 */
 func (agent *Agent) ChooseAction(
 	impulse grid.Impulse,
@@ -364,8 +388,15 @@ func (agent *Agent) ChooseAction(
 	sequence := recall.Sequence
 
 	if len(sequence) == 0 {
-		return ActionDecision{Action: ActionWait}, nil
+		defaultAction := ActionWait
+
+		if holding {
+			defaultAction = ActionHold
+		}
+
+		return ActionDecision{Action: defaultAction}, nil
 	}
+
 
 	evaluation := recall.Evaluation
 
@@ -437,11 +468,11 @@ func (agent *Agent) RehearseChild() (int, error) {
 		return 0, nil
 	}
 
-	// 1. Constrain A to strictly precursor development: 0 <= A < B.
-	// Factual anchor B must be valid; missing anchor is an explicit error, never a fallback.
+	// 1. Constrain A to strictly precursor development: 0 <= A < B for positive legs,
+	// or eligible prefix for negative non-event fragments (AnchorIndex < 0).
 	anchorIdx := replay.AnchorIndex
 
-	if anchorIdx <= 0 || anchorIdx >= childLen {
+	if anchorIdx >= childLen {
 		if agent.replays != nil && ringLen[types.ReplayFragment](agent.replays) > 0 {
 			ringAdvance[types.ReplayFragment](agent.replays)
 		}
@@ -452,16 +483,21 @@ func (agent *Agent) RehearseChild() (int, error) {
 
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"rehearsal: invalid or missing anchor index B in replay fragment",
+			"rehearsal: anchor index B exceeds fragment length",
 			nil,
 		))
 	}
 
 	offset := 0
 
-	if agent.rng != nil && anchorIdx > 1 {
+	if anchorIdx > 1 && agent.rng != nil {
 		offset = agent.rng.Intn(anchorIdx)
 	}
+
+	if anchorIdx < 0 && childLen > 1 && agent.rng != nil {
+		offset = agent.rng.Intn(childLen / 2)
+	}
+
 
 	// 2. Clear observation-local perception and context history before replay from A
 	agent.resetLocked()
@@ -500,7 +536,19 @@ func (agent *Agent) RehearseChild() (int, error) {
 			continue
 		}
 
-		impulse, err := agent.stepLocked(measurements, symbol)
+		validMeasurements := make([]*data.Measurement[float64], 0, len(measurements))
+
+		for _, measurement := range measurements {
+			if measurement != nil && measurement.Err == nil {
+				validMeasurements = append(validMeasurements, measurement)
+			}
+		}
+
+		if len(validMeasurements) == 0 {
+			continue
+		}
+
+		impulse, err := agent.stepLocked(validMeasurements, symbol)
 
 		if err != nil {
 			return stepped, err
@@ -558,7 +606,7 @@ func (agent *Agent) RehearseChild() (int, error) {
 			outcome, evalErr = agent.evaluator.EvaluateEntry(replay.Frames, tr.frameIdx)
 		case ActionExit:
 			outcome, evalErr = agent.evaluator.EvaluateExit(replay.Frames, tr.frameIdx, tr.entryIdx)
-		case ActionWait:
+		case ActionWait, ActionHold:
 			outcome, evalErr = agent.evaluator.EvaluateWait(replay.Frames, tr.frameIdx, tr.holding, tr.entryIdx)
 		}
 
@@ -601,13 +649,14 @@ func (agent *Agent) RehearseChild() (int, error) {
 			}
 
 			if tr.holding {
-				groundTruth = ActionWait
+				groundTruth = ActionHold
 
-				if tr.action == ActionWait {
+				if tr.action == ActionHold {
 					groundTruth = ActionExit
 				}
 			}
 		}
+
 
 		agent.recordAnswer(&telemetry.LearningAnswerT{
 			Asked:      string(groundTruth),

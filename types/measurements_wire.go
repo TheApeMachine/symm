@@ -1,7 +1,6 @@
 package types
 
 import (
-	"bytes"
 	"strconv"
 	"sync"
 
@@ -12,11 +11,19 @@ import (
 
 var measurementsBuilderPool = sync.Pool{
 	New: func() any {
-		return flatbuffers.NewBuilder(16384)
+		return flatbuffers.NewBuilder(131072)
 	},
 }
 
-func EncodeMeasurementsFrame(measurements []*data.Measurement[float64]) []byte {
+/*
+EncodeMeasurementsFrameWith serializes a batch of measurements and passes the
+borrowed FlatBuffer bytes directly to fn, returning the builder to the pool once
+fn returns. This avoids defensive heap cloning when writing directly to sockets.
+*/
+func EncodeMeasurementsFrameWith(
+	measurements []*data.Measurement[float64],
+	fn func([]byte) error,
+) error {
 	rows := make([]*wire.MeasurementT, 0, len(measurements))
 
 	for _, m := range measurements {
@@ -79,5 +86,5 @@ func EncodeMeasurementsFrame(measurements []*data.Measurement[float64]) []byte {
 	offset := frame.Pack(builder)
 	builder.Finish(offset)
 
-	return bytes.Clone(builder.FinishedBytes())
+	return fn(builder.FinishedBytes())
 }

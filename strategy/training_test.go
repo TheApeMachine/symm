@@ -88,6 +88,24 @@ func TestTrainingStep(t *testing.T) {
 		So(training.Error(), ShouldBeNil)
 	})
 
+	Convey("Live step ignores peer measurements that carry errors without poisoning perception grid", t, func() {
+		tape := NewTape()
+		tape.Close()
+		training := NewTraining(context.Background(), tape)
+		erroredPeer := data.NewMeasurement("hawkes", map[string]data.Metric[float64]{})
+		erroredPeer.Label, erroredPeer.At, erroredPeer.From = "BTC/USD", time.Now().UTC(), time.Now().UTC()
+		erroredPeer.Err = core.ErrDomain
+		validPeer := data.NewMeasurement("cvd", map[string]data.Metric[float64]{})
+		validPeer.Label, validPeer.At, validPeer.From = "BTC/USD", time.Now().UTC(), time.Now().UTC()
+		validPeer.Metrics["signed"] = data.Metric[float64]{Label: "signed", Raw: 1.0}
+
+		measurement := data.NewMeasurement("training", map[string]data.Metric[float64]{})
+		measurement.Peers = []*data.Measurement[float64]{erroredPeer, validPeer}
+		So(training.Step(measurement), ShouldEqual, measurement)
+		So(training.Error(), ShouldBeNil)
+		So(spaceState(training.space).Updated, ShouldEqual, "BTC/USD")
+	})
+
 	Convey("Ring-of-rings rehearsal ingests fragments with random slots and plays with random offsets", t, func() {
 		agent := NewAgent(1, false, nil, 64)
 		measurementA := data.NewMeasurement[float64]("cvd", nil)
@@ -115,4 +133,78 @@ func TestTrainingStep(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(stepped, ShouldBeGreaterThanOrEqualTo, 1)
 	})
+
+	Convey("Focus restricts quantities and regions payload to the focused symbol", t, func() {
+		tape := NewTape()
+		tape.Close()
+		training := NewTraining(context.Background(), tape)
+
+		cvdBTC := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
+			"signed": data.NewMetric[float64]("signed", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(1.0),
+		})
+		cvdBTC.Label, cvdBTC.At, cvdBTC.From = "BTC/USD", time.Now().UTC(), time.Now().UTC()
+		mBTC := data.NewMeasurement("training", map[string]data.Metric[float64]{})
+		mBTC.Peers = []*data.Measurement[float64]{cvdBTC}
+		training.Step(mBTC)
+
+		cvdETH := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
+			"signed": data.NewMetric[float64]("signed", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(2.0),
+		})
+		cvdETH.Label, cvdETH.At, cvdETH.From = "ETH/USD", time.Now().UTC(), time.Now().UTC()
+		mETH := data.NewMeasurement("training", map[string]data.Metric[float64]{})
+		mETH.Peers = []*data.Measurement[float64]{cvdETH}
+		training.Step(mETH)
+
+		recBTC := training.State("BTC/USD")
+		So(recBTC, ShouldNotBeNil)
+		So(len(recBTC.state.Markets), ShouldEqual, 2)
+		for _, market := range recBTC.state.Markets {
+			if market.Symbol == "BTC/USD" {
+				So(len(market.Quantities), ShouldBeGreaterThan, 0)
+			}
+			if market.Symbol == "ETH/USD" {
+				So(len(market.Quantities), ShouldEqual, 0)
+			}
+		}
+
+		recETH := training.State("ETH/USD")
+		So(recETH, ShouldNotBeNil)
+		So(len(recETH.state.Markets), ShouldEqual, 2)
+		for _, market := range recETH.state.Markets {
+			if market.Symbol == "ETH/USD" {
+				So(len(market.Quantities), ShouldBeGreaterThan, 0)
+			}
+			if market.Symbol == "BTC/USD" {
+				So(len(market.Quantities), ShouldEqual, 0)
+			}
+		}
+
+		payload := training.MarshalFlatbuffer("BTC/USD")
+		So(len(payload), ShouldBeGreaterThan, 0)
+	})
+
+	Convey("Negative and non-event fragments can be published and mounted (AT-13, AT-14)", t, func() {
+		tape := NewTape()
+		measA := data.NewMeasurement[float64]("cvd", nil)
+		measA.Label, measA.At, measA.From = "BTC/USD", time.Now().UTC(), time.Time{}
+		measA.Metrics["signed"] = data.Metric[float64]{Label: "signed", Raw: 0.1}
+		measB := data.NewMeasurement[float64]("cvd", nil)
+		measB.Label, measB.At, measB.From = "BTC/USD", time.Now().UTC(), time.Time{}
+		measB.Metrics["signed"] = data.Metric[float64]{Label: "signed", Raw: 0.05}
+
+		tape.Publish(types.ReplayFragment{
+			Frames:        [][]*data.Measurement[float64]{{measA}, {measB}},
+			Symbol:        "BTC/USD",
+			AnchorIndex:   -1,
+			ExtremumIndex: -1,
+		})
+		tape.Close()
+
+		training := NewTraining(context.Background(), tape)
+		input := data.NewMeasurement("training", map[string]data.Metric[float64]{})
+		So(training.Step(input), ShouldEqual, input)
+		So(training.Error(), ShouldBeNil)
+		So(len(training.legs), ShouldEqual, 1)
+	})
 }
+

@@ -63,9 +63,12 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 	input := measurement
 
 	if len(measurement.Peers) > 0 {
+		measurement.Err = nil
+
 		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
 			_, hasP := p.Metrics["price"]
-			return hasP && p.Label != ""
+			_, hasQ := p.Metrics["qty"]
+			return hasP && hasQ && p.Label != "" && p.Err == nil
 		})
 
 		if peer == nil {
@@ -75,7 +78,15 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		input = peer.Clone()
 	}
 
+	if input.Err != nil {
+		return measurement
+	}
+
 	if _, hasPrice := input.Metrics["price"]; !hasPrice {
+		return measurement
+	}
+
+	if _, hasQty := input.Metrics["qty"]; !hasQty {
 		return measurement
 	}
 

@@ -38,7 +38,6 @@ func New(t testing.TB) *tables.Catalog {
 	return catalog
 }
 
-
 // Underlying returns an empty real catalog for catalog-boundary test adapters.
 func Underlying(t testing.TB) catalog.Catalog {
 	t.Helper()

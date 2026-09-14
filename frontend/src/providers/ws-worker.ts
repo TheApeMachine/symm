@@ -16,7 +16,7 @@ const sendPositionExit = (symbol: string) => {
 };
 
 const sendFocus = (symbol: string) => {
-	if (socket !== null && socket.readyState === WebSocket.OPEN && symbol) {
+	if (socket !== null && socket.readyState === WebSocket.OPEN && typeof symbol === "string") {
 		socket.send(JSON.stringify({ type: "focus", symbol }));
 	}
 };

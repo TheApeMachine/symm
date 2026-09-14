@@ -60,6 +60,24 @@ The primary sources are the user’s guide and subsequent clarifications, plus `
 
 The motivation includes the project’s preliminary research and its interpretation of documented recurring market-manipulation behavior. This is a motivation for the experiment, not a semantic label automatically attached to observations or episodes. The learner is not tasked with proving manipulation or identifying an actor.
 
+**Legend**
+
+`A` A point on the tape some time before a market event.
+`B` A point on the tape that marks the start of a market event.
+`C` A point on the tape where a market event starts to die down.
+
+**Example:**
+
+`A` is set before a symbol goes into `vertical_ignition`.
+`B` is set right at the point of `vertical_ignition`.
+`C` is set when the `vertical_ignition` moves into `stagnation`/`exhasustion`/`reversal`.
+
+**What this means:** The tape between `A` and `B` is the `precursor` for `entry`, while the tape between `B` and `C` is the precursor for `exit`. The correct points for `entry` and `exit` is determined by the `confidence` that `A` is turning into `B` or `B` is turning into `C`.
+
+Together we will refer to this as a `tape_fragment` and it is what the learner agents will train on.
+
+> Of course we will need a little bit of tape after `C` as well.
+
 The system’s computational task is:
 
 - While **flat**, recognize potential **A→B entry precursors** and decide **Enter** or **Wait**.
@@ -76,7 +94,7 @@ The system does not require a future-price curve, an interpretation of indicator
 
 ### 2.1 Commit to not knowing the metrics’ meanings
 
-Approximately 750 individual observations are available in the described system. The exact number is not an architectural constant. Their names identify sources and quantities; names are not explanations of causality and do not prescribe actions.
+Approximately 750 individual observations are available in the described system (sourced from the `signals` and the `logic` stages). The exact number is not an architectural constant. Their names identify sources and quantities; names are not explanations of causality and do not prescribe actions.
 
 **REQ-02 — Semantic opacity.** No trading preference may be assigned merely because a metric’s name sounds bullish, bearish, predictive, or authoritative. Names remain available for lineage and inspection. Identity must remain stable even when presentation names change.
 

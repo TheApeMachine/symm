@@ -1,7 +1,13 @@
 package ui
 
 import (
+	"bytes"
+	"io"
+	"net/http"
+
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/catalog"
 )
@@ -14,22 +20,11 @@ stream itself rather than a JSON envelope carrying it.
 const arrowStream = "application/vnd.apache.arrow.stream"
 
 /*
-registerWorkbench mounts the Analytical Workbench's engine.
+registerWorkbench mounts the Analytical Workbench's surface.
 
-This is the only endpoint that evaluates SQL rather than projecting a record
-family: the workbench asks questions the typed Hindsight reads were never
-shaped to answer, over whatever combination of tables the question needs. The
-engine attaches the same Iceberg warehouse those reads use, and answers from
-the server so the browser never pulls a table it means to aggregate.
-
-The statements arrive from Perspective running as a Virtual Server: the viewer
-compiles its own configuration into SQL and asks only for the window it is
-displaying. That is why there is one endpoint and not a REST surface per
-question — the viewer, not this package, decides what to ask.
-
-Arbitrary SQL reaches the warehouse from here. The hub listens on loopback by
-default and its CORS policy admits loopback origins only; a deployment that
-moves it onto a network has to put its own authorization in front of it.
+Analytical queries are executed out-of-process by the standalone symm-workbench service
+to physically isolate DuckDB materializations and Go GC sweeps from the critical trading loop.
+The hub acts as a gateway reverse-proxying statements to the workbench service.
 */
 func (hub *Hub) registerWorkbench() {
 	/*
@@ -49,10 +44,8 @@ func (hub *Hub) registerWorkbench() {
 		return c.JSON(primitives)
 	})
 
-	// /workbench/query evaluates one statement and returns its result as an
-	// Arrow IPC stream, empty for a statement that produces no rows. A
-	// malformed or unanswerable statement is the analyst's to see, so the
-	// engine's own message is what comes back.
+	// /workbench/query proxies one analytical statement to the standalone
+	// workbench service, returning its result as an Arrow IPC stream.
 	hub.app.Post("/workbench/query", func(c fiber.Ctx) error {
 		var request struct {
 			SQL string `json:"sql"`
@@ -66,10 +59,60 @@ func (hub *Hub) registerWorkbench() {
 			return fiber.NewError(fiber.StatusBadRequest, "query is empty")
 		}
 
-		stream, err := hub.warehouse.Execute(hub.ctx, request.SQL)
+		workbenchURL := viper.GetString("workbench.url")
+
+		if workbenchURL == "" {
+			workbenchURL = "http://127.0.0.1:8081/workbench/query"
+		}
+
+		payload, err := sonic.Marshal(request)
 
 		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+
+		proxyRequest, err := http.NewRequestWithContext(
+			hub.ctx,
+			http.MethodPost,
+			workbenchURL,
+			bytes.NewReader(payload),
+		)
+
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+
+		proxyRequest.Header.Set("Content-Type", "application/json")
+
+		response, err := http.DefaultClient.Do(proxyRequest)
+
+		if err != nil {
+			return fiber.NewError(
+				fiber.StatusServiceUnavailable,
+				"workbench service unavailable at "+workbenchURL+": "+err.Error(),
+			)
+		}
+
+		defer func() {
+			if closeErr := response.Body.Close(); closeErr != nil {
+				errnie.Error(closeErr)
+			}
+		}()
+
+		if response.StatusCode != http.StatusOK {
+			messageBytes, readErr := io.ReadAll(response.Body)
+
+			if readErr != nil {
+				return fiber.NewError(response.StatusCode, "failed reading workbench error")
+			}
+
+			return fiber.NewError(response.StatusCode, string(messageBytes))
+		}
+
+		stream, err := io.ReadAll(response.Body)
+
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 
 		c.Set(fiber.HeaderContentType, arrowStream)

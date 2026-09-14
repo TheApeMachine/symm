@@ -308,7 +308,7 @@ func (c *Catalog) Epochs(ctx context.Context) ([]int64, error) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	if time.Since(c.epochsLoaded) < 5*time.Second && len(c.cachedEpochs) > 0 {
+	if time.Since(c.epochsLoaded) < 30*time.Second && len(c.cachedEpochs) > 0 {
 		cached := make([]int64, len(c.cachedEpochs))
 		copy(cached, c.cachedEpochs)
 
@@ -322,21 +322,57 @@ func (c *Catalog) Epochs(ctx context.Context) ([]int64, error) {
 	}
 
 	checkTable := func(tableName string) {
-		batches, err := c.scan(ctx, tableName, []string{"epoch"})
+		loaded, err := c.Load(ctx, tableName)
 
 		if err != nil {
 			return
 		}
 
-		for batch, bErr := range batches {
-			if bErr != nil {
-				continue
+		tasks, err := loaded.Scan().PlanFiles(ctx)
+
+		if err != nil {
+			return
+		}
+
+		for _, task := range tasks {
+			partitionMap := task.File.Partition()
+			foundPartition := false
+
+			for _, pVal := range partitionMap {
+				switch v := pVal.(type) {
+				case int64:
+					epochSet[v] = struct{}{}
+					foundPartition = true
+				case int:
+					epochSet[int64(v)] = struct{}{}
+					foundPartition = true
+				case int32:
+					epochSet[int64(v)] = struct{}{}
+					foundPartition = true
+				case float64:
+					epochSet[int64(v)] = struct{}{}
+					foundPartition = true
+				}
 			}
 
-			col := batch.Column(0)
+			if !foundPartition {
+				batches, err := c.scan(ctx, tableName, []string{"epoch"})
 
-			for rowIdx := range int(batch.NumRows()) {
-				epochSet[num(col, rowIdx)] = struct{}{}
+				if err == nil {
+					for batch, bErr := range batches {
+						if bErr != nil {
+							continue
+						}
+
+						col := batch.Column(0)
+
+						for rowIdx := range int(batch.NumRows()) {
+							epochSet[num(col, rowIdx)] = struct{}{}
+						}
+					}
+				}
+
+				break
 			}
 		}
 	}
@@ -874,7 +910,7 @@ func (c *Catalog) getOrBuildTimelineIndex(ctx context.Context, epoch int64) (*ru
 	c.cacheMu.RLock()
 	index := c.timelineIndex[epoch]
 
-	if index != nil && time.Since(index.indexedAt) < 2*time.Second {
+	if index != nil && time.Since(index.indexedAt) < 10*time.Second {
 		c.cacheMu.RUnlock()
 
 		return index, nil
@@ -891,7 +927,7 @@ func (c *Catalog) getOrBuildTimelineIndex(ctx context.Context, epoch int64) (*ru
 
 	index = c.timelineIndex[epoch]
 
-	if index != nil && time.Since(index.indexedAt) < 2*time.Second {
+	if index != nil && time.Since(index.indexedAt) < 10*time.Second {
 		return index, nil
 	}
 

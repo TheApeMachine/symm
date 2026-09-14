@@ -26,7 +26,7 @@ type ActionOutcome struct {
 /*
 FragmentEvaluator scores the learner's chosen action directly against the
 objective ground truth excursion geometry discovered on the tape fragment:
-Anchor (B) -> Extremum (C) -> Retracement.
+Anchor (B) -> Extremum (C) -> Retracement, or explicitly non-event/negative tape.
 
 The green bar in Hindsight has already proven that this excursion leg crossed
 friction (fees, etc.). The evaluator therefore requires no embedded prices,
@@ -73,7 +73,8 @@ func (evaluator *FragmentEvaluator) Reset() {
 
 /*
 EvaluateEntry scores an ENTER action chosen at decisionIdx within a fragment.
-Judged directly against the ground-truth excursion leg [Anchor B, Extremum C].
+Judged directly against the ground-truth excursion leg [Anchor B, Extremum C],
+or against negative non-event tape.
 */
 func (evaluator *FragmentEvaluator) EvaluateEntry(
 	fragment [][]*data.Measurement[float64],
@@ -88,10 +89,18 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 	anchorIdx := evaluator.anchorIndex
 	extremumIdx := evaluator.extremumIndex
 
-	if anchorIdx < 0 || extremumIdx <= anchorIdx {
+	if anchorIdx < 0 {
+		outcome.Correctness = -1.0
+		outcome.Timing = 0.0
+		outcome.Reinforcement = -1.0
+
+		return outcome, nil
+	}
+
+	if extremumIdx <= anchorIdx {
 		return ActionOutcome{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"evaluator: valid excursion boundaries [Anchor B, Extremum C] required",
+			"evaluator: valid extremum boundary C required for excursion",
 			nil,
 		))
 	}
@@ -133,7 +142,7 @@ func (evaluator *FragmentEvaluator) EvaluateEntry(
 
 /*
 EvaluateExit scores an EXIT action chosen at decisionIdx while holding position entered at entryIdx.
-Judged against peak extremum C and subsequent retracement.
+Judged against peak extremum C and subsequent retracement, or against negative non-event tape.
 */
 func (evaluator *FragmentEvaluator) EvaluateExit(
 	fragment [][]*data.Measurement[float64],
@@ -149,8 +158,20 @@ func (evaluator *FragmentEvaluator) EvaluateExit(
 	anchorIdx := evaluator.anchorIndex
 	extremumIdx := evaluator.extremumIndex
 
-	if anchorIdx < 0 || extremumIdx <= anchorIdx {
+	if anchorIdx < 0 {
+		outcome.Correctness = 1.0
+		outcome.Timing = 1.0
+		outcome.Reinforcement = 1.0
+
 		return outcome, nil
+	}
+
+	if extremumIdx <= anchorIdx {
+		return ActionOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"evaluator: valid extremum boundary C required for excursion",
+			nil,
+		))
 	}
 
 	// 1. Exiting before anchor B: premature exit before the leg begins
@@ -206,7 +227,7 @@ func (evaluator *FragmentEvaluator) EvaluateExit(
 }
 
 /*
-EvaluateWait scores a WAIT action against what would have happened had the
+EvaluateWait scores a WAIT/HOLD action against what would have happened had the
 alternative action been taken.
 */
 func (evaluator *FragmentEvaluator) EvaluateWait(
@@ -217,6 +238,10 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 ) (ActionOutcome, error) {
 	outcome := ActionOutcome{Action: ActionWait}
 
+	if holding {
+		outcome.Action = ActionHold
+	}
+
 	if decisionIdx < 0 || decisionIdx >= len(fragment) {
 		return outcome, nil
 	}
@@ -224,8 +249,28 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 	anchorIdx := evaluator.anchorIndex
 	extremumIdx := evaluator.extremumIndex
 
-	if anchorIdx < 0 || extremumIdx <= anchorIdx {
+	if anchorIdx < 0 {
+		if !holding {
+			outcome.Correctness = 1.0
+			outcome.Timing = 1.0
+			outcome.Reinforcement = 1.0
+
+			return outcome, nil
+		}
+
+		outcome.Correctness = -1.0
+		outcome.Timing = 0.0
+		outcome.Reinforcement = -1.0
+
 		return outcome, nil
+	}
+
+	if extremumIdx <= anchorIdx {
+		return ActionOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"evaluator: valid extremum boundary C required for excursion",
+			nil,
+		))
 	}
 
 	if !holding {
@@ -259,12 +304,12 @@ func (evaluator *FragmentEvaluator) EvaluateWait(
 		return outcome, err
 	}
 
+	outcome.Correctness = -exitOutcome.Correctness
 	aftermathSpan := float64(len(fragment) - 1 - extremumIdx)
+
 	if aftermathSpan > 0 {
 		drawdownRatio := float64(decisionIdx-extremumIdx) / aftermathSpan
 		outcome.Correctness = -math.Max(0.5, drawdownRatio)
-	} else {
-		outcome.Correctness = -exitOutcome.Correctness
 	}
 
 	outcome.Timing = 0.0

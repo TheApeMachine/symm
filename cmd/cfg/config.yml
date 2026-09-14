@@ -31,11 +31,11 @@ storage:
     append_bytes: 16777216
 
 workbench:
-  # The Analytical Workbench's DuckDB runs inside this process. An unpivoted
-  # view is materialized in full before it is paged, so this is the ceiling on
-  # what an analyst's question may cost the run; beyond it the query is refused
-  # rather than spilled to disk or taken out of the trading path's memory.
-  memory_limit: 2GB
+  # The Analytical Workbench runs as a standalone service decoupled from the
+  # critical trading path to protect the live solvers from garbage collection pauses.
+  addr: ":8081"
+  url: "http://127.0.0.1:8081/workbench/query"
+  memory_limit: 16GB
 
 experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
@@ -134,8 +134,31 @@ cognitive:
 market:
   model: paper
   quote_currency: USD
-  balance: 200 # No, this is not a typo, or test amoutn, this is the exact amount I found in my 
+  balance: 200 # No, this is not a typo, or test amount, this is the exact amount I found in my 
                # Kraken account, and it is the only money I am willing to trade with.
+               # Now, you might think this system is therefor "overkill" and it is a valid point.
+               # But what if it works? Daily 24h risers over 100+%, or more... Do you think the
+               # balance will stay at $200 forever? Let's say we catch only 50% of those daily
+               # risers (50% because with micro-caps you have to get out while there is still
+               # lots of buying power going on, getting out at the peak will just see the entire
+               # order book dissolve underneath you)?
+               #
+               # Day 0  $200.00
+               # Day 5  $1,518.75
+               # Day 10 $11,533.01
+               # Day 15 $87,578.78
+               # Day 20 $665,051.35
+               # Day 25 $5,050,233.66
+               # Day 30 $38,350,211.85
+               #
+               # Now, let's be realistic, you won't get there this fast, because at some point you
+               # will not be able to sell off your position into the liquidity of a micro-cap.
+               # So you have to start using smaller slices of your capital, based on the order book's
+               # liquidity to even be able to survive your own positions.
+               # It is just to highlight that thinking about this as a $200 crypto-trading "bot" is 
+               # the wrong frame of reference. It is not a "bot" and it is not a High-Frequency
+               # trading algorithm. Think of this as an activated research environment that
+               # finds opportunity in the pre-cursors to market events.
   instrument:
     excluded:
       - USD 
@@ -207,7 +230,7 @@ ui:
     buffered_segments: 64
   websocket:
     # UI delivery budget only; does not control decisions or tape maturity.
-    learning_interval: 250ms
+    learning_interval: 100ms
     # Upper bound for one ordered dashboard batch. Later frames remain queued
     # for the next message; no telemetry record is truncated or discarded.
     max_message_bytes: 4194304
@@ -247,4 +270,4 @@ manifold:
     z: 64
   phase:
     lattice:
-      width: 256
+      width: 1024

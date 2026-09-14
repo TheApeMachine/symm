@@ -137,7 +137,7 @@ func (api *API) Transition(stage runtime.Stage) {
 		api.public.Transition(stage)
 	}
 
-	if api.futures != nil {
+	if api.futures != nil && api.futures.System != nil {
 		api.futures.Transition(stage)
 	}
 

@@ -323,7 +323,8 @@ the way they size around insufficient depth.
 func TestPriceCrossedBookIsAReading(t *testing.T) {
 	Convey("A crossed touch is unprocessable, not a validation failure", t, func() {
 		touch := &touchBook{}
-		price := NewPrice(t.Context(), nil, newTestInstrument(t, nil))
+		price := newQuantityPrice(t)
+		price.Books = touch
 		touch.quote("BTC/USD", 100000, 99900)
 		quantity := decimal.NewFromFloat64(0.001)
 
@@ -336,6 +337,10 @@ func TestPriceCrossedBookIsAReading(t *testing.T) {
 		So(surface.FullyExecutable, ShouldBeFalse)
 		So(errnie.IsUnprocessableContent(err), ShouldBeTrue)
 		So(errnie.IsValidation(err), ShouldBeFalse)
+
+		time.Sleep(15 * time.Millisecond)
+		So(price.Anomalies().Count("BTC/USD"), ShouldBeGreaterThan, 0)
+		So(price.MarketHealth("BTC/USD"), ShouldBeLessThan, 1.0)
 
 		Convey("A touch quoted with no spread at all reads the same way", func() {
 			touch.quote("BTC/USD", 100000, 100000)
@@ -364,6 +369,12 @@ func (source *touchBook) quote(symbol string, bid, ask float64) {
 		Asks: &spotbook.Side{Low: &spotbook.Level{
 			Price: decimal.NewFromFloat64(ask), Quantity: decimal.NewFromFloat64(1),
 		}},
+	}
+}
+
+func (source *touchBook) Book(symbol string, read func(*spotbook.Book)) {
+	if source.current != nil && source.current.Name == symbol {
+		read(source.current)
 	}
 }
 

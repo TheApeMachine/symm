@@ -9,7 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/hindsight/tables/tablestest"
+	"github.com/theapemachine/symm/tests/tablestest"
 	"github.com/theapemachine/symm/nomagique/data"
 	"golang.design/x/lockfree/wf"
 )

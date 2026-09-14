@@ -18,7 +18,7 @@ import (
 
 var learningBuilderPool = sync.Pool{
 	New: func() any {
-		return flatbuffers.NewBuilder(262144)
+		return flatbuffers.NewBuilder(1048576)
 	},
 }
 
@@ -38,8 +38,8 @@ type Recognition struct {
 
 const LearningIdentifier = "LRNG"
 
-/* MarshalFlatbuffer serializes the reading for the dashboard socket. */
-func (recognition *Recognition) MarshalFlatbuffer(string) []byte {
+/* MarshalFlatbufferWith serializes the reading for the dashboard socket without defensive copying. */
+func (recognition *Recognition) MarshalFlatbufferWith(_ string, fn func([]byte) error) error {
 	if recognition == nil || recognition.state == nil {
 		return nil
 	}
@@ -51,8 +51,23 @@ func (recognition *Recognition) MarshalFlatbuffer(string) []byte {
 	offset := recognition.state.Pack(builder)
 	builder.FinishWithFileIdentifier(offset, []byte(LearningIdentifier))
 
-	return bytes.Clone(builder.FinishedBytes())
+	return fn(builder.FinishedBytes())
 }
+
+/* MarshalFlatbuffer serializes the reading for the dashboard socket. */
+func (recognition *Recognition) MarshalFlatbuffer(focus string) []byte {
+	var payload []byte
+
+	if err := recognition.MarshalFlatbufferWith(focus, func(data []byte) error {
+		payload = bytes.Clone(data)
+		return nil
+	}); err != nil {
+		errnie.Error(err)
+	}
+
+	return payload
+}
+
 
 /*
 MarshalFlatbuffer reads the learners only when the dashboard is actually taking
@@ -64,21 +79,30 @@ recall against it hundreds of times for each frame that survives. The envelope
 carries the owner; the reading is taken when it is wanted.
 */
 func (training *Training) MarshalFlatbuffer(focus string) []byte {
-	return training.State().MarshalFlatbuffer(focus)
+	return training.State(focus).MarshalFlatbuffer(focus)
+}
+
+func (training *Training) MarshalFlatbufferWith(focus string, fn func([]byte) error) error {
+	return training.State(focus).MarshalFlatbufferWith(focus, fn)
 }
 
 /*
 State reads what the grid is showing and what every learner currently holds,
 without disturbing any of them.
 */
-func (training *Training) State() *Recognition {
+func (training *Training) State(focus ...string) *Recognition {
+	var target string
+	if len(focus) > 0 {
+		target = focus[0]
+	}
+
 	training.mu.Lock()
 	at := time.Now().UTC().UnixNano()
 	held := training.snapshot()
 	frames := training.seen.Load()
 	training.mu.Unlock()
 
-	rec := held.state(at, frames)
+	rec := held.state(at, frames, target)
 
 	if held.fragments == 0 && held.loading {
 		rec.state.Status = "reading the record"
@@ -92,13 +116,13 @@ func (training *Training) State() *Recognition {
 }
 
 /* state is what one mounted tape and its learners currently amount to. */
-func (held *replay) state(at int64, frames uint64) *Recognition {
+func (held *replay) state(at int64, frames uint64, focus string) *Recognition {
 	state := &telemetry.LearningStateT{
 		AtNs:     at,
 		Steps:    frames,
 		Status:   held.status(),
 		Restored: spaceState(held.space).Formed,
-		Markets:  held.markets(at),
+		Markets:  held.markets(at, focus),
 	}
 
 	// Each memory is read exactly once. Reading it twice would take the store
@@ -163,23 +187,35 @@ func (held *replay) rehearsal(
 			continue
 		}
 
-		valStart, okStart := frameValue(leg.Frames[0])
-		valEnd, okEnd := frameValue(leg.Frames[len(leg.Frames)-1])
+		anchorFrame := leg.Frames[0]
 
-		if !okStart || !okEnd {
+		if leg.AnchorIndex >= 0 && leg.AnchorIndex < len(leg.Frames) {
+			anchorFrame = leg.Frames[leg.AnchorIndex]
+		}
+
+		extremumFrame := leg.Frames[len(leg.Frames)-1]
+
+		if leg.ExtremumIndex > 0 && leg.ExtremumIndex < len(leg.Frames) {
+			extremumFrame = leg.Frames[leg.ExtremumIndex]
+		}
+
+		valAnchor, okAnchor := frameValue(anchorFrame)
+		valExtremum, okExtremum := frameValue(extremumFrame)
+
+		if !okAnchor || !okExtremum {
 			quiet++
 			continue
 		}
 
-		if valEnd > valStart {
+		if valExtremum > valAnchor {
 			profitable++
 		}
 
-		if valEnd < valStart {
+		if valExtremum < valAnchor {
 			declining++
 		}
 
-		if valEnd == valStart {
+		if valExtremum == valAnchor {
 			quiet++
 		}
 	}
@@ -235,12 +271,14 @@ func (held *replay) tapeSteps(index int) (
 	}
 
 	leg := held.tape[index%len(held.tape)]
-	steps := make([]*telemetry.LearningStepT, 0, len(leg.Frames))
-	symbol := leg.Symbol
 	entry, exit := int32(-1), int32(-1)
 
 	if index < len(held.cohort) && held.cohort[index] != nil {
 		worker := held.cohort[index]
+
+		if current, ok := worker.CurrentReplay(); ok && len(current.Frames) > 0 {
+			leg = current
+		}
 
 		if worker.LastEntry() >= 0 {
 			entry = int32(worker.LastEntry())
@@ -250,6 +288,9 @@ func (held *replay) tapeSteps(index int) (
 			exit = int32(worker.LastExit())
 		}
 	}
+
+	steps := make([]*telemetry.LearningStepT, 0, len(leg.Frames))
+	symbol := leg.Symbol
 
 	for _, frame := range leg.Frames {
 		value, defined := frameValue(frame)
@@ -279,7 +320,7 @@ func frameValue(frame []*data.Measurement[float64]) (float64, bool) {
 			continue
 		}
 
-		for _, key := range []string{"level", "rate", "value", "raw"} {
+		for _, key := range []string{"price", "last_price", "last", "close", "level", "rate", "value", "raw"} {
 			if metric, ok := measurement.Metrics[key]; ok {
 				return metric.Raw, true
 			}
@@ -356,12 +397,24 @@ func (held *replay) status() string {
 
 /*
 markets is the grid as the learners are being shown it: one entry per instrument
-the tape carries, with every quantity that instrument published and the regions
-those quantities settled into.
+the tape carries. To keep payload sizes lightweight for the dashboard socket,
+only the focused market carries full quantities and regions.
 */
-func (held *replay) markets(at int64) []*telemetry.LearningDevelopmentT {
+func (held *replay) markets(at int64, focus string) []*telemetry.LearningDevelopmentT {
 	space := held.space
-	known := spaceState(space).Rows
+	state := spaceState(space)
+	known := state.Rows
+
+	target := focus
+
+	if target == "" || target == "*" {
+		target = state.Updated
+
+		if target == "" && len(known) > 0 {
+			target = known[0]
+		}
+	}
+
 	markets := make([]*telemetry.LearningDevelopmentT, 0, len(known))
 
 	for _, symbol := range known {
@@ -371,26 +424,34 @@ func (held *replay) markets(at int64) []*telemetry.LearningDevelopmentT {
 			FromNs: at,
 			Status: held.status(),
 		}
-		snapshot, err := askGrid(space, &grid.Command{Snapshot: &grid.SnapshotQuery{Label: symbol}})
 
-		if err != nil {
+		if symbol != target {
+			markets = append(markets, development)
 			continue
 		}
 
-		for _, q := range snapshot.Quantities {
+		snapshot, err := askGrid(space, &grid.Command{Snapshot: &grid.SnapshotQuery{Label: symbol}})
+
+		if err != nil {
+			markets = append(markets, development)
+			continue
+		}
+
+		for _, quantity := range snapshot.Quantities {
 			development.Quantities = append(
 				development.Quantities, &telemetry.LearningQuantityT{
-					Source:   q.Source,
-					Label:    q.Label,
-					X:        q.X,
-					Y:        q.Y,
-					Value:    q.Value,
-					Activity: q.Activity,
-					Quality:  q.Quality,
-					Present:  q.Present,
+					Source:   quantity.Source,
+					Label:    quantity.Label,
+					X:        quantity.X,
+					Y:        quantity.Y,
+					Value:    quantity.Value,
+					Activity: quantity.Activity,
+					Quality:  quantity.Quality,
+					Present:  quantity.Present,
 				},
 			)
 		}
+
 		development.Decisions = snapshot.Version
 
 		for _, region := range snapshot.Regions {
@@ -507,6 +568,7 @@ func learner(
 
 	if individual != nil && individual.Engine() != nil {
 		classCounts, err := classCensus(individual.Engine())
+
 		if err != nil {
 			errnie.Error(errnie.Err(errnie.Internal, "recognition: class census failed", err))
 		}
@@ -515,7 +577,9 @@ func learner(
 			counted[name] = count
 			order = append(order, name)
 		}
-	} else {
+	}
+
+	if individual == nil || individual.Engine() == nil {
 		step := uint64(0)
 		iterator := tree.Root().Iterator()
 		iterator.SeekPrefix([]byte("b/"))
@@ -529,6 +593,7 @@ func learner(
 			if !named {
 				continue
 			}
+
 
 			if written := packedWeight(value).WriteStep; written > step {
 				step = written

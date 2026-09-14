@@ -2,42 +2,66 @@ package cvd
 
 import (
 	"context"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	nmcvd "github.com/theapemachine/symm/nomagique/cvd"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 Trade is the CVD executed-flow measuring instrument. It holds no state and no
-logic of its own: its entire behavior is one nomagique pipeline over the
-measurement itself — every stage writes its facts into the measurement where
+logic of its own: its entire behavior is composed nomagique pipelines per symbol
+over the measurements — every stage writes its facts into the measurement where
 it computes them, and the workload's register owns the measurement's lifetime.
 */
 type Trade struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	pipelines map[string]core.Primitive
+	mu        sync.RWMutex
+	ID        int
 }
 
 func NewTrade(ctx context.Context) *Trade {
 	trade := &Trade{
-		System: runtime.NewSystem(ctx, "cvd:trade"),
-		pipeline: nomagique.NewNumber(
-			nmcvd.NewGate(),
-			nmcvd.NewQuantity(),
-			nmcvd.NewNotional(),
-			nmcvd.NewRates(),
-			data.NewFinalizer[float64](),
-		),
+		System:    runtime.NewSystem(ctx, "cvd:trade"),
+		pipelines: make(map[string]core.Primitive),
 	}
 
 	trade.Transition(runtime.READY)
 	return trade
+}
+
+func (trade *Trade) pipelineFor(symbol string) core.Primitive {
+	trade.mu.RLock()
+	pipeline, ok := trade.pipelines[symbol]
+	trade.mu.RUnlock()
+
+	if ok {
+		return pipeline
+	}
+
+	trade.mu.Lock()
+	defer trade.mu.Unlock()
+
+	pipeline, ok = trade.pipelines[symbol]
+	if ok {
+		return pipeline
+	}
+
+	pipeline = nomagique.NewNumber(
+		nmcvd.NewGate(),
+		nmcvd.NewQuantity(),
+		nmcvd.NewNotional(),
+		nmcvd.NewRates(),
+		data.NewFinalizer[float64](),
+	)
+	trade.pipelines[symbol] = pipeline
+	return pipeline
 }
 
 /*
@@ -65,6 +89,10 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		input = peer.Clone()
 	}
 
+	if input.Label == "" {
+		return measurement
+	}
+
 	if _, hasPrice := input.Metrics["price"]; !hasPrice {
 		return measurement
 	}
@@ -73,7 +101,7 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(input.Label).Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
 
 	if res != nil && res != measurement {
 		measurement.Absorb(res)

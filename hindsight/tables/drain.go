@@ -198,7 +198,7 @@ func route(
 				BidQty:       metricRaw(measurement, "bid_qty"),
 				Ask:          metricRaw(measurement, "ask"),
 				AskQty:       metricRaw(measurement, "ask_qty"),
-				Last:         metricRaw(measurement, "last"),
+				Last:         firstMetric(measurement, "last", "last_price", "price"),
 				Volume:       metricRaw(measurement, "volume"),
 				VWAP:         metricRaw(measurement, "vwap"),
 				Low:          metricRaw(measurement, "low"),
@@ -223,7 +223,7 @@ func route(
 			BidQty:     metricRaw(measurement, "bid_qty"),
 			Ask:        metricRaw(measurement, "ask"),
 			AskQty:     metricRaw(measurement, "ask_qty"),
-			Last:       metricRaw(measurement, "last"),
+			Last:       firstMetric(measurement, "last", "last_price", "price"),
 			Volume:     metricRaw(measurement, "volume"),
 			VWAP:       metricRaw(measurement, "vwap"),
 			Low:        metricRaw(measurement, "low"),
@@ -356,17 +356,27 @@ func route(
 		return
 	}
 
-	metricsMap := make(map[string]float64, len(measurement.Metrics))
+	var metricsMap map[string]float64
 
-	for key, value := range measurement.Metrics {
-		metricsMap[key] = value.Raw
+	if len(measurement.Metrics) > 0 {
+		metricsMap = make(map[string]float64, len(measurement.Metrics))
+
+		for key, value := range measurement.Metrics {
+			metricsMap[key] = value.Raw
+		}
 	}
 
-	metadataMap := make(map[string]float64)
+	var metadataMap map[string]float64
 
-	for key, value := range measurement.Metadata {
-		if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
-			metadataMap[key] = floatVal
+	if len(measurement.Metadata) > 0 {
+		for key, value := range measurement.Metadata {
+			if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
+				if metadataMap == nil {
+					metadataMap = make(map[string]float64, len(measurement.Metadata))
+				}
+
+				metadataMap[key] = floatVal
+			}
 		}
 	}
 
@@ -411,6 +421,20 @@ func metricRaw(measurement *data.Measurement[float64], key string) float64 {
 	}
 
 	return measurement.Metrics[key].Raw
+}
+
+func firstMetric(measurement *data.Measurement[float64], keys ...string) float64 {
+	if measurement.Metrics == nil {
+		return 0
+	}
+
+	for _, key := range keys {
+		if metric, ok := measurement.Metrics[key]; ok && metric.Raw != 0 {
+			return metric.Raw
+		}
+	}
+
+	return 0
 }
 
 func metricExact(measurement *data.Measurement[float64], key string) *decimal.Decimal {

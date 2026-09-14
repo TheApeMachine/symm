@@ -539,6 +539,10 @@ func (solver *Solver) Advance() *State {
 	}
 
 	if len(departures) == 0 && batch == nil {
+		if solver.viewer != nil && solver.viewer.WantsManifold() {
+			solver.publish()
+		}
+
 		return nil
 	}
 
@@ -557,6 +561,10 @@ func (solver *Solver) Advance() *State {
 	if batch == nil && remaining == 0 {
 		solver.advanceMu.Unlock()
 
+		if solver.viewer != nil && solver.viewer.WantsManifold() {
+			solver.publish()
+		}
+
 		return nil
 	}
 
@@ -567,9 +575,8 @@ func (solver *Solver) Advance() *State {
 		return nil
 	}
 
-	if state == nil || state.N == 0 {
+	if state == nil {
 		solver.advanceMu.Unlock()
-
 		return nil
 	}
 
@@ -907,16 +914,40 @@ func (solver *Solver) Snapshot() *State {
 	defer solver.advanceMu.Unlock()
 
 	state := solver.physics.State()
-
-	if state == nil || state.N == 0 {
-		return nil
-	}
-
 	reading := solver.Reading()
 
-	if reading == nil {
-		return nil
+	var stateVal sensorium.State
+
+	if state != nil && state.N > 0 {
+		stateVal = cloneState(state)
 	}
+
+	var readingVal sensorium.Reading
+	var modes []WaveMode
+	var at time.Time
+	var version uint64
+
+	if reading != nil {
+		readingVal = reading.Reading
+		modes = reading.Modes
+		at = reading.At
+		version = reading.Version
+	} else {
+		readingVal = solver.physics.Reading()
+		modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
+		modes = make([]WaveMode, len(modeOmega))
+
+		for index := range modeOmega {
+			modes[index] = WaveMode{
+				Omega: modeOmega[index], Real: modeReal[index],
+				Imag: modeImag[index], Linewidth: modeLinewidth[index],
+			}
+		}
+
+		at = time.Now()
+		version = solver.version
+	}
+
 	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
 	cells := gridX * gridY * gridZ
 
@@ -933,10 +964,10 @@ func (solver *Solver) Snapshot() *State {
 	)
 
 	return &State{
-		State:         reading.State,
-		Reading:       reading.Reading,
-		At:            reading.At,
-		Version:       reading.Version,
+		State:         stateVal,
+		Reading:       readingVal,
+		At:            at,
+		Version:       version,
 		GridX:         gridX,
 		GridY:         gridY,
 		GridZ:         gridZ,
@@ -949,7 +980,7 @@ func (solver *Solver) Snapshot() *State {
 		MomentumScale: momentumScale,
 		EnergyScale:   energyScale,
 		WaveScale:     waveScale,
-		Modes:         reading.Modes,
+		Modes:         modes,
 	}
 }
 

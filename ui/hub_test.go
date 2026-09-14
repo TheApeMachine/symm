@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +14,9 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/hindsight/tables/tablestest"
+	"github.com/theapemachine/symm/tests/tablestest"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/wf"
 )
 
@@ -67,6 +69,8 @@ func TestHubWriteFrontend(t *testing.T) {
 		defer client.Close()
 		connection := <-accepted
 		So(connection.Close(), ShouldBeNil)
+		types.SetFocus("TEST/USD")
+		defer types.SetFocus("BTC/USD")
 		hub := &Hub{frontend: &fiberws.Conn{Conn: connection}}
 		measurement := data.NewMeasurement[float64]("cvd", nil)
 		measurement.Label = "TEST/USD"
@@ -311,6 +315,81 @@ func TestIsRawMarketData(t *testing.T) {
 			hawkesMeas.Label = "BTC/USD"
 			So(IsRawMarketData(hawkesMeas), ShouldBeFalse)
 			So(IsAllowedTelemetry(hawkesMeas), ShouldBeTrue)
+		})
+	})
+}
+
+func TestIsWireAllowed(t *testing.T) {
+	Convey("Given a hub and focus-gated measurements", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		hub := NewHub(ctx)
+		defer hub.Close()
+
+		original := types.Focus()
+		Reset(func() {
+			types.SetFocus(original)
+		})
+
+		Convey("Raw market data is always rejected regardless of focus", func() {
+			types.SetFocus("BTC/USD")
+			rawMeas := data.NewMeasurement[float64]("websocket", nil)
+			rawMeas.Label = "BTC/USD"
+			So(hub.isWireAllowed(rawMeas), ShouldBeFalse)
+			So(hub.isWireAllowed(nil), ShouldBeFalse)
+		})
+
+		Convey("Training and system measurements are admitted regardless of focus", func() {
+			types.SetFocus("BTC/USD")
+
+			trainingMeas := data.NewMeasurement[float64]("training", nil)
+			trainingMeas.Label = "ETH/USD"
+			So(hub.isWireAllowed(trainingMeas), ShouldBeTrue)
+
+			globalMeas := data.NewMeasurement[float64]("pulse", nil)
+			globalMeas.Label = ""
+			So(hub.isWireAllowed(globalMeas), ShouldBeTrue)
+		})
+
+		Convey("Signal measurements are filtered by the active focus symbol", func() {
+			types.SetFocus("BTC/USD")
+
+			btcMeas := data.NewMeasurement[float64]("cvd", nil)
+			btcMeas.Label = "BTC/USD"
+			So(hub.isWireAllowed(btcMeas), ShouldBeTrue)
+
+			ethMeas := data.NewMeasurement[float64]("cvd", nil)
+			ethMeas.Label = "ETH/USD"
+			So(hub.isWireAllowed(ethMeas), ShouldBeFalse)
+
+			solMeas := data.NewMeasurement[float64]("hawkes", nil)
+			solMeas.Label = "SOL/USD"
+			So(hub.isWireAllowed(solMeas), ShouldBeFalse)
+		})
+
+		Convey("Changing the focus dynamically admits the new symbol", func() {
+			types.SetFocus("ETH/USD")
+
+			btcMeas := data.NewMeasurement[float64]("cvd", nil)
+			btcMeas.Label = "BTC/USD"
+			So(hub.isWireAllowed(btcMeas), ShouldBeFalse)
+
+			ethMeas := data.NewMeasurement[float64]("cvd", nil)
+			ethMeas.Label = "ETH/USD"
+			So(hub.isWireAllowed(ethMeas), ShouldBeTrue)
+		})
+
+		Convey("Wildcard or empty focus admits all analytical signals", func() {
+			types.SetFocus("*")
+
+			btcMeas := data.NewMeasurement[float64]("cvd", nil)
+			btcMeas.Label = "BTC/USD"
+			So(hub.isWireAllowed(btcMeas), ShouldBeTrue)
+
+			ethMeas := data.NewMeasurement[float64]("cvd", nil)
+			ethMeas.Label = "ETH/USD"
+			So(hub.isWireAllowed(ethMeas), ShouldBeTrue)
 		})
 	})
 }

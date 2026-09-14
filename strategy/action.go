@@ -15,17 +15,19 @@ const (
 	ActionEnter Action = "enter"
 	ActionExit  Action = "exit"
 	ActionWait  Action = "wait"
+	ActionHold  Action = "hold"
 )
 
 /*
 LegalActions returns the actions available to the learner given its current
 position state. A flat learner may enter or wait. A holding learner may exit
-or wait.
+or hold (wait while holding).
 */
 func LegalActions(holding bool) []Action {
 	if holding {
-		return []Action{ActionExit, ActionWait}
+		return []Action{ActionExit, ActionHold}
 	}
 
 	return []Action{ActionEnter, ActionWait}
 }
+

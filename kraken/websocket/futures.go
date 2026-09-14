@@ -577,12 +577,14 @@ func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.M
 		return measurement
 	}
 
+	measurement.Provenance = make(map[string]string, 4)
+	measurement.Metrics = make(map[string]data.Metric[float64], len(row))
+	measurement.Err = nil
+	measurement.At = time.Time{}
+	measurement.From = time.Time{}
+
 	if symbol, ok := row["symbol"].(string); ok {
 		measurement.Label = symbol
-	}
-
-	if measurement.Provenance == nil {
-		measurement.Provenance = make(map[string]string)
 	}
 
 	if channel, ok := row["channel"].(string); ok {
@@ -603,6 +605,10 @@ func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.M
 
 	if at, ok := row["timestamp"].(time.Time); ok {
 		measurement.At = at
+	}
+
+	if measurement.At.IsZero() {
+		measurement.At = time.Now().UTC()
 	}
 
 	for key, value := range row {

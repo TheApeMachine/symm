@@ -23,6 +23,7 @@ import {
 	getAllRetainedResonance,
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
+import { Flex } from "#/components/ui";
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
@@ -33,7 +34,9 @@ const XrayPaintBridge = () => {
 			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
-				const row = (typeof (last as any).unpack === "function" ? (last as any).unpack() : last) as unknown as Record<string, unknown>;
+				const row = (typeof (last as any).unpack === "function"
+					? (last as any).unpack()
+					: last) as unknown as Record<string, unknown>;
 				const sym = typeof row.symbol === "string" ? row.symbol : "";
 
 				if (sym) {
@@ -93,7 +96,10 @@ const XrayCarrierBar = () => {
 	}, []);
 
 	return (
-		<div className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
+		<Flex.Row
+			align="center"
+			className="h-11.5 shrink-0 gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5"
+		>
 			<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 				Inspect symbol
 			</span>
@@ -117,21 +123,21 @@ const XrayCarrierBar = () => {
 					</button>
 				);
 			})}
-		</div>
+		</Flex.Row>
 	);
 };
 
 const RouteComponent = () => (
-	<div className="flex h-full min-w-275 flex-col">
+	<Flex.Column className="h-full min-w-275">
 		<XrayPaintBridge />
 		<XrayCarrierBar />
 		<div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
-			<div className="flex min-h-0 flex-col overflow-auto border-(--line) border-r">
+			<Flex.Column className="min-h-0 overflow-auto border-(--line) border-r">
 				<XrayHierarchyPanel />
 				<XrayHawkesPanel />
-			</div>
+			</Flex.Column>
 
-			<div className="flex min-h-0 flex-col overflow-auto bg-(--surface)">
+			<Flex.Column className="min-h-0 overflow-auto bg-(--surface)">
 				<div className="shrink-0 px-3.5 pt-3 pb-1.5">
 					<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 						Latent manifold
@@ -149,12 +155,11 @@ const RouteComponent = () => (
 						latent-2 →
 					</div>
 				</div>
-
 				<XrayFactsPanel />
 				<XrayManifoldPanel />
-			</div>
+			</Flex.Column>
 		</div>
-	</div>
+	</Flex.Column>
 );
 
 export const Route = createFileRoute("/xray")({

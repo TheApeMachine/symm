@@ -8,6 +8,7 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pion/sctp"
 	"github.com/pion/webrtc/v4"
@@ -94,7 +95,15 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 		previous.close()
 	}
 
+	errnie.Info(fmt.Sprintf(
+		"fluid: attached data channel %s (state=%s)", label, dataChannel.ReadyState(),
+	))
+
 	dataChannel.OnOpen(channel.start)
+
+	if dataChannel.ReadyState() == webrtc.DataChannelStateOpen {
+		channel.start()
+	}
 }
 
 func (peer *fluidPeer) close() {
@@ -123,6 +132,7 @@ one complete frame, discard incomplete frames, and discard obsolete frames once
 a newer frame is available.
 */
 type fluidChannel struct {
+	label         string
 	ctx           context.Context
 	cancel        context.CancelFunc
 	transport     fluidTransport
@@ -206,7 +216,10 @@ func newFluidChannel(
 ) *fluidChannel {
 	ctx, cancel := context.WithCancel(ctx)
 	channel := &fluidChannel{
-		ctx: ctx, cancel: cancel, transport: dataChannelTransport{channel: dataChannel},
+		label:         dataChannel.Label(),
+		ctx:           ctx,
+		cancel:        cancel,
+		transport:     dataChannelTransport{channel: dataChannel},
 		drained:       make(chan struct{}, 1),
 		bufferedLimit: bufferedLimit, fail: fail,
 		latestReady: make(chan struct{}, 1),
@@ -280,7 +293,6 @@ func (channel *fluidChannel) run() {
 			continue
 		}
 
-		channel.sending.Store(true)
 		err := channel.send(payload)
 		channel.sending.Store(false)
 
@@ -301,6 +313,11 @@ func (channel *fluidChannel) takeLatest() []byte {
 	channel.latestMu.Lock()
 	payload := channel.latest
 	channel.latest = nil
+
+	if payload != nil {
+		channel.sending.Store(true)
+	}
+
 	channel.latestMu.Unlock()
 
 	return payload
@@ -333,6 +350,11 @@ func (channel *fluidChannel) send(payload []byte) error {
 	frameID := channel.frameID
 	chunkCount := uint32((len(payload) + fluidSegmentSize - 1) / fluidSegmentSize)
 	generation := channel.sendGen.Load()
+
+	errnie.Info(fmt.Sprintf(
+		"fluid[%s]: sending frame %d (%d chunks, %d bytes)",
+		channel.label, frameID, chunkCount, len(payload),
+	))
 
 	for offset, index := 0, uint32(0); offset < len(payload); offset += fluidSegmentSize {
 		if channel.sendGen.Load() != generation {
@@ -404,6 +426,7 @@ func (channel *fluidChannel) sendSegment(segment []byte, generation uint64) erro
 		case <-channel.ctx.Done():
 			return channel.ctx.Err()
 		case <-channel.drained:
+		case <-time.After(5 * time.Millisecond):
 		case <-channel.latestReady:
 			if channel.sendGen.Load() != generation {
 				return errFrameSuperseded

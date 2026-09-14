@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/hindsight/tables/tablestest"
+	"github.com/theapemachine/symm/tests/tablestest"
 )
 
 func TestCatalogEnsure(t *testing.T) {
@@ -30,6 +30,14 @@ func TestCatalogEnsure(t *testing.T) {
 			unchanged, err := catalog.Load(t.Context(), tables.Measurements)
 			So(err, ShouldBeNil)
 			So(unchanged.MetadataLocation(), ShouldEqual, updated.MetadataLocation())
+		})
+
+		Convey("Missing columns are evolved in-place", func() {
+			decisions, err := catalog.Load(t.Context(), tables.Decisions)
+			So(err, ShouldBeNil)
+			_, found := decisions.Schema().FindFieldByName("epoch")
+			So(found, ShouldBeTrue)
+			So(catalog.Ensure(t.Context()), ShouldBeNil)
 		})
 
 		Convey("Invalid budgets fail before changing the catalog", func() {

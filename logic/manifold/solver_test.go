@@ -92,5 +92,41 @@ func TestDatasetAndSolverAdvance(t *testing.T) {
 			So(viewer.manifold, ShouldNotBeNil)
 			So(viewer.manifold.Reading.CoherenceMag2, ShouldBeGreaterThanOrEqualTo, 0)
 		})
+
+		Convey("And a solver with an empty manifold publishing to a viewer", func() {
+			physics := sensorium.NewManifold(8, 8, 8)
+			solver := &Solver{
+				System:  runtime.NewSystem(t.Context(), "manifold-empty"),
+				physics: physics,
+				dataset: ds,
+				loaded:  make(map[int64]struct{}),
+				dirty:   make(map[string]struct{}),
+				wake:    make(chan struct{}, 1),
+			}
+			solver.Transition(runtime.READY)
+			defer solver.Close()
+
+			viewer := &testViewer{wants: true}
+			solver.SetViewer(viewer)
+
+			snapshot := solver.Snapshot()
+			So(snapshot, ShouldNotBeNil)
+			So(snapshot.GridX, ShouldEqual, 8)
+			So(snapshot.GridY, ShouldEqual, 8)
+			So(snapshot.GridZ, ShouldEqual, 8)
+			So(snapshot.State.N, ShouldEqual, 0)
+			So(len(snapshot.MomRho), ShouldEqual, 8*8*8*4)
+
+			solver.publish()
+			So(viewer.manifold, ShouldNotBeNil)
+			So(viewer.manifold.GridX, ShouldEqual, 8)
+			So(viewer.manifold.State.N, ShouldEqual, 0)
+
+			// Advance with no orders but an attached viewer that wants manifold publishes
+			viewer.manifold = nil
+			solver.Advance()
+			So(viewer.manifold, ShouldNotBeNil)
+			So(viewer.manifold.GridX, ShouldEqual, 8)
+		})
 	})
 }
