@@ -12,14 +12,12 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as WorkbenchRouteImport } from './routes/workbench'
 import { Route as SignalsRouteImport } from './routes/signals'
-import { Route as RegulatorRouteImport } from './routes/regulator'
 import { Route as PipelineRouteImport } from './routes/pipeline'
 import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as LearningRouteImport } from './routes/learning'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as HindsightRouteImport } from './routes/hindsight'
-import { Route as GraphRouteImport } from './routes/graph'
 import { Route as FluidRouteImport } from './routes/fluid'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as CortexRouteImport } from './routes/cortex'
@@ -38,11 +36,6 @@ const WorkbenchRoute = WorkbenchRouteImport.update({
 const SignalsRoute = SignalsRouteImport.update({
   id: '/signals',
   path: '/signals',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RegulatorRoute = RegulatorRouteImport.update({
-  id: '/regulator',
-  path: '/regulator',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PipelineRoute = PipelineRouteImport.update({
@@ -75,11 +68,6 @@ const HindsightRoute = HindsightRouteImport.update({
   path: '/hindsight',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GraphRoute = GraphRouteImport.update({
-  id: '/graph',
-  path: '/graph',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const FluidRoute = FluidRouteImport.update({
   id: '/fluid',
   path: '/fluid',
@@ -106,14 +94,12 @@ export interface FileRoutesByFullPath {
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
-  '/graph': typeof GraphRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
-  '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -123,14 +109,12 @@ export interface FileRoutesByTo {
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
-  '/graph': typeof GraphRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
-  '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -141,14 +125,12 @@ export interface FileRoutesById {
   '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
-  '/graph': typeof GraphRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/pipeline': typeof PipelineRoute
-  '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -160,14 +142,12 @@ export interface FileRouteTypes {
     | '/cortex'
     | '/diagnostics'
     | '/fluid'
-    | '/graph'
     | '/hindsight'
     | '/influence'
     | '/journal'
     | '/learning'
     | '/lineage'
     | '/pipeline'
-    | '/regulator'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -177,14 +157,12 @@ export interface FileRouteTypes {
     | '/cortex'
     | '/diagnostics'
     | '/fluid'
-    | '/graph'
     | '/hindsight'
     | '/influence'
     | '/journal'
     | '/learning'
     | '/lineage'
     | '/pipeline'
-    | '/regulator'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -194,14 +172,12 @@ export interface FileRouteTypes {
     | '/cortex'
     | '/diagnostics'
     | '/fluid'
-    | '/graph'
     | '/hindsight'
     | '/influence'
     | '/journal'
     | '/learning'
     | '/lineage'
     | '/pipeline'
-    | '/regulator'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -212,14 +188,12 @@ export interface RootRouteChildren {
   CortexRoute: typeof CortexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
   FluidRoute: typeof FluidRoute
-  GraphRoute: typeof GraphRoute
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
   JournalRoute: typeof JournalRoute
   LearningRoute: typeof LearningRoute
   LineageRoute: typeof LineageRoute
   PipelineRoute: typeof PipelineRoute
-  RegulatorRoute: typeof RegulatorRoute
   SignalsRoute: typeof SignalsRoute
   WorkbenchRoute: typeof WorkbenchRoute
   XrayRoute: typeof XrayRoute
@@ -246,13 +220,6 @@ declare module '@tanstack/react-router' {
       path: '/signals'
       fullPath: '/signals'
       preLoaderRoute: typeof SignalsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/regulator': {
-      id: '/regulator'
-      path: '/regulator'
-      fullPath: '/regulator'
-      preLoaderRoute: typeof RegulatorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pipeline': {
@@ -297,13 +264,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HindsightRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/graph': {
-      id: '/graph'
-      path: '/graph'
-      fullPath: '/graph'
-      preLoaderRoute: typeof GraphRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/fluid': {
       id: '/fluid'
       path: '/fluid'
@@ -340,14 +300,12 @@ const rootRouteChildren: RootRouteChildren = {
   CortexRoute: CortexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
   FluidRoute: FluidRoute,
-  GraphRoute: GraphRoute,
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,
   JournalRoute: JournalRoute,
   LearningRoute: LearningRoute,
   LineageRoute: LineageRoute,
   PipelineRoute: PipelineRoute,
-  RegulatorRoute: RegulatorRoute,
   SignalsRoute: SignalsRoute,
   WorkbenchRoute: WorkbenchRoute,
   XrayRoute: XrayRoute,

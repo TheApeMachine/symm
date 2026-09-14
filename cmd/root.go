@@ -203,29 +203,14 @@ var (
 			telemetryTee.SetFilter(ui.IsAllowedTelemetry)
 			go hub.Drain(telemetryTee.Ring())
 
+			epoch := processStartedAt.UnixNano()
 			storageTee := nmruntime.NewNamedTee("storage.tee", 131072)
-			go tables.Drain(ctx, catalog, storageTee.Ring())
+			go tables.Drain(ctx, catalog, storageTee.Ring(), epoch)
 
 			if catalog != nil {
 				go func() {
 					if err := catalog.LoadRehearsalTape(ctx, tape); err != nil {
 						errnie.Error(err)
-					}
-				}()
-
-				go func() {
-					ticker := time.NewTicker(1 * time.Hour)
-					defer ticker.Stop()
-
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case <-ticker.C:
-							if err := catalog.CompactAll(ctx); err != nil {
-								errnie.Error(err)
-							}
-						}
 					}
 				}()
 			}

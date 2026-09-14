@@ -193,8 +193,19 @@ const HindsightRoute = () => {
 			.then((loaded) => {
 				if (cancelled) return;
 
-				setRuns(loaded);
-				setRun((current) => current ?? loaded[0]?.id ?? null);
+				const sortedRuns = [...loaded].sort((left, right) => {
+					const epochLeft = Number(left.id) || 0;
+					const epochRight = Number(right.id) || 0;
+
+					if (epochLeft !== epochRight) {
+						return epochRight - epochLeft;
+					}
+
+					return new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime();
+				});
+
+				setRuns(sortedRuns);
+				setRun((current) => current ?? sortedRuns[0]?.id ?? null);
 			})
 			.catch((cause: unknown) => {
 				if (!cancelled) failed(cause);

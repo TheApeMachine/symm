@@ -23,6 +23,7 @@ type Config struct {
 	WebSocket *WebSocket
 	Market    *Market
 	Learning  *Learning
+	Storage   *Storage
 }
 
 func NewConfig() *Config {
@@ -37,6 +38,7 @@ func NewConfig() *Config {
 		WebSocket: NewWebSocket(),
 		Market:    NewMarket(),
 		Learning:  NewLearning(),
+		Storage:   NewStorage(),
 	}
 }
 
