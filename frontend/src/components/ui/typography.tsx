@@ -11,21 +11,21 @@ so a store subscriber can query it and write its textContent directly.
 export const typographyVariants = cva("font-mono text-[11.5px] text-(--f3)", {
 	variants: {
 		variant: {
-			foreground: "text-foreground",
+			foreground: "text-(--f1)",
 			/** Muted helpers under a page title */
-			lead: "font-mono text-[11.5px] text-muted-foreground [&]:leading-normal max-sm:[&]:text-sm",
+			lead: "font-mono text-[11.5px] text-(--f3) [&]:leading-normal max-sm:[&]:text-sm",
 			/** Compact section label in side rails / panels */
-			sectionHeading: "text-sm font-medium text-foreground",
+			sectionHeading: "text-sm font-medium text-(--f1)",
 			/** Monospace export / raw source preview */
 			codeExport:
-				"font-mono font-normal text-[10px] leading-relaxed whitespace-pre-wrap text-foreground sm:text-xs",
-			info: "text-info",
-			success: "text-success",
-			warning: "text-warning",
-			error: "text-error",
-			muted: "text-muted-foreground",
-			primary: "text-primary-foreground",
-			secondary: "text-secondary-foreground",
+				"font-mono font-normal text-[10px] leading-relaxed whitespace-pre-wrap text-(--f2) sm:text-xs",
+			info: "text-(--info)",
+			success: "text-(--success)",
+			warning: "text-(--warning)",
+			error: "text-(--error)",
+			muted: "text-(--f3)",
+			primary: "text-(--f1)",
+			secondary: "text-(--f2)",
 			/* Terminal foreground ramp, loudest to quietest. */
 			f1: "text-(--f1)",
 			f2: "text-(--f2)",
@@ -160,7 +160,7 @@ export const Typography = ({ children }: { children: React.ReactNode }) =>
 
 Typography.PageTitle = textElement(
 	"h1",
-	"font-semibold text-foreground text-lg",
+	"font-semibold text-(--f1) text-lg",
 );
 
 /*

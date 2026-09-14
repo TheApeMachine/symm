@@ -77,7 +77,7 @@ export const RegulatorPredictiveCoding = () => {
 
 	regulatorStore.subscribe((state) => {
 		if (!root.current) return;
-		const frame = state.getLast();
+		const frame = typeof state?.getLast === "function" ? state.getLast() : null;
 		if (!frame) return;
 
 		if (!queryCache) {

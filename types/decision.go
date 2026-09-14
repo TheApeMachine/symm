@@ -3,7 +3,6 @@ package types
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/nomagique/learning"
 )
@@ -35,7 +34,6 @@ The immutable decision identifier links admission, execution, and Hindsight.
 */
 type Decision struct {
 	Reduce           bool                    `json:"reduce"`
-	OnRefusal        func(*ExecutionRefusal) `json:"-"`
 	Admit            func(*EntryCost) error  `json:"-"`
 	Permit           func() bool             `json:"-"`
 	ID               string                  `json:"id" validate:"required"`
@@ -80,29 +78,6 @@ type Decision struct {
 	EntryCost        *EntryCost              `json:"entryCost,omitempty"`
 }
 
-/*
-EnsureID assigns one UUID when the decision does not already carry its durable
-position-link identifier.
-*/
-func (decision *Decision) EnsureID() {
-	if decision == nil || decision.ID != "" {
-		return
-	}
-
-	decision.ID = uuid.NewString()
-}
-
-/*
-ValidID reports whether the decision identifier is a syntactically valid UUID.
-*/
-func (decision Decision) ValidID() bool {
-	if decision.ID == "" {
-		return false
-	}
-
-	_, err := uuid.Parse(decision.ID)
-	return err == nil
-}
 
 /*
 StrategyRound carries one plan decision round intended for the dashboard. The

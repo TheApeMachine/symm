@@ -1,6 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 import { positionStore } from "#/collections/app";
+import { learningStore } from "#/collections/learning";
 import { terminalStore } from "#/collections/terminal";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
@@ -36,11 +37,65 @@ type PositionCardData = {
 };
 
 export const Positions = () => {
-	const positions = useSelector(positionStore, (state) => {
-		const latestFrame = state.findLast(() => true);
-		if (!latestFrame) return [];
-
+	const positions = useSelector(learningStore, (learningState) => {
 		const currentPositions: PositionCardData[] = [];
+		const policy = learningState?.agents?.[0];
+
+		if (policy?.positions && policy.positions.length > 0) {
+			for (const currentPosition of policy.positions) {
+				const currentHolding = currentPosition.holding;
+				if (!currentHolding) continue;
+
+				const currentSymbol = String(currentHolding.symbol ?? "");
+				if (!currentSymbol) continue;
+
+				const positionStatus = String(
+					currentHolding.status ?? currentPosition.status ?? "—",
+				);
+				if (positionStatus === "closed") {
+					continue;
+				}
+
+				const rawPnl = currentHolding.pnl;
+				const pnlNum =
+					typeof rawPnl === "number"
+						? rawPnl
+						: typeof rawPnl === "string" && Number.isFinite(Number(rawPnl))
+							? Number(rawPnl)
+							: 0;
+
+				const entryPrice = currentHolding.entryPrice;
+				const mark = currentHolding.mark;
+				const returnPct = currentHolding.returnPct;
+
+				currentPositions.push({
+					symbol: currentSymbol,
+					status: positionStatus,
+					pnl: `${formatValue(rawPnl, 4)} USD`,
+					pnlValue: pnlNum,
+					entryPrice: formatValue(entryPrice, 6),
+					mark: formatValue(mark, 6),
+					returnPct: `${formatValue(returnPct, 2)}%`,
+				});
+			}
+
+			if (currentPositions.length > 0) {
+				return currentPositions.sort((leftPosition, rightPosition) =>
+					leftPosition.symbol.localeCompare(rightPosition.symbol),
+				);
+			}
+		}
+
+		const state: any = positionStore.state;
+		const latestFrame =
+			typeof state?.findLast === "function"
+				? state.findLast(() => true)
+				: Array.isArray(state)
+					? state[state.length - 1]
+					: state;
+		if (!latestFrame || typeof latestFrame.rowsLength !== "function") return [];
+
+		const fallbackPositions: PositionCardData[] = [];
 
 		for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
 			const currentPosition = latestFrame.rows(rowIndex, positionObject);
@@ -66,7 +121,7 @@ export const Positions = () => {
 						? Number(rawPnl)
 						: 0;
 
-			currentPositions.push({
+			fallbackPositions.push({
 				symbol: currentSymbol,
 				status: positionStatus,
 				pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
@@ -77,7 +132,7 @@ export const Positions = () => {
 			});
 		}
 
-		return currentPositions.sort((leftPosition, rightPosition) =>
+		return fallbackPositions.sort((leftPosition, rightPosition) =>
 			leftPosition.symbol.localeCompare(rightPosition.symbol),
 		);
 	});

@@ -2,10 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 import {
-	appStore,
 	DEFAULT_FOCUS_SYMBOL,
+	focusAtom,
 	focusStore,
-	resonanceArtifactStore,
+	observeSymbols,
+	resonanceStore,
 	symbolsStore,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -27,16 +28,17 @@ const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 
 	useEffect(() => {
-		const updatePaint = (state: typeof resonanceArtifactStore.state) => {
-			const last = state.getLast();
+		const updatePaint = (state: typeof resonanceStore.state) => {
+			const ring = state[focusSymbol];
+			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
-				const row = last.unpack() as unknown as Record<string, unknown>;
+				const row = (typeof (last as any).unpack === "function" ? (last as any).unpack() : last) as unknown as Record<string, unknown>;
 				const sym = typeof row.symbol === "string" ? row.symbol : "";
 
 				if (sym) {
 					retainResonanceRow(sym, row);
-					appStore.actions.observeSymbols([sym]);
+					observeSymbols([sym]);
 				}
 			}
 
@@ -45,8 +47,8 @@ const XrayPaintBridge = () => {
 			paintXrayLatent(universe, focusSymbol);
 		};
 
-		updatePaint(resonanceArtifactStore.state);
-		const subscription = resonanceArtifactStore.subscribe((state) => {
+		updatePaint(resonanceStore.state);
+		const subscription = resonanceStore.subscribe((state) => {
 			updatePaint(state);
 		});
 
@@ -82,7 +84,7 @@ const XrayCarrierBar = () => {
 
 		syncSymbols();
 		const sub1 = symbolsStore.subscribe(syncSymbols);
-		const sub2 = resonanceArtifactStore.subscribe(syncSymbols);
+		const sub2 = resonanceStore.subscribe(syncSymbols);
 
 		return () => {
 			sub1.unsubscribe();
@@ -102,7 +104,7 @@ const XrayCarrierBar = () => {
 						key={sym}
 						type="button"
 						onClick={() => {
-							appStore.actions.updateFocusSymbol(sym);
+							focusAtom.set(sym);
 							terminalStore.actions.selectFocusSymbol(sym);
 						}}
 						className={`shrink-0 cursor-pointer rounded-[3px] border px-2.75 py-1 font-medium font-mono text-[11px] transition-colors ${

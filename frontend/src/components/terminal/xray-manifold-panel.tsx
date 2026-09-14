@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusStore, resonanceArtifactStore } from "#/collections/app";
+import { focusStore, resonanceStore } from "#/collections/app";
 import {
 	getRetainedResonance,
 	retainResonanceRow,
@@ -125,12 +125,13 @@ export const XrayManifoldPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const updateFromState = (state: typeof resonanceArtifactStore.state) => {
+		const updateFromState = (state: typeof resonanceStore.state) => {
 			if (!root.current) return;
-			const last = state.getLast();
+			const ring = state[focusSymbol];
+			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
-				const row = last.unpack() as unknown as Record<string, unknown>;
+				const row = (typeof (last as any).unpack === "function" ? (last as any).unpack() : last) as unknown as Record<string, unknown>;
 				const sym = typeof row.symbol === "string" ? row.symbol : "";
 
 				if (sym) {
@@ -167,8 +168,8 @@ export const XrayManifoldPanel = () => {
 			}
 		};
 
-		updateFromState(resonanceArtifactStore.state);
-		const subscription = resonanceArtifactStore.subscribe((state) => {
+		updateFromState(resonanceStore.state);
+		const subscription = resonanceStore.subscribe((state) => {
 			updateFromState(state);
 		});
 

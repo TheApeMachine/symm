@@ -46,15 +46,38 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	if _, hasBid := measurement.Metrics["bid"]; !hasBid {
+	input := measurement
+
+	if len(measurement.Peers) > 0 {
+		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
+			_, hasB := p.Metrics["bid"]
+			_, hasA := p.Metrics["ask"]
+			return hasB && hasA && p.Label != ""
+		})
+
+		if peer == nil {
+			return measurement
+		}
+
+		input = peer.Clone()
+	}
+
+	if _, hasBid := input.Metrics["bid"]; !hasBid {
 		return measurement
 	}
 
-	if _, hasAsk := measurement.Metrics["ask"]; !hasAsk {
+	if _, hasAsk := input.Metrics["ask"]; !hasAsk {
 		return measurement
 	}
 
-	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+
+	if res != nil && res != measurement {
+		measurement.Absorb(res)
+		return measurement
+	}
+
+	return res
 }
 
 /*
@@ -64,7 +87,7 @@ The touch quote and displayed quantities are the feed's facts the stages
 consume; the rest are written where they are computed.
 */
 func (ticker *Ticker) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("liquidity", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("liquidity", map[string]data.Metric[float64]{
 		"bid": data.NewMetric[float64](
 			"bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
 		),
@@ -174,4 +197,7 @@ func (ticker *Ticker) Register() *data.Measurement[float64] {
 			"spread_divergence_velocity_snr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }
+

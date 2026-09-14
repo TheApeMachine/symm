@@ -204,6 +204,41 @@ func NewWithClient(
 	if endpoint == system.Cfg.WebSocket.Endpoints.Level3 {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
+		live.book.SetTouch(func(touches []kraken.Level3Touch) {
+			if live.Status() != runtime.READY {
+				return
+			}
+
+			for _, touch := range touches {
+				if touch.Bid == nil || touch.Ask == nil {
+					continue
+				}
+
+				row := map[string]any{
+					"channel":        "level3",
+					"symbol":         touch.Symbol,
+					"timestamp":      touch.Timestamp.Format(time.RFC3339Nano),
+					"bid":            json.Number(touch.Bid.String()),
+					"best_bid":       json.Number(touch.Bid.String()),
+					"best_price:bid": json.Number(touch.Bid.String()),
+					"ask":            json.Number(touch.Ask.String()),
+					"best_ask":       json.Number(touch.Ask.String()),
+					"best_price:ask": json.Number(touch.Ask.String()),
+				}
+
+				if touch.BidQty != nil {
+					row["bid_qty"] = json.Number(touch.BidQty.String())
+					row["touch_quantity:bid"] = json.Number(touch.BidQty.String())
+				}
+
+				if touch.AskQty != nil {
+					row["ask_qty"] = json.Number(touch.AskQty.String())
+					row["touch_quantity:ask"] = json.Number(touch.AskQty.String())
+				}
+
+				live.queue.Enqueue(row)
+			}
+		})
 	}
 
 	client.OnReceived.Recurring(func(event *callback.Event[*sdk.WebSocketMessage]) {
@@ -304,7 +339,7 @@ func NewWithClient(
 			}
 		}
 
-		if channel == "level3" && live.book != nil {
+		if channel == "level3" {
 			level3, ok := out.(*kraken.Level3)
 
 			if !ok {
@@ -317,8 +352,14 @@ func NewWithClient(
 				return
 			}
 
-			if err := live.book.Update(event, level3); err != nil {
-				errnie.Error(err)
+			if live.book != nil {
+				if err := live.book.Update(event, level3); err != nil {
+					errnie.Error(err)
+				}
+			}
+
+			if live.Status() == runtime.READY {
+				live.enqueueLevel3(level3)
 			}
 
 			return
@@ -359,6 +400,79 @@ func NewWithClient(
 	}
 
 	return live
+}
+
+func (live *Live) enqueueLevel3(level3 *kraken.Level3) {
+	if live == nil || live.queue == nil || level3 == nil {
+		return
+	}
+
+	isSnapshot := level3.Type == "snapshot"
+
+	for _, entry := range level3.Data {
+		checksumStr := strconv.FormatUint(uint64(entry.Checksum), 10)
+		entrySnapshot := isSnapshot || entry.Type == "snapshot"
+
+		live.enqueueLevel3Orders(entry.Symbol, "bid", entry.Bids, entry.Timestamp, checksumStr, entrySnapshot)
+		live.enqueueLevel3Orders(entry.Symbol, "ask", entry.Asks, entry.Timestamp, checksumStr, entrySnapshot)
+	}
+}
+
+func (live *Live) enqueueLevel3Orders(
+	symbol string,
+	side string,
+	orders []kraken.Level3Order,
+	fallbackAt time.Time,
+	checksumStr string,
+	isSnapshot bool,
+) {
+	for _, order := range orders {
+		eventName := order.Event
+
+		if eventName == "" {
+			eventName = "add"
+
+			if !isSnapshot {
+				eventName = "modify"
+			}
+		}
+
+		at := order.Timestamp
+
+		if at.IsZero() {
+			at = fallbackAt
+		}
+
+		if at.IsZero() {
+			at = time.Now()
+		}
+
+		limitPrice := order.ChecksumLimitPrice()
+
+		if limitPrice == "" && order.LimitPrice != nil {
+			limitPrice = order.LimitPrice.String()
+		}
+
+		orderQty := order.ChecksumOrderQty()
+
+		if orderQty == "" && order.OrderQty != nil {
+			orderQty = order.OrderQty.String()
+		}
+
+		row := map[string]any{
+			"channel":     "level3",
+			"symbol":      symbol,
+			"side":        side,
+			"event":       eventName,
+			"order_id":    order.OrderID,
+			"timestamp":   at.Format(time.RFC3339Nano),
+			"limit_price": json.Number(limitPrice),
+			"order_qty":   json.Number(orderQty),
+			"checksum":    json.Number(checksumStr),
+		}
+
+		live.queue.Enqueue(row)
+	}
 }
 
 /*
@@ -749,6 +863,7 @@ func (live *Live) SubL3(symbols []string) {
 			return
 		}
 
+		conn.queue = live.queue
 		conn.symbols = append([]string{}, groups...)
 		live.AttachLevel3(groupKey, conn)
 
@@ -863,6 +978,8 @@ func (live *Live) AttachLevel3(groupKey string, conn *Live) {
 	if conn == nil || groupKey == "" {
 		return
 	}
+
+	conn.queue = live.queue
 
 	if live.level3 == nil {
 		live.level3 = &sync.Map{}

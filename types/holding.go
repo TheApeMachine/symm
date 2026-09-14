@@ -84,24 +84,3 @@ func (holding *Holding) Close() (err error) {
 	return err
 }
 
-/* NewHolding establishes the zero ledger without manufacturing an entry price. */
-func NewHolding(symbol string) *Holding {
-	zero := decimal.NewFromInt64(0)
-	return &Holding{
-		Symbol:      symbol,
-		Status:      INITIALIZING,
-		Qty:         zero,
-		SellableQty: zero,
-		Basis:       zero,
-		EntryCost:   zero,
-		ExitCost:    zero,
-		EntryFee:    zero,
-		EntryFees:   zero,
-		EntryQty:    zero,
-		ExitFee:     zero,
-		ExitFees:    zero,
-		ExitQty:     zero,
-		RealizedPnL: zero,
-		PnL:         zero,
-	}
-}

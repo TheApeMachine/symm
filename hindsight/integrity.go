@@ -30,46 +30,7 @@ const (
 	IntegrityCorrupt
 )
 
-func (integrity Integrity) String() string {
-	switch integrity {
-	case IntegrityComplete:
-		return "COMPLETE"
-	case IntegrityGapped:
-		return "GAPPED"
-	case IntegrityCorrupt:
-		return "CORRUPT"
-	default:
-		return "UNKNOWN"
-	}
-}
 
-/*
-MarshalJSON serializes the integrity state as its stable name, so a persisted or
-wire representation carries "COMPLETE"/"GAPPED"/"CORRUPT" rather than a raw
-enum ordinal that would silently break when the enum reorders.
-*/
-func (integrity Integrity) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + integrity.String() + `"`), nil
-}
-
-/*
-UnmarshalJSON recovers an integrity state from its stable name, failing closed
-to CORRUPT on an unknown value rather than silently reading COMPLETE.
-*/
-func (integrity *Integrity) UnmarshalJSON(data []byte) error {
-	switch string(data) {
-	case `"COMPLETE"`:
-		*integrity = IntegrityComplete
-	case `"GAPPED"`:
-		*integrity = IntegrityGapped
-	case `"CORRUPT"`:
-		*integrity = IntegrityCorrupt
-	default:
-		*integrity = IntegrityCorrupt
-	}
-
-	return nil
-}
 
 /*
 GapEncoding enumerates the concrete conditions the specification (§47) names as

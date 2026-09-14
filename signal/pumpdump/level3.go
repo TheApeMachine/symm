@@ -128,8 +128,39 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		return m
 	}
 
-	bid := m.Metrics["best_bid"].Raw
-	ask := m.Metrics["best_ask"].Raw
+	input := m
+
+	if len(m.Peers) > 0 {
+		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+			if p.Label == "" {
+				return false
+			}
+			b := p.Metrics["best_bid"].Raw
+			if b == 0 {
+				b = p.Metrics["bid"].Raw
+			}
+			a := p.Metrics["best_ask"].Raw
+			if a == 0 {
+				a = p.Metrics["ask"].Raw
+			}
+			return b > 0 && a > 0
+		})
+
+		if peer == nil {
+			return m
+		}
+
+		input = peer.Clone()
+	}
+
+	bid := input.Metrics["best_bid"].Raw
+	if bid == 0 {
+		bid = input.Metrics["bid"].Raw
+	}
+	ask := input.Metrics["best_ask"].Raw
+	if ask == 0 {
+		ask = input.Metrics["ask"].Raw
+	}
 
 	if bid > 0 && ask > 0 && bid >= ask {
 		m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
@@ -140,10 +171,10 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		m.Metadata = make(map[string]string)
 	}
 
-	input := level3EntityInput{Bid: bid, Ask: ask}
+	pipeInput := level3EntityInput{Bid: bid, Ask: ask}
 
 	var valid bool
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*level3EntityResult)(out)
 		if !res.Valid {
 			return nil
@@ -162,6 +193,9 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		return nil
 	}
 
+	m.Label = input.Label
+	m.At = input.At
+	m.Finalize()
 	return m
 }
 
@@ -171,11 +205,13 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (level3 *Level3) Register() *data.Measurement[float64] {
-	return data.NewMeasurement[float64]("pumpdump:level3", map[string]data.Metric[float64]{
+	m := data.NewMeasurement[float64]("pumpdump:level3", map[string]data.Metric[float64]{
 		"best_bid":        data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"best_ask":        data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"midpoint":        data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"spread":          data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"relative_spread": data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }

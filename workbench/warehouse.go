@@ -76,15 +76,6 @@ func New() *Warehouse {
 }
 
 /*
-Wrap adapts an already-open DuckDB. Production connects through connect; tests
-attach their own tables to an in-memory database, which exercises the same
-projection, encoding, and listing without a catalog server.
-*/
-func Wrap(db *sql.DB) *Warehouse {
-	return &Warehouse{db: db}
-}
-
-/*
 Close releases the engine. A Warehouse that never connected owns nothing.
 */
 func (warehouse *Warehouse) Close() error {

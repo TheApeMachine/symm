@@ -1,14 +1,20 @@
 package types
 
 import (
-	"fmt"
+	"bytes"
 	"strconv"
-	"time"
+	"sync"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/data"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
+
+var measurementsBuilderPool = sync.Pool{
+	New: func() any {
+		return flatbuffers.NewBuilder(16384)
+	},
+}
 
 func EncodeMeasurementsFrame(measurements []*data.Measurement[float64]) []byte {
 	rows := make([]*wire.MeasurementT, 0, len(measurements))
@@ -66,80 +72,12 @@ func EncodeMeasurementsFrame(measurements []*data.Measurement[float64]) []byte {
 		Rows: rows,
 	}
 
-	builder := flatbuffers.NewBuilder(1024)
+	builder := measurementsBuilderPool.Get().(*flatbuffers.Builder)
+	builder.Reset()
+	defer measurementsBuilderPool.Put(builder)
+
 	offset := frame.Pack(builder)
 	builder.Finish(offset)
 
-	return builder.FinishedBytes()
-}
-
-func MeasurementsFromState(payload []byte) (measurements []*data.Measurement[float64], err error) {
-	if len(payload) == 0 {
-		return nil, nil
-	}
-
-	defer func() {
-		if invalid := recover(); invalid != nil {
-			measurements, err = nil, fmt.Errorf("measurements: malformed state: %v", invalid)
-		}
-	}()
-
-	frame := wire.GetRootAsMeasurementsFrame(payload, 0)
-	count := frame.RowsLength()
-	measurements = make([]*data.Measurement[float64], 0, count)
-
-	for i := 0; i < count; i++ {
-		row := new(wire.Measurement)
-		if !frame.Rows(row, i) {
-			continue
-		}
-
-		m := data.NewMeasurement[float64](string(row.Source()), nil)
-		m.Label = string(row.Symbol())
-		m.SeqIdx = row.Tick()
-		m.At = time.Unix(0, row.At())
-		m.From = time.Unix(0, row.ObservedFrom())
-		m.Maturity = row.Maturity()
-		m.SNR = row.Snr()
-		m.SNRDefined = row.SnrDefined()
-
-		metricsCount := row.MetricsLength()
-		for j := 0; j < metricsCount; j++ {
-			metric := new(wire.Metric)
-			if !row.Metrics(metric, j) {
-				continue
-			}
-
-			decoded := data.Metric[float64]{
-				Label: string(metric.Name()),
-				Raw:   metric.Raw(),
-				Unit:  data.Unit(string(metric.Unit())),
-			}
-
-			if metric.HasNormalized() {
-				norm := metric.Normalized()
-				decoded.Normalized = &norm
-			}
-
-			m.Metrics[decoded.Label] = decoded
-		}
-
-		metadataCount := row.MetadataLength()
-		for j := 0; j < metadataCount; j++ {
-			item := new(wire.NamedNumber)
-			if !row.Metadata(item, j) {
-				continue
-			}
-
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
-			}
-
-			m.Metadata[string(item.Name())] = strconv.FormatFloat(item.Value(), 'f', -1, 64)
-		}
-
-		measurements = append(measurements, m)
-	}
-
-	return measurements, nil
+	return bytes.Clone(builder.FinishedBytes())
 }

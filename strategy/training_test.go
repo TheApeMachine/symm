@@ -6,9 +6,21 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/types"
 )
+
+func ringChildLen[T any](ring core.Primitive) int {
+	result, err := ringCommand(ring, &store.RingCommand[T]{ChildLen: true})
+
+	if err != nil {
+		return 0
+	}
+
+	return result.ChildLen
+}
 
 func TestTrainingStep(t *testing.T) {
 	Convey("An empty pipeline returns the measurement without panicking", t, func() {

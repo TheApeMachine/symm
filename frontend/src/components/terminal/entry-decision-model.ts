@@ -60,10 +60,16 @@ export const findDecision = (
 	const position = new Position();
 	const holding = new Holding();
 	const decision = new Decision();
-	const frames = state.toArray();
+	const frames =
+		typeof (state as any)?.toArray === "function"
+			? (state as any).toArray()
+			: Array.isArray(state)
+				? state
+				: [];
 
 	for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex--) {
 		const frame = frames[frameIndex];
+		if (!frame || typeof frame.rowsLength !== "function") continue;
 
 		for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
 			const row = frame.rows(rowIndex, position);

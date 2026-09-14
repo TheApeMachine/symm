@@ -87,6 +87,9 @@ export const meterInlineValueClass: Record<Size, string> = {
 type MeterTrackVariantProps = VariantProps<typeof meterTrackVariants>;
 type MeterLayoutProps = VariantProps<typeof meterVariants>;
 
+export type MeterVariant = NonNullable<MeterTrackVariantProps["variant"]>;
+export type MeterSize = NonNullable<MeterTrackVariantProps["size"]>;
+
 export type MeterProps = Omit<ComponentPropsWithoutRef<"div">, "children"> &
 	MeterTrackVariantProps &
 	MeterLayoutProps & {
@@ -166,6 +169,7 @@ export const Meter = forwardRef<HTMLDivElement, MeterProps>(
 						>
 							<div
 								data-inline-fill="true"
+								data-meter-fill="true"
 								className={cn(
 									"h-full bg-(--meter-tone)",
 									animated && "transition-[width] duration-500 ease-out",
@@ -194,6 +198,7 @@ export const Meter = forwardRef<HTMLDivElement, MeterProps>(
 						)}
 					>
 						<div
+							data-meter-fill="true"
 							className={cn(
 								"h-full bg-(--meter-tone)",
 								animated && "transition-[width] duration-500 ease-out",
@@ -206,3 +211,28 @@ export const Meter = forwardRef<HTMLDivElement, MeterProps>(
 		);
 	},
 );
+
+/*
+setMeter updates a meter DOM element directly without triggering React re-renders.
+Supports passing either the meter root or the inner fill element.
+*/
+export const setMeter = (
+	el: HTMLElement | null | undefined,
+	percent: number,
+	variant?: MeterVariant,
+) => {
+	if (!el) return;
+	const clamped = clampPercent(percent);
+	const fill = (el.querySelector<HTMLElement>(
+		'[data-meter-fill], [data-inline-fill]',
+	) ?? el) as HTMLElement;
+
+	fill.style.width = `${clamped.toFixed(1)}%`;
+
+	if (variant) {
+		el.style.setProperty("--meter-tone", `var(--${variant})`);
+		fill.style.backgroundColor = `var(--${variant})`;
+	}
+
+	el.setAttribute("aria-valuenow", String(clamped));
+};

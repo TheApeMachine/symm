@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net"
 	neturl "net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
+	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/workbench"
@@ -33,6 +36,13 @@ interface so the UI layer never depends on the broker package's concrete type.
 */
 type TradeJournalSource interface {
 	RecentTrades(limit int) ([]*wire.PositionT, error)
+}
+
+/*
+LearningSource supplies serialized learning state FlatBuffers.
+*/
+type LearningSource interface {
+	MarshalFlatbuffer(focus string) []byte
 }
 
 /*
@@ -54,6 +64,7 @@ type Hub struct {
 	store            *tables.Catalog
 	warehouse        *workbench.Warehouse
 	tradeStore       TradeJournalSource
+	learningSource   LearningSource
 	exitHandler      func(symbol string)
 	fluid            *FluidRTC
 	learningInterval time.Duration
@@ -135,6 +146,146 @@ func NewHub(ctx context.Context) *Hub {
 		}
 
 		return c.JSON(trades)
+	})
+
+	// Hindsight inspection projection reads
+	hub.app.Get("/hindsight/metric-map", func(c fiber.Ctx) error {
+		return c.JSON(signal.Semantics())
+	})
+
+	hub.app.Get("/hindsight/runs", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		runs, err := hub.store.Runs(hub.ctx)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(runs)
+	})
+
+	hub.app.Get("/hindsight/timeline", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		run := c.Query("run")
+
+		if run == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "run is required")
+		}
+
+		query := tables.TimelineQuery{
+			Run:        run,
+			Symbol:     c.Query("symbol"),
+			Coordinate: c.Query("coordinate"),
+			Axis:       c.Query("axis"),
+			Buckets:    int(parseUintQuery(c.Query("buckets"))),
+			From:       parseInt64Query(c.Query("from")),
+			To:         parseInt64Query(c.Query("to")),
+			Symbols:    c.Query("symbols") == "1",
+		}
+
+		timeline, err := hub.store.Timeline(hub.ctx, query)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(timeline)
+	})
+
+	hub.app.Get("/hindsight/lifecycle", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("run"))
+		events, err := hub.store.Lifecycle(hub.ctx, epoch)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(events)
+	})
+
+	hub.app.Get("/hindsight/captures", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("run"))
+		after := parseInt64Query(c.Query("after"))
+		captures, err := hub.store.Captures(hub.ctx, epoch, after)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(captures)
+	})
+
+	hub.app.Get("/hindsight/envelope", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("run"))
+		seq := parseInt64Query(c.Query("seq"))
+		envelope, err := hub.store.EnvelopeAt(hub.ctx, epoch, seq)
+
+		if err != nil {
+			return fiber.ErrNotFound
+		}
+
+		return c.JSON(envelope)
+	})
+
+	hub.app.Get("/hindsight/state", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		return fiber.ErrNotFound
+	})
+
+	hub.app.Get("/hindsight/states", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		return c.JSON([]tables.HindsightState{})
+	})
+
+	hub.app.Get("/hindsight/resident", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		epoch := parseInt64Query(c.Query("run"))
+		symbol := c.Query("symbol")
+		seq := parseInt64Query(c.Query("seq"))
+		budget := int(parseUintQuery(c.Query("budget")))
+
+		resident, err := hub.store.ResidentAt(hub.ctx, epoch, symbol, seq, budget)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(resident)
+	})
+
+	hub.app.Get("/hindsight/gaps", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		return c.JSON([]tables.HindsightGap{})
 	})
 
 	// Hindsight canonical table reads
@@ -337,6 +488,12 @@ func NewHub(ctx context.Context) *Hub {
 		hub.frontendMu.Unlock()
 		errnie.Info("hub: frontend websocket connected")
 
+		if hub.learningSource != nil {
+			if payload := hub.learningSource.MarshalFlatbuffer(""); len(payload) > 0 {
+				hub.writeLearning(payload)
+			}
+		}
+
 		defer func() {
 			hub.frontendMu.Lock()
 
@@ -436,7 +593,7 @@ func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
 				break
 			}
 
-			if measurement != nil {
+			if measurement != nil && !IsRawMarketData(measurement) {
 				batch = append(batch, measurement)
 			}
 
@@ -450,7 +607,22 @@ func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
 			hub.writeMeasurements(batch)
 			batch = batch[:0]
 		}
+
+		if hub.learningSource != nil && hub.hasFrontend() && time.Since(hub.lastLearning) >= hub.learningInterval {
+			hub.lastLearning = time.Now()
+
+			if payload := hub.learningSource.MarshalFlatbuffer(""); len(payload) > 0 {
+				hub.writeLearning(payload)
+			}
+		}
 	}
+}
+
+func (hub *Hub) hasFrontend() bool {
+	hub.frontendMu.Lock()
+	defer hub.frontendMu.Unlock()
+
+	return hub.frontend != nil
 }
 
 /*
@@ -489,10 +661,52 @@ func (hub *Hub) PublishMeasurements(measurements []*data.Measurement[float64]) {
 }
 
 /*
+IsRawMarketData reports whether a measurement carries raw spot or futures market data
+(ticker, trade, level3/book) that should not be broadcast over the dashboard websocket.
+*/
+func IsRawMarketData(measurement *data.Measurement[float64]) bool {
+	if measurement == nil {
+		return true
+	}
+
+	source := strings.ToLower(measurement.Source)
+
+	if source == "websocket" || source == "public" || source == "private" || source == "spot" || source == "futures" {
+		return true
+	}
+
+	if slices.Contains(types.SignalSourceStrings, source) || slices.Contains(types.LogicSourceStrings, source) ||
+		strings.HasPrefix(source, "pumpdump") || strings.HasPrefix(source, "toxicity") ||
+		strings.HasPrefix(source, "depthflow") || strings.HasPrefix(source, "morphology") ||
+		strings.HasPrefix(source, "derivatives") || strings.HasPrefix(source, "cognition") ||
+		strings.HasPrefix(source, "training") {
+		return false
+	}
+
+	if measurement.Provenance != nil {
+		channel := strings.ToLower(measurement.Provenance["channel"])
+
+		if channel == "ticker" || channel == "trade" || channel == "level3" || channel == "book" ||
+			strings.HasPrefix(channel, "futures.") {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
+IsAllowedTelemetry reports whether a measurement is permitted for dashboard telemetry broadcast.
+*/
+func IsAllowedTelemetry(measurement *data.Measurement[float64]) bool {
+	return !IsRawMarketData(measurement)
+}
+
+/*
 writeFrontend encodes one measurement as a MeasurementsFrame and writes it to the dashboard socket.
 */
 func (hub *Hub) writeFrontend(measurement *data.Measurement[float64]) {
-	if measurement == nil {
+	if measurement == nil || IsRawMarketData(measurement) {
 		return
 	}
 
@@ -530,6 +744,20 @@ func (hub *Hub) writeMeasurements(measurements []*data.Measurement[float64]) {
 		return
 	}
 
+	filtered := make([]*data.Measurement[float64], 0, len(measurements))
+
+	for _, measurement := range measurements {
+		if measurement == nil || IsRawMarketData(measurement) {
+			continue
+		}
+
+		filtered = append(filtered, measurement)
+	}
+
+	if len(filtered) == 0 {
+		return
+	}
+
 	hub.frontendMu.Lock()
 	defer hub.frontendMu.Unlock()
 
@@ -537,7 +765,7 @@ func (hub *Hub) writeMeasurements(measurements []*data.Measurement[float64]) {
 		return
 	}
 
-	payload := types.EncodeMeasurementsFrame(measurements)
+	payload := types.EncodeMeasurementsFrame(filtered)
 
 	if len(payload) == 0 {
 		return
@@ -555,6 +783,34 @@ func (hub *Hub) writeMeasurements(measurements []*data.Measurement[float64]) {
 		}
 
 		return
+	}
+}
+
+/*
+writeLearning encodes a learning state snapshot and writes it to the dashboard socket.
+*/
+func (hub *Hub) writeLearning(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+
+	hub.frontendMu.Lock()
+	defer hub.frontendMu.Unlock()
+
+	if hub.frontend == nil {
+		return
+	}
+
+	if err := hub.frontend.WriteMessage(
+		websocket.BinaryMessage, payload,
+	); err != nil {
+		failed := hub.frontend
+		hub.frontend = nil
+		errnie.Warn(fmt.Sprintf("hub: websocket write learning message failed; detaching client: %v", err))
+
+		if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
+		}
 	}
 }
 
@@ -651,6 +907,18 @@ func (hub *Hub) SetTradeStore(source TradeJournalSource) {
 	}
 
 	hub.tradeStore = source
+}
+
+/*
+SetLearningSource attaches the learning source so the dashboard socket can broadcast
+the resident learning state periodically.
+*/
+func (hub *Hub) SetLearningSource(source LearningSource) {
+	if hub == nil {
+		return
+	}
+
+	hub.learningSource = source
 }
 
 /*

@@ -17,17 +17,19 @@ appends it and answers the slot, and the node is told its identity so the
 values it produces name their own register slot.
 */
 type Consumer[T any] struct {
-	node     Node[T]
-	register *store.Register[T]
-	ID       int
+	node      Node[T]
+	register  *store.Register[T]
+	ID        int
+	peerLimit int
 }
 
 func NewConsumer[T any](
 	node Node[T], register *store.Register[T],
 ) *Consumer[T] {
 	consumer := &Consumer[T]{
-		node:     node,
-		register: register,
+		node:      node,
+		register:  register,
+		peerLimit: -1,
 	}
 
 	if node == nil || register == nil {
@@ -44,6 +46,14 @@ func NewConsumer[T any](
 		meas.ID = consumer.ID
 	}
 
+	return consumer
+}
+
+/*
+SetPeerLimit restricts the consumer's peer queries to register slots strictly below limit.
+*/
+func (consumer *Consumer[T]) SetPeerLimit(limit int) *Consumer[T] {
+	consumer.peerLimit = limit
 	return consumer
 }
 
@@ -72,6 +82,11 @@ and puts what Step returns back into the register under the node's slot.
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		query := store.NewQuery(consumer, data.ActionRead)
+
+		if consumer.peerLimit >= 0 {
+			query.SetPeerLimit(consumer.peerLimit)
+		}
+
 		val := data.Read[T](consumer.register.Next(data.NewValue(*query)))
 		result := consumer.node.Step(val)
 

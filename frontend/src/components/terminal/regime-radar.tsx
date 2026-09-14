@@ -1,10 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import type { FrameBuffer } from "#/collections/app";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
-import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
 
 const metricObj = new Metric();
@@ -37,18 +35,27 @@ export const RadarPanel = () => {
 		const subscriptions = radarAxes.map((axis) => {
 			const store = getMeasurementStore(axis.source, focusSymbol);
 
-			const apply = (state: FrameBuffer<Measurement>) => {
-				if (!root.current) return;
+			const apply = (state: any) => {
+				if (!root.current || !state || typeof state.getLast !== "function") return;
 
 				const row = state.getLast();
 				let normalized = 0;
 
 				if (row) {
-					for (let j = 0; j < row.metricsLength(); j++) {
-						const m = row.metrics(j, metricObj);
-						if (m && m.name() === axis.metric) {
-							normalized = m.normalized();
-							break;
+					if (Array.isArray(row.metrics)) {
+						for (const m of row.metrics) {
+							if (m && m.name === axis.metric) {
+								normalized = m.normalized;
+								break;
+							}
+						}
+					} else if (typeof row.metricsLength === "function") {
+						for (let j = 0; j < row.metricsLength(); j++) {
+							const m = row.metrics(j, metricObj);
+							if (m && m.name() === axis.metric) {
+								normalized = m.normalized();
+								break;
+							}
 						}
 					}
 				}

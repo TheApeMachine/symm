@@ -189,8 +189,13 @@ export const JournalSurface = () => {
 		const activeMap = new Map<string, ActiveLotEntry>();
 		const closedMap = new Map<string, JournalTradeEntry>();
 
-		const latestFrame = state.findLast(() => true);
-		if (latestFrame) {
+		const latestFrame =
+			typeof (state as any)?.findLast === "function"
+				? (state as any).findLast(() => true)
+				: Array.isArray(state)
+					? state[state.length - 1]
+					: state;
+		if (latestFrame && typeof latestFrame.rowsLength === "function") {
 			for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
 				const currentPosition = latestFrame.rows(rowIndex, positionHolder);
 				if (!currentPosition) continue;
@@ -227,7 +232,14 @@ export const JournalSurface = () => {
 			}
 		}
 
-		for (const frame of state.toArray()) {
+		const frames =
+			typeof (state as any)?.toArray === "function"
+				? (state as any).toArray()
+				: Array.isArray(state)
+					? state
+					: [];
+		for (const frame of frames) {
+			if (!frame || typeof frame.rowsLength !== "function") continue;
 			for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
 				const currentPosition = frame.rows(rowIndex, positionHolder);
 				if (!currentPosition) continue;

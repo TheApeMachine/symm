@@ -1,11 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { appStore } from "#/collections/app";
+import { errorAtom } from "#/collections/app";
 import { Flex } from "./flex";
 import { Grid } from "./grid";
 
 export const Dialog = () => {
-	const error = useSelector(appStore, (state) => state.error);
+	const error = useSelector(errorAtom);
 	const errorDialogRef = useRef<HTMLDialogElement>(null);
 	const dismissRef = useRef<HTMLButtonElement>(null);
 
@@ -38,11 +38,11 @@ export const Dialog = () => {
 			className="fixed inset-0 z-80 m-0 h-full w-full max-h-none max-w-none border-0 bg-[rgba(8,6,5,0.82)] p-6 text-[#f1d7cf]"
 			onCancel={(event) => {
 				event.preventDefault();
-				appStore.actions.clearError();
+				errorAtom.set(null);
 			}}
 			onClick={(event) => {
 				if (event.target === event.currentTarget) {
-					appStore.actions.clearError();
+					errorAtom.set(null);
 				}
 			}}
 			onKeyDown={(event) => {
@@ -51,7 +51,7 @@ export const Dialog = () => {
 					event.target === event.currentTarget
 				) {
 					event.preventDefault();
-					appStore.actions.clearError();
+					errorAtom.set(null);
 				}
 			}}
 		>
@@ -73,7 +73,7 @@ export const Dialog = () => {
 							ref={dismissRef}
 							type="button"
 							className="font-mono text-[11px] text-[#f1d7cf] underline-offset-2 hover:underline"
-							onClick={() => appStore.actions.clearError()}
+							onClick={() => errorAtom.set(null)}
 						>
 							dismiss
 						</button>

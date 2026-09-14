@@ -18,8 +18,8 @@ memory allocations, and never exerts backpressure on the upstream LMAX ring.
 */
 type Tee struct {
 	*System
-	ring     *wf.RingBuffer[*data.Measurement[float64]]
-	lastSeen map[string]int64
+	ring   *wf.RingBuffer[*data.Measurement[float64]]
+	filter func(*data.Measurement[float64]) bool
 }
 
 /*
@@ -39,6 +39,14 @@ func NewNamedTee(label string, capacity int) *Tee {
 	}
 	tee.Transition(READY)
 	return tee
+}
+
+/*
+SetFilter sets a predicate controlling which measurements are enqueued onto the ring.
+A nil filter permits all valid named measurements.
+*/
+func (tee *Tee) SetFilter(filter func(*data.Measurement[float64]) bool) {
+	tee.filter = filter
 }
 
 /*
@@ -68,14 +76,20 @@ func (tee *Tee) Step(measurement *data.Measurement[float64]) *data.Measurement[f
 		return nil
 	}
 
-	if measurement.Source != tee.Name() && measurement.Label != "" {
+	if (tee.filter == nil || tee.filter(measurement)) && measurement.Source != tee.Name() && measurement.Label != "" {
 		tee.ring.Put(measurement.Clone())
 	}
 
 	for _, peer := range measurement.Peers {
-		if peer != nil && peer.Label != "" {
-			tee.ring.Put(peer.Clone())
+		if peer == nil || peer.Label == "" {
+			continue
 		}
+
+		if tee.filter != nil && !tee.filter(peer) {
+			continue
+		}
+
+		tee.ring.Put(peer.Clone())
 	}
 
 	return measurement

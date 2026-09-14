@@ -1,6 +1,12 @@
 import { createStore } from "@tanstack/react-store";
 import { ByteBuffer } from "flatbuffers";
 import {
+	candidatesAtom,
+	phaseAtom,
+	positionCountAtom,
+	updateEquity,
+} from "./app";
+import {
 	LearningState,
 	type LearningStateT,
 } from "#/providers/telemetry/telemetry/learning-state";
@@ -14,4 +20,25 @@ export const receiveLearning = (bytes: Uint8Array) => {
 	).unpack();
 
 	learningStore.setState(() => state);
+
+	if (state.status) {
+		phaseAtom.set(typeof state.status === "string" ? state.status : String(state.status));
+	}
+
+	if (state.decisions) {
+		candidatesAtom.set(Number(state.decisions));
+	}
+
+	if (state.agents?.[0]) {
+		const agent = state.agents[0];
+		updateEquity(
+			typeof agent.cash === "string" ? agent.cash : null,
+			typeof agent.unrealized === "string" ? agent.unrealized : null,
+			typeof agent.equity === "string" ? agent.equity : null,
+		);
+		positionCountAtom.set(
+			agent.positions?.filter((p) => Number(p.holding?.qty) > 0).length ?? 0,
+		);
+	}
 };
+

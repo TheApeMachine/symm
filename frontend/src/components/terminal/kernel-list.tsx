@@ -1,103 +1,26 @@
-import { useSelector } from "@tanstack/react-store";
-import type { FrameBuffer } from "#/collections/app";
+import { useEffect, useRef } from "react";
 import {
 	DEFAULT_KERNELS,
+	focusMetric,
 	focusStore,
-	getMeasurementStore,
-	getResonanceReadingStore,
-	kernelDetailStore,
+	RingBuffer,
+	signals,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
-	kernelCopy,
-	kernelSparkPaths,
-	kernelStatusMeta,
-	kernelStatusVariant,
-	type SignalHealthStatus,
-} from "#/components/terminal/kernel-meta";
-import { Flex } from "#/components/ui";
-import { Badge } from "#/components/ui/badge";
-import { cn } from "#/lib/utils";
-import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
-
-/*
-readingsOf collects a kernel's accumulated readings directly from its measurement store.
-*/
-const readingsOf = (ring: FrameBuffer<Measurement>) => {
-	const points: number[] = [];
-	const len = ring.getBufferLength();
-
-	for (let i = 0; i < len; i++) {
-		const m = ring.get(i);
-
-		if (m) {
-			const snr = m.snr();
-			if (Number.isFinite(snr)) {
-				points.push(snr);
-			}
-		}
-	}
-
-	const latest = points.length > 0 ? points[points.length - 1] : null;
-
-	return { points, latest };
-};
-
-const readingsOfNumbers = (ring: FrameBuffer<number>) => {
-	const points: number[] = [];
-	const len = ring.getBufferLength();
-
-	for (let i = 0; i < len; i++) {
-		const value = ring.get(i);
-
-		if (value !== undefined && Number.isFinite(value)) {
-			points.push(value);
-		}
-	}
-
-	const latest = points.length > 0 ? points[points.length - 1] : null;
-
-	return { points, latest };
-};
-
-/*
-kernelStatus resolves a kernel row's health from what its own ring actually
-holds: a usable reading means the kernel is measuring, anything else stays
-on standby until the first reading lands.
-*/
-const kernelStatus = (latest: number | null): SignalHealthStatus =>
-	latest === null ? "waiting" : "measured";
-
-/*
-relativeToOwnRange scales each SNR reading against the min/max this kernel's
-own ring has actually observed. SNR is an unbounded Mahalanobis/scalar
-quantity (divergence²/noise_variance) with no fixed "good" threshold declared
-anywhere in the backend, so there is no principled absolute [0,1] mapping to
-assert — asserting one (e.g. snr/(snr+k)) would invent a quality bar that
-doesn't exist in the domain. Scaling relative to the kernel's own recent
-range instead shows genuine relative movement without claiming any reading
-is universally strong or weak. A single reading (no range yet) reads as its
-own peak, at the top of the trace, since nothing else exists yet to compare
-it against.
-*/
-const relativeToOwnRange = (values: number[]): number[] => {
-	if (values.length === 0) return [];
-
-	const min = Math.min(...values);
-	const max = Math.max(...values);
-	const range = max - min;
-
-	return values.map((value) => (range > 0 ? (value - min) / range : 1));
-};
-
-/*
-Resonance is not a measurement source: it carries a calibrated confidence
-rather than an SNR, and its frames arrive for the whole cross-section rather
-than one focused symbol, so its readings are kept per symbol. Both selectors
-below run unconditionally (hooks cannot be conditional); only one of their
-results is actually used per row.
-*/
-const isResonance = (source: string) => source === "resonance";
+	Badge,
+	Button,
+	Flex,
+	Meter,
+	setBadge,
+	setMeter,
+	setSparkline,
+	Sparkline,
+	Typography,
+} from "#/components/ui";
+import { cn, memoizedQuery, renderValue } from "#/lib/utils";
+import { useSelector } from "@tanstack/react-store";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 const KernelRow = ({
 	source,
@@ -106,116 +29,129 @@ const KernelRow = ({
 	source: string;
 	compact: boolean;
 }) => {
-	const resonance = isResonance(source);
-	const focusSymbol = useSelector(focusStore, (state) => state);
-	const measurements = useSelector(
-		getMeasurementStore(source, focusSymbol),
-		(state) => state,
-	);
-	const resonanceReadings = useSelector(
-		getResonanceReadingStore(focusSymbol),
-		(state) => state,
-	);
+	const symbol = useSelector(focusStore, (s) => s);
+	const rowRef = useRef<HTMLButtonElement>(null);
 
-	const { points, latest } = resonance
-		? readingsOfNumbers(resonanceReadings)
-		: readingsOf(measurements);
-	const copy = kernelCopy(source, "");
-	const status = kernelStatus(latest);
-	const badge = kernelStatusMeta(status);
+	useEffect(() => {
+		const btn = rowRef.current;
+		if (!btn) return;
 
-	// Confidence is already a real [0,1] quantity by construction — only
-	// unbounded SNR needs scaling against its own observed range before it
-	// means anything as a bar/sparkline.
-	const relativePoints = resonance ? points : relativeToOwnRange(points);
-	const paths = kernelSparkPaths(relativePoints, status);
-	const confidence =
-		relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
-	const barTitle = resonance
-		? "Predictive confidence for the focused symbol, once the head has calibrated"
-		: "SNR relative to this kernel's own recent range — not an absolute quality threshold";
-	const valueLabel = resonance ? "confidence" : "raw SNR";
-	const valueText =
-		latest === null
-			? "—"
-			: resonance
-				? `${(latest * 100).toFixed(0)}%`
-				: latest.toFixed(2);
+		const badgeEl = memoizedQuery(btn, '[data-k="badge"]') as HTMLElement;
+		const areaEl = memoizedQuery(btn, '[data-k="area"]') as SVGPolylineElement;
+		const sparkEl = memoizedQuery(btn, '[data-k="spark"]') as SVGPolylineElement;
+		const barEl = memoizedQuery(btn, '[data-k="bar"]') as HTMLElement;
+		const valueEl = memoizedQuery(btn, '[data-k="value"]') as HTMLElement;
+
+		const update = (ring: RingBuffer<MeasurementT>) => {
+			if (!ring || ring.isEmpty()) {
+				setBadge(badgeEl, "disabled", "STANDBY");
+				setMeter(barEl, 0, "disabled");
+				setSparkline(sparkEl, areaEl, [], false);
+				return;
+			}
+
+			const values: number[] = [];
+			const len = ring.getBufferLength();
+
+			for (let i = 0; i < len; i++) {
+				const measurement = ring.get(i);
+				if (measurement === undefined) {
+					continue;
+				}
+
+				const snr = measurement.snr;
+				values.push(snr);
+
+				renderValue(valueEl, snr);
+				setBadge(badgeEl, "success", "HEALTHY");
+
+				if (barEl) {
+					const conf = Math.min(1, Math.max(0, measurement.maturity || snr));
+					setMeter(barEl, conf * 100, "brand");
+				}
+			}
+
+			setSparkline(sparkEl, areaEl, values, true);
+		};
+
+		const initial = signals[source]?.state[symbol] ?? signals[source]?.state[""];
+		
+		if (initial) {
+			update(initial);
+		}
+
+		const unsubSignal = signals[source]?.subscribe((state) => {
+			const r = state[symbol] ?? state[""];
+
+			if (r !== undefined) {
+				update(r);
+			}
+		});
+
+		return () => {
+			unsubSignal?.unsubscribe?.();
+		};
+	}, [source, symbol]);
 
 	return (
-		<button
-			type="button"
+		<Button
+			ref={rowRef}
+			variant="bare"
+			shape="block"
 			data-kernel={source}
 			onClick={() => {
-				kernelDetailStore.setState(() => source);
+				focusMetric.setState(() => source);
 				terminalStore.actions.inspectSource(source);
 			}}
-			className="flex min-h-0 w-full flex-1 cursor-pointer flex-col justify-center border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-1.5 text-left font-[inherit] hover:bg-(--raised)"
+			className="flex min-h-0 w-full flex-1 flex-col justify-center border-(--line) border-b border-l-2 border-l-transparent px-3 py-1.5 hover:bg-(--raised)"
 		>
 			<Flex.Row align="center" justify="between" gap={2} className="shrink-0">
-				<span
-					className={cn(
-						"truncate font-semibold text-(--f1)",
-						compact && "text-[10px]",
-					)}
+				<Typography.Span
+					variant="f1"
+					semibold
+					truncate
+					className={cn(compact && "text-[10px]")}
 				>
-					{copy.name}
-				</span>
+					{source.toUpperCase()}
+				</Typography.Span>
 				<Badge
-					label={badge.label}
-					variant={kernelStatusVariant(status)}
+					data-k="badge"
+					label="Standby"
+					variant="disabled"
 					size="xxs"
 				/>
 			</Flex.Row>
-			<div className="mt-0.5 shrink-0 truncate font-mono text-[9px] text-(--f4)">
-				{copy.sub}
-			</div>
-			{/*
-				The sparkline is the row's elastic part: the name, sub, bar and
-				readout are all text that must keep its size, so the trace is what
-				absorbs whatever height the pane has left after them. min-h-0 lets
-				it shrink below the SVG's natural size, and preserveAspectRatio
-				"none" means the fixed 0..30 viewBox stretches to whatever height it
-				ends up with, so the trace stays correct at any size.
-			*/}
-			<svg
-				viewBox="0 0 150 30"
-				preserveAspectRatio="none"
-				className="mt-1 block min-h-2.5 w-full flex-1"
+			<Typography.Label
+				size="xxs"
+				tone="f4"
+				className="mt-0.5 shrink-0 font-mono truncate"
 			>
-				<title>{`${copy.name} sparkline`}</title>
-				<polyline points={paths.area} fill={paths.fill} stroke="none" />
-				<polyline
-					points={paths.spark}
-					fill="none"
-					stroke={paths.line}
-					strokeWidth="1.4"
-					vectorEffect="non-scaling-stroke"
-				/>
-			</svg>
+				{source}
+			</Typography.Label>
+			<Sparkline
+				data-k="sparkline"
+				title={`${source} sparkline`}
+			/>
 			<Flex.Row align="center" gap={2} className="mt-1 shrink-0">
-				<div
-					className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)"
-					title={barTitle}
+				<Meter
+					data-k="bar"
+					layout="bar"
+					size="xxs"
+					percent={0}
+					variant="info"
+					className="flex-1"
+					title={`${source} confidence`}
+				/>
+				<Typography.Mono
+					data-k="value"
+					size="xxs"
+					tone="f2"
+					className="w-11 shrink-0 text-right font-mono"
 				>
-					<div
-						data-k="conf"
-						className="h-full transition-[width,background-color] duration-300 ease-out"
-						style={{
-							width: `${(confidence * 100).toFixed(1)}%`,
-							background: paths.line,
-						}}
-					/>
-				</div>
-				<span
-					data-k="snr1"
-					className="w-11 shrink-0 text-right font-mono text-[9px] tabular-nums text-(--f2)"
-					title={valueLabel}
-				>
-					{valueText}
-				</span>
+					--
+				</Typography.Mono>
 			</Flex.Row>
-		</button>
+		</Button>
 	);
 };
 
@@ -228,27 +164,16 @@ export const KernelList = ({
 	sources = DEFAULT_KERNELS,
 	compact = false,
 }: KernelListProps = {}) => {
-	/*
-		The rows share the pane rather than each claiming a fixed height: twelve
-		fixed rows overflow a normal viewport, and the scrollbar that produced hid
-		the last kernels behind a gesture. As a flex column of flex-1 rows they
-		divide whatever height there is, so the whole set is always visible at a
-		glance — which is the point of a kernel list.
-
-		The floor is the rows' own min-height, not a fixed one here: once the pane
-		is too short for even the compressed rows the list scrolls again, which is
-		the honest outcome for a genuinely tiny viewport.
-	*/
 	return (
-		<div
+		<Flex.Column
 			className={cn(
-				"flex min-h-0 flex-1 flex-col overflow-auto",
+				"min-h-0 flex-1 overflow-auto",
 				compact && "text-[10px]",
 			)}
 		>
 			{sources.map((source) => (
 				<KernelRow key={source} source={source} compact={compact} />
 			))}
-		</div>
+		</Flex.Column>
 	);
 };

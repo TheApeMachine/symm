@@ -66,8 +66,12 @@ func (estimator *bivariateEstimator) fitRestricted(
 	poisson := context.poissonFit().withIntensitiesAt(stream, horizonSec)
 
 	if poisson.valid() {
-		best = poisson
-		bestLL = poisson.logLikelihood(stream, horizonSec)
+		poissonLL, poissonOK := poisson.logLikelihood(stream, horizonSec)
+
+		if poissonOK {
+			best = poisson
+			bestLL = poissonLL
+		}
 	}
 
 	for _, seed := range estimator.multiStartSeeds(context) {
@@ -84,9 +88,9 @@ func (estimator *bivariateEstimator) fitRestricted(
 			candidate = candidate.withCrossZeroed().withIntensitiesAt(stream, horizonSec)
 		}
 
-		logLikelihood := candidate.logLikelihood(stream, horizonSec)
+		logLikelihood, candidateOK := candidate.logLikelihood(stream, horizonSec)
 
-		if !estimator.preferCandidate(best, candidate, bestLL, logLikelihood) {
+		if !candidateOK || !estimator.preferCandidate(best, candidate, bestLL, logLikelihood) {
 			continue
 		}
 
@@ -114,8 +118,12 @@ func (estimator *bivariateEstimator) crossLikelihoodValid(
 		beta:    fit.beta,
 	}
 
-	fitLL := fit.logLikelihood(stream, horizonSec)
-	restrictedLL := restricted.logLikelihood(stream, horizonSec)
+	fitLL, fitOK := fit.logLikelihood(stream, horizonSec)
+	restrictedLL, restrictedOK := restricted.logLikelihood(stream, horizonSec)
+
+	if !fitOK || !restrictedOK {
+		return false
+	}
 
 	return fitLL+logLikelihoodTolerance(fitLL, restrictedLL) >= restrictedLL
 }

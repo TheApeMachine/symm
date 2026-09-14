@@ -60,11 +60,33 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
+	input := measurement
+
+	if len(measurement.Peers) > 0 {
+		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
+			_, hasP := p.Metrics["price"]
+			return hasP && p.Label != ""
+		})
+
+		if peer == nil {
+			return measurement
+		}
+
+		input = peer.Clone()
+	}
+
+	if _, hasPrice := input.Metrics["price"]; !hasPrice {
 		return measurement
 	}
 
-	return data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+	res := data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+
+	if res != nil && res != measurement {
+		measurement.Absorb(res)
+		return measurement
+	}
+
+	return res
 }
 
 /*
@@ -72,7 +94,7 @@ Register returns the pre-allocated measurement every trade flows through:
 every metric the instrument can produce is declared, none valued.
 */
 func (trade *Trade) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("hawkes", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("hawkes", map[string]data.Metric[float64]{
 		"event_count": data.NewMetric[float64](
 			"event_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
 		),
@@ -251,4 +273,7 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 			"snr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }
+

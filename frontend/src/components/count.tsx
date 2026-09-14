@@ -13,7 +13,7 @@ one row of readouts rather than a sentence sitting among them.
 export const Count = () => {
 	const policy = useSelector(learningStore, (state) => state?.agents[0]);
 	const last = useSelector(positionStore, (state) =>
-		state.findLast(() => true),
+		state
 	);
 
 	return (
@@ -33,7 +33,7 @@ export const Count = () => {
 								(position) => Number(position.holding?.qty) > 0,
 							).length
 						: last
-							? last.rowsLength()
+							? last
 							: 0,
 				)}
 			</Typography.Mono>

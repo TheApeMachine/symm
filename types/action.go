@@ -10,6 +10,3 @@ const (
 	ActionNothing Action = "nothing"
 )
 
-func (action Action) String() string {
-	return string(action)
-}

@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
-import { appStore } from "#/collections/app";
+import { errorAtom, focusAtom } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { CommandPalette } from "#/components/terminal/palette";
 import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
@@ -89,7 +89,6 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		selectFocusSymbol,
 		inspectSource,
 	} = terminalStore.actions;
-	const { updateFocusSymbol } = appStore.actions;
 
 	const runPalette = (
 		nextSurface: TerminalSurface,
@@ -101,7 +100,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		}
 
 		if (focusSymbol) {
-			updateFocusSymbol(focusSymbol);
+			focusAtom.set(focusSymbol);
 			selectFocusSymbol(focusSymbol);
 		}
 
@@ -117,9 +116,9 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 				return;
 			}
 
-			if (event.key === "Escape" && appStore.state.error) {
+			if (event.key === "Escape" && errorAtom.get()) {
 				event.preventDefault();
-				appStore.actions.clearError();
+				errorAtom.set(null);
 				return;
 			}
 

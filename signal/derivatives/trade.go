@@ -44,11 +44,37 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if trade.Status() != runtime.READY {
+	if trade.Status() != runtime.READY || measurement == nil {
 		return measurement
 	}
 
-	return data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+	input := measurement
+
+	if len(measurement.Peers) > 0 {
+		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
+			if p.Label == "" {
+				return false
+			}
+			_, hasP := p.Metrics["price"]
+			_, hasQ := p.Metrics["qty"]
+			return hasP && hasQ
+		})
+
+		if peer == nil {
+			return measurement
+		}
+
+		input = peer.Clone()
+	}
+
+	res := data.Read[*data.Measurement[float64]](trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+
+	if res != nil && res != measurement {
+		measurement.Absorb(res)
+		return measurement
+	}
+
+	return res
 }
 
 /*
@@ -56,7 +82,7 @@ Register returns the pre-allocated measurement every futures trade flows
 through: every metric the instrument can produce is declared, none valued.
 */
 func (trade *Trade) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("derivatives", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("derivatives", map[string]data.Metric[float64]{
 		"liquidation_notional:buy": data.NewMetric[float64](
 			"liquidation_notional:buy", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
 		),
@@ -85,4 +111,6 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 			"liquidation_share_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -14,6 +15,12 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
+
+var learningBuilderPool = sync.Pool{
+	New: func() any {
+		return flatbuffers.NewBuilder(262144)
+	},
+}
 
 /*
 Recognition is what the learners have made of the tape so far, in the shape the
@@ -29,15 +36,22 @@ type Recognition struct {
 	state *telemetry.LearningStateT
 }
 
+const LearningIdentifier = "LRNG"
+
 /* MarshalFlatbuffer serializes the reading for the dashboard socket. */
 func (recognition *Recognition) MarshalFlatbuffer(string) []byte {
 	if recognition == nil || recognition.state == nil {
 		return nil
 	}
-	builder := flatbuffers.NewBuilder(1024)
-	builder.Finish(recognition.state.Pack(builder))
 
-	return builder.FinishedBytes()
+	builder := learningBuilderPool.Get().(*flatbuffers.Builder)
+	builder.Reset()
+	defer learningBuilderPool.Put(builder)
+
+	offset := recognition.state.Pack(builder)
+	builder.FinishWithFileIdentifier(offset, []byte(LearningIdentifier))
+
+	return bytes.Clone(builder.FinishedBytes())
 }
 
 /*

@@ -236,6 +236,7 @@ func route(
 	}
 
 	if channel == "level3" {
+		orderID := provenance(measurement, "order_id")
 		limitPrice := metricRaw(measurement, "limit_price")
 
 		if limitPrice == 0 {
@@ -248,21 +249,23 @@ func route(
 			orderQty = metricRaw(measurement, "qty")
 		}
 
-		writer.AddSpotLevel3(SpotLevel3Row{
-			Epoch:      epoch,
-			Tick:       tick,
-			Symbol:     measurement.Label,
-			VenueAt:    venueAt(measurement),
-			ReceivedAt: receivedAt(measurement),
-			Side:       provenance(measurement, "side"),
-			Event:      provenance(measurement, "event"),
-			OrderID:    provenance(measurement, "order_id"),
-			LimitPrice: limitPrice,
-			OrderQty:   orderQty,
-			Checksum:   int64(metricRaw(measurement, "checksum")),
-		})
+		if orderID != "" || limitPrice > 0 {
+			writer.AddSpotLevel3(SpotLevel3Row{
+				Epoch:      epoch,
+				Tick:       tick,
+				Symbol:     measurement.Label,
+				VenueAt:    venueAt(measurement),
+				ReceivedAt: receivedAt(measurement),
+				Side:       provenance(measurement, "side"),
+				Event:      provenance(measurement, "event"),
+				OrderID:    orderID,
+				LimitPrice: limitPrice,
+				OrderQty:   orderQty,
+				Checksum:   int64(metricRaw(measurement, "checksum")),
+			})
 
-		return
+			return
+		}
 	}
 
 	if channel == "futures.trade" {

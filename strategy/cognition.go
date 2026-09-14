@@ -37,14 +37,6 @@ func observeContext(engine core.Primitive, assoc cognition.Association) error {
 	return err
 }
 
-/*
-evaluateContext classifies one context.
-*/
-func evaluateContext(engine core.Primitive, context []byte) (cognition.Evaluation, error) {
-	result, err := ask(engine, &cognition.Command{Evaluate: &cognition.Question{Context: context}})
-
-	return result.Evaluation, err
-}
 
 /*
 engineTree reads the engine's current immutable trie.
@@ -272,15 +264,4 @@ func ringCurrent[T any](ring core.Primitive) (T, bool) {
 	return result.Value, result.Has
 }
 
-/*
-ringChildLen reads the current child sequence's length.
-*/
-func ringChildLen[T any](ring core.Primitive) int {
-	result, err := ringCommand(ring, &store.RingCommand[T]{ChildLen: true})
 
-	if err != nil {
-		return 0
-	}
-
-	return result.ChildLen
-}

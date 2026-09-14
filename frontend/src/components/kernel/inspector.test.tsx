@@ -15,7 +15,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const { DEFAULT_FOCUS_SYMBOL, getMeasurementStore } =
-	await import("#/collections/app");
+	(await import("#/collections/app")) as any;
 const { KernelInspector } = await import("#/components/kernel/inspector");
 
 const renderInspector = () => renderToStaticMarkup(<KernelInspector />);

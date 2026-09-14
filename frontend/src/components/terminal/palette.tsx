@@ -1,6 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { appStore } from "#/collections/app";
+import {
+	DEFAULT_KERNELS,
+	focusAtom,
+	symbolsAtom,
+} from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
@@ -93,9 +97,7 @@ type PaletteCommand = {
 CommandPalette is the jump shell.
 
 The symbol universe is whatever the engine has named this run, accumulated in
-the app store as frames arrive. It used to be discovered into module-level
-variables that no frame ever wrote, so the palette could only ever offer the
-surfaces and kernels it had hard-coded.
+the symbolsAtom as frames arrive.
 */
 export const CommandPalette = ({
 	activeSurface,
@@ -104,7 +106,8 @@ export const CommandPalette = ({
 	activeSurface: TerminalSurface;
 	onRun: (surface: TerminalSurface, source?: string, symbol?: string) => void;
 }) => {
-	const app = useSelector(appStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom);
+	const symbolUniverse = useSelector(symbolsAtom);
 	const terminal = useSelector(terminalStore, (state) => state);
 	const { closePalette, setPaletteQuery } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement | null>(null);
@@ -121,8 +124,6 @@ export const CommandPalette = ({
 		return null;
 	}
 
-	const symbolUniverse = app.symbols;
-
 	const commands: PaletteCommand[] = [
 		...SURFACES.map(
 			(surface): PaletteCommand => ({
@@ -134,7 +135,7 @@ export const CommandPalette = ({
 				active: surface.id === activeSurface,
 			}),
 		),
-		...app.kernels.map(
+		...DEFAULT_KERNELS.map(
 			(kernel): PaletteCommand => ({
 				key: `kernel:${kernel}`,
 				label: `Inspect · ${kernel}`,
@@ -153,7 +154,7 @@ export const CommandPalette = ({
 				group: "Symbol",
 				surface: activeSurface,
 				symbol,
-				active: symbol === app.focusSymbol,
+				active: symbol === focusSymbol,
 			}),
 		),
 	].filter((command) => {

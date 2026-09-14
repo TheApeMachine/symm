@@ -1,9 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import type { FrameBuffer } from "#/collections/app";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
-import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
 
 const metricObj = new Metric();
@@ -31,8 +29,8 @@ export const CrossSectionPanel = () => {
 
 	useEffect(() => {
 		const store = getMeasurementStore("liquidity", focusSymbol);
-		const apply = (state: FrameBuffer<Measurement>) => {
-			if (!root.current) return;
+		const apply = (state: any) => {
+			if (!root.current || !state || typeof state.getLast !== "function") return;
 			const row = state.getLast();
 
 			const set = (q: string, value: string) => {
@@ -43,13 +41,24 @@ export const CrossSectionPanel = () => {
 			const metricsMap: Record<string, { raw: number; normalized: number }> =
 				{};
 			if (row) {
-				for (let j = 0; j < row.metricsLength(); j++) {
-					const m = row.metrics(j, metricObj);
-					if (m) {
-						metricsMap[m.name() ?? ""] = {
-							raw: m.raw(),
-							normalized: m.normalized(),
-						};
+				if (Array.isArray(row.metrics)) {
+					for (const m of row.metrics) {
+						if (m && m.name) {
+							metricsMap[m.name] = {
+								raw: m.raw,
+								normalized: m.normalized,
+							};
+						}
+					}
+				} else if (typeof row.metricsLength === "function") {
+					for (let j = 0; j < row.metricsLength(); j++) {
+						const m = row.metrics(j, metricObj);
+						if (m) {
+							metricsMap[m.name() ?? ""] = {
+								raw: m.raw(),
+								normalized: m.normalized(),
+							};
+						}
 					}
 				}
 			}
@@ -60,8 +69,9 @@ export const CrossSectionPanel = () => {
 			set(
 				"at",
 				(() => {
-					if (row?.at() === undefined || row.at() === 0n) return "—";
-					const parsed = new Date(Number(row.at() / 1000000n));
+					const rowAt = typeof row?.at === "function" ? row.at() : row?.at;
+					if (rowAt === undefined || rowAt === 0n) return "—";
+					const parsed = new Date(Number(rowAt / 1000000n));
 					return Number.isNaN(parsed.getTime())
 						? "—"
 						: parsed.toISOString().slice(11, 19);

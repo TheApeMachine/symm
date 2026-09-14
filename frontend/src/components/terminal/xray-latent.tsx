@@ -1,6 +1,6 @@
 import { createStore } from "@tanstack/store";
 import { createRef } from "react";
-import { appStore } from "#/collections/app";
+import { focusAtom } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import type { ResonanceFrame } from "#/collections/types";
 import {
@@ -190,7 +190,7 @@ export const XrayLatentPanel = () => (
 				return;
 			}
 
-			appStore.actions.updateFocusSymbol(nearest.symbol);
+			focusAtom.set(nearest.symbol);
 			terminalStore.actions.selectFocusSymbol(nearest.symbol);
 		}}
 		className="absolute inset-0 block size-full cursor-pointer"

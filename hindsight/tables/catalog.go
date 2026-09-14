@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
@@ -35,6 +37,11 @@ inside a shared one.
 */
 type Catalog struct {
 	catalog catalog.Catalog
+
+	cacheMu       sync.RWMutex
+	cachedEpochs  []int64
+	epochsLoaded  time.Time
+	timelineIndex map[int64]*runTimelineIndex
 }
 
 /*
@@ -43,7 +50,12 @@ catalog SeaweedFS serves; tests use a SQLite catalog over a temporary
 directory, which exercises the same schemas, encoders, and scans without
 needing a catalog server.
 */
-func Wrap(underlying catalog.Catalog) *Catalog { return &Catalog{catalog: underlying} }
+func Wrap(underlying catalog.Catalog) *Catalog {
+	return &Catalog{
+		catalog:       underlying,
+		timelineIndex: make(map[int64]*runTimelineIndex),
+	}
+}
 
 /*
 Open connects to the Iceberg REST catalog named by storage.iceberg.uri, for the
@@ -98,7 +110,10 @@ func Open(ctx context.Context) *Catalog {
 		return nil
 	}
 
-	return &Catalog{catalog: connected}
+	return &Catalog{
+		catalog:       connected,
+		timelineIndex: make(map[int64]*runTimelineIndex),
+	}
 }
 
 /*

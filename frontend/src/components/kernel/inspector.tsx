@@ -33,17 +33,18 @@ readings collects the accumulated values for one kernel directly from its store.
 */
 const readingsFromMeasurements = (ring: {
 	getBufferLength: () => number;
-	get: (index: number) => { snr: () => number } | undefined;
+	get: (index: number) => any;
 }) => {
 	const points: number[] = [];
+	if (!ring || typeof ring.getBufferLength !== "function") return points;
 	const len = ring.getBufferLength();
 
 	for (let i = 0; i < len; i++) {
 		const m = ring.get(i);
 
 		if (m) {
-			const snr = m.snr();
-			if (Number.isFinite(snr)) {
+			const snr = typeof m.snr === "function" ? m.snr() : m.snr;
+			if (typeof snr === "number" && Number.isFinite(snr)) {
 				points.push(snr);
 			}
 		}
@@ -54,16 +55,23 @@ const readingsFromMeasurements = (ring: {
 
 const readingsFromNumbers = (ring: {
 	getBufferLength: () => number;
-	get: (index: number) => number | undefined;
+	get: (index: number) => any;
 }) => {
 	const points: number[] = [];
+	if (!ring || typeof ring.getBufferLength !== "function") return points;
 	const len = ring.getBufferLength();
 
 	for (let i = 0; i < len; i++) {
 		const value = ring.get(i);
+		const numVal =
+			typeof value === "number"
+				? value
+				: typeof value?.confidence === "function"
+					? value.confidence()
+					: value?.confidence;
 
-		if (value !== undefined && Number.isFinite(value)) {
-			points.push(value);
+		if (numVal !== undefined && Number.isFinite(numVal)) {
+			points.push(numVal);
 		}
 	}
 
@@ -92,34 +100,39 @@ update, and a carried metric with no value reads the same way — an absent valu
 stays null (the readout shows a dash) rather than being fabricated as zero.
 */
 const metricValues = (
-	row: {
-		metricsLength: () => number;
-		metrics: (
-			index: number,
-			obj: Metric,
-		) => Metric | null;
-	},
+	row: any,
 	names: string[],
 ): Record<string, { raw: number; normalized: number } | null> => {
-	// Every requested name is present in the result; a metric the row does not
-	// carry stays null (the readout shows a dash) rather than being fabricated
-	// as zero. Omitting the key entirely would make a lookup return undefined,
-	// which callers could mistake for a present-but-unset value.
 	const out: Record<string, { raw: number; normalized: number } | null> = {};
 	for (const name of names) out[name] = null;
+	if (!row) return out;
 
-	for (let j = 0; j < row.metricsLength(); j++) {
-		const m = row.metrics(j, metricObj);
+	if (Array.isArray(row.metrics)) {
+		for (const m of row.metrics) {
+			if (!m) continue;
+			const name = m.name;
+			if (!name || !names.includes(name)) continue;
+			out[name] = {
+				raw: m.raw,
+				normalized: m.normalized,
+			};
+		}
+		return out;
+	}
 
-		if (!m) continue;
+	if (typeof row.metricsLength === "function") {
+		for (let j = 0; j < row.metricsLength(); j++) {
+			const m = row.metrics(j, metricObj);
+			if (!m) continue;
 
-		const name = m.name();
-		if (!name || !names.includes(name)) continue;
+			const name = m.name();
+			if (!name || !names.includes(name)) continue;
 
-		out[name] = {
-			raw: m.raw(),
-			normalized: m.normalized(),
-		};
+			out[name] = {
+				raw: m.raw(),
+				normalized: m.normalized(),
+			};
+		}
 	}
 
 	return out;
@@ -177,9 +190,15 @@ export const KernelInspector = () => {
 		let raw: number | null = null;
 		let normalized = 0;
 
-		const row = measurementState.findLast((candidate) => {
-			return metricValues(candidate, [name])[name] !== null;
-		});
+		const count = (measurementState as any)?.getBufferLength ? (measurementState as any).getBufferLength() : 0;
+		let row: any = null;
+		for (let i = count - 1; i >= 0; i--) {
+			const candidate = (measurementState as any).get(i);
+			if (candidate && metricValues(candidate, [name])[name] !== null) {
+				row = candidate;
+				break;
+			}
+		}
 		const value = row ? metricValues(row, [name])[name] : null;
 
 		if (value) {

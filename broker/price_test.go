@@ -236,7 +236,10 @@ func TestPriceTradable(t *testing.T) {
 func TestPriceApplyFill(t *testing.T) {
 	Convey("Given an empty holding", t, func() {
 		price, _ := newPriceSurface(t, "AAA/USD")
-		holding := types.NewHolding("AAA/USD")
+		holding := &types.Holding{
+			Symbol: "AAA/USD",
+			Status: types.INITIALIZING,
+		}
 		now := time.Now().UTC()
 
 		Convey("Buy fill accumulates quantity, cost, fees and VWAP", func() {
@@ -364,8 +367,4 @@ func (source *touchBook) quote(symbol string, bid, ask float64) {
 	}
 }
 
-func (source *touchBook) Book(symbol string, read func(*spotbook.Book)) {
-	if source.current != nil && source.current.Name == symbol {
-		read(source.current)
-	}
-}
+

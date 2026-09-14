@@ -1,8 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
-import { focusStore, resonanceArtifactStore } from "#/collections/app";
+import { focusStore, resonanceStore } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import type { Resonance } from "#/providers/telemetry/telemetry/resonance";
 import { ResonanceLayer } from "#/providers/telemetry/telemetry/resonance-layer";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
@@ -39,12 +38,13 @@ artifact store is not pre-scoped to one symbol — the solver keys its coder per
 symbol across the cross-section — so the focused symbol is selected here, the
 same way the other resonance surfaces do it.
 */
-const useArtifact = (): Resonance | undefined => {
+const useArtifact = (): any => {
 	const symbol = useSelector(focusStore, (state) => state);
 
-	const row = useSelector(resonanceArtifactStore, (state) =>
-		state.findLast((candidate) => candidate.symbol() === symbol),
-	);
+	const row = useSelector(resonanceStore, (state) => {
+		const ring = state[symbol];
+		return ring && !ring.isEmpty() ? (ring.getLast() as any) : undefined;
+	});
 
 	/*
 	The artifact ring is shared across the whole cross-section, so the focused
@@ -57,7 +57,7 @@ const useArtifact = (): Resonance | undefined => {
 	*/
 	const held = useRef<{
 		symbol: string | undefined;
-		row: Resonance | undefined;
+		row: any;
 	}>({ symbol, row: undefined });
 
 	if (held.current.symbol !== symbol) {
@@ -71,19 +71,56 @@ const useArtifact = (): Resonance | undefined => {
 	return held.current.row;
 };
 
+const readBool = (obj: any, key: string): boolean => {
+	if (!obj) return false;
+	if (typeof obj[key] === "function") return Boolean(obj[key]());
+	return Boolean(obj[key]);
+};
+
+const readNum = (obj: any, key: string): number | undefined => {
+	if (!obj) return undefined;
+	if (typeof obj[key] === "function") {
+		const val = obj[key]();
+		return typeof val === "number" ? val : undefined;
+	}
+	if (typeof obj[key] === "number") return obj[key];
+	if (typeof obj[key] === "bigint") return Number(obj[key]);
+	if (Array.isArray(obj.metrics)) {
+		const metric = obj.metrics.find((m: any) => m?.name === key);
+		if (metric && typeof metric.raw === "number") return metric.raw;
+	}
+	return undefined;
+};
+
+const readString = (obj: any, key: string): string | undefined => {
+	if (!obj) return undefined;
+	if (typeof obj[key] === "function") {
+		const val = obj[key]();
+		return typeof val === "string" ? val : undefined;
+	}
+	if (typeof obj[key] === "string") return obj[key];
+	return undefined;
+};
+
 /*
 taskCalibration and taskSkillStatus read the coder's own readiness as words.
 They were assembled backend-side when the panel had a curated frame of its own;
 with the artifact carrying the raw quantities, the wording belongs here — it is
 presentation, and the envelope stays the numbers it measured.
 */
-const taskCalibration = (artifact: Resonance): string =>
-	artifact.calibrated() ? "calibrated" : "calibrating";
+const taskCalibration = (artifact: any): string => {
+	const calString = readString(artifact, "taskCalibration");
+	if (calString) return calString;
+	return readBool(artifact, "calibrated") ? "calibrated" : "calibrating";
+};
 
-const taskSkillStatus = (artifact: Resonance): string => {
-	if (!artifact.taskSkillReady()) return "calibrating";
+const taskSkillStatus = (artifact: any): string => {
+	const statusString = readString(artifact, "taskSkillStatus");
+	if (statusString) return statusString;
 
-	const skill = artifact.taskSkill();
+	if (!readBool(artifact, "taskSkillReady")) return "calibrating";
+
+	const skill = readNum(artifact, "taskSkill") ?? 0;
 
 	if (skill > 1) return "above baseline";
 	if (skill >= 0.5) return "baseline";
@@ -96,14 +133,46 @@ The forward curve is cumulative per horizon: element k predicts the direction of
 the move over the next k+1 ticks, so the call for the supported horizon is the
 curve's last element.
 */
-const horizonCall = (artifact: Resonance): number | null => {
-	const length = artifact.forwardCurveLength();
-
-	return length === 0 ? null : artifact.forwardCurve(length - 1);
+const horizonCall = (artifact: any): number | null => {
+	if (!artifact) return null;
+	if (typeof artifact.forwardCurveLength === "function") {
+		const length = artifact.forwardCurveLength();
+		return length === 0 ? null : artifact.forwardCurve(length - 1);
+	}
+	if (Array.isArray(artifact.forwardCurve)) {
+		return artifact.forwardCurve.length === 0
+			? null
+			: artifact.forwardCurve[artifact.forwardCurve.length - 1];
+	}
+	return null;
 };
 
 const ScalarDiagnostics = () => {
 	const res = useArtifact();
+
+	const prec = readNum(res, "taskRelativePrecision");
+	const skill = readNum(res, "taskSkill");
+	const issued = readNum(res, "lastResolutionPrediction");
+	const realized = readNum(res, "lastResolutionTarget");
+	const error = readNum(res, "lastResolutionError");
+	const horizon = readNum(res, "supportedHorizon");
+	const reach = res
+		? typeof res.forwardCurveLength === "function"
+			? res.forwardCurveLength()
+			: Array.isArray(res.forwardCurve)
+				? res.forwardCurve.length
+				: undefined
+		: undefined;
+	const samples = res
+		? typeof res.resolvedSteps === "function"
+			? String(res.resolvedSteps())
+			: res.resolvedSteps !== undefined
+				? String(res.resolvedSteps)
+				: "—"
+		: "—";
+	const surprise = readNum(res, "surprise");
+	const energy = readNum(res, "energy");
+	const confidence = readNum(res, "confidence");
 
 	return (
 		<div className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)">
@@ -112,7 +181,7 @@ const ScalarDiagnostics = () => {
 					relative precision
 				</div>
 				<div data-p="prec" className="mt-0.5 font-mono text-[11px] text-(--up)">
-					{res ? fmt(res.taskRelativePrecision(), 3) : "—"}
+					{fmt(prec, 3)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -123,7 +192,7 @@ const ScalarDiagnostics = () => {
 					data-p="skill"
 					className="mt-0.5 font-mono text-[11px] text-(--f2)"
 				>
-					{res ? fmt(res.taskSkill(), 3) : "—"}
+					{fmt(skill, 3)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -134,7 +203,7 @@ const ScalarDiagnostics = () => {
 					data-p="issued"
 					className="mt-0.5 font-mono text-[11px] text-(--f2)"
 				>
-					{res ? dir(res.lastResolutionPrediction()) : "—"}
+					{dir(issued)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -145,7 +214,7 @@ const ScalarDiagnostics = () => {
 					data-p="realized"
 					className="mt-0.5 font-mono text-[11px] text-(--f2)"
 				>
-					{res ? dir(res.lastResolutionTarget()) : "—"}
+					{dir(realized)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -156,7 +225,7 @@ const ScalarDiagnostics = () => {
 					data-p="error"
 					className="mt-0.5 font-mono text-[11px] text-(--f2)"
 				>
-					{res ? fmt(res.lastResolutionError(), 0) : "—"}
+					{fmt(error, 0)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -165,11 +234,11 @@ const ScalarDiagnostics = () => {
 				</div>
 				<div className="mt-0.5 flex gap-1 font-mono text-[11px] text-(--f2)">
 					<span data-p="horizon">
-						{res ? fmt(Number(res.supportedHorizon()), 0) : "—"}
+						{fmt(horizon, 0)}
 					</span>
 					<span>/</span>
 					<span data-p="reach">
-						{res ? fmt(res.forwardCurveLength(), 0) : "—"}
+						{fmt(reach, 0)}
 					</span>
 				</div>
 			</div>
@@ -181,7 +250,7 @@ const ScalarDiagnostics = () => {
 					data-p="samples"
 					className="mt-0.5 font-mono text-[11px] text-(--acc)"
 				>
-					{res ? String(res.resolvedSteps()) : "—"}
+					{samples}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -192,7 +261,7 @@ const ScalarDiagnostics = () => {
 					data-p="surprise"
 					className="mt-0.5 truncate font-mono text-[11px] text-(--warning)"
 				>
-					{res ? fmt(res.surprise(), 2) : "—"}
+					{fmt(surprise, 2)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -203,7 +272,7 @@ const ScalarDiagnostics = () => {
 					data-p="energy"
 					className="mt-0.5 truncate font-mono text-[11px] text-(--info)"
 				>
-					{res ? fmt(res.energy(), 2) : "—"}
+					{fmt(energy, 2)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">
@@ -214,7 +283,7 @@ const ScalarDiagnostics = () => {
 					data-p="confidence"
 					className="mt-0.5 truncate font-mono text-[11px] text-(--f2)"
 				>
-					{res ? fmt(res.confidence(), 3) : "—"}
+					{fmt(confidence, 3)}
 				</div>
 			</div>
 		</div>
@@ -274,7 +343,7 @@ const VerdictRow = () => {
 	);
 };
 
-const toVector = (value: Float64Array | null | undefined): number[] =>
+const toVector = (value: Float64Array | number[] | null | undefined): number[] =>
 	value === null || value === undefined ? [] : Array.from(value);
 
 /*
@@ -361,19 +430,52 @@ curve. All lanes read the focused carrier row from the resonance store.
 const HierarchyLanes = () => {
 	const res = useArtifact();
 
-	const layerCount = res ? res.layersLength() : 0;
+	const layerCount = res
+		? typeof res.layersLength === "function"
+			? res.layersLength()
+			: Array.isArray(res.layers)
+				? res.layers.length
+				: 0
+		: 0;
+
 	const layers = Array.from({ length: layerCount }, (_, index) => {
-		const layer = res?.layers(index, layerObj);
+		let stateVec: number[] = [];
+		let predVec: number[] = [];
+
+		if (res) {
+			if (typeof res.layers === "function") {
+				const layer = res.layers(index, layerObj);
+				stateVec = toVector(layer?.stateArray());
+				predVec = toVector(layer?.predictionArray());
+			} else if (Array.isArray(res.layers)) {
+				const layer = res.layers[index];
+				stateVec = toVector(layer?.state);
+				predVec = toVector(layer?.prediction);
+			}
+		}
 
 		return {
 			label: `L${index} · ${semanticLayerName(index, layerCount)}`,
 			meta:
 				index < layerCount - 1 ? "adjacent generative link" : "context state",
 			color: "bg-(--f3)",
-			values: toVector(layer?.stateArray()),
-			ghost: toVector(layer?.predictionArray()),
+			values: stateVec,
+			ghost: predVec,
 		};
 	});
+
+	const latentVec = res
+		? typeof res.latentArray === "function"
+			? toVector(res.latentArray())
+			: toVector(res.latent)
+		: [];
+
+	const forwardVec = res
+		? typeof res.forwardCurveArray === "function"
+			? toVector(res.forwardCurveArray())
+			: toVector(res.forwardCurve)
+		: [];
+
 	return (
 		<>
 			{layers.map((layer) => (
@@ -383,13 +485,13 @@ const HierarchyLanes = () => {
 				label="Latent state z"
 				meta="settled predictive state · zero centered"
 				color="bg-(--info)"
-				values={toVector(res?.latentArray())}
+				values={latentVec}
 			/>
 			<VectorLane
 				label="Forward direction shape"
 				meta="signed direction lean · t+1 → t+k"
 				color="bg-(--acc)"
-				values={toVector(res?.forwardCurveArray())}
+				values={forwardVec}
 			/>
 		</>
 	);

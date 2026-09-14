@@ -46,6 +46,9 @@ export const badgeVariants = cva(
 
 type BadgeVariantProps = VariantProps<typeof badgeVariants>;
 
+export type BadgeVariant = NonNullable<BadgeVariantProps["variant"]>;
+export type BadgeSize = NonNullable<BadgeVariantProps["size"]>;
+
 export type BadgeProps = Omit<ComponentProps<"span">, "children"> &
 	BadgeVariantProps & {
 		/*
@@ -89,4 +92,35 @@ export const Badge = ({
 			{label}
 		</span>
 	);
+};
+
+/*
+setBadge updates a badge DOM element directly without triggering a React re-render.
+Ideal for high-frequency telemetry and streaming updates across components.
+*/
+export const setBadge = (
+	el: HTMLElement | null | undefined,
+	variant: BadgeVariant,
+	label?: string,
+	size: BadgeSize = "xxs",
+) => {
+	if (!el) return;
+
+	if (label !== undefined) {
+		const dot = el.firstElementChild;
+		if (dot) {
+			const textNode = Array.from(el.childNodes).find(
+				(node) => node.nodeType === Node.TEXT_NODE,
+			);
+			if (textNode) {
+				textNode.textContent = label;
+			} else {
+				el.appendChild(document.createTextNode(label));
+			}
+		} else {
+			el.innerText = label;
+		}
+	}
+
+	el.className = badgeVariants({ variant, size });
 };

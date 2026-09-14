@@ -55,12 +55,18 @@ func NewWorkspace[T any](
 		),
 	)
 
+	slotOffset := 0
+
 	for _, stage := range stages {
 		group := make([]disruptor.Handler, len(stage))
 
-		for i, node := range stage {
-			group[i] = NewConsumer(node, workload.register)
+		for index, node := range stage {
+			consumer := NewConsumer(node, workload.register)
+			consumer.SetPeerLimit(slotOffset)
+			group[index] = consumer
 		}
+
+		slotOffset += len(stage)
 
 		if len(group) > 0 {
 			opts = append(opts, disruptor.Options.NewHandlerGroup(group...))
@@ -80,7 +86,6 @@ func NewWorkspace[T any](
 	go workload.channel.Listen()
 	return workload
 }
-
 
 func (workspace *Workspace[T]) Step(payload T) T {
 	select {

@@ -18,9 +18,10 @@ it was assigned.
 type Query[T any] struct {
 	data.Identifiable[T]
 	data.Actionable
-	err     error
-	subject data.Identifiable[T]
-	payload []T
+	err       error
+	subject   data.Identifiable[T]
+	payload   []T
+	peerLimit int
 }
 
 /*
@@ -36,6 +37,7 @@ func NewQuery[T any](
 		Actionable:   action,
 		subject:      subject,
 		payload:      payload,
+		peerLimit:    -1,
 	}
 }
 
@@ -69,6 +71,15 @@ func (op *Query[T]) Identify(id int) data.Identifiable[T] {
 
 func (op *Query[T]) First() T {
 	return op.payload[0]
+}
+
+func (op *Query[T]) PeerLimit() int {
+	return op.peerLimit
+}
+
+func (op *Query[T]) SetPeerLimit(limit int) *Query[T] {
+	op.peerLimit = limit
+	return op
 }
 
 

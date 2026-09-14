@@ -87,17 +87,6 @@ func (w *Writer) AddMeasurement(row MeasurementRow) {
 	w.measurements = append(w.measurements, row)
 }
 
-func (w *Writer) AddModel(row ModelRow) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-	w.models = append(w.models, row)
-}
-
-func (w *Writer) AddGrid(row GridRow) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-	w.grids = append(w.grids, row)
-}
 
 func (w *Writer) AddPosition(row PositionRow) {
 	w.mutex.Lock()
@@ -105,11 +94,6 @@ func (w *Writer) AddPosition(row PositionRow) {
 	w.positions = append(w.positions, row)
 }
 
-func (w *Writer) AddDecision(row OutcomeRow) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-	w.decisions = append(w.decisions, row)
-}
 
 func (w *Writer) AddOutcome(row OutcomeRow) {
 	w.mutex.Lock()
@@ -304,13 +288,14 @@ func (w *Writer) append(
 			return committed, err
 		}
 
-		defer reader.Release()
+		_, appendErr := tbl.Append(ctx, reader, nil)
+		reader.Release()
 
-		if _, err := tbl.Append(ctx, reader, nil); err != nil {
+		if appendErr != nil {
 			return committed, errnie.Error(errnie.Err(
 				errnie.BadGateway,
 				"[iceberg] failed to commit append to "+name,
-				err,
+				appendErr,
 			))
 		}
 

@@ -285,7 +285,15 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
-	solver.markDirty(symbol)
+	if symbol == "" {
+		for _, peer := range measurement.Peers {
+			if peer != nil && peer.Label != "" {
+				solver.markDirty(peer.Label)
+			}
+		}
+	} else {
+		solver.markDirty(symbol)
+	}
 
 	select {
 	case solver.wake <- struct{}{}:
@@ -331,14 +339,14 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[floa
 	sell := float32(0)
 
 	if buyFound {
-		if !isFiniteFloat(buyMetric.Raw) || buyMetric.Raw < 0 {
+		if buyMetric.Raw < 0 {
 			return
 		}
 		buy = float32(buyMetric.Raw)
 	}
 
 	if sellFound {
-		if !isFiniteFloat(sellMetric.Raw) || sellMetric.Raw < 0 {
+		if sellMetric.Raw < 0 {
 			return
 		}
 		sell = float32(sellMetric.Raw)
@@ -360,10 +368,6 @@ func (solver *Solver) latestForcing(symbol string) forcingState {
 	}
 
 	return solver.forcing[symbol]
-}
-
-func isFiniteFloat(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 /*
@@ -394,6 +398,10 @@ func (solver *Solver) markDirty(symbol string) {
 }
 
 func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
+	if solver.api == nil {
+		return nil, nil
+	}
+
 	seen := make(map[int64]struct{}, len(solver.loaded))
 	states := make([]*sensorium.State, 0, len(solver.loaded))
 	symbols := solver.api.Books()
@@ -402,34 +410,34 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		return nil, nil
 	}
 
-	symbols.Range(func(key, _ any) bool {
+	symbols.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
 
 		if !ok || symbol == "" {
 			return true
 		}
 
-		solver.api.Book(symbol, func(spotbook *book.Book) {
-			if spotbook == nil {
-				return
+		spotbook, ok := value.(*book.Book)
+
+		if !ok || spotbook == nil {
+			return true
+		}
+
+		solver.forcingMu.RLock()
+		forcing := solver.latestForcing(symbol)
+		solver.forcingMu.RUnlock()
+
+		for state := range solver.dataset.Step(
+			symbol, spotbook.Bids, spotbook.Asks, forcing,
+		) {
+			if state == nil || state.N != 1 {
+				sensorium.StatePool.Put(state)
+				continue
 			}
 
-			solver.forcingMu.RLock()
-			forcing := solver.latestForcing(symbol)
-			solver.forcingMu.RUnlock()
-
-			for state := range solver.dataset.Step(
-				symbol, spotbook.Bids, spotbook.Asks, forcing,
-			) {
-				if state == nil || state.N != 1 {
-					sensorium.StatePool.Put(state)
-					continue
-				}
-
-				seen[state.ContentIDs[0]] = struct{}{}
-				states = append(states, state)
-			}
-		})
+			seen[state.ContentIDs[0]] = struct{}{}
+			states = append(states, state)
+		}
 
 		return true
 	})
@@ -610,24 +618,6 @@ func (solver *Solver) Reading() *State {
 	return solver.reading.Load()
 }
 
-/*
-liveReading is the scalar field an L3 envelope may carry: version, time, and
-the producer reading. Particle arrays and Eulerian grids stay on the advance
-snapshot. Attaching them to every Level3 message is what packed the Iceberg
-state witness with the whole book on every tick.
-*/
-func (solver *Solver) liveReading() *State {
-	held := solver.reading.Load()
-
-	if held == nil {
-		return nil
-	}
-
-	return &State{
-		At: held.At, Version: held.Version,
-		Reading: held.Reading, Modes: held.Modes,
-	}
-}
 
 /*
 publish materializes the resident particles and fields into an envelope of their

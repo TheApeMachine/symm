@@ -146,19 +146,85 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		return m
 	}
 
+	input := m
+
+	if len(m.Peers) > 0 {
+		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+			if p.Label == "" {
+				return false
+			}
+			_, hasObsBid := p.Metrics["observed_notional:bid"]
+			_, hasObsAsk := p.Metrics["observed_notional:ask"]
+			if hasObsBid || hasObsAsk {
+				return true
+			}
+			b := p.Metrics["best_bid"].Raw
+			if b == 0 {
+				b = p.Metrics["bid"].Raw
+			}
+			a := p.Metrics["best_ask"].Raw
+			if a == 0 {
+				a = p.Metrics["ask"].Raw
+			}
+			return b > 0 && a > 0
+		})
+
+		if peer == nil {
+			return m
+		}
+
+		input = peer.Clone()
+	}
+
+	obsBid := input.Metrics["observed_notional:bid"].Raw
+	obsAsk := input.Metrics["observed_notional:ask"].Raw
+	mutBid := input.Metrics["mutation_count:bid"].Raw
+	mutAsk := input.Metrics["mutation_count:ask"].Raw
+
+	if obsBid == 0 && obsAsk == 0 {
+		bidPrice := input.Metrics["best_bid"].Raw
+		if bidPrice == 0 {
+			bidPrice = input.Metrics["bid"].Raw
+		}
+		askPrice := input.Metrics["best_ask"].Raw
+		if askPrice == 0 {
+			askPrice = input.Metrics["ask"].Raw
+		}
+		bidQty := input.Metrics["touch_quantity:bid"].Raw
+		if bidQty == 0 {
+			bidQty = input.Metrics["bid_qty"].Raw
+		}
+		askQty := input.Metrics["touch_quantity:ask"].Raw
+		if askQty == 0 {
+			askQty = input.Metrics["ask_qty"].Raw
+		}
+		if bidPrice > 0 && bidQty > 0 {
+			obsBid = bidPrice * bidQty
+			mutBid = 1
+		}
+		if askPrice > 0 && askQty > 0 {
+			obsAsk = askPrice * askQty
+			mutAsk = 1
+		}
+	}
+
+	if obsBid <= 0 && obsAsk <= 0 {
+		return m
+	}
+
 	if m.Metadata == nil {
 		m.Metadata = make(map[string]string)
 	}
 
-	input := depthInput{
-		ObservedBid: m.Metrics["observed_notional:bid"].Raw,
-		ObservedAsk: m.Metrics["observed_notional:ask"].Raw,
-		MutationBid: m.Metrics["mutation_count:bid"].Raw,
-		MutationAsk: m.Metrics["mutation_count:ask"].Raw,
-		At:          m.At,
+	pipeInput := depthInput{
+		ObservedBid: obsBid,
+		ObservedAsk: obsAsk,
+		MutationBid: mutBid,
+		MutationAsk: mutAsk,
+		At:          input.At,
 	}
 
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*depthResult)(out)
 
 		m.Metrics["observed_notional"] = m.Metrics["observed_notional"].Write(res.Observed)
@@ -197,6 +263,8 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		}
 	}
 
+	m.Label = input.Label
+	m.At = input.At
 	m.Finalize()
 	return m
 }
@@ -207,7 +275,7 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (level3 *Level3) Register() *data.Measurement[float64] {
-	return data.NewMeasurement[float64]("depthflow:level3", map[string]data.Metric[float64]{
+	m := data.NewMeasurement[float64]("depthflow:level3", map[string]data.Metric[float64]{
 		"observed_notional:bid":                 data.NewMetric[float64]("observed_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"observed_notional:ask":                 data.NewMetric[float64]("observed_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"observed_notional":                     data.NewMetric[float64]("observed_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
@@ -232,4 +300,6 @@ func (level3 *Level3) Register() *data.Measurement[float64] {
 		"observed_notional_rate_divergence":     data.NewMetric[float64]("observed_notional_rate_divergence", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"observed_notional_rate_zscore":         data.NewMetric[float64]("observed_notional_rate_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }

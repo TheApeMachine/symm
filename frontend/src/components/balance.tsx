@@ -1,7 +1,11 @@
 import { learningStore } from "#/collections/learning";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
-import { equityStore } from "#/collections/app";
+import {
+	cashAtom,
+	equityAtom,
+	unrealizedAtom,
+} from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
@@ -74,23 +78,17 @@ const Reading = ({
 
 export const Balance = () => {
 	const policy = useSelector(learningStore, (state) => state?.agents[0]);
-	const lastWithCash = useSelector(equityStore, (state) =>
-		state.findLast((f) => f.cash() !== null && f.cash() !== ""),
-	);
-	const lastWithUnrealized = useSelector(equityStore, (state) =>
-		state.findLast((f) => f.unrealized() !== null && f.unrealized() !== ""),
-	);
-	const lastWithEquity = useSelector(equityStore, (state) =>
-		state.findLast((f) => f.equity() !== null && f.equity() !== ""),
-	);
+	const cash = useSelector(cashAtom, (state) => state);
+	const unrealized = useSelector(unrealizedAtom, (state) => state);
+	const equity = useSelector(equityAtom, (state) => state);
 
 	// Profit is unrealized rather than equity: the ride is for the book being up
 	// right now, not for the account being larger than nothing. Equity is above
 	// zero the moment the wallet is funded, which would leave it permanently on.
-	const unrealized = Number(
-		policy ? policy.unrealized : lastWithUnrealized?.unrealized(),
+	const unrealizedVal = Number(
+		policy ? policy.unrealized : unrealized,
 	);
-	const inProfit = Number.isFinite(unrealized) && unrealized > 0;
+	const inProfit = Number.isFinite(unrealizedVal) && unrealizedVal > 0;
 
 	return (
 		<Flex.Row
@@ -110,7 +108,7 @@ export const Balance = () => {
 				tone={policy ? "f3" : "f1"}
 				weight="medium"
 				which="cash"
-				value={fmt(policy ? String(policy.cash) : lastWithCash?.cash())}
+				value={fmt(policy ? String(policy.cash) : cash)}
 			/>
 			<Reading
 				label="Unrealized"
@@ -118,7 +116,7 @@ export const Balance = () => {
 				weight="medium"
 				which="unrealized"
 				value={fmt(
-					policy ? String(policy.unrealized) : lastWithUnrealized?.unrealized(),
+					policy ? String(policy.unrealized) : unrealized,
 				)}
 			/>
 			<Reading
@@ -126,7 +124,7 @@ export const Balance = () => {
 				tone={policy ? "f3" : "accent"}
 				weight="semibold"
 				which="equity"
-				value={fmt(policy ? String(policy.equity) : lastWithEquity?.equity())}
+				value={fmt(policy ? String(policy.equity) : equity)}
 			>
 				{inProfit ? <Lambo /> : null}
 			</Reading>

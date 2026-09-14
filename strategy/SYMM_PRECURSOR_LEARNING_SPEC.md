@@ -17,12 +17,12 @@ The specification preserves the latest product description in the discussion. It
 
 Four labels distinguish authority:
 
-| Label | Meaning |
-|---|---|
-| **Intent** | A product decision explicitly stated by Danny in the discussion. |
+| Label        | Meaning                                                                                                                                           |
+|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Intent**   | A product decision explicitly stated by Danny in the discussion.                                                                                  |
 | **Contract** | An engineering formalization proposed by this document to make that intent implementable and testable. Requirement IDs identify these statements. |
-| **Observed** | Behavior inspected in the supplied source snapshot, not necessarily the target behavior or a verified runtime result. |
-| **Open** | A policy or mathematical choice not settled by the discussion or supplied source. Coding agents must not invent its value. |
+| **Observed** | Behavior inspected in the supplied source snapshot, not necessarily the target behavior or a verified runtime result.                             |
+| **Open**     | A policy or mathematical choice not settled by the discussion or supplied source. Coding agents must not invent its value.                        |
 
 **MUST** denotes a requirement of the proposed contract. **SHOULD** denotes a recommendation whose deviation needs a recorded rationale. Requirements do not certify that current code conforms. Section 18 lists observed differences; section 20 lists decisions still needed.
 
@@ -104,25 +104,25 @@ The grid measures relationships. The learner chooses actions. Hindsight and the 
 
 ### 3.1 Terms
 
-| Term | Definition |
-|---|---|
-| **Tape** | Ordered, retained raw market events, with capture identity and enough timing/provenance to reconstruct what was observable. |
-| **Observation** | A numerical reading emitted by a Signal or Logic Solver from the available tape. |
-| **Quantity** | An identified observation channel, such as a source plus metric identifier; not an individual order. |
-| **Universe key** | The scope in which a context is interpreted, initially a market symbol pair and its venue/instrument scope. |
-| **Impulse Map / grid** | The organization of quantities by observed sympathetic relationships, together with current activation. |
-| **Region** | A community of related quantities, with stable structural identity and changing activation. |
-| **Region condition** | The encoded state of a region, such as its identity and level/change signs. |
-| **Impulse** | The active regional reading produced at one observation frontier. It can contain several region conditions. |
-| **Context** | A temporally ordered history of impulses for one universe and one working-state owner. |
-| **Prior** | Learned associations accumulated before the current decision, with evidence and feedback provenance. |
-| **A** | The selected beginning of a precursor interval on the tape, some distance before B; not a discovered physical singularity. |
-| **B** | Hindsight’s ignition landmark under a declared event-definition policy. |
-| **C** | Hindsight’s termination landmark: exhaustion, stagnation, or reversal under that policy. Not every C is necessarily a price maximum. |
-| **S** | The actual randomized rehearsal start within the selected A→B interval. S is separate from A. |
-| **Episode** | A tape fragment, its provenance, and teacher-only annotation. |
-| **Rehearsal** | A causal rollout through an episode followed by grading and learning. |
-| **Main agent** | The owner applying the learned decision method to current tape, initially through simulated execution, with PnL-based feedback. |
+| Term                   | Definition                                                                                                                           |
+|------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| **Tape**               | Ordered, retained raw market events, with capture identity and enough timing/provenance to reconstruct what was observable.          |
+| **Observation**        | A numerical reading emitted by a Signal or Logic Solver from the available tape.                                                     |
+| **Quantity**           | An identified observation channel, such as a source plus metric identifier; not an individual order.                                 |
+| **Universe key**       | The scope in which a context is interpreted, initially a market symbol pair and its venue/instrument scope.                          |
+| **Impulse Map / grid** | The organization of quantities by observed sympathetic relationships, together with current activation.                              |
+| **Region**             | A community of related quantities, with stable structural identity and changing activation.                                          |
+| **Region condition**   | The encoded state of a region, such as its identity and level/change signs.                                                          |
+| **Impulse**            | The active regional reading produced at one observation frontier. It can contain several region conditions.                          |
+| **Context**            | A temporally ordered history of impulses for one universe and one working-state owner.                                               |
+| **Prior**              | Learned associations accumulated before the current decision, with evidence and feedback provenance.                                 |
+| **A**                  | The selected beginning of a precursor interval on the tape, some distance before B; not a discovered physical singularity.           |
+| **B**                  | Hindsight’s ignition landmark under a declared event-definition policy.                                                              |
+| **C**                  | Hindsight’s termination landmark: exhaustion, stagnation, or reversal under that policy. Not every C is necessarily a price maximum. |
+| **S**                  | The actual randomized rehearsal start within the selected A→B interval. S is separate from A.                                        |
+| **Episode**            | A tape fragment, its provenance, and teacher-only annotation.                                                                        |
+| **Rehearsal**          | A causal rollout through an episode followed by grading and learning.                                                                |
+| **Main agent**         | The owner applying the learned decision method to current tape, initially through simulated execution, with PnL-based feedback.      |
 
 ### 3.2 Timeline
 
@@ -275,11 +275,11 @@ The displayed geometry is two-dimensional. The underlying affinity model need no
 
 **REQ-09 — Sympathetic relation.** The representation MUST support these separately inspectable considerations:
 
-| Priority | Required interpretation |
-|---|---|
-| Co-movement | Quantities that repeatedly move together should attract or share representation. |
+| Priority                          | Required interpretation                                                                                                                                                                                                  |
+|-----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Co-movement                       | Quantities that repeatedly move together should attract or share representation.                                                                                                                                         |
 | Relative movement and consistency | Comparable movement in declared normalized units strengthens association. A stable inverse relationship is valid sympathy. A relationship that inconsistently changes orientation is not equivalent to a stable inverse. |
-| Evidence quality | Maturity and SNR determine the strength of supported influence. Under otherwise comparable evidence, the weaker-established quantity should adjust more toward the stronger-established one than conversely. |
+| Evidence quality                  | Maturity and SNR determine the strength of supported influence. Under otherwise comparable evidence, the weaker-established quantity should adjust more toward the stronger-established one than conversely.             |
 
 The contributions are additive in the user’s design, not an implicit lexicographic rule in which a lower priority never matters. Exact channel scaling, combination weights, and stability criteria require a declared policy.
 
@@ -365,10 +365,10 @@ Stable IDs for audit records may accompany the request but are not predictive fe
 
 ### 9.2 Action vocabulary
 
-| Position mode | Learned actions | Meaning of Wait |
-|---|---|---|
-| Flat | Enter, Wait | Do not establish exposure at this point. |
-| Holding long | Exit, Wait | Retain the current exposure at this point. |
+| Position mode | Learned actions | Meaning of Wait                            |
+|---------------|-----------------|--------------------------------------------|
+| Flat          | Enter, Wait     | Do not establish exposure at this point.   |
+| Holding long  | Exit, Wait      | Retain the current exposure at this point. |
 
 **REQ-20 — Position-conditioned action.** Legal actions and context interpretation MUST respect position mode. Wait-while-flat and Wait-while-holding must not be pooled as an identical target without conditioning on that mode.
 
@@ -499,14 +499,14 @@ The grader evaluates committed actions using the completed tape and annotation p
 
 Minimum output semantics:
 
-| Field | Meaning |
-|---|---|
-| Verdict | Correct action, incorrect action, pending, or not applicable under the policy. |
-| Timing class | Early, in the declared acceptable window, late, or not applicable. |
+| Field         | Meaning                                                                        |
+|---------------|--------------------------------------------------------------------------------|
+| Verdict       | Correct action, incorrect action, pending, or not applicable under the policy. |
+| Timing class  | Early, in the declared acceptable window, late, or not applicable.             |
 | Timing offset | Signed recorded-time difference from the relevant B/C reference, when defined. |
-| Reinforcement | The declared mapping of verdict/timing into a learning signal. |
-| Reason | Which rule and teacher landmark support the grade. |
-| Validity | Whether the observed suffix is sufficient to judge this particular target. |
+| Reinforcement | The declared mapping of verdict/timing into a learning signal.                 |
+| Reason        | Which rule and teacher landmark support the grade.                             |
+| Validity      | Whether the observed suffix is sufficient to judge this particular target.     |
 
 For diagnostics, `entry_offset = decision_time - B_time` and `exit_offset = decision_time - C_time` may be reported. Negative offsets mean before the reference; whether that is desirable or too early belongs to the declared grading rule.
 
@@ -562,19 +562,19 @@ Distinguish rehearsal, frozen evaluation, forward simulation with learning, froz
 
 These are semantic records, not mandatory new Go structs or a second storage architecture. Map them to existing payloads, keys, and owners wherever possible. Fields marked teacher-only must not appear in the learner’s feature serialization.
 
-| Record | Required content and ownership |
-|---|---|
-| **Event reference** | Capture/run ID, ordinal/sequence, universe, raw payload reference, event/availability frontier. Owned by capture/replay. |
-| **Observation** | Stable quantity ID, numerical reading, observation status, support interval, maturity/SNR with definedness, causal lineage. Owned by producer. |
+| Record                      | Required content and ownership                                                                                                                                                             |
+|-----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Event reference**         | Capture/run ID, ordinal/sequence, universe, raw payload reference, event/availability frontier. Owned by capture/replay.                                                                   |
+| **Observation**             | Stable quantity ID, numerical reading, observation status, support interval, maturity/SNR with definedness, causal lineage. Owned by producer.                                             |
 | **Representation artifact** | Quantity registry, normalization/bin policy, affinity/partition, token schema, training/calibration provenance, version/hash. Owned by the existing perception/model publication boundary. |
-| **Impulse** | Universe, representation ID, observation version/frontier, readiness status, active region readings. No teacher annotations. |
-| **Episode annotation** | Episode/capture group, A/B/C validity and locations, terminal reason, direction/family, friction category, label/grader policy IDs. Teacher-only. |
-| **Replay run** | Episode reference, sampler/seed, allowed warm-up, pinned model/representation versions, mode, start/end status. Scheduler-owned; identifying metadata is not a policy feature. |
-| **Decision** | Immutable ID, causal frontier, context identity, universe/position mode, legal actions, selected action, typed scores/undefinedness, model version, exploration provenance. |
-| **Grade** | Decision/trace reference, verdict/timing/validity, reinforcement, policy ID, availability frontier, feedback kind. |
-| **Execution outcome** | Decision/order/fill/position linkage, prices, sizes, fees, actual or simulated execution identity, realized PnL, availability. Main-agent owned. |
-| **Learning commit** | Source decision/grade references, feedback kind, idempotency key, prior/published model versions, replay-exposure and distinct-episode accounting. |
-| **Model snapshot** | Existing learned state plus representation compatibility, feedback-policy versions, scope policy, provenance frontier, and serialization version. |
+| **Impulse**                 | Universe, representation ID, observation version/frontier, readiness status, active region readings. No teacher annotations.                                                               |
+| **Episode annotation**      | Episode/capture group, A/B/C validity and locations, terminal reason, direction/family, friction category, label/grader policy IDs. Teacher-only.                                          |
+| **Replay run**              | Episode reference, sampler/seed, allowed warm-up, pinned model/representation versions, mode, start/end status. Scheduler-owned; identifying metadata is not a policy feature.             |
+| **Decision**                | Immutable ID, causal frontier, context identity, universe/position mode, legal actions, selected action, typed scores/undefinedness, model version, exploration provenance.                |
+| **Grade**                   | Decision/trace reference, verdict/timing/validity, reinforcement, policy ID, availability frontier, feedback kind.                                                                         |
+| **Execution outcome**       | Decision/order/fill/position linkage, prices, sizes, fees, actual or simulated execution identity, realized PnL, availability. Main-agent owned.                                           |
+| **Learning commit**         | Source decision/grade references, feedback kind, idempotency key, prior/published model versions, replay-exposure and distinct-episode accounting.                                         |
+| **Model snapshot**          | Existing learned state plus representation compatibility, feedback-policy versions, scope policy, provenance frontier, and serialization version.                                          |
 
 **REQ-36 — Typed absence and errors.** Nullable/undefined values MUST not be indistinguishable from measured zero. Invalid payloads fail explicitly at their owning boundary. An empty model is not an implicit recovery for corrupted stored memory.
 
@@ -616,13 +616,13 @@ Episode groups with overlapping raw tape or multiple sampled starts belong to th
 
 Report both task and economic outcomes:
 
-| Level | Examples of required reported quantities |
-|---|---|
-| Perception | Active channels/regions, compression, missingness, formation stability, interpretation/version compatibility. |
-| Precursor recognition | Defined target; false activations on negative tape; missed ignitions/terminations; evidence by episode family; probability calibration when probabilities are claimed. |
-| Timing and action | Entry/exit offsets; early/late/wrong counts; Wait behavior by position mode; no-evidence versus deliberate Wait. |
-| Economic | Net PnL, fees/costs, exposure and drawdown, execution/fill model, position count, realized versus pending outcomes. |
-| Evidence and operation | Distinct captures/episodes, repetitions, seeds, model versions, runtime/latency and failure counts. |
+| Level                  | Examples of required reported quantities                                                                                                                               |
+|------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Perception             | Active channels/regions, compression, missingness, formation stability, interpretation/version compatibility.                                                          |
+| Precursor recognition  | Defined target; false activations on negative tape; missed ignitions/terminations; evidence by episode family; probability calibration when probabilities are claimed. |
+| Timing and action      | Entry/exit offsets; early/late/wrong counts; Wait behavior by position mode; no-evidence versus deliberate Wait.                                                       |
+| Economic               | Net PnL, fees/costs, exposure and drawdown, execution/fill model, position count, realized versus pending outcomes.                                                    |
+| Evidence and operation | Distinct captures/episodes, repetitions, seeds, model versions, runtime/latency and failure counts.                                                                    |
 
 These metrics are proposed assessment contracts, not claims that current experiments pass. Numerical success thresholds and minimum evidence requirements are open decisions; the specification does not choose arbitrary percentages.
 
@@ -650,72 +650,72 @@ This is a source inspection, not a build or execution result. The file paths ref
 
 ### 18.1 Reuse map
 
-| Responsibility | Existing owner to inspect/reuse |
-|---|---|
-| Quantity identity, quality, presence, grid lifecycle | `nomagique/learning/associative/grid/space.go`, `window.go` |
-| Affinity and layout | `grid/affinity.go`, `relaxation.go` |
-| Region formation and current salience | `grid/regions.go` |
-| Condition token and temporal serialization | `grid/condition.go`, `associative/context.go` |
-| Learn/recall sequencing | `nomagique/learning/associative/agent.go` |
-| Shared associations and memory serialization | `nomagique/cognition/engine.go`, `key.go`, `weight.go` |
-| Rehearsal and legal decisions | `strategy/agent.go`, `action.go` |
-| Ground-truth grading | `strategy/evaluator.go`; actual Hindsight owners must be retrieved separately |
-| Cohort and tape handoff | `strategy/training.go` |
-| Execution and economic accounting | `strategy/main_agent.go` |
-| Learning UI projection | `strategy/recognition.go` and existing telemetry/UI consumers |
-| Existing physical substrate | `nomagique/physics/sensorium`; existing market projection in `logic/manifold` |
+| Responsibility                                       | Existing owner to inspect/reuse                                               |
+|------------------------------------------------------|-------------------------------------------------------------------------------|
+| Quantity identity, quality, presence, grid lifecycle | `nomagique/learning/associative/grid/space.go`, `window.go`                   |
+| Affinity and layout                                  | `grid/affinity.go`, `relaxation.go`                                           |
+| Region formation and current salience                | `grid/regions.go`                                                             |
+| Condition token and temporal serialization           | `grid/condition.go`, `associative/context.go`                                 |
+| Learn/recall sequencing                              | `nomagique/learning/associative/agent.go`                                     |
+| Shared associations and memory serialization         | `nomagique/cognition/engine.go`, `key.go`, `weight.go`                        |
+| Rehearsal and legal decisions                        | `strategy/agent.go`, `action.go`                                              |
+| Ground-truth grading                                 | `strategy/evaluator.go`; actual Hindsight owners must be retrieved separately |
+| Cohort and tape handoff                              | `strategy/training.go`                                                        |
+| Execution and economic accounting                    | `strategy/main_agent.go`                                                      |
+| Learning UI projection                               | `strategy/recognition.go` and existing telemetry/UI consumers                 |
+| Existing physical substrate                          | `nomagique/physics/sensorium`; existing market projection in `logic/manifold` |
 
 ### 18.2 Differences that must not be silently reconciled
 
-| Area | Observed source | Target or unresolved choice |
-|---|---|---|
-| Main-agent economic learning | An architecture test explicitly requires a completed forward trade not to modify cognition. **[C10]** | Latest intent requires PnL-driven refinement. Migrate deliberately; define reward attribution/combination. |
-| Negative/non-event episodes | Tape publication and replay require a valid positive anchor index. Grading assumes B/C excursion geometry. **[C8, C9, C11]** | The stated curriculum includes failed, flat, choppy, and sub-friction fragments. Their truthful schema and grading are not established by this source. |
-| Meaning of C | Evaluator names it `ExtremumIndex` and scores relative to an ascent/peak/retracement. **[C9]** | User intent includes exhaustion and stagnation as well as reversal. Specify detector and grader by terminal type. |
-| Impulse order | Regional readings are strength-sorted, but context frames are sorted by condition ID. **[C4, C5]** | Do not claim strongest-first order reaches memory. Keep baseline or explicitly version a change. |
-| Timing and silence | Context writes tokens/counts only and skips empty impulses. **[C5]** | Timing/silence sensitivity is not implicit. Decide before changing representation. |
-| Relative magnitude | Affinity’s magnitude channel averages products of absolute standardized values. **[C1]** | This measures co-magnitude; it is not directly a numerical closeness penalty. Approve the intended definition before substituting a formula. |
-| Relation threshold | Stability is `abs(consistency) > 0.5`; strength averages three channels. **[C1]** | These are current modeling choices, not values derived by this specification. |
-| Region convergence | The source comment describes strictly improving formation; the body also has a 100-iteration cap. **[C4]** | Budget exhaustion and convergence are different statuses. Do not promise a global optimum or omit the cap from evidence. |
-| Model isolation | Rollout delays its own grades, while cognition reads its root during evaluation and the cohort shares the engine. **[C7, C8, C11]** | Pinned cross-worker model views need verification/implementation; a local replay mutex alone is not proof. |
-| Representation and universe scope | Workers own private grids; the shared model’s input is encoded context. **[C5, C7, C11]** | Verify equivalent partitions/IDs, universe namespace, and position conditioning before pooling updates. |
-| Manifold learning role | A market/order-book projector and physics engine exist. **[C13]** | A region-driven temporal/associative learning integration is an experimental decision, not already established behavior. |
+| Area                              | Observed source                                                                                                                     | Target or unresolved choice                                                                                                                            |
+|-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Main-agent economic learning      | An architecture test explicitly requires a completed forward trade not to modify cognition. **[C10]**                               | Latest intent requires PnL-driven refinement. Migrate deliberately; define reward attribution/combination.                                             |
+| Negative/non-event episodes       | Tape publication and replay require a valid positive anchor index. Grading assumes B/C excursion geometry. **[C8, C9, C11]**        | The stated curriculum includes failed, flat, choppy, and sub-friction fragments. Their truthful schema and grading are not established by this source. |
+| Meaning of C                      | Evaluator names it `ExtremumIndex` and scores relative to an ascent/peak/retracement. **[C9]**                                      | User intent includes exhaustion and stagnation as well as reversal. Specify detector and grader by terminal type.                                      |
+| Impulse order                     | Regional readings are strength-sorted, but context frames are sorted by condition ID. **[C4, C5]**                                  | Do not claim strongest-first order reaches memory. Keep baseline or explicitly version a change.                                                       |
+| Timing and silence                | Context writes tokens/counts only and skips empty impulses. **[C5]**                                                                | Timing/silence sensitivity is not implicit. Decide before changing representation.                                                                     |
+| Relative magnitude                | Affinity’s magnitude channel averages products of absolute standardized values. **[C1]**                                            | This measures co-magnitude; it is not directly a numerical closeness penalty. Approve the intended definition before substituting a formula.           |
+| Relation threshold                | Stability is `abs(consistency) > 0.5`; strength averages three channels. **[C1]**                                                   | These are current modeling choices, not values derived by this specification.                                                                          |
+| Region convergence                | The source comment describes strictly improving formation; the body also has a 100-iteration cap. **[C4]**                          | Budget exhaustion and convergence are different statuses. Do not promise a global optimum or omit the cap from evidence.                               |
+| Model isolation                   | Rollout delays its own grades, while cognition reads its root during evaluation and the cohort shares the engine. **[C7, C8, C11]** | Pinned cross-worker model views need verification/implementation; a local replay mutex alone is not proof.                                             |
+| Representation and universe scope | Workers own private grids; the shared model’s input is encoded context. **[C5, C7, C11]**                                           | Verify equivalent partitions/IDs, universe namespace, and position conditioning before pooling updates.                                                |
+| Manifold learning role            | A market/order-book projector and physics engine exist. **[C13]**                                                                   | A region-driven temporal/associative learning integration is an experimental decision, not already established behavior.                               |
 
 ## 19. Acceptance tests
 
 These are tests to implement or map to existing tests. They are **not reported as passed** in this document.
 
-| ID | Fixture and required assertion | Requirement(s) |
-|---|---|---|
-| AT-01 | Rename quantity display strings bijectively while preserving identities and evidence; decisions remain equivalent after decoding IDs. | REQ-02 |
-| AT-02 | Related subsets activate the same region without raw-name matching; every original member remains inspectable. | REQ-03, REQ-09 |
-| AT-03 | Stable direct and stable inverse fixtures attract; inconsistent orientation is distinguished. | REQ-09 |
-| AT-04 | Missing, measured-zero, stale, and invalid readings remain distinct through storage, grid, and telemetry. | REQ-08, REQ-36 |
-| AT-05 | No common observation support does not produce inferred attraction or repulsion. | REQ-10 |
-| AT-06 | A stronger-evidence quantity moves less in a symmetric pair fixture; magnitude of the behavior is policy-defined. | REQ-09 |
-| AT-07 | A representation/schema change cannot reinterpret an old model silently; restore rejects incompatible artifacts. | REQ-11, REQ-39 |
-| AT-08 | Identical input gives compatible token identities across workers, or the workers receive different namespaces. | REQ-12, REQ-21 |
-| AT-09 | Temporal set boundaries round-trip; canonical set order does not erase frame order. | REQ-14 |
-| AT-10 | Unready, ready-empty, active, and error states are distinguishable; a computation failure is not learned Wait. | REQ-15, REQ-40 |
-| AT-11 | Mutate teacher-only A/B/C, friction labels, or suffix data while holding the delivered prefix/model/seed fixed; prefix decisions are unchanged. | REQ-07, REQ-16, REQ-19 |
-| AT-12 | Alter future-derived normalization/cache contents; event lineage and the causal boundary reject them rather than producing a different past decision. | REQ-06, REQ-07 |
-| AT-13 | Sample S reproducibly within the declared range; negative episodes use their own valid-start policy. | REQ-18, REQ-23 |
-| AT-14 | All required curriculum families survive admission and receive applicable grades, not silent filtering. | REQ-17, REQ-18 |
-| AT-15 | Reset one worker/universe; other working histories and the admitted model remain unchanged. | REQ-24, REQ-38 |
-| AT-16 | Commit another worker’s update mid-rollout; the current rollout still reads its pinned model version. | REQ-25 |
-| AT-17 | Grade inspection is impossible until decisions are sealed; grade delivery changes only subsequent model versions. | REQ-26, REQ-27 |
-| AT-18 | Duplicate commit delivery changes memory once; scheduled repeated rehearsal is counted as repetition, not a new episode. | REQ-28, REQ-37 |
-| AT-19 | Enter is unavailable while holding and Exit while flat; the two Wait targets retain their position mode. | REQ-20 |
-| AT-20 | Grade the same trace twice with the same policy; verdicts and timing are identical, including early/late/negative cases. | REQ-29, REQ-30 |
-| AT-21 | Missing C, insufficient suffix, or administrative fragment end does not manufacture a rewarded Exit or zero-valued final grade. | REQ-18, REQ-29 |
-| AT-22 | A geometric grade and a PnL reward retain distinct kinds/units and use only the declared combination rule. | REQ-04, REQ-31, REQ-34 |
-| AT-23 | A mature live economic outcome updates future decisions; the preceding decision record and score remain immutable. | REQ-32, REQ-33 |
-| AT-24 | Submission without a fill does not create a filled position; a failed order is visible independently of the policy decision. | REQ-20, REQ-32 |
-| AT-25 | All simulated/actual costs reconcile to the position ledger; attribution does not count terminal PnL once per tick. | REQ-34 |
-| AT-26 | Simulation cannot submit real orders or promote itself without the explicit mode boundary. | REQ-35 |
-| AT-27 | Dashboard teacher overlays and hand-assigned action labels do not appear in grid policy input; prior lanes reference real evidence. | REQ-13, REQ-16, REQ-41 |
-| AT-28 | Overlapping episodes and randomized starts cannot straddle train/frozen-test partitions. | REQ-28, REQ-42 |
-| AT-29 | A claimed probability is evaluated against its named target; undefined estimates and action preferences are not mislabeled. | REQ-22 |
+| ID    | Fixture and required assertion                                                                                                                                                                       | Requirement(s)         |
+|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------|
+| AT-01 | Rename quantity display strings bijectively while preserving identities and evidence; decisions remain equivalent after decoding IDs.                                                                | REQ-02                 |
+| AT-02 | Related subsets activate the same region without raw-name matching; every original member remains inspectable.                                                                                       | REQ-03, REQ-09         |
+| AT-03 | Stable direct and stable inverse fixtures attract; inconsistent orientation is distinguished.                                                                                                        | REQ-09                 |
+| AT-04 | Missing, measured-zero, stale, and invalid readings remain distinct through storage, grid, and telemetry.                                                                                            | REQ-08, REQ-36         |
+| AT-05 | No common observation support does not produce inferred attraction or repulsion.                                                                                                                     | REQ-10                 |
+| AT-06 | A stronger-evidence quantity moves less in a symmetric pair fixture; magnitude of the behavior is policy-defined.                                                                                    | REQ-09                 |
+| AT-07 | A representation/schema change cannot reinterpret an old model silently; restore rejects incompatible artifacts.                                                                                     | REQ-11, REQ-39         |
+| AT-08 | Identical input gives compatible token identities across workers, or the workers receive different namespaces.                                                                                       | REQ-12, REQ-21         |
+| AT-09 | Temporal set boundaries round-trip; canonical set order does not erase frame order.                                                                                                                  | REQ-14                 |
+| AT-10 | Unready, ready-empty, active, and error states are distinguishable; a computation failure is not learned Wait.                                                                                       | REQ-15, REQ-40         |
+| AT-11 | Mutate teacher-only A/B/C, friction labels, or suffix data while holding the delivered prefix/model/seed fixed; prefix decisions are unchanged.                                                      | REQ-07, REQ-16, REQ-19 |
+| AT-12 | Alter future-derived normalization/cache contents; event lineage and the causal boundary reject them rather than producing a different past decision.                                                | REQ-06, REQ-07         |
+| AT-13 | Sample S reproducibly within the declared range; negative episodes use their own valid-start policy.                                                                                                 | REQ-18, REQ-23         |
+| AT-14 | All required curriculum families survive admission and receive applicable grades, not silent filtering.                                                                                              | REQ-17, REQ-18         |
+| AT-15 | Reset one worker/universe; other working histories and the admitted model remain unchanged.                                                                                                          | REQ-24, REQ-38         |
+| AT-16 | Commit another worker’s update mid-rollout; the current rollout still reads its pinned model version.                                                                                                | REQ-25                 |
+| AT-17 | Grade inspection is impossible until decisions are sealed; grade delivery changes only subsequent model versions.                                                                                    | REQ-26, REQ-27         |
+| AT-18 | Duplicate commit delivery changes memory once; scheduled repeated rehearsal is counted as repetition, not a new episode.                                                                             | REQ-28, REQ-37         |
+| AT-19 | Enter is unavailable while holding and Exit while flat; the two Wait targets retain their position mode.                                                                                             | REQ-20                 |
+| AT-20 | Grade the same trace twice with the same policy; verdicts and timing are identical, including early/late/negative cases.                                                                             | REQ-29, REQ-30         |
+| AT-21 | Missing C, insufficient suffix, or administrative fragment end does not manufacture a rewarded Exit or zero-valued final grade.                                                                      | REQ-18, REQ-29         |
+| AT-22 | A geometric grade and a PnL reward retain distinct kinds/units and use only the declared combination rule.                                                                                           | REQ-04, REQ-31, REQ-34 |
+| AT-23 | A mature live economic outcome updates future decisions; the preceding decision record and score remain immutable.                                                                                   | REQ-32, REQ-33         |
+| AT-24 | Submission without a fill does not create a filled position; a failed order is visible independently of the policy decision.                                                                         | REQ-20, REQ-32         |
+| AT-25 | All simulated/actual costs reconcile to the position ledger; attribution does not count terminal PnL once per tick.                                                                                  | REQ-34                 |
+| AT-26 | Simulation cannot submit real orders or promote itself without the explicit mode boundary.                                                                                                           | REQ-35                 |
+| AT-27 | Dashboard teacher overlays and hand-assigned action labels do not appear in grid policy input; prior lanes reference real evidence.                                                                  | REQ-13, REQ-16, REQ-41 |
+| AT-28 | Overlapping episodes and randomized starts cannot straddle train/frozen-test partitions.                                                                                                             | REQ-28, REQ-42         |
+| AT-29 | A claimed probability is evaluated against its named target; undefined estimates and action preferences are not mislabeled.                                                                          | REQ-22                 |
 | AT-30 | Review the primitive composition and target contract; any Manifold candidate preserves the task, receives the same allowed inputs, and is tested with and without its dynamics/readout contribution. | REQ-01, REQ-05, REQ-43 |
 
 Acceptance of an implementation requires a traceability report connecting these tests to real code paths and executed results. Source inspection, unit fixtures, frozen assessment, and forward economic results are separate evidence classes.
@@ -724,22 +724,22 @@ Acceptance of an implementation requires a traceability report connecting these 
 
 A coding agent should resolve the relevant decision with the owner before changing behavior. Missing a policy must not be “solved” by choosing a convenient constant, relabeling a gap, or writing a no-op path.
 
-| ID | Decision needed | Why it matters |
-|---|---|---|
-| D-01 | Exact Hindsight definitions of ignition, exhaustion, stagnation, reversal, and observation/price surface. | Determines B/C ground truth and reproducibility. |
-| D-02 | Negative/censored episode annotation and sampling rules. | Required for the explicitly stated full curriculum. |
-| D-03 | Entry/exit timing windows and reinforcement maps by episode family. | Determines what too early, too late, and wrong actually mean. |
-| D-04 | Definition of friction classification and its role in geometric versus action grading. | Keeps genuine event structure separate from economic eligibility. |
-| D-05 | Relative-magnitude normalization, relationship evidence, and channel-combination policy. | The current magnitude product is not literal closeness. |
-| D-06 | Keep canonical token-only frames or add rank, magnitude, timing, or quiet frames. | Changes the learner’s information and model compatibility. |
-| D-07 | Shared representation artifact versus namespaced private grids; universe-transfer policy. | Prevents contradictory meanings under the same model key. |
-| D-08 | Probability target/event window and interpretation of current action scores. | Prevents ambiguous probability claims without forcing a new model class. |
-| D-09 | Main-agent PnL credit assignment, normalization, and interaction with rehearsal feedback. | Required latest intent; current tests prohibit this feedback path. |
-| D-10 | Start sampler, allowed warm-up, replay rate, and distinct-support accounting. | Makes randomized practice reproducible without offset shortcuts. |
-| D-11 | Model publication/pinning and concurrency protocol. | Preserves stable rollout decisions while workers learn concurrently. |
-| D-12 | Execution sizing, pending-order behavior, costs, and mode transitions. | Keeps the minimal action learner distinct from the execution system. |
-| D-13 | Grid reformation/version migration policy. | Current formation is retained; perpetual reorganization is not implied. |
-| D-14 | Manifold’s actual encoding, learned state, readout, and acceptance experiment. | Its learning role is not selected simply because a physics kernel exists. |
+| ID   | Decision needed                                                                                           | Why it matters                                                            |
+|------|-----------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
+| D-01 | Exact Hindsight definitions of ignition, exhaustion, stagnation, reversal, and observation/price surface. | Determines B/C ground truth and reproducibility.                          |
+| D-02 | Negative/censored episode annotation and sampling rules.                                                  | Required for the explicitly stated full curriculum.                       |
+| D-03 | Entry/exit timing windows and reinforcement maps by episode family.                                       | Determines what too early, too late, and wrong actually mean.             |
+| D-04 | Definition of friction classification and its role in geometric versus action grading.                    | Keeps genuine event structure separate from economic eligibility.         |
+| D-05 | Relative-magnitude normalization, relationship evidence, and channel-combination policy.                  | The current magnitude product is not literal closeness.                   |
+| D-06 | Keep canonical token-only frames or add rank, magnitude, timing, or quiet frames.                         | Changes the learner’s information and model compatibility.                |
+| D-07 | Shared representation artifact versus namespaced private grids; universe-transfer policy.                 | Prevents contradictory meanings under the same model key.                 |
+| D-08 | Probability target/event window and interpretation of current action scores.                              | Prevents ambiguous probability claims without forcing a new model class.  |
+| D-09 | Main-agent PnL credit assignment, normalization, and interaction with rehearsal feedback.                 | Required latest intent; current tests prohibit this feedback path.        |
+| D-10 | Start sampler, allowed warm-up, replay rate, and distinct-support accounting.                             | Makes randomized practice reproducible without offset shortcuts.          |
+| D-11 | Model publication/pinning and concurrency protocol.                                                       | Preserves stable rollout decisions while workers learn concurrently.      |
+| D-12 | Execution sizing, pending-order behavior, costs, and mode transitions.                                    | Keeps the minimal action learner distinct from the execution system.      |
+| D-13 | Grid reformation/version migration policy.                                                                | Current formation is retained; perpetual reorganization is not implied.   |
+| D-14 | Manifold’s actual encoding, learned state, readout, and acceptance experiment.                            | Its learning role is not selected simply because a physics kernel exists. |
 
 ## 21. Sources and diagram tooling
 
@@ -760,21 +760,21 @@ SHA-256: `c7f3ede6a292ba13c29153b77521e70ef3954cf94cc5dc4bdc7efdce728d93c2`
 
 Ranges below use lines in the original concatenated snapshot, not the local line numbers within each extracted Go file.
 
-| Reference | Snapshot range and content |
-|---|---|
-| [C1] | Lines 4486–4622: `grid/affinity.go`. Direction, consistency, magnitude, support, stability threshold. |
-| [C2] | Lines 6371–7339: `grid/space.go` and `window.go`. Quantity identity, presence, quality-weighted activity, formation/reset, asynchronous observation bins. |
-| [C3] | Lines 5849–6015: `grid/relaxation.go`. Fixed-objective layout and formed-state behavior. |
-| [C4] | Lines 5257–5496: `grid/regions.go`. Signed-affinity communities, orientation, regional projection, salience selection, iteration cap. |
-| [C5] | Lines 4727–4940 and 8086–8297: `grid/condition.go` and `associative/context.go`. Token and temporal-frame serialization. |
-| [C6] | Lines 35799–35836: `strategy/action.go`. Enter/Exit/Wait and position-conditioned legality. |
-| [C7] | Lines 2671–3688, 3746–3941, 4079–4236: cognition engine, key, and weight owners. |
-| [C8] | Lines 35953–36640: `strategy/agent.go`. Private grid/context, action selection, randomized rehearsal, post-hoc reinforcement. |
-| [C9] | Lines 37951–38224: `strategy/evaluator.go`. Current B/C geometric grading formulas. The full Hindsight discovery implementation is not included. |
-| [C10] | Lines 37103–37140 in `strategy/architecture_test.go`: forward trading must leave cognition unchanged in this snapshot. |
-| [C11] | Lines 40727–41154: `strategy/training.go`. Shared cognitive engine, cohort, tape admission, live/rehearsal delivery. |
-| [C12] | Lines 39919–40605: `strategy/recognition.go`. Existing learning and region telemetry. |
-| [C13] | Lines 318–735 and 1053–2121: `logic/manifold/dataset.go` and `solver.go`. Existing order-book-to-physics projection and field owner. |
+| Reference | Snapshot range and content                                                                                                                                |
+|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [C1]      | Lines 4486–4622: `grid/affinity.go`. Direction, consistency, magnitude, support, stability threshold.                                                     |
+| [C2]      | Lines 6371–7339: `grid/space.go` and `window.go`. Quantity identity, presence, quality-weighted activity, formation/reset, asynchronous observation bins. |
+| [C3]      | Lines 5849–6015: `grid/relaxation.go`. Fixed-objective layout and formed-state behavior.                                                                  |
+| [C4]      | Lines 5257–5496: `grid/regions.go`. Signed-affinity communities, orientation, regional projection, salience selection, iteration cap.                     |
+| [C5]      | Lines 4727–4940 and 8086–8297: `grid/condition.go` and `associative/context.go`. Token and temporal-frame serialization.                                  |
+| [C6]      | Lines 35799–35836: `strategy/action.go`. Enter/Exit/Wait and position-conditioned legality.                                                               |
+| [C7]      | Lines 2671–3688, 3746–3941, 4079–4236: cognition engine, key, and weight owners.                                                                          |
+| [C8]      | Lines 35953–36640: `strategy/agent.go`. Private grid/context, action selection, randomized rehearsal, post-hoc reinforcement.                             |
+| [C9]      | Lines 37951–38224: `strategy/evaluator.go`. Current B/C geometric grading formulas. The full Hindsight discovery implementation is not included.          |
+| [C10]     | Lines 37103–37140 in `strategy/architecture_test.go`: forward trading must leave cognition unchanged in this snapshot.                                    |
+| [C11]     | Lines 40727–41154: `strategy/training.go`. Shared cognitive engine, cohort, tape admission, live/rehearsal delivery.                                      |
+| [C12]     | Lines 39919–40605: `strategy/recognition.go`. Existing learning and region telemetry.                                                                     |
+| [C13]     | Lines 318–735 and 1053–2121: `logic/manifold/dataset.go` and `solver.go`. Existing order-book-to-physics projection and field owner.                      |
 
 No source change, repository mutation, native execution, or empirical performance result is implied by this document.
 

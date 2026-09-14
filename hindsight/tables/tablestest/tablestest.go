@@ -38,16 +38,6 @@ func New(t testing.TB) *tables.Catalog {
 	return catalog
 }
 
-/*
-Empty returns a catalog with no tables created, for exercising the failure
-path. Every append against it fails because there is nothing to append to,
-which reproduces a persistence failure without faking the storage layer.
-*/
-func Empty(t testing.TB) *tables.Catalog {
-	t.Helper()
-
-	return tables.Wrap(Underlying(t))
-}
 
 // Underlying returns an empty real catalog for catalog-boundary test adapters.
 func Underlying(t testing.TB) catalog.Catalog {

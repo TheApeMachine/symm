@@ -2,14 +2,18 @@ import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
-	addMeasurement,
-	appStore,
-	errorStore,
-	focusStore,
-	onlineStore,
-	tickCountStore,
+	focusAtom,
+	observeSymbols,
+	onlineAtom,
+	RingBuffer,
+	signals,
+	symbolsAtom,
+	tickCountAtom,
+	updateClock,
 } from "#/collections/app";
+import { receiveLearning } from "#/collections/learning";
 
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 
 let globalWsWorker: Worker | null = null;
@@ -39,18 +43,49 @@ Each Measurement row carries its own source, symbol, tick, snr, and metrics.
 */
 function dispatchMeasurements(frame: MeasurementsFrame) {
 	const count = frame.rowsLength();
+	const touched = new Set<string>();
 
 	for (let i = 0; i < count; i++) {
 		const row = frame.rows(i);
 		if (!row) continue;
 
-		const source = row.source() ?? "";
-		addMeasurement(source, row);
+		const rawSource = (row.source() ?? "").toLowerCase();
+		const source = rawSource.includes(":") ? rawSource.split(":")[0] : rawSource;
+		const symbol = row.symbol() ?? "";
 
+		if (symbol && !symbolsAtom.get().includes(symbol)) {
+			observeSymbols([symbol]);
+		}
+
+		const signalStore = signals[source];
+		
+		if (!signalStore) {
+			console.error("Unknown source:", source);
+			continue
+		};
+
+		let ring = signalStore.state[symbol];
+
+		if (!ring) {
+			ring = new RingBuffer<MeasurementT>(50);
+			signalStore.state[symbol] = ring;
+		}
+		
+		ring.add(row.unpack());
+		touched.add(source);
+
+		const at = row.at();
+		if (at > 0n) {
+			updateClock(at);
+		}
 		const tick = row.tick();
 		if (tick > 0n) {
-			tickCountStore.setState(() => Number(tick));
+			tickCountAtom.set(Number(tick));
 		}
+	}
+
+	for (const source of touched) {
+		signals[source]?.setState((prev) => ({ ...prev }));
 	}
 }
 
@@ -68,24 +103,27 @@ export const WsFeed = () => {
 			if (!data) return;
 
 			if (data.type === "STATUS") {
-				onlineStore.setState(() => data.status);
-				appStore.actions.updateOnline(data.status === "ONLINE");
+				onlineAtom.set(data.status);
 				if (data.status === "ONLINE") {
-					wsWorker.postMessage({ type: "FOCUS", symbol: focusStore.state });
+					wsWorker.postMessage({ type: "FOCUS", symbol: focusAtom.get() });
 				}
 				return;
 			}
 
 			if (data.type === "ERROR") {
-				errorStore.setState(() => new Error(data.error));
+				console.error("WS error:", data.error);
 				return;
 			}
 
 			if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
 				try {
-					const buffer = new flatbuffers.ByteBuffer(
-						new Uint8Array(data.buffer),
-					);
+					const bytes = new Uint8Array(data.buffer);
+					const buffer = new flatbuffers.ByteBuffer(bytes);
+
+					if (buffer.__has_identifier("LRNG")) {
+						receiveLearning(bytes);
+						return;
+					}
 
 					const frame =
 						MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
@@ -94,14 +132,14 @@ export const WsFeed = () => {
 						dispatchMeasurements(frame);
 					});
 				} catch (err) {
-					errorStore.setState(() => err as Event);
+					console.error("WS message processing error:", err);
 				}
 			}
 		});
 
 		wsWorker.postMessage({ type: "CONNECT", url: wsUrl });
 
-		const unsubscribeFocus = focusStore.subscribe((symbol: string) => {
+		const unsubscribeFocus = focusAtom.subscribe((symbol: string) => {
 			wsWorker.postMessage({ type: "FOCUS", symbol });
 		});
 

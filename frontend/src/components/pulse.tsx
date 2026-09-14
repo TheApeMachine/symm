@@ -1,9 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
 import {
-	measurementSourcesStore,
-	positionStore,
-	strategyStore,
-	tickStore,
+	candidatesAtom,
+	measurementSourcesAtom,
+	phaseAtom,
+	positionCountAtom,
+	tickCountAtom,
 } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
@@ -34,17 +35,14 @@ const Reading = ({
 );
 
 export const Pulse = () => {
-	const lastTick = useSelector(tickStore, (state) => state.getLast());
-	const lastStrategy = useSelector(strategyStore, (state) =>
-		state.findLast((f) => !!f.outcome() || f.decisionsLength() > 0),
-	);
+	const tick = useSelector(tickCountAtom, (state) => state);
+	const phase = useSelector(phaseAtom, (state) => state);
+	const candidates = useSelector(candidatesAtom, (state) => state);
 	const measurementCount = useSelector(
-		measurementSourcesStore,
+		measurementSourcesAtom,
 		(state) => state.length,
 	);
-	const lastPositions = useSelector(positionStore, (state) =>
-		state.findLast(() => true),
-	);
+	const openCount = useSelector(positionCountAtom, (state) => state);
 
 	return (
 		<Flex.Row
@@ -52,31 +50,16 @@ export const Pulse = () => {
 			gap={4}
 			className="h-8 shrink-0 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)"
 		>
-			<Reading
-				which="tick"
-				value={
-					lastTick
-						? String(lastTick.count())
-						: "—"
-				}
-			/>
-			<Reading
-				label="phase"
-				which="phase"
-				accent
-				value={lastStrategy?.outcome() ?? "—"}
-			/>
+			<Reading which="tick" value={tick ? String(tick) : "—"} />
+			<Reading label="phase" which="phase" accent value={phase} />
 			<Reading
 				label="cand"
 				which="cand"
-				value={lastStrategy ? String(lastStrategy.decisionsLength()) : "—"}
+				value={candidates ? String(candidates) : "—"}
 			/>
 			<Reading label="meas" which="meas" value={String(measurementCount)} />
-			<Reading
-				label="open"
-				which="open"
-				value={String(lastPositions ? lastPositions.rowsLength() : 0)}
-			/>
+			<Reading label="open" which="open" value={String(openCount)} />
 		</Flex.Row>
 	);
 };
+

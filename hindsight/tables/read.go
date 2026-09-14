@@ -124,6 +124,67 @@ func afterTick(tick int64) iceberg.BooleanExpression {
 	return iceberg.GreaterThan(iceberg.Reference("tick"), tick)
 }
 
+func colMap(batch arrow.RecordBatch) map[string]arrow.Array {
+	cols := make(map[string]arrow.Array, batch.NumCols())
+
+	for colIdx := range int(batch.NumCols()) {
+		cols[batch.ColumnName(colIdx)] = batch.Column(colIdx)
+	}
+
+	return cols
+}
+
+func colNum(cols map[string]arrow.Array, name string, row int) int64 {
+	col, ok := cols[name]
+
+	if !ok || col.IsNull(row) {
+		return 0
+	}
+
+	return col.(*array.Int64).Value(row)
+}
+
+
+func colStr(cols map[string]arrow.Array, name string, row int) string {
+	col, ok := cols[name]
+
+	if !ok || col.IsNull(row) {
+		return ""
+	}
+
+	return strings.Clone(col.(*array.String).Value(row))
+}
+
+func colFlt(cols map[string]arrow.Array, name string, row int) float64 {
+	col, ok := cols[name]
+
+	if !ok || col.IsNull(row) {
+		return 0
+	}
+
+	return col.(*array.Float64).Value(row)
+}
+
+func colTime(cols map[string]arrow.Array, name string, row int) time.Time {
+	col, ok := cols[name]
+
+	if !ok || col.IsNull(row) {
+		return time.Time{}
+	}
+
+	return col.(*array.Timestamp).Value(row).ToTime(arrow.Microsecond).UTC()
+}
+
+func colBool(cols map[string]arrow.Array, name string, row int) bool {
+	col, ok := cols[name]
+
+	if !ok || col.IsNull(row) {
+		return false
+	}
+
+	return col.(*array.Boolean).Value(row)
+}
+
 func str(column arrow.Array, row int) string {
 	if column.IsNull(row) {
 		return ""
@@ -222,7 +283,7 @@ func mapStrFlt(column arrow.Array, row int) map[string]float64 {
 	items := mapArr.Items().(*array.Float64)
 
 	for element := int(start); element < int(end); element++ {
-		result[keys.Value(element)] = items.Value(element)
+		result[strings.Clone(keys.Value(element))] = items.Value(element)
 	}
 
 	return result
@@ -259,15 +320,64 @@ func dec(column arrow.Array, row int) *decimal.Decimal {
 
 // Measurements scans canonical measurements strictly after afterTick for a given epoch.
 func (c *Catalog) Measurements(ctx context.Context, epoch int64, afterTickSeq int64) ([]MeasurementRow, error) {
-	rows := []MeasurementRow{}
+	return c.MeasurementsScan(ctx, epoch, afterTick(afterTickSeq), 0)
+}
 
-	err := c.EachMeasurement(ctx, epoch, afterTickSeq, func(row MeasurementRow) error {
-		rows = append(rows, row)
-		return nil
-	})
+// MeasurementsScan scans measurements matching filter with optional limit and selected fields.
+func (c *Catalog) MeasurementsScan(
+	ctx context.Context, epoch int64, filter iceberg.BooleanExpression, limit int, fields ...string,
+) ([]MeasurementRow, error) {
+	batches, err := c.scan(ctx, Measurements, fields, forEpoch(epoch), filter)
 
 	if err != nil {
 		return nil, err
+	}
+
+	rows := []MeasurementRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] measurements batch", err))
+		}
+
+		cols := colMap(batch)
+
+		for index := range int(batch.NumRows()) {
+			var m map[string]float64
+			var md map[string]float64
+			var p []byte
+
+			if col, ok := cols["metrics"]; ok {
+				m = mapStrFlt(col, index)
+			}
+
+			if col, ok := cols["metadata"]; ok {
+				md = mapStrFlt(col, index)
+			}
+
+			if col, ok := cols["payload"]; ok {
+				p = bin(col, index)
+			}
+
+			rows = append(rows, MeasurementRow{
+				Epoch:      colNum(cols, "epoch", index),
+				Tick:       colNum(cols, "tick", index),
+				Source:     colStr(cols, "source", index),
+				Symbol:     colStr(cols, "symbol", index),
+				VenueAt:    colTime(cols, "venue_at", index),
+				ObservedAt: colTime(cols, "observed_at", index),
+				Maturity:   colFlt(cols, "maturity", index),
+				SNR:        colFlt(cols, "snr", index),
+				SNRDefined: colBool(cols, "snr_defined", index),
+				Metrics:    m,
+				Metadata:   md,
+				Payload:    p,
+			})
+
+			if limit > 0 && len(rows) >= limit {
+				return rows, nil
+			}
+		}
 	}
 
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Tick < rows[j].Tick })
@@ -290,20 +400,38 @@ func (c *Catalog) EachMeasurement(
 			return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] measurements batch", err))
 		}
 
+		cols := colMap(batch)
+
 		for index := range int(batch.NumRows()) {
+			var m map[string]float64
+			var md map[string]float64
+			var p []byte
+
+			if col, ok := cols["metrics"]; ok {
+				m = mapStrFlt(col, index)
+			}
+
+			if col, ok := cols["metadata"]; ok {
+				md = mapStrFlt(col, index)
+			}
+
+			if col, ok := cols["payload"]; ok {
+				p = bin(col, index)
+			}
+
 			row := MeasurementRow{
-				Epoch:      num(batch.Column(0), index),
-				Tick:       num(batch.Column(1), index),
-				Source:     str(batch.Column(2), index),
-				Symbol:     str(batch.Column(3), index),
-				VenueAt:    timeVal(batch.Column(4), index),
-				ObservedAt: timeVal(batch.Column(5), index),
-				Maturity:   flt(batch.Column(6), index),
-				SNR:        flt(batch.Column(7), index),
-				SNRDefined: boolean(batch.Column(8), index),
-				Metrics:    mapStrFlt(batch.Column(9), index),
-				Metadata:   mapStrFlt(batch.Column(10), index),
-				Payload:    bin(batch.Column(11), index),
+				Epoch:      colNum(cols, "epoch", index),
+				Tick:       colNum(cols, "tick", index),
+				Source:     colStr(cols, "source", index),
+				Symbol:     colStr(cols, "symbol", index),
+				VenueAt:    colTime(cols, "venue_at", index),
+				ObservedAt: colTime(cols, "observed_at", index),
+				Maturity:   colFlt(cols, "maturity", index),
+				SNR:        colFlt(cols, "snr", index),
+				SNRDefined: colBool(cols, "snr_defined", index),
+				Metrics:    m,
+				Metadata:   md,
+				Payload:    p,
 			}
 
 			if err := fn(row); err != nil {
@@ -317,7 +445,14 @@ func (c *Catalog) EachMeasurement(
 
 // SpotLevel3 scans book touch updates strictly after afterTick for a given epoch.
 func (c *Catalog) SpotLevel3(ctx context.Context, epoch int64, afterTickSeq int64) ([]SpotLevel3Row, error) {
-	batches, err := c.scan(ctx, SpotLevel3, nil, forEpoch(epoch), afterTick(afterTickSeq))
+	return c.SpotLevel3Scan(ctx, epoch, afterTick(afterTickSeq), 0)
+}
+
+// SpotLevel3Scan scans book touch updates matching filter with optional limit and selected fields.
+func (c *Catalog) SpotLevel3Scan(
+	ctx context.Context, epoch int64, filter iceberg.BooleanExpression, limit int, fields ...string,
+) ([]SpotLevel3Row, error) {
+	batches, err := c.scan(ctx, SpotLevel3, fields, forEpoch(epoch), filter)
 
 	if err != nil {
 		return nil, err
@@ -330,20 +465,26 @@ func (c *Catalog) SpotLevel3(ctx context.Context, epoch int64, afterTickSeq int6
 			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] spot_level3 batch", err))
 		}
 
+		cols := colMap(batch)
+
 		for index := range int(batch.NumRows()) {
 			rows = append(rows, SpotLevel3Row{
-				Epoch:      num(batch.Column(0), index),
-				Tick:       num(batch.Column(1), index),
-				Symbol:     str(batch.Column(2), index),
-				VenueAt:    timeVal(batch.Column(3), index),
-				ReceivedAt: timeVal(batch.Column(4), index),
-				Side:       str(batch.Column(5), index),
-				Event:      str(batch.Column(6), index),
-				OrderID:    str(batch.Column(7), index),
-				LimitPrice: flt(batch.Column(8), index),
-				OrderQty:   flt(batch.Column(9), index),
-				Checksum:   num(batch.Column(10), index),
+				Epoch:      colNum(cols, "epoch", index),
+				Tick:       colNum(cols, "tick", index),
+				Symbol:     colStr(cols, "symbol", index),
+				VenueAt:    colTime(cols, "venue_at", index),
+				ReceivedAt: colTime(cols, "received_at", index),
+				Side:       colStr(cols, "side", index),
+				Event:      colStr(cols, "event", index),
+				OrderID:    colStr(cols, "order_id", index),
+				LimitPrice: colFlt(cols, "limit_price", index),
+				OrderQty:   colFlt(cols, "order_qty", index),
+				Checksum:   colNum(cols, "checksum", index),
 			})
+
+			if limit > 0 && len(rows) >= limit {
+				return rows, nil
+			}
 		}
 	}
 
@@ -354,7 +495,14 @@ func (c *Catalog) SpotLevel3(ctx context.Context, epoch int64, afterTickSeq int6
 
 // SpotTicker scans spot ticker updates strictly after afterTick for a given epoch.
 func (c *Catalog) SpotTicker(ctx context.Context, epoch int64, afterTickSeq int64) ([]SpotTickerRow, error) {
-	batches, err := c.scan(ctx, SpotTicker, nil, forEpoch(epoch), afterTick(afterTickSeq))
+	return c.SpotTickerScan(ctx, epoch, afterTick(afterTickSeq), 0)
+}
+
+// SpotTickerScan scans spot ticker updates matching filter with optional limit and selected fields.
+func (c *Catalog) SpotTickerScan(
+	ctx context.Context, epoch int64, filter iceberg.BooleanExpression, limit int, fields ...string,
+) ([]SpotTickerRow, error) {
+	batches, err := c.scan(ctx, SpotTicker, fields, forEpoch(epoch), filter)
 
 	if err != nil {
 		return nil, err
@@ -367,25 +515,31 @@ func (c *Catalog) SpotTicker(ctx context.Context, epoch int64, afterTickSeq int6
 			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] spot_ticker batch", err))
 		}
 
+		cols := colMap(batch)
+
 		for index := range int(batch.NumRows()) {
 			rows = append(rows, SpotTickerRow{
-				Epoch:      num(batch.Column(0), index),
-				Tick:       num(batch.Column(1), index),
-				Symbol:     str(batch.Column(2), index),
-				VenueAt:    timeVal(batch.Column(3), index),
-				ReceivedAt: timeVal(batch.Column(4), index),
-				Bid:        flt(batch.Column(5), index),
-				BidQty:     flt(batch.Column(6), index),
-				Ask:        flt(batch.Column(7), index),
-				AskQty:     flt(batch.Column(8), index),
-				Last:       flt(batch.Column(9), index),
-				Volume:     flt(batch.Column(10), index),
-				VWAP:       flt(batch.Column(11), index),
-				Low:        flt(batch.Column(12), index),
-				High:       flt(batch.Column(13), index),
-				Change:     flt(batch.Column(14), index),
-				ChangePct:  flt(batch.Column(15), index),
+				Epoch:      colNum(cols, "epoch", index),
+				Tick:       colNum(cols, "tick", index),
+				Symbol:     colStr(cols, "symbol", index),
+				VenueAt:    colTime(cols, "venue_at", index),
+				ReceivedAt: colTime(cols, "received_at", index),
+				Bid:        colFlt(cols, "bid", index),
+				BidQty:     colFlt(cols, "bid_qty", index),
+				Ask:        colFlt(cols, "ask", index),
+				AskQty:     colFlt(cols, "ask_qty", index),
+				Last:       colFlt(cols, "last", index),
+				Volume:     colFlt(cols, "volume", index),
+				VWAP:       colFlt(cols, "vwap", index),
+				Low:        colFlt(cols, "low", index),
+				High:       colFlt(cols, "high", index),
+				Change:     colFlt(cols, "change", index),
+				ChangePct:  colFlt(cols, "change_pct", index),
 			})
+
+			if limit > 0 && len(rows) >= limit {
+				return rows, nil
+			}
 		}
 	}
 
@@ -396,7 +550,14 @@ func (c *Catalog) SpotTicker(ctx context.Context, epoch int64, afterTickSeq int6
 
 // SpotTrade scans spot trades strictly after afterTick for a given epoch.
 func (c *Catalog) SpotTrade(ctx context.Context, epoch int64, afterTickSeq int64) ([]SpotTradeRow, error) {
-	batches, err := c.scan(ctx, SpotTrade, nil, forEpoch(epoch), afterTick(afterTickSeq))
+	return c.SpotTradeScan(ctx, epoch, afterTick(afterTickSeq), 0)
+}
+
+// SpotTradeScan scans spot trades matching filter with optional limit and selected fields.
+func (c *Catalog) SpotTradeScan(
+	ctx context.Context, epoch int64, filter iceberg.BooleanExpression, limit int, fields ...string,
+) ([]SpotTradeRow, error) {
+	batches, err := c.scan(ctx, SpotTrade, fields, forEpoch(epoch), filter)
 
 	if err != nil {
 		return nil, err
@@ -409,19 +570,25 @@ func (c *Catalog) SpotTrade(ctx context.Context, epoch int64, afterTickSeq int64
 			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] spot_trade batch", err))
 		}
 
+		cols := colMap(batch)
+
 		for index := range int(batch.NumRows()) {
 			rows = append(rows, SpotTradeRow{
-				Epoch:      num(batch.Column(0), index),
-				Tick:       num(batch.Column(1), index),
-				Symbol:     str(batch.Column(2), index),
-				VenueAt:    timeVal(batch.Column(3), index),
-				ReceivedAt: timeVal(batch.Column(4), index),
-				Price:      flt(batch.Column(5), index),
-				Qty:        flt(batch.Column(6), index),
-				Side:       str(batch.Column(7), index),
-				OrdType:    str(batch.Column(8), index),
-				TradeID:    num(batch.Column(9), index),
+				Epoch:      colNum(cols, "epoch", index),
+				Tick:       colNum(cols, "tick", index),
+				Symbol:     colStr(cols, "symbol", index),
+				VenueAt:    colTime(cols, "venue_at", index),
+				ReceivedAt: colTime(cols, "received_at", index),
+				Price:      colFlt(cols, "price", index),
+				Qty:        colFlt(cols, "qty", index),
+				Side:       colStr(cols, "side", index),
+				OrdType:    colStr(cols, "ord_type", index),
+				TradeID:    colNum(cols, "trade_id", index),
 			})
+
+			if limit > 0 && len(rows) >= limit {
+				return rows, nil
+			}
 		}
 	}
 

@@ -44,11 +44,39 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
+	if ticker.Status() != runtime.READY || measurement == nil {
 		return measurement
 	}
 
-	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+	input := measurement
+
+	if len(measurement.Peers) > 0 {
+		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
+			if p.Label == "" {
+				return false
+			}
+			_, hasLast := p.Metrics["last"]
+			_, hasIndex := p.Metrics["index_price"]
+			_, hasMark := p.Metrics["mark_price"]
+			_, hasOI := p.Metrics["open_interest"]
+			return hasLast && hasIndex && hasMark && hasOI
+		})
+
+		if peer == nil {
+			return measurement
+		}
+
+		input = peer.Clone()
+	}
+
+	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+
+	if res != nil && res != measurement {
+		measurement.Absorb(res)
+		return measurement
+	}
+
+	return res
 }
 
 /*
@@ -57,7 +85,7 @@ flows through: every metric the instrument can produce is declared, none
 valued.
 */
 func (ticker *Ticker) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("derivatives", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("derivatives", map[string]data.Metric[float64]{
 		"derivative_price": data.NewMetric[float64](
 			"derivative_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
 		),
@@ -128,4 +156,6 @@ func (ticker *Ticker) Register() *data.Measurement[float64] {
 			"return_gap_velocity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }

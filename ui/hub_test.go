@@ -167,6 +167,50 @@ func TestHubSetHindsightStore(t *testing.T) {
 			So(measurements[0].Source, ShouldEqual, "cvd")
 			So(measurements[0].Metrics["delta"], ShouldEqual, 100.0)
 		})
+
+		Convey("Hindsight runs are queryable", func() {
+			var runs []tables.HindsightRun
+			read("/hindsight/runs", &runs)
+			So(len(runs), ShouldEqual, 1)
+			So(runs[0].ID, ShouldEqual, "1")
+		})
+
+		Convey("Hindsight timeline is queryable", func() {
+			var timeline tables.HindsightTimeline
+			read("/hindsight/timeline?run=1&symbol=BTC/USD&buckets=10", &timeline)
+			So(timeline.Symbol, ShouldEqual, "BTC/USD")
+			So(len(timeline.Buckets), ShouldEqual, 10)
+		})
+
+		Convey("Hindsight lifecycle is queryable", func() {
+			var lifecycle []tables.HindsightLifecycleEvent
+			read("/hindsight/lifecycle?run=1", &lifecycle)
+			So(len(lifecycle), ShouldBeGreaterThanOrEqualTo, 1)
+		})
+
+		Convey("Hindsight captures are queryable", func() {
+			var captures []tables.HindsightCapture
+			read("/hindsight/captures?run=1&after=0", &captures)
+			So(len(captures), ShouldBeGreaterThanOrEqualTo, 1)
+		})
+
+		Convey("Hindsight envelope is queryable", func() {
+			var envelope tables.HindsightEnvelope
+			read("/hindsight/envelope?run=1&seq=10", &envelope)
+			So(envelope.Sequence, ShouldEqual, 10)
+		})
+
+		Convey("Hindsight resident is queryable", func() {
+			var resident tables.HindsightResident
+			read("/hindsight/resident?run=1&symbol=BTC/USD&seq=15&budget=10", &resident)
+			So(resident.Sequence, ShouldEqual, 15)
+		})
+
+		Convey("Hindsight metric map is queryable", func() {
+			var metricMap map[string]any
+			read("/hindsight/metric-map", &metricMap)
+			So(metricMap["metrics"], ShouldNotBeNil)
+		})
 	})
 }
 
@@ -204,8 +248,69 @@ func TestHubDrain(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			So(ring.IsEmpty(), ShouldBeTrue)
 
-			hub.cancel()
+		hub.cancel()
 			<-done
+		})
+	})
+}
+
+func TestIsRawMarketData(t *testing.T) {
+	Convey("Given measurements from various sources and channels", t, func() {
+		Convey("Nil measurement is treated as raw/invalid", func() {
+			So(IsRawMarketData(nil), ShouldBeTrue)
+			So(IsAllowedTelemetry(nil), ShouldBeFalse)
+		})
+
+		Convey("Spot websocket source measurements are recognized as raw", func() {
+			spotMeas := data.NewMeasurement[float64]("websocket", nil)
+			So(IsRawMarketData(spotMeas), ShouldBeTrue)
+
+			publicMeas := data.NewMeasurement[float64]("public", nil)
+			So(IsRawMarketData(publicMeas), ShouldBeTrue)
+		})
+
+		Convey("Spot ticker, trade, and level3 channels are recognized as raw", func() {
+			tickerMeas := data.NewMeasurement[float64]("feed", nil)
+			tickerMeas.Provenance = map[string]string{"channel": "ticker"}
+			So(IsRawMarketData(tickerMeas), ShouldBeTrue)
+
+			tradeMeas := data.NewMeasurement[float64]("feed", nil)
+			tradeMeas.Provenance = map[string]string{"channel": "trade"}
+			So(IsRawMarketData(tradeMeas), ShouldBeTrue)
+
+			level3Meas := data.NewMeasurement[float64]("feed", nil)
+			level3Meas.Provenance = map[string]string{"channel": "level3"}
+			So(IsRawMarketData(level3Meas), ShouldBeTrue)
+
+			bookMeas := data.NewMeasurement[float64]("feed", nil)
+			bookMeas.Provenance = map[string]string{"channel": "book"}
+			So(IsRawMarketData(bookMeas), ShouldBeTrue)
+		})
+
+		Convey("Futures source and channels are recognized as raw", func() {
+			futuresMeas := data.NewMeasurement[float64]("futures", nil)
+			So(IsRawMarketData(futuresMeas), ShouldBeTrue)
+
+			futuresChannelMeas := data.NewMeasurement[float64]("feed", nil)
+			futuresChannelMeas.Provenance = map[string]string{"channel": "futures.ticker"}
+			So(IsRawMarketData(futuresChannelMeas), ShouldBeTrue)
+		})
+
+		Convey("Analytical signal and category measurements are admitted", func() {
+			categoryMeas := data.NewMeasurement[float64]("category", nil)
+			categoryMeas.Label = "BTC/USD"
+			So(IsRawMarketData(categoryMeas), ShouldBeFalse)
+			So(IsAllowedTelemetry(categoryMeas), ShouldBeTrue)
+
+			cvdMeas := data.NewMeasurement[float64]("cvd", nil)
+			cvdMeas.Label = "BTC/USD"
+			So(IsRawMarketData(cvdMeas), ShouldBeFalse)
+			So(IsAllowedTelemetry(cvdMeas), ShouldBeTrue)
+
+			hawkesMeas := data.NewMeasurement[float64]("hawkes", nil)
+			hawkesMeas.Label = "BTC/USD"
+			So(IsRawMarketData(hawkesMeas), ShouldBeFalse)
+			So(IsAllowedTelemetry(hawkesMeas), ShouldBeTrue)
 		})
 	})
 }

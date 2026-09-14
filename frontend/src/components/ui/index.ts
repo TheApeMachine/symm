@@ -11,7 +11,7 @@ class-variance-authority, motion, and tailwind-merge/clsx.
 */
 
 export { Alert, type AlertProps, alertVariants } from "./alert";
-export { Badge, type BadgeProps, badgeVariants } from "./badge";
+export { Badge, type BadgeProps, badgeVariants, setBadge, type BadgeVariant, type BadgeSize } from "./badge";
 export { Button, type ButtonProps, buttonVariants } from "./button";
 export { Canvas, type CanvasProps } from "./canvas";
 export { Chip, type ChipProps, chipVariants } from "./chip";
@@ -49,6 +49,9 @@ export {
 	type MeterProps,
 	meterTrackVariants,
 	meterVariants,
+	setMeter,
+	type MeterVariant,
+	type MeterSize,
 } from "./meter";
 export {
 	Modal,
@@ -82,8 +85,11 @@ export {
 } from "./section";
 export {
 	computeSparklinePath,
+	computeSparklinePaths,
 	Sparkline,
 	type SparklineProps,
+	type SparklinePaths,
+	setSparkline,
 } from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";
 export { Stat, type StatProps, statVariants } from "./stat";

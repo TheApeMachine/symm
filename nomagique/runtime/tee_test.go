@@ -98,5 +98,35 @@ func TestTeeStep(t *testing.T) {
 				So(tee.Ring().IsEmpty(), ShouldBeTrue)
 			})
 		})
+
+		Convey("When a filter is configured", func() {
+			tee.SetFilter(func(m *data.Measurement[float64]) bool {
+				return m.Source != "websocket"
+			})
+
+			now := time.Now()
+			root := data.NewMeasurement[float64]("telemetry.tee", nil)
+			admittedPeer := data.NewMeasurement[float64]("category", nil)
+			admittedPeer.Label = "BTC/USD"
+			admittedPeer.At = now
+
+			rejectedPeer := data.NewMeasurement[float64]("websocket", nil)
+			rejectedPeer.Label = "BTC/USD"
+			rejectedPeer.At = now
+
+			root.Peers = []*data.Measurement[float64]{rejectedPeer, admittedPeer}
+
+			result := tee.Step(root)
+
+			Convey("It enqueues only admitted peers", func() {
+				So(result, ShouldEqual, root)
+
+				admitted, ok := tee.Ring().Get()
+				So(ok, ShouldBeTrue)
+				So(admitted.Source, ShouldEqual, "category")
+
+				So(tee.Ring().IsEmpty(), ShouldBeTrue)
+			})
+		})
 	})
 }

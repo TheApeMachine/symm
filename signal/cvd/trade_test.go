@@ -211,6 +211,23 @@ func TestTradeRegister(t *testing.T) {
 				So(label, ShouldEqual, metric.Label)
 				So(metric.Raw, ShouldEqual, 0.0)
 			}
+			So(measurement.Metadata["peer-interest"], ShouldEqual, "*")
+		})
+
+		Convey("Step absorbs trade facts from peers when measurement is unpopulated", func() {
+			entity := NewTrade(t.Context())
+			meas := entity.Register()
+			meas.Peers = []*data.Measurement[float64]{
+				row("BTC/USD", "buy", 100, 2, timestamp(0)),
+			}
+
+			stepped := entity.Step(meas)
+			So(stepped, ShouldNotBeNil)
+			So(stepped.Label, ShouldEqual, "BTC/USD")
+			So(stepped.Source, ShouldEqual, "cvd")
+			So(stepped.Metrics["trade_count"].Raw, ShouldEqual, 1.0)
+			So(stepped.Metrics["gross_executed_quantity"].Raw, ShouldEqual, 2.0)
 		})
 	})
 }
+

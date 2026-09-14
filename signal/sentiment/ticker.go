@@ -52,11 +52,57 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
+	if ticker.Status() != runtime.READY || measurement == nil {
 		return measurement
 	}
 
-	return data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+	input := measurement
+
+	if len(measurement.Peers) > 0 {
+		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
+			if p.Label == "" {
+				return false
+			}
+			if m, ok := p.Metrics["last"]; ok && m.Raw > 0 {
+				return true
+			}
+			if m, ok := p.Metrics["last_price"]; ok && m.Raw > 0 {
+				return true
+			}
+			if m, ok := p.Metrics["price"]; ok && m.Raw > 0 {
+				return true
+			}
+			return false
+		})
+
+		if peer == nil {
+			return measurement
+		}
+
+		price := 0.0
+		if m, ok := peer.Metrics["last"]; ok && m.Raw > 0 {
+			price = m.Raw
+		} else if m, ok := peer.Metrics["last_price"]; ok && m.Raw > 0 {
+			price = m.Raw
+		} else if m, ok := peer.Metrics["price"]; ok && m.Raw > 0 {
+			price = m.Raw
+		}
+
+		input = peer.Clone()
+		if _, ok := input.Metrics["last"]; !ok {
+			input.Metrics["last"] = data.NewMetric[float64]("last", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
+		}
+		input.Metrics["last"] = input.Metrics["last"].Write(price)
+	}
+
+	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+
+	if res != nil && res != measurement {
+		measurement.Absorb(res)
+		return measurement
+	}
+
+	return res
 }
 
 /*
@@ -65,7 +111,7 @@ through: the feed's last price plus every cross-section fact the pipeline can
 write, declared, none valued.
 */
 func (ticker *Ticker) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("sentiment", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("sentiment", map[string]data.Metric[float64]{
 		"last": data.NewMetric[float64](
 			"last", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
 		),
@@ -214,4 +260,7 @@ func (ticker *Ticker) Register() *data.Measurement[float64] {
 			"extreme_share_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }
+

@@ -14,9 +14,6 @@ import {
 } from "#/components/terminal/kernel-meta";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
-
-const metricObj = new Metric();
 
 export const SignalDetail = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
@@ -45,26 +42,26 @@ export const SignalDetail = () => {
 			};
 
 			set("symbol", focusSymbol);
+			const rowAt = row?.at;
 			set(
 				"at",
-				row?.at() === undefined
+				rowAt === undefined || rowAt === 0n
 					? "—"
-					: new Date(Number(row.at() / 1000000n)).toISOString().slice(11, 19),
+					: new Date(Number(rowAt / 1000000n)).toISOString().slice(11, 19),
 			);
 			set(
 				"maturity",
-				row?.maturity() === undefined ? "—" : row.maturity().toFixed(3),
+				row?.maturity === undefined ? "—" : row.maturity.toFixed(3),
 			);
 			set("peer", "—");
 			set("epoch", String(measurementSourcesStore.state.length));
 
-			if (row) {
-				for (let j = 0; j < row.metricsLength(); j++) {
-					const m = row.metrics(j, metricObj);
+			if (row && Array.isArray(row.metrics)) {
+				for (const m of row.metrics) {
 					if (!m) continue;
-					const name = m.name() ?? "";
-					const raw = m.raw();
-					const normalized = m.normalized();
+					const name = m.name ?? "";
+					const raw = m.raw;
+					const normalized = m.normalized;
 
 					set(`m:${name}`, raw.toFixed(4));
 					const bar = root.current?.querySelector<HTMLElement>(

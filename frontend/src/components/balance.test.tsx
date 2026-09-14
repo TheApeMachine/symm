@@ -1,7 +1,12 @@
 import * as flatbuffers from "flatbuffers";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { equityStore } from "#/collections/app";
+import {
+	cashAtom,
+	equityAtom,
+	unrealizedAtom,
+	updateEquity,
+} from "#/collections/app";
 import { learningStore } from "#/collections/learning";
 import { learningFixture } from "#/components/learning/fixture";
 import { Balance } from "#/components/balance";
@@ -36,9 +41,15 @@ const encodeEquityFrame = (
 	);
 };
 
+const applyEquityFrame = (frame: EquityFrame) => {
+	updateEquity(frame.cash(), frame.unrealized(), frame.equity());
+};
+
 describe("Balance", () => {
 	beforeEach(() => {
-		equityStore.state.clear();
+		cashAtom.set("");
+		unrealizedAtom.set("");
+		equityAtom.set("");
 		learningStore.setState(() => null);
 	});
 
@@ -68,7 +79,7 @@ describe("Balance", () => {
 		const equity = encodeEquityFrame("1000", "-25.5", "974.5");
 
 		expect(equity).not.toBeNull();
-		equityStore.actions.add(equity);
+		applyEquityFrame(equity);
 
 		const markup = renderToStaticMarkup(<Balance />);
 
@@ -83,7 +94,7 @@ describe("Balance", () => {
 	permanently and it would stop meaning anything.
 	*/
 	it("hides the lambo while the book is down", () => {
-		equityStore.actions.add(
+		applyEquityFrame(
 			encodeEquityFrame("1000", "-25.5", "974.5"),
 		);
 
@@ -91,7 +102,7 @@ describe("Balance", () => {
 	});
 
 	it("rides the lambo behind equity while the book is up", () => {
-		equityStore.actions.add(
+		applyEquityFrame(
 			encodeEquityFrame("1000", "25.5", "1025.5"),
 		);
 
@@ -103,7 +114,7 @@ describe("Balance", () => {
 	});
 
 	it("hides the lambo at exactly flat", () => {
-		equityStore.actions.add(
+		applyEquityFrame(
 			encodeEquityFrame("1000", "0", "1000"),
 		);
 
@@ -111,13 +122,13 @@ describe("Balance", () => {
 	});
 
 	it("keeps the last known valuation when a later frame omits it", () => {
-		equityStore.actions.add(
+		applyEquityFrame(
 			encodeEquityFrame("1000", "-25.5", "974.5"),
 		);
 
 		// A message with an empty equity frame must not blank a balance the
 		// dashboard has already been shown.
-		equityStore.actions.add(
+		applyEquityFrame(
 			encodeEquityFrame("", "", ""),
 		);
 

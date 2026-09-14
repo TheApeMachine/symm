@@ -16,11 +16,11 @@ describe("KernelList", () => {
 		expect(new Set(rows)).toEqual(new Set(DEFAULT_KERNELS));
 		// Each row names the kernel, carries a status badge, a sub line, a
 		// sparkline with area fill, and a confidence bar with a reading.
-		expect(markup).toContain("Hawkes process");
-		expect(markup).toContain("branching η");
+		expect(markup).toContain("HAWKES");
+		expect(markup).toContain("hawkes");
 		expect(markup).toContain("Standby");
-		expect(markup).toContain('data-k="snr1"');
-		expect(markup).toContain('data-k="conf"');
-		expect(markup).toMatch(/<polyline/);
+		expect(markup).toContain('data-k="value"');
+		expect(markup).toContain('data-k="bar"');
+		expect(markup).toContain('data-k="sparkline"');
 	});
 });

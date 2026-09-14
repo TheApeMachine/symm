@@ -265,34 +265,45 @@ func (op *Excitation) evaluate(
 		m.Metrics["expected_descendants_from_sell"] = m.Metrics["expected_descendants_from_sell"].Write(sellParent)
 	}
 
-	streamWindow := currentWindowStream(buyArrivals, sellArrivals, atSec, mark)
-	hawkesLL := model.logLikelihood(streamWindow, atSec)
-	poisson := bivariateFit{muX: muX, muY: muY, beta: beta}
-	poissonLL := poisson.logLikelihood(streamWindow, atSec)
-
-	if len(streamWindow.marked) > 0 {
-		markedCount := float64(len(streamWindow.marked))
-
-		m.Metrics["log_likelihood:hawkes"] = m.Metrics["log_likelihood:hawkes"].Write(hawkesLL)
-		m.Metrics["log_likelihood:poisson"] = m.Metrics["log_likelihood:poisson"].Write(poissonLL)
-		m.Metrics["log_likelihood_per_event:hawkes"] = m.Metrics["log_likelihood_per_event:hawkes"].Write(hawkesLL / markedCount)
-		m.Metrics["log_likelihood_gain_vs_poisson"] = m.Metrics["log_likelihood_gain_vs_poisson"].Write(hawkesLL - poissonLL)
-		m.Metrics["log_likelihood_gain_per_event_vs_poisson"] = m.Metrics["log_likelihood_gain_per_event_vs_poisson"].Write((hawkesLL - poissonLL) / markedCount)
-
-		if p.selfOnlyReady {
-			selfLL := p.selfOnlyModel.logLikelihood(streamWindow, atSec)
-
-			m.Metrics["log_likelihood:self_only"] = m.Metrics["log_likelihood:self_only"].Write(selfLL)
-			m.Metrics["log_likelihood_gain_vs_self_only"] = m.Metrics["log_likelihood_gain_vs_self_only"].Write(hawkesLL - selfLL)
-			m.Metrics["log_likelihood_gain_per_event_vs_self_only"] = m.Metrics["log_likelihood_gain_per_event_vs_self_only"].Write((hawkesLL - selfLL) / markedCount)
-		}
-	}
-
 	streamPrior := newArrivalStream(buyArrivals, sellArrivals)
 	spanPrior := streamPrior.span(atSec)
 
 	if spanPrior <= 0 {
 		return
+	}
+
+	streamWindow := currentWindowStream(buyArrivals, sellArrivals, atSec, mark)
+	markedCount := float64(len(streamWindow.marked))
+
+	hawkesLL, hawkesOK := model.logLikelihood(streamWindow, atSec)
+
+	if hawkesOK {
+		m.Metrics["log_likelihood:hawkes"] = m.Metrics["log_likelihood:hawkes"].Write(hawkesLL)
+		m.Metrics["log_likelihood_per_event:hawkes"] = m.Metrics["log_likelihood_per_event:hawkes"].Write(hawkesLL / markedCount)
+	}
+
+	poisson := bivariateFit{muX: muX, muY: muY, beta: beta}
+	poissonLL, poissonOK := poisson.logLikelihood(streamWindow, atSec)
+
+	if poissonOK {
+		m.Metrics["log_likelihood:poisson"] = m.Metrics["log_likelihood:poisson"].Write(poissonLL)
+	}
+
+	if hawkesOK && poissonOK {
+		gainPoisson := hawkesLL - poissonLL
+		m.Metrics["log_likelihood_gain_vs_poisson"] = m.Metrics["log_likelihood_gain_vs_poisson"].Write(gainPoisson)
+		m.Metrics["log_likelihood_gain_per_event_vs_poisson"] = m.Metrics["log_likelihood_gain_per_event_vs_poisson"].Write(gainPoisson / markedCount)
+	}
+
+	if hawkesOK && p.selfOnlyReady {
+		selfLL, selfOK := p.selfOnlyModel.logLikelihood(streamWindow, atSec)
+
+		if selfOK {
+			gainSelf := hawkesLL - selfLL
+			m.Metrics["log_likelihood:self_only"] = m.Metrics["log_likelihood:self_only"].Write(selfLL)
+			m.Metrics["log_likelihood_gain_vs_self_only"] = m.Metrics["log_likelihood_gain_vs_self_only"].Write(gainSelf)
+			m.Metrics["log_likelihood_gain_per_event_vs_self_only"] = m.Metrics["log_likelihood_gain_per_event_vs_self_only"].Write(gainSelf / markedCount)
+		}
 	}
 
 	buySupport, sellSupport := streamPrior.kernelIntegralSupport(atSec, beta)

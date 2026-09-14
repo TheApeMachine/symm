@@ -193,25 +193,123 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		return m
 	}
 
-	price := m.Metrics["price"].Raw
-	qty := m.Metrics["qty"].Raw
+	input := m
+
+	if len(m.Peers) > 0 {
+		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+			_, hasP := p.Metrics["price"]
+			_, hasQ := p.Metrics["qty"]
+			return hasP && hasQ && p.Label != ""
+		})
+
+		if peer == nil {
+			return m
+		}
+
+		input = peer.Clone()
+	}
+
+	price := input.Metrics["price"].Raw
+	qty := input.Metrics["qty"].Raw
 
 	if price <= 0 || qty <= 0 {
 		return m
 	}
 
-	input := tradeInput{
-		Price:    price,
-		Qty:      qty,
-		Side:     m.Provenance["side"],
-		BidPrice: m.Metrics["best_price:bid"].Raw,
-		AskPrice: m.Metrics["best_price:ask"].Raw,
-		BidQty:   m.Metrics["touch_quantity:bid"].Raw,
-		AskQty:   m.Metrics["touch_quantity:ask"].Raw,
-		At:       m.At,
+	bidPrice := input.Metrics["best_price:bid"].Raw
+	if bidPrice == 0 {
+		bidPrice = input.Metrics["best_bid"].Raw
+	}
+	if bidPrice == 0 {
+		bidPrice = input.Metrics["bid"].Raw
 	}
 
-	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+	askPrice := input.Metrics["best_price:ask"].Raw
+	if askPrice == 0 {
+		askPrice = input.Metrics["best_ask"].Raw
+	}
+	if askPrice == 0 {
+		askPrice = input.Metrics["ask"].Raw
+	}
+
+	bidQty := input.Metrics["touch_quantity:bid"].Raw
+	if bidQty == 0 {
+		bidQty = input.Metrics["bid_qty"].Raw
+	}
+
+	askQty := input.Metrics["touch_quantity:ask"].Raw
+	if askQty == 0 {
+		askQty = input.Metrics["ask_qty"].Raw
+	}
+
+	if bidPrice == 0 || askPrice == 0 {
+		touchPeer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+			if p.Label == "" {
+				return false
+			}
+			b := p.Metrics["best_price:bid"].Raw
+			if b == 0 {
+				b = p.Metrics["best_bid"].Raw
+			}
+			if b == 0 {
+				b = p.Metrics["bid"].Raw
+			}
+			a := p.Metrics["best_price:ask"].Raw
+			if a == 0 {
+				a = p.Metrics["best_ask"].Raw
+			}
+			if a == 0 {
+				a = p.Metrics["ask"].Raw
+			}
+			return b > 0 && a > 0
+		})
+
+		if touchPeer != nil {
+			if bidPrice == 0 {
+				bidPrice = touchPeer.Metrics["best_price:bid"].Raw
+				if bidPrice == 0 {
+					bidPrice = touchPeer.Metrics["best_bid"].Raw
+				}
+				if bidPrice == 0 {
+					bidPrice = touchPeer.Metrics["bid"].Raw
+				}
+			}
+			if askPrice == 0 {
+				askPrice = touchPeer.Metrics["best_price:ask"].Raw
+				if askPrice == 0 {
+					askPrice = touchPeer.Metrics["best_ask"].Raw
+				}
+				if askPrice == 0 {
+					askPrice = touchPeer.Metrics["ask"].Raw
+				}
+			}
+			if bidQty == 0 {
+				bidQty = touchPeer.Metrics["touch_quantity:bid"].Raw
+				if bidQty == 0 {
+					bidQty = touchPeer.Metrics["bid_qty"].Raw
+				}
+			}
+			if askQty == 0 {
+				askQty = touchPeer.Metrics["touch_quantity:ask"].Raw
+				if askQty == 0 {
+					askQty = touchPeer.Metrics["ask_qty"].Raw
+				}
+			}
+		}
+	}
+
+	pipeInput := tradeInput{
+		Price:    price,
+		Qty:      qty,
+		Side:     input.Provenance["side"],
+		BidPrice: bidPrice,
+		AskPrice: askPrice,
+		BidQty:   bidQty,
+		AskQty:   askQty,
+		At:       input.At,
+	}
+
+	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*tradeResult)(out)
 
 		m.Metrics["bracket_trade_quantity"] = m.Metrics["bracket_trade_quantity"].Write(res.BracketQty)
@@ -258,6 +356,8 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		}
 	}
 
+	m.Label = input.Label
+	m.At = input.At
 	m.Finalize()
 	return m
 }
@@ -268,7 +368,7 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (trade *Trade) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("toxicity:trade", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("toxicity:trade", map[string]data.Metric[float64]{
 		"bracket_trade_quantity":             data.NewMetric[float64]("bracket_trade_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"matched_touch_trade_quantity:bid":   data.NewMetric[float64]("matched_touch_trade_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"matched_touch_trade_quantity:ask":   data.NewMetric[float64]("matched_touch_trade_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
@@ -285,4 +385,6 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 		"fill_fraction_zscore:bid":           data.NewMetric[float64]("fill_fraction_zscore:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 		"fill_fraction_zscore:ask":           data.NewMetric[float64]("fill_fraction_zscore:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }

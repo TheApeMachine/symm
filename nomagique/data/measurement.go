@@ -119,6 +119,67 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 }
 
 /*
+FindPeer returns the first peer matching the given predicate, or nil if none match.
+*/
+func (measurement *Measurement[T]) FindPeer(predicate func(*Measurement[T]) bool) *Measurement[T] {
+	if measurement == nil || predicate == nil {
+		return nil
+	}
+
+	for _, peer := range measurement.Peers {
+		if peer != nil && predicate(peer) {
+			return peer
+		}
+	}
+
+	return nil
+}
+
+/*
+Absorb updates runtime facts, metrics, metadata, and provenance from another
+measurement while keeping this measurement's identity and source intact.
+*/
+func (measurement *Measurement[T]) Absorb(other *Measurement[T]) {
+	if other == nil || measurement == nil {
+		return
+	}
+
+	measurement.Label = other.Label
+	measurement.At = other.At
+	measurement.From = other.From
+	measurement.SeqIdx = other.SeqIdx
+	measurement.Maturity = other.Maturity
+	measurement.SNR = other.SNR
+	measurement.SNRDefined = other.SNRDefined
+	measurement.Estimated = other.Estimated
+	measurement.Err = other.Err
+
+	if other.Metrics != nil {
+		if measurement.Metrics == nil {
+			measurement.Metrics = make(map[string]Metric[T], len(other.Metrics))
+		}
+
+		maps.Copy(measurement.Metrics, other.Metrics)
+	}
+
+	if other.Metadata != nil {
+		if measurement.Metadata == nil {
+			measurement.Metadata = make(map[string]string, len(other.Metadata))
+		}
+
+		maps.Copy(measurement.Metadata, other.Metadata)
+	}
+
+	if other.Provenance != nil {
+		if measurement.Provenance == nil {
+			measurement.Provenance = make(map[string]string, len(other.Provenance))
+		}
+
+		maps.Copy(measurement.Provenance, other.Provenance)
+	}
+}
+
+/*
 Standardize walks the measurement's metrics as pointers, so a standardization
 stage can fill each metric's normalized and standardized forms in place.
 */

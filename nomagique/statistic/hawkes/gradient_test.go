@@ -45,8 +45,8 @@ func TestLogLikelihoodGradientMatchesFiniteDifference(testingT *testing.T) {
 	}
 
 	for index, perturb := range natural {
-		up := perturb(step).logLikelihood(stream, horizonSec)
-		down := perturb(-step).logLikelihood(stream, horizonSec)
+		up, _ := perturb(step).logLikelihood(stream, horizonSec)
+		down, _ := perturb(-step).logLikelihood(stream, horizonSec)
 		numeric := (up - down) / (2 * step)
 
 		if math.Abs(gradient[index]-numeric) > 1e-3*math.Max(1, math.Abs(numeric)) {

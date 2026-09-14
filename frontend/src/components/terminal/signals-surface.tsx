@@ -1,5 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
+import { DEFAULT_KERNELS } from "#/collections/app";
 import { SignalDetail } from "#/components/kernel/detail";
 import { CrossSectionPanel } from "#/components/terminal/cross-section-panel";
 import { HealthPanel } from "#/components/terminal/health";
@@ -23,7 +22,7 @@ kernels; DRAW paints live readouts. Health and radar derive sources from each
 measurements batch — no React state for DRAW discovery.
 */
 export const SignalsSurface = () => {
-	const kernels = useSelector(appStore, (state) => state.kernels);
+	const kernels = DEFAULT_KERNELS;
 
 	return (
 		<div className="grid h-full min-w-270 grid-cols-[230px_minmax(420px,1fr)_320px]">

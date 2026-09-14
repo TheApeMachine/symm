@@ -1,9 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import {
 	focusStore,
+	onlineAtom,
 	onlineStore,
-	resonanceTransportDetailStore,
-	resonanceTransportStore,
 } from "#/collections/app";
 import { learningStore } from "#/collections/learning";
 import { terminalStore } from "#/collections/terminal";
@@ -83,9 +82,7 @@ the countdown, the failing channel — belongs in the hover, where reading it is
 deliberate act rather than a line of chrome that changes width every second.
 */
 const ResonanceTransportBadge = () => {
-	const status = useSelector(resonanceTransportStore, (state) => state);
-	const detail = useSelector(resonanceTransportDetailStore, (state) => state);
-
+	const status = useSelector(onlineAtom) 
 	const live = status === "ONLINE";
 	const connecting = status === "CONNECTING";
 	const state = live ? "live" : connecting ? "connecting" : "offline";
@@ -97,7 +94,7 @@ const ResonanceTransportBadge = () => {
 			variant={variant}
 			dot
 			pulse={live}
-			title={detail ? `WebRTC ${state} · ${detail}` : `WebRTC ${state}`}
+			title={`WebRTC ${state}`}
 		/>
 	);
 };

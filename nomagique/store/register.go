@@ -3,6 +3,7 @@ package store
 import (
 	"iter"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -13,12 +14,12 @@ import (
 Register is a fixed-slot O(1) lookup table. Slots are assigned once, when a
 subject identifies itself: it is appended and answered its index. From then
 on reads and writes are direct slot access — a write replaces, never
-appends. Because every subject writes only the slot it was assigned, no
-locking is needed. It stores data; it knows nothing about who queries it or
-why. Every store in the system answers the same Query protocol.
+appends. All slots are synchronized via RWMutex, and reads of measurement
+slots yield isolated clones so concurrent consumers never race on map state.
 */
 type Register[T any] struct {
 	*core.PrimitiveError
+	mu    sync.RWMutex
 	slots []T
 }
 
@@ -43,6 +44,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 		switch query.Action() {
 		case data.ActionIdentify:
+			op.mu.Lock()
 			op.slots = append(op.slots, query.payload...)
 			slotID := len(op.slots) - 1
 			query.Identify(slotID)
@@ -53,38 +55,79 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				}
 			}
 
-			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
+			slotVal := op.slots[query.Identity()]
+			op.mu.Unlock()
+
+			if !yield(unsafe.Pointer(&slotVal)) {
 				return
 			}
 		case data.ActionWrite:
+			op.mu.Lock()
+
 			if query.Identity() < 0 || query.Identity() >= len(op.slots) {
+				op.mu.Unlock()
 				op.Error(core.ErrShape)
 				return
 			}
 
-			op.slots[query.Identity()] = query.payload[0]
+			if len(query.payload) > 0 {
+				op.slots[query.Identity()] = query.payload[0]
+			}
 
-			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
+			slotVal := op.slots[query.Identity()]
+			op.mu.Unlock()
+
+			if !yield(unsafe.Pointer(&slotVal)) {
 				return
 			}
 		case data.ActionRead:
+			op.mu.RLock()
+
 			if query.Identity() < 0 {
-				for index := range op.slots {
-					if !yield(unsafe.Pointer(&op.slots[index])) {
+				slotsCopy := make([]T, len(op.slots))
+				copy(slotsCopy, op.slots)
+				op.mu.RUnlock()
+
+				for index := range slotsCopy {
+					if !yield(unsafe.Pointer(&slotsCopy[index])) {
 						return
 					}
 				}
+
 				return
 			}
 
 			if query.Identity() >= len(op.slots) {
+				op.mu.RUnlock()
 				op.Error(core.ErrShape)
 				return
 			}
 
-			op.populatePeers(query.Identity())
+			limit := query.Identity()
 
-			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
+			if query.PeerLimit() >= 0 {
+				limit = query.PeerLimit()
+			}
+
+			meas, ok := any(op.slots[query.Identity()]).(*data.Measurement[float64])
+
+			if ok && meas != nil {
+				out := any(meas.Clone()).(T)
+				outMeas := any(out).(*data.Measurement[float64])
+				op.populatePeers(outMeas, query.Identity(), limit)
+				op.mu.RUnlock()
+
+				if !yield(unsafe.Pointer(&out)) {
+					return
+				}
+
+				return
+			}
+
+			slotVal := op.slots[query.Identity()]
+			op.mu.RUnlock()
+
+			if !yield(unsafe.Pointer(&slotVal)) {
 				return
 			}
 		default:
@@ -94,10 +137,8 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 	}
 }
 
-func (op *Register[T]) populatePeers(slotIndex int) {
-	meas, ok := any(op.slots[slotIndex]).(*data.Measurement[float64])
-
-	if !ok || meas == nil || meas.Metadata == nil {
+func (op *Register[T]) populatePeers(meas *data.Measurement[float64], slotIndex int, limit int) {
+	if meas == nil || meas.Metadata == nil {
 		return
 	}
 
@@ -114,12 +155,16 @@ func (op *Register[T]) populatePeers(slotIndex int) {
 		interests[idx] = strings.TrimSpace(interests[idx])
 	}
 
-	for idx, slot := range op.slots {
+	if limit > len(op.slots) {
+		limit = len(op.slots)
+	}
+
+	for idx := 0; idx < limit; idx++ {
 		if idx == slotIndex {
 			continue
 		}
 
-		peer, isMeas := any(slot).(*data.Measurement[float64])
+		peer, isMeas := any(op.slots[idx]).(*data.Measurement[float64])
 
 		if !isMeas || peer == nil {
 			continue

@@ -2,12 +2,19 @@ import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
-	addResonanceReading,
-	resonanceTransportDetailStore,
-	resonanceTransportStore,
+	observeSymbols,
+	onlineAtom,
+	resonanceStore,
+	RingBuffer,
+	symbolsAtom,
+	updateClock,
 } from "#/collections/app";
 import { FluidRecordReader } from "#/components/fluid-3d/record";
+import { Frame } from "#/providers/telemetry/telemetry/frame";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
+import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 
 const resonanceChannel = "resonance";
@@ -31,10 +38,96 @@ const signalingURL = () =>
 
 const setTransport = (
 	status: "ONLINE" | "CONNECTING" | "OFFLINE",
-	detail: string,
 ) => {
-	resonanceTransportStore.setState(() => status);
-	resonanceTransportDetailStore.setState(() => detail);
+	onlineAtom.set(status)
+};
+
+export const dispatchResonanceRow = (row: {
+	symbol: () => string | null;
+	unpack: () => MeasurementT | ResonanceT;
+}) => {
+	const symbol = row.symbol() ?? "";
+
+	if (symbol && !symbolsAtom.get().includes(symbol)) {
+		observeSymbols([symbol]);
+	}
+
+	let ring = resonanceStore.state[symbol];
+
+	if (!ring) {
+		ring = new RingBuffer<MeasurementT | ResonanceT>(50);
+		resonanceStore.state[symbol] = ring;
+	}
+
+	const unpacked = row.unpack();
+	ring.add(unpacked);
+
+	if ("at" in unpacked && unpacked.at) {
+		updateClock(unpacked.at);
+	}
+};
+
+export const dispatchResonanceBuffer = (buffer: flatbuffers.ByteBuffer) => {
+	let touched = false;
+
+	storeBatch(() => {
+		if (Message.bufferHasIdentifier(buffer)) {
+			const message = Message.getRootAsMessage(buffer);
+			const frameType = message.frameType();
+
+			if (frameType === Frame.MeasurementsFrame) {
+				const frame = message.frame(new MeasurementsFrame());
+				if (frame) {
+					const count = frame.rowsLength();
+					for (let index = 0; index < count; index += 1) {
+						const row = frame.rows(index);
+						if (row) {
+							dispatchResonanceRow(row);
+							touched = true;
+						}
+					}
+				}
+			} else {
+				const frame = message.frame(new ResonanceFrame());
+				if (frame) {
+					const count = frame.rowsLength();
+					for (let index = 0; index < count; index += 1) {
+						const row = frame.rows(index);
+						if (row) {
+							dispatchResonanceRow(row);
+							touched = true;
+						}
+					}
+				}
+			}
+		} else {
+			try {
+				const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
+				const count = frame.rowsLength();
+				for (let index = 0; index < count; index += 1) {
+					const row = frame.rows(index);
+					if (row) {
+						dispatchResonanceRow(row);
+						touched = true;
+					}
+				}
+			} catch {
+				const frame = ResonanceFrame.getRootAsResonanceFrame(buffer);
+				const count = frame.rowsLength();
+				for (let index = 0; index < count; index += 1) {
+					const row = frame.rows(index);
+					if (row) {
+						dispatchResonanceRow(row);
+						touched = true;
+					}
+				}
+			}
+		}
+
+		if (touched) {
+			resonanceStore.setState((prev) => ({ ...prev }));
+		}
+	});
 };
 
 const waitForIceGathering = (connection: RTCPeerConnection) => {
@@ -101,7 +194,7 @@ export const RtcFeed = () => {
 				RECONNECT_MAX_MS,
 			);
 
-			setTransport("OFFLINE", `reconnecting in ${delay}ms`);
+			setTransport("OFFLINE");
 			reconnectTimer = setTimeout(() => {
 				reconnectTimer = null;
 				reconnectAttempts += 1;
@@ -124,7 +217,7 @@ export const RtcFeed = () => {
 			}
 
 			destroy();
-			setTransport("CONNECTING", "negotiating");
+			setTransport("CONNECTING");
 
 			const connection = new RTCPeerConnection();
 			peer = connection;
@@ -143,7 +236,7 @@ export const RtcFeed = () => {
 				}
 
 				reconnectAttempts = 0;
-				setTransport("ONLINE", connection.connectionState);
+				setTransport("ONLINE");
 			};
 
 			const openChannel = (
@@ -183,7 +276,6 @@ export const RtcFeed = () => {
 
 				setTransport(
 					connection.connectionState === "connected" ? "ONLINE" : "CONNECTING",
-					connection.connectionState,
 				);
 
 				if (TERMINAL_CONNECTION_STATES.has(connection.connectionState)) {
@@ -194,25 +286,7 @@ export const RtcFeed = () => {
 			openChannel(resonanceChannel, (record) => {
 				const bytes = new Uint8Array(record as ArrayBuffer);
 				const buffer = new flatbuffers.ByteBuffer(bytes);
-
-				if (!Message.bufferHasIdentifier(buffer)) {
-					return;
-				}
-
-				const message = Message.getRootAsMessage(buffer);
-				const frame = message.frame(new ResonanceFrame());
-
-				if (!frame) return;
-
-				const count = frame.rowsLength();
-				for (let index = 0; index < count; index += 1) {
-					const row = frame.rows(index);
-					if (row) {
-						storeBatch(() => {
-							addResonanceReading(row);
-						});
-					}
-				}
+				dispatchResonanceBuffer(buffer);
 			});
 
 			try {

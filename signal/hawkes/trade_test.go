@@ -3,6 +3,7 @@ package hawkes
 import (
 	"context"
 	"maps"
+	"math"
 	"testing"
 	"time"
 
@@ -676,6 +677,27 @@ func TestLikelihoodDoesNotAccumulateAcrossRefits(t *testing.T) {
 			So(hasCount, ShouldBeTrue)
 			So(perEvent.Raw, ShouldAlmostEqual, total.Raw/count.Raw, 1e-6)
 		})
+	})
+}
+
+func TestSimultaneousArrivalsProduceNoNaNOrInf(t *testing.T) {
+	Convey("Given a fitted model followed by simultaneous arrivals at identical timestamps", t, func() {
+		entity := NewTrade(context.Background())
+		seedClusteredTrades(entity, "XRP/USD", 120, 0)
+
+		base := time.Unix(1000, 0)
+
+		for counter := 0; counter < 10; counter++ {
+			measurement := step(entity, "XRP/USD", "buy", base)
+
+			for metricName, metricValue := range measurement.Metrics {
+				if metricValue.Standardized != nil {
+					So(metricName, ShouldNotBeBlank)
+					So(math.IsNaN(metricValue.Raw), ShouldBeFalse)
+					So(math.IsInf(metricValue.Raw, 0), ShouldBeFalse)
+				}
+			}
+		}
 	})
 }
 

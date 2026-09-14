@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
 	"embed"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -200,8 +197,10 @@ var (
 			training := strategy.NewTraining(ctx, tape, instrument, price, balance, api)
 			hub.SetTradeStore(training)
 			hub.SetExitHandler(training.RequestExit)
+			hub.SetLearningSource(training)
 
 			telemetryTee := nmruntime.NewTee(131072)
+			telemetryTee.SetFilter(ui.IsAllowedTelemetry)
 			go hub.Drain(telemetryTee.Ring())
 
 			storageTee := nmruntime.NewNamedTee("storage.tee", 131072)
@@ -375,84 +374,7 @@ func startPprof() {
 	}()
 }
 
-/*
-configDigest returns a stable digest of the configuration actually loaded for
-this run. It hashes the raw bytes of the config file viper resolved; when no
-file was used (the embedded default), it returns empty. The digest is what the
-Hindsight Run records so replay can distinguish one configuration from another.
-*/
-func configDigest() string {
-	configFile := viper.ConfigFileUsed()
 
-	if configFile == "" {
-		return ""
-	}
-
-	raw, err := os.ReadFile(configFile)
-
-	if err != nil {
-		return ""
-	}
-
-	sum := sha256.Sum256(raw)
-
-	return hex.EncodeToString(sum[:])
-}
-
-/*
-buildCodeCommit returns the VCS commit the binary was built from, or the special
-"unknown" marker when the build information carries no VCS revision. It never
-fabricates a commit string.
-*/
-func buildCodeCommit() string {
-	info, ok := debug.ReadBuildInfo()
-
-	if !ok {
-		return "unknown"
-	}
-
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
-			return setting.Value
-		}
-	}
-
-	return "unknown"
-}
-
-/*
-buildBuildID returns a stable build identity from the main module's version and
-checksum. When the module carries neither (a from-source `go run`), it falls
-back to the Go version that built it, so two different binaries are still
-distinguishable without inventing a value.
-*/
-func buildBuildID() string {
-	info, ok := debug.ReadBuildInfo()
-
-	if !ok {
-		return "unknown"
-	}
-
-	mainVersion := info.Main.Version
-
-	if mainVersion != "" && mainVersion != "(devel)" {
-		return mainVersion + "." + info.Main.Sum
-	}
-
-	return "go-" + info.GoVersion
-}
-
-/*
-hindsightSchemaVersions records the wire/Hindsight schema identities needed to
-interpret persisted state: the FlatBuffers file identifier (SYMM) and the
-Hindsight schema version. These are stable strings, not a fabricated digest.
-*/
-func hindsightSchemaVersions() map[string]string {
-	return map[string]string{
-		"wire_file_identifier": "SYMM",
-		"hindsight_schema":     "1",
-	}
-}
 
 func init() {
 	cobra.OnInitialize(initConfig)

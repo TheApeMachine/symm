@@ -192,8 +192,24 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		return m
 	}
 
-	priceMetric, hasPrice := m.Metrics["price"]
-	qtyMetric, hasQty := m.Metrics["qty"]
+	input := m
+
+	if len(m.Peers) > 0 {
+		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+			_, hasP := p.Metrics["price"]
+			_, hasQ := p.Metrics["qty"]
+			return hasP && hasQ && p.Label != ""
+		})
+
+		if peer == nil {
+			return m
+		}
+
+		input = peer.Clone()
+	}
+
+	priceMetric, hasPrice := input.Metrics["price"]
+	qtyMetric, hasQty := input.Metrics["qty"]
 
 	if !hasPrice || !hasQty {
 		return m
@@ -211,13 +227,13 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		m.Metadata = make(map[string]string)
 	}
 
-	input := tradeEntityInput{
+	pipeInput := tradeEntityInput{
 		Price: price,
 		Qty:   qty,
-		At:    m.At,
+		At:    input.At,
 	}
 
-	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*tradeEntityResult)(out)
 
 		m.Metrics["trade_price"] = m.Metrics["trade_price"].Write(res.TradePrice)
@@ -255,6 +271,8 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		}
 	}
 
+	m.Label = input.Label
+	m.At = input.At
 	m.Finalize()
 	return m
 }
@@ -265,7 +283,7 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (trade *Trade) Register() *data.Measurement[float64] {
-	return data.NewMeasurement[float64]("pumpdump:trade", map[string]data.Metric[float64]{
+	m := data.NewMeasurement[float64]("pumpdump:trade", map[string]data.Metric[float64]{
 		"trade_price":                  data.NewMetric[float64]("trade_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"trade_quantity":               data.NewMetric[float64]("trade_quantity", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"trade_notional":               data.NewMetric[float64]("trade_notional", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
@@ -284,4 +302,6 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 		"notional_rate_divergence":     data.NewMetric[float64]("notional_rate_divergence", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"notional_rate_zscore":         data.NewMetric[float64]("notional_rate_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }

@@ -113,6 +113,22 @@ func TestDrain(t *testing.T) {
 		signalMeas.SNRDefined = true
 		ring.Put(signalMeas)
 
+		// 6. Spot Level3 Order
+		level3Meas := data.NewMeasurement[float64]("websocket:private", map[string]data.Metric[float64]{
+			"limit_price": {Raw: 50005.0},
+			"order_qty":   {Raw: 2.5},
+			"checksum":    {Raw: 123456789},
+		})
+		level3Meas.Label = "BTC/USD"
+		level3Meas.At = now
+		level3Meas.Provenance = map[string]string{
+			"channel":  "level3",
+			"side":     "bid",
+			"event":    "add",
+			"order_id": "ORD-L3-1",
+		}
+		ring.Put(level3Meas)
+
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 
@@ -177,6 +193,19 @@ func TestDrain(t *testing.T) {
 			So(measurements[0].Metrics["cvd"], ShouldEqual, 42.195)
 			So(measurements[0].SNR, ShouldEqual, 3.2)
 			So(measurements[0].SNRDefined, ShouldBeTrue)
+		})
+
+		Convey("Spot Level3 orders are persisted to Iceberg and readable", func() {
+			l3Rows, err := catalog.SpotLevel3(context.Background(), 1, 0)
+			So(err, ShouldBeNil)
+			So(len(l3Rows), ShouldEqual, 1)
+			So(l3Rows[0].Symbol, ShouldEqual, "BTC/USD")
+			So(l3Rows[0].OrderID, ShouldEqual, "ORD-L3-1")
+			So(l3Rows[0].Side, ShouldEqual, "bid")
+			So(l3Rows[0].Event, ShouldEqual, "add")
+			So(l3Rows[0].LimitPrice, ShouldEqual, 50005.0)
+			So(l3Rows[0].OrderQty, ShouldEqual, 2.5)
+			So(l3Rows[0].Checksum, ShouldEqual, 123456789)
 		})
 	})
 

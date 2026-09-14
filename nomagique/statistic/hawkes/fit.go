@@ -51,25 +51,25 @@ logLikelihood returns the exact log-likelihood at horizon: the sum of
 log-intensities at every observed event, minus the compensator (the
 integrated intensity over the observation window).
 */
-func (fit bivariateFit) logLikelihood(stream arrivalStream, horizonSec float64) float64 {
+func (fit bivariateFit) logLikelihood(stream arrivalStream, horizonSec float64) (float64, bool) {
 	if fit.muX <= 0 || fit.muY <= 0 || fit.beta <= 0 {
-		return math.Inf(-1)
+		return 0, false
 	}
 
 	if fit.alphaXX < 0 || fit.alphaXY < 0 || fit.alphaYX < 0 || fit.alphaYY < 0 {
-		return math.Inf(-1)
+		return 0, false
 	}
 
 	marked := stream.marked
 
 	if len(marked) == 0 {
-		return math.Inf(-1)
+		return 0, false
 	}
 
 	span := stream.span(horizonSec)
 
 	if span <= 0 {
-		return math.Inf(-1)
+		return 0, false
 	}
 
 	state := excitationState{}
@@ -82,12 +82,12 @@ func (fit bivariateFit) logLikelihood(stream arrivalStream, horizonSec float64) 
 	)
 
 	if !ok {
-		return math.Inf(-1)
+		return 0, false
 	}
 
 	compensator := fit.compensator(stream, horizonSec, span)
 
-	return logSum - compensator
+	return logSum - compensator, true
 }
 
 /*

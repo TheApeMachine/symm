@@ -122,8 +122,7 @@ func TestExecute(t *testing.T) {
 			"ingress": audit.Manifests, "completed": observer.Completed.Load(),
 			"learningSteps": observer.Steps.Load(), "decisions": observer.Decisions.Load(),
 			"markets": observer.Markets.Load(), "agents": observer.Agents.Load(),
-			"maxLateness": server.MaxLateness.String(), "configDigest": configDigest(),
-			"codeCommit": buildCodeCommit(), "buildId": buildBuildID(),
+			"maxLateness": server.MaxLateness.String(),
 		}, "", "  ")
 		So(reportErr, ShouldBeNil)
 		So(os.WriteFile(filepath.Join(output, "replay-report.json"), report, 0600), ShouldBeNil)

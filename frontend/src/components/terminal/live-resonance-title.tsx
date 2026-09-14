@@ -1,25 +1,45 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusStore, resonanceArtifactStore } from "#/collections/app";
+import { focusStore, resonanceStore } from "#/collections/app";
 
 export const LiveResonanceTitle = () => {
 	const symbol = useSelector(focusStore, (state) => state);
-	const artifact = useSelector(resonanceArtifactStore, (state) =>
-		state.findLast((row) => row.symbol() === symbol),
-	);
+	const artifact = useSelector(resonanceStore, (state) => {
+		const ring = state[symbol];
+		return ring && !ring.isEmpty() ? (ring.getLast() as any) : null;
+	});
 
-	// Reach is how far the forward curve actually extends, which is the probe
-	// horizon the coder reported: the curve is one element per horizon step.
-	const horizon = artifact ? String(artifact.supportedHorizon()) : "—";
-	const reach = artifact ? String(artifact.forwardCurveLength()) : "—";
-	const precision = artifact
-		? artifact.taskRelativePrecision().toFixed(3)
+	const horizonVal = artifact
+		? typeof artifact.supportedHorizon === "function"
+			? artifact.supportedHorizon()
+			: (artifact.supportedHorizon ?? "—")
 		: "—";
+
+	const reachVal = artifact
+		? typeof artifact.forwardCurveLength === "function"
+			? artifact.forwardCurveLength()
+			: Array.isArray(artifact.forwardCurve)
+				? artifact.forwardCurve.length
+				: "—"
+		: "—";
+
+	const precisionNum = artifact
+		? typeof artifact.taskRelativePrecision === "function"
+			? artifact.taskRelativePrecision()
+			: typeof artifact.taskRelativePrecision === "number"
+				? artifact.taskRelativePrecision
+				: null
+		: null;
+
+	const precision =
+		precisionNum !== null && Number.isFinite(precisionNum)
+			? precisionNum.toFixed(3)
+			: "—";
 
 	return (
 		<span>
-			h<span data-res="horizon">{horizon}</span>
+			h<span data-res="horizon">{String(horizonVal)}</span>
 			{" · r "}
-			<span data-res="reach">{reach}</span>
+			<span data-res="reach">{String(reachVal)}</span>
 			{" · relative precision "}
 			<span data-res="precision">{precision}</span>
 		</span>

@@ -124,20 +124,75 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		return m
 	}
 
+	input := m
+
+	if len(m.Peers) > 0 {
+		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+			if p.Label == "" {
+				return false
+			}
+			_, hasDist := p.Metrics["book_shape_distance"]
+			if hasDist {
+				return true
+			}
+			b := p.Metrics["best_bid"].Raw
+			if b == 0 {
+				b = p.Metrics["bid"].Raw
+			}
+			a := p.Metrics["best_ask"].Raw
+			if a == 0 {
+				a = p.Metrics["ask"].Raw
+			}
+			return b > 0 && a > 0
+		})
+
+		if peer == nil {
+			return m
+		}
+
+		input = peer.Clone()
+	}
+
+	distance := input.Metrics["book_shape_distance"].Raw
+	ks := input.Metrics["book_shape_ks"].Raw
+	concBid := input.Metrics["concentration:bid"].Raw
+	concAsk := input.Metrics["concentration:ask"].Raw
+	entBid := input.Metrics["entropy:bid"].Raw
+	entAsk := input.Metrics["entropy:ask"].Raw
+
+	if distance == 0 {
+		b := input.Metrics["best_bid"].Raw
+		if b == 0 {
+			b = input.Metrics["bid"].Raw
+		}
+		a := input.Metrics["best_ask"].Raw
+		if a == 0 {
+			a = input.Metrics["ask"].Raw
+		}
+		mid := (b + a) / 2.0
+		if mid > 0 {
+			distance = (a - b) / mid
+		}
+	}
+
+	if distance <= 0 {
+		return m
+	}
+
 	if m.Metadata == nil {
 		m.Metadata = make(map[string]string)
 	}
 
-	input := morphologyInput{
-		Distance: m.Metrics["book_shape_distance"].Raw,
-		KS:       m.Metrics["book_shape_ks"].Raw,
-		ConcBid:  m.Metrics["concentration:bid"].Raw,
-		ConcAsk:  m.Metrics["concentration:ask"].Raw,
-		EntBid:   m.Metrics["entropy:bid"].Raw,
-		EntAsk:   m.Metrics["entropy:ask"].Raw,
+	pipeInput := morphologyInput{
+		Distance: distance,
+		KS:       ks,
+		ConcBid:  concBid,
+		ConcAsk:  concAsk,
+		EntBid:   entBid,
+		EntAsk:   entAsk,
 	}
 
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*morphologyResult)(out)
 
 		m.Metrics["book_shape_distance"] = m.Metrics["book_shape_distance"].Write(res.Distance)
@@ -163,6 +218,8 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		}
 	}
 
+	m.Label = input.Label
+	m.At = input.At
 	m.Finalize()
 	return m
 }
@@ -173,7 +230,7 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (level3 *Level3) Register() *data.Measurement[float64] {
-	return data.NewMeasurement[float64]("morphology:level3", map[string]data.Metric[float64]{
+	m := data.NewMeasurement[float64]("morphology:level3", map[string]data.Metric[float64]{
 		"book_shape_distance":        data.NewMetric[float64]("book_shape_distance", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 		"book_shape_ks":              data.NewMetric[float64]("book_shape_ks", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 		"concentration:bid":          data.NewMetric[float64]("concentration:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
@@ -184,4 +241,6 @@ func (level3 *Level3) Register() *data.Measurement[float64] {
 		"morphology_change_baseline": data.NewMetric[float64]("morphology_change_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 		"morphology_change_zscore":   data.NewMetric[float64]("morphology_change_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
+	m.Metadata["peer-interest"] = "*"
+	return m
 }
