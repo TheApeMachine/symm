@@ -166,5 +166,87 @@ func TestLoadRehearsalTape(t *testing.T) {
 				So(symbolsFound["IAG/USD"], ShouldBeFalse)
 			})
 		})
+
+		Convey("When Level 3 order book events exist on tape", func() {
+			writerL3 := tables.NewWriter(catalog)
+			epochL3 := int64(300)
+
+			// Add initial book orders
+			writerL3.AddSpotLevel3(tables.SpotLevel3Row{
+				Epoch:      epochL3,
+				Tick:       1,
+				Symbol:     "SOL/USD",
+				VenueAt:    now.Add(1 * time.Second),
+				ReceivedAt: now.Add(1 * time.Second),
+				Side:       "buy",
+				Event:      "add",
+				OrderID:    "order-b1",
+				LimitPrice: 150.0,
+				OrderQty:   10.0,
+			})
+			writerL3.AddSpotLevel3(tables.SpotLevel3Row{
+				Epoch:      epochL3,
+				Tick:       2,
+				Symbol:     "SOL/USD",
+				VenueAt:    now.Add(2 * time.Second),
+				ReceivedAt: now.Add(2 * time.Second),
+				Side:       "sell",
+				Event:      "add",
+				OrderID:    "order-a1",
+				LimitPrice: 150.5,
+				OrderQty:   10.0,
+			})
+
+			// Drive upward movement through successive L3 limit orders
+			for tickIdx := int64(3); tickIdx <= 20; tickIdx++ {
+				writerL3.AddSpotLevel3(tables.SpotLevel3Row{
+					Epoch:      epochL3,
+					Tick:       tickIdx,
+					Symbol:     "SOL/USD",
+					VenueAt:    now.Add(time.Duration(tickIdx) * time.Second),
+					ReceivedAt: now.Add(time.Duration(tickIdx) * time.Second),
+					Side:       "buy",
+					Event:      "add",
+					OrderID:    "order-b-" + string(rune('a'+tickIdx)),
+					LimitPrice: 150.0 + float64(tickIdx)*0.5,
+					OrderQty:   5.0,
+				})
+				writerL3.AddSpotLevel3(tables.SpotLevel3Row{
+					Epoch:      epochL3,
+					Tick:       tickIdx + 20,
+					Symbol:     "SOL/USD",
+					VenueAt:    now.Add(time.Duration(tickIdx) * time.Second),
+					ReceivedAt: now.Add(time.Duration(tickIdx) * time.Second),
+					Side:       "sell",
+					Event:      "add",
+					OrderID:    "order-a-" + string(rune('a'+tickIdx)),
+					LimitPrice: 150.5 + float64(tickIdx)*0.5,
+					OrderQty:   5.0,
+				})
+			}
+
+			errCommit := writerL3.Commit(ctx)
+			So(errCommit, ShouldBeNil)
+
+			tapeL3 := newTestTape()
+			errLoad := catalog.LoadRehearsalTape(ctx, tapeL3)
+			So(errLoad, ShouldBeNil)
+
+			tapeL3.mu.Lock()
+			defer tapeL3.mu.Unlock()
+
+			hasSOL := false
+
+			for _, frag := range tapeL3.fragments {
+				if frag.Symbol == "SOL/USD" {
+					hasSOL = true
+					So(frag.AnchorIndex, ShouldBeLessThan, len(frag.Frames))
+					So(frag.ExtremumIndex, ShouldBeGreaterThanOrEqualTo, frag.AnchorIndex)
+					break
+				}
+			}
+
+			So(hasSOL, ShouldBeTrue)
+		})
 	})
 }

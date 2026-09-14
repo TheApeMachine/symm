@@ -381,11 +381,10 @@ func (c *Catalog) Epochs(ctx context.Context) ([]int64, error) {
 	checkTable(Executions)
 	checkTable(Decisions)
 	checkTable(Models)
-
-	if len(epochSet) == 0 {
-		checkTable(SpotTicker)
-		checkTable(Measurements)
-	}
+	checkTable(SpotTicker)
+	checkTable(SpotLevel3)
+	checkTable(SpotTrade)
+	checkTable(Measurements)
 
 	epochs := make([]int64, 0, len(epochSet))
 

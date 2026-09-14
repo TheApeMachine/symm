@@ -65,6 +65,18 @@ func Wrap(underlying catalog.Catalog) *Catalog {
 	}
 }
 
+func (c *Catalog) InvalidateEpochs() {
+	if c == nil {
+		return
+	}
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	c.cachedEpochs = nil
+	c.epochsLoaded = time.Time{}
+}
+
 /*
 Context enriches ctx with the catalog's pooled AWS configuration so internal
 FileIO operations reuse the same HTTP transport and avoid TCP port exhaustion.

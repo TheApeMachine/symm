@@ -63,7 +63,7 @@ func setFluidCORS(ctx fiber.Ctx) {
 		ctx.Set(fiber.HeaderAccessControlAllowOrigin, "*")
 	}
 
-	ctx.Set(fiber.HeaderAccessControlAllowHeaders, fiber.HeaderContentType)
+	ctx.Set(fiber.HeaderAccessControlAllowHeaders, "*")
 	ctx.Set(fiber.HeaderAccessControlAllowMethods, fiber.MethodPost+", "+fiber.MethodOptions)
 	ctx.Set("Access-Control-Allow-Private-Network", "true")
 }

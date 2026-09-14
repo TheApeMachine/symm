@@ -2,7 +2,6 @@ package tables
 
 import (
 	"context"
-	"math"
 	"slices"
 	"sort"
 	"time"
@@ -27,17 +26,144 @@ type TapePublisher interface {
 }
 
 type observationTick struct {
-	tick     int64
-	venueAt  time.Time
-	symbol   string
-	price    float64
-	qty      float64
-	isTicker bool
+	tick       int64
+	venueAt    time.Time
+	symbol     string
+	price      float64
+	bid        float64
+	ask        float64
+	spread     float64
+	qty        float64
+	sourceKind string
+}
+
+type l3Order struct {
+	price float64
+	qty   float64
+	side  string
+}
+
+type bookState struct {
+	orders map[string]l3Order
+	bids   map[float64]float64
+	asks   map[float64]float64
+}
+
+func newBookState() *bookState {
+	return &bookState{
+		orders: make(map[string]l3Order),
+		bids:   make(map[float64]float64),
+		asks:   make(map[float64]float64),
+	}
+}
+
+func (book *bookState) apply(side string, event string, orderID string, price float64, qty float64) {
+	if event == "add" {
+		book.orders[orderID] = l3Order{price: price, qty: qty, side: side}
+
+		if side == "buy" || side == "b" {
+			book.bids[price] += qty
+		}
+
+		if side == "sell" || side == "s" || side == "ask" || side == "a" {
+			book.asks[price] += qty
+		}
+
+		return
+	}
+
+	if event == "modify" {
+		oldOrder, exists := book.orders[orderID]
+
+		if exists {
+			if oldOrder.side == "buy" || oldOrder.side == "b" {
+				book.bids[oldOrder.price] -= oldOrder.qty
+
+				if book.bids[oldOrder.price] <= 0 {
+					delete(book.bids, oldOrder.price)
+				}
+
+				book.bids[price] += qty
+			}
+
+			if oldOrder.side == "sell" || oldOrder.side == "s" || oldOrder.side == "ask" || oldOrder.side == "a" {
+				book.asks[oldOrder.price] -= oldOrder.qty
+
+				if book.asks[oldOrder.price] <= 0 {
+					delete(book.asks, oldOrder.price)
+				}
+
+				book.asks[price] += qty
+			}
+		}
+
+		if !exists {
+			if side == "buy" || side == "b" {
+				book.bids[price] += qty
+			}
+
+			if side == "sell" || side == "s" || side == "ask" || side == "a" {
+				book.asks[price] += qty
+			}
+		}
+
+		book.orders[orderID] = l3Order{price: price, qty: qty, side: side}
+		return
+	}
+
+	if event == "delete" {
+		oldOrder, exists := book.orders[orderID]
+
+		if !exists {
+			return
+		}
+
+		if oldOrder.side == "buy" || oldOrder.side == "b" {
+			book.bids[oldOrder.price] -= oldOrder.qty
+
+			if book.bids[oldOrder.price] <= 0 {
+				delete(book.bids, oldOrder.price)
+			}
+		}
+
+		if oldOrder.side == "sell" || oldOrder.side == "s" || oldOrder.side == "ask" || oldOrder.side == "a" {
+			book.asks[oldOrder.price] -= oldOrder.qty
+
+			if book.asks[oldOrder.price] <= 0 {
+				delete(book.asks, oldOrder.price)
+			}
+		}
+
+		delete(book.orders, orderID)
+	}
+}
+
+func (book *bookState) bestBidAsk() (float64, float64, float64, float64) {
+	bestBid := 0.0
+	bidQty := 0.0
+	bestAsk := 0.0
+	askQty := 0.0
+
+	for price, qty := range book.bids {
+		if qty > 0 && (bestBid == 0 || price > bestBid) {
+			bestBid = price
+			bidQty = qty
+		}
+	}
+
+	for price, qty := range book.asks {
+		if qty > 0 && (bestAsk == 0 || price < bestAsk) {
+			bestAsk = price
+			askQty = qty
+		}
+	}
+
+	return bestBid, bestAsk, bidQty, askQty
 }
 
 /*
 LoadRehearsalTape walks historical runs in the Iceberg catalog, discovers market
-excursion fragments, and publishes them into the training tape up to the observation budget.
+excursion fragments from the reconstructed order book and tape, and publishes them into the training tape.
 */
 func (c *Catalog) LoadRehearsalTape(ctx context.Context, tape TapePublisher) error {
 	if c == nil || tape == nil {
@@ -69,7 +195,6 @@ func (c *Catalog) LoadRehearsalTape(ctx context.Context, tape TapePublisher) err
 		return nil
 	}
 
-	// Practice on completed runs newest first
 	walkEpochs := make([]int64, len(epochs))
 	copy(walkEpochs, epochs)
 	slices.Reverse(walkEpochs)
@@ -85,39 +210,79 @@ func (c *Catalog) LoadRehearsalTape(ctx context.Context, tape TapePublisher) err
 			break
 		}
 
-		tickers, err := c.SpotTickerScan(ctx, epoch, iceberg.AlwaysTrue{}, 0)
+		l3Rows, _ := c.SpotLevel3Scan(ctx, epoch, iceberg.AlwaysTrue{}, 0)
+		tickers, _ := c.SpotTickerScan(ctx, epoch, iceberg.AlwaysTrue{}, 0)
+		trades, _ := c.SpotTradeScan(ctx, epoch, iceberg.AlwaysTrue{}, 0)
 
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		trades, err := c.SpotTradeScan(ctx, epoch, iceberg.AlwaysTrue{}, 0)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		if len(tickers) == 0 && len(trades) == 0 {
+		if len(l3Rows) == 0 && len(tickers) == 0 && len(trades) == 0 {
 			continue
 		}
 
 		symbolObservations := make(map[string][]observationTick)
 
+		// 1. Reconstruct order books from Level 3 events
+		if len(l3Rows) > 0 {
+			books := make(map[string]*bookState)
+
+			for _, l3 := range l3Rows {
+				if l3.Symbol == "" || l3.LimitPrice <= 0 {
+					continue
+				}
+
+				book, exists := books[l3.Symbol]
+
+				if !exists {
+					book = newBookState()
+					books[l3.Symbol] = book
+				}
+
+				book.apply(l3.Side, l3.Event, l3.OrderID, l3.LimitPrice, l3.OrderQty)
+
+				bid, ask, bidQty, askQty := book.bestBidAsk()
+				price := l3.LimitPrice
+				spread := 0.0
+
+				if bid > 0 && ask > 0 && ask > bid {
+					price = (bid + ask) / 2
+					spread = ask - bid
+				}
+
+				if price <= 0 {
+					continue
+				}
+
+				symbolObservations[l3.Symbol] = append(symbolObservations[l3.Symbol], observationTick{
+					tick:       l3.Tick,
+					venueAt:    l3.VenueAt,
+					symbol:     l3.Symbol,
+					price:      price,
+					bid:        bid,
+					ask:        ask,
+					spread:     spread,
+					qty:        bidQty + askQty,
+					sourceKind: "l3",
+				})
+			}
+		}
+
+		// 2. Incorporate spot tickers using true midpoint
 		for _, ticker := range tickers {
+			bid := ticker.Bid
+			ask := ticker.Ask
 			price := ticker.Last
+			spread := 0.0
 
-			if price <= 0 && ticker.Bid > 0 && ticker.Ask > 0 {
-				price = (ticker.Bid + ticker.Ask) / 2
+			if bid > 0 && ask > 0 && ask >= bid {
+				price = (bid + ask) / 2
+				spread = ask - bid
 			}
 
-			if price <= 0 && ticker.Bid > 0 {
-				price = ticker.Bid
+			if price <= 0 && bid > 0 {
+				price = bid
 			}
 
-			if price <= 0 && ticker.Ask > 0 {
-				price = ticker.Ask
+			if price <= 0 && ask > 0 {
+				price = ask
 			}
 
 			if price <= 0 {
@@ -125,27 +290,31 @@ func (c *Catalog) LoadRehearsalTape(ctx context.Context, tape TapePublisher) err
 			}
 
 			symbolObservations[ticker.Symbol] = append(symbolObservations[ticker.Symbol], observationTick{
-				tick:     ticker.Tick,
-				venueAt:  ticker.VenueAt,
-				symbol:   ticker.Symbol,
-				price:    price,
-				qty:      ticker.BidQty + ticker.AskQty,
-				isTicker: true,
+				tick:       ticker.Tick,
+				venueAt:    ticker.VenueAt,
+				symbol:     ticker.Symbol,
+				price:      price,
+				bid:        bid,
+				ask:        ask,
+				spread:     spread,
+				qty:        ticker.BidQty + ticker.AskQty,
+				sourceKind: "ticker",
 			})
 		}
 
+		// 3. Incorporate spot trades
 		for _, trade := range trades {
 			if trade.Price <= 0 {
 				continue
 			}
 
 			symbolObservations[trade.Symbol] = append(symbolObservations[trade.Symbol], observationTick{
-				tick:     trade.Tick,
-				venueAt:  trade.VenueAt,
-				symbol:   trade.Symbol,
-				price:    trade.Price,
-				qty:      trade.Qty,
-				isTicker: false,
+				tick:       trade.Tick,
+				venueAt:    trade.VenueAt,
+				symbol:     trade.Symbol,
+				price:      trade.Price,
+				qty:        trade.Qty,
+				sourceKind: "trade",
 			})
 		}
 
@@ -171,80 +340,14 @@ func (c *Catalog) LoadRehearsalTape(ctx context.Context, tape TapePublisher) err
 				return ticks[firstIndex].tick < ticks[secondIndex].tick
 			})
 
-			fragmentSize := 32
-
-			if len(ticks) < fragmentSize {
-				fragmentSize = len(ticks)
-			}
-
-			stride := fragmentSize / 2
-
-			if stride < 1 {
-				stride = 1
-			}
-
-			var fragments []types.ReplayFragment
-
-			for start := 0; start+fragmentSize <= len(ticks); start += stride {
-				slice := ticks[start : start+fragmentSize]
-
-				hasMovement := false
-				firstPrice := slice[0].price
-
-				for _, item := range slice[1:] {
-					if item.price != firstPrice {
-						hasMovement = true
-						break
-					}
-				}
-
-				if !hasMovement {
-					continue
-				}
-
-				fragment := buildFragment(symbol, slice)
-				fragments = append(fragments, fragment)
-			}
+			// Discover start and end of market events across the reconstructed tape
+			fragments := discoverMarketEvents(symbol, ticks)
 
 			if len(fragments) > 0 {
 				symbolFragments[symbol] = fragments
 
 				if len(fragments) > maxFragments {
 					maxFragments = len(fragments)
-				}
-			}
-		}
-
-		if maxFragments == 0 {
-			for _, symbol := range symbols {
-				ticks := symbolObservations[symbol]
-
-				fragmentSize := 32
-
-				if len(ticks) < fragmentSize {
-					fragmentSize = len(ticks)
-				}
-
-				stride := fragmentSize / 2
-
-				if stride < 1 {
-					stride = 1
-				}
-
-				var fragments []types.ReplayFragment
-
-				for start := 0; start+fragmentSize <= len(ticks); start += stride {
-					slice := ticks[start : start+fragmentSize]
-					fragment := buildFragment(symbol, slice)
-					fragments = append(fragments, fragment)
-				}
-
-				if len(fragments) > 0 {
-					symbolFragments[symbol] = fragments
-
-					if len(fragments) > maxFragments {
-						maxFragments = len(fragments)
-					}
 				}
 			}
 		}
@@ -284,28 +387,166 @@ func (c *Catalog) LoadRehearsalTape(ctx context.Context, tape TapePublisher) err
 	return nil
 }
 
-func buildFragment(symbol string, slice []observationTick) types.ReplayFragment {
-	frames := make([][]*data.Measurement[float64], len(slice))
-	anchorIdx := len(slice) / 3
-	extremumIdx := (2 * len(slice)) / 3
+type marketEvent struct {
+	anchorIndex    int
+	extremumIndex  int
+	clearsFriction bool
+}
 
-	anchorPrice := slice[anchorIdx].price
-	maxDisplacement := 0.0
+/*
+discoverMarketEvents scans the chronological tape for a symbol, identifying genuine
+upward and downward price legs (start anchor B to peak/trough C) with precursor context A -> B.
+It yields both movements that clear friction and movements that do not, creating varied learning data.
+*/
+func discoverMarketEvents(symbol string, ticks []observationTick) []types.ReplayFragment {
+	totalTicks := len(ticks)
 
-	for index := anchorIdx + 1; index < len(slice); index++ {
-		diff := math.Abs(slice[index].price - anchorPrice)
+	if totalTicks < 8 {
+		return nil
+	}
 
-		if diff > maxDisplacement {
-			maxDisplacement = diff
-			extremumIdx = index
+	// Compute average spread / friction from quotes
+	totalSpread := 0.0
+	spreadCount := 0
+
+	for _, item := range ticks {
+		if item.spread > 0 {
+			totalSpread += item.spread / item.price
+			spreadCount++
 		}
 	}
 
+	frictionRate := 0.002
+
+	if spreadCount > 0 && totalSpread > 0 {
+		frictionRate = totalSpread / float64(spreadCount)
+	}
+
+	var events []marketEvent
+
+	// Scan with adaptive step sizes to find local inflections
+	stepHorizon := 16
+
+	if totalTicks < 32 {
+		stepHorizon = totalTicks / 2
+	}
+
+	for anchorPos := 0; anchorPos+4 < totalTicks; anchorPos += max(1, stepHorizon/2) {
+		anchorPrice := ticks[anchorPos].price
+		windowEnd := min(anchorPos+stepHorizon*2, totalTicks)
+
+		maxPrice := anchorPrice
+		maxPos := anchorPos
+		minPrice := anchorPrice
+		minPos := anchorPos
+
+		for candidatePos := anchorPos + 1; candidatePos < windowEnd; candidatePos++ {
+			candPrice := ticks[candidatePos].price
+
+			if candPrice > maxPrice {
+				maxPrice = candPrice
+				maxPos = candidatePos
+			}
+
+			if candPrice < minPrice {
+				minPrice = candPrice
+				minPos = candidatePos
+			}
+		}
+
+		upwardMove := (maxPrice - anchorPrice) / anchorPrice
+		downwardMove := (anchorPrice - minPrice) / anchorPrice
+
+		if upwardMove > 0 && maxPos > anchorPos {
+			clears := upwardMove >= frictionRate
+			events = append(events, marketEvent{
+				anchorIndex:    anchorPos,
+				extremumIndex:  maxPos,
+				clearsFriction: clears,
+			})
+		}
+
+		if downwardMove > 0 && minPos > anchorPos {
+			clears := downwardMove >= frictionRate
+			events = append(events, marketEvent{
+				anchorIndex:    anchorPos,
+				extremumIndex:  minPos,
+				clearsFriction: clears,
+			})
+		}
+	}
+
+	if len(events) == 0 {
+		return nil
+	}
+
+	var fragments []types.ReplayFragment
+
+	for _, evt := range events {
+		// Precursor window: up to 16 observations before B
+		precursorLen := 12
+
+		if evt.anchorIndex < precursorLen {
+			precursorLen = evt.anchorIndex
+		}
+
+		startPos := evt.anchorIndex - precursorLen
+
+		// Post-extremum window: up to 8 observations after C
+		postLen := 8
+
+		if evt.extremumIndex+postLen > totalTicks {
+			postLen = totalTicks - evt.extremumIndex
+		}
+
+		endPos := evt.extremumIndex + postLen
+
+		if endPos <= startPos {
+			continue
+		}
+
+		slice := ticks[startPos:endPos]
+		relAnchor := evt.anchorIndex - startPos
+		relExtremum := evt.extremumIndex - startPos
+
+		if relAnchor >= len(slice) || relExtremum >= len(slice) {
+			continue
+		}
+
+		fragment := buildFragmentWithIndices(symbol, slice, relAnchor, relExtremum)
+		fragments = append(fragments, fragment)
+	}
+
+	return fragments
+}
+
+func buildFragmentWithIndices(
+	symbol string,
+	slice []observationTick,
+	anchorIndex int,
+	extremumIndex int,
+) types.ReplayFragment {
+	frames := make([][]*data.Measurement[float64], len(slice))
+
 	for index, item := range slice {
-		meas := data.NewMeasurement[float64]("market", map[string]data.Metric[float64]{
+		metrics := map[string]data.Metric[float64]{
 			"price": data.NewMetric[float64]("price", data.UnitDimensionless, data.TimescaleInstantaneous, 0, item.price),
 			"qty":   data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, item.qty),
-		})
+		}
+
+		if item.bid > 0 {
+			metrics["bid"] = data.NewMetric[float64]("bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, item.bid)
+		}
+
+		if item.ask > 0 {
+			metrics["ask"] = data.NewMetric[float64]("ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, item.ask)
+		}
+
+		if item.spread > 0 {
+			metrics["spread"] = data.NewMetric[float64]("spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, item.spread)
+		}
+
+		meas := data.NewMeasurement[float64]("market", metrics)
 		meas.Label = symbol
 		meas.At = item.venueAt
 		meas.SeqIdx = item.tick
@@ -316,7 +557,7 @@ func buildFragment(symbol string, slice []observationTick) types.ReplayFragment 
 	return types.ReplayFragment{
 		Frames:        frames,
 		Symbol:        symbol,
-		AnchorIndex:   anchorIdx,
-		ExtremumIndex: extremumIdx,
+		AnchorIndex:   anchorIndex,
+		ExtremumIndex: extremumIndex,
 	}
 }

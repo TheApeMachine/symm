@@ -309,7 +309,18 @@ Answer accepts one browser offer and returns a complete non-trickle answer.
 func (fluidTransport *FluidRTC) Answer(
 	offer webrtc.SessionDescription,
 ) (webrtc.SessionDescription, error) {
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetIncludeLoopbackCandidate(true)
+
+	if err := settingEngine.SetAnsweringDTLSRole(webrtc.DTLSRoleServer); err != nil {
+		return webrtc.SessionDescription{}, fluidError(
+			"unable to set answering DTLS role",
+			err,
+		)
+	}
+
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{})
 
 	if err != nil {
 		return webrtc.SessionDescription{}, fluidError(
@@ -413,5 +424,5 @@ func (fluidTransport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
 }
 
 func fluidError(message string, err error) error {
-	return errnie.Err(errnie.IO, "webrtc: "+message, err)
+	return errnie.Error(errnie.Err(errnie.IO, "webrtc: "+message, err))
 }

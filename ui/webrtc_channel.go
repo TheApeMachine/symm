@@ -351,7 +351,7 @@ func (channel *fluidChannel) send(payload []byte) error {
 	chunkCount := uint32((len(payload) + fluidSegmentSize - 1) / fluidSegmentSize)
 	generation := channel.sendGen.Load()
 
-	errnie.Info(fmt.Sprintf(
+	errnie.Debug(fmt.Sprintf(
 		"fluid[%s]: sending frame %d (%d chunks, %d bytes)",
 		channel.label, frameID, chunkCount, len(payload),
 	))

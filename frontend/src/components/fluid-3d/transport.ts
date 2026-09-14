@@ -126,6 +126,7 @@ export class FluidWebRTCFeed {
 		let chunksReceived = 0;
 		channel.addEventListener("message", (event) => {
 			try {
+				console.log(event);
 				if (!(event.data instanceof ArrayBuffer)) {
 					throw new Error(`${channel.label} received a non-binary message`);
 				}

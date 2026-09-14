@@ -160,14 +160,17 @@ export const FluidInspector = () => {
 
 		const feed = new FluidWebRTCFeed({
 			onFields: (fields) => {
+				console.log("fields", fields);
 				scene.updateFields(fields);
 				setGrid(fields.grid);
 			},
 			onParticles: (particles) => {
+				console.log("particles", particles);
 				scene.updateParticles(particles);
 				setParticleCount(particles.count);
 			},
 			onPhase: (phase) => {
+				console.log("phase", phase);
 				const { reading, oscillators, modes } = phase;
 
 				// Hydrodynamic panel: the live scalar reading from the kernel.
@@ -245,6 +248,7 @@ export const FluidInspector = () => {
 		feedRef.current = feed;
 		scene.setOptions(initialOptions);
 		void feed.connect();
+		console.log(feed);
 
 		return () => {
 			feed.close();
@@ -293,7 +297,7 @@ export const FluidInspector = () => {
 						) : null}
 					</Flex.Row>
 				}
-				className="absolute inset-x-0 top-0 z-10 bg-[color:color-mix(in_srgb,var(--bg)_91%,transparent)]"
+				className="absolute inset-x-0 top-0 z-10 bg-[color-mix(in_srgb,var(--bg)_91%,transparent)]"
 			>
 				<Flex.Row gap={2} align="center" className="ml-2">
 					<Toggle
@@ -335,7 +339,7 @@ export const FluidInspector = () => {
 			{options.slices ? (
 				<Flex.Column
 					gap={2}
-					className="absolute top-14 right-3 z-10 rounded border border-(--line) bg-[color:color-mix(in_srgb,var(--bg)_91%,transparent)] p-2"
+					className="absolute top-14 right-3 z-10 rounded border border-(--line) bg-[color-mix(in_srgb,var(--bg)_91%,transparent)] p-2"
 				>
 					<Slider
 						label="X"
@@ -355,12 +359,12 @@ export const FluidInspector = () => {
 				</Flex.Column>
 			) : null}
 
-			<Typography.Pre className="absolute bottom-3 left-3 z-10 m-0 whitespace-pre rounded border border-(--line) bg-[color:color-mix(in_srgb,var(--bg)_91%,transparent)] p-2 text-[10px] leading-4 text-(--f3)">
+			<Typography.Pre className="absolute bottom-3 left-3 z-10 m-0 whitespace-pre rounded border border-(--line) bg-[color-mix(in_srgb,var(--bg)_91%,transparent)] p-2 text-[10px] leading-4 text-(--f3)">
 				{particleReadout(selected)}
 			</Typography.Pre>
 
 			{/* Kuramoto sync ring */}
-			<div className="absolute right-3 bottom-3 z-10 h-44 w-44 rounded border border-(--line) bg-[color:color-mix(in_srgb,var(--bg)_91%,transparent)] p-1">
+			<div className="absolute right-3 bottom-3 z-10 h-44 w-44 rounded border border-(--line) bg-[color-mix(in_srgb,var(--bg)_91%,transparent)] p-1">
 				<Typography.Label size="xxs" tone="f4" className="mb-0.5 text-center">
 					Kuramoto sync
 				</Typography.Label>
@@ -368,7 +372,7 @@ export const FluidInspector = () => {
 			</div>
 
 			{/* Hydrodynamic phase portrait */}
-			<div className="absolute right-50 bottom-3 z-10 h-44 w-56 rounded border border-(--line) bg-[color:color-mix(in_srgb,var(--bg)_91%,transparent)] p-1">
+			<div className="absolute right-50 bottom-3 z-10 h-44 w-56 rounded border border-(--line) bg-[color-mix(in_srgb,var(--bg)_91%,transparent)] p-1">
 				<Typography.Label size="xxs" tone="f4" className="mb-0.5 text-center">
 					∇·u vs ‖∇P‖
 				</Typography.Label>
@@ -398,7 +402,7 @@ export const FluidInspector = () => {
 						</span>
 					</div>
 				}
-				className="absolute top-14 left-3 z-10 h-104 w-80 rounded border border-(--line) bg-[color:color-mix(in_srgb,var(--bg)_91%,transparent)]"
+				className="absolute top-14 left-3 z-10 h-104 w-80 rounded border border-(--line) bg-[color-mix(in_srgb,var(--bg)_91%,transparent)]"
 			>
 				<TerminalPhaseDialChart />
 			</Canvas>
@@ -407,7 +411,7 @@ export const FluidInspector = () => {
 				<Flex.Row
 					align="center"
 					gap={3}
-					className="absolute right-3 bottom-3 z-10 rounded border border-(--error) bg-[color:color-mix(in_srgb,var(--bg)_95%,transparent)] p-2"
+					className="absolute right-3 bottom-3 z-10 rounded border border-(--error) bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] p-2"
 				>
 					<Typography.Mono size="s" className="text-(--error)">
 						{error}

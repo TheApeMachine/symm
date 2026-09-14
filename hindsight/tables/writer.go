@@ -201,11 +201,19 @@ func (w *Writer) Commit(ctx context.Context) error {
 		return err
 	}
 
-	return commitFamily(w, ctx, Outcomes,
+	if err := commitFamily(w, ctx, Outcomes,
 		func() []OutcomeRow { rows := w.outcomes; w.outcomes = nil; return rows },
 		func(rows []OutcomeRow) { w.outcomes = append(rows, w.outcomes...) },
 		nil, fillOutcomes,
-	)
+	); err != nil {
+		return err
+	}
+
+	if w.catalog != nil {
+		w.catalog.InvalidateEpochs()
+	}
+
+	return nil
 }
 
 func commitFamily[T any](

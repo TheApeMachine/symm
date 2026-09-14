@@ -364,12 +364,6 @@ func (training *Training) mount() {
 			}
 
 			worker.IngestReplay(fragment, randSlot)
-
-			if worker.IsUnprimed() {
-				if _, err := worker.RehearseChild(); err != nil {
-					errnie.Error(err)
-				}
-			}
 		}
 	}
 }
