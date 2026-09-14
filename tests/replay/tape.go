@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/types"
 )
 
 // Tape reads cached original S3 capture objects in their persisted order.
@@ -24,7 +24,7 @@ type Tape struct {
 
 var errThrough = errors.New("replay: requested capture interval complete")
 
-func (tape Tape) Read(ctx context.Context, visit func(hindsight.RawFrame) error) error {
+func (tape Tape) Read(ctx context.Context, visit func(RawFrame) error) error {
 	paths, err := filepath.Glob(filepath.Join(tape.Directory, "*.jsonl"))
 
 	if err != nil {
@@ -34,7 +34,7 @@ func (tape Tape) Read(ctx context.Context, visit func(hindsight.RawFrame) error)
 	if len(paths) == 0 {
 		return errnie.Error(errnie.Err(errnie.NotFound, "replay: no capture objects", nil))
 	}
-	var previous hindsight.CaptureIdentity
+	var previous types.CaptureIdentity
 
 	for _, path := range paths {
 		if err := tape.read(ctx, path, &previous, visit); err != nil {
@@ -48,8 +48,8 @@ func (tape Tape) Read(ctx context.Context, visit func(hindsight.RawFrame) error)
 }
 
 func (tape Tape) read(
-	ctx context.Context, path string, previous *hindsight.CaptureIdentity,
-	visit func(hindsight.RawFrame) error,
+	ctx context.Context, path string, previous *types.CaptureIdentity,
+	visit func(RawFrame) error,
 ) (err error) {
 	file, err := os.Open(path)
 
@@ -67,7 +67,7 @@ func (tape Tape) read(
 		if err := ctx.Err(); err != nil {
 			return errnie.Error(err)
 		}
-		var frame hindsight.RawFrame
+		var frame RawFrame
 		err := decoder.Decode(&frame)
 
 		if err == io.EOF {

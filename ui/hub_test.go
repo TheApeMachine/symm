@@ -11,7 +11,6 @@ import (
 
 	fastws "github.com/fasthttp/websocket"
 	fiberws "github.com/gofiber/contrib/v3/websocket"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/tests/tablestest"
@@ -83,38 +82,46 @@ func TestHubWriteFrontend(t *testing.T) {
 func TestHubSetHindsightStore(t *testing.T) {
 	Convey("The Hindsight canonical HTTP contract survives an Iceberg round trip", t, func() {
 		catalog := tablestest.New(t)
-		writer := tables.NewWriter(catalog)
 		at := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
-		price, err := decimal.NewFromString("50000.5")
-		So(err, ShouldBeNil)
-		qty, err := decimal.NewFromString("1.5")
-		So(err, ShouldBeNil)
-		fee, err := decimal.NewFromString("0.15")
+
+		err := catalog.RecordRun(t.Context(), tables.Run{
+			Epoch:     1,
+			StartedAt: at,
+			BuildID:   "test",
+			Status:    "ACTIVE",
+		})
 		So(err, ShouldBeNil)
 
-		writer.AddSpotTicker(tables.SpotTickerRow{
-			Epoch: 1, Tick: 10, Symbol: "BTC/USD", VenueAt: at, ReceivedAt: at,
-			Bid: 50000, Ask: 50001, Last: 50000.5,
-		})
-		writer.AddSpotTrade(tables.SpotTradeRow{
-			Epoch: 1, Tick: 11, Symbol: "BTC/USD", VenueAt: at, ReceivedAt: at,
-			Price: 50000.5, Qty: 1.5, Side: "buy", OrdType: "limit", TradeID: 12345,
-		})
-		writer.AddSpotLevel3(tables.SpotLevel3Row{
-			Epoch: 1, Tick: 12, Symbol: "BTC/USD", VenueAt: at, ReceivedAt: at,
-			Side: "buy", Event: "add", OrderID: "O1", LimitPrice: 50000, OrderQty: 2.0,
-		})
-		writer.AddExecution(tables.ExecutionRow{
-			Epoch: 1, Tick: 13, Symbol: "BTC/USD", OrderID: "ord-1", Side: "buy",
-			OrderStatus: "filled", LastPrice: price, LastQty: qty, Cost: price, FeeUsdEquiv: fee,
-		})
-		writer.AddMeasurement(tables.MeasurementRow{
-			Epoch: 1, Tick: 14, Source: "cvd", Symbol: "BTC/USD", VenueAt: at,
-			ObservedAt: at, Maturity: 1.0, SNR: 2.5, SNRDefined: true,
-			Metrics: map[string]float64{"delta": 100.0},
-		})
+		writer := tables.NewWriter(catalog, 1)
 
-		So(writer.Commit(t.Context()), ShouldBeNil)
+		tickerMeasurement := &data.Measurement[float64]{
+			Source:   "spot_ticker",
+			Label:    "BTC/USD",
+			SeqIdx:   10,
+			At:       at,
+			Maturity: 1.0,
+			Metrics: map[string]data.Metric[float64]{
+				"bid":  {Label: "bid", Raw: 50000},
+				"ask":  {Label: "ask", Raw: 50001},
+				"last": {Label: "last", Raw: 50000.5},
+			},
+		}
+		writer.Add("ticker", tickerMeasurement)
+
+		tradeMeasurement := &data.Measurement[float64]{
+			Source:   "spot_trade",
+			Label:    "BTC/USD",
+			SeqIdx:   11,
+			At:       at,
+			Maturity: 1.0,
+			Metrics: map[string]data.Metric[float64]{
+				"price": {Label: "price", Raw: 50000.5},
+				"qty":   {Label: "qty", Raw: 1.5},
+			},
+		}
+		writer.Add("trade", tradeMeasurement)
+
+		So(writer.CommitReady(t.Context(), true), ShouldBeNil)
 
 		hub := NewHub(t.Context())
 		hub.SetHindsightStore(catalog)
@@ -132,82 +139,32 @@ func TestHubSetHindsightStore(t *testing.T) {
 			So(response.Body.Close(), ShouldBeNil)
 		}
 
-		Convey("Spot ticker records are queryable by epoch and tick", func() {
-			var tickers []tables.SpotTickerRow
-			read("/hindsight/spot_ticker?epoch=1&after=0", &tickers)
-			So(len(tickers), ShouldEqual, 1)
-			So(tickers[0].Symbol, ShouldEqual, "BTC/USD")
-			So(tickers[0].Last, ShouldEqual, 50000.5)
-		})
-
-		Convey("Spot trade records are queryable by epoch and tick", func() {
-			var trades []tables.SpotTradeRow
-			read("/hindsight/spot_trade?epoch=1&after=0", &trades)
-			So(len(trades), ShouldEqual, 1)
-			So(trades[0].Symbol, ShouldEqual, "BTC/USD")
-			So(trades[0].TradeID, ShouldEqual, 12345)
-		})
-
-		Convey("Spot Level3 records are queryable by epoch and tick", func() {
-			var level3Rows []tables.SpotLevel3Row
-			read("/hindsight/spot_level3?epoch=1&after=0", &level3Rows)
-			So(len(level3Rows), ShouldEqual, 1)
-			So(level3Rows[0].OrderID, ShouldEqual, "O1")
-			So(level3Rows[0].LimitPrice, ShouldEqual, 50000)
-		})
-
-		Convey("Execution records are queryable by epoch and tick", func() {
-			var execs []tables.ExecutionRow
-			read("/hindsight/executions?epoch=1&after=0", &execs)
-			So(len(execs), ShouldEqual, 1)
-			So(execs[0].OrderID, ShouldEqual, "ord-1")
-			So(execs[0].Side, ShouldEqual, "buy")
-		})
-
-		Convey("Measurement records are queryable by epoch and tick", func() {
-			var measurements []tables.MeasurementRow
-			read("/hindsight/measurements?epoch=1&after=0", &measurements)
-			So(len(measurements), ShouldEqual, 1)
-			So(measurements[0].Source, ShouldEqual, "cvd")
-			So(measurements[0].Metrics["delta"], ShouldEqual, 100.0)
-		})
-
 		Convey("Hindsight runs are queryable", func() {
-			var runs []tables.HindsightRun
+			var runs []tables.Run
 			read("/hindsight/runs", &runs)
 			So(len(runs), ShouldEqual, 1)
-			So(runs[0].ID, ShouldEqual, "1")
+			So(runs[0].Epoch, ShouldEqual, 1)
 		})
 
 		Convey("Hindsight timeline is queryable", func() {
-			var timeline tables.HindsightTimeline
-			read("/hindsight/timeline?run=1&symbol=BTC/USD&buckets=10", &timeline)
-			So(timeline.Symbol, ShouldEqual, "BTC/USD")
-			So(len(timeline.Buckets), ShouldEqual, 10)
+			var timeline []*data.Measurement[float64]
+			read("/hindsight/timeline?run=1&symbol=BTC/USD", &timeline)
+			So(len(timeline), ShouldEqual, 1)
+			So(timeline[0].Label, ShouldEqual, "BTC/USD")
 		})
 
-		Convey("Hindsight lifecycle is queryable", func() {
-			var lifecycle []tables.HindsightLifecycleEvent
-			read("/hindsight/lifecycle?run=1", &lifecycle)
-			So(len(lifecycle), ShouldBeGreaterThanOrEqualTo, 1)
+		Convey("Hindsight symbols are queryable", func() {
+			var symbols []string
+			read("/hindsight/symbols?run=1", &symbols)
+			So(len(symbols), ShouldEqual, 1)
+			So(symbols[0], ShouldEqual, "BTC/USD")
 		})
 
-		Convey("Hindsight captures are queryable", func() {
-			var captures []tables.HindsightCapture
-			read("/hindsight/captures?run=1&after=0", &captures)
-			So(len(captures), ShouldBeGreaterThanOrEqualTo, 1)
-		})
-
-		Convey("Hindsight envelope is queryable", func() {
-			var envelope tables.HindsightEnvelope
-			read("/hindsight/envelope?run=1&seq=10", &envelope)
-			So(envelope.Sequence, ShouldEqual, 10)
-		})
-
-		Convey("Hindsight resident is queryable", func() {
-			var resident tables.HindsightResident
-			read("/hindsight/resident?run=1&symbol=BTC/USD&seq=15&budget=10", &resident)
-			So(resident.Sequence, ShouldEqual, 15)
+		Convey("Hindsight data is queryable by table", func() {
+			var dataRows []*data.Measurement[float64]
+			read("/hindsight/data?epoch=1&table=spot_ticker", &dataRows)
+			So(len(dataRows), ShouldEqual, 1)
+			So(dataRows[0].Label, ShouldEqual, "BTC/USD")
 		})
 
 		Convey("Hindsight metric map is queryable", func() {

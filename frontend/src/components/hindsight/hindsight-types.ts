@@ -5,6 +5,9 @@ These mirror hindsight.CaptureIdentity / Run / StateEntry — not a parallel
 domain model — so the UI reads the same identities the backend persisted.
 */
 
+export { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+export { MetricT } from "#/providers/telemetry/telemetry/metric";
+
 export type HindsightRun = {
 	id: string;
 	startedAt: string;

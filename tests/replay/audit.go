@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
 )
 
 // Audit counts persisted input acceptance and ingress manifests from the
@@ -55,8 +54,10 @@ func (audit *Audit) Read() error {
 					return errnie.Error(err)
 				}
 
+
 				if family == "manifests" {
-					var manifest hindsight.EnvelopeManifest
+					var manifest EnvelopeManifest
+
 					if err := json.Unmarshal(record, &manifest); err != nil {
 						return errnie.Error(err)
 					}
@@ -67,12 +68,11 @@ func (audit *Audit) Read() error {
 					audit.Manifests++
 					continue
 				}
-				var frame hindsight.RawFrame
+				var frame RawFrame
 
 				if err := json.Unmarshal(record, &frame); err != nil {
 					return errnie.Error(err)
 				}
-
 				if frame.Kind != "l3_touch" {
 					audit.Captures++
 				}

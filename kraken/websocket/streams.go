@@ -3,7 +3,7 @@ package websocket
 import (
 	"sync"
 
-	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -11,7 +11,7 @@ streamSpan is one operational connection span within a transport stream: its
 epoch and frame sequence. It is owned by the transport session, not Hindsight.
 */
 type streamSpan struct {
-	epoch    hindsight.StreamEpoch
+	epoch    types.StreamEpoch
 	sequence uint64
 }
 
@@ -27,13 +27,13 @@ type Streams struct {
 	endpoint string
 
 	mu    sync.Mutex
-	spans map[hindsight.Stream]streamSpan
+	spans map[types.Stream]streamSpan
 }
 
 func NewStreams(endpoint string) *Streams {
 	return &Streams{
 		endpoint: endpoint,
-		spans:    make(map[hindsight.Stream]streamSpan),
+		spans:    make(map[types.Stream]streamSpan),
 	}
 }
 
@@ -42,18 +42,18 @@ Next mints the operational StreamRef for one inbound frame on the given channel
 or feed. The stream name mirrors Hindsight's endpoint:kind naming; the epoch
 starts at 1 and the sequence within the span is monotonic.
 */
-func (streams *Streams) Next(kind string) hindsight.StreamRef {
+func (streams *Streams) Next(kind string) types.StreamRef {
 	if streams == nil {
-		return hindsight.StreamRef{}
+		return types.StreamRef{}
 	}
 
-	stream := hindsight.Stream(streams.endpoint + ":" + kind)
+	stream := types.Stream(streams.endpoint + ":" + kind)
 
 	streams.mu.Lock()
 	defer streams.mu.Unlock()
 
 	if streams.spans == nil {
-		streams.spans = make(map[hindsight.Stream]streamSpan)
+		streams.spans = make(map[types.Stream]streamSpan)
 	}
 
 	span := streams.spans[stream]
@@ -65,7 +65,7 @@ func (streams *Streams) Next(kind string) hindsight.StreamRef {
 	span.sequence++
 	streams.spans[stream] = span
 
-	return hindsight.StreamRef{
+	return types.StreamRef{
 		Stream:   stream,
 		Epoch:    span.epoch,
 		Sequence: span.sequence,

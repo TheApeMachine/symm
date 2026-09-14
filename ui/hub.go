@@ -173,318 +173,88 @@ func NewHub(ctx context.Context) *Hub {
 		return c.JSON(runs)
 	})
 
-	hub.app.Get("/hindsight/timeline", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/timeline", func(ctx fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		run := c.Query("run")
+		run := ctx.Query("run")
+
+		if run == "" {
+			run = ctx.Query("epoch")
+		}
 
 		if run == "" {
 			return fiber.NewError(fiber.StatusBadRequest, "run is required")
 		}
 
-		query := tables.TimelineQuery{
-			Run:        run,
-			Symbol:     c.Query("symbol"),
-			Coordinate: c.Query("coordinate"),
-			Axis:       c.Query("axis"),
-			Buckets:    int(parseUintQuery(c.Query("buckets"))),
-			From:       parseInt64Query(c.Query("from")),
-			To:         parseInt64Query(c.Query("to")),
-			Symbols:    c.Query("symbols") == "1",
+		epoch := parseInt64Query(run)
+		symbol := ctx.Query("symbol")
+		fromTick := parseInt64Query(ctx.Query("from"))
+		toTick := parseInt64Query(ctx.Query("to"))
+
+		var measurements []*data.Measurement[float64]
+
+		for measurement := range hub.store.Timeline(hub.ctx, epoch, symbol, fromTick, toTick) {
+			measurements = append(measurements, measurement)
 		}
 
-		timeline, err := hub.store.Timeline(hub.ctx, query)
+		if measurements == nil {
+			measurements = []*data.Measurement[float64]{}
+		}
+
+		return ctx.JSON(measurements)
+	})
+
+	hub.app.Get("/hindsight/symbols", func(ctx fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		run := ctx.Query("run")
+
+		if run == "" {
+			run = ctx.Query("epoch")
+		}
+
+		epoch := parseInt64Query(run)
+		symbols, err := hub.store.Symbols(hub.ctx, epoch)
 
 		if err != nil {
 			return err
 		}
 
-		return c.JSON(timeline)
+		if symbols == nil {
+			symbols = []string{}
+		}
+
+		return ctx.JSON(symbols)
 	})
 
-	hub.app.Get("/hindsight/lifecycle", func(c fiber.Ctx) error {
+	hub.app.Get("/hindsight/data", func(ctx fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		epoch := parseInt64Query(c.Query("run"))
-		events, err := hub.store.Lifecycle(hub.ctx, epoch)
+		epoch := parseInt64Query(ctx.Query("epoch"))
+		tableName := ctx.Query("table")
 
-		if err != nil {
-			return err
+		if tableName == "" {
+			tableName = tables.SpotTicker
 		}
 
-		return c.JSON(events)
-	})
+		limit := int(parseUintQuery(ctx.Query("limit")))
+		var measurements []*data.Measurement[float64]
 
-	hub.app.Get("/hindsight/captures", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		for measurement := range hub.store.Scan(hub.ctx, tableName, epoch, nil, limit) {
+			measurements = append(measurements, measurement)
 		}
 
-		epoch := parseInt64Query(c.Query("run"))
-		after := parseInt64Query(c.Query("after"))
-		captures, err := hub.store.Captures(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
+		if measurements == nil {
+			measurements = []*data.Measurement[float64]{}
 		}
 
-		return c.JSON(captures)
-	})
-
-	hub.app.Get("/hindsight/envelope", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("run"))
-		seq := parseInt64Query(c.Query("seq"))
-		envelope, err := hub.store.EnvelopeAt(hub.ctx, epoch, seq)
-
-		if err != nil {
-			return fiber.ErrNotFound
-		}
-
-		return c.JSON(envelope)
-	})
-
-	hub.app.Get("/hindsight/state", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		return fiber.ErrNotFound
-	})
-
-	hub.app.Get("/hindsight/states", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		return c.JSON([]tables.HindsightState{})
-	})
-
-	hub.app.Get("/hindsight/resident", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("run"))
-		symbol := c.Query("symbol")
-		seq := parseInt64Query(c.Query("seq"))
-		budget := int(parseUintQuery(c.Query("budget")))
-
-		resident, err := hub.store.ResidentAt(hub.ctx, epoch, symbol, seq, budget)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(resident)
-	})
-
-	hub.app.Get("/hindsight/gaps", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		return c.JSON([]tables.HindsightGap{})
-	})
-
-	// Hindsight canonical table reads
-	hub.app.Get("/hindsight/measurements", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.Measurements(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/spot_level3", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.SpotLevel3(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/spot_ticker", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.SpotTicker(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/spot_trade", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.SpotTrade(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/futures_ticker", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.FuturesTicker(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/futures_trade", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.FuturesTrade(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/executions", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.Executions(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/models", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.Models(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/grids", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.Grids(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/positions", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.Positions(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/decisions", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.Decisions(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
-	})
-
-	hub.app.Get("/hindsight/outcomes", func(c fiber.Ctx) error {
-		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-		}
-
-		epoch := parseInt64Query(c.Query("epoch"))
-		after := parseInt64Query(c.Query("after"))
-		rows, err := hub.store.Outcomes(hub.ctx, epoch, after)
-
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(rows)
+		return ctx.JSON(measurements)
 	})
 	hub.registerWorkbench()
 

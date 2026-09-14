@@ -157,15 +157,6 @@ var (
 				))
 			}
 
-			// Stateful analytical stages are constructed once and mounted directly
-			// in each Workload that produces their inputs. The Workloads themselves
-			// remain the complete topology; there is no secondary observation store.
-			manifoldSolver := manifold.NewSolver(ctx, api)
-			defer manifoldSolver.Close()
-
-			manifoldSolver.SetViewer(hub)
-			manifoldSolver.Start()
-
 			if err := price.GetFees(instrument.Symbols()); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
@@ -194,11 +185,6 @@ var (
 
 			tape := strategy.NewTape()
 
-			training := strategy.NewTraining(ctx, tape, instrument, price, balance, api)
-			hub.SetTradeStore(training)
-			hub.SetExitHandler(training.RequestExit)
-			hub.SetLearningSource(training)
-
 			telemetryTee := nmruntime.NewTee(131072)
 			telemetryTee.SetFilter(ui.IsAllowedTelemetry)
 			go hub.Drain(telemetryTee.Ring())
@@ -208,19 +194,17 @@ var (
 			go tables.Drain(ctx, catalog, storageTee.Ring(), epoch)
 
 			if catalog != nil {
-				go func() {
-					if err := catalog.LoadRehearsalTape(ctx, tape); err != nil {
-						errnie.Error(err)
-					}
-				}()
+				hub.SetHindsightStore(catalog)
 			}
 
-			if catalog == nil {
-				tape.Close()
-			}
+			tape.Close()
 
-			resonanceSolver := resonance.NewSolver(ctx, system.Cfg.Resonance.LearningRate)
-			resonanceSolver.SetObserver(hub.PublishResonance)
+			training := strategy.NewTraining(
+				ctx, tape, instrument, price, balance, api,
+			)
+			hub.SetTradeStore(training)
+			hub.SetExitHandler(training.RequestExit)
+			hub.SetLearningSource(training)
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
@@ -250,8 +234,10 @@ var (
 					},
 					{
 						category.NewSolver(ctx),
-						resonanceSolver,
-						manifoldSolver,
+						resonance.NewSolver(
+							ctx, system.Cfg.Resonance.LearningRate,
+						),
+						manifold.NewSolver(ctx, api),
 					},
 					{
 						cognition.NewSolver(ctx),
@@ -387,8 +373,6 @@ func startPprof() {
 	}()
 }
 
-
-
 func init() {
 	cobra.OnInitialize(initConfig)
 
@@ -410,13 +394,21 @@ func loadEmbeddedConfig() error {
 	cfgReader, err := embedded.Open("cfg/config.yml")
 
 	if err != nil {
-		return fmt.Errorf("embedded config file not readable: %w", err)
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[root] embedded config file not readable",
+			err,
+		))
 	}
 
 	defer cfgReader.Close()
 
 	if err := viper.ReadConfig(cfgReader); err != nil {
-		return fmt.Errorf("embedded config file not readable: %w", err)
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[root] embedded config file not readable",
+			err,
+		))
 	}
 
 	return nil

@@ -350,7 +350,7 @@ export const ComparePanel = ({
 			</Flex.Row>
 
 			<div className="shrink-0 border-(--line) border-b px-2.5 py-1.5">
-				<Flex.Row gap={2} className="flex-wrap items-center">
+				<Flex.Row align="center" gap={2} className="flex-wrap">
 					{marks.map((mark, index) => (
 						<Flex.Row
 							key={`${mark.sequence}:${mark.ordinal}`}
@@ -388,7 +388,7 @@ export const ComparePanel = ({
 					</Button>
 				</Flex.Row>
 
-				<Flex.Row gap={2} className="mt-1.5 flex-wrap items-center">
+				<Flex.Row align="center" gap={2} className="mt-1.5 flex-wrap">
 					<Button
 						variant="bare"
 						className="font-mono text-[9px] text-(--f4) hover:text-(--f2)"

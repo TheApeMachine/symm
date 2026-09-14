@@ -4075,30 +4075,6 @@
       "kernelOnly": false
     },
     {
-      "id": "market/price",
-      "source": "market",
-      "metric": "price",
-      "package": "github.com/theapemachine/symm/hindsight/tables",
-      "file": "hindsight/tables/rehearsal.go",
-      "line": 306,
-      "unit": "item.price",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "market/qty",
-      "source": "market",
-      "metric": "qty",
-      "package": "github.com/theapemachine/symm/hindsight/tables",
-      "file": "hindsight/tables/rehearsal.go",
-      "line": 307,
-      "unit": "item.qty",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
       "id": "morphology:level3/book_shape_distance",
       "source": "morphology:level3",
       "metric": "book_shape_distance",
@@ -6332,8 +6308,8 @@
     }
   ],
   "summary": {
-    "totalProducers": 377,
-    "deadProducers": 215,
+    "totalProducers": 375,
+    "deadProducers": 213,
     "referencedProducers": 162,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,
