@@ -362,3 +362,235 @@ func runRecords(schema *iceberg.Schema, runs []Run) (array.RecordReader, error) 
 
 	return reader, nil
 }
+
+type ExcursionRecord struct {
+	Epoch              int64   `json:"epoch"`
+	ID                 string  `json:"id"`
+	Symbol             string  `json:"symbol"`
+	Direction          string  `json:"direction"`
+	ClearsFriction     bool    `json:"clearsFriction"`
+	PrecursorStartTick int64   `json:"precursorStartTick"`
+	AnchorTick         int64   `json:"anchorTick"`
+	ExtremumTick       int64   `json:"extremumTick"`
+	ExitTick           int64   `json:"exitTick"`
+	PostEndTick        int64   `json:"postEndTick"`
+	EntryPrice         float64 `json:"entryPrice"`
+	ExtremumPrice      float64 `json:"extremumPrice"`
+	ExitPrice          float64 `json:"exitPrice"`
+	PositionSize       float64 `json:"positionSize"`
+	Fee                float64 `json:"fee"`
+	Profit             float64 `json:"profit"`
+	ProfitFraction     float64 `json:"profitFraction"`
+	GrossExcursion     float64 `json:"grossExcursion"`
+	ObservationCount   int64   `json:"observationCount"`
+	Status             string  `json:"status"`
+}
+
+func fillExcursions(
+	recordBuilder *array.RecordBuilder,
+	excursions []ExcursionRecord,
+	epoch int64,
+) {
+	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
+	idBuilder := recordBuilder.Field(1).(*array.StringBuilder)
+	symbolBuilder := recordBuilder.Field(2).(*array.StringBuilder)
+	directionBuilder := recordBuilder.Field(3).(*array.StringBuilder)
+	clearsFrictionBuilder := recordBuilder.Field(4).(*array.BooleanBuilder)
+	precursorStartTickBuilder := recordBuilder.Field(5).(*array.Int64Builder)
+	anchorTickBuilder := recordBuilder.Field(6).(*array.Int64Builder)
+	extremumTickBuilder := recordBuilder.Field(7).(*array.Int64Builder)
+	exitTickBuilder := recordBuilder.Field(8).(*array.Int64Builder)
+	postEndTickBuilder := recordBuilder.Field(9).(*array.Int64Builder)
+	entryPriceBuilder := recordBuilder.Field(10).(*array.Float64Builder)
+	extremumPriceBuilder := recordBuilder.Field(11).(*array.Float64Builder)
+	exitPriceBuilder := recordBuilder.Field(12).(*array.Float64Builder)
+	positionSizeBuilder := recordBuilder.Field(13).(*array.Float64Builder)
+	feeBuilder := recordBuilder.Field(14).(*array.Float64Builder)
+	profitBuilder := recordBuilder.Field(15).(*array.Float64Builder)
+	profitFractionBuilder := recordBuilder.Field(16).(*array.Float64Builder)
+	grossExcursionBuilder := recordBuilder.Field(17).(*array.Float64Builder)
+	observationCountBuilder := recordBuilder.Field(18).(*array.Int64Builder)
+	statusBuilder := recordBuilder.Field(19).(*array.StringBuilder)
+
+	for _, excursion := range excursions {
+		recEpoch := excursion.Epoch
+
+		if recEpoch <= 0 {
+			recEpoch = epoch
+		}
+
+		epochBuilder.Append(recEpoch)
+		idBuilder.Append(excursion.ID)
+		symbolBuilder.Append(excursion.Symbol)
+		directionBuilder.Append(excursion.Direction)
+		clearsFrictionBuilder.Append(excursion.ClearsFriction)
+		precursorStartTickBuilder.Append(excursion.PrecursorStartTick)
+		anchorTickBuilder.Append(excursion.AnchorTick)
+		extremumTickBuilder.Append(excursion.ExtremumTick)
+		exitTickBuilder.Append(excursion.ExitTick)
+		postEndTickBuilder.Append(excursion.PostEndTick)
+		entryPriceBuilder.Append(excursion.EntryPrice)
+		extremumPriceBuilder.Append(excursion.ExtremumPrice)
+		exitPriceBuilder.Append(excursion.ExitPrice)
+		positionSizeBuilder.Append(excursion.PositionSize)
+		feeBuilder.Append(excursion.Fee)
+		profitBuilder.Append(excursion.Profit)
+		profitFractionBuilder.Append(excursion.ProfitFraction)
+		grossExcursionBuilder.Append(excursion.GrossExcursion)
+		observationCountBuilder.Append(excursion.ObservationCount)
+		statusBuilder.Append(excursion.Status)
+	}
+}
+
+func readExcursions(batch arrow.RecordBatch) []ExcursionRecord {
+	totalRows := int(batch.NumRows())
+	excursions := make([]ExcursionRecord, 0, totalRows)
+
+	cols := make(map[string]arrow.Array, batch.NumCols())
+
+	for colIdx := range int(batch.NumCols()) {
+		cols[batch.ColumnName(colIdx)] = batch.Column(colIdx)
+	}
+
+	epochCol, _ := cols["epoch"].(*array.Int64)
+	idCol, _ := cols["id"].(*array.String)
+	symbolCol, _ := cols["symbol"].(*array.String)
+	directionCol, _ := cols["direction"].(*array.String)
+	clearsFrictionCol, _ := cols["clears_friction"].(*array.Boolean)
+	precursorStartTickCol, _ := cols["precursor_start_tick"].(*array.Int64)
+	anchorTickCol, _ := cols["anchor_tick"].(*array.Int64)
+	extremumTickCol, _ := cols["extremum_tick"].(*array.Int64)
+	exitTickCol, _ := cols["exit_tick"].(*array.Int64)
+	postEndTickCol, _ := cols["post_end_tick"].(*array.Int64)
+	entryPriceCol, _ := cols["entry_price"].(*array.Float64)
+	extremumPriceCol, _ := cols["extremum_price"].(*array.Float64)
+	exitPriceCol, _ := cols["exit_price"].(*array.Float64)
+	positionSizeCol, _ := cols["position_size"].(*array.Float64)
+	feeCol, _ := cols["fee"].(*array.Float64)
+	profitCol, _ := cols["profit"].(*array.Float64)
+	profitFractionCol, _ := cols["profit_fraction"].(*array.Float64)
+	grossExcursionCol, _ := cols["gross_excursion"].(*array.Float64)
+	observationCountCol, _ := cols["observation_count"].(*array.Int64)
+	statusCol, _ := cols["status"].(*array.String)
+
+	for rowIdx := range totalRows {
+		excursion := ExcursionRecord{}
+
+		if epochCol != nil && !epochCol.IsNull(rowIdx) {
+			excursion.Epoch = epochCol.Value(rowIdx)
+		}
+
+		if idCol != nil && !idCol.IsNull(rowIdx) {
+			excursion.ID = idCol.Value(rowIdx)
+		}
+
+		if symbolCol != nil && !symbolCol.IsNull(rowIdx) {
+			excursion.Symbol = symbolCol.Value(rowIdx)
+		}
+
+		if directionCol != nil && !directionCol.IsNull(rowIdx) {
+			excursion.Direction = directionCol.Value(rowIdx)
+		}
+
+		if clearsFrictionCol != nil && !clearsFrictionCol.IsNull(rowIdx) {
+			excursion.ClearsFriction = clearsFrictionCol.Value(rowIdx)
+		}
+
+		if precursorStartTickCol != nil && !precursorStartTickCol.IsNull(rowIdx) {
+			excursion.PrecursorStartTick = precursorStartTickCol.Value(rowIdx)
+		}
+
+		if anchorTickCol != nil && !anchorTickCol.IsNull(rowIdx) {
+			excursion.AnchorTick = anchorTickCol.Value(rowIdx)
+		}
+
+		if extremumTickCol != nil && !extremumTickCol.IsNull(rowIdx) {
+			excursion.ExtremumTick = extremumTickCol.Value(rowIdx)
+		}
+
+		if exitTickCol != nil && !exitTickCol.IsNull(rowIdx) {
+			excursion.ExitTick = exitTickCol.Value(rowIdx)
+		}
+
+		if postEndTickCol != nil && !postEndTickCol.IsNull(rowIdx) {
+			excursion.PostEndTick = postEndTickCol.Value(rowIdx)
+		}
+
+		if entryPriceCol != nil && !entryPriceCol.IsNull(rowIdx) {
+			excursion.EntryPrice = entryPriceCol.Value(rowIdx)
+		}
+
+		if extremumPriceCol != nil && !extremumPriceCol.IsNull(rowIdx) {
+			excursion.ExtremumPrice = extremumPriceCol.Value(rowIdx)
+		}
+
+		if exitPriceCol != nil && !exitPriceCol.IsNull(rowIdx) {
+			excursion.ExitPrice = exitPriceCol.Value(rowIdx)
+		}
+
+		if positionSizeCol != nil && !positionSizeCol.IsNull(rowIdx) {
+			excursion.PositionSize = positionSizeCol.Value(rowIdx)
+		}
+
+		if feeCol != nil && !feeCol.IsNull(rowIdx) {
+			excursion.Fee = feeCol.Value(rowIdx)
+		}
+
+		if profitCol != nil && !profitCol.IsNull(rowIdx) {
+			excursion.Profit = profitCol.Value(rowIdx)
+		}
+
+		if profitFractionCol != nil && !profitFractionCol.IsNull(rowIdx) {
+			excursion.ProfitFraction = profitFractionCol.Value(rowIdx)
+		}
+
+		if grossExcursionCol != nil && !grossExcursionCol.IsNull(rowIdx) {
+			excursion.GrossExcursion = grossExcursionCol.Value(rowIdx)
+		}
+
+		if observationCountCol != nil && !observationCountCol.IsNull(rowIdx) {
+			excursion.ObservationCount = observationCountCol.Value(rowIdx)
+		}
+
+		if statusCol != nil && !statusCol.IsNull(rowIdx) {
+			excursion.Status = statusCol.Value(rowIdx)
+		}
+
+		excursions = append(excursions, excursion)
+	}
+
+	return excursions
+}
+
+func excursionRecords(
+	schema *iceberg.Schema,
+	excursions []ExcursionRecord,
+	epoch int64,
+) (array.RecordReader, error) {
+	converted, err := arrowSchemaFor(schema)
+
+	if err != nil {
+		return nil, err
+	}
+
+	recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
+	defer recordBuilder.Release()
+
+	recordBuilder.Reserve(len(excursions))
+	fillExcursions(recordBuilder, excursions, epoch)
+	batch := recordBuilder.NewRecord()
+	defer batch.Release()
+
+	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{batch})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[iceberg] failed to build excursion record reader",
+			err,
+		))
+	}
+
+	return reader, nil
+}
+

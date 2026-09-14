@@ -29,6 +29,7 @@ type Writer struct {
 	spotTrade    []*data.Measurement[float64]
 	spotLevel3   []*data.Measurement[float64]
 	measurements []*data.Measurement[float64]
+	excursions   []ExcursionRecord
 }
 
 /*
@@ -74,13 +75,23 @@ func (writer *Writer) Add(channel string, measurement *data.Measurement[float64]
 }
 
 /*
-Pending returns total buffered measurements across all families.
+AddExcursion routes a completed excursion record to the excursions buffer.
+*/
+func (writer *Writer) AddExcursion(excursion ExcursionRecord) {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+
+	writer.excursions = append(writer.excursions, excursion)
+}
+
+/*
+Pending returns total buffered measurements and excursions across all families.
 */
 func (writer *Writer) Pending() int {
 	writer.mutex.Lock()
 	defer writer.mutex.Unlock()
 
-	return len(writer.spotTicker) + len(writer.spotTrade) + len(writer.spotLevel3) + len(writer.measurements)
+	return len(writer.spotTicker) + len(writer.spotTrade) + len(writer.spotLevel3) + len(writer.measurements) + len(writer.excursions)
 }
 
 /*
@@ -129,6 +140,70 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 		writer.measurements = append(remaining, writer.measurements...)
 	}); err != nil {
 		return err
+	}
+
+	if err := writer.commitExcursions(ctx, forceAll); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (writer *Writer) commitExcursions(ctx context.Context, forceAll bool) error {
+	writer.mutex.Lock()
+
+	rowsToCommit := writer.excursions
+	writer.excursions = nil
+
+	if len(rowsToCommit) == 0 {
+		writer.mutex.Unlock()
+
+		return nil
+	}
+
+	if !forceAll && len(rowsToCommit) < 10 {
+		writer.excursions = rowsToCommit
+		writer.mutex.Unlock()
+
+		return nil
+	}
+
+	writer.mutex.Unlock()
+
+	tbl, err := writer.catalog.Load(ctx, Excursions)
+
+	if err != nil {
+		writer.mutex.Lock()
+		writer.excursions = append(rowsToCommit, writer.excursions...)
+		writer.mutex.Unlock()
+
+		return err
+	}
+
+	reader, err := excursionRecords(tbl.Schema(), rowsToCommit, writer.epoch)
+
+	if err != nil {
+		writer.mutex.Lock()
+		writer.excursions = append(rowsToCommit, writer.excursions...)
+		writer.mutex.Unlock()
+
+		return err
+	}
+
+	defer reader.Release()
+
+	_, appendErr := tbl.Append(ctx, reader, nil)
+
+	if appendErr != nil {
+		writer.mutex.Lock()
+		writer.excursions = append(rowsToCommit, writer.excursions...)
+		writer.mutex.Unlock()
+
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to append to "+Excursions,
+			appendErr,
+		))
 	}
 
 	return nil
