@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
 
@@ -54,11 +55,10 @@ func (audit *Audit) Read() error {
 					return errnie.Error(err)
 				}
 
-
 				if family == "manifests" {
 					var manifest EnvelopeManifest
 
-					if err := json.Unmarshal(record, &manifest); err != nil {
+					if err := sonic.Unmarshal(record, &manifest); err != nil {
 						return errnie.Error(err)
 					}
 
@@ -70,7 +70,7 @@ func (audit *Audit) Read() error {
 				}
 				var frame RawFrame
 
-				if err := json.Unmarshal(record, &frame); err != nil {
+				if err := sonic.Unmarshal(record, &frame); err != nil {
 					return errnie.Error(err)
 				}
 				if frame.Kind != "l3_touch" {

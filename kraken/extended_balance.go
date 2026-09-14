@@ -1,9 +1,9 @@
 package kraken
 
 import (
-	"encoding/json"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
@@ -26,7 +26,7 @@ type ExtendedBalance struct {
 func NewExtendedBalance(payload []byte) (*ExtendedBalance, error) {
 	var balance ExtendedBalance
 
-	if err := json.Unmarshal(payload, &balance); err != nil {
+	if err := sonic.Unmarshal(payload, &balance); err != nil {
 		return nil, errnie.Err(errnie.Validation, "extended balance: invalid response", err)
 	}
 

@@ -38,7 +38,7 @@ type ledgerRequest struct {
 /* MarshalJSON supplies the existing authenticated REST request boundary. */
 func (request ledgerRequest) MarshalJSON() ([]byte, error) {
 	type plain ledgerRequest
-	return json.Marshal(plain(request))
+	return sonic.Marshal(plain(request))
 }
 
 /* ledgerEntry contains the actual cash movement and its venue timestamp. */

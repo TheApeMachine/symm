@@ -8,6 +8,16 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+Side identifies which half of an order book a level belongs to.
+*/
+type Side string
+
+const (
+	SideBid Side = "bid"
+	SideAsk Side = "ask"
+)
+
 type Book struct {
 	Channel string     `json:"channel"`
 	Type    string     `json:"type"`

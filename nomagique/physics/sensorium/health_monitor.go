@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 // PhysicsSnapshot is a versioned, finite-only wire contract. The full Reading
@@ -29,7 +31,7 @@ func (s PhysicsSnapshot) Marshal() ([]byte, error) {
 	if s.Schema != "sensorium-physics-health/v1" || s.Population < 0 || !s.Reading.IsFinite() {
 		return nil, fmt.Errorf("invalid physics snapshot contract")
 	}
-	return json.Marshal(s)
+	return sonic.Marshal(s)
 }
 
 // PhysicsMonitor is a replaceable observational boundary, never an integrator.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/bytedance/sonic"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
@@ -73,7 +74,7 @@ func (observer *Observer) readDiagnostics(ctx context.Context, url string) error
 		return ctx.Err()
 	case <-gathered:
 	}
-	payload, err := json.Marshal(connection.LocalDescription())
+	payload, err := sonic.Marshal(connection.LocalDescription())
 
 	if err != nil {
 		return errnie.Error(err)

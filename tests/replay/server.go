@@ -2,7 +2,6 @@ package replay
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -159,7 +159,7 @@ func (server *Server) target(frame RawFrame) (*websocket.Conn, error) {
 	symbol := ""
 
 	if frame.Kind == "level3" {
-		if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
 			return nil, errnie.Error(err)
 		}
 

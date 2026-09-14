@@ -61,9 +61,6 @@ type FuturesLive struct {
 	subscriptionMu sync.RWMutex
 	subscriptions  map[string][]string
 
-	// streams owns this session's operational epoch/sequence bookkeeping.
-	streams *Streams
-
 	// pinger owns this session's keepalive loop.
 	pinger *Pinger
 
@@ -184,7 +181,6 @@ func NewFuturesWithClient(
 		callbacks:     &sync.Map{},
 		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
-		streams:       NewStreams(client.URL),
 	}
 	futures.client.Store(client)
 
@@ -288,7 +284,6 @@ func (futures *FuturesLive) reconnect(err error) {
 
 	futures.pinger.Stop()
 	futures.Transition(runtime.WAITING)
-	futures.streams.Advance()
 	client := futures.Client()
 	replacement := derivatives.NewWebSocket()
 	replacement.REST = client.REST
