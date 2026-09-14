@@ -29,6 +29,8 @@ table Measurement {
   snrDefined:bool;
   metrics:[Metric];
   metadata:[NamedNumber];
+  provenance:[NamedString];
+  peers:[Measurement];
 }
 
 table MeasurementsFrame { rows:[Measurement] (required); }

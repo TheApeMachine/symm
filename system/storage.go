@@ -15,6 +15,7 @@ type Iceberg struct {
 }
 
 type S3 struct {
+	Bucket          string
 	Endpoint        string
 	Region          string
 	AccessKeyID     string
@@ -27,6 +28,7 @@ func NewStorage() *Storage {
 	viper.SetDefault("storage.iceberg.warehouse", "s3://symmtables/")
 	viper.SetDefault("storage.iceberg.commit_retries", 3)
 	viper.SetDefault("storage.iceberg.append_bytes", 8388608)
+	viper.SetDefault("storage.s3.bucket", "symm")
 
 	return &Storage{
 		Iceberg: &Iceberg{
@@ -36,6 +38,7 @@ func NewStorage() *Storage {
 			AppendBytes:   viper.GetInt("storage.iceberg.append_bytes"),
 		},
 		S3: &S3{
+			Bucket:          viper.GetString("storage.s3.bucket"),
 			Endpoint:        viper.GetString("storage.s3.endpoint"),
 			Region:          viper.GetString("storage.s3.region"),
 			AccessKeyID:     viper.GetString("storage.s3.access_key_id"),

@@ -1,12 +1,16 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -149,6 +153,10 @@ func Open(ctx context.Context) *Catalog {
 		restOpts = append(restOpts, rest.WithAwsConfig(awsCfg))
 	}
 
+	if err := ensureStorageBuckets(ctx, s3Config, icebergConfig); err != nil {
+		errnie.Error(err)
+	}
+
 	connected, err := rest.NewCatalog(ctx, "seaweed", icebergConfig.URI, restOpts...)
 
 	if err != nil {
@@ -171,6 +179,10 @@ func Open(ctx context.Context) *Catalog {
 Ensure creates the Hindsight namespace and every canonical table if not already present.
 */
 func (catalog *Catalog) Ensure(ctx context.Context) error {
+	if err := catalog.ensureBuckets(ctx); err != nil {
+		return err
+	}
+
 	properties := iceberg.Properties{}
 
 	if system.Cfg.Storage != nil && system.Cfg.Storage.Iceberg != nil {
@@ -255,6 +267,171 @@ func (catalog *Catalog) ensureTable(
 	}
 
 	return nil
+}
+
+func (catalog *Catalog) ensureBuckets(ctx context.Context) error {
+	if system.Cfg.Storage == nil || system.Cfg.Storage.S3 == nil {
+		return nil
+	}
+
+	return ensureStorageBuckets(ctx, system.Cfg.Storage.S3, system.Cfg.Storage.Iceberg)
+}
+
+func ensureStorageBuckets(
+	ctx context.Context,
+	s3Config *system.S3,
+	icebergConfig *system.Iceberg,
+) error {
+	if s3Config == nil || s3Config.Endpoint == "" {
+		return nil
+	}
+
+	client := &http.Client{
+		Transport: http.DefaultTransport,
+		Timeout:   10 * time.Second,
+	}
+
+	if icebergConfig != nil && icebergConfig.Warehouse != "" {
+		tableBucket := parseBucketName(icebergConfig.Warehouse)
+
+		if tableBucket != "" {
+			if err := ensureTableBucket(ctx, client, s3Config.Endpoint, tableBucket); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s3Config.Bucket != "" {
+		if err := ensureS3Bucket(ctx, client, s3Config.Endpoint, s3Config.Bucket); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ensureTableBucket(
+	ctx context.Context,
+	client *http.Client,
+	endpoint string,
+	name string,
+) error {
+	target := strings.TrimRight(endpoint, "/") + "/"
+	payload := fmt.Appendf(nil, `{"name":"%s","format":"ICEBERG"}`, name)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to construct table bucket request for "+name,
+			err,
+		))
+	}
+
+	req.Header.Set("X-Amz-Target", "S3Tables.CreateTableBucket")
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := client.Do(req)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to create table bucket "+name,
+			err,
+		))
+	}
+
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusConflict {
+		return nil
+	}
+
+	body, readErr := io.ReadAll(res.Body)
+
+	if readErr != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to read response body for table bucket "+name,
+			readErr,
+		))
+	}
+
+	if strings.Contains(string(body), "BucketAlreadyExists") {
+		return nil
+	}
+
+	return errnie.Error(errnie.Err(
+		errnie.BadGateway,
+		fmt.Sprintf("[iceberg] unexpected response creating table bucket %s: %d %s", name, res.StatusCode, string(body)),
+		nil,
+	))
+}
+
+func ensureS3Bucket(
+	ctx context.Context,
+	client *http.Client,
+	endpoint string,
+	name string,
+) error {
+	target := strings.TrimRight(endpoint, "/") + "/" + name
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, nil)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to construct bucket request for "+name,
+			err,
+		))
+	}
+
+	res, err := client.Do(req)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to create bucket "+name,
+			err,
+		))
+	}
+
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusNoContent || res.StatusCode == http.StatusConflict {
+		return nil
+	}
+
+	body, readErr := io.ReadAll(res.Body)
+
+	if readErr != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to read response body for bucket "+name,
+			readErr,
+		))
+	}
+
+	if strings.Contains(string(body), "BucketAlreadyOwnedByYou") || strings.Contains(string(body), "BucketAlreadyExists") {
+		return nil
+	}
+
+	return errnie.Error(errnie.Err(
+		errnie.BadGateway,
+		fmt.Sprintf("[iceberg] unexpected response creating bucket %s: %d %s", name, res.StatusCode, string(body)),
+		nil,
+	))
+}
+
+func parseBucketName(location string) string {
+	trimmed := strings.Trim(strings.TrimPrefix(location, "s3://"), "/")
+
+	if bucket, _, found := strings.Cut(trimmed, "/"); found {
+		return bucket
+	}
+
+	return trimmed
 }
 
 /*
@@ -343,7 +520,7 @@ func (catalog *Catalog) Runs(ctx context.Context) ([]Run, error) {
 		))
 	}
 
-	var runs []Run
+	var allRuns []Run
 
 	for batch, batchErr := range batches {
 		if batchErr != nil {
@@ -355,14 +532,26 @@ func (catalog *Catalog) Runs(ctx context.Context) ([]Run, error) {
 		}
 
 		if batch != nil {
-			runs = append(runs, readRuns(batch)...)
+			allRuns = append(allRuns, readRuns(batch)...)
 			batch.Release()
 		}
 	}
 
-	sort.Slice(runs, func(leftIndex, rightIndex int) bool {
-		return runs[leftIndex].Epoch > runs[rightIndex].Epoch
+	sort.Slice(allRuns, func(leftIndex, rightIndex int) bool {
+		return allRuns[leftIndex].Epoch > allRuns[rightIndex].Epoch
 	})
+
+	seen := make(map[int64]struct{}, len(allRuns))
+	runs := make([]Run, 0, len(allRuns))
+
+	for _, run := range allRuns {
+		if _, exists := seen[run.Epoch]; exists {
+			continue
+		}
+
+		seen[run.Epoch] = struct{}{}
+		runs = append(runs, run)
+	}
 
 	return runs, nil
 }

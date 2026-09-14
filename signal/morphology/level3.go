@@ -99,10 +99,10 @@ type Level3 struct {
 
 func NewLevel3(ctx context.Context) *Level3 {
 	level3 := &Level3{
-		System:   runtime.NewSystem(ctx, "morphology:level3"),
 		pipeline: nomagique.NewNumber(newMorphologyPipeline()),
 	}
 
+	level3.System = runtime.NewSystem(ctx, "morphology:level3", level3)
 	level3.Transition(runtime.READY)
 	return level3
 }

@@ -160,6 +160,7 @@ func NewWithClient(
 		name,
 		live.pinger,
 		runtime.Closer(client.Disconnect),
+		live,
 	)
 
 	// A failed ping is the only evidence a half-open socket may produce. Treat it

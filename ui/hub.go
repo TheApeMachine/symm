@@ -22,6 +22,7 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -56,6 +57,7 @@ arrive over the same socket and are handled directly by the connection's
 handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
+	*runtime.System
 	physics          sensorium.PhysicsMonitor
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -96,6 +98,8 @@ func NewHub(ctx context.Context) *Hub {
 		}),
 		fluid: NewFluidRTC(ctx, "hub"),
 	}
+
+	hub.System = runtime.NewSystem(ctx, "hub", hub)
 
 	// The dashboard is a separate origin from the hub (vite dev server on
 	// :3000 vs. the hub on :8765). The REST capture listing is fetched with a
@@ -170,41 +174,71 @@ func NewHub(ctx context.Context) *Hub {
 			return err
 		}
 
+		if runs == nil {
+			runs = []tables.Run{}
+		}
+
 		return c.JSON(runs)
 	})
 
-	hub.app.Get("/hindsight/timeline", func(ctx fiber.Ctx) error {
+	hub.app.Use("/hindsight/timeline", func(ctx fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(ctx) {
+			ctx.Locals("allowed", true)
+			return ctx.Next()
+		}
+
+		return fiber.ErrUpgradeRequired
+	})
+
+	hub.app.Get("/hindsight/timeline", websocket.New(func(conn *websocket.Conn) {
 		if hub.store == nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+			return
 		}
 
-		run := ctx.Query("run")
+		run := conn.Query("run")
 
 		if run == "" {
-			run = ctx.Query("epoch")
+			run = conn.Query("epoch")
 		}
 
 		if run == "" {
-			return fiber.NewError(fiber.StatusBadRequest, "run is required")
+			return
 		}
 
 		epoch := parseInt64Query(run)
-		symbol := ctx.Query("symbol")
-		fromTick := parseInt64Query(ctx.Query("from"))
-		toTick := parseInt64Query(ctx.Query("to"))
+		symbol := conn.Query("symbol")
+		fromTick := parseInt64Query(conn.Query("from"))
+		toTick := parseInt64Query(conn.Query("to"))
 
-		var measurements []*data.Measurement[float64]
+		const timelineBatchSize = 256
+		batch := make([]*data.Measurement[float64], 0, timelineBatchSize)
 
 		for measurement := range hub.store.Timeline(hub.ctx, epoch, symbol, fromTick, toTick) {
-			measurements = append(measurements, measurement)
+			batch = append(batch, measurement)
+
+			if len(batch) < timelineBatchSize {
+				continue
+			}
+
+			err := types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
+				return conn.WriteMessage(websocket.BinaryMessage, payload)
+			})
+
+			if err != nil {
+				return
+			}
+
+			batch = batch[:0]
 		}
 
-		if measurements == nil {
-			measurements = []*data.Measurement[float64]{}
+		if len(batch) > 0 {
+			_ = types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
+				return conn.WriteMessage(websocket.BinaryMessage, payload)
+			})
 		}
-
-		return ctx.JSON(measurements)
-	})
+	}, websocket.Config{
+		Origins: []string{"*"},
+	}))
 
 	hub.app.Get("/hindsight/symbols", func(ctx fiber.Ctx) error {
 		if hub.store == nil {

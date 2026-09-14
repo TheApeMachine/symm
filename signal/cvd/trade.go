@@ -28,10 +28,10 @@ type Trade struct {
 
 func NewTrade(ctx context.Context) *Trade {
 	trade := &Trade{
-		System:    runtime.NewSystem(ctx, "cvd:trade"),
 		pipelines: make(map[string]core.Primitive),
 	}
 
+	trade.System = runtime.NewSystem(ctx, "cvd:trade", trade)
 	trade.Transition(runtime.READY)
 	return trade
 }
@@ -199,4 +199,3 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 	m.Metadata["peer-interest"] = "*"
 	return m
 }
-

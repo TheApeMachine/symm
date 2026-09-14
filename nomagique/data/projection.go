@@ -107,7 +107,7 @@ func (op *Projection) Error(errs ...error) error {
 project translates the declared record into the domain-facing measurement.
 */
 func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
-	measurement := NewMeasurement[float64](op.Source, map[string]Metric[float64]{})
+	measurement := NewMeasurement(op.Source, map[string]Metric[float64]{})
 
 	if op.Identity != nil {
 		measurement.Label, measurement.At, measurement.From = op.Identity()

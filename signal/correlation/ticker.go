@@ -27,7 +27,6 @@ type Ticker struct {
 
 func NewTicker(ctx context.Context) *Ticker {
 	ticker := &Ticker{
-		System: runtime.NewSystem(ctx, "correlation:ticker"),
 		pipeline: nomagique.NewNumber(
 			nmcorrelation.NewGate(),
 			nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
@@ -40,6 +39,7 @@ func NewTicker(ctx context.Context) *Ticker {
 		),
 	}
 
+	ticker.System = runtime.NewSystem(ctx, "correlation:ticker", ticker)
 	ticker.Transition(runtime.READY)
 	return ticker
 }
@@ -207,4 +207,3 @@ func (ticker *Ticker) Register() *data.Measurement[float64] {
 	m.Metadata["peer-interest"] = "*"
 	return m
 }
-

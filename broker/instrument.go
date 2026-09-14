@@ -44,7 +44,6 @@ func NewInstrument(api *websocket.API) *Instrument {
 	}
 
 	instrument := &Instrument{
-		System:           runtime.NewSystem(api.Context(), "instrument"),
 		api:              api,
 		cache:            &sync.Map{},
 		symbols:          []string{},
@@ -53,6 +52,7 @@ func NewInstrument(api *websocket.API) *Instrument {
 		symbolsByProduct: make(map[string]string),
 	}
 
+	instrument.System = runtime.NewSystem(api.Context(), "instrument", instrument)
 	instrument.Transition(runtime.BUSY)
 
 	callback := make(chan any, 1)

@@ -27,7 +27,6 @@ type Ticker struct {
 
 func NewTicker(ctx context.Context) *Ticker {
 	ticker := &Ticker{
-		System: runtime.NewSystem(ctx, "derivatives:ticker"),
 		pipeline: nomagique.NewNumber(
 			nmderivatives.NewGate(),
 			nmderivatives.NewBasis(),
@@ -35,6 +34,7 @@ func NewTicker(ctx context.Context) *Ticker {
 		),
 	}
 
+	ticker.System = runtime.NewSystem(ctx, "derivatives:ticker", ticker)
 	ticker.Transition(runtime.READY)
 	return ticker
 }

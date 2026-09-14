@@ -13,7 +13,6 @@ import {
 	fetchHindsightGaps,
 	fetchHindsightLifecycle,
 	fetchHindsightMetricMap,
-	fetchHindsightResident,
 	fetchHindsightRuns,
 	fetchHindsightState,
 	fetchHindsightTimeline,
@@ -26,10 +25,10 @@ import type {
 	HindsightLifecycleEvent,
 	HindsightMetricMap,
 	HindsightRef,
-	HindsightResident,
 	HindsightRun,
 	HindsightTimeline,
 	MarketCoordinate,
+	Measurement,
 	TimelineAxis,
 } from "#/components/hindsight/hindsight-types";
 import {
@@ -126,16 +125,15 @@ const HindsightRoute = () => {
 	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
 	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
 	const [state, setState] = useState<unknown>(null);
-	const [resident, setResident] = useState<HindsightResident | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [semantics, setSemantics] = useState<HindsightMetricMap | null>(null);
 	const [position, setPosition] = useState<string | null>(null);
 	const [marks, setMarks] = useState<Mark[]>([]);
+	const [markMeasurements, setMarkMeasurements] = useState<
+		Array<Measurement | null>
+	>([]);
 	const [markStates, setMarkStates] = useState<Array<unknown>>([]);
-	const [residents, setResidents] = useState<Array<HindsightResident | null>>(
-		[],
-	);
 	const [compareMode, setCompareMode] = useState<CompareMode>("resident");
 	const [resolving, setResolving] = useState(false);
 
@@ -177,8 +175,8 @@ const HindsightRoute = () => {
 			.then((loaded) => {
 				if (!cancelled) setSemantics(loaded);
 			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+			.catch(() => {
+				if (!cancelled) setSemantics(null);
 			});
 
 		return () => {
@@ -232,27 +230,26 @@ const HindsightRoute = () => {
 		setEpisode(null);
 		setEnvelope(null);
 		setState(null);
-		setResident(null);
 		setCaptures([]);
 		setMarks([]);
+		setMarkMeasurements([]);
 		setMarkStates([]);
-		setResidents([]);
 		setPosition(null);
 
 		fetchHindsightGaps(run)
 			.then((loaded) => {
 				if (!cancelled) setGaps(loaded);
 			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+			.catch(() => {
+				if (!cancelled) setGaps([]);
 			});
 
 		fetchHindsightLifecycle(run)
 			.then((loaded) => {
 				if (!cancelled) setLifecycle(loaded);
 			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+			.catch(() => {
+				if (!cancelled) setLifecycle([]);
 			});
 
 		return () => {
@@ -267,16 +264,30 @@ const HindsightRoute = () => {
 		if (run === null) return;
 
 		let cancelled = false;
+		const controller = new AbortController();
 		setLoading(true);
 
-		fetchHindsightTimeline({
-			run,
-			symbol: symbol ?? undefined,
-			coordinate,
-			axis,
-			buckets: OVERVIEW_BUCKETS,
-			symbols: true,
-		})
+		fetchHindsightTimeline(
+			{
+				run,
+				symbol: symbol ?? undefined,
+				coordinate,
+				axis,
+				buckets: OVERVIEW_BUCKETS,
+				symbols: true,
+			},
+			{
+				signal: controller.signal,
+				onProgress: (partial) => {
+					if (!cancelled) {
+						setOverview(partial);
+						if (symbol === null && partial.symbol !== "") {
+							setSymbol(partial.symbol);
+						}
+					}
+				},
+			},
+		)
 			.then((loaded) => {
 				if (cancelled) return;
 
@@ -288,11 +299,12 @@ const HindsightRoute = () => {
 				}
 			})
 			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+				if (!cancelled && !controller.signal.aborted) failed(cause);
 			});
 
 		return () => {
 			cancelled = true;
+			controller.abort();
 		};
 	}, [run, symbol, coordinate, axis, failed]);
 
@@ -305,25 +317,35 @@ const HindsightRoute = () => {
 		}
 
 		let cancelled = false;
+		const controller = new AbortController();
 
-		fetchHindsightTimeline({
-			run,
-			symbol,
-			coordinate,
-			axis,
-			buckets: DETAIL_BUCKETS,
-			from: viewport?.from,
-			to: viewport?.to,
-		})
+		fetchHindsightTimeline(
+			{
+				run,
+				symbol,
+				coordinate,
+				axis,
+				buckets: DETAIL_BUCKETS,
+				from: viewport?.from,
+				to: viewport?.to,
+			},
+			{
+				signal: controller.signal,
+				onProgress: (partial) => {
+					if (!cancelled) setDetail(partial);
+				},
+			},
+		)
 			.then((loaded) => {
 				if (!cancelled) setDetail(loaded);
 			})
 			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+				if (!cancelled && !controller.signal.aborted) failed(cause);
 			});
 
 		return () => {
 			cancelled = true;
+			controller.abort();
 		};
 	}, [run, symbol, coordinate, axis, viewport, failed]);
 
@@ -337,41 +359,30 @@ const HindsightRoute = () => {
 		const from = Math.max(playhead.sequence - 24, 0);
 		setEnvelope(null);
 		setState(null);
-		setResident(null);
 
 		fetchHindsightCaptures(run, from)
 			.then((loaded) => {
 				if (!cancelled) setCaptures(loaded.slice(0, 48));
 			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+			.catch(() => {
+				if (!cancelled) setCaptures([]);
 			});
 
 		fetchHindsightEnvelope(run, playhead.sequence)
 			.then((loaded) => {
 				if (!cancelled) setEnvelope(loaded);
 			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+			.catch(() => {
+				if (!cancelled) setEnvelope(null);
 			});
 
 		fetchHindsightState(run, playhead.sequence, playhead.ordinal)
 			.then((loaded) => {
 				if (!cancelled) setState(decodeEnvelopeState(loaded?.payload));
 			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+			.catch(() => {
+				if (!cancelled) setState(null);
 			});
-
-		if (symbol !== null) {
-			fetchHindsightResident(run, symbol, playhead.sequence, playhead.ordinal)
-				.then((loaded) => {
-					if (!cancelled) setResident(loaded);
-				})
-				.catch((cause: unknown) => {
-					if (!cancelled) failed(cause);
-				});
-		}
 
 		return () => {
 			cancelled = true;
@@ -382,6 +393,29 @@ const HindsightRoute = () => {
 		() => buildPositions(lifecycle),
 		[lifecycle],
 	);
+
+	const activeTimeline = detail ?? overview;
+	const selectedMeasurement = useMemo<Measurement | null>(() => {
+		const list = activeTimeline?.measurements ?? overview?.measurements;
+		if (!list || list.length === 0) return null;
+		if (playhead === null) return list[0] ?? null;
+
+		const targetSeq = playhead.sequence;
+		let closest: Measurement = list[0];
+		let minDiff = Infinity;
+
+		for (const item of list) {
+			const seq = Number(item.seqIdx ?? item.id ?? 0);
+			const diff = Math.abs(seq - targetSeq);
+			if (diff < minDiff) {
+				minDiff = diff;
+				closest = item;
+			}
+			if (diff === 0) break;
+		}
+
+		return closest;
+	}, [activeTimeline, overview, playhead]);
 
 	/*
 		Each mark's state is read by its own exact capture identity, never
@@ -407,47 +441,16 @@ const HindsightRoute = () => {
 			.then((loaded) => {
 				if (!cancelled) setMarkStates(loaded);
 			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+			.catch(() => {
+				if (!cancelled) setMarkStates([]);
 			});
 
 		return () => {
 			cancelled = true;
 		};
-	}, [run, marks, failed]);
+	}, [run, marks]);
 
-	/*
-		Resident resolution is per (run, symbol, mark): the walk is over the
-		instrument's own captures, so changing instrument changes the answer.
-	*/
-	useEffect(() => {
-		if (run === null || symbol === null || marks.length === 0) {
-			setResidents([]);
-			return;
-		}
 
-		let cancelled = false;
-		setResolving(true);
-
-		Promise.all(
-			marks.map((entry) =>
-				fetchHindsightResident(run, symbol, entry.sequence, entry.ordinal),
-			),
-		)
-			.then((loaded) => {
-				if (cancelled) return;
-
-				setResidents(loaded);
-				setResolving(false);
-			})
-			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [run, symbol, marks, failed]);
 
 	const runMeta = useMemo(
 		() => runs.find((entry) => entry.id === run) ?? null,
@@ -553,12 +556,16 @@ const HindsightRoute = () => {
 				return current;
 			}
 
+			setMarkMeasurements((prev) => [...prev, selectedMeasurement]);
+
 			return [
 				...current,
 				{
 					sequence: playhead.sequence,
 					ordinal: playhead.ordinal,
-					label: `#${playhead.sequence}:${playhead.ordinal}`,
+					label: selectedMeasurement?.source
+						? `${selectedMeasurement.source} · #${playhead.sequence}`
+						: `#${playhead.sequence}:${playhead.ordinal}`,
 				},
 			].sort((left, right) =>
 				left.sequence !== right.sequence
@@ -566,7 +573,7 @@ const HindsightRoute = () => {
 					: left.ordinal - right.ordinal,
 			);
 		});
-	}, [playhead]);
+	}, [playhead, selectedMeasurement]);
 
 	/*
 		Focusing a position parks the playhead on the nearest frame that really
@@ -860,23 +867,36 @@ const HindsightRoute = () => {
 								<ComparePanel
 									marks={marks}
 									states={markStates}
-									residents={residents}
+									measurements={markMeasurements}
 									mode={compareMode}
 									loading={resolving}
 									onMode={setCompareMode}
 									onPlayhead={(sequence, ordinal) => {
 										setPlayhead({ sequence, ordinal });
 									}}
-									onClear={() => setMarks([])}
-									onRemove={(sequence, ordinal) =>
+									onClear={() => {
+										setMarks([]);
+										setMarkMeasurements([]);
+									}}
+									onRemove={(sequence, ordinal) => {
+										const index = marks.findIndex(
+											(entry) =>
+												entry.sequence === sequence &&
+												entry.ordinal === ordinal,
+										);
 										setMarks((current) =>
 											current.filter(
 												(entry) =>
 													entry.sequence !== sequence ||
 													entry.ordinal !== ordinal,
 											),
-										)
-									}
+										);
+										if (index !== -1) {
+											setMarkMeasurements((current) =>
+												current.filter((_, idx) => idx !== index),
+											);
+										}
+									}}
 								/>
 							) : playhead === null ? (
 								<p className="px-3 py-8 font-mono text-[10px] text-(--f4) leading-relaxed">
@@ -908,8 +928,8 @@ const HindsightRoute = () => {
 										}
 										state={
 											<StatePanel
+												measurement={selectedMeasurement}
 												state={state}
-												resident={resident}
 												envelope={envelope}
 												semantics={semantics}
 												plain={plain}

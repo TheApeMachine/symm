@@ -2,12 +2,13 @@ import { Fragment, useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
+import { Typography } from "#/components/ui/typography";
 import type {
 	HindsightCapture,
 	HindsightEnvelope,
 	HindsightMetricMap,
-	HindsightResident,
 	HindsightRun,
+	Measurement,
 	MetricSemantics,
 } from "./hindsight-types";
 import {
@@ -351,7 +352,7 @@ type MetricReading = {
 	timescale: string;
 };
 
-type MeasurementReading = {
+export type MeasurementReading = {
 	signal: string;
 	id: string;
 	label: string;
@@ -364,6 +365,59 @@ type MeasurementReading = {
 	metrics: MetricReading[];
 	metadata: Array<{ id: string; name: string; value: number }>;
 	provenance: Array<{ id: string; name: string; value: string }>;
+	peers?: MeasurementReading[];
+	Peers?: MeasurementReading[];
+};
+
+export const measurementToReading = (m: Measurement): MeasurementReading => {
+	const source = m.source ?? "";
+	const label = m.label ?? m.symbol ?? "";
+	const rawPeers = m.peers ?? m.Peers ?? [];
+	const peers = rawPeers.map(measurementToReading);
+	const metrics: MetricReading[] = Object.entries(m.metrics ?? {}).map(
+		([key, metric], index) => ({
+			id: `${index}:${key}`,
+			key,
+			label: metric.label ?? key,
+			raw: metric.raw,
+			normalized: metric.normalized ?? null,
+			standardized: metric.standardized ?? null,
+			unit: String(metric.unit ?? ""),
+			timescale: String(metric.timescale ?? ""),
+		}),
+	);
+
+	return {
+		signal: source || label || "measurement",
+		id: String(m.id ?? m.seqIdx ?? source),
+		label,
+		source,
+		seqIdx: String(m.seqIdx ?? m.tick ?? ""),
+		at:
+			typeof m.at === "string"
+				? new Date(m.at).getTime() * 1e6
+				: Number(m.at) || 0,
+		from: m.from
+			? typeof m.from === "string"
+				? new Date(m.from).getTime() * 1e6
+				: Number(m.from)
+			: null,
+		maturity: m.maturity ?? 0,
+		snr: m.snrDefined && m.snr !== undefined ? m.snr : null,
+		metrics,
+		metadata: Object.entries(m.metadata ?? {}).map(([name, value]) => ({
+			id: name,
+			name,
+			value: Number(value) || 0,
+		})),
+		provenance: Object.entries(m.provenance ?? {}).map(([name, value]) => ({
+			id: name,
+			name,
+			value: String(value),
+		})),
+		peers,
+		Peers: peers,
+	};
 };
 
 
@@ -912,6 +966,48 @@ const MeasurementPanel = ({
 											))}
 										</div>
 									) : null}
+									{(measurement.peers ?? measurement.Peers) &&
+									(measurement.peers ?? measurement.Peers)!.length > 0 ? (
+										<div className="pt-2">
+											<div className="pb-1 font-mono text-[8px] text-(--f4) uppercase tracking-widest">
+												Concurrent Peers (
+												{(measurement.peers ?? measurement.Peers)!.length})
+											</div>
+											<div className="space-y-1">
+												{(measurement.peers ?? measurement.Peers)!.map(
+													(peer, peerIdx) => (
+													<div
+														key={peer.id || peerIdx}
+														className="rounded bg-(--sunken) p-1.5 font-mono text-[9px]"
+													>
+														<div className="flex items-center gap-2 text-(--f2)">
+															<span className="font-semibold text-(--f1)">
+																{peer.source}
+															</span>
+															{peer.label ? (
+																<span className="text-(--f4)">{peer.label}</span>
+															) : null}
+															<span className="ml-auto text-(--f4)">
+																seq {peer.seqIdx}
+															</span>
+														</div>
+														{peer.metrics.length > 0 ? (
+															<div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[8px]">
+																{peer.metrics.map((m) => (
+																	<span key={m.id} className="text-(--f4)">
+																		{m.label || m.key}:{" "}
+																		<span className="text-(--f1)">
+																			{formatValue(m.raw)}
+																		</span>
+																	</span>
+																))}
+															</div>
+														) : null}
+													</div>
+												))}
+											</div>
+										</div>
+									) : null}
 								</div>
 							) : null}
 						</div>
@@ -923,141 +1019,62 @@ const MeasurementPanel = ({
 };
 
 /*
-StatePanel decodes the EnvelopeState the running binary persisted at this
-frame's observe boundary. It is Historical Witness: what SYMM actually held,
-not what today's build would now compute.
+StatePanel decodes and displays the observed Measurement at the inspected coordinate,
+including all concurrent peer observations attached via Peers.
 */
 export const StatePanel = ({
-	resident,
+	measurement,
 	semantics,
 	plain = true,
 }: {
 	state?: unknown;
-	resident: HindsightResident | null;
+	measurement?: Measurement | null;
 	envelope?: HindsightEnvelope | null;
 	semantics: HindsightMetricMap | null;
 	plain?: boolean;
 }) => {
-	const residentMeasurements = useMemo<MeasurementReading[]>(
-		() =>
-			(resident?.signals ?? []).map((measurement) => ({
-				signal: measurement.source,
-				id: measurement.identity ?? measurement.source,
-				label: "",
-				source: measurement.source,
-				seqIdx: String(measurement.origin.origin.sequence),
-				at: measurement.atNs,
-				from: null,
-				maturity: measurement.maturity,
-				snr: measurement.snrDefined ? measurement.snr : null,
-				metrics: measurement.metrics.map((metric, position) => ({
-					id: `${position}:${metric.key}`,
-					key: metric.key,
-					label: metric.label ?? "",
-					raw: metric.raw,
-					normalized: metric.hasNormalized ? metric.normalized : null,
-					standardized: metric.hasStandardized ? metric.standardized : null,
-					unit: metric.unit ?? "",
-					timescale: metric.timescale ?? "",
-				})),
-				metadata: [],
-				provenance: [
-					{
-						id: "origin",
-						name: "origin",
-						value: `${measurement.origin.origin.sequence}:${measurement.origin.ordinal}`,
-					},
-					{
-						id: "residency",
-						name: "residency",
-						value: measurement.carried
-							? measurement.hasAge
-								? `carried ${(measurement.ageNs / 1e6).toFixed(2)}ms`
-								: "carried"
-							: "fresh",
-					},
-				],
-			})),
-		[resident],
-	);
+	const directReading = useMemo<MeasurementReading | null>(() => {
+		if (!measurement) return null;
 
-	const residentEvidence = useMemo(() => {
-		const byMetric = new Map<
-			string,
-			Array<{ category: string; stance: string }>
-		>();
+		return measurementToReading(measurement);
+	}, [measurement]);
 
-		for (const category of resident?.categories ?? []) {
-			for (const identity of category.supporting ?? []) {
-				const references = byMetric.get(identity) ?? [];
-				references.push({ category: category.type, stance: "supports" });
-				byMetric.set(identity, references);
-			}
+	const readings = useMemo<MeasurementReading[]>(() => {
+		if (directReading === null) return [];
 
-			for (const identity of category.opposing ?? []) {
-				const references = byMetric.get(identity) ?? [];
-				references.push({ category: category.type, stance: "contradicts" });
-				byMetric.set(identity, references);
-			}
-		}
+		const peers = directReading.peers ?? directReading.Peers ?? [];
 
-		return byMetric;
-	}, [resident]);
+		return [directReading, ...peers];
+	}, [directReading]);
 
-	if (resident !== null && residentMeasurements.length > 0) {
+	if (readings.length > 0 && directReading !== null) {
+		const peerCount = (directReading.peers ?? directReading.Peers ?? []).length;
+
 		return (
 			<Flex.Column gap={3} className="p-3">
 				<div className="font-mono text-[9px] text-(--f4) leading-relaxed">
 					<span className="text-(--acc)">
-						Resident state as-of this envelope
+						Observed measurement at sequence {directReading.seqIdx || "—"}
 					</span>
-					{" · "}latest causally available values, with their exact origins
-					and ages. Examined {resident.examined} envelopes and reached back{" "}
-					{resident.reachedBack} captures.
+					{" · "}
+					{directReading.source || "market"} ({directReading.label || "BTC/USD"})
+					{peerCount > 0 ? ` · ${peerCount} concurrent peers` : ""}
 				</div>
 
 				<MeasurementPanel
-					measurements={residentMeasurements}
+					measurements={readings}
 					semantics={semantics}
 					versions={new Map()}
-					evidence={residentEvidence}
+					evidence={new Map()}
 					plain={plain}
 				/>
-
-				{resident.categories.length > 0 ? (
-					<Section fit="content" surface="sunken">
-						<Section.Header title="Resident categories" size="s" rule />
-						<Section.Body>
-							{resident.categories.map((category) => (
-								<div
-									key={`${category.type}:${category.origin.origin.sequence}:${category.origin.ordinal}`}
-									className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
-								>
-									<span className="text-(--f1)">{category.type}</span>
-									<span className="text-(--f4) tabular-nums">
-										conf {category.confidence.toFixed(3)} · origin{" "}
-										{category.origin.origin.sequence}:
-										{category.origin.ordinal}
-									</span>
-								</div>
-							))}
-						</Section.Body>
-					</Section>
-				) : null}
-
-				{(resident.unresolved?.length ?? 0) > 0 ? (
-					<p className="font-mono text-[9px] text-(--warn)">
-						Unresolved within this causal walk:{" "}
-						{resident.unresolved?.join(", ")}.
-					</p>
-				) : null}
 			</Flex.Column>
 		);
 	}
 
 	return (
-		<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-			No exact or resident historical state was found at this envelope.
-		</p>
+		<Typography.Paragraph className="px-3 py-3 font-mono text-[10px] text-(--f4)">
+			No observation was recorded at this sequence.
+		</Typography.Paragraph>
 	);
 };

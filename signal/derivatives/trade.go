@@ -27,7 +27,6 @@ type Trade struct {
 
 func NewTrade(ctx context.Context) *Trade {
 	trade := &Trade{
-		System: runtime.NewSystem(ctx, "derivatives:trade"),
 		pipeline: nomagique.NewNumber(
 			nmderivatives.NewTradeGate(),
 			nmderivatives.NewLiquidation(),
@@ -35,6 +34,7 @@ func NewTrade(ctx context.Context) *Trade {
 		),
 	}
 
+	trade.System = runtime.NewSystem(ctx, "derivatives:trade", trade)
 	trade.Transition(runtime.READY)
 	return trade
 }

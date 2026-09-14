@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,8 +14,9 @@ import (
 	fiberws "github.com/gofiber/contrib/v3/websocket"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/tests/tablestest"
 	"github.com/theapemachine/symm/nomagique/data"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/tests/tablestest"
 	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/wf"
 )
@@ -111,7 +113,7 @@ func TestHubSetHindsightStore(t *testing.T) {
 		tradeMeasurement := &data.Measurement[float64]{
 			Source:   "spot_trade",
 			Label:    "BTC/USD",
-			SeqIdx:   11,
+			SeqIdx:   10,
 			At:       at,
 			Maturity: 1.0,
 			Metrics: map[string]data.Metric[float64]{
@@ -146,11 +148,45 @@ func TestHubSetHindsightStore(t *testing.T) {
 			So(runs[0].Epoch, ShouldEqual, 1)
 		})
 
-		Convey("Hindsight timeline is queryable", func() {
-			var timeline []*data.Measurement[float64]
-			read("/hindsight/timeline?run=1&symbol=BTC/USD", &timeline)
-			So(len(timeline), ShouldEqual, 1)
-			So(timeline[0].Label, ShouldEqual, "BTC/USD")
+		Convey("Hindsight timeline requires websocket upgrade", func() {
+			response, err := hub.app.Test(httptest.NewRequest("GET", "/hindsight/timeline?run=1&symbol=BTC/USD", nil))
+			So(err, ShouldBeNil)
+			defer response.Body.Close()
+			So(response.StatusCode, ShouldEqual, 426)
+		})
+
+		Convey("Hindsight timeline streams FlatBuffers over websocket", func() {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			So(err, ShouldBeNil)
+			defer listener.Close()
+
+			go hub.app.Listener(listener)
+
+			addr := listener.Addr().String()
+			client, response, err := fastws.DefaultDialer.Dial("ws://"+addr+"/hindsight/timeline?run=1&symbol=BTC/USD", nil)
+			So(err, ShouldBeNil)
+
+			if response.Body != nil {
+				defer response.Body.Close()
+			}
+
+			defer client.Close()
+
+			messageType, payload, err := client.ReadMessage()
+			So(err, ShouldBeNil)
+			So(messageType, ShouldEqual, fastws.BinaryMessage)
+
+			frame := wire.GetRootAsMeasurementsFrame(payload, 0)
+			So(frame.RowsLength(), ShouldEqual, 1)
+
+			measurement := &wire.Measurement{}
+			So(frame.Rows(measurement, 0), ShouldBeTrue)
+			So(string(measurement.Symbol()), ShouldEqual, "BTC/USD")
+			So(measurement.PeersLength(), ShouldEqual, 1)
+
+			peer := &wire.Measurement{}
+			So(measurement.Peers(peer, 0), ShouldBeTrue)
+			So(string(peer.Source()), ShouldEqual, "spot_trade")
 		})
 
 		Convey("Hindsight symbols are queryable", func() {

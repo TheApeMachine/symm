@@ -20,55 +20,92 @@ EncodeMeasurementsFrameWith serializes a batch of measurements and passes the
 borrowed FlatBuffer bytes directly to fn, returning the builder to the pool once
 fn returns. This avoids defensive heap cloning when writing directly to sockets.
 */
+/*
+MeasurementToWire converts a data.Measurement to wire.MeasurementT including metrics,
+metadata, provenance, and concurrent peers.
+*/
+func MeasurementToWire(measurement *data.Measurement[float64]) *wire.MeasurementT {
+	if measurement == nil {
+		return nil
+	}
+
+	metrics := make([]*wire.MetricT, 0, len(measurement.Metrics))
+	for _, metric := range measurement.Metrics {
+		wireMetric := &wire.MetricT{
+			Name: metric.Label,
+			Raw:  metric.Raw,
+			Unit: string(metric.Unit),
+		}
+
+		if metric.Normalized != nil {
+			wireMetric.Normalized = *metric.Normalized
+			wireMetric.HasNormalized = true
+		}
+
+		metrics = append(metrics, wireMetric)
+	}
+
+	metadata := make([]*wire.NamedNumberT, 0, len(measurement.Metadata))
+	for key, val := range measurement.Metadata {
+		if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
+			metadata = append(metadata, &wire.NamedNumberT{
+				Name:  key,
+				Value: floatVal,
+			})
+		}
+	}
+
+	provenance := make([]*wire.NamedStringT, 0, len(measurement.Provenance))
+	for key, val := range measurement.Provenance {
+		provenance = append(provenance, &wire.NamedStringT{
+			Name:  key,
+			Value: val,
+		})
+	}
+
+	var peers []*wire.MeasurementT
+
+	if len(measurement.Peers) > 0 {
+		peers = make([]*wire.MeasurementT, 0, len(measurement.Peers))
+
+		for _, peer := range measurement.Peers {
+			if wirePeer := MeasurementToWire(peer); wirePeer != nil {
+				peers = append(peers, wirePeer)
+			}
+		}
+	}
+
+	return &wire.MeasurementT{
+		Source:       measurement.Source,
+		Symbol:       measurement.Label,
+		Tick:         measurement.SeqIdx,
+		At:           measurement.At.UnixNano(),
+		ObservedFrom: measurement.From.UnixNano(),
+		Maturity:     measurement.Maturity,
+		Snr:          measurement.SNR,
+		SnrDefined:   measurement.SNRDefined,
+		Metrics:      metrics,
+		Metadata:     metadata,
+		Provenance:   provenance,
+		Peers:        peers,
+	}
+}
+
+/*
+EncodeMeasurementsFrameWith serializes a batch of measurements and passes the
+borrowed FlatBuffer bytes directly to fn, returning the builder to the pool once
+fn returns. This avoids defensive heap cloning when writing directly to sockets.
+*/
 func EncodeMeasurementsFrameWith(
 	measurements []*data.Measurement[float64],
 	fn func([]byte) error,
 ) error {
 	rows := make([]*wire.MeasurementT, 0, len(measurements))
 
-	for _, m := range measurements {
-		if m == nil {
-			continue
+	for _, measurement := range measurements {
+		if wireMeasurement := MeasurementToWire(measurement); wireMeasurement != nil {
+			rows = append(rows, wireMeasurement)
 		}
-
-		metrics := make([]*wire.MetricT, 0, len(m.Metrics))
-		for _, metric := range m.Metrics {
-			met := &wire.MetricT{
-				Name: metric.Label,
-				Raw:  metric.Raw,
-				Unit: string(metric.Unit),
-			}
-
-			if metric.Normalized != nil {
-				met.Normalized = *metric.Normalized
-				met.HasNormalized = true
-			}
-
-			metrics = append(metrics, met)
-		}
-
-		metadata := make([]*wire.NamedNumberT, 0, len(m.Metadata))
-		for k, v := range m.Metadata {
-			if fval, err := strconv.ParseFloat(v, 64); err == nil {
-				metadata = append(metadata, &wire.NamedNumberT{
-					Name:  k,
-					Value: fval,
-				})
-			}
-		}
-
-		rows = append(rows, &wire.MeasurementT{
-			Source:       m.Source,
-			Symbol:       m.Label,
-			Tick:         m.SeqIdx,
-			At:           m.At.UnixNano(),
-			ObservedFrom: m.From.UnixNano(),
-			Maturity:     m.Maturity,
-			Snr:          m.SNR,
-			SnrDefined:   m.SNRDefined,
-			Metrics:      metrics,
-			Metadata:     metadata,
-		})
 	}
 
 	if len(rows) == 0 {

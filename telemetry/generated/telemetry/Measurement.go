@@ -22,6 +22,8 @@ type MeasurementT struct {
 	SnrDefined bool `json:"snrDefined"`
 	Metrics []*MetricT `json:"metrics"`
 	Metadata []*NamedNumberT `json:"metadata"`
+	Provenance []*NamedStringT `json:"provenance"`
+	Peers []*MeasurementT `json:"peers"`
 }
 
 func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -64,6 +66,32 @@ func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		}
 		metadataOffset = builder.EndVector(metadataLength)
 	}
+	provenanceOffset := flatbuffers.UOffsetT(0)
+	if t.Provenance != nil {
+		provenanceLength := len(t.Provenance)
+		provenanceOffsets := make([]flatbuffers.UOffsetT, provenanceLength)
+		for j := 0; j < provenanceLength; j++ {
+			provenanceOffsets[j] = t.Provenance[j].Pack(builder)
+		}
+		MeasurementStartProvenanceVector(builder, provenanceLength)
+		for j := provenanceLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(provenanceOffsets[j])
+		}
+		provenanceOffset = builder.EndVector(provenanceLength)
+	}
+	peersOffset := flatbuffers.UOffsetT(0)
+	if t.Peers != nil {
+		peersLength := len(t.Peers)
+		peersOffsets := make([]flatbuffers.UOffsetT, peersLength)
+		for j := 0; j < peersLength; j++ {
+			peersOffsets[j] = t.Peers[j].Pack(builder)
+		}
+		MeasurementStartPeersVector(builder, peersLength)
+		for j := peersLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(peersOffsets[j])
+		}
+		peersOffset = builder.EndVector(peersLength)
+	}
 	MeasurementStart(builder)
 	MeasurementAddId(builder, idOffset)
 	MeasurementAddSource(builder, sourceOffset)
@@ -80,6 +108,8 @@ func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	MeasurementAddSnrDefined(builder, t.SnrDefined)
 	MeasurementAddMetrics(builder, metricsOffset)
 	MeasurementAddMetadata(builder, metadataOffset)
+	MeasurementAddProvenance(builder, provenanceOffset)
+	MeasurementAddPeers(builder, peersOffset)
 	return MeasurementEnd(builder)
 }
 
@@ -110,6 +140,20 @@ func (rcv *Measurement) UnPackTo(t *MeasurementT) {
 		x := NamedNumber{}
 		rcv.Metadata(&x, j)
 		t.Metadata[j] = x.UnPack()
+	}
+	provenanceLength := rcv.ProvenanceLength()
+	t.Provenance = make([]*NamedStringT, provenanceLength)
+	for j := 0; j < provenanceLength; j++ {
+		x := NamedString{}
+		rcv.Provenance(&x, j)
+		t.Provenance[j] = x.UnPack()
+	}
+	peersLength := rcv.PeersLength()
+	t.Peers = make([]*MeasurementT, peersLength)
+	for j := 0; j < peersLength; j++ {
+		x := Measurement{}
+		rcv.Peers(&x, j)
+		t.Peers[j] = x.UnPack()
 	}
 }
 
@@ -337,8 +381,48 @@ func (rcv *Measurement) MetadataLength() int {
 	return 0
 }
 
+func (rcv *Measurement) Provenance(obj *NamedString, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *Measurement) ProvenanceLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *Measurement) Peers(obj *Measurement, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *Measurement) PeersLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func MeasurementStart(builder *flatbuffers.Builder) {
-	builder.StartObject(15)
+	builder.StartObject(17)
 }
 func MeasurementAddId(builder *flatbuffers.Builder, id flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(id), 0)
@@ -389,6 +473,18 @@ func MeasurementAddMetadata(builder *flatbuffers.Builder, metadata flatbuffers.U
 	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(metadata), 0)
 }
 func MeasurementStartMetadataVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func MeasurementAddProvenance(builder *flatbuffers.Builder, provenance flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(provenance), 0)
+}
+func MeasurementStartProvenanceVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func MeasurementAddPeers(builder *flatbuffers.Builder, peers flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(peers), 0)
+}
+func MeasurementStartPeersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func MeasurementEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

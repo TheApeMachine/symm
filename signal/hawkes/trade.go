@@ -37,7 +37,6 @@ func NewTrade(ctx context.Context) *Trade {
 	history := nmhawkes.Paths()
 
 	trade := &Trade{
-		System: runtime.NewSystem(ctx, "hawkes:trade"),
 		pipeline: nomagique.NewNumber(
 			nmhawkes.NewGate(),
 			nmhawkes.NewCounts(history),
@@ -47,6 +46,7 @@ func NewTrade(ctx context.Context) *Trade {
 		),
 	}
 
+	trade.System = runtime.NewSystem(ctx, "hawkes:trade", trade)
 	trade.Transition(runtime.READY)
 	return trade
 }
@@ -287,4 +287,3 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 	m.Metadata["peer-interest"] = "*"
 	return m
 }
-

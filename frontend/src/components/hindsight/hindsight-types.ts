@@ -7,15 +7,30 @@ domain model — so the UI reads the same identities the backend persisted.
 
 export { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 export { MetricT } from "#/providers/telemetry/telemetry/metric";
+import type { Measurement } from "#/collections/types";
+export type { Measurement };
+export type Metric<Value = number> = {
+	label?: string;
+	raw: Value;
+	normalized?: Value | null;
+	standardized?: Value | null;
+	exact?: string | null;
+	center?: number;
+	scale?: number;
+	unit?: number | string;
+	timescale?: number | string;
+};
 
 export type HindsightRun = {
+	epoch?: number;
 	id: string;
 	startedAt: string;
-	codeCommit: string;
-	buildId: string;
-	configDigest: string;
+	codeCommit?: string;
+	buildId?: string;
+	configDigest?: string;
 	schemaVersions?: Record<string, string>;
-	integrity: "COMPLETE" | "GAPPED" | "CORRUPT" | "UNKNOWN";
+	integrity?: "COMPLETE" | "GAPPED" | "CORRUPT" | "UNKNOWN";
+	status?: string;
 	/*
 		How many positions the desk held during this run, counted from the
 		lifecycle tape. Lets a reader pick a run that actually traded instead of
@@ -344,6 +359,7 @@ export type HindsightTimeline = {
 	totalObservations: number;
 	totalSymbols: number;
 	indexedAt: string;
+	measurements?: Measurement[];
 };
 
 export type HindsightTimelineQuery = {
@@ -396,104 +412,4 @@ export type HindsightMetricMap = {
 	signals: Record<string, SignalSemantics>;
 };
 
-/*
-The resident as-of read model.
 
-A value here is the latest one causally available at the inspected coordinate,
-which is usually not the one the inspected envelope carried. `carried` says the
-value came from an earlier envelope, `ageNs` says how much earlier, and
-`origin` names the exact capture it came from — so a resident value can never
-be mistaken for a fresh one.
-
-`unresolved` names the families the backward walk never found. It is not the
-same claim as "the system held nothing": `exhausted` says whether the walk ran
-out of budget before it ran out of history.
-*/
-export type ResidentMetric = {
-	key: string;
-	label?: string;
-	raw: number;
-	normalized: number;
-	hasNormalized: boolean;
-	standardized: number;
-	hasStandardized: boolean;
-	unit?: string;
-	timescale?: string;
-};
-
-export type ResidentOrigin = {
-	origin: HindsightCaptureIdentity;
-	ordinal: number;
-};
-
-export type ResidentMeasurement = {
-	source: string;
-	identity?: string;
-	origin: ResidentOrigin;
-	atNs: number;
-	ageNs: number;
-	hasAge: boolean;
-	carried: boolean;
-	maturity: number;
-	snr: number;
-	snrDefined: boolean;
-	metrics: ResidentMetric[];
-};
-
-export type ResidentCategory = {
-	type: string;
-	origin: ResidentOrigin;
-	ageNs: number;
-	hasAge: boolean;
-	carried: boolean;
-	confidence: number;
-	strength: number;
-	maturity: number;
-	uncertainty: number;
-	supporting?: string[];
-	opposing?: string[];
-};
-
-export type ResidentPerspective = {
-	symbol: string;
-	peer?: string;
-	/*
-		Retired metric-bucket advisor family byte carried by historical wire data.
-		This is decode-only evidence, not the current falsifiable Perspective.
-	*/
-	kind: number;
-	origin: ResidentOrigin;
-	ageNs: number;
-	hasAge: boolean;
-	carried: boolean;
-	readings: ResidentReading[];
-};
-
-export type ResidentReading = {
-	metric: string;
-	value: number;
-	defined: boolean;
-	/* Presence flags: an undefined observation instant is absent, not zero. */
-	observedAt?: number;
-	hasAt: boolean;
-	from?: number;
-	hasFrom: boolean;
-	maturity: number;
-	snr: number;
-	snrDefined: boolean;
-};
-
-export type HindsightResident = {
-	run: string;
-	symbol: string;
-	sequence: number;
-	ordinal: number;
-	at: string;
-	signals: ResidentMeasurement[];
-	categories: ResidentCategory[];
-	perspectives: ResidentPerspective[];
-	examined: number;
-	reachedBack: number;
-	exhausted: boolean;
-	unresolved?: string[];
-};

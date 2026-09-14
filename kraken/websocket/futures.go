@@ -209,6 +209,7 @@ func NewFuturesWithClient(
 		"websocket:futures",
 		futures.pinger,
 		runtime.Closer(client.Disconnect),
+		futures,
 	)
 
 	futures.pinger.OnFailed(func(err error) {

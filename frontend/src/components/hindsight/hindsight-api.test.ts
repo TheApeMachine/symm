@@ -1,4 +1,7 @@
+import * as flatbuffers from "flatbuffers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
+import { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import {
 	fetchHindsightRuns,
 	fetchHindsightCaptures,
@@ -8,7 +11,7 @@ import {
 	fetchHindsightGaps,
 	fetchHindsightLifecycle,
 	fetchHindsightTimeline,
-	fetchHindsightResident,
+	fetchHindsightSymbols,
 	fetchHindsightMetricMap,
 } from "./hindsight-api";
 
@@ -44,12 +47,79 @@ describe("Hindsight archive reads", () => {
 		["envelope", () => fetchHindsightEnvelope("run", 2)],
 		["gaps", () => fetchHindsightGaps("run")],
 		["lifecycle", () => fetchHindsightLifecycle("run")],
-		["timeline", () => fetchHindsightTimeline({ run: "run" })],
-		["resident", () => fetchHindsightResident("run", "BTC/USD", 2, 1)],
+		["symbols", () => fetchHindsightSymbols("run")],
 		["semantics", () => fetchHindsightMetricMap()],
 	])("surfaces a failed %s read instead of returning an empty archive", async (_name, read) => {
 		respond(503, "archive unavailable");
 		await expect(read()).rejects.toThrow("503");
+	});
+
+	it("surfaces a failed timeline WebSocket connection instead of returning an empty archive", async () => {
+		vi.stubGlobal("window", {
+			location: { protocol: "http:", hostname: "localhost" },
+		});
+		await expect(fetchHindsightTimeline({ run: "run" })).rejects.toThrow("WebSocket");
+	});
+
+	it("streams and decodes FlatBuffers MeasurementsFrame over WebSocket", async () => {
+		vi.stubGlobal("window", {
+			location: { protocol: "http:", hostname: "localhost" },
+		});
+
+		const builder = new flatbuffers.Builder(1024);
+		const source = builder.createString("spot_ticker");
+		const symbol = builder.createString("BTC/USD");
+		Measurement.startMeasurement(builder);
+		Measurement.addSource(builder, source);
+		Measurement.addSymbol(builder, symbol);
+		Measurement.addTick(builder, 10n);
+		Measurement.addAt(builder, 1000000000000n);
+		const measurementOffset = Measurement.endMeasurement(builder);
+
+		const rowsOffset = MeasurementsFrame.createRowsVector(builder, [measurementOffset]);
+		MeasurementsFrame.startMeasurementsFrame(builder);
+		MeasurementsFrame.addRows(builder, rowsOffset);
+		const frameOffset = MeasurementsFrame.endMeasurementsFrame(builder);
+		builder.finish(frameOffset);
+		const bytes = builder.asUint8Array().slice();
+
+		class MockWebSocket {
+			binaryType = "blob";
+			onmessage: ((event: MessageEvent) => void) | null = null;
+			onclose: (() => void) | null = null;
+			onerror: (() => void) | null = null;
+
+			constructor() {
+				setTimeout(() => {
+					if (this.onmessage) {
+						this.onmessage({ data: bytes.buffer } as MessageEvent);
+					}
+					if (this.onclose) {
+						this.onclose();
+					}
+				}, 5);
+			}
+
+			close() {}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+
+		let progressCount = 0;
+		const timeline = await fetchHindsightTimeline(
+			{ run: "1", symbol: "BTC/USD" },
+			{
+				onProgress: (partial) => {
+					progressCount++;
+					expect(partial.symbol).toBe("BTC/USD");
+				},
+			},
+		);
+
+		expect(timeline).not.toBeNull();
+		expect(timeline?.symbol).toBe("BTC/USD");
+		expect(timeline?.totalObservations).toBe(1);
+		expect(progressCount).toBeGreaterThan(0);
 	});
 
 	it("keeps a genuinely absent exact artifact distinct from a failed read", async () => {

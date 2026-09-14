@@ -105,10 +105,10 @@ type Ticker struct {
 
 func NewTicker(ctx context.Context) *Ticker {
 	ticker := &Ticker{
-		System:   runtime.NewSystem(ctx, "pumpdump:ticker"),
 		pipeline: nomagique.NewNumber(newTickerPipeline()),
 	}
 
+	ticker.System = runtime.NewSystem(ctx, "pumpdump:ticker", ticker)
 	ticker.Transition(runtime.READY)
 	return ticker
 }

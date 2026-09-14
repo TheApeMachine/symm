@@ -61,7 +61,7 @@ const Seek = ({
 		return (
 			<span
 				title={`No frame was recorded for this position's ${label}, so the tape cannot be seeked to it.`}
-				className="rounded-[2px] border border-(--line) px-1 py-0.5 text-(--f4) opacity-50"
+				className="rounded-xs border border-(--line) px-1 py-0.5 text-(--f4) opacity-50"
 			>
 				{label} —
 			</span>
@@ -73,7 +73,7 @@ const Seek = ({
 			variant="bare"
 			size="xs"
 			title={`Seek the tape to capture ${sequence}, the frame this position's ${label} was recorded at.`}
-			className="rounded-[2px] border border-(--line) px-1 py-0.5 text-(--f3) hover:border-(--acc) hover:text-(--f1)"
+			className="rounded-xs border border-(--line) px-1 py-0.5 text-(--f3) hover:border-(--acc) hover:text-(--f1)"
 			onClick={(clicked) => {
 				clicked.stopPropagation();
 				onSeek();

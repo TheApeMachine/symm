@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
-import type { HindsightResident } from "./hindsight-types";
+import { Typography } from "#/components/ui/typography";
+import type { Measurement } from "./hindsight-types";
 /*
 Comparing what SYMM held at two or three exact capture coordinates.
 
@@ -74,73 +75,53 @@ type Reading = {
 	} | null;
 };
 
-/*
-readResident flattens one as-of answer into the same named facts the exact-
-capture mode produces, so the two modes line up row for row and switching
-between them compares like with like. Historical Perspective rows are labeled
-as legacy advisor evidence; they are not the current Perspective contract.
-*/
-const readResident = (
-	resident: HindsightResident | null,
-): Map<string, Reading> => {
+
+
+const readMeasurement = (m: Measurement | null): Map<string, Reading> => {
 	const facts = new Map<string, Reading>();
+	if (m === null || m === undefined) return facts;
 
-	if (resident === null) return facts;
-
-	for (const signal of resident.signals) {
+	const all = [m, ...(m.peers ?? m.Peers ?? [])];
+	for (const item of all) {
+		const source = item.source || item.label || "measurement";
+		const seq =
+			typeof item.seqIdx === "number"
+				? item.seqIdx
+				: Number(item.seqIdx) || 0;
 		const origin = {
-			sequence: signal.origin.origin.sequence,
-			ordinal: signal.origin.ordinal,
-			ageMs: signal.hasAge ? signal.ageNs / 1e6 : null,
-			carried: signal.carried,
+			sequence: seq,
+			ordinal: 0,
+			ageMs: null,
+			carried: false,
 		};
 
-		for (const metric of signal.metrics) {
-			const name = `${signal.source}/${metric.key}`;
-
-			facts.set(name, {
+		if (item.maturity !== undefined) {
+			facts.set(`${source}/maturity`, {
 				group: "measurement",
-				name,
-				unit: metric.unit ?? "",
-				value: Number.isFinite(metric.raw) ? metric.raw : null,
+				name: `${source}/maturity`,
+				unit: "",
+				value: item.maturity,
 				origin,
 			});
 		}
-	}
 
-	for (const category of resident.categories) {
-		facts.set(`category/${category.type}`, {
-			group: "category",
-			name: `${category.type} · confidence`,
-			unit: "",
-			value: category.confidence,
-			origin: {
-				sequence: category.origin.origin.sequence,
-				ordinal: category.origin.ordinal,
-				ageMs: category.hasAge ? category.ageNs / 1e6 : null,
-				carried: category.carried,
-			},
-		});
-	}
+		if (item.snrDefined && item.snr !== undefined) {
+			facts.set(`${source}/snr`, {
+				group: "measurement",
+				name: `${source}/snr`,
+				unit: "dB",
+				value: item.snr,
+				origin,
+			});
+		}
 
-	for (const view of resident.perspectives) {
-		const origin = {
-			sequence: view.origin.origin.sequence,
-			ordinal: view.origin.ordinal,
-			ageMs: view.hasAge ? view.ageNs / 1e6 : null,
-			carried: view.carried,
-		};
-
-		const family = view.kind === undefined ? "" : `${view.kind}/`;
-
-		for (const reading of view.readings) {
-			const name = `${view.symbol}/${family}${reading.metric}`;
-
-			facts.set(`legacy-advisor/${name}`, {
-				group: "legacy-advisor",
+		for (const [key, metric] of Object.entries(item.metrics ?? {})) {
+			const name = `${source}/${key}`;
+			facts.set(name, {
+				group: "measurement",
 				name,
-				unit: "",
-				value: reading.defined ? reading.value : null,
+				unit: String(metric.unit ?? ""),
+				value: Number.isFinite(metric.raw) ? metric.raw : null,
 				origin,
 			});
 		}
@@ -186,7 +167,7 @@ const formatCell = (value: number | null | undefined): string => {
 export const ComparePanel = ({
 	marks,
 	states,
-	residents,
+	measurements,
 	mode,
 	loading,
 	onMode,
@@ -196,7 +177,7 @@ export const ComparePanel = ({
 }: {
 	marks: Mark[];
 	states?: Array<unknown>;
-	residents: Array<HindsightResident | null>;
+	measurements?: Array<Measurement | null>;
 	mode: CompareMode;
 	loading: boolean;
 	onMode: (next: CompareMode) => void;
@@ -210,7 +191,9 @@ export const ComparePanel = ({
 
 	const facts = useMemo(() => {
 		const perMark =
-			mode === "resident" ? residents.map(readResident) : (states ?? []).map(readFacts);
+			measurements && measurements.length > 0
+				? measurements.map(readMeasurement)
+				: (states ?? []).map(readFacts);
 		const identities = new Set<string>();
 
 		for (const mark of perMark) {
@@ -245,7 +228,7 @@ export const ComparePanel = ({
 		});
 
 		return rows;
-	}, [states, residents, mode]);
+	}, [states, measurements, mode]);
 
 	const rows = useMemo(() => {
 		const needle = filter.trim().toLowerCase();
@@ -287,7 +270,7 @@ export const ComparePanel = ({
 				<Button
 					variant="bare"
 					title="What this exact envelope produced and carried. A family absent here was not recomputed on this frame — which is not the same as the system not holding it."
-					className={`rounded-[2px] border px-1 py-0.5 font-mono text-[9px] ${
+					className={`rounded-xs border px-1 py-0.5 font-mono text-[9px] ${
 						mode === "exact"
 							? "border-(--acc) text-(--f1)"
 							: "border-(--line) text-(--f4) hover:text-(--f2)"
@@ -299,7 +282,7 @@ export const ComparePanel = ({
 				<Button
 					variant="bare"
 					title="The latest value causally available at this coordinate for every signal family, however long ago it was produced. Resolved by capture order, never by nearest timestamp."
-					className={`rounded-[2px] border px-1 py-0.5 font-mono text-[9px] ${
+					className={`rounded-xs border px-1 py-0.5 font-mono text-[9px] ${
 						mode === "resident"
 							? "border-(--acc) text-(--f1)"
 							: "border-(--line) text-(--f4) hover:text-(--f2)"
@@ -309,44 +292,26 @@ export const ComparePanel = ({
 					resident as-of
 				</Button>
 
-				{mode === "resident" ? (
-					<span className="ml-2">
-						{residents.map((resident, index) =>
-							resident === null ? null : (
-								<span
-									key={`${marks[index]?.sequence ?? index}:${marks[index]?.ordinal ?? 0}`}
-									className="mr-3"
-								>
-									<span className="text-(--info)">
-										{String.fromCharCode(65 + index)}
-									</span>{" "}
-									walked {resident.examined} envelopes back{" "}
-									{resident.reachedBack} captures
-									{resident.exhausted ? (
-										<span
-											className="text-(--warn)"
-											title="The walk hit its budget before it ran out of history. Unresolved families here mean the search stopped, not that the system held nothing."
-										>
-											{" "}
-											· budget reached
-										</span>
-									) : null}
-									{resident.unresolved && resident.unresolved.length > 0 ? (
-										<span className="text-(--warn)">
-											{" "}
-											· unresolved {resident.unresolved.join(", ")}
-										</span>
-									) : null}
-								</span>
-							),
-						)}
-					</span>
-				) : (
-					<span className="ml-2">
-						showing only what each envelope itself carried — absent means this
-						frame did not produce it
-					</span>
-				)}
+				<span className="ml-2">
+					{marks.map((mark, index) => {
+						const m = measurements?.[index];
+						const peers = m ? m.peers ?? m.Peers ?? [] : [];
+
+						return (
+							<span
+								key={`${mark.sequence}:${mark.ordinal}`}
+								className="mr-3"
+							>
+								<span className="text-(--info)">
+									{String.fromCharCode(65 + index)}
+								</span>{" "}
+								seq {mark.sequence}
+								{m?.source ? ` · ${m.source}` : ""}
+								{peers.length > 0 ? ` (${peers.length} peers)` : ""}
+							</span>
+						);
+					})}
+				</span>
 			</Flex.Row>
 
 			<div className="shrink-0 border-(--line) border-b px-2.5 py-1.5">
@@ -403,7 +368,7 @@ export const ComparePanel = ({
 						<Button
 							key={option}
 							variant="bare"
-							className={`rounded-[2px] border px-1 font-mono text-[9px] ${
+							className={`rounded-xs border px-1 font-mono text-[9px] ${
 								group === option
 									? "border-(--acc) text-(--f1)"
 									: "border-(--line) text-(--f4) hover:text-(--f2)"
@@ -419,7 +384,7 @@ export const ComparePanel = ({
 						value={filter}
 						placeholder="filter fact"
 						spellCheck={false}
-						className="ml-auto w-40 rounded-[2px] border border-(--line) bg-(--sunken) px-1 py-0.5 font-mono text-[9px] text-(--f1) outline-none focus:border-(--line2)"
+						className="ml-auto w-40 rounded-xs border border-(--line) bg-(--sunken) px-1 py-0.5 font-mono text-[9px] text-(--f1) outline-none focus:border-(--line2)"
 						onChange={(event) => setFilter(event.currentTarget.value)}
 					/>
 				</Flex.Row>
@@ -427,11 +392,11 @@ export const ComparePanel = ({
 
 			<Section.Body>
 				{rows.length === 0 ? (
-					<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
+					<Typography.Paragraph className="px-3 py-3 font-mono text-[10px] text-(--f4)">
 						{facts.length === 0
 							? "No state was witnessed at these marks. Unavailable — not unchanged."
 							: "Nothing changed between these marks under the current filter."}
-					</p>
+					</Typography.Paragraph>
 				) : (
 					<table className="w-full border-collapse font-mono text-[9px]">
 						<thead className="sticky top-0 bg-(--surface)">

@@ -177,6 +177,10 @@ func readMeasurements(batch arrow.RecordBatch) []*data.Measurement[float64] {
 		}
 
 		if metricsCol != nil && !metricsCol.IsNull(rowIdx) {
+			if measurement.Metrics == nil {
+				measurement.Metrics = make(map[string]data.Metric[float64])
+			}
+
 			keyArray := metricsCol.Keys().(*array.String)
 			valArray := metricsCol.Items().(*array.Float64)
 			offsets := metricsCol.Offsets()
@@ -194,6 +198,10 @@ func readMeasurements(batch arrow.RecordBatch) []*data.Measurement[float64] {
 		}
 
 		if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
+			if measurement.Metadata == nil {
+				measurement.Metadata = make(map[string]string)
+			}
+
 			keyArray := metadataCol.Keys().(*array.String)
 			valArray := metadataCol.Items().(*array.String)
 			offsets := metadataCol.Offsets()
@@ -206,6 +214,10 @@ func readMeasurements(batch arrow.RecordBatch) []*data.Measurement[float64] {
 		}
 
 		if provenanceCol != nil && !provenanceCol.IsNull(rowIdx) {
+			if measurement.Provenance == nil {
+				measurement.Provenance = make(map[string]string)
+			}
+
 			keyArray := provenanceCol.Keys().(*array.String)
 			valArray := provenanceCol.Items().(*array.String)
 			offsets := provenanceCol.Offsets()

@@ -81,12 +81,13 @@ func NewAPI(
 	normalizer := spot.NewNormalizer()
 
 	api := &API{
-		System:     runtime.NewSystem(ctx, "kraken", public, private, futures),
 		normalizer: normalizer,
 		public:     public,
 		private:    private,
 		futures:    futures,
 	}
+
+	api.System = runtime.NewSystem(ctx, "kraken", public, private, futures, api)
 
 	if err := errnie.Require(map[string]any{
 		"public":  public,
@@ -122,7 +123,6 @@ func (api *API) Futures() *FuturesLive {
 
 func (api *API) Name() string { return "kraken" }
 
-
 /*
 Normalizer returns the internal [spot.Normalizer] used to normalize asset names.
 */
@@ -145,7 +145,6 @@ func (api *API) Transition(stage runtime.Stage) {
 		api.private.Transition(stage)
 	}
 }
-
 
 func (api *API) Private() Conn                             { return api.private }
 func (api *API) Books() *sync.Map                          { return api.private.Books() }

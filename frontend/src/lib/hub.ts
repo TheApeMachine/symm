@@ -23,3 +23,20 @@ export const hubBaseUrl = () => {
 
 	return `${protocol}//${host}:8765`;
 };
+
+/*
+hubWsUrl locates the hub's WebSocket endpoints.
+*/
+export const hubWsUrl = () => {
+	if (import.meta.env.VITE_SYMM_WS_URL) {
+		return import.meta.env.VITE_SYMM_WS_URL.replace(/\/ws$/, "");
+	}
+
+	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+	const host =
+		!window.location.hostname || window.location.hostname === "localhost"
+			? "127.0.0.1"
+			: window.location.hostname;
+
+	return `${protocol}//${host}:8765`;
+};

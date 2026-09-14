@@ -44,17 +44,6 @@ func Drain(
 		}
 	}
 
-	run := Run{
-		Epoch:     epoch,
-		StartedAt: time.Now().UTC(),
-		BuildID:   "symm",
-		Status:    "ACTIVE",
-	}
-
-	if err := catalog.RecordRun(ctx, run); err != nil {
-		errnie.Error(err)
-	}
-
 	writer := NewWriter(catalog, epoch)
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()

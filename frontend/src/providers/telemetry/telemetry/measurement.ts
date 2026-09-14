@@ -7,6 +7,7 @@ import * as flatbuffers from 'flatbuffers';
 
 import { Metric, MetricT } from '../telemetry/metric.js';
 import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
+import { NamedString, NamedStringT } from '../telemetry/named-string.js';
 
 
 export class Measurement implements flatbuffers.IUnpackableObject<MeasurementT> {
@@ -120,8 +121,28 @@ metadataLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+provenance(index: number, obj?:NamedString):NamedString|null {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? (obj || new NamedString()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+provenanceLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+peers(index: number, obj?:Measurement):Measurement|null {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? (obj || new Measurement()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+peersLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startMeasurement(builder:flatbuffers.Builder) {
-  builder.startObject(15);
+  builder.startObject(17);
 }
 
 static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
@@ -208,6 +229,38 @@ static startMetadataVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addProvenance(builder:flatbuffers.Builder, provenanceOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(15, provenanceOffset, 0);
+}
+
+static createProvenanceVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startProvenanceVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addPeers(builder:flatbuffers.Builder, peersOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(16, peersOffset, 0);
+}
+
+static createPeersVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startPeersVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endMeasurement(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 6) // source
@@ -215,7 +268,7 @@ static endMeasurement(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createMeasurement(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, sourceOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, tick:bigint, peerOffset:flatbuffers.Offset, at:bigint, observedFrom:bigint, horizon:bigint, peerAt:bigint, peerObservedFrom:bigint, maturity:number, snr:number, snrDefined:boolean, metricsOffset:flatbuffers.Offset, metadataOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createMeasurement(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, sourceOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, tick:bigint, peerOffset:flatbuffers.Offset, at:bigint, observedFrom:bigint, horizon:bigint, peerAt:bigint, peerObservedFrom:bigint, maturity:number, snr:number, snrDefined:boolean, metricsOffset:flatbuffers.Offset, metadataOffset:flatbuffers.Offset, provenanceOffset:flatbuffers.Offset, peersOffset:flatbuffers.Offset):flatbuffers.Offset {
   Measurement.startMeasurement(builder);
   Measurement.addId(builder, idOffset);
   Measurement.addSource(builder, sourceOffset);
@@ -232,6 +285,8 @@ static createMeasurement(builder:flatbuffers.Builder, idOffset:flatbuffers.Offse
   Measurement.addSnrDefined(builder, snrDefined);
   Measurement.addMetrics(builder, metricsOffset);
   Measurement.addMetadata(builder, metadataOffset);
+  Measurement.addProvenance(builder, provenanceOffset);
+  Measurement.addPeers(builder, peersOffset);
   return Measurement.endMeasurement(builder);
 }
 
@@ -251,7 +306,9 @@ unpack(): MeasurementT {
     this.snr(),
     this.snrDefined(),
     this.bb!.createObjList<Metric, MetricT>(this.metrics.bind(this), this.metricsLength()),
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.metadata.bind(this), this.metadataLength())
+    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.metadata.bind(this), this.metadataLength()),
+    this.bb!.createObjList<NamedString, NamedStringT>(this.provenance.bind(this), this.provenanceLength()),
+    this.bb!.createObjList<Measurement, MeasurementT>(this.peers.bind(this), this.peersLength())
   );
 }
 
@@ -272,6 +329,8 @@ unpackTo(_o: MeasurementT): void {
   _o.snrDefined = this.snrDefined();
   _o.metrics = this.bb!.createObjList<Metric, MetricT>(this.metrics.bind(this), this.metricsLength());
   _o.metadata = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.metadata.bind(this), this.metadataLength());
+  _o.provenance = this.bb!.createObjList<NamedString, NamedStringT>(this.provenance.bind(this), this.provenanceLength());
+  _o.peers = this.bb!.createObjList<Measurement, MeasurementT>(this.peers.bind(this), this.peersLength());
 }
 }
 
@@ -291,7 +350,9 @@ constructor(
   public snr: number = 0.0,
   public snrDefined: boolean = false,
   public metrics: (MetricT)[] = [],
-  public metadata: (NamedNumberT)[] = []
+  public metadata: (NamedNumberT)[] = [],
+  public provenance: (NamedStringT)[] = [],
+  public peers: (MeasurementT)[] = []
 ){}
 
 
@@ -302,6 +363,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const peer = (this.peer !== null ? builder.createString(this.peer!) : 0);
   const metrics = Measurement.createMetricsVector(builder, builder.createObjectOffsetList(this.metrics));
   const metadata = Measurement.createMetadataVector(builder, builder.createObjectOffsetList(this.metadata));
+  const provenance = Measurement.createProvenanceVector(builder, builder.createObjectOffsetList(this.provenance));
+  const peers = Measurement.createPeersVector(builder, builder.createObjectOffsetList(this.peers));
 
   return Measurement.createMeasurement(builder,
     id,
@@ -318,7 +381,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.snr,
     this.snrDefined,
     metrics,
-    metadata
+    metadata,
+    provenance,
+    peers
   );
 }
 }

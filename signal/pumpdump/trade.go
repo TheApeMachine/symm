@@ -167,10 +167,10 @@ type Trade struct {
 
 func NewTrade(ctx context.Context) *Trade {
 	trade := &Trade{
-		System:   runtime.NewSystem(ctx, "pumpdump:trade"),
 		pipeline: nomagique.NewNumber(newTradeEntityPipeline()),
 	}
 
+	trade.System = runtime.NewSystem(ctx, "pumpdump:trade", trade)
 	trade.Transition(runtime.READY)
 	return trade
 }

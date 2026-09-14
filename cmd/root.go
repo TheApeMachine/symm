@@ -88,8 +88,10 @@ var (
 
 			startPprof()
 
+			// Everything started here implements *runtime.System, which allows you to pass
+			// a variadic amount of closers, and everything passes itself to that. There is
+			// thus no need to call a deferred Close method for anything.
 			hub := ui.NewHub(ctx)
-			defer hub.Close()
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
@@ -119,8 +121,6 @@ var (
 				system.Cfg.WebSocket.Endpoints.Public,
 			)
 
-			defer public.Close()
-
 			private := websocket.New(
 				ctx,
 				websocket.NewSimulator(),
@@ -128,26 +128,18 @@ var (
 				system.Cfg.WebSocket.Endpoints.Private,
 			)
 
-			defer private.Close()
-
 			futures := websocket.NewFutures(
 				ctx,
 				system.Cfg.WebSocket.Endpoints.Futures,
 			)
 
-			defer futures.Close()
-
 			api := websocket.NewAPI(
 				ctx, public, private, futures,
 			)
 
-			defer api.Close()
-
 			instrument := broker.NewInstrument(api)
 			price := broker.NewPrice(ctx, api, instrument)
 			balance := broker.NewBalance(ctx, api)
-
-			defer instrument.Close()
 
 			if err := instrument.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -190,6 +182,17 @@ var (
 			go hub.Drain(telemetryTee.Ring())
 
 			epoch := processStartedAt.UnixNano()
+
+			if err := catalog.RecordRun(ctx, tables.Run{
+				Epoch:        epoch,
+				StartedAt:    processStartedAt,
+				BuildID:      "symm-live",
+				ConfigDigest: viper.GetString("system.log.level"),
+				Status:       "ACTIVE",
+			}); err != nil {
+				errnie.Warn(fmt.Sprintf("cmd: record run fact: %v", err))
+			}
+
 			storageTee := nmruntime.NewNamedTee("storage.tee", 131072)
 			go tables.Drain(ctx, catalog, storageTee.Ring(), epoch)
 
@@ -252,9 +255,7 @@ var (
 				},
 				workspaceRegister,
 			)
-
-			defer workspace.Close()
-
+			
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
 			if err := instrument.Subscribe(); err != nil {

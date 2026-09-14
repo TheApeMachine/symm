@@ -52,10 +52,11 @@ func NewMeasurement[T any](
 	}
 
 	return &Measurement[T]{
-		ID:       -1,
-		Source:   source,
-		Metrics:  metrics,
-		Metadata: make(map[string]string),
+		ID:         -1,
+		Source:     source,
+		Metrics:    metrics,
+		Metadata:   make(map[string]string),
+		Provenance: make(map[string]string),
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 
 func TestMeasurementFinalize(t *testing.T) {
 	Convey("Given a measurement without historical support", t, func() {
-		measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+		measurement := NewMeasurement("source", map[string]Metric[float64]{})
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.Finalize()
 
@@ -20,7 +20,7 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with scalar divergence and noise variance", t, func() {
-		measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+		measurement := NewMeasurement("source", map[string]Metric[float64]{})
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.Metadata = map[string]string{
 			MetadataSupport:       "10",
@@ -51,7 +51,7 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 
 	Convey("Given a measurement with multivariate Mahalanobis SNR metadata", t, func() {
-		measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+		measurement := NewMeasurement("source", map[string]Metric[float64]{})
 		measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 		measurement.Metadata = map[string]string{
 			MetadataSupport:        "20",
@@ -67,7 +67,7 @@ func TestMeasurementFinalize(t *testing.T) {
 }
 
 func BenchmarkMeasurementFinalize(b *testing.B) {
-	measurement := NewMeasurement[float64]("source", map[string]Metric[float64]{})
+	measurement := NewMeasurement("source", map[string]Metric[float64]{})
 	measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()
 	measurement.Metadata = map[string]string{
 		MetadataSupport:        "25",

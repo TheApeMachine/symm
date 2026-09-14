@@ -31,7 +31,6 @@ func NewTicker(ctx context.Context) *Ticker {
 	changes := store.NewLatest[string, data.CrossMember]()
 
 	ticker := &Ticker{
-		System: runtime.NewSystem(ctx, "sentiment:ticker"),
 		pipeline: nomagique.NewNumber(
 			data.NewMetricGate("last"),
 			crosssection.NewUpdateMember("last", prices, changes),
@@ -43,6 +42,7 @@ func NewTicker(ctx context.Context) *Ticker {
 		),
 	}
 
+	ticker.System = runtime.NewSystem(ctx, "sentiment:ticker", ticker)
 	ticker.Transition(runtime.READY)
 	return ticker
 }
@@ -263,4 +263,3 @@ func (ticker *Ticker) Register() *data.Measurement[float64] {
 	m.Metadata["peer-interest"] = "*"
 	return m
 }
-

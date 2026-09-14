@@ -430,17 +430,23 @@ export type MeasurementCategory = Omit<ThesisCategory, "maturity"> & {
 };
 
 export type Measurement = {
-	id?: string;
+	id?: string | number;
+	label?: string;
 	source: string;
-	symbol: string;
+	symbol?: string;
+	seqIdx?: number | string;
 	tick?: number;
 	peer?: string;
 	at: string;
+	from?: string;
 	observedFrom?: string;
 	peerAt?: string;
 	peerObservedFrom?: string;
 	horizon?: number | string;
 	maturity?: number;
+	snr?: number;
+	snrDefined?: boolean;
+	estimated?: boolean;
 	uncertainty?: {
 		lower?: number;
 		upper?: number;
@@ -450,13 +456,20 @@ export type Measurement = {
 	metrics?: Record<
 		string,
 		{
+			label?: string;
 			raw: number;
 			normalized?: number | null;
-			unit?: string;
+			standardized?: number | null;
+			exact?: string | null;
+			unit?: string | number;
+			timescale?: string | number;
 		}
 	>;
-	metadata?: Record<string, number>;
+	metadata?: Record<string, string | number>;
+	provenance?: Record<string, string>;
 	categories?: MeasurementCategory[];
+	peers?: Measurement[];
+	Peers?: Measurement[];
 };
 
 export type MeasurementEpoch = {

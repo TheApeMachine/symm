@@ -47,7 +47,7 @@ func NewWorkspace[T any](
 		stages:   stages,
 	}
 
-	workload.System = NewSystem(ctx, label)
+	workload.System = NewSystem(ctx, label, workload)
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(
