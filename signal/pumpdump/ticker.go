@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"context"
 	"fmt"
+	"github.com/theapemachine/errnie"
 	"iter"
 	"math"
 	"strconv"
@@ -119,6 +120,7 @@ measurement is the pipeline's state, enriched in place.
 */
 func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
 	if ticker.Status() != runtime.READY {
+		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
 		return m
 	}
 

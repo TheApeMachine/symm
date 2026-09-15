@@ -2,6 +2,7 @@ package morphology
 
 import (
 	"context"
+	"github.com/theapemachine/errnie"
 	"iter"
 	"math"
 	"strconv"
@@ -113,6 +114,7 @@ measurement is the pipeline's state, enriched in place.
 */
 func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
 	if level3.Status() != runtime.READY {
+		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
 		return m
 	}
 

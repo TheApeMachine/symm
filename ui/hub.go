@@ -2,12 +2,9 @@ package ui
 
 import (
 	"context"
-	"errors"
 	"io"
-	"net"
 	neturl "net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -36,17 +33,6 @@ type TradeJournalSource interface {
 }
 
 /*
-LearningSource supplies serialized learning state FlatBuffers.
-*/
-type LearningSource interface {
-	MarshalFlatbuffer(focus string) []byte
-}
-
-type StreamableLearningSource interface {
-	MarshalFlatbufferWith(focus string, fn func([]byte) error) error
-}
-
-/*
 Hub owns the dashboard websocket and broadcasts schema-tagged binary frames.
 It is an ordinary Workspace stage: it registers to ChannelUI through NewHub,
 and the Workspace drives every outbound write through Step. Inbound commands
@@ -63,7 +49,6 @@ type Hub struct {
 	frontendMu       sync.Mutex
 	store            *tables.Catalog
 	tradeStore       TradeJournalSource
-	learningSource   LearningSource
 	exitHandler      func(symbol string)
 	fluid            *FluidRTC
 	learningInterval time.Duration
@@ -76,6 +61,8 @@ registers it on the workspace so live frames reach it through Step.
 */
 func NewHub(
 	ctx context.Context,
+	trades TradeJournalSource,
+	hindsightStore *tables.Catalog,
 	uiTee runtime.Tee,
 ) *Hub {
 	viper.SetDefault("ui.websocket.learning_interval", "250ms")
@@ -93,7 +80,9 @@ func NewHub(
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		fluid: NewFluidRTC(ctx, "hub"),
+		fluid:      NewFluidRTC(ctx, "hub"),
+		tradeStore: trades,
+		store:      hindsightStore,
 	}
 
 	closers := []io.Closer{}
@@ -365,7 +354,14 @@ func NewHub(
 				continue
 			}
 
-			payload := *(*[]byte)(hub.uiTee.Next())
+			frame := hub.uiTee.Next()
+
+			if frame == nil {
+				time.Sleep(100 * time.Microsecond)
+				continue
+			}
+
+			payload := *(*[]byte)(frame)
 
 			if len(payload) == 0 {
 				time.Sleep(100 * time.Microsecond)
@@ -388,42 +384,6 @@ func NewHub(
 }
 
 /*
-SetHindsightStore attaches the capture store so the Hindsight inspection reads
-can answer without the live path.
-*/
-func (hub *Hub) SetHindsightStore(store *tables.Catalog) {
-	if hub == nil {
-		return
-	}
-
-	hub.store = store
-}
-
-/*
-SetTradeStore attaches the broker's trade journal so GET /trades can serve the
-persisted position_trades table.
-*/
-func (hub *Hub) SetTradeStore(source TradeJournalSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.tradeStore = source
-}
-
-/*
-SetLearningSource attaches the learning source so the dashboard socket can broadcast
-the resident learning state periodically.
-*/
-func (hub *Hub) SetLearningSource(source LearningSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.learningSource = source
-}
-
-/*
 SetExitHandler attaches the handler for manual position exit commands from the UI.
 */
 func (hub *Hub) SetExitHandler(handler func(symbol string)) {
@@ -432,53 +392,6 @@ func (hub *Hub) SetExitHandler(handler func(symbol string)) {
 	}
 
 	hub.exitHandler = handler
-}
-
-/*
-Fluid returns the WebRTC transport boundary used by live visualization viewers.
-*/
-func (hub *Hub) Fluid() *FluidRTC {
-	if hub == nil {
-		return nil
-	}
-
-	return hub.fluid
-}
-
-/*
-PhysicsMonitor returns the physics monitor attached to the hub.
-*/
-func (hub *Hub) PhysicsMonitor() *sensorium.PhysicsMonitor {
-	if hub == nil {
-		return nil
-	}
-
-	return &hub.physics
-}
-
-/*
-Close shuts down the HTTP server, cancels clients, and waits for ingress drain.
-*/
-func (hub *Hub) Close() error {
-	var err error
-
-	if hub.System != nil {
-		err = hub.System.Close()
-	}
-
-	if hub.fluid != nil {
-		err = errors.Join(err, hub.fluid.Close())
-	}
-
-	if hub.app != nil {
-		if shutdownErr := hub.app.Shutdown(); shutdownErr != nil {
-			if !errors.Is(shutdownErr, net.ErrClosed) && !strings.Contains(shutdownErr.Error(), "use of closed network connection") {
-				err = errors.Join(err, shutdownErr)
-			}
-		}
-	}
-
-	return err
 }
 
 /*
@@ -537,12 +450,14 @@ func (hub *Hub) handleCommand(payload []byte) {
 /*
 Run listens for dashboard clients on the configured address.
 */
-func (hub *Hub) Run() error {
-	address := hub.listenAddr
+func (hub *Hub) Run() {
+	go func() {
+		address := hub.listenAddr
 
-	if address == "" {
-		address = ":8765"
-	}
+		if address == "" {
+			address = ":8765"
+		}
 
-	return hub.app.Listen(address)
+		hub.app.Listen(address)
+	}()
 }

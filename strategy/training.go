@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"github.com/theapemachine/errnie"
 	"iter"
 	"sync"
 	"time"
@@ -126,6 +127,11 @@ until the model is confident enough, while updating and returning the held
 telemetry measurement so telemetryTee streams it to the frontend.
 */
 func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if training.Status() != runtime.READY {
+		errnie.Warn(training.Name() + ": Step called before READY; dropping event")
+		return measurement
+	}
+
 	training.mu.Lock()
 	current := training.measurement
 

@@ -31,6 +31,16 @@ func TestConsumerHandle(t *testing.T) {
 		register := store.NewRegister[*data.Measurement[float64]]()
 		node := &countingNode{}
 		consumer := NewConsumer(t.Context(), node, register)
+		consumer.Transition(READY)
+
+		Convey("Paused consumers drop a range and resume without replaying it", func() {
+			consumer.Transition(WAITING)
+			consumer.Handle(0, 3)
+			So(node.steps, ShouldEqual, 0)
+			consumer.Transition(READY)
+			consumer.Handle(4, 4)
+			So(node.steps, ShouldEqual, 1)
+		})
 
 		Convey("the consumer identified the node's register slot", func() {
 			So(consumer.Identity(), ShouldEqual, 0)
@@ -60,9 +70,11 @@ func TestConsumerHandle(t *testing.T) {
 		register := store.NewRegister[*data.Measurement[float64]]()
 		sourceNode := &countingNode{}
 		sourceConsumer := NewConsumer(t.Context(), sourceNode, register)
+		sourceConsumer.Transition(READY)
 
 		peerNode := &peerAwareNode{}
 		peerConsumer := NewConsumer(t.Context(), peerNode, register)
+		peerConsumer.Transition(READY)
 
 		So(sourceConsumer.Identity(), ShouldEqual, 0)
 		So(peerConsumer.Identity(), ShouldEqual, 1)
@@ -88,7 +100,22 @@ func (node *peerAwareNode) Step(state *data.Measurement[float64]) *data.Measurem
 
 func (node *peerAwareNode) Register() *data.Measurement[float64] {
 	measurement := data.NewMeasurement[float64]("solver", nil)
-	measurement.Metadata["peer-interest"] = "counting"
+	// The source consumer owns register slot zero in this fixture.
+	measurement.Metadata["peer-interest"] = "0"
 
 	return measurement
+}
+
+func BenchmarkConsumerHandle(b *testing.B) {
+	register := store.NewRegister[*data.Measurement[float64]]()
+	consumer := NewConsumer(b.Context(), &countingNode{}, register)
+	consumer.Transition(READY)
+	b.ResetTimer()
+	for sequence := 0; sequence < b.N; sequence++ {
+		consumer.Handle(int64(sequence), int64(sequence))
+	}
+	b.StopTimer()
+	if err := consumer.Close(); err != nil {
+		b.Fatal(err)
+	}
 }

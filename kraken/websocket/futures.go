@@ -564,6 +564,7 @@ one measurement.
 */
 func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if futures.Status() != runtime.READY {
+		errnie.Warn(futures.Name() + ": Step called before READY; dropping event")
 		return measurement
 	}
 

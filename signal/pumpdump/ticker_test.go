@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
 	"testing"
 	"time"
@@ -103,6 +104,19 @@ func TestTickerRegister(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(metric.Label, ShouldEqual, name)
 			So(metric.Raw, ShouldEqual, 0.0)
+		}
+	})
+}
+
+func TestTickerStepReadiness(t *testing.T) {
+	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+		node := &Ticker{System: runtime.NewSystem(t.Context(), "readiness-test")}
+		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
+			node.Transition(stage)
+			So(node.Step(measurement), ShouldEqual, measurement)
+			So(node.Status(), ShouldEqual, stage)
+			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
 }

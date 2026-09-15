@@ -45,7 +45,8 @@ and a WebRTC viewer is ready, it serializes and publishes the manifold state.
 */
 func (tee *WebRTCTee) Push(measurement *data.Measurement[float64]) {
 	if tee.Status() != runtime.READY {
-		errnie.Warn("pushing to a non-ready system may have unintended consequences")
+		errnie.Warn(tee.Name() + ": Push called before READY; dropping event")
+		return
 	}
 
 	if !tee.ring.Put(measurement) {

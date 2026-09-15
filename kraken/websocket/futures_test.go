@@ -117,3 +117,16 @@ func TestFuturesLive(t *testing.T) {
 		})
 	})
 }
+
+func TestFuturesLiveStepReadiness(t *testing.T) {
+	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+		node := &FuturesLive{System: runtime.NewSystem(t.Context(), "readiness-test")}
+		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
+			node.Transition(stage)
+			So(node.Step(measurement), ShouldEqual, measurement)
+			So(node.Status(), ShouldEqual, stage)
+			So(measurement.SeqIdx, ShouldEqual, 7)
+		}
+	})
+}

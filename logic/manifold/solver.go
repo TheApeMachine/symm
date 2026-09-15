@@ -255,6 +255,11 @@ func (solver *Solver) run() {
 Step dispatches on the envelope kind:
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if solver.Status() != runtime.READY {
+		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
+		return measurement
+	}
+
 	if solver.Status() != runtime.READY || solver.Error() != nil {
 		return nil
 	}

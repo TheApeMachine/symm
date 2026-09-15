@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"github.com/theapemachine/errnie"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
@@ -45,7 +46,12 @@ Step supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
 func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY || measurement == nil {
+	if ticker.Status() != runtime.READY {
+		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
+		return measurement
+	}
+
+	if measurement == nil {
 		return measurement
 	}
 

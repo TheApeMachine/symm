@@ -101,7 +101,12 @@ var (
 			// above keeps only genuine blobs, the model checkpoint chief among
 			// them; everything a reader queries lives in the catalog.
 			catalog := tables.Open(ctx, storeTee)
-			catalog.Drain(ctx, epoch)
+
+			if catalog == nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO, "symm: catalog initialization failed", nil,
+				))
+			}
 
 			if err := catalog.Ensure(ctx); err != nil {
 				return err
@@ -177,11 +182,33 @@ var (
 				errnie.Warn(fmt.Sprintf("cmd: record run fact: %v", err))
 			}
 
-			hub := ui.NewHub(ctx, uiTee)
-			hub.SetHindsightStore(catalog)
+			hub := ui.NewHub(ctx, nil, catalog, uiTee)
+			hub.Run()
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
 			manifoldSolver.Start()
+
+			correlationTicker := correlation.NewTicker(ctx)
+			leadlagTicker := leadlag.NewTicker(ctx)
+			liquidityTicker := liquidity.NewTicker(ctx)
+			sentimentTicker := sentiment.NewTicker(ctx)
+			pumpdumpTicker := pumpdump.NewTicker(ctx)
+			cvdTrade := cvd.NewTrade(ctx)
+			hawkesTrade := hawkes.NewTrade(ctx)
+			toxicityTrade := toxicity.NewTrade(ctx)
+			pumpdumpTrade := pumpdump.NewTrade(ctx)
+			depthflowLevel3 := depthflow.NewLevel3(ctx)
+			morphologyLevel3 := morphology.NewLevel3(ctx)
+			toxicityLevel3 := toxicity.NewLevel3(ctx)
+			pumpdumpLevel3 := pumpdump.NewLevel3(ctx)
+			derivativesTicker := derivatives.NewTicker(ctx)
+			derivativesTrade := derivatives.NewTrade(ctx)
+
+			categorySolver := category.NewSolver(ctx)
+			resonanceSolver := resonance.NewSolver(
+				ctx, system.Cfg.Resonance.LearningRate,
+			)
+			cognitionSolver := cognition.NewSolver(ctx)
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
@@ -193,31 +220,29 @@ var (
 						futures,
 					},
 					{
-						correlation.NewTicker(ctx),
-						leadlag.NewTicker(ctx),
-						liquidity.NewTicker(ctx),
-						sentiment.NewTicker(ctx),
-						pumpdump.NewTicker(ctx),
-						cvd.NewTrade(ctx),
-						hawkes.NewTrade(ctx),
-						toxicity.NewTrade(ctx),
-						pumpdump.NewTrade(ctx),
-						depthflow.NewLevel3(ctx),
-						morphology.NewLevel3(ctx),
-						toxicity.NewLevel3(ctx),
-						pumpdump.NewLevel3(ctx),
-						derivatives.NewTicker(ctx),
-						derivatives.NewTrade(ctx),
+						correlationTicker,
+						leadlagTicker,
+						liquidityTicker,
+						sentimentTicker,
+						pumpdumpTicker,
+						cvdTrade,
+						hawkesTrade,
+						toxicityTrade,
+						pumpdumpTrade,
+						depthflowLevel3,
+						morphologyLevel3,
+						toxicityLevel3,
+						pumpdumpLevel3,
+						derivativesTicker,
+						derivativesTrade,
 					},
 					{
-						category.NewSolver(ctx),
-						resonance.NewSolver(
-							ctx, system.Cfg.Resonance.LearningRate,
-						),
+						categorySolver,
+						resonanceSolver,
 						manifoldSolver,
 					},
 					{
-						cognition.NewSolver(ctx),
+						cognitionSolver,
 					},
 					{
 						training,
@@ -246,73 +271,60 @@ var (
 				))
 			}
 
-			api.Transition(nmruntime.READY)
+			// Start consumers before opening market ingress. All construction,
+			// subscriptions and seeding have completed at this point.
+			go catalog.Drain(ctx, epoch)
 
-			if err := api.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: transport readiness barrier failed",
-					err,
-				))
-			}
-
-			if api.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"symm: required transports did not reach ready",
-					nil,
-				))
-			}
-
-			if workspace.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"symm: workspace did not reach ready",
-					nil,
-				))
+			for _, runsys := range []nmruntime.RuntimeSystem{
+				hub,
+				uiTee,
+				storeTee,
+				webrtcTee,
+				training,
+				manifoldSolver,
+				correlationTicker,
+				leadlagTicker,
+				liquidityTicker,
+				sentimentTicker,
+				pumpdumpTicker,
+				cvdTrade,
+				hawkesTrade,
+				toxicityTrade,
+				pumpdumpTrade,
+				depthflowLevel3,
+				morphologyLevel3,
+				toxicityLevel3,
+				pumpdumpLevel3,
+				derivativesTicker,
+				derivativesTrade,
+				workspace,
+				api,
+				public,
+				private,
+				futures,
+			} {
+				runsys.Transition(nmruntime.READY)
 			}
 
 			var totalSteps atomic.Uint64
 
-			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					if api.Status() != nmruntime.READY ||
-						instrument.Status() != nmruntime.READY ||
-						price.Status() != nmruntime.READY {
-						if workspace.Status() == nmruntime.READY {
-							workspace.Transition(nmruntime.WAITING)
-						}
-
-						time.Sleep(10 * time.Millisecond)
-						continue
-					}
-
-					if workspace.Status() == nmruntime.WAITING {
-						workspace.Transition(nmruntime.READY)
-					}
-
-					if workspace.Status() != nmruntime.READY {
-						time.Sleep(10 * time.Millisecond)
-						continue
-					}
-
-					if public.Pending() > 0 || private.Pending() > 0 || futures.Pending() > 0 {
-						workspace.Step(nil)
-						totalSteps.Add(1)
-						continue
-					}
-
-					time.Sleep(100 * time.Microsecond)
+			for ctx.Err() == nil {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
 				}
-			}()
 
-			return hub.Run()
+				if public.Pending() > 0 || private.Pending() > 0 || futures.Pending() > 0 {
+					workspace.Step(nil)
+					totalSteps.Add(1)
+					continue
+				}
+
+				time.Sleep(100 * time.Microsecond)
+			}
+
+			return ctx.Err()
 		},
 	}
 )

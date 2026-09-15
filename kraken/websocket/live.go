@@ -490,6 +490,7 @@ float64 the mathematics runs on.
 */
 func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if live.Status() != runtime.READY {
+		errnie.Warn(live.Name() + ": Step called before READY; dropping event")
 		return measurement
 	}
 
@@ -962,7 +963,8 @@ func (live *Live) subscribeLevel3Group(conn *Live) error {
 		time.Sleep(viper.GetDuration("market.subscribe.pace"))
 	}
 
-	conn.Transition(runtime.READY)
+	// A seeded child must not open ingress before its owning session.
+	conn.Transition(live.Status())
 
 	return nil
 }

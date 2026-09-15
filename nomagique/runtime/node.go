@@ -81,8 +81,14 @@ func (consumer *Consumer[T]) Identify(id int) data.Identifiable[T] {
 Handle steps one node over every slot in [lower, upper]. Each invocation
 reads the node's registered data back out of the register, passes it to Step,
 and puts what Step returns back into the register under the node's slot.
+Before READY, Handle drops the range without stepping or publishing.
 */
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
+	if consumer.Status() != READY {
+		errnie.Warn(consumer.Name() + ": Handle called before READY; dropping event")
+		return
+	}
+
 	for seq := lower; seq <= upper; seq++ {
 		val := consumer.register.Next(data.NewValue(
 			*store.NewQuery(consumer, data.ActionRead),

@@ -26,11 +26,11 @@ websocket).
 */
 type Workspace[T any] struct {
 	*System
-	channel  disruptor.Disruptor
-	buffer   []T
-	register *store.Register[T]
-	stages   [][]Node[T]
-	tees     []Tee
+	channel   disruptor.Disruptor
+	buffer    []T
+	register  *store.Register[T]
+	consumers []*Consumer[T]
+	tees      []Tee
 }
 
 func NewWorkspace[T any](
@@ -42,7 +42,6 @@ func NewWorkspace[T any](
 	workload := &Workspace[T]{
 		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
 		register: store.NewRegister[T](),
-		stages:   stages,
 		tees:     tees,
 	}
 
@@ -57,6 +56,7 @@ func NewWorkspace[T any](
 
 		for index, node := range stage {
 			consumer := NewConsumer(ctx, node, workload.register, tees...)
+			workload.consumers = append(workload.consumers, consumer)
 			group[index] = consumer
 		}
 
@@ -79,15 +79,27 @@ func NewWorkspace[T any](
 	}
 
 	workload.channel = channel
-	workload.Transition(READY)
 
 	go workload.channel.Listen()
 	return workload
 }
 
+// Transition opens downstream consumers before workspace admission. Pausing the
+// workspace stops new admission while already committed work can finish.
+func (workspace *Workspace[T]) Transition(stage Stage) {
+	if stage == READY {
+		for index := len(workspace.consumers) - 1; index >= 0; index-- {
+			workspace.consumers[index].Transition(READY)
+		}
+	}
+
+	workspace.System.Transition(stage)
+}
+
+// Step drops input without reserving a ring slot until the workspace is ready.
 func (workspace *Workspace[T]) Step(payload T) T {
 	if workspace.Status() != READY {
-		errnie.Warn("pushing to a non-ready system may have unintended consequences")
+		errnie.Warn(workspace.Name() + ": Step called before READY; dropping event")
 		return payload
 	}
 

@@ -11,19 +11,16 @@ import (
 )
 
 /*
-StoreTee is a concrete off-ramp that accepts *data.Measurement[float64]
-and yields encoded FlatBuffer []byte frames for the dashboard, as well as
-streaming fluid manifold frames over WebRTC.
-It satisfies runtime.Tee[*data.Measurement[float64], []byte].
+StoreTee queues measurements for the catalog drain. It implements runtime.Tee
+and remains idle until startup explicitly transitions it to READY.
 */
 type StoreTee struct {
 	*runtime.System
 	queue *wf.RingBuffer[*data.Measurement[float64]]
-	bound uint64
 }
 
 /*
-NewUITee creates a new wait-free UITee off-ramp.
+NewStoreTee creates an idle storage off-ramp.
 */
 func NewStoreTee(label string, capacity int) *StoreTee {
 	if capacity < 1 {
@@ -32,7 +29,6 @@ func NewStoreTee(label string, capacity int) *StoreTee {
 
 	tee := &StoreTee{
 		queue: wf.NewRingBuffer[*data.Measurement[float64]](capacity),
-		bound: uint64(capacity),
 	}
 
 	tee.System = runtime.NewSystem(context.Background(), label, tee)
@@ -40,9 +36,7 @@ func NewStoreTee(label string, capacity int) *StoreTee {
 }
 
 /*
-Push receives measurements from the workspace. Raw venue feeds stay off the
-dashboard websocket; the page route still selects which analytical sources
-are on the wire.
+Push receives measurements from the workspace after startup opens the tee.
 */
 func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 	if tee.Status() != runtime.READY {
@@ -54,16 +48,21 @@ func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	tee.queue.Put(measurement)
+	if !tee.queue.Put(measurement) {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"store tee: measurement queue is full",
+			nil,
+		))
+	}
 }
 
 /*
-Next drains available measurements from the queue, batches them,
-and returns an encoded FlatBuffer frame ([]byte).
+Next returns a measurement pointer, or nil while idle or when the queue is empty.
 */
 func (tee *StoreTee) Next() unsafe.Pointer {
 	if tee.Status() != runtime.READY {
-		errnie.Warn("pushing to a non-ready system may have unintended consequences")
+		errnie.Warn(tee.Name() + ": Next called before READY; dropping event")
 		return nil
 	}
 
@@ -75,6 +74,7 @@ func (tee *StoreTee) Next() unsafe.Pointer {
 			"[storetee] bad measurement retrieved from tie ring",
 			nil,
 		))
+
 		return nil
 	}
 

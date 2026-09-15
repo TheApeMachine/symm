@@ -4,6 +4,8 @@ import (
 	"context"
 	"iter"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"time"
 	"unsafe"
 
@@ -49,6 +51,7 @@ func TestTraining_Learn(t *testing.T) {
 			So(gridSpace.Formed(), ShouldBeTrue)
 
 			training := NewTraining(ctx, nil, gridSpace)
+			training.Transition(runtime.READY)
 
 			excursion := tables.ExcursionRecord{
 				ID:                 "exc-1",
@@ -124,6 +127,7 @@ func TestTraining_Learn(t *testing.T) {
 			So(gridSpace.Formed(), ShouldBeTrue)
 
 			training := NewTraining(ctx, nil, gridSpace)
+			training.Transition(runtime.READY)
 
 			excursion := tables.ExcursionRecord{
 				ID:                 "exc-2",
@@ -193,6 +197,7 @@ func TestTraining_RegisterAndStep(t *testing.T) {
 	Convey("Given a Training node with registered telemetry", t, func() {
 		ctx := context.Background()
 		training := NewTraining(ctx, nil)
+		training.Transition(runtime.READY)
 
 		Convey("Register should populate the complete metric schema", func() {
 			measurement := training.Register()
@@ -229,4 +234,15 @@ func TestTraining_RegisterAndStep(t *testing.T) {
 	})
 }
 
-
+func TestTrainingStepReadiness(t *testing.T) {
+	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+		node := &Training{System: runtime.NewSystem(t.Context(), "readiness-test")}
+		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
+			node.Transition(stage)
+			So(node.Step(measurement), ShouldEqual, measurement)
+			So(node.Status(), ShouldEqual, stage)
+			So(measurement.SeqIdx, ShouldEqual, 7)
+		}
+	})
+}

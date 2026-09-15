@@ -124,7 +124,12 @@ Step folds the category observations in Peers into the symbol's cognition
 state machine and writes the freshest reading back onto the measurement.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if solver.Status() != runtime.READY || solver.Error() != nil {
+	if solver.Status() != runtime.READY {
+		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
+		return measurement
+	}
+
+	if solver.Error() != nil {
 		return measurement
 	}
 
@@ -1073,7 +1078,6 @@ func (solver *Solver) Reset() {
 		return true
 	})
 }
-
 
 /*
 Reading returns the freshest cognition reading for a symbol in a thread-safe manner.

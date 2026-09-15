@@ -1,6 +1,7 @@
 package toxicity
 
 import (
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"testing"
 	"time"
 
@@ -15,12 +16,12 @@ func tradeRow(
 	at time.Time,
 ) *data.Measurement[float64] {
 	m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
-		"price":               data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
-		"qty":                 data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
-		"best_price:bid":      data.NewMetric[float64]("best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(bidPrice),
-		"best_price:ask":      data.NewMetric[float64]("best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(askPrice),
-		"touch_quantity:bid":  data.NewMetric[float64]("touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(bidQty),
-		"touch_quantity:ask":  data.NewMetric[float64]("touch_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(askQty),
+		"price":              data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
+		"qty":                data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
+		"best_price:bid":     data.NewMetric[float64]("best_price:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(bidPrice),
+		"best_price:ask":     data.NewMetric[float64]("best_price:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(askPrice),
+		"touch_quantity:bid": data.NewMetric[float64]("touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(bidQty),
+		"touch_quantity:ask": data.NewMetric[float64]("touch_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(askQty),
 	})
 	m.Label, m.At, m.From = symbol, at, at
 	m.Provenance = map[string]string{"side": side}
@@ -131,6 +132,19 @@ func TestTradeRegister(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(metric.Label, ShouldEqual, name)
 			So(metric.Raw, ShouldEqual, 0.0)
+		}
+	})
+}
+
+func TestTradeStepReadiness(t *testing.T) {
+	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+		node := &Trade{System: runtime.NewSystem(t.Context(), "readiness-test")}
+		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
+			node.Transition(stage)
+			So(node.Step(measurement), ShouldEqual, measurement)
+			So(node.Status(), ShouldEqual, stage)
+			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
 }
