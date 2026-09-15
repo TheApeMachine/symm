@@ -176,6 +176,9 @@ var (
 			workspaceRegister := store.NewRegister[*data.Measurement[float64]]()
 
 			tape := strategy.NewTape()
+			training := strategy.NewTraining(
+				ctx, tape, instrument, price, balance, api,
+			)
 
 			telemetryTee := nmruntime.NewTee(131072)
 			telemetryTee.SetFilter(ui.IsAllowedTelemetry)
@@ -194,17 +197,12 @@ var (
 			}
 
 			storageTee := nmruntime.NewNamedTee("storage.tee", 131072)
-			go tables.Drain(ctx, catalog, storageTee.Ring(), epoch)
+			go tables.Drain(ctx, catalog, storageTee.Ring(), epoch, tape.Publish, training.NotifyGroundTruth)
 
 			if catalog != nil {
 				hub.SetHindsightStore(catalog)
 			}
 
-			tape.Close()
-
-			training := strategy.NewTraining(
-				ctx, tape, instrument, price, balance, api,
-			)
 			hub.SetTradeStore(training)
 			hub.SetExitHandler(training.RequestExit)
 			hub.SetLearningSource(training)

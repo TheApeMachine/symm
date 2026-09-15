@@ -34,7 +34,7 @@ var absent = math.NaN()
 
 func TestSpaceRelax(t *testing.T) {
 	Convey("Given two quantities and evidence in a 9:1 ratio", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 		grid.column("source", "first")
 		grid.column("source", "second")
 		grid.version = 1
@@ -134,7 +134,7 @@ func TestSpaceRelax(t *testing.T) {
 		its own objective between observations.
 	*/
 	Convey("Given three quantities with fixed relationships", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 
 		for column := range 3 {
 			grid.column("source", strconv.Itoa(column))
@@ -204,7 +204,7 @@ func TestSpaceRelax(t *testing.T) {
 
 func TestSpaceForm(t *testing.T) {
 	Convey("Conflicting pair distances settle when represented stress cannot improve", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 
 		for column := range 32 {
 			grid.column("source", strconv.Itoa(column))
@@ -237,7 +237,7 @@ func TestSpaceForm(t *testing.T) {
 	})
 
 	Convey("A complete calibration settles once and subsequent activity cannot restart it", t, func() {
-		grid := NewSpace(8).(*Space)
+		grid := NewSpace(8)
 		measurement := data.NewMeasurement[float64]("source", nil)
 		measurement.Label, measurement.At, measurement.From = "market", time.Time{}, time.Time{}
 
@@ -300,7 +300,7 @@ func TestSpaceForm(t *testing.T) {
 // calibration span. Pairs within a cohort share movement; the cohorts do not.
 func formationFixture(t testing.TB, columns int) (*Space, *data.Measurement[float64], int) {
 	t.Helper()
-	grid := NewSpace().(*Space)
+	grid := NewSpace()
 	measurement := data.NewMeasurement[float64]("source", nil)
 	measurement.Label, measurement.At, measurement.From = "market", time.Time{}, time.Time{}
 	measurement.Maturity = 1

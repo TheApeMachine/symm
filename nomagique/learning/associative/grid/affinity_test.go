@@ -36,7 +36,7 @@ func TestAffinityAcrossSeparateUpdates(t *testing.T) {
 		}
 
 		Convey("Identical movement reads as identical however it arrives", func() {
-			together, apart := NewSpace().(*Space), NewSpace().(*Space)
+			together, apart := NewSpace(), NewSpace()
 
 			for tick := range 120 {
 				value := swing(tick)
@@ -65,7 +65,7 @@ func TestAffinityAcrossSeparateUpdates(t *testing.T) {
 		})
 
 		Convey("Opposite movement reads as inverse, which is still a relationship", func() {
-			grid := NewSpace().(*Space)
+			grid := NewSpace()
 
 			for tick := range 120 {
 				publish(t, grid, "alpha", swing(tick))
@@ -85,7 +85,7 @@ func TestAffinityAcrossSeparateUpdates(t *testing.T) {
 		})
 
 		Convey("A pair that never shared a bin supports no reading at all", func() {
-			grid := NewSpace().(*Space)
+			grid := NewSpace()
 
 			// beta only ever publishes after the window has moved past alpha.
 			for range 120 {
@@ -202,7 +202,7 @@ that made a single-update sketch report unrelated quantities as related and
 identical ones as orthogonal, so it is the arrangement the cost is measured in.
 */
 func BenchmarkSpaceStepFrameTypes(b *testing.B) {
-	grid := NewSpace().(*Space)
+	grid := NewSpace()
 	families := []string{"ticker", "trade", "level3"}
 	build := func(family, label string, tick int) *data.Measurement[float64] {
 		measurement := data.NewMeasurement[float64](family, nil)

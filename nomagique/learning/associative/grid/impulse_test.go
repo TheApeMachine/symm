@@ -12,7 +12,7 @@ func TestSpaceImpulse(t *testing.T) {
 	Convey("Formation readiness belongs to the settled grid, not current activity", t, func() {
 		for _, regime := range []string{"coherent", "inverse", "immature", "singleton", "independent"} {
 			Convey(regime, func() {
-				space := NewSpace().(*Space)
+				space := NewSpace()
 				var impulse Impulse
 				for index := range 4096 {
 					at := time.Unix(int64(index+1), 0)
@@ -60,7 +60,7 @@ func TestSpaceImpulse(t *testing.T) {
 }
 
 func BenchmarkSpaceImpulse(b *testing.B) {
-	space := NewSpace().(*Space)
+	space := NewSpace()
 	measurement := data.NewMeasurement[float64]("source", nil)
 	measurement.Label, measurement.At, measurement.From = "market", time.Unix(1, 0), time.Unix(1, 0)
 	measurement.Metadata = map[string]string{data.MetadataSupport: "100", data.MetadataMahalanobisSNR: "100"}

@@ -24,7 +24,7 @@ type Number struct {
 /*
 NewNumber instantiates a nomagique.Number composer with the given stages.
 */
-func NewNumber(stages ...core.Primitive) core.Primitive {
+func NewNumber(stages ...core.Primitive) *Number {
 	return &Number{
 		stages: stages,
 	}

@@ -143,7 +143,7 @@ type Space struct {
 NewSpace constructs an empty live grid over the declared window span. Two
 dimensions are the requested output geometry. There is no chosen cluster count.
 */
-func NewSpace(bins ...int) core.Primitive {
+func NewSpace(bins ...int) *Space {
 	span := DefaultWindowBins
 
 	if len(bins) > 0 {
@@ -159,32 +159,149 @@ func NewSpace(bins ...int) core.Primitive {
 	}
 }
 
+// Formed reports whether the grid has completed initial calibration and relaxation.
+func (op *Space) Formed() bool {
+	op.mu.RLock()
+	defer op.mu.RUnlock()
+	return op.formed
+}
+
 /*
-Next executes each arriving command and yields its result. An invalid command
-is recorded in Error and ends the stream.
+Next executes each arriving command or measurement and yields its result.
+If the grid has not completed development (formed), it steps observations to develop
+the grid and returns nil to indicate it is not ready yet.
 */
 func (op *Space) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
-		return func(yield func(unsafe.Pointer) bool) {}
+	if op.err != nil || in == nil {
+		return nil
+	}
+
+	if !op.formed {
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			if m := parseMeasurement(arriving); m != nil {
+				if err := op.step([]*data.Measurement[float64]{m}); err != nil {
+					op.Error(err)
+					return nil
+				}
+			}
+		}
+
+		if !op.formed {
+			return nil
+		}
+
+		at, from := observed(nil)
+		impulse, err := op.impulse(op.updated, at, from)
+		if err != nil {
+			op.Error(err)
+			return nil
+		}
+
+		op.out = Result{Impulse: impulse}
+		return func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(&op.out.Impulse))
+		}
 	}
 
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			command := (*Command)(arriving)
-			result, err := op.execute(command)
-
-			if err != nil {
-				op.Error(err)
-				return
+			if arriving == nil {
+				continue
 			}
 
-			op.out = result
+			if m := parseMeasurement(arriving); m != nil {
+				res, err := op.stepCommand([]*data.Measurement[float64]{m})
+				if err != nil {
+					op.Error(err)
+					return
+				}
 
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
+				op.out = res
+				if !yield(unsafe.Pointer(&op.out.Impulse)) {
+					return
+				}
+				continue
+			}
+
+			if cmd := parseCommand(arriving); cmd != nil {
+				res, err := op.execute(cmd)
+				if err != nil {
+					op.Error(err)
+					return
+				}
+
+				op.out = res
+				if !yield(unsafe.Pointer(&op.out.Impulse)) {
+					return
+				}
+				continue
 			}
 		}
 	}
+}
+
+func parseMeasurement(arriving unsafe.Pointer) *data.Measurement[float64] {
+	if arriving == nil {
+		return nil
+	}
+
+	m1 := (*data.Measurement[float64])(arriving)
+	if m1.Metrics != nil || m1.Source != "" || m1.Label != "" {
+		return m1
+	}
+
+	addr := uintptr(arriving)
+	if addr > 4096 {
+		ptr := *(*unsafe.Pointer)(arriving)
+		if uintptr(ptr) > 4096 && uintptr(ptr) != ^uintptr(0) {
+			m2 := (*data.Measurement[float64])(ptr)
+			if m2.Metrics != nil || m2.Source != "" || m2.Label != "" {
+				return m2
+			}
+		}
+	}
+
+	return nil
+}
+
+func parseCommand(arriving unsafe.Pointer) *Command {
+	if arriving == nil {
+		return nil
+	}
+
+	cmd := (*Command)(arriving)
+	intents := 0
+	if cmd.Step != nil {
+		intents++
+	}
+	if cmd.Impulse != nil {
+		intents++
+	}
+	if cmd.Snapshot != nil {
+		intents++
+	}
+	if cmd.Regions != nil {
+		intents++
+	}
+	if cmd.State != nil {
+		intents++
+	}
+	if cmd.Preseed != nil {
+		intents++
+	}
+	if cmd.Reset != nil {
+		intents++
+	}
+
+	if intents == 1 {
+		return cmd
+	}
+
+	return nil
 }
 
 /*
@@ -278,6 +395,16 @@ func (op *Space) execute(command *Command) (Result, error) {
 	}
 
 	return Result{}, op.reset()
+}
+
+// Step drives the grid with measurements from one context and reads the resulting impulse.
+func (op *Space) Step(measurements []*data.Measurement[float64]) (Result, error) {
+	return op.stepCommand(measurements)
+}
+
+// Reset clears observation-local state between independent episodes.
+func (op *Space) Reset() error {
+	return op.reset()
 }
 
 /*

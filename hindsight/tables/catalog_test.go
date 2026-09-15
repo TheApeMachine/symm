@@ -113,3 +113,51 @@ func TestCatalog_RunsDeduplication(t *testing.T) {
 	})
 }
 
+func TestCatalog_ExcursionsRoundtrip(t *testing.T) {
+	Convey("Given an Iceberg catalog and writer", t, func() {
+		catalog := tablestest.New(t)
+		ctx := context.Background()
+		epoch := int64(2000)
+
+		writer := tables.NewWriter(catalog, epoch)
+
+		record := tables.ExcursionRecord{
+			Epoch:              epoch,
+			ID:                 "2000:BTC/USD:10",
+			Symbol:             "BTC/USD",
+			Direction:          "upward",
+			ClearsFriction:     true,
+			PrecursorStartTick: 1,
+			AnchorTick:         10,
+			ExtremumTick:       20,
+			ExitTick:           28,
+			PostEndTick:        35,
+			EntryPrice:         50000.0,
+			ExtremumPrice:      52500.0,
+			ExitPrice:          52000.0,
+			PositionSize:       40.0,
+			Fee:                0.20,
+			Profit:             1.40,
+			ProfitFraction:     0.035,
+			GrossExcursion:     0.05,
+			ObservationCount:   25,
+			Status:             "profitable",
+		}
+
+		writer.AddExcursion(record)
+		So(writer.CommitReady(ctx, true), ShouldBeNil)
+
+		Convey("Excursions queries the stored excursion records for the epoch", func() {
+			excursions, err := catalog.Excursions(ctx, epoch, nil)
+			So(err, ShouldBeNil)
+			So(len(excursions), ShouldEqual, 1)
+			read := excursions[0]
+			So(read.Symbol, ShouldEqual, "BTC/USD")
+			So(read.Direction, ShouldEqual, "upward")
+			So(read.ClearsFriction, ShouldBeTrue)
+			So(read.Profit, ShouldEqual, 1.40)
+			So(read.Status, ShouldEqual, "profitable")
+		})
+	})
+}
+

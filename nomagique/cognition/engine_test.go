@@ -327,3 +327,51 @@ observeForBenchmark drives one association without the testing helper.
 func observeForBenchmark(engine *Engine, context, class []byte, feedback float64) {
 	engine.observe(Association{Context: context, Class: class, Feedback: feedback, Graded: true})
 }
+
+func TestEngineTrainAndPrune(t *testing.T) {
+	Convey("Engine.Train decomposes sequences into n-grams and modulates by surprisal", t, func() {
+		engine := NewEngine(Config{}).(*Engine)
+		seq := []byte("token1_token2_token3_token4")
+		class := []byte("enter")
+
+		res, err := engine.Train(seq, class, 1.0)
+		So(err, ShouldBeNil)
+		So(res.Tree, ShouldNotBeNil)
+
+		evalRes, evalErr := engine.Evaluate([]byte("token1_token2"))
+		So(evalErr, ShouldBeNil)
+		So(evalRes.Evaluation.WinnerClass, ShouldEqual, "enter")
+		So(evalRes.Evaluation.Confidence, ShouldBeGreaterThan, 0.5)
+
+		Convey("Engine.Prune removes records decayed below threshold", func() {
+			engine.stepCounter.Add(100000)
+			pruned := engine.Prune(0.05)
+			So(pruned, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestEngineSleepAndSymbols(t *testing.T) {
+	Convey("Engine.Consolidate and ExtractSymbols reflect learned concept basins", t, func() {
+		engine := NewEngine(Config{}).(*Engine)
+
+		for count := 0; count < 10; count++ {
+			_, _ = engine.Train([]byte("breakout_volume_spike"), []byte("ignition"), 1.0)
+			_, _ = engine.Train([]byte("consolidation_sideways_flat"), []byte("wait"), 1.0)
+		}
+
+		symbols := engine.ExtractSymbols()
+		So(len(symbols), ShouldBeGreaterThan, 0)
+
+		export := engine.ExportTree([]byte("breakout"), 32)
+		So(len(export.Branches), ShouldBeGreaterThan, 0)
+		So(export.NodeCount, ShouldBeGreaterThan, 0)
+
+		dream, targetClass, confidence, _, dreamErr := engine.Consolidate(0.5)
+		So(dreamErr, ShouldBeNil)
+		So(targetClass, ShouldNotBeBlank)
+		So(confidence, ShouldBeGreaterThanOrEqualTo, 0)
+		_ = dream
+	})
+}
+

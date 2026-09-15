@@ -54,7 +54,7 @@ func TestStreamingDetector(t *testing.T) {
 			}
 
 			// Peak reached at 52500, then retraces by 40% of the gain
-			for tick := int64(21); tick <= 35; tick++ {
+			for tick := int64(21); tick <= 45; tick++ {
 				price := 52500.0 - float64(tick-20)*70.0
 				detector.Process(&data.Measurement[float64]{
 					Source: "spot_ticker",
@@ -116,7 +116,7 @@ func TestStreamingDetector(t *testing.T) {
 			}
 
 			// Bounce back triggers exit
-			for tick := int64(21); tick <= 35; tick++ {
+			for tick := int64(21); tick <= 45; tick++ {
 				price := 2800.0 + float64(tick-20)*10.0
 				detector.Process(&data.Measurement[float64]{
 					Source: "spot_ticker",
@@ -198,7 +198,7 @@ func TestStreamingDetector(t *testing.T) {
 			}
 
 			// Exit both
-			for tick := int64(21); tick <= 35; tick++ {
+			for tick := int64(21); tick <= 45; tick++ {
 				detector.Process(&data.Measurement[float64]{
 					Source: "spot_ticker",
 					Label:  "SOL/USD",
@@ -236,6 +236,173 @@ func TestStreamingDetector(t *testing.T) {
 
 			So(solRec.PositionSize, ShouldAlmostEqual, 40.0, 1.0)
 			So(avaxRec.PositionSize, ShouldAlmostEqual, 32.0, 1.0)
+		})
+
+		Convey("When an upward move fails to clear friction (subfriction)", func() {
+			at := time.Now().UTC()
+			symbol := "DOGE/USD"
+
+			for tick := int64(1); tick <= 10; tick++ {
+				detector.Process(&data.Measurement[float64]{
+					Source: "spot_ticker",
+					Label:  symbol,
+					SeqIdx: tick,
+					At:     at,
+					Metrics: map[string]data.Metric[float64]{
+						"bid":  {Raw: 0.1000},
+						"ask":  {Raw: 0.1001},
+						"last": {Raw: 0.10005},
+					},
+				})
+			}
+
+			// Breakout at tick 11 initiates upward excursion
+			for tick := int64(11); tick <= 18; tick++ {
+				price := 0.10040 + float64(tick-11)*0.00003
+				detector.Process(&data.Measurement[float64]{
+					Source: "spot_ticker",
+					Label:  symbol,
+					SeqIdx: tick,
+					At:     at,
+					Metrics: map[string]data.Metric[float64]{
+						"bid":  {Raw: price - 0.00005},
+						"ask":  {Raw: price + 0.00005},
+						"last": {Raw: price},
+					},
+				})
+			}
+
+			// Rollover and retracement back down
+			for tick := int64(19); tick <= 45; tick++ {
+				price := 0.10061 - float64(tick-18)*0.00002
+				detector.Process(&data.Measurement[float64]{
+					Source: "spot_ticker",
+					Label:  symbol,
+					SeqIdx: tick,
+					At:     at,
+					Metrics: map[string]data.Metric[float64]{
+						"bid":  {Raw: price - 0.00005},
+						"ask":  {Raw: price + 0.00005},
+						"last": {Raw: price},
+					},
+				})
+			}
+
+			var dogeRec *tables.ExcursionRecord
+			for _, rec := range completed {
+				if rec.Symbol == symbol {
+					recCopy := rec
+					dogeRec = &recCopy
+					break
+				}
+			}
+
+			So(dogeRec, ShouldNotBeNil)
+			So(dogeRec.Direction, ShouldEqual, "upward")
+			So(dogeRec.ClearsFriction, ShouldBeFalse)
+			So(dogeRec.Status, ShouldEqual, "subfriction")
+			So(dogeRec.Profit, ShouldBeLessThan, 0)
+		})
+
+		Convey("When tape is choppy with oscillating direction inside noise band", func() {
+			at := time.Now().UTC()
+			symbol := "DOT/USD"
+
+			for tick := int64(1); tick <= 10; tick++ {
+				detector.Process(&data.Measurement[float64]{
+					Source: "spot_ticker",
+					Label:  symbol,
+					SeqIdx: tick,
+					At:     at,
+					Metrics: map[string]data.Metric[float64]{
+						"bid":  {Raw: 5.000},
+						"ask":  {Raw: 5.002},
+						"last": {Raw: 5.001},
+					},
+				})
+			}
+
+			// Oscillate up and down repeatedly across anchor 5.001 within noise band (±0.04%)
+			for tick := int64(11); tick <= 150; tick++ {
+				offset := 0.002
+				if tick%2 == 0 {
+					offset = -0.002
+				}
+				price := 5.001 + offset
+				detector.Process(&data.Measurement[float64]{
+					Source: "spot_ticker",
+					Label:  symbol,
+					SeqIdx: tick,
+					At:     at,
+					Metrics: map[string]data.Metric[float64]{
+						"bid":  {Raw: price - 0.001},
+						"ask":  {Raw: price + 0.001},
+						"last": {Raw: price},
+					},
+				})
+			}
+
+			var dotRec *tables.ExcursionRecord
+			for _, rec := range completed {
+				if rec.Symbol == symbol {
+					recCopy := rec
+					dotRec = &recCopy
+					break
+				}
+			}
+
+			So(dotRec, ShouldNotBeNil)
+			So(dotRec.Direction, ShouldEqual, "choppy")
+			So(dotRec.ClearsFriction, ShouldBeFalse)
+			So(dotRec.Status, ShouldEqual, "choppy")
+		})
+
+		Convey("When tape is flat with prolonged quietness", func() {
+			at := time.Now().UTC()
+			symbol := "ADA/USD"
+
+			for tick := int64(1); tick <= 10; tick++ {
+				detector.Process(&data.Measurement[float64]{
+					Source: "spot_ticker",
+					Label:  symbol,
+					SeqIdx: tick,
+					At:     at,
+					Metrics: map[string]data.Metric[float64]{
+						"bid":  {Raw: 0.3500},
+						"ask":  {Raw: 0.3501},
+						"last": {Raw: 0.35005},
+					},
+				})
+			}
+
+			// Dead flat ticks with no oscillation for >128 ticks
+			for tick := int64(11); tick <= 140; tick++ {
+				detector.Process(&data.Measurement[float64]{
+					Source: "spot_ticker",
+					Label:  symbol,
+					SeqIdx: tick,
+					At:     at,
+					Metrics: map[string]data.Metric[float64]{
+						"bid":  {Raw: 0.3500},
+						"ask":  {Raw: 0.3501},
+						"last": {Raw: 0.35005},
+					},
+				})
+			}
+
+			var adaRec *tables.ExcursionRecord
+			for _, rec := range completed {
+				if rec.Symbol == symbol {
+					recCopy := rec
+					adaRec = &recCopy
+					break
+				}
+			}
+
+			So(adaRec, ShouldNotBeNil)
+			So(adaRec.Direction, ShouldEqual, "flat")
+			So(adaRec.ClearsFriction, ShouldBeFalse)
+			So(adaRec.Status, ShouldEqual, "flat")
 		})
 	})
 }

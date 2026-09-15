@@ -48,3 +48,38 @@ type Evaluation struct {
 	// Predictive Lookahead
 	Lookahead []LookaheadPath
 }
+
+/*
+Branch is one node in the sensory prefix tree exported for visualizers.
+*/
+type Branch struct {
+	ID          int
+	ParentID    int
+	Token       string
+	Prefix      string
+	Key         string
+	Depth       int
+	Probability float64
+	Count       uint64
+}
+
+/*
+Symbol is one discriminative sequence motif associated with a class.
+*/
+type Symbol struct {
+	Symbol string
+	Class  string
+	Score  float64
+	Purity float64
+}
+
+/*
+TreeExport contains the full cognitive state snapshot for visualizers.
+*/
+type TreeExport struct {
+	Branches  []Branch
+	Beams     []LookaheadPath
+	Classes   []ClassCandidate
+	NodeCount int
+}
+

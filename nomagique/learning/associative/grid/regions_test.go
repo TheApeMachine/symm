@@ -14,7 +14,7 @@ import (
 // the second direct; both are sympathetic communities rather than hot cells.
 func regionFixture(t testing.TB) *Space {
 	t.Helper()
-	grid := NewSpace(8).(*Space)
+	grid := NewSpace(8)
 	measurement := data.NewMeasurement[float64]("source", nil)
 	measurement.Label, measurement.At, measurement.From = "first", time.Time{}, time.Time{}
 
@@ -87,7 +87,7 @@ func TestSpaceRegions(t *testing.T) {
 		})
 
 		Convey("Community density normalization resists absorption by larger weak clusters", func() {
-			testGrid := NewSpace(8).(*Space)
+			testGrid := NewSpace(8)
 			testMeasurement := data.NewMeasurement[float64]("source", nil)
 			testMeasurement.Label, testMeasurement.At, testMeasurement.From = "test", time.Time{}, time.Time{}
 

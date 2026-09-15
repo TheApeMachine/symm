@@ -23,7 +23,9 @@ import (
 	"io"
 	"iter"
 	"math"
+	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -32,9 +34,26 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
+
+type Action string
+
+const (
+	ActionEnter Action = "enter"
+	ActionExit  Action = "exit"
+	ActionWait  Action = "wait"
+)
+
+func LegalActions(holding bool) []Action {
+	if !holding {
+		return []Action{ActionEnter, ActionWait}
+	}
+
+	return []Action{ActionExit, ActionWait}
+}
 
 const (
 	maxSensoryCandidates = 16 // Sensory transition hypothesis space
@@ -110,11 +129,13 @@ observes publish through compare-and-swap; evaluations read immutable roots.
 type Engine struct {
 	err         error
 	out         Result
+	action      Action
 	cfg         Config
 	root        atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter atomic.Uint64
 	decayFactor float64
 	classCounts sync.Map
+	remReplays  atomic.Uint64
 }
 
 /*
@@ -133,31 +154,109 @@ func NewEngine(cfg Config) core.Primitive {
 }
 
 /*
-Next executes each arriving command and yields its result. An invalid command
-is recorded in Error and ends the stream.
+Next executes each arriving command, impulse or token sequence and yields its result.
+If in is nil, it rejects doing anything and returns nil.
+When an impulse or context arrives, it evaluates the sensory tokens and yields the winning Action.
 */
 func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
-		return func(yield func(unsafe.Pointer) bool) {}
+	if in == nil || op.err != nil {
+		return nil
 	}
 
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			command := (*Command)(arriving)
-			result, err := op.execute(command)
+			if arriving == nil {
+				continue
+			}
 
+			if cmd := parseEngineCommand(arriving); cmd != nil {
+				result, err := op.execute(cmd)
+				if err != nil {
+					op.Error(err)
+					return
+				}
+
+				op.out = result
+				if !yield(unsafe.Pointer(&op.out)) {
+					return
+				}
+				continue
+			}
+
+			token := extractCognitionToken(arriving)
+			if len(token) == 0 {
+				continue
+			}
+
+			result, err := op.evaluate(token)
 			if err != nil {
 				op.Error(err)
 				return
 			}
 
-			op.out = result
+			op.action = Action(result.Evaluation.WinnerClass)
+			if op.action == "" {
+				op.action = ActionWait
+			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&op.action)) {
 				return
 			}
 		}
 	}
+}
+
+func parseEngineCommand(arriving unsafe.Pointer) *Command {
+	if arriving == nil {
+		return nil
+	}
+
+	cmd := (*Command)(arriving)
+	intents := 0
+	if cmd.Observe != nil {
+		intents++
+	}
+	if cmd.Evaluate != nil {
+		intents++
+	}
+	if cmd.Snapshot != nil {
+		intents++
+	}
+	if cmd.Restore != nil {
+		intents++
+	}
+	if cmd.Census != nil {
+		intents++
+	}
+	if cmd.Root != nil {
+		intents++
+	}
+
+	if intents == 1 {
+		return cmd
+	}
+
+	return nil
+}
+
+func extractCognitionToken(arriving unsafe.Pointer) []byte {
+	if arriving == nil {
+		return nil
+	}
+
+	imp := (*grid.Impulse)(arriving)
+	if imp.Ready {
+		var b strings.Builder
+		for _, region := range imp.Regions {
+			fmt.Fprintf(&b, "%s_%d_", imp.Label, region.Condition)
+		}
+		if b.Len() == 0 && imp.Label != "" {
+			fmt.Fprintf(&b, "%s_", imp.Label)
+		}
+		return []byte(b.String())
+	}
+
+	return nil
 }
 
 /*
@@ -232,6 +331,582 @@ func (op *Engine) execute(command *Command) (Result, error) {
 
 	return Result{Tree: op.root.Load()}, nil
 }
+
+// Evaluate classifies a context sequence against the radix trie.
+func (op *Engine) Evaluate(context []byte) (Result, error) {
+	return op.evaluate(context)
+}
+
+// Observe records a context -> class association into the radix trie.
+func (op *Engine) Observe(assoc Association) (Result, error) {
+	return op.observe(assoc)
+}
+
+// Train ingests a sequence of sensory tokens associated with a target class,
+// decomposing it into suffix n-grams up to MaxBackoffOrder with surprisal-modulated plasticity.
+func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result, error) {
+	if len(sequence) == 0 {
+		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: sequence is required for training", nil))
+	}
+
+	if len(class) == 0 {
+		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: class is required for training", nil))
+	}
+
+	evalResult, evalErr := op.evaluate(sequence)
+
+	if evalErr != nil {
+		return Result{}, evalErr
+	}
+
+	plasticity := math.Min(1.0, 0.1+(evalResult.Evaluation.Surprisal/4.0))
+	effectiveFeedback := feedback * plasticity
+	var lastResult Result
+	var err error
+
+	if len(sequence) >= 12 {
+		offset := 0
+		var frameOffsets []int
+
+		for offset < len(sequence) {
+			if offset+4 > len(sequence) {
+				frameOffsets = nil
+				break
+			}
+
+			count := binary.BigEndian.Uint32(sequence[offset : offset+4])
+
+			if count == 0 {
+				frameOffsets = nil
+				break
+			}
+
+			frameSize := 4 + int(count)*8
+
+			if offset+frameSize > len(sequence) {
+				frameOffsets = nil
+				break
+			}
+
+			frameOffsets = append(frameOffsets, offset)
+			offset += frameSize
+		}
+
+		if offset == len(sequence) && len(frameOffsets) > 0 {
+			maxOrder := op.cfg.MaxBackoffOrder
+
+			for startIdx := 0; startIdx < len(frameOffsets); startIdx++ {
+				limitIdx := min(len(frameOffsets), startIdx+maxOrder)
+
+				for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
+					var subContext []byte
+
+					if endIdx < len(frameOffsets) {
+						subContext = sequence[frameOffsets[startIdx]:frameOffsets[endIdx]]
+					}
+
+					if endIdx >= len(frameOffsets) {
+						subContext = sequence[frameOffsets[startIdx]:]
+					}
+
+					lastResult, err = op.observe(Association{
+						Context:  subContext,
+						Class:    class,
+						Feedback: effectiveFeedback,
+						Graded:   true,
+					})
+
+					if err != nil {
+						return Result{}, err
+					}
+				}
+			}
+
+			return lastResult, nil
+		}
+	}
+
+	if len(sequence)%8 == 0 && len(sequence) >= 8 {
+		tokenCount := len(sequence) / 8
+		maxOrder := op.cfg.MaxBackoffOrder
+
+		for startIdx := 0; startIdx < tokenCount; startIdx++ {
+			limitIdx := min(tokenCount, startIdx+maxOrder)
+
+			for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
+				subContext := sequence[startIdx*8 : endIdx*8]
+				lastResult, err = op.observe(Association{
+					Context:  subContext,
+					Class:    class,
+					Feedback: effectiveFeedback,
+					Graded:   true,
+				})
+
+				if err != nil {
+					return Result{}, err
+				}
+			}
+		}
+
+		return lastResult, nil
+	}
+
+	delim := byte(0)
+	hasDelim := false
+
+	if bytes.IndexByte(sequence, 0) >= 0 {
+		delim = 0
+		hasDelim = true
+	}
+
+	if !hasDelim && bytes.IndexByte(sequence, '/') >= 0 {
+		delim = '/'
+		hasDelim = true
+	}
+
+	if !hasDelim && bytes.IndexByte(sequence, '_') >= 0 {
+		delim = '_'
+		hasDelim = true
+	}
+
+	if hasDelim {
+		var tokenBounds [][]int
+		startOffset := 0
+
+		for currentOffset, charByte := range sequence {
+			if charByte == delim {
+				if currentOffset > startOffset {
+					tokenBounds = append(tokenBounds, []int{startOffset, currentOffset})
+				}
+
+				startOffset = currentOffset + 1
+			}
+		}
+
+		if len(sequence) > startOffset {
+			tokenBounds = append(tokenBounds, []int{startOffset, len(sequence)})
+		}
+
+		if len(tokenBounds) > 0 {
+			maxOrder := op.cfg.MaxBackoffOrder
+
+			for startIdx := 0; startIdx < len(tokenBounds); startIdx++ {
+				limitIdx := min(len(tokenBounds), startIdx+maxOrder)
+
+				for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
+					subContext := sequence[tokenBounds[startIdx][0]:tokenBounds[endIdx-1][1]]
+					lastResult, err = op.observe(Association{
+						Context:  subContext,
+						Class:    class,
+						Feedback: effectiveFeedback,
+						Graded:   true,
+					})
+
+					if err != nil {
+						return Result{}, err
+					}
+				}
+			}
+
+			return lastResult, nil
+		}
+	}
+
+	lastResult, err = op.observe(Association{
+		Context:  sequence,
+		Class:    class,
+		Feedback: effectiveFeedback,
+		Graded:   true,
+	})
+
+	if err != nil {
+		return Result{}, err
+	}
+
+	_, suffixes := backoffCandidates(sequence, op.cfg.MaxBackoffOrder)
+
+	for _, suffix := range suffixes {
+		lastResult, err = op.observe(Association{
+			Context:  suffix,
+			Class:    class,
+			Feedback: effectiveFeedback,
+			Graded:   true,
+		})
+
+		if err != nil {
+			return Result{}, err
+		}
+	}
+
+	return lastResult, nil
+}
+
+// Prune walks the radix trie and removes records whose effective count
+// has dropped below minEffectiveCount.
+func (op *Engine) Prune(minEffectiveCount float64) int {
+	if minEffectiveCount <= 0 {
+		minEffectiveCount = 0.05
+	}
+
+	prunedTotal := 0
+
+	for {
+		oldRoot := op.root.Load()
+		currentStep := op.stepCounter.Load()
+		txn := oldRoot.Txn()
+
+		var keysToDelete [][]byte
+		iterator := oldRoot.Root().Iterator()
+
+		for keyBytes, valBytes, ok := iterator.Next(); ok; keyBytes, valBytes, ok = iterator.Next() {
+			if len(valBytes) != WeightSize {
+				continue
+			}
+
+			weight := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+			effectiveMass := float64(weight.Count) * weight.Probability
+
+			if effectiveMass < minEffectiveCount {
+				keysToDelete = append(keysToDelete, bytes.Clone(keyBytes))
+			}
+		}
+
+		if len(keysToDelete) == 0 {
+			return 0
+		}
+
+		for _, keyBytes := range keysToDelete {
+			txn.Delete(keyBytes)
+		}
+
+		newRoot := txn.Commit()
+
+		if op.root.CompareAndSwap(oldRoot, newRoot) {
+			prunedTotal = len(keysToDelete)
+			break
+		}
+	}
+
+	return prunedTotal
+}
+
+// Dream generates a candidate continuation sequence via temperature-guided lookahead.
+func (op *Engine) Dream(temperature float64, maxLength int) string {
+	if maxLength <= 0 {
+		maxLength = 64
+	}
+
+	root := op.root.Load()
+	currentSequence := ""
+
+	for hop := 0; hop < maxLength; hop++ {
+		searchPrefix := makeSensoryKey([]byte(currentSequence))
+		iterator := root.Root().Iterator()
+		iterator.SeekPrefix(searchPrefix)
+
+		var candidates []string
+		var probabilities []float64
+
+		for keyBytes, valBytes, ok := iterator.Next(); ok; keyBytes, valBytes, ok = iterator.Next() {
+			if !bytes.HasPrefix(keyBytes, searchPrefix) {
+				break
+			}
+
+			seqSuffix := string(keyBytes[len("s/"):])
+
+			if len(seqSuffix) <= len(currentSequence) {
+				continue
+			}
+
+			weight := decodeWeight(valBytes)
+			candidates = append(candidates, seqSuffix)
+			probabilities = append(probabilities, math.Max(weight.Probability, 1e-4))
+		}
+
+		if len(candidates) == 0 {
+			break
+		}
+
+		if temperature <= 0 {
+			bestIdx := 0
+			bestProb := probabilities[0]
+
+			for candIdx := 1; candIdx < len(probabilities); candIdx++ {
+				if probabilities[candIdx] > bestProb {
+					bestProb = probabilities[candIdx]
+					bestIdx = candIdx
+				}
+			}
+
+			currentSequence = candidates[bestIdx]
+			continue
+		}
+
+		totalScaled := 0.0
+		scaledWeights := make([]float64, len(probabilities))
+
+		for candIdx, probVal := range probabilities {
+			scaled := math.Pow(probVal, 1.0/temperature)
+			scaledWeights[candIdx] = scaled
+			totalScaled += scaled
+		}
+
+		sampleVal := rand.Float64() * totalScaled
+		runningSum := 0.0
+		selectedCandidate := candidates[len(candidates)-1]
+
+		for candIdx, scaled := range scaledWeights {
+			runningSum += scaled
+
+			if sampleVal <= runningSum {
+				selectedCandidate = candidates[candIdx]
+				break
+			}
+		}
+
+		currentSequence = selectedCandidate
+	}
+
+	return currentSequence
+}
+
+// Consolidate executes an offline REM sleep memory consolidation cycle.
+func (op *Engine) Consolidate(temperature float64) (string, string, float64, bool, error) {
+	classes := op.census()
+
+	if len(classes) == 0 {
+		return "", "", 0, false, nil
+	}
+
+	targetClass := ""
+	minCount := int32(math.MaxInt32)
+
+	for clsName, countVal := range classes {
+		if countVal < minCount {
+			minCount = countVal
+			targetClass = clsName
+		}
+	}
+
+	if targetClass == "" {
+		for clsName := range classes {
+			targetClass = clsName
+			break
+		}
+	}
+
+	dream := op.Dream(temperature, 64)
+
+	if len(dream) == 0 {
+		return "", targetClass, 0, false, nil
+	}
+
+	evalResult, evalErr := op.evaluate([]byte(dream))
+
+	if evalErr != nil {
+		return dream, targetClass, 0, false, evalErr
+	}
+
+	confidence := evalResult.Evaluation.Confidence
+	novel := false
+
+	if evalResult.Evaluation.WinnerClass == targetClass && confidence >= 0.80 {
+		basinKey := makeBasinKey([]byte(targetClass), []byte(dream))
+		root := op.root.Load()
+		_, exists := root.Get(basinKey)
+		novel = !exists
+
+		if novel {
+			_, trainErr := op.Train([]byte(dream), []byte(targetClass), 1.0)
+
+			if trainErr != nil {
+				return dream, targetClass, confidence, novel, trainErr
+			}
+
+			op.remReplays.Add(1)
+		}
+	}
+
+	return dream, targetClass, confidence, novel, nil
+}
+
+// ExtractSymbols identifies distinctive sequence motifs across attractor basins.
+func (op *Engine) ExtractSymbols() []Symbol {
+	root := op.root.Load()
+	currentStep := op.stepCounter.Load()
+
+	contexts := make(map[string]map[string]float64)
+	contextTotals := make(map[string]float64)
+
+	iterator := root.Root().Iterator()
+	iterator.SeekPrefix([]byte("b/"))
+
+	for keyBytes, valBytes, ok := iterator.Next(); ok; keyBytes, valBytes, ok = iterator.Next() {
+		if !bytes.HasPrefix(keyBytes, []byte("b/")) {
+			break
+		}
+
+		classBytes, contextBytes, valid := parseBasinKey(keyBytes)
+
+		if !valid || len(contextBytes) == 0 || len(classBytes) == 0 {
+			continue
+		}
+
+		weight := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+		effectiveCount := float64(weight.Count) * weight.Probability
+
+		if effectiveCount <= 0 {
+			continue
+		}
+
+		ctxStr := string(contextBytes)
+		clsStr := string(classBytes)
+
+		if contexts[ctxStr] == nil {
+			contexts[ctxStr] = make(map[string]float64)
+		}
+
+		contexts[ctxStr][clsStr] += effectiveCount
+		contextTotals[ctxStr] += effectiveCount
+	}
+
+	var results []Symbol
+
+	for ctxStr, classCounts := range contexts {
+		total := contextTotals[ctxStr]
+
+		if total < 2.0 {
+			continue
+		}
+
+		for clsStr, countVal := range classCounts {
+			purity := countVal / total
+			score := purity * math.Log1p(total)
+
+			if score > 1.0 {
+				results = append(results, Symbol{
+					Symbol: ctxStr,
+					Class:  clsStr,
+					Score:  score,
+					Purity: purity,
+				})
+			}
+		}
+	}
+
+	sort.Slice(results, func(leftIdx, rightIdx int) bool {
+		return results[leftIdx].Score > results[rightIdx].Score
+	})
+
+	if len(results) > 50 {
+		results = results[:50]
+	}
+
+	return results
+}
+
+// ExportTree constructs the prefix branches, lookahead beams, and class readouts for visualizers.
+func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
+	if maxBranches <= 0 {
+		maxBranches = 128
+	}
+
+	root := op.root.Load()
+	currentStep := op.stepCounter.Load()
+	var branches []Branch
+	nodeMap := make(map[string]int)
+
+	branches = append(branches, Branch{
+		ID:          0,
+		ParentID:    -1,
+		Token:       "root",
+		Prefix:      "",
+		Key:         "",
+		Depth:       0,
+		Probability: 1.0,
+		Count:       currentStep,
+	})
+	nodeMap[""] = 0
+
+	iterator := root.Root().Iterator()
+	iterator.SeekPrefix([]byte("s/"))
+
+	for keyBytes, valBytes, ok := iterator.Next(); ok; keyBytes, valBytes, ok = iterator.Next() {
+		if !bytes.HasPrefix(keyBytes, []byte("s/")) {
+			break
+		}
+
+		if len(branches) >= maxBranches {
+			break
+		}
+
+		seqBytes := keyBytes[len("s/"):]
+
+		if len(seqBytes) == 0 {
+			continue
+		}
+
+		seqStr := string(seqBytes)
+		state := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+		parentID := 0
+		depth := 1
+		token := seqStr
+
+		if len(seqBytes)%8 == 0 && len(seqBytes) > 8 {
+			parentSeq := string(seqBytes[:len(seqBytes)-8])
+
+			if pid, exists := nodeMap[parentSeq]; exists {
+				parentID = pid
+				depth = branches[pid].Depth + 1
+				token = fmt.Sprintf("%x", binary.BigEndian.Uint64(seqBytes[len(seqBytes)-8:]))
+			}
+		}
+
+		if strings.Contains(seqStr, "_") {
+			lastSep := strings.LastIndex(seqStr, "_")
+
+			if lastSep > 0 {
+				parentSeq := seqStr[:lastSep]
+
+				if pid, exists := nodeMap[parentSeq]; exists {
+					parentID = pid
+					depth = branches[pid].Depth + 1
+					token = seqStr[lastSep+1:]
+				}
+			}
+		}
+
+		nodeID := len(branches)
+		nodeMap[seqStr] = nodeID
+
+		branches = append(branches, Branch{
+			ID:          nodeID,
+			ParentID:    parentID,
+			Token:       token,
+			Prefix:      seqStr,
+			Key:         seqStr,
+			Depth:       depth,
+			Probability: state.Probability,
+			Count:       state.Count,
+		})
+	}
+
+	beams := beamSearch(root, activeContext, op.cfg.BeamWidth, op.cfg.MaxHops)
+	evalResult, _ := op.evaluate(activeContext)
+
+	return TreeExport{
+		Branches:  branches,
+		Beams:     beams,
+		Classes:   evalResult.Evaluation.Candidates,
+		NodeCount: root.Len(),
+	}
+}
+
+// REMReplays returns the total number of REM consolidations performed.
+func (op *Engine) REMReplays() int {
+	return int(op.remReplays.Load())
+}
+
 
 /*
 observe registers context -> class in the existing packed basin and publishes
@@ -927,8 +1602,15 @@ func backoffCandidates(context []byte, maxSteps int) (prefixes [][]byte, suffixe
 	if bytes.IndexByte(context, 0) >= 0 {
 		delim = 0
 		hasDelim = true
-	} else if bytes.IndexByte(context, '/') >= 0 {
+	}
+
+	if !hasDelim && bytes.IndexByte(context, '/') >= 0 {
 		delim = '/'
+		hasDelim = true
+	}
+
+	if !hasDelim && bytes.IndexByte(context, '_') >= 0 {
+		delim = '_'
 		hasDelim = true
 	}
 

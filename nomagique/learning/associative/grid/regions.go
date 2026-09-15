@@ -47,7 +47,7 @@ func (regions *regions) form(grid *Space) {
 	scores := make([]float64, len(grid.columns))
 	const maxFormIterations = 100
 
-	for iteration := 0; iteration < maxFormIterations; iteration++ {
+	for range maxFormIterations {
 		moved := false
 
 		for column := range regions.membership {

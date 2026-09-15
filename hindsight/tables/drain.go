@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/wf"
 )
 
@@ -20,6 +21,7 @@ func Drain(
 	catalog *Catalog,
 	ring *wf.RingBuffer[*data.Measurement[float64]],
 	epoch int64,
+	deps ...any,
 ) {
 	if ring == nil {
 		return
@@ -44,7 +46,27 @@ func Drain(
 		}
 	}
 
+	var fragmentSink func(types.ReplayFragment)
+	var groundTruthSink func(ExcursionRecord)
+
+	for _, dep := range deps {
+		switch dependency := dep.(type) {
+		case func(types.ReplayFragment):
+			fragmentSink = dependency
+		case func(ExcursionRecord):
+			groundTruthSink = dependency
+		}
+	}
+
 	writer := NewWriter(catalog, epoch)
+	detector := NewStreamingDetector(epoch, 200.0, func(record ExcursionRecord) {
+		writer.AddExcursion(record)
+
+		if groundTruthSink != nil {
+			groundTruthSink(record)
+		}
+	}, fragmentSink)
+
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
 
@@ -70,6 +92,8 @@ func Drain(
 				if measurement.SeqIdx <= 0 {
 					measurement.SeqIdx = tickCounter.Add(1)
 				}
+
+				detector.Process(measurement)
 
 				channel := deriveChannel(measurement)
 				writer.Add(channel, measurement)
@@ -105,6 +129,8 @@ func Drain(
 				if measurement.SeqIdx <= 0 {
 					measurement.SeqIdx = tickCounter.Add(1)
 				}
+
+				detector.Process(measurement)
 
 				channel := deriveChannel(measurement)
 				writer.Add(channel, measurement)

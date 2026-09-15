@@ -265,6 +265,31 @@ func NewHub(ctx context.Context) *Hub {
 		return ctx.JSON(symbols)
 	})
 
+	hub.app.Get("/hindsight/excursions", func(ctx fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
+		}
+
+		run := ctx.Query("run")
+
+		if run == "" {
+			run = ctx.Query("epoch")
+		}
+
+		epoch := parseInt64Query(run)
+		excursions, err := hub.store.Excursions(hub.ctx, epoch, nil)
+
+		if err != nil {
+			return err
+		}
+
+		if excursions == nil {
+			excursions = []tables.ExcursionRecord{}
+		}
+
+		return ctx.JSON(excursions)
+	})
+
 	hub.app.Get("/hindsight/data", func(ctx fiber.Ctx) error {
 		if hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")

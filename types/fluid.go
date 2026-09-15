@@ -17,4 +17,9 @@ const (
 	// the same WebRTC transport as the manifold channel so the diagram can be
 	// opened without the orchestrating websocket bus in front of the data.
 	DiagnosticsChannel = "diagnostics"
+
+	// CognitionChannel carries the real-time cognitive state (sensory prefix tree
+	// branches, lookahead beams, regime classes, entropy, and REM sleep replays).
+	CognitionChannel = "cognition"
 )
+

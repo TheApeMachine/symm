@@ -25,7 +25,14 @@ Read takes the first value of a run out of the wire.
 func Read[T any](value iter.Seq[unsafe.Pointer]) T {
 	var zero T
 
+	if value == nil {
+		return zero
+	}
+
 	for val := range value {
+		if val == nil {
+			continue
+		}
 		return *(*T)(val)
 	}
 
@@ -36,8 +43,15 @@ func Read[T any](value iter.Seq[unsafe.Pointer]) T {
 ReadSeq walks all values of a run out of the wire as typed values.
 */
 func ReadSeq[T any](value iter.Seq[unsafe.Pointer]) iter.Seq[T] {
+	if value == nil {
+		return func(yield func(T) bool) {}
+	}
+
 	return func(yield func(T) bool) {
 		for val := range value {
+			if val == nil {
+				continue
+			}
 			if !yield(*(*T)(val)) {
 				return
 			}

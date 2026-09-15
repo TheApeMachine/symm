@@ -22,7 +22,7 @@ func related(grid *Space, left, right string) affinity {
 
 func TestSpaceStep(t *testing.T) {
 	Convey("Given quantities with shared and opposing activation profiles", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 		measurement := data.NewMeasurement[float64]("source", nil)
 		measurement.Label, measurement.At, measurement.From = "context", time.Time{}, time.Time{}
 		// Two independent alternating sequences span the requested plane.
@@ -97,7 +97,7 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Given different numerical units and independent context histories", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 		first := data.NewMeasurement[float64]("source", nil)
 		first.Label, first.At, first.From = "first", time.Time{}, time.Time{}
 		second := data.NewMeasurement[float64]("source", nil)
@@ -123,7 +123,7 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Given the same observations with different producer evidence", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 		strong := data.NewMeasurement[float64]("strong", nil)
 		strong.Label, strong.At, strong.From = "context", time.Time{}, time.Time{}
 		weak := data.NewMeasurement[float64]("weak", nil)
@@ -169,7 +169,7 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Given values that all change on every update", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 		measurement := data.NewMeasurement[float64]("source", nil)
 		measurement.Label, measurement.At, measurement.From = "context", time.Time{}, time.Time{}
 		left := [...]float64{-1, 1, -1, 1, -1, 1, -1, 1}
@@ -205,7 +205,7 @@ func TestSpaceStep(t *testing.T) {
 		// A movement arithmetic cannot represent is a numerical failure, not a
 		// missing reading: it must stop rather than enter the window as a
 		// value that is not a number.
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 		measurement := data.NewMeasurement[float64]("source", nil)
 		measurement.Label, measurement.At, measurement.From = "context", time.Time{}, time.Time{}
 		// Both observations are representable. Their difference is not. This
@@ -223,7 +223,7 @@ func TestSpaceStep(t *testing.T) {
 	})
 
 	Convey("Given a rejected or mixed-context update", t, func() {
-		grid := NewSpace().(*Space)
+		grid := NewSpace()
 		failure := errors.New("unavailable input")
 		measurement := data.NewMeasurement[float64]("source", nil)
 		measurement.Label, measurement.At, measurement.From = "first", time.Time{}, time.Time{}
@@ -271,7 +271,7 @@ func BenchmarkSpaceStepUniverse(b *testing.B) {
 	runtime.GC()
 	var initial runtime.MemStats
 	runtime.ReadMemStats(&initial)
-	grid := NewSpace().(*Space)
+	grid := NewSpace()
 	measurement := data.NewMeasurement[float64]("fixture", nil)
 	measurement.Label, measurement.At, measurement.From = "", time.Time{}, time.Time{}
 	labels := make([]string, 640)
@@ -332,7 +332,7 @@ func TestSpaceReset(t *testing.T) {
 	})
 
 	Convey("An unfinished bin cannot combine observations from separate tapes", t, func() {
-		grid := NewSpace(4).(*Space)
+		grid := NewSpace(4)
 		grid.column("source", "first")
 		grid.column("source", "second")
 		seed(grid, []float64{1, -1})

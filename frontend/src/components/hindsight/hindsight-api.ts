@@ -3,8 +3,10 @@ import { hubBaseUrl, hubWsUrl } from "#/lib/hub";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import type {
+	EpisodeKind,
 	HindsightCapture,
 	HindsightEnvelope,
+	HindsightEpisode,
 	HindsightGap,
 	HindsightLifecycleEvent,
 	HindsightMetricMap,
@@ -15,7 +17,9 @@ import type {
 	HindsightTimelineBucket,
 	HindsightTimelineQuery,
 	HindsightTimelineSpan,
+	MarketCoordinate,
 	Measurement,
+	ReferenceRole,
 } from "./hindsight-types";
 
 export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
@@ -209,10 +213,48 @@ export const fetchHindsightLifecycle = async (
 	return (await response.json()) as HindsightLifecycleEvent[];
 };
 
+export type RawExcursionRecord = {
+	epoch: number;
+	id: string;
+	symbol: string;
+	direction: string;
+	clears_friction: boolean;
+	precursor_start_tick: number;
+	anchor_tick: number;
+	extremum_tick: number;
+	exit_tick: number;
+	post_end_tick: number;
+	entry_price: number;
+	extremum_price: number;
+	exit_price: number;
+	position_size: number;
+	fee: number;
+	profit: number;
+	profit_fraction: number;
+	gross_excursion: number;
+	observation_count: number;
+	status: string;
+};
+
+export const fetchHindsightExcursions = async (
+	run: string,
+): Promise<RawExcursionRecord[]> => {
+	const response = await fetch(
+		`${hubBaseUrl()}/hindsight/excursions?run=${encodeURIComponent(run)}`,
+	);
+
+	if (!response.ok) {
+		return [];
+	}
+
+	return (await response.json()) as RawExcursionRecord[];
+};
+
 export const adaptMeasurementsToTimeline = (
 	measurements: Measurement[],
 	query: HindsightTimelineQuery,
 	symbols: string[] = [],
+	excursions: RawExcursionRecord[] = [],
 ): HindsightTimeline => {
 	const numBuckets = query.buckets && query.buckets > 0 ? query.buckets : 200;
 	const selectedSymbol =
@@ -343,23 +385,115 @@ export const adaptMeasurementsToTimeline = (
 		});
 	}
 
-	const allSymbols = symbols.length > 0 ? symbols : [selectedSymbol];
-	const symbolSummaries: HindsightSymbolSummary[] = allSymbols.map((sym) => ({
-		symbol: sym,
-		observations: sym === selectedSymbol ? totalObservations : 0,
-		defined: sym === selectedSymbol ? filtered.length : 0,
-		tickers: sym === selectedSymbol ? filtered.length : 0,
-		trades: 0,
-		firstSequence: firstSeq,
-		lastSequence: lastSeq,
-		firstAt,
-		lastAt,
-		episodes: 0,
-		insufficientData: false,
-		topExcursion: 0,
-		priceEpisodes: 0,
-		regimeEpisodes: 0,
+	const selectedSymbolExcursions = excursions.filter(
+		(e) => e.symbol === selectedSymbol,
+	);
+
+	const episodes: HindsightEpisode[] = selectedSymbolExcursions.map((e) => ({
+		id: e.id,
+		symbol: e.symbol,
+		kind:
+			e.direction === "upward"
+				? "upward_excursion"
+				: e.direction === "downward"
+					? "downward_excursion"
+					: "reversal",
+		coordinate: "last" as MarketCoordinate,
+		fromSequence: e.anchor_tick,
+		toSequence: e.exit_tick,
+		fromAt: "",
+		toAt: "",
+		observations: e.observation_count,
+		observedExcursion: e.gross_excursion,
+		hasObservedExcursion: true,
+		confirmed: e.clears_friction,
+		ratio: e.profit_fraction,
+		hasRatio: true,
+		traversed: e.profit_fraction,
+		hasTraversed: true,
+		threshold: 0.0052,
+		hasThreshold: true,
+		references: [
+			{
+				role: "anchor" as ReferenceRole,
+				capture: {
+					run: String(e.epoch),
+					sequence: e.anchor_tick,
+					stream: "excursions",
+					streamEpoch: e.epoch,
+					streamSequence: e.anchor_tick,
+				},
+				ordinal: e.anchor_tick,
+				venueAt: "",
+				receivedAt: "",
+				value: e.entry_price,
+				hasValue: true,
+			},
+			{
+				role: "peak" as ReferenceRole,
+				capture: {
+					run: String(e.epoch),
+					sequence: e.extremum_tick,
+					stream: "excursions",
+					streamEpoch: e.epoch,
+					streamSequence: e.extremum_tick,
+				},
+				ordinal: e.extremum_tick,
+				venueAt: "",
+				receivedAt: "",
+				value: e.extremum_price,
+				hasValue: true,
+			},
+			{
+				role: "exit_anchor" as ReferenceRole,
+				capture: {
+					run: String(e.epoch),
+					sequence: e.exit_tick,
+					stream: "excursions",
+					streamEpoch: e.epoch,
+					streamSequence: e.exit_tick,
+				},
+				ordinal: e.exit_tick,
+				venueAt: "",
+				receivedAt: "",
+				value: e.exit_price,
+				hasValue: true,
+			},
+		],
 	}));
+
+	const allSymbols = symbols.length > 0 ? symbols : [selectedSymbol];
+	const symbolSummaries: HindsightSymbolSummary[] = allSymbols.map((sym) => {
+		const symExcursions = excursions.filter((e) => e.symbol === sym);
+		const topExcursion = symExcursions.reduce(
+			(max, e) => Math.max(max, e.gross_excursion),
+			0,
+		);
+		const topKind =
+			symExcursions.length > 0
+				? symExcursions[0].direction === "upward"
+					? ("upward_excursion" as EpisodeKind)
+					: ("downward_excursion" as EpisodeKind)
+				: undefined;
+
+		return {
+			symbol: sym,
+			observations: sym === selectedSymbol ? totalObservations : 0,
+			defined: sym === selectedSymbol ? filtered.length : 0,
+			tickers: sym === selectedSymbol ? filtered.length : 0,
+			trades: 0,
+			firstSequence: firstSeq,
+			lastSequence: lastSeq,
+			firstAt,
+			lastAt,
+			episodes: symExcursions.length,
+			insufficientData: false,
+			topExcursion,
+			topKind,
+			priceEpisodes: symExcursions.length,
+			regimeEpisodes: 0,
+		};
+	});
 
 	return {
 		run: query.run,
@@ -410,7 +544,7 @@ export const adaptMeasurementsToTimeline = (
 			sigma: 0,
 			hasSigma: false,
 			qualifyingMove: 0,
-			episodes: [],
+			episodes,
 			insufficientData: filtered.length === 0,
 		},
 		streams: [],
@@ -548,6 +682,13 @@ export const fetchHindsightTimeline = async (
 		}
 	}
 
+	let excursions: RawExcursionRecord[] = [];
+	try {
+		excursions = await fetchHindsightExcursions(query.run);
+	} catch {
+		// optional discovery
+	}
+
 	return new Promise((resolve, reject) => {
 		if (options?.signal?.aborted) {
 			reject(new DOMException("Aborted", "AbortError"));
@@ -597,7 +738,7 @@ export const fetchHindsightTimeline = async (
 
 				if (options?.onProgress && measurements.length > 0) {
 					options.onProgress(
-						adaptMeasurementsToTimeline(measurements, query, symbols),
+						adaptMeasurementsToTimeline(measurements, query, symbols, excursions),
 					);
 				}
 			} catch (err) {
@@ -621,7 +762,7 @@ export const fetchHindsightTimeline = async (
 				options.signal.removeEventListener("abort", onAbort);
 			}
 
-			resolve(adaptMeasurementsToTimeline(measurements, query, symbols));
+			resolve(adaptMeasurementsToTimeline(measurements, query, symbols, excursions));
 		};
 	});
 };
