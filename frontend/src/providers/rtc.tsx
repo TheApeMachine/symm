@@ -32,9 +32,16 @@ const TERMINAL_CONNECTION_STATES: ReadonlySet<RTCPeerConnectionState> = new Set(
 	["failed", "disconnected", "closed"],
 );
 
-const signalingURL = () =>
-	import.meta.env.VITE_SYMM_WEBRTC_URL?.trim() ||
-	"http://127.0.0.1:8765/webrtc/manifold";
+const signalingURL = () => {
+	if (import.meta.env.VITE_SYMM_WEBRTC_URL?.trim()) {
+		return import.meta.env.VITE_SYMM_WEBRTC_URL.trim();
+	}
+	const host =
+		typeof window !== "undefined" && window.location.hostname
+			? window.location.hostname
+			: "127.0.0.1";
+	return `http://${host}:8765/webrtc/manifold`;
+};
 
 const setTransport = (
 	status: "ONLINE" | "CONNECTING" | "OFFLINE",

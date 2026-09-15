@@ -1,4 +1,3 @@
-import { learningStore } from "#/collections/learning";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import {
@@ -6,18 +5,24 @@ import {
 	equityAtom,
 	unrealizedAtom,
 } from "#/collections/app";
-import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
-const fmt = (value: unknown): string =>
-	typeof value === "number"
-		? value.toFixed(2)
-		: typeof value === "string" &&
-				value.trim() !== "" &&
-				Number.isFinite(Number(value))
-			? Number(value).toFixed(2)
-			: "—";
+const fmt = (value: unknown): string => {
+	if (typeof value === "number") {
+		return value.toFixed(2);
+	}
+
+	if (
+		typeof value === "string" &&
+		value.trim() !== "" &&
+		Number.isFinite(Number(value))
+	) {
+		return Number(value).toFixed(2);
+	}
+
+	return "—";
+};
 
 /*
 The lambo rides behind the equity reading whenever the book is in unrealized
@@ -77,54 +82,39 @@ const Reading = ({
 );
 
 export const Balance = () => {
-	const policy = useSelector(learningStore, (state) => state?.agents[0]);
 	const cash = useSelector(cashAtom, (state) => state);
 	const unrealized = useSelector(unrealizedAtom, (state) => state);
 	const equity = useSelector(equityAtom, (state) => state);
 
-	// Profit is unrealized rather than equity: the ride is for the book being up
-	// right now, not for the account being larger than nothing. Equity is above
-	// zero the moment the wallet is funded, which would leave it permanently on.
-	const unrealizedVal = Number(
-		policy ? policy.unrealized : unrealized,
-	);
+	const unrealizedVal = Number(unrealized);
 	const inProfit = Number.isFinite(unrealizedVal) && unrealizedVal > 0;
 
 	return (
 		<Flex.Row
 			align="center"
 			gap={6}
-			data-wallet={policy ? "learning" : "account"}
+			data-wallet="account"
 		>
-			{policy && (
-				<Badge
-					label="Learning · simulated"
-					variant="disabled"
-					title="Consolidated-model learning wallet. Orders are simulated against the market book."
-				/>
-			)}
 			<Reading
 				label="Cash"
-				tone={policy ? "f3" : "f1"}
+				tone="f1"
 				weight="medium"
 				which="cash"
-				value={fmt(policy ? String(policy.cash) : cash)}
+				value={fmt(cash)}
 			/>
 			<Reading
 				label="Unrealized"
-				tone={policy ? "f3" : "f2"}
+				tone="f2"
 				weight="medium"
 				which="unrealized"
-				value={fmt(
-					policy ? String(policy.unrealized) : unrealized,
-				)}
+				value={fmt(unrealized)}
 			/>
 			<Reading
 				label="Equity"
-				tone={policy ? "f3" : "accent"}
+				tone="accent"
 				weight="semibold"
 				which="equity"
-				value={fmt(policy ? String(policy.equity) : equity)}
+				value={fmt(equity)}
 			>
 				{inProfit ? <Lambo /> : null}
 			</Reading>

@@ -128,8 +128,6 @@ observes publish through compare-and-swap; evaluations read immutable roots.
 */
 type Engine struct {
 	err         error
-	out         Result
-	action      Action
 	cfg         Config
 	root        atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter atomic.Uint64
@@ -143,7 +141,7 @@ NewEngine instantiates the cognitive engine Primitive. Unset bounds in the
 configuration fold to the declared defaults; the normalized values are
 computed here and owned by the engine.
 */
-func NewEngine(cfg Config) core.Primitive {
+func NewEngine(cfg Config) *Engine {
 	engine := &Engine{
 		cfg:         cfg.normalised(),
 		decayFactor: cfg.normalised().decayFactor(),
@@ -156,7 +154,7 @@ func NewEngine(cfg Config) core.Primitive {
 /*
 Next executes each arriving command, impulse or token sequence and yields its result.
 If in is nil, it rejects doing anything and returns nil.
-When an impulse or context arrives, it evaluates the sensory tokens and yields the winning Action.
+When an impulse or context arrives, it evaluates the sensory tokens and yields the Evaluation.
 */
 func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	if in == nil || op.err != nil {
@@ -164,6 +162,8 @@ func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 
 	return func(yield func(unsafe.Pointer) bool) {
+		var activeSeq []byte
+
 		for arriving := range in {
 			if arriving == nil {
 				continue
@@ -176,30 +176,40 @@ func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					return
 				}
 
-				op.out = result
-				if !yield(unsafe.Pointer(&op.out)) {
+				if cmd.Evaluate != nil {
+					if !yield(unsafe.Pointer(&result.Evaluation)) {
+						return
+					}
+					continue
+				}
+
+				if !yield(unsafe.Pointer(&result)) {
 					return
 				}
 				continue
 			}
 
-			token := extractCognitionToken(arriving)
+			token := ExtractToken(arriving)
 			if len(token) == 0 {
 				continue
 			}
 
-			result, err := op.evaluate(token)
+			activeSeq = append(activeSeq, token...)
+			result, err := op.evaluate(activeSeq)
 			if err != nil {
 				op.Error(err)
 				return
 			}
 
-			op.action = Action(result.Evaluation.WinnerClass)
-			if op.action == "" {
-				op.action = ActionWait
+			if result.Evaluation.IsBreak {
+				activeSeq = activeSeq[:0]
 			}
 
-			if !yield(unsafe.Pointer(&op.action)) {
+			if result.Evaluation.WinnerClass == "" {
+				result.Evaluation.WinnerClass = string(ActionWait)
+			}
+
+			if !yield(unsafe.Pointer(&result.Evaluation)) {
 				return
 			}
 		}
@@ -239,7 +249,7 @@ func parseEngineCommand(arriving unsafe.Pointer) *Command {
 	return nil
 }
 
-func extractCognitionToken(arriving unsafe.Pointer) []byte {
+func ExtractToken(arriving unsafe.Pointer) []byte {
 	if arriving == nil {
 		return nil
 	}
@@ -906,7 +916,6 @@ func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
 func (op *Engine) REMReplays() int {
 	return int(op.remReplays.Load())
 }
-
 
 /*
 observe registers context -> class in the existing packed basin and publishes

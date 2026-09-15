@@ -125,7 +125,7 @@ func TestHubSetHindsightStore(t *testing.T) {
 
 		So(writer.CommitReady(t.Context(), true), ShouldBeNil)
 
-		hub := NewHub(t.Context())
+		hub := NewHub(t.Context(), nil)
 		hub.SetHindsightStore(catalog)
 		t.Cleanup(func() {
 			if err := hub.Close(); err != nil {
@@ -213,7 +213,7 @@ func TestHubSetHindsightStore(t *testing.T) {
 
 func TestHubDrain(t *testing.T) {
 	Convey("Given a hub draining from a wait-free ring buffer", t, func() {
-		hub := NewHub(t.Context())
+		hub := NewHub(t.Context(), nil)
 		t.Cleanup(func() {
 			if err := hub.Close(); err != nil {
 				t.Error(err)
@@ -245,7 +245,8 @@ func TestHubDrain(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			So(ring.IsEmpty(), ShouldBeTrue)
 
-		hub.cancel()
+			err := hub.Close()
+			So(err, ShouldBeNil)
 			<-done
 		})
 	})
@@ -317,7 +318,7 @@ func TestIsWireAllowed(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		hub := NewHub(ctx)
+		hub := NewHub(ctx, nil)
 		defer hub.Close()
 
 		original := types.Focus()

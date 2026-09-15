@@ -15,6 +15,7 @@ choosing an action. What the learner should do is the learner's decision.
 */
 type Impulse struct {
 	Label    string
+	SeqIdx   int64
 	At, From time.Time
 	Version  uint64
 	Ready    bool

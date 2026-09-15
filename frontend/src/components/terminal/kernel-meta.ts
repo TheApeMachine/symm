@@ -36,6 +36,7 @@ export const TERMINAL_KERNEL_ORDER = [
 	"liquidity",
 	"sentiment",
 	"leadlag",
+	"training",
 ] as const;
 
 const kernelOrderIndex = (source: string): number => {
@@ -57,7 +58,7 @@ book_imbalance (depthflow), open_interest_growth_zscore (derivatives),
 book_imbalance_zscore (exhaustion), branching_spectral_radius (hawkes),
 best_lag_correlation (leadlag), touch_notional_imbalance (liquidity),
 morphology_change (morphology), spread_zscore (pumpdump), breadth
-(sentiment), fill_fraction_zscore:bid (toxicity).
+(sentiment), fill_fraction_zscore:bid (toxicity), confidence (training).
 */
 const SOURCE_HEADLINE: Record<string, string> = {
 	correlation: "signed_correlation",
@@ -72,6 +73,7 @@ const SOURCE_HEADLINE: Record<string, string> = {
 	pumpdump: "spread_zscore",
 	sentiment: "breadth",
 	toxicity: "fill_fraction_zscore:bid",
+	training: "confidence",
 };
 
 /*
@@ -265,6 +267,22 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"withdrawal_fraction_zscore:ask",
 		"retreat_rate",
 	],
+	training: [
+		"steps",
+		"decisions",
+		"resolved",
+		"confidence",
+		"contrast",
+		"surprisal",
+		"ambiguity",
+		"action",
+		"win_rate",
+		"edge",
+		"progress",
+		"accuracy",
+		"support",
+		"quality",
+	],
 };
 
 /*
@@ -424,6 +442,12 @@ const KERNEL_COPY: Record<
 		name: "Sentiment",
 		sub: "sentiment · tape",
 		blurb: "Sentiment measurement from backend frames.",
+	},
+	training: {
+		name: "Cognitive Training",
+		sub: "training · precursor radix",
+		blurb:
+			"Precursor associative learning model compiling excursions into radix basins.",
 	},
 };
 

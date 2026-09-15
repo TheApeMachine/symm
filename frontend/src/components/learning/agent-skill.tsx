@@ -1,81 +1,98 @@
+import { useEffect, useRef } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { focusStore, type RingBuffer, trainingStore } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { type Skill, useAgentSkill } from "./state";
-
-/*
-Tone encodes what the agent is doing and which account is exposed, not whether
-that is good. Learning is the resting state and reads blue: an agent that has
-not earned an edge is behaving correctly, and a distinct hue keeps it from being
-read on the same red/orange/green scale the transports use. Trading is green,
-and a real account additionally pulses — the one state an operator must never
-mistake for any other.
-*/
-const tone = (mode: string) => {
-	if (mode !== "trading") {
-		return "info" as const;
-	}
-
-	return "success" as const;
-};
-
-const percent = (value: number) => `${(100 * value).toFixed(4)}%`;
-const basis = (value: number) => `${(10000 * value).toFixed(1)} bp`;
-
-/*
-skillTitle states the whole measurement in one hover: the estimate, the bar it
-has to clear, and what the agent is currently allowed to do. Every number here
-is measured; none of them is a score invented for display.
-*/
-const skillTitle = (skill: Skill) =>
-	skill.defined
-		? `Mean completed decision benefit ${basis(skill.mean)} · ${skill.samples} outcomes · ${skill.wins} positive / ${skill.losses} negative. Overlapping decisions are not independent trials.`
-		: "Waiting for completed tape outcomes";
+import { memoizedQuery } from "#/lib/utils";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { basis, percent } from "./format";
 
 export const AgentSkill = () => {
-	const { state, error } = useAgentSkill();
-	const skill = state?.skill;
+	const symbol = useSelector(focusStore, (s) => s);
+	const ref = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const root = ref.current;
+		if (!root) return;
+
+		const update = (ring: RingBuffer<MeasurementT>) => {
+			if (!ring || ring.isEmpty()) return;
+			const len = ring.getBufferLength();
+
+			for (let i = 0; i < len; i++) {
+				const m = ring.get(i);
+				if (!m) continue;
+				const metricMap: Record<string, number> = {};
+				for (const metric of m.metrics ?? []) {
+					if (metric?.name) metricMap[String(metric.name)] = metric.raw ?? 0;
+				}
+				const edge = metricMap["edge"] ?? 0;
+				const winRate = metricMap["win_rate"] ?? 0;
+				const resolved = metricMap["resolved"] ?? 0;
+
+				const winRateEl = memoizedQuery(root, '[data-a="winrate"]') as HTMLElement;
+				if (winRateEl) {
+					winRateEl.innerText = resolved > 0 ? percent(winRate) : "—";
+				}
+
+				const edgeEl = memoizedQuery(root, '[data-a="edge"]') as HTMLElement;
+				if (edgeEl) {
+					edgeEl.innerText = resolved > 0 ? basis(edge) : "—";
+				}
+			}
+		};
+
+		const getTrainingRing = (
+			records?: Record<string, RingBuffer<MeasurementT>>,
+		): RingBuffer<MeasurementT> | null => {
+			if (!records) {
+				return null;
+			}
+
+			return (
+				records[symbol] ??
+				records["learner"] ??
+				records[""] ??
+				Object.values(records)[0] ??
+				null
+			);
+		};
+
+		const initial = getTrainingRing(trainingStore?.state);
+		if (initial) {
+			update(initial);
+		}
+
+		const unsub = trainingStore.subscribe((state) => {
+			const activeRing = getTrainingRing(state);
+			if (activeRing) {
+				update(activeRing);
+			}
+		});
+
+		return () => {
+			unsub?.unsubscribe?.();
+		};
+	}, [symbol]);
 
 	return (
-		<Flex.Row align="center" gap={6}>
-			<Badge
-				label="Agent"
-				variant={
-					skill && !error ? tone(state?.authorizedMode ?? "learning") : "error"
-				}
-				dot
-				pulse={state?.authorizedMode === "trading" && skill?.account === "real"}
-				title={
-					skill
-						? `${skillTitle(skill)}\nEffective mode: ${state?.authorizedMode ?? "unavailable"} · Realization: ${state?.realizationReason ?? "unavailable"}`
-						: error || "Waiting for the learning workspace"
-				}
-			/>
+		<Flex.Row ref={ref} align="center" gap={6}>
+			<Badge label="Agent" variant="info" dot />
 			<Flex.Column className="items-end gap-px">
 				<Typography.Label size="s" tone="f4" weight="normal">
-					Skill
+					Win Rate
 				</Typography.Label>
-				<Typography.Mono
-					size="lg"
-					tone={skill?.defined && skill.mean > 0 ? "accent" : "f1"}
-					data-agent-skill={skill?.mode ?? "offline"}
-					data-agent-account={skill?.account ?? "none"}
-					title={skill ? skillTitle(skill) : undefined}
-				>
-					{skill?.defined ? percent(skill.mean) : "—"}
+				<Typography.Mono size="lg" tone="f1" data-a="winrate">
+					—
 				</Typography.Mono>
 			</Flex.Column>
 			<Flex.Column className="items-end gap-px">
 				<Typography.Label size="s" tone="f4" weight="normal">
 					Edge
 				</Typography.Label>
-				<Typography.Mono
-					size="lg"
-					tone={!skill?.defined ? "f1" : skill.mean > 0 ? "accent" : "f2"}
-					data-agent-edge={skill?.defined ? String(skill.mean) : ""}
-					title="Mean completed tape evaluation, as a fraction of starting capital"
-				>
-					{skill?.defined ? basis(skill.mean) : "—"}
+				<Typography.Mono size="lg" tone="accent" data-a="edge">
+					—
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

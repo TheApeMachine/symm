@@ -1,6 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
 import { strategyStore } from "#/collections/app";
-import { learningStore } from "#/collections/learning";
 import { terminalStore } from "#/collections/terminal";
 import {
 	setDecisionsPendingFocus,
@@ -22,62 +21,31 @@ type DecisionRow = {
 };
 
 export const Decisions = () => {
-	// Merge every decision across learningStore and strategyStore by symbol, latest
-	// frame wins. A candidate whose causal state was not refreshed in a given
-	// round still keeps its card, so the list behaves like a normal growing
-	// list instead of a full-replacement snapshot that churns every tick.
-	const decisions = useSelector(learningStore, (learningState) => {
+	const decisions = useSelector(strategyStore, (stratState: any) => {
 		const merged = new Map<string, DecisionRow>();
-
-		if (learningState?.agents) {
-			for (const agent of learningState.agents) {
-				const last = agent.last;
-				if (!last) continue;
-
-				const sym = String(last.symbol ?? "");
-				if (!sym) continue;
-
-				const actionObj = last.action;
-				const actionKind = String(actionObj?.kind ?? "—");
-
-				const priorObj = actionObj?.prior;
-				const conf =
-					typeof priorObj?.support === "number"
-						? Math.min(1, priorObj.support / 100)
-						: 1;
-
-				const ctxList = Array.isArray(last.context) ? last.context : [];
-				const reason =
-					ctxList.length > 0
-						? ctxList.join(" · ")
-						: `Action ${actionKind} selected by agent`;
-
-				const idStr = String(last.id);
-
-				merged.set(sym, {
-					id: idStr,
-					symbol: sym,
-					action: actionKind,
-					confidence: conf,
-					reason,
-				});
-			}
-		}
-
-		const stratState: any = strategyStore.state;
 		const frames =
 			typeof stratState?.toArray === "function"
 				? stratState.toArray()
 				: Array.isArray(stratState)
 					? stratState
 					: [];
+
 		for (const frame of frames) {
-			if (typeof frame?.decisionsLength !== "function") continue;
+			if (typeof frame?.decisionsLength !== "function") {
+				continue;
+			}
+
 			for (let i = 0; i < frame.decisionsLength(); i++) {
 				const dec = frame.decisions(i, decObj);
-				if (!dec) continue;
+				if (!dec) {
+					continue;
+				}
+
 				const symbol = dec.symbol() ?? "";
-				if (!symbol) continue;
+				if (!symbol) {
+					continue;
+				}
+
 				merged.set(symbol, {
 					id: dec.id() ?? `dec-${symbol}`,
 					symbol,

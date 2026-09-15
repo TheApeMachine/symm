@@ -72,7 +72,7 @@ func (hub *Hub) registerWorkbench() {
 		}
 
 		proxyRequest, err := http.NewRequestWithContext(
-			hub.ctx,
+			hub.Context(),
 			http.MethodPost,
 			workbenchURL,
 			bytes.NewReader(payload),

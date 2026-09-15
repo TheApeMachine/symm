@@ -1,7 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 import { positionStore } from "#/collections/app";
-import { learningStore } from "#/collections/learning";
 import { terminalStore } from "#/collections/terminal";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
@@ -11,17 +10,33 @@ import { Position } from "#/providers/telemetry/telemetry/position";
 import { sendPositionExit } from "#/providers/websocket";
 import { cn } from "@/lib/utils";
 
-const formatValue = (value: unknown, digits: number): string =>
-	typeof value === "number"
-		? value.toFixed(digits)
-		: typeof value === "string" &&
-				value !== "" &&
-				Number.isFinite(Number(value))
-			? Number(value).toFixed(digits)
-			: String(value ?? "—");
+const formatValue = (value: unknown, digits: number): string => {
+	if (typeof value === "number") {
+		return value.toFixed(digits);
+	}
 
-const pnlTone = (value: number): "up" | "down" | "f3" =>
-	value > 0 ? "up" : value < 0 ? "down" : "f3";
+	if (
+		typeof value === "string" &&
+		value !== "" &&
+		Number.isFinite(Number(value))
+	) {
+		return Number(value).toFixed(digits);
+	}
+
+	return String(value ?? "—");
+};
+
+const pnlTone = (value: number): "up" | "down" | "f3" => {
+	if (value > 0) {
+		return "up";
+	}
+
+	if (value < 0) {
+		return "down";
+	}
+
+	return "f3";
+};
 
 const positionObject = new Position();
 const holdingObject = new Holding();
@@ -36,75 +51,34 @@ type PositionCardData = {
 	returnPct: string;
 };
 
-const selectPositions = (learningState: any): PositionCardData[] => {
-	const currentPositions: PositionCardData[] = [];
-	const policy = learningState?.agents?.[0];
-
-	if (policy?.positions && policy.positions.length > 0) {
-		for (const currentPosition of policy.positions) {
-			const currentHolding = currentPosition.holding;
-			if (!currentHolding) continue;
-
-			const currentSymbol = String(currentHolding.symbol ?? "");
-			if (!currentSymbol) continue;
-
-			const positionStatus = String(
-				currentHolding.status ?? currentPosition.status ?? "—",
-			);
-			if (positionStatus === "closed") {
-				continue;
-			}
-
-			const rawPnl = currentHolding.pnl;
-			const pnlNum =
-				typeof rawPnl === "number"
-					? rawPnl
-					: typeof rawPnl === "string" && Number.isFinite(Number(rawPnl))
-						? Number(rawPnl)
-						: 0;
-
-			const entryPrice = currentHolding.entryPrice;
-			const mark = currentHolding.mark;
-			const returnPct = currentHolding.returnPct;
-
-			currentPositions.push({
-				symbol: currentSymbol,
-				status: positionStatus,
-				pnl: `${formatValue(rawPnl, 4)} USD`,
-				pnlValue: pnlNum,
-				entryPrice: formatValue(entryPrice, 6),
-				mark: formatValue(mark, 6),
-				returnPct: `${formatValue(returnPct, 2)}%`,
-			});
-		}
-
-		if (currentPositions.length > 0) {
-			return currentPositions.sort((leftPosition, rightPosition) =>
-				leftPosition.symbol.localeCompare(rightPosition.symbol),
-			);
-		}
-	}
-
-	const state: any = positionStore.state;
+const selectPositions = (state: any): PositionCardData[] => {
 	const latestFrame =
 		typeof state?.findLast === "function"
 			? state.findLast(() => true)
 			: Array.isArray(state)
 				? state[state.length - 1]
 				: state;
-	if (!latestFrame || typeof latestFrame.rowsLength !== "function") return [];
+	if (!latestFrame || typeof latestFrame.rowsLength !== "function") {
+		return [];
+	}
 
 	const fallbackPositions: PositionCardData[] = [];
 
 	for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
 		const currentPosition = latestFrame.rows(rowIndex, positionObject);
-		if (!currentPosition) continue;
+		if (!currentPosition) {
+			continue;
+		}
 
 		const currentHolding = currentPosition.holding(holdingObject);
-		if (!currentHolding) continue;
+		if (!currentHolding) {
+			continue;
+		}
 
 		const currentSymbol = currentHolding.symbol() ?? "";
-		if (!currentSymbol) continue;
+		if (!currentSymbol) {
+			continue;
+		}
 
 		const positionStatus =
 			currentHolding.status() ?? currentPosition.status() ?? "—";
@@ -161,7 +135,7 @@ const positionsEqual = (
 };
 
 export const Positions = () => {
-	const positions = useSelector(learningStore, selectPositions, {
+	const positions = useSelector(positionStore, selectPositions, {
 		compare: positionsEqual,
 	});
 	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(

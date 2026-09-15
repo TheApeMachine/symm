@@ -1,14 +1,31 @@
 import { Canvas } from "#/components/ui/canvas";
 import { cn } from "#/lib/utils";
-import type { Point, Region } from "./state";
+export type Point = {
+	id: number;
+	source: string;
+	label: string;
+	x: number;
+	y: number;
+	value: number;
+	energy: number;
+	authority: number;
+	present: boolean;
+};
+
+export type Region = {
+	id: number;
+	strength: number;
+	authority: number;
+	members: number;
+};
 
 export const ImpulseMap = ({
-	points,
-	regions,
+	points = [],
+	regions = [],
 	className,
 }: {
-	points: Point[];
-	regions: Region[];
+	points?: Point[];
+	regions?: Region[];
 	className?: string;
 }) => {
 	const extent = Math.max(

@@ -2,95 +2,61 @@ package runtime
 
 import (
 	"context"
-
-	"golang.design/x/lockfree/wf"
+	"io"
 
 	"github.com/theapemachine/symm/nomagique/data"
+	"golang.design/x/lockfree/wf"
 )
 
 /*
-Tee is a non-blocking pipeline off-ramp. It satisfies Node[*data.Measurement[float64]]
-and enqueues measurements to a wait-free SPSC ring buffer for asynchronous
-consumption by telemetry and persistence consumers.
-
-Its Step method executes in single-digit nanoseconds with zero locks, zero
-memory allocations, and never exerts backpressure on the upstream LMAX ring.
+Tee unites an off-ramp pusher with a consumer receiver.
 */
-type Tee struct {
+type Tee[T any] interface {
+	Push(*data.Measurement[float64])
+	Next() T
+	io.Closer
+}
+
+type memoryTee[T any] struct {
 	*System
-	ring   *wf.RingBuffer[*data.Measurement[float64]]
-	filter func(*data.Measurement[float64]) bool
+	ring *wf.RingBuffer[T]
 }
 
 /*
-NewTee creates a new Tee node with the given ring buffer capacity and default "telemetry.tee" label.
+NewTee creates a new wait-free Tee for type T.
 */
-func NewTee(capacity int) *Tee {
-	return NewNamedTee("telemetry.tee", capacity)
-}
-
-/*
-NewNamedTee creates a new Tee node with a custom system label and ring buffer capacity.
-*/
-func NewNamedTee(label string, capacity int) *Tee {
-	tee := &Tee{
-		System: NewSystem(context.Background(), label),
-		ring:   wf.NewRingBuffer[*data.Measurement[float64]](capacity),
+func NewTee[T any](label string, capacity int) Tee[T] {
+	tee := &memoryTee[T]{
+		ring: wf.NewRingBuffer[T](capacity),
 	}
+
+	tee.System = NewSystem(context.Background(), label, tee)
 	tee.Transition(READY)
+
 	return tee
 }
 
 /*
-SetFilter sets a predicate controlling which measurements are enqueued onto the ring.
-A nil filter permits all valid named measurements.
+Push enqueues a measurement onto the wait-free ring buffer.
 */
-func (tee *Tee) SetFilter(filter func(*data.Measurement[float64]) bool) {
-	tee.filter = filter
-}
-
-/*
-Ring exposes the underlying wait-free SPSC ring buffer to the detached consumer.
-*/
-func (tee *Tee) Ring() *wf.RingBuffer[*data.Measurement[float64]] {
-	return tee.ring
-}
-
-/*
-Register identifies the Tee with the runtime register and declares a wildcard peer
-interest so all stage measurements are populated into val.Peers.
-*/
-func (tee *Tee) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement[float64](tee.Name(), nil)
-	measurement.Metadata["peer-interest"] = "*"
-
-	return measurement
-}
-
-/*
-Step satisfies Node[*data.Measurement[float64]]. It enqueues the measurement
-and all its populated peers into the wait-free ring buffer and returns the measurement.
-*/
-func (tee *Tee) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if measurement == nil || tee.Status() != READY {
-		return nil
-	}
-
-	if (tee.filter == nil || tee.filter(measurement)) && measurement.Source != tee.Name() && measurement.Label != "" {
-		tee.ring.Put(measurement.Clone())
-	}
-
-	for _, peer := range measurement.Peers {
-		if peer == nil || peer.Label == "" {
-			continue
+func (tee *memoryTee[T]) Push(item *data.Measurement[float64]) {
+	if val, ok := any(item).(T); ok {
+		if !tee.ring.Put(val) {
+			tee.Transition(ERROR)
 		}
+	}
+}
 
-		if tee.filter != nil && !tee.filter(peer) {
-			continue
-		}
+/*
+Next dequeues the next item from the ring buffer, or returns the zero value if empty.
+*/
+func (tee *memoryTee[T]) Next() T {
+	item, ok := tee.ring.Get()
 
-		tee.ring.Put(peer.Clone())
+	if !ok {
+		var zero T
+		return zero
 	}
 
-	return measurement
+	return item
 }

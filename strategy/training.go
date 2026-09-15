@@ -3,8 +3,11 @@ package strategy
 import (
 	"context"
 	"iter"
+	"sync"
+	"time"
 	"unsafe"
 
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/cognition"
@@ -36,73 +39,213 @@ runs offline REM consolidation and periodic decay pruning.
 */
 type Training struct {
 	*runtime.System
-	fragments []iter.Seq[unsafe.Pointer]
-	pipeline  *nomagique.Number
-	trader    *Trader
+	wg          sync.WaitGroup
+	mu          sync.RWMutex
+	measurement *data.Measurement[float64]
+	precursor   *Precursor
+	excursions  []tables.ExcursionRecord
+	pipeline    *nomagique.Number
+	engine      *cognition.Engine
+	trader      *Trader
 }
 
-func NewStrategy(ctx context.Context, api *websocket.API) *Training {
+func NewTraining(ctx context.Context, api *websocket.API) *Training {
+	engine := cognition.NewEngine(cognition.Config{})
+	precursor := NewPrecursor()
+
 	training := &Training{
+		precursor: precursor,
 		pipeline: nomagique.NewNumber(
 			grid.NewSpace(),
-			cognition.NewEngine(cognition.Config{}),
+			precursor,
+			engine,
 		),
+		engine: engine,
 		trader: NewTrader(ctx, api),
 	}
 
+	training.Register()
 	training.System = runtime.NewSystem(ctx, "strategy", training)
 	return training
 }
 
 /*
-Step implements the runtime.Node interface, and this is the active trading path.
+Register initializes and returns the canonical training telemetry measurement
+populated with all metrics required by the frontend dashboard.
 */
-func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	action := data.Read[Action](training.pipeline.Next(data.NewValue(measurement)))
+func (training *Training) Register() *data.Measurement[float64] {
+	training.mu.Lock()
+	defer training.mu.Unlock()
 
-	switch action {
-	case ActionEnter, ActionExit:
-		training.trader.OnAction(measurement.Label, action)
-	case ActionWait:
-		// TODO: Do nothing.
+	if training.measurement != nil {
+		return training.measurement
 	}
 
-	return measurement
-}
+	training.measurement = data.NewMeasurement("training", map[string]data.Metric[float64]{
+		"steps":      data.NewMetric[float64]("steps", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"decisions":  data.NewMetric[float64]("decisions", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"resolved":   data.NewMetric[float64]("resolved", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"confidence": data.NewMetric[float64]("confidence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"contrast":   data.NewMetric[float64]("contrast", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"surprisal":  data.NewMetric[float64]("surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1),
+		"ambiguity":  data.NewMetric[float64]("ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"action":     data.NewMetric[float64]("action", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"win_rate":   data.NewMetric[float64]("win_rate", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
+		"edge":       data.NewMetric[float64]("edge", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"progress":   data.NewMetric[float64]("progress", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
+		"accuracy":   data.NewMetric[float64]("accuracy", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
+		"support":    data.NewMetric[float64]("support", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"quality":    data.NewMetric[float64]("quality", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+	})
 
-func (training *Training) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("training", map[string]data.Metric[float64]{})
+	training.measurement.Label = "learner"
+	training.measurement.Metadata["peer-interest"] = "*"
+
+	return training.measurement
 }
 
 /*
-Learn takes measurements and trains the engine on the measurements.
+Step implements the runtime.Node interface. It remains inert on market entry
+until the model is confident enough, while updating and returning the held
+telemetry measurement so telemetryTee streams it to the frontend.
 */
-func (training *Training) Learn(fragments iter.Seq[iter.Seq[unsafe.Pointer]]) {
-	go func() {
-		for fragment := range fragments {
-			training.fragments = append(training.fragments, fragment)
-			training.pipeline.Next(fragment)
+func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	training.mu.Lock()
+	current := training.measurement
+
+	if current == nil {
+		training.mu.Unlock()
+		current = training.Register()
+		training.mu.Lock()
+	}
+
+	if measurement != nil {
+		if measurement.Source == "training" {
+			training.measurement = measurement
+			current = measurement
 		}
 
-		for {
-			for _, fragment := range training.fragments {
-				action := data.Read[Action](training.pipeline.Next(fragment))
+		if measurement.Source != "training" {
+			current.Label = measurement.Label
+			current.At = measurement.At
+			current.SeqIdx = measurement.SeqIdx
+		}
 
-				switch action {
-				case ActionEnter:
-					// TODO: Check if this is a friction clearing upwards movement.
-					// If so, strengthen this path in the model.
-					// If not, weaken it.
-				case ActionExit:
-					// TODO: Check if this is close to the perfect exit moment.
-					// If so, strengthen this path in the model.
-					// If not, weaken it.
-				case ActionWait:
-					// TODO: Check if this is the correct thing to do.
-					// If so, strengthen this path in the model.
-					// If not, weaken it.
+		for _, peer := range measurement.Peers {
+			if peer == nil || peer.Label == "" || peer.Label == "learner" {
+				continue
+			}
+
+			current.Label = peer.Label
+			current.At = peer.At
+			current.SeqIdx = peer.SeqIdx
+			break
+		}
+	}
+
+	if current.Label == "" {
+		current.Label = "learner"
+	}
+	training.mu.Unlock()
+
+	if measurement == nil {
+		return current
+	}
+
+	eval := data.Read[cognition.Evaluation](training.pipeline.Next(data.NewValue(measurement)))
+	action := Action(eval.WinnerClass)
+
+	// Step remains inert on market action until model is confident enough.
+	confident := eval.Confidence >= 0.70 && eval.Contrast > 0.50
+
+	if confident && (action == ActionEnter || action == ActionExit) {
+		training.trader.OnAction(current.Label, action)
+	}
+
+	training.mu.Lock()
+	stepsMetric := current.Metrics["steps"]
+	stepsMetric = stepsMetric.Write(stepsMetric.Raw + 1)
+	current.Metrics["steps"] = stepsMetric
+	current.Metrics["support"] = current.Metrics["support"].Write(stepsMetric.Raw)
+	current.Metrics["decisions"] = current.Metrics["decisions"].Write(stepsMetric.Raw)
+
+	current.Metrics["confidence"] = current.Metrics["confidence"].Write(eval.Confidence)
+	current.Metrics["contrast"] = current.Metrics["contrast"].Write(eval.Contrast)
+	current.Metrics["surprisal"] = current.Metrics["surprisal"].Write(eval.Surprisal)
+	current.Metrics["ambiguity"] = current.Metrics["ambiguity"].Write(eval.Ambiguity)
+
+	actionVal := 0.0
+	if action == ActionEnter {
+		actionVal = 1.0
+	}
+	if action == ActionExit {
+		actionVal = 2.0
+	}
+	current.Metrics["action"] = current.Metrics["action"].Write(actionVal)
+
+	training.mu.Unlock()
+
+	return current
+}
+
+/*
+Learn takes excursions and measurement fragments to train the engine,
+updating the held telemetry measurement throughout the learning process.
+*/
+func (training *Training) Learn(
+	excursions []tables.ExcursionRecord,
+	fragments iter.Seq[iter.Seq[unsafe.Pointer]],
+) {
+	training.excursions = excursions
+
+	training.wg.Go(func() {
+		index := 0
+		totalSteps := 0
+		totalWins := 0
+
+		for fragment := range fragments {
+			var excursion *tables.ExcursionRecord
+			if index < len(training.excursions) {
+				excursion = &training.excursions[index]
+				training.precursor.SetExcursion(excursion)
+			}
+
+			for range training.pipeline.Next(fragment) {
+				totalSteps++
+			}
+
+			if excursion != nil && excursion.Direction == "upward" && excursion.ClearsFriction {
+				totalWins++
+			}
+
+			training.mu.Lock()
+			if training.measurement != nil {
+				held := training.measurement
+				held.At = time.Now()
+				if excursion != nil {
+					held.Label = excursion.Symbol
+				}
+				held.Metrics["steps"] = held.Metrics["steps"].Write(float64(totalSteps))
+				held.Metrics["decisions"] = held.Metrics["decisions"].Write(float64(totalSteps))
+				held.Metrics["resolved"] = held.Metrics["resolved"].Write(float64(index + 1))
+
+				if len(training.excursions) > 0 {
+					held.Metrics["progress"] = held.Metrics["progress"].Write(float64(index+1) / float64(len(training.excursions)))
+				}
+
+				if index+1 > 0 {
+					winRate := float64(totalWins) / float64(index+1)
+					held.Metrics["win_rate"] = held.Metrics["win_rate"].Write(winRate)
+					held.Metrics["edge"] = held.Metrics["edge"].Write((winRate - 0.5) * 100)
+					held.Metrics["accuracy"] = held.Metrics["accuracy"].Write(winRate * 100)
 				}
 			}
+			training.mu.Unlock()
+
+			index++
 		}
-	}()
+
+		training.precursor.SetExcursion(nil)
+		training.excursions = nil
+	})
 }

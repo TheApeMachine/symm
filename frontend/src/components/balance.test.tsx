@@ -7,8 +7,6 @@ import {
 	unrealizedAtom,
 	updateEquity,
 } from "#/collections/app";
-import { learningStore } from "#/collections/learning";
-import { learningFixture } from "#/components/learning/fixture";
 import { Balance } from "#/components/balance";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 
@@ -50,20 +48,6 @@ describe("Balance", () => {
 		cashAtom.set("");
 		unrealizedAtom.set("");
 		equityAtom.set("");
-		learningStore.setState(() => null);
-	});
-
-	it("labels and mutes the learning wallet and clears that label with the learning state", () => {
-		learningStore.setState(() => learningFixture());
-		const learning = renderToStaticMarkup(<Balance />);
-		expect(learning).toContain("Learning · simulated");
-		expect(learning).toContain('data-wallet="learning"');
-		expect(learning).toContain("198.00");
-		expect(learning).toContain("text-(--f3)");
-		learningStore.setState(() => null);
-		const account = renderToStaticMarkup(<Balance />);
-		expect(account).not.toContain("Learning · simulated");
-		expect(account).toContain('data-wallet="account"');
 	});
 
 	it("renders a placeholder before any valuation has arrived", () => {

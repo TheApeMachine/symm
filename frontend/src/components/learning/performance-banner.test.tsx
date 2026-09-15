@@ -1,39 +1,32 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { learningFixture } from "./fixture";
 import { LearningPerformanceBanner } from "./performance-banner";
-import { projectLearning } from "./state";
 
 describe("LearningPerformanceBanner", () => {
-	it("renders both parallel precursor model and main agent forward testing sections", () => {
-		const view = projectLearning(learningFixture(), "");
-		const html = renderToStaticMarkup(<LearningPerformanceBanner view={view} />);
+	it("renders both precursor cognition and forward evaluation sections with data-metric attributes", () => {
+		const html = renderToStaticMarkup(<LearningPerformanceBanner />);
 
 		// Architecture
 		expect(html).toContain("PARALLEL LEARNERS (DECOUPLED)");
-		expect(html).toContain("MAIN AGENT");
 
 		// Pillar 1: Precursor model
-		expect(html).toContain("PRECURSOR RECOGNITION (PARALLEL AGENTS)");
+		expect(html).toContain("PRECURSOR COGNITION");
 		expect(html).toContain("Learned Situations");
-		expect(html).toContain("Consensus Accuracy");
-		expect(html).toContain("Mean Contrast");
+		expect(html).toContain('data-metric="decisions"');
+		expect(html).toContain('data-metric="steps"');
+		expect(html).toContain('data-metric="confidence"');
+		expect(html).toContain('data-metric="contrast"');
 
-		// Pillar 2: Main Agent forward testing
-		expect(html).toContain("MAIN AGENT FORWARD TESTING (POLICY TRADER)");
+		// Pillar 2: Forward evaluation
+		expect(html).toContain("FORWARD EVALUATION");
 		expect(html).toContain("Measured Edge");
-		expect(html).toContain("Simulated Win Rate");
-		expect(html).toContain("Simulated Realized P&amp;L");
-		expect(html).toContain("Trades Graded");
+		expect(html).toContain('data-metric="edge"');
+		expect(html).toContain('data-metric="win_rate"');
+		expect(html).toContain('data-metric="accuracy"');
+		expect(html).toContain('data-metric="resolved"');
 
-		// Promotion gates
-		expect(html).toContain("Promotion Readiness");
-		expect(html).toContain("criteria");
-	});
-
-	it("handles null view gracefully without crashing", () => {
-		const html = renderToStaticMarkup(<LearningPerformanceBanner view={null} />);
-		expect(html).toContain("PARALLEL LEARNERS (DECOUPLED)");
-		expect(html).toContain("MAIN AGENT");
+		// Readiness gates
+		expect(html).toContain("Execution Readiness");
+		expect(html).toContain('data-l="gate-count"');
 	});
 });

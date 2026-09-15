@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -87,7 +86,7 @@ type StreamingDetector struct {
 	postMarginWindow int
 	trackers         map[string]*symbolTracker
 	onComplete       func(ExcursionRecord)
-	onFragment       func(types.ReplayFragment)
+	onFragment       func([][]*data.Measurement[float64])
 
 	// Balanced training sample quotas
 	profitableCount  int64
@@ -104,7 +103,7 @@ func NewStreamingDetector(
 	epoch int64,
 	initialBalance float64,
 	onComplete func(ExcursionRecord),
-	onFragment ...func(types.ReplayFragment),
+	onFragment ...func([][]*data.Measurement[float64]),
 ) *StreamingDetector {
 	balance := initialBalance
 
@@ -112,7 +111,7 @@ func NewStreamingDetector(
 		balance = 200.0 // Canonical initial paper/test balance
 	}
 
-	var fragmentSink func(types.ReplayFragment)
+	var fragmentSink func([][]*data.Measurement[float64])
 
 	if len(onFragment) > 0 {
 		fragmentSink = onFragment[0]
@@ -133,7 +132,7 @@ func NewStreamingDetector(
 /*
 SetFragmentSink configures a downstream consumer for complete tape fragments.
 */
-func (detector *StreamingDetector) SetFragmentSink(sink func(types.ReplayFragment)) {
+func (detector *StreamingDetector) SetFragmentSink(sink func([][]*data.Measurement[float64])) {
 	detector.mutex.Lock()
 	defer detector.mutex.Unlock()
 
@@ -607,12 +606,7 @@ func (detector *StreamingDetector) finalizeExcursion(
 				extremumIdx = -1
 			}
 
-			detector.onFragment(types.ReplayFragment{
-				Frames:        allFrames,
-				Symbol:        tracker.symbol,
-				AnchorIndex:   anchorIdx,
-				ExtremumIndex: extremumIdx,
-			})
+			detector.onFragment(allFrames)
 		}
 	}
 
@@ -712,12 +706,7 @@ func (detector *StreamingDetector) sampleFlatSpan(
 		allFrames = append(allFrames, tracker.precursorFrames...)
 		allFrames = append(allFrames, []*data.Measurement[float64]{cloneMeasurement(measurement)})
 
-		detector.onFragment(types.ReplayFragment{
-			Frames:        allFrames,
-			Symbol:        tracker.symbol,
-			AnchorIndex:   -1,
-			ExtremumIndex: -1,
-		})
+		detector.onFragment(allFrames)
 	}
 }
 
@@ -802,12 +791,7 @@ func (detector *StreamingDetector) sampleChoppySpan(
 		allFrames = append(allFrames, tracker.precursorFrames...)
 		allFrames = append(allFrames, []*data.Measurement[float64]{cloneMeasurement(measurement)})
 
-		detector.onFragment(types.ReplayFragment{
-			Frames:        allFrames,
-			Symbol:        tracker.symbol,
-			AnchorIndex:   -1,
-			ExtremumIndex: -1,
-		})
+		detector.onFragment(allFrames)
 	}
 }
 

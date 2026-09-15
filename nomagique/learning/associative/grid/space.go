@@ -220,6 +220,8 @@ func (op *Space) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					return
 				}
 
+				res.Impulse.SeqIdx = m.SeqIdx
+				res.Impulse.Label = m.Label
 				op.out = res
 				if !yield(unsafe.Pointer(&op.out.Impulse)) {
 					return

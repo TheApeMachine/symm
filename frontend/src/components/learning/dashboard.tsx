@@ -1,166 +1,245 @@
-import { useState } from "react";
-import { Alert } from "#/components/ui/alert";
+import { useEffect, useRef, useState } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { focusStore, type RingBuffer, trainingStore } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
+import { memoizedQuery, renderValue } from "#/lib/utils";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { CandidateReview } from "./candidate-review";
-import { CapitalPanel } from "./capital-panel";
 import {
 	CandidatePanel,
-	DeskPanel,
 	ForwardPanel,
 	ImpulsePanel,
 	InfluencePanel,
-	LanePanel,
 } from "./decision-panel";
 import { Explain } from "./explain";
-import { action, amount, basis, clock, percent } from "./format";
+import { action, basis, clock, percent } from "./format";
 import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap } from "./map";
 import { LearningPerformanceBanner } from "./performance-banner";
 import { RecognitionPanel } from "./recognition-panel";
-import { RehearsalPanel } from "./rehearsal-panel";
 import { SkillPanel } from "./skill-panel";
-import { type LearningEvent, type Region, useLearning } from "./state";
 import { LearningVisualizer } from "./visualizer";
-
-const JournalEntry = ({ event }: { event: LearningEvent }) => (
-	<Flex.Row
-		align="center"
-		gap={2}
-		className="border-(--line) border-b px-3 py-1.5"
-	>
-		<Typography.Mono size="s" tone="f4" className="shrink-0">
-			{clock(event.at)}
-		</Typography.Mono>
-		<Typography.Mono size="s" tone="f2" className="min-w-0 flex-1 truncate">
-			{action(event.action, event.power, event.reduce)}
-		</Typography.Mono>
-		<Typography.Mono
-			size="s"
-			tone={event.kind === "resolved" ? "accent" : "f3"}
-			className="shrink-0"
-			title={`${event.mode} ${event.lane + 1} · ${event.kind}`}
-		>
-			{event.kind === "resolved"
-				? basis(event.target ?? 0)
-				: amount(event.profit)}
-		</Typography.Mono>
-	</Flex.Row>
-);
-
-const hottest = (regions: Region[] | null, region: Region) => {
-	const strongest = Math.max(...(regions ?? []).map((entry) => entry.strength), 0);
-
-	return strongest > 0 ? (region.strength / strongest) * 100 : 0;
-};
 
 type Tab =
 	| "decision"
 	| "recognition"
-	| "capital"
 	| "influence"
-	| "forward"
-	| "wallets";
+	| "forward";
 
 const TABS: Array<{ key: Tab; label: string }> = [
-	{ key: "decision", label: "Main agent decision" },
+	{ key: "decision", label: "Model decision" },
 	{ key: "recognition", label: "Precursor recognition" },
-	{ key: "capital", label: "Main agent economics" },
 	{ key: "influence", label: "Precursor discovery" },
 	{ key: "forward", label: "Forward test" },
-	{ key: "wallets", label: "Agent channels" },
 ];
 
 export const LearningDashboard = () => {
-	const [symbol] = useState("");
+	const focusSymbol = useSelector(focusStore, (state) => state);
 	const [tab, setTab] = useState<Tab>("recognition");
-	const { view, events, error } = useLearning(symbol);
+	const containerRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const root = containerRef.current;
+		if (!root) return;
+
+		const update = (ring: RingBuffer<MeasurementT>) => {
+			if (!ring || ring.isEmpty()) return;
+
+			const len = ring.getBufferLength();
+			const metaEl = memoizedQuery(root, '[data-l="header-meta"]') as HTMLElement;
+			const statusMetaEl = memoizedQuery(root, '[data-l="status-meta"]') as HTMLElement;
+			const gateCountEl = memoizedQuery(root, '[data-l="gate-count"]') as HTMLElement;
+			const forwardMetaEl = memoizedQuery(root, '[data-l="forward-meta"]') as HTMLElement;
+			const recogMetaEl = memoizedQuery(root, '[data-l="recog-meta"]') as HTMLElement;
+			const recogStatusEl = memoizedQuery(root, '[data-l="recog-status"]') as HTMLElement;
+			const skillMetaEl = memoizedQuery(root, '[data-l="skill-meta"]') as HTMLElement;
+
+			for (let i = 0; i < len; i++) {
+				const measurement = ring.get(i);
+				if (!measurement) continue;
+
+				const metricMap: Record<string, number> = {};
+				for (const m of measurement.metrics ?? []) {
+					if (!m?.name) continue;
+					const name = String(m.name);
+					const raw = m.raw ?? 0;
+					metricMap[name] = raw;
+
+					const els = root.querySelectorAll(`[data-metric="${name}"]`);
+					for (let j = 0; j < els.length; j++) {
+						const el = els[j] as HTMLElement;
+						const fmt = el.getAttribute("data-format");
+
+						switch (fmt) {
+							case "percent":
+								el.innerText = percent(raw);
+								break;
+							case "basis":
+								el.innerText = basis(raw);
+								break;
+							case "integer":
+								el.innerText = Math.floor(raw).toLocaleString();
+								break;
+							case "bits":
+								el.innerText = `${raw.toFixed(2)} bits`;
+								break;
+							case "spread":
+								el.innerText = `Spread ${raw.toFixed(3)}`;
+								break;
+							case "surprisal":
+								el.innerText = `Surprisal ${raw.toFixed(2)} nat`;
+								break;
+							case "action":
+								if (raw === 1) {
+									el.innerText = "ENTER";
+									break;
+								}
+
+								if (raw === 2) {
+									el.innerText = "EXIT";
+									break;
+								}
+
+								el.innerText = "WAIT";
+								break;
+							default:
+								renderValue(el, raw);
+								break;
+						}
+					}
+				}
+
+				const steps = metricMap["steps"] ?? 0;
+				const decisions = metricMap["decisions"] ?? 0;
+				const resolved = metricMap["resolved"] ?? 0;
+				const confidence = metricMap["confidence"] ?? 0;
+				const contrast = metricMap["contrast"] ?? 0;
+				const edge = metricMap["edge"] ?? 0;
+				const support = metricMap["support"] ?? 0;
+				const isTrading = confidence >= 0.7 && contrast > 0.5;
+
+				if (metaEl) {
+					metaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`;
+				}
+
+				if (statusMetaEl) {
+					statusMetaEl.innerText = `conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · edge: ${(edge * 10000).toFixed(1)} bp`;
+				}
+
+				if (gateCountEl) {
+					const gates = [support >= 10, edge > 0, confidence >= 0.7, contrast > 0.5].filter(Boolean).length;
+					gateCountEl.innerText = `${gates}/4 criteria`;
+				}
+
+				if (forwardMetaEl) {
+					forwardMetaEl.innerText = `${Math.floor(resolved).toLocaleString()} completed evaluations`;
+				}
+
+				if (recogMetaEl) {
+					recogMetaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations`;
+				}
+
+				if (recogStatusEl) {
+					recogStatusEl.innerText = isTrading
+						? "Execution active · Model meets confidence and contrast criteria"
+						: "Training precursor associations · Execution remains inert until confident";
+				}
+
+				if (skillMetaEl) {
+					skillMetaEl.innerText = `${Math.floor(resolved).toLocaleString()} forward evaluations · ${isTrading ? "trading" : "learning"}`;
+				}
+			}
+
+			const activityListEl = memoizedQuery(root, '[data-l="activity-list"]') as HTMLElement;
+			if (activityListEl) {
+				const rows = ring.toArray();
+				const items = rows.slice(-15);
+				activityListEl.innerHTML = items.map((row) => {
+					const mmap: Record<string, number> = {};
+					for (const m of row.metrics ?? []) {
+						if (m?.name) mmap[String(m.name)] = m.raw ?? 0;
+					}
+					const actionVal = mmap["action"] ?? 0;
+					const edgeVal = mmap["edge"] ?? 0;
+					const atNs = row.at ?? 0n;
+					const atIso = atNs ? new Date(Number(atNs / 1_000_000n)).toISOString() : new Date().toISOString();
+					const actStr = action(actionVal === 1 ? "enter" : actionVal === 2 ? "exit" : "wait", 1, false);
+					const edgeStr = basis(edgeVal);
+					return `<div class="flex items-center gap-2 border-(--line) border-b px-3 py-1.5 font-mono text-xs">
+						<span class="text-(--f4) shrink-0">${clock(atIso)}</span>
+						<span class="text-(--f2) min-w-0 flex-1 truncate">${actStr}</span>
+						<span class="text-(--acc) shrink-0">${edgeStr}</span>
+					</div>`;
+				}).join("");
+			}
+		};
+
+		const getTrainingRing = (
+			records?: Record<string, RingBuffer<MeasurementT>>,
+		): RingBuffer<MeasurementT> | null => {
+			if (!records) {
+				return null;
+			}
+
+			return (
+				records[focusSymbol] ??
+				records["learner"] ??
+				records[""] ??
+				Object.values(records)[0] ??
+				null
+			);
+		};
+
+		const initial = getTrainingRing(trainingStore?.state);
+		if (initial) {
+			update(initial);
+		}
+
+		const unsubTraining = trainingStore.subscribe((state) => {
+			const activeRing = getTrainingRing(state);
+			if (activeRing) {
+				update(activeRing);
+			}
+		});
+
+		return () => {
+			unsubTraining?.unsubscribe?.();
+		};
+	}, [focusSymbol, tab]);
 
 	return (
-		<Flex.Column className="h-full min-h-0 w-full">
+		<Flex.Column ref={containerRef} className="h-full min-h-0 w-full">
 			<Section.Header
 				title="Precursor recognition"
 				meta={
-					view
-						? view.status === "reading the record"
-							? `${view.status} · ${Number(view.rehearsal?.observations ?? 0).toLocaleString()} of ${Number(view.rehearsal?.budget ?? 0).toLocaleString()} captured observations`
-							: `${view.steps.toLocaleString()} frames · ${view.decisions.toLocaleString()} learned situations · ${view.columns} quantities`
-						: "Connecting to the workspace"
+					<span data-l="header-meta">
+						Connecting to the workspace
+					</span>
 				}
 			/>
-			{error && <Alert>{error} · Last successful state remains visible.</Alert>}
-			<RehearsalPanel view={view} />
-			<LearningPerformanceBanner view={view} />
+			<LearningPerformanceBanner />
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
 				<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-auto">
-					{/*
-						The mode badge and the horizon line sit in the header rather than
-						in a strip beneath it: they qualify the title — which symbol, in
-						what state, measured over what — and a second full-width band to
-						carry three facts cost more vertical space than the panels below
-						could spare.
-					*/}
 					<Section.Header
-						title={view?.symbol || "Waiting for market observations"}
-						meta={error || view?.status}
+						title={focusSymbol || "BTC/USD"}
+						meta={<span data-l="status-meta">learning</span>}
 					>
-						<Badge
-							label={
-								error
-									? "offline"
-									: view?.skill?.mode === "trading"
-										? `trading · ${view.skill.account}`
-										: "learning"
-							}
-							variant={
-								error
-									? "error"
-									: view?.skill?.mode !== "trading"
-										? "info"
-										: view.skill.account === "real"
-											? "error"
-											: "success"
-							}
-							dot
-						/>
-						<Typography.Mono size="s" tone="f3" className="truncate">
-							{view?.regions?.length ?? 0} hot regions · grid v
-							{view?.gridVersion ?? 0}
-						</Typography.Mono>
+						<Badge label="learning" variant="info" dot />
 					</Section.Header>
-					{/*
-						The band is resizable rather than a fixed height. It is the part
-						of the surface worth the most space, but it shares one scroller
-						with the panels underneath: pinned tall it left them a sliver to
-						scroll inside, and pinned short it wasted the screen. The reader
-						decides, and the browser's own resize handle does it without a
-						drag implementation of this surface's own.
-					*/}
+
 					<div className="flex h-100 max-h-[80vh] min-h-40 shrink-0 resize-y overflow-hidden border-(--line) border-b max-2xl:h-auto max-2xl:resize-none max-2xl:flex-col">
 						<div className="w-100 shrink-0 border-(--line) border-r max-2xl:h-85 max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
-							<ImpulseMap
-								points={view?.points ?? []}
-								regions={view?.regions ?? []}
-								className="h-full w-full"
-							/>
+							<ImpulseMap className="h-full w-full" />
 						</div>
 						<div className="min-w-0 flex-1 bg-(--surface) max-2xl:h-85">
-							<LearningVisualizer
-								view={view}
-								events={events}
-								className="h-full w-full"
-							/>
+							<LearningVisualizer className="h-full w-full" />
 						</div>
 					</div>
 
-					{/*
-						Sticky, because it is the control for everything below it: once
-						the panels are long enough to scroll, a tab strip that scrolled
-						away with them left no way back without returning to the top.
-					*/}
 					<Flex.Row
 						gap={2}
 						className="sticky top-0 z-2 shrink-0 border-(--line) border-b bg-(--surface) px-3 py-2"
@@ -181,30 +260,23 @@ export const LearningDashboard = () => {
 
 					{tab === "decision" && (
 						<>
-							<ImpulsePanel view={view} />
-							<CandidatePanel view={view} />
-							<KnowledgePanel view={view} />
+							<ImpulsePanel />
+							<CandidatePanel />
+							<KnowledgePanel />
 						</>
 					)}
 					{tab === "recognition" && <RecognitionPanel />}
-					{tab === "influence" && <InfluencePanel view={view} />}
+					{tab === "influence" && <InfluencePanel />}
 					{tab === "forward" && (
 						<>
-							<ForwardPanel view={view} />
-							<CandidateReview view={view} />
+							<ForwardPanel />
+							<CandidateReview />
 						</>
 					)}
-					{tab === "wallets" && (
-						<>
-							<DeskPanel view={view} />
-							<LanePanel view={view} />
-						</>
-					)}
-					{tab === "capital" && <CapitalPanel view={view} />}
 				</Flex.Column>
 
 				<Flex.Column className="w-96 shrink-0 overflow-auto border-(--line) border-l max-lg:w-full">
-					<SkillPanel view={view} />
+					<SkillPanel />
 					<Section fit="content">
 						<Section.Header title="Hot regions" meta="strongest first">
 							<Explain>
@@ -215,55 +287,21 @@ export const LearningDashboard = () => {
 							</Explain>
 						</Section.Header>
 						<Flex.Column className="gap-1.5 p-3">
-							{view?.regions?.map((region) => (
-								<Flex.Row key={region.id} align="center" gap={2}>
-									<Typography.Mono
-										size="s"
-										tone="f3"
-										className="w-16 shrink-0"
-										title={`${region.members} cells`}
-									>
-										#{region.id}
-									</Typography.Mono>
-									<div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
-										<div
-											className="h-full bg-(--acc)"
-											style={{ width: `${hottest(view.regions, region)}%` }}
-										/>
-									</div>
-									<Typography.Mono
-										size="s"
-										tone="f4"
-										className="w-24 shrink-0 text-right"
-										title={`${amount(region.strength)} energy · ${percent(region.authority)} authority`}
-									>
-										{percent(region.authority)}
-									</Typography.Mono>
-								</Flex.Row>
-							))}
-							{!view?.regions?.length && (
-								<Typography.Mono size="s" tone="f3">
-									No evidenced activity yet.
-								</Typography.Mono>
-							)}
+							<Typography.Mono size="s" tone="f3">
+								No evidenced activity yet.
+							</Typography.Mono>
 						</Flex.Column>
 					</Section>
 					<Section>
 						<Section.Header title="Recent activity" meta="live history">
 							<Explain>
 								One row per recorded moment, newest last: the time, the call the
-								agent made, and what it came to — a tape benefit in basis points
-								once the record has answered it, the wallet's own change before
-								that.
+								model made, and what it came to — a tape benefit in basis points
+								once the record has answered it.
 							</Explain>
 						</Section.Header>
 						<Section.Body scroll={false}>
-							{events.map((event) => (
-								<JournalEntry
-									key={`${event.lane}-${event.id}-${event.kind}-${event.at}`}
-									event={event}
-								/>
-							))}
+							<div data-l="activity-list" className="flex flex-col" />
 						</Section.Body>
 					</Section>
 				</Flex.Column>

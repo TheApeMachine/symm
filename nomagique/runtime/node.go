@@ -19,16 +19,18 @@ values it produces name their own register slot.
 type Consumer[T any] struct {
 	node      Node[T]
 	register  *store.Register[T]
+	tees      []any
 	ID        int
 	peerLimit int
 }
 
 func NewConsumer[T any](
-	node Node[T], register *store.Register[T],
+	node Node[T], register *store.Register[T], tees ...any,
 ) *Consumer[T] {
 	consumer := &Consumer[T]{
 		node:      node,
 		register:  register,
+		tees:      tees,
 		peerLimit: -1,
 	}
 
@@ -90,8 +92,14 @@ func (consumer *Consumer[T]) Handle(lower, upper int64) {
 		val := data.Read[T](consumer.register.Next(data.NewValue(*query)))
 		result := consumer.node.Step(val)
 
-		data.Read[T](consumer.register.Next(data.NewValue(*store.NewQuery(
+		out := data.Read[*data.Measurement[float64]](consumer.register.Next(data.NewValue(*store.NewQuery(
 			consumer, data.ActionWrite, result,
 		))))
+
+		for _, tee := range consumer.tees {
+			if pusher, ok := tee.(interface{ Push(*data.Measurement[float64]) }); ok {
+				pusher.Push(out)
+			}
+		}
 	}
 }

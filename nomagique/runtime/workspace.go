@@ -29,22 +29,25 @@ type Workspace[T any] struct {
 	buffer   []T
 	register *store.Register[T]
 	stages   [][]Node[T]
+	tees     []any
 }
 
 func NewWorkspace[T any](
-	ctx context.Context, label string, stages [][]Node[T],
-	registers ...*store.Register[T],
+	ctx context.Context,
+	label string,
+	stages [][]Node[T],
+	register *store.Register[T],
+	tees ...any,
 ) *Workspace[T] {
-	reg := store.NewRegister[T]()
-
-	if len(registers) > 0 && registers[0] != nil {
-		reg = registers[0]
+	if register == nil {
+		register = store.NewRegister[T]()
 	}
 
 	workload := &Workspace[T]{
 		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
-		register: reg,
+		register: register,
 		stages:   stages,
+		tees:     tees,
 	}
 
 	workload.System = NewSystem(ctx, label, workload)
@@ -61,7 +64,7 @@ func NewWorkspace[T any](
 		group := make([]disruptor.Handler, len(stage))
 
 		for index, node := range stage {
-			consumer := NewConsumer(node, workload.register)
+			consumer := NewConsumer(node, workload.register, tees...)
 			consumer.SetPeerLimit(slotOffset)
 			group[index] = consumer
 		}

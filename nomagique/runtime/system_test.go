@@ -46,7 +46,7 @@ func TestWorkspaceStatus(t *testing.T) {
 	Convey("Given a freshly initialized workspace with stages", t, func() {
 		node := &countingNode{}
 		workspace := NewWorkspace(
-			t.Context(), "test-workspace", [][]Node[*data.Measurement[float64]]{{node}},
+			t.Context(), "test-workspace", [][]Node[*data.Measurement[float64]]{{node}}, nil,
 		)
 		defer workspace.Close()
 
@@ -54,7 +54,7 @@ func TestWorkspaceStatus(t *testing.T) {
 	})
 
 	Convey("Given a workspace with no handlers", t, func() {
-		workspace := NewWorkspace[int](t.Context(), "test-workspace", nil)
+		workspace := NewWorkspace[int](t.Context(), "test-workspace", nil, nil)
 		defer workspace.Close()
 
 		So(workspace.Status(), ShouldEqual, ERROR)

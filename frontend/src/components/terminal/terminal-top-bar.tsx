@@ -3,8 +3,9 @@ import {
 	focusStore,
 	onlineAtom,
 	onlineStore,
+	tickCountStore,
+	trainingStore,
 } from "#/collections/app";
-import { learningStore } from "#/collections/learning";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
 import { Count } from "#/components/count";
@@ -39,7 +40,32 @@ const SymmLogo = () => (
 );
 
 const ObservationCounter = () => {
-	const tick = useSelector(learningStore, (state) => state?.steps);
+	const symbol = useSelector(focusStore, (s) => s);
+	const steps = useSelector(trainingStore, (state) => {
+		const ring =
+			state[symbol] ??
+			state["learner"] ??
+			state[""] ??
+			Object.values(state)[0];
+		const latest = ring?.getLast();
+		if (!latest) {
+			return null;
+		}
+
+		for (const metric of latest.metrics ?? []) {
+			if (metric.name === "steps") {
+				return Math.floor(metric.raw ?? 0);
+			}
+		}
+
+		return null;
+	});
+	const ticks = useSelector(tickCountStore, (s) => s);
+
+	let count = steps;
+	if (count === null && ticks > 0) {
+		count = ticks;
+	}
 
 	return (
 		<Flex.Row align="center" gap={6}>
@@ -48,7 +74,7 @@ const ObservationCounter = () => {
 					Observations
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{String(tick ?? "—")}
+					{count !== null ? count.toLocaleString() : "—"}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

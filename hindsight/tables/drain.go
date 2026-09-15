@@ -7,8 +7,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/types"
-	"golang.design/x/lockfree/wf"
 )
 
 /*
@@ -16,131 +14,104 @@ Drain consumes *data.Measurement[float64] from the workspace ring buffer,
 routes each measurement to its canonical Iceberg table family, and commits snapshots
 using per-family batch thresholds and a periodic commit cadence.
 */
-func Drain(
+func (catalog *Catalog) Drain(
 	ctx context.Context,
-	catalog *Catalog,
-	ring *wf.RingBuffer[*data.Measurement[float64]],
 	epoch int64,
 	deps ...any,
 ) {
-	if ring == nil {
+	if catalog == nil || catalog.storeTee == nil {
 		return
 	}
 
-	if epoch <= 0 {
-		epoch = time.Now().UTC().UnixNano()
-	}
+	go func() {
+		var fragmentSink func([][]*data.Measurement[float64])
+		var groundTruthSink func(ExcursionRecord)
 
-	if catalog == nil {
+		for _, dep := range deps {
+			switch dependency := dep.(type) {
+			case func([][]*data.Measurement[float64]):
+				fragmentSink = dependency
+			case func(ExcursionRecord):
+				groundTruthSink = dependency
+			}
+		}
+
+		writer := NewWriter(catalog, epoch)
+		detector := NewStreamingDetector(epoch, 200.0, func(record ExcursionRecord) {
+			writer.AddExcursion(record)
+
+			if groundTruthSink != nil {
+				groundTruthSink(record)
+			}
+		}, fragmentSink)
+
+		flushTicker := time.NewTicker(50 * time.Millisecond)
+		defer flushTicker.Stop()
+
+		commitTicker := time.NewTicker(30 * time.Second)
+		defer commitTicker.Stop()
+
+		var tickCounter atomic.Int64
+
 		for {
 			select {
 			case <-ctx.Done():
-				return
-			case <-time.After(50 * time.Millisecond):
 				for {
-					if _, ok := ring.Get(); !ok {
+					measurement := catalog.storeTee.Next()
+
+					if measurement == nil {
 						break
+					}
+
+					if measurement.SeqIdx <= 0 {
+						measurement.SeqIdx = tickCounter.Add(1)
+					}
+
+					detector.Process(measurement)
+
+					channel := deriveChannel(measurement)
+					writer.Add(channel, measurement)
+				}
+
+				if writer.Pending() > 0 {
+					if err := writer.CommitReady(context.Background(), true); err != nil {
+						errnie.Error(err)
+					}
+				}
+
+				return
+
+			case <-commitTicker.C:
+				if writer.Pending() > 0 {
+					if err := writer.CommitReady(ctx, true); err != nil {
+						errnie.Error(err)
+					}
+				}
+
+			case <-flushTicker.C:
+				for {
+					measurement := catalog.storeTee.Next()
+
+					if measurement == nil {
+						break
+					}
+
+					if measurement.SeqIdx <= 0 {
+						measurement.SeqIdx = tickCounter.Add(1)
+					}
+
+					detector.Process(measurement)
+
+					channel := deriveChannel(measurement)
+					writer.Add(channel, measurement)
+
+					if err := writer.CommitReady(ctx, false); err != nil {
+						errnie.Error(err)
 					}
 				}
 			}
 		}
-	}
-
-	var fragmentSink func(types.ReplayFragment)
-	var groundTruthSink func(ExcursionRecord)
-
-	for _, dep := range deps {
-		switch dependency := dep.(type) {
-		case func(types.ReplayFragment):
-			fragmentSink = dependency
-		case func(ExcursionRecord):
-			groundTruthSink = dependency
-		}
-	}
-
-	writer := NewWriter(catalog, epoch)
-	detector := NewStreamingDetector(epoch, 200.0, func(record ExcursionRecord) {
-		writer.AddExcursion(record)
-
-		if groundTruthSink != nil {
-			groundTruthSink(record)
-		}
-	}, fragmentSink)
-
-	flushTicker := time.NewTicker(50 * time.Millisecond)
-	defer flushTicker.Stop()
-
-	commitTicker := time.NewTicker(30 * time.Second)
-	defer commitTicker.Stop()
-
-	var tickCounter atomic.Int64
-
-	for {
-		select {
-		case <-ctx.Done():
-			for {
-				measurement, ok := ring.Get()
-
-				if !ok {
-					break
-				}
-
-				if measurement == nil {
-					continue
-				}
-
-				if measurement.SeqIdx <= 0 {
-					measurement.SeqIdx = tickCounter.Add(1)
-				}
-
-				detector.Process(measurement)
-
-				channel := deriveChannel(measurement)
-				writer.Add(channel, measurement)
-			}
-
-			if writer.Pending() > 0 {
-				if err := writer.CommitReady(context.Background(), true); err != nil {
-					errnie.Error(err)
-				}
-			}
-
-			return
-
-		case <-commitTicker.C:
-			if writer.Pending() > 0 {
-				if err := writer.CommitReady(ctx, true); err != nil {
-					errnie.Error(err)
-				}
-			}
-
-		case <-flushTicker.C:
-			for {
-				measurement, ok := ring.Get()
-
-				if !ok {
-					break
-				}
-
-				if measurement == nil {
-					continue
-				}
-
-				if measurement.SeqIdx <= 0 {
-					measurement.SeqIdx = tickCounter.Add(1)
-				}
-
-				detector.Process(measurement)
-
-				channel := deriveChannel(measurement)
-				writer.Add(channel, measurement)
-
-				if err := writer.CommitReady(ctx, false); err != nil {
-					errnie.Error(err)
-				}
-			}
-		}
-	}
+	}()
 }
 
 func deriveChannel(measurement *data.Measurement[float64]) string {

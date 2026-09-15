@@ -103,9 +103,8 @@ const KernelRow = ({
 				focusMetric.setState(() => source);
 				terminalStore.actions.inspectSource(source);
 			}}
-			className="flex min-h-0 w-full flex-1 flex-col justify-center border-(--line) border-b border-l-2 border-l-transparent px-3 py-1.5 hover:bg-(--raised)"
 		>
-			<Flex.Row align="center" justify="between" gap={2} className="shrink-0">
+			<Flex.Row align="center" justify="between" gap={2}>
 				<Typography.Span
 					variant="f1"
 					semibold
@@ -120,7 +119,7 @@ const KernelRow = ({
 					variant="disabled"
 					size="xxs"
 				/>
-			</Flex.Row>
+			</Flex.Row>	
 			<Typography.Label
 				size="xxs"
 				tone="f4"
@@ -132,7 +131,7 @@ const KernelRow = ({
 				data-k="sparkline"
 				title={`${source} sparkline`}
 			/>
-			<Flex.Row align="center" gap={2} className="mt-1 shrink-0">
+			<Flex.Row align="center" gap={2}>
 				<Meter
 					data-k="bar"
 					layout="bar"

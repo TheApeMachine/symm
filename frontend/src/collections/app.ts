@@ -1,5 +1,5 @@
-import { createAtom, type Atom } from "@tanstack/react-store";
-import { createStore, Store } from "@tanstack/store";
+import { type Atom, createAtom } from "@tanstack/react-store";
+import { createStore, type Store } from "@tanstack/store";
 import type { RingBuffer as RingBufferType } from "ring-buffer-ts";
 import ringBufferPkg from "ring-buffer-ts";
 
@@ -90,7 +90,11 @@ export const updateEquity = (
 	if (cash !== null && cash !== undefined && cash.trim() !== "") {
 		cashAtom.set(cash);
 	}
-	if (unrealized !== null && unrealized !== undefined && unrealized.trim() !== "") {
+	if (
+		unrealized !== null &&
+		unrealized !== undefined &&
+		unrealized.trim() !== ""
+	) {
 		unrealizedAtom.set(unrealized);
 	}
 	if (equity !== null && equity !== undefined && equity.trim() !== "") {
@@ -149,12 +153,22 @@ export const measurementSourcesStore = measurementSourcesAtom;
 export const kernelDetailAtom = createAtomic<string>("cvd");
 export const kernelDetailStore = kernelDetailAtom;
 
-export const resonanceStore = createStore<Record<string, RingBuffer<MeasurementT | ResonanceT>>>({});
+export const resonanceStore = createStore<
+	Record<string, RingBuffer<MeasurementT | ResonanceT>>
+>({});
 export const resonanceArtifactStore = resonanceStore;
 
-export const categoryStore = createStore<Record<string, RingBuffer<MeasurementT>>>({});
+export const categoryStore = createStore<
+	Record<string, RingBuffer<MeasurementT>>
+>({});
+export const trainingStore = createStore<
+	Record<string, RingBuffer<MeasurementT>>
+>({});
 
-export const signals: Record<string, Store<Record<string, RingBuffer<MeasurementT>>>> = {
+export const signals: Record<
+	string,
+	Store<Record<string, RingBuffer<MeasurementT>>>
+> = {
 	category: categoryStore,
 	correlation: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	cvd: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
@@ -168,6 +182,7 @@ export const signals: Record<string, Store<Record<string, RingBuffer<Measurement
 	resonance: resonanceStore as any,
 	sentiment: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	toxicity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
+	training: trainingStore,
 };
 
 export type FrameBuffer<T> = RingBuffer<T>;
@@ -185,8 +200,6 @@ const createFallbackFrameStore = () =>
 export const strategyStore = createFallbackFrameStore();
 export const positionStore = createFallbackFrameStore();
 export const manifoldStore = createStore<any>({});
-export const graphStore = createStore<any>(null);
-export const regulatorStore = createFallbackFrameStore();
 export const tradeHistoryStore = createStore<any[]>([]);
 
 export const cognitionStore = createStore<Record<string, any>>({});
@@ -204,17 +217,23 @@ Object.defineProperty(cognitionStore.state, "getLast", {
 
 export type MeasurementStore = Store<RingBuffer<MeasurementT>> & {
 	actions: {
-		add: (item: any) => void;
+		add: (item: MeasurementT) => void;
 	};
-	add: (item: any) => void;
+	add: (item: MeasurementT) => void;
 };
 
 export const MAX_CACHED_SYMBOLS = 64;
 
-const measurementStoreCache: Record<string, Store<RingBuffer<MeasurementT>>> = {};
+const measurementStoreCache: Record<
+	string,
+	Store<RingBuffer<MeasurementT>>
+> = {};
 const measurementSubscribers: Record<string, () => void> = {};
 
-const resonanceReadingStoreCache: Record<string, Store<RingBuffer<MeasurementT | ResonanceT>>> = {};
+const resonanceReadingStoreCache: Record<
+	string,
+	Store<RingBuffer<MeasurementT | ResonanceT>>
+> = {};
 const resonanceSubscribers: Record<string, () => void> = {};
 
 const symbolAccessTimes = new Map<string, number>();
@@ -279,7 +298,11 @@ export const evictSymbol = (symbol: string) => {
 	}
 
 	const current = symbolsAtom.get();
-	if (current.includes(symbol) && symbol !== DEFAULT_FOCUS_SYMBOL && symbol !== focusAtom.get()) {
+	if (
+		current.includes(symbol) &&
+		symbol !== DEFAULT_FOCUS_SYMBOL &&
+		symbol !== focusAtom.get()
+	) {
 		symbolsAtom.set(current.filter((s) => s !== symbol));
 	}
 };

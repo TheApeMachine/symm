@@ -98,11 +98,24 @@ func (system *System) AddCloser(closer io.Closer) {
 	system.closers = append(system.closers, closer)
 }
 
+func (system *System) System() *System { return system }
+
 func (system *System) Close() error {
+	if system.cancel == nil {
+		return system.err
+	}
+
 	system.cancel()
 
-	for _, closer := range system.closers {
+	closers := system.closers
+	system.closers = nil
+
+	for _, closer := range closers {
 		if closer == nil {
+			continue
+		}
+
+		if sysGetter, ok := closer.(interface{ System() *System }); ok && sysGetter.System() == system {
 			continue
 		}
 

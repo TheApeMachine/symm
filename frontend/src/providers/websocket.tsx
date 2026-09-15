@@ -13,7 +13,6 @@ import {
 	tickCountAtom,
 	updateClock,
 } from "#/collections/app";
-import { receiveLearning } from "#/collections/learning";
 
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
@@ -32,10 +31,7 @@ export const sendPositionExit = (symbol: string) => {
 const defaultWsUrl = () => {
 	if (typeof window === "undefined") return "ws://127.0.0.1:8765/ws";
 	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-	const host =
-		!window.location.hostname || window.location.hostname === "localhost"
-			? "127.0.0.1"
-			: window.location.hostname;
+	const host = window.location.hostname || "127.0.0.1";
 	return `${protocol}//${host}:8765/ws`;
 };
 
@@ -60,11 +56,9 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 		}
 
 		const signalStore = signals[source];
-		
 		if (!signalStore) {
-			console.error("Unknown source:", source);
-			continue
-		};
+			continue;
+		}
 
 		let ring = signalStore.state[symbol];
 
@@ -72,9 +66,19 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 			ring = new RingBuffer<MeasurementT>(50);
 			signalStore.state[symbol] = ring;
 		}
-		
+
 		ring.add(row.unpack());
 		touched.add(source);
+
+		if (source === "training") {
+			signalStore.state[""] = ring;
+			signalStore.state["learner"] = ring;
+			const currentFocus = focusAtom.get();
+
+			if (currentFocus) {
+				signalStore.state[currentFocus] = ring;
+			}
+		}
 
 		const at = row.at();
 		if (at > 0n) {
@@ -126,11 +130,6 @@ export const WsFeed = () => {
 				try {
 					const bytes = new Uint8Array(data.buffer);
 					const buffer = new flatbuffers.ByteBuffer(bytes);
-
-					if (buffer.__has_identifier("LRNG")) {
-						receiveLearning(bytes);
-						return;
-					}
 
 					const frame =
 						MeasurementsFrame.getRootAsMeasurementsFrame(buffer);

@@ -37,7 +37,15 @@ func (number *Number) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 	}
 
 	for _, stage := range number.stages {
+		if curr == nil {
+			break
+		}
+
 		curr = stage.Next(curr)
+	}
+
+	if curr == nil {
+		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
 	return curr

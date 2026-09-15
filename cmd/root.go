@@ -91,28 +91,20 @@ var (
 			// Everything started here implements *runtime.System, which allows you to pass
 			// a variadic amount of closers, and everything passes itself to that. There is
 			// thus no need to call a deferred Close method for anything.
-			hub := ui.NewHub(ctx)
+			epoch := processStartedAt.UnixNano()
+
+			uiTee := ui.NewUITee("uiTee", 131072)
+			storeTee := nmruntime.NewTee[*data.Measurement[float64]]("storeTee", 131072)
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
 			// them; everything a reader queries lives in the catalog.
-			catalog := tables.Open(cmd.Context())
-
-			if catalog == nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: open iceberg catalog",
-					nil,
-				))
-			}
+			catalog := tables.Open(cmd.Context(), storeTee)
+			catalog.Drain(ctx, epoch)
 
 			if err := catalog.Ensure(cmd.Context()); err != nil {
 				return err
 			}
-
-			// The Hindsight inspection reads (runs / captures / persisted states)
-			// are served by the hub over this catalog.
-			hub.SetHindsightStore(catalog)
 
 			public := websocket.New(
 				ctx,
@@ -173,19 +165,8 @@ var (
 				))
 			}
 
-			workspaceRegister := store.NewRegister[*data.Measurement[float64]]()
-
-			tape := strategy.NewTape()
-			training := strategy.NewTraining(
-				ctx, tape, instrument, price, balance, api,
-			)
-
-			telemetryTee := nmruntime.NewTee(131072)
-			telemetryTee.SetFilter(ui.IsAllowedTelemetry)
-			go hub.Drain(telemetryTee.Ring())
-
-			epoch := processStartedAt.UnixNano()
-
+			register := store.NewRegister[*data.Measurement[float64]]()
+			training := strategy.NewTraining(ctx, api)
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
@@ -195,17 +176,6 @@ var (
 			}); err != nil {
 				errnie.Warn(fmt.Sprintf("cmd: record run fact: %v", err))
 			}
-
-			storageTee := nmruntime.NewNamedTee("storage.tee", 131072)
-			go tables.Drain(ctx, catalog, storageTee.Ring(), epoch, tape.Publish, training.NotifyGroundTruth)
-
-			if catalog != nil {
-				hub.SetHindsightStore(catalog)
-			}
-
-			hub.SetTradeStore(training)
-			hub.SetExitHandler(training.RequestExit)
-			hub.SetLearningSource(training)
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
@@ -246,14 +216,12 @@ var (
 					{
 						training,
 					},
-					{
-						telemetryTee,
-						storageTee,
-					},
 				},
-				workspaceRegister,
+				register,
+				uiTee,
+				storeTee,
 			)
-			
+
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
 			if err := instrument.Subscribe(); err != nil {
@@ -338,6 +306,7 @@ var (
 				}
 			}()
 
+			hub := ui.NewHub(ctx, uiTee)
 			return hub.Run()
 		},
 	}
