@@ -26,8 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -42,7 +41,7 @@ type Catalog struct {
 	cacheMutex   sync.RWMutex
 	cachedEpochs []int64
 	epochsLoaded time.Time
-	storeTee     runtime.Tee[*data.Measurement[float64]]
+	storeTee     *hindsight.StoreTee
 }
 
 /*
@@ -57,7 +56,7 @@ func Wrap(underlying icecat.Catalog) *Catalog {
 /*
 Open connects to the Iceberg REST catalog configured in system.Cfg.Storage.
 */
-func Open(ctx context.Context, storeTee runtime.Tee[*data.Measurement[float64]]) *Catalog {
+func Open(ctx context.Context, storeTee *hindsight.StoreTee) *Catalog {
 	storageConfig := system.Cfg.Storage
 
 	if storageConfig == nil || storageConfig.Iceberg == nil {

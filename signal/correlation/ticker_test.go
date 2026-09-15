@@ -19,7 +19,7 @@ Zero is an unobserved market; a negative price is an invalid one.
 var schema = new(Ticker).Register().Metrics
 
 func tick(symbol string, price float64, at time.Time) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("correlation", maps.Clone(schema))
+	m := data.NewMeasurement("correlation", maps.Clone(schema))
 	m.Label, m.At, m.From = symbol, at, at
 	m.Metrics["last_price"] = m.Metrics["last_price"].Write(price)
 

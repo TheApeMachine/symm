@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/smarty/go-disruptor"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
 )
@@ -29,28 +30,21 @@ type Workspace[T any] struct {
 	buffer   []T
 	register *store.Register[T]
 	stages   [][]Node[T]
-	tees     []any
+	tees     []Tee
 }
 
 func NewWorkspace[T any](
 	ctx context.Context,
 	label string,
 	stages [][]Node[T],
-	register *store.Register[T],
-	tees ...any,
+	tees ...Tee,
 ) *Workspace[T] {
-	if register == nil {
-		register = store.NewRegister[T]()
-	}
-
 	workload := &Workspace[T]{
 		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
-		register: register,
+		register: store.NewRegister[T](),
 		stages:   stages,
 		tees:     tees,
 	}
-
-	workload.System = NewSystem(ctx, label, workload)
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(
@@ -58,18 +52,13 @@ func NewWorkspace[T any](
 		),
 	)
 
-	slotOffset := 0
-
 	for _, stage := range stages {
 		group := make([]disruptor.Handler, len(stage))
 
 		for index, node := range stage {
-			consumer := NewConsumer(node, workload.register, tees...)
-			consumer.SetPeerLimit(slotOffset)
+			consumer := NewConsumer(ctx, node, workload.register, tees...)
 			group[index] = consumer
 		}
-
-		slotOffset += len(stage)
 
 		if len(group) > 0 {
 			opts = append(opts, disruptor.Options.NewHandlerGroup(group...))
@@ -77,26 +66,42 @@ func NewWorkspace[T any](
 	}
 
 	channel, err := disruptor.New(opts...)
+	workload.System = NewSystem(ctx, label, channel, workload)
 
 	if err != nil {
-		workload.Error(err)
-		return workload
+		workload.Error(errnie.Err(
+			errnie.Internal,
+			"[workspace] error creating LMAX disruptor channel",
+			err,
+		))
+
+		return nil
 	}
 
 	workload.channel = channel
-	workload.AddCloser(channel)
 	workload.Transition(READY)
+
 	go workload.channel.Listen()
 	return workload
 }
 
 func (workspace *Workspace[T]) Step(payload T) T {
+	if workspace.Status() != READY {
+		errnie.Warn("pushing to a non-ready system may have unintended consequences")
+		return payload
+	}
+
 	select {
 	case <-workspace.Context().Done():
 		workspace.Error(workspace.Context().Err())
 		return payload
 	default:
-		if workspace.Error() != nil || workspace.Status() != READY {
+		if workspace.Error() != nil {
+			workspace.Error(errnie.Err(
+				errnie.Internal,
+				"[workspace] internal error encountered",
+				nil,
+			))
 			return payload
 		}
 	}
@@ -107,16 +112,4 @@ func (workspace *Workspace[T]) Step(payload T) T {
 	workspace.channel.Commit(seq, seq)
 
 	return payload
-}
-
-func (workspace *Workspace[T]) Transition(stage Stage) {
-	workspace.System.Transition(stage)
-
-	for _, stageGroup := range workspace.stages {
-		for _, node := range stageGroup {
-			if sys, ok := any(node).(interface{ Transition(Stage) }); ok {
-				sys.Transition(stage)
-			}
-		}
-	}
 }

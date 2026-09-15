@@ -409,7 +409,7 @@ func (fluidTransport *FluidRTC) Wants(channel string) bool {
 	defer fluidTransport.peersMutex.RUnlock()
 
 	for _, peer := range fluidTransport.peers {
-		if peer.idle(channel) {
+		if peer.ready(channel) {
 			return true
 		}
 	}

@@ -21,8 +21,10 @@ borrowed FlatBuffer bytes directly to fn, returning the builder to the pool once
 fn returns. This avoids defensive heap cloning when writing directly to sockets.
 */
 /*
-MeasurementToWire converts a data.Measurement to wire.MeasurementT including metrics,
-metadata, provenance, and concurrent peers.
+MeasurementToWire converts a data.Measurement to wire.MeasurementT including
+metrics, metadata, and provenance. Peers stay off the dashboard frame: they are
+live register snapshots, and encoding the tree made half-megabyte websocket
+messages that stalled the UI.
 */
 func MeasurementToWire(measurement *data.Measurement[float64]) *wire.MeasurementT {
 	if measurement == nil {
@@ -63,18 +65,6 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 		})
 	}
 
-	var peers []*wire.MeasurementT
-
-	if len(measurement.Peers) > 0 {
-		peers = make([]*wire.MeasurementT, 0, len(measurement.Peers))
-
-		for _, peer := range measurement.Peers {
-			if wirePeer := MeasurementToWire(peer); wirePeer != nil {
-				peers = append(peers, wirePeer)
-			}
-		}
-	}
-
 	return &wire.MeasurementT{
 		Source:       measurement.Source,
 		Symbol:       measurement.Label,
@@ -87,7 +77,6 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 		Metrics:      metrics,
 		Metadata:     metadata,
 		Provenance:   provenance,
-		Peers:        peers,
 	}
 }
 

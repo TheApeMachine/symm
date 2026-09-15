@@ -262,6 +262,9 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
+	measurement.Label = symbol
+	measurement.At = at
+
 	if resonance != nil && solver.observe != nil {
 		solver.observe(resonance)
 	}

@@ -53,9 +53,13 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
 
-			metric, traded := m.Metrics["last"]
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string, 1)
+			}
 
-			m.Metadata = map[string]string{data.MetadataSupport: "0"}
+			m.Metadata[data.MetadataSupport] = "0"
+
+			metric, traded := m.Metrics["last"]
 
 			if !traded {
 				m.Err = fmt.Errorf("%w: leadlag: ticker requires a last price", core.ErrDomain)
@@ -82,7 +86,11 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			m.Metrics["last_price"] = m.Metrics["last_price"].Write(last)
 
 			if last == 0 {
-				m.Provenance = map[string]string{"last_trade_price_state": "unobserved"}
+				if m.Provenance == nil {
+					m.Provenance = make(map[string]string, 1)
+				}
+
+				m.Provenance["last_trade_price_state"] = "unobserved"
 			}
 
 			if !yield(arriving) {

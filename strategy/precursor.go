@@ -22,16 +22,33 @@ type Precursor struct {
 	mu        sync.RWMutex
 	err       error
 	excursion *tables.ExcursionRecord
+	activeSeq []byte
+	maxSeqLen int
 }
 
-func NewPrecursor() *Precursor {
-	return &Precursor{}
+func NewPrecursor(maxSeqLen ...int) *Precursor {
+	limit := 128
+	if len(maxSeqLen) > 0 && maxSeqLen[0] > 0 {
+		limit = maxSeqLen[0]
+	}
+
+	return &Precursor{
+		maxSeqLen: limit,
+	}
 }
 
 func (p *Precursor) SetExcursion(excursion *tables.ExcursionRecord) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.excursion = excursion
+	p.activeSeq = p.activeSeq[:0]
+}
+
+func (p *Precursor) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.activeSeq = p.activeSeq[:0]
+	p.excursion = nil
 }
 
 func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -40,8 +57,6 @@ func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 
 	return func(yield func(unsafe.Pointer) bool) {
-		var activeSeq []byte
-
 		for arriving := range in {
 			if arriving == nil {
 				continue
@@ -52,25 +67,29 @@ func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			activeSeq = append(activeSeq, token...)
+			p.mu.Lock()
+			p.activeSeq = append(p.activeSeq, token...)
+			if p.maxSeqLen > 0 && len(p.activeSeq) > p.maxSeqLen {
+				p.activeSeq = p.activeSeq[len(p.activeSeq)-p.maxSeqLen:]
+			}
+			context := bytes.Clone(p.activeSeq)
+			excursion := p.excursion
+			p.mu.Unlock()
 
 			imp := (*grid.Impulse)(arriving)
 			tick := imp.SeqIdx
 
-			p.mu.RLock()
-			excursion := p.excursion
-			p.mu.RUnlock()
-
 			if excursion == nil {
 				cmd := &cognition.Command{
 					Evaluate: &cognition.Question{
-						Context: bytes.Clone(activeSeq),
+						Context: context,
 					},
 				}
 
 				if !yield(unsafe.Pointer(cmd)) {
 					return
 				}
+
 				continue
 			}
 
@@ -83,7 +102,7 @@ func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				cmd := &cognition.Command{
 					Observe: &cognition.Association{
-						Context: bytes.Clone(activeSeq),
+						Context: context,
 						Class:   []byte(class),
 					},
 				}
@@ -91,6 +110,7 @@ func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				if !yield(unsafe.Pointer(cmd)) {
 					return
 				}
+
 				continue
 			}
 
@@ -98,7 +118,7 @@ func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				if excursion.Direction == "upward" && excursion.ClearsFriction {
 					cmd := &cognition.Command{
 						Observe: &cognition.Association{
-							Context: bytes.Clone(activeSeq),
+							Context: context,
 							Class:   []byte(ActionExit),
 						},
 					}
@@ -108,7 +128,9 @@ func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					}
 				}
 
-				activeSeq = activeSeq[:0]
+				p.mu.Lock()
+				p.activeSeq = p.activeSeq[:0]
+				p.mu.Unlock()
 				continue
 			}
 		}

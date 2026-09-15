@@ -1,6 +1,9 @@
 package runtime
 
 import (
+	"context"
+
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -17,45 +20,43 @@ appends it and answers the slot, and the node is told its identity so the
 values it produces name their own register slot.
 */
 type Consumer[T any] struct {
+	*System
 	node      Node[T]
 	register  *store.Register[T]
-	tees      []any
+	tees      []Tee
 	ID        int
 	peerLimit int
 }
 
 func NewConsumer[T any](
-	node Node[T], register *store.Register[T], tees ...any,
+	ctx context.Context,
+	node Node[T],
+	register *store.Register[T],
+	tees ...Tee,
 ) *Consumer[T] {
 	consumer := &Consumer[T]{
-		node:      node,
-		register:  register,
-		tees:      tees,
-		peerLimit: -1,
+		node:     node,
+		register: register,
+		tees:     tees,
 	}
 
-	if node == nil || register == nil {
-		return consumer
+	consumer.System = NewSystem(ctx, "consumer", consumer)
+
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"system":   consumer.System,
+		"node":     consumer.node,
+		"register": consumer.register,
+	})); err != nil {
+		return nil
 	}
 
-	val := node.Register()
-
+	// This will obtain a slot in the register, and call Identify on both the
+	// consumer as well as the measurement (obtained via node.Register()), so both
+	// will be stamped with the same ID, corresponding to the register slot index.
 	data.Read[*store.Query[T]](consumer.register.Next(data.NewValue(*store.NewQuery(
-		consumer, data.ActionIdentify, val,
+		consumer, data.ActionIdentify, data.NewValue(node.Register()),
 	))))
 
-	if meas, ok := any(val).(*data.Measurement[float64]); ok && meas != nil {
-		meas.ID = consumer.ID
-	}
-
-	return consumer
-}
-
-/*
-SetPeerLimit restricts the consumer's peer queries to register slots strictly below limit.
-*/
-func (consumer *Consumer[T]) SetPeerLimit(limit int) *Consumer[T] {
-	consumer.peerLimit = limit
 	return consumer
 }
 
@@ -83,23 +84,28 @@ and puts what Step returns back into the register under the node's slot.
 */
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
-		query := store.NewQuery(consumer, data.ActionRead)
+		val := consumer.register.Next(data.NewValue(
+			*store.NewQuery(consumer, data.ActionRead),
+		))
 
-		if consumer.peerLimit >= 0 {
-			query.SetPeerLimit(consumer.peerLimit)
+		if data.Read[*data.Measurement[float64]](val) == nil {
+			consumer.Error(errnie.Err(
+				errnie.NotFound,
+				"[consumer] no measurement found for consumer",
+				nil,
+			))
 		}
 
-		val := data.Read[T](consumer.register.Next(data.NewValue(*query)))
-		result := consumer.node.Step(val)
+		result := consumer.node.Step(data.Read[T](val))
 
-		out := data.Read[*data.Measurement[float64]](consumer.register.Next(data.NewValue(*store.NewQuery(
-			consumer, data.ActionWrite, result,
-		))))
+		out := data.Read[*data.Measurement[float64]](consumer.register.Next(
+			data.NewValue(*store.NewQuery(
+				consumer, data.ActionWrite, data.NewValue(result),
+			)),
+		))
 
 		for _, tee := range consumer.tees {
-			if pusher, ok := tee.(interface{ Push(*data.Measurement[float64]) }); ok {
-				pusher.Push(out)
-			}
+			tee.Push(out)
 		}
 	}
 }

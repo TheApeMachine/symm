@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.3
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.3
 	github.com/bytedance/sonic v1.15.2
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/google/flatbuffers v25.12.19+incompatible
 	github.com/gorilla/websocket v1.5.3
 	github.com/grafana/pyroscope-go v1.4.2
@@ -79,7 +80,6 @@ require (
 	github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/creasty/defaults v1.8.0 // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/duckdb/duckdb-go-bindings v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.21 // indirect
@@ -214,7 +214,7 @@ require (
 )
 
 require (
-	github.com/fasthttp/websocket v1.5.12
+	github.com/fasthttp/websocket v1.5.12 // indirect
 	github.com/gofiber/contrib/v3/websocket v1.2.0
 	github.com/gofiber/fiber/v3 v3.3.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

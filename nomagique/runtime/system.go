@@ -9,6 +9,16 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+type RuntimeSystem interface {
+	Name() string
+	Context() context.Context
+	Status() Stage
+	Transition(Stage)
+	Error(...error) error
+	AddCloser(io.Closer)
+	Close() error
+}
+
 type System struct {
 	ctx     context.Context
 	cancel  context.CancelFunc

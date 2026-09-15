@@ -1,14 +1,8 @@
 package data
 
 import (
-	"unsafe"
-
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
-
-var standardizer = statistic.NewStandardize()
 
 /*
 Metric is one projected value of a measurement: a label, the raw observation,
@@ -55,10 +49,9 @@ func (metric Metric[T]) Write(value T) Metric[T] {
 	metric.Raw = value
 
 	if number, held := any(value).(float64); held {
-		input := statistic.StandardizeInput{Value: number, Center: metric.Center, Scale: metric.Scale}
 
-		for out := range standardizer.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
-			standard := *(*float64)(out)
+		if metric.Scale != 0 {
+			standard := (number - metric.Center) / metric.Scale
 			metric.Standardized = any(&standard).(*T)
 		}
 	}

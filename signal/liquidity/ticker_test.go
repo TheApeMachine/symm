@@ -3,6 +3,7 @@ package liquidity
 import (
 	"context"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,6 +242,85 @@ func TestTickerVelocitySNRPresent(t *testing.T) {
 			So(math.IsNaN(snr), ShouldBeFalse)
 			So(math.IsInf(snr, 0), ShouldBeFalse)
 			So(snr, ShouldBeGreaterThanOrEqualTo, 0)
+		})
+	})
+}
+
+func TestTickerStepPeerIsolation(t *testing.T) {
+	Convey("Given a quoted peer and an owned liquidity measurement", t, func() {
+		entity := NewTicker(context.Background())
+		peer := data.NewMeasurement("public", map[string]data.Metric[float64]{
+			"bid":     data.NewMetric[float64]("bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+			"ask":     data.NewMetric[float64]("ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+			"bid_qty": data.NewMetric[float64]("bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+			"ask_qty": data.NewMetric[float64]("ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		})
+		peer.Label = "BTC/USD"
+		peer.At = time.Unix(1, 0)
+		peer.Metrics["bid"] = peer.Metrics["bid"].Write(100)
+		peer.Metrics["ask"] = peer.Metrics["ask"].Write(102)
+		peer.Metrics["bid_qty"] = peer.Metrics["bid_qty"].Write(1)
+		peer.Metrics["ask_qty"] = peer.Metrics["ask_qty"].Write(1)
+
+		owned := tick("ETH/USD", 0, 0, 0, 0, time.Unix(1, 0))
+		owned.Peers = []*data.Measurement[float64]{peer}
+
+		result := entity.Step(owned)
+
+		Convey("the instrument writes onto its own measurement", func() {
+			So(result.Err, ShouldBeNil)
+			So(result.Source, ShouldEqual, "liquidity")
+			So(result.Label, ShouldEqual, "BTC/USD")
+			So(result.Metrics["midpoint"].Raw, ShouldEqual, 101.0)
+		})
+
+		Convey("the peer's metric map is not written", func() {
+			_, hasMid := peer.Metrics["midpoint"]
+			So(hasMid, ShouldBeFalse)
+			So(len(peer.Metrics), ShouldEqual, 4)
+			So(peer.Metrics["bid"].Raw, ShouldEqual, 100)
+		})
+	})
+}
+
+func TestTickerStepConcurrentPeers(t *testing.T) {
+	Convey("Given many instruments sharing one quote peer", t, func() {
+		peer := data.NewMeasurement("public", map[string]data.Metric[float64]{
+			"bid":     data.NewMetric[float64]("bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+			"ask":     data.NewMetric[float64]("ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+			"bid_qty": data.NewMetric[float64]("bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+			"ask_qty": data.NewMetric[float64]("ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		})
+		peer.Label = "BTC/USD"
+		peer.At = time.Unix(1, 0)
+		peer.Metrics["bid"] = peer.Metrics["bid"].Write(100)
+		peer.Metrics["ask"] = peer.Metrics["ask"].Write(102)
+		peer.Metrics["bid_qty"] = peer.Metrics["bid_qty"].Write(1)
+		peer.Metrics["ask_qty"] = peer.Metrics["ask_qty"].Write(1)
+
+		var group sync.WaitGroup
+
+		for range 8 {
+			group.Add(1)
+
+			go func() {
+				defer group.Done()
+
+				entity := NewTicker(context.Background())
+				owned := entity.Register()
+				owned.Peers = []*data.Measurement[float64]{peer}
+
+				for range 50 {
+					entity.Step(owned)
+				}
+			}()
+		}
+
+		group.Wait()
+
+		Convey("the shared peer is still the feed's quote", func() {
+			So(peer.Metrics["bid"].Raw, ShouldEqual, 100)
+			So(len(peer.Metrics), ShouldEqual, 4)
 		})
 	})
 }

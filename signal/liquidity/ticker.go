@@ -46,34 +46,33 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	input := measurement
-
 	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
-			_, hasB := p.Metrics["bid"]
-			_, hasA := p.Metrics["ask"]
-			return hasB && hasA && p.Label != ""
+		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
+			_, hasBid := candidate.Metrics["bid"]
+			_, hasAsk := candidate.Metrics["ask"]
+			return hasBid && hasAsk && candidate.Label != ""
 		})
 
 		if peer == nil {
 			return measurement
 		}
 
-		input = peer.Clone()
+		measurement.Pull(peer, "bid", "ask", "bid_qty", "ask_qty")
 	}
 
-	if _, hasBid := input.Metrics["bid"]; !hasBid {
+	if _, hasBid := measurement.Metrics["bid"]; !hasBid {
 		return measurement
 	}
 
-	if _, hasAsk := input.Metrics["ask"]; !hasAsk {
+	if _, hasAsk := measurement.Metrics["ask"]; !hasAsk {
 		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	))
 
-	if res != nil && res != measurement {
-		measurement.Absorb(res)
+	if res == nil {
 		return measurement
 	}
 

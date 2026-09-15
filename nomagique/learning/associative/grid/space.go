@@ -173,7 +173,7 @@ the grid and returns nil to indicate it is not ready yet.
 */
 func (op *Space) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	if op.err != nil || in == nil {
-		return nil
+		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
 	if !op.formed {
@@ -185,20 +185,20 @@ func (op *Space) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			if m := parseMeasurement(arriving); m != nil {
 				if err := op.step([]*data.Measurement[float64]{m}); err != nil {
 					op.Error(err)
-					return nil
+					return func(yield func(unsafe.Pointer) bool) {}
 				}
 			}
 		}
 
 		if !op.formed {
-			return nil
+			return func(yield func(unsafe.Pointer) bool) {}
 		}
 
 		at, from := observed(nil)
 		impulse, err := op.impulse(op.updated, at, from)
 		if err != nil {
 			op.Error(err)
-			return nil
+			return func(yield func(unsafe.Pointer) bool) {}
 		}
 
 		op.out = Result{Impulse: impulse}

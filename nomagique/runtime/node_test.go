@@ -30,7 +30,7 @@ func TestConsumerHandle(t *testing.T) {
 	Convey("Given a node bound to a register", t, func() {
 		register := store.NewRegister[*data.Measurement[float64]]()
 		node := &countingNode{}
-		consumer := NewConsumer(node, register)
+		consumer := NewConsumer(t.Context(), node, register)
 
 		Convey("the consumer identified the node's register slot", func() {
 			So(consumer.Identity(), ShouldEqual, 0)
@@ -59,10 +59,10 @@ func TestConsumerHandle(t *testing.T) {
 	Convey("Given a peer-aware node registered alongside a source node", t, func() {
 		register := store.NewRegister[*data.Measurement[float64]]()
 		sourceNode := &countingNode{}
-		sourceConsumer := NewConsumer(sourceNode, register)
+		sourceConsumer := NewConsumer(t.Context(), sourceNode, register)
 
 		peerNode := &peerAwareNode{}
-		peerConsumer := NewConsumer(peerNode, register)
+		peerConsumer := NewConsumer(t.Context(), peerNode, register)
 
 		So(sourceConsumer.Identity(), ShouldEqual, 0)
 		So(peerConsumer.Identity(), ShouldEqual, 1)

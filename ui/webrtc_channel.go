@@ -55,6 +55,14 @@ func (peer *fluidPeer) idle(label string) bool {
 	return channel != nil && channel.idle()
 }
 
+func (peer *fluidPeer) ready(label string) bool {
+	peer.mutex.RLock()
+	channel := peer.channels[label]
+	peer.mutex.RUnlock()
+
+	return channel != nil && channel.started.Load() && channel.ctx.Err() == nil
+}
+
 func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 	label := dataChannel.Label()
 
@@ -159,6 +167,7 @@ type fluidChannel struct {
 	// what idle() reports on, so a publisher can decline to encode a record
 	// this channel could only supersede mid-flight.
 	sending atomic.Bool
+	started atomic.Bool
 }
 
 /*
@@ -172,6 +181,10 @@ first is what keeps latest-wins from becoming never-wins.
 */
 func (channel *fluidChannel) idle() bool {
 	if channel.ctx.Err() != nil {
+		return false
+	}
+
+	if !channel.started.Load() {
 		return false
 	}
 
@@ -250,7 +263,10 @@ func newFluidChannel(
 }
 
 func (channel *fluidChannel) start() {
-	channel.startOnce.Do(func() { go channel.run() })
+	channel.startOnce.Do(func() {
+		channel.started.Store(true)
+		go channel.run()
+	})
 }
 
 /*

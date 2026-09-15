@@ -12,20 +12,33 @@ import (
 )
 
 /*
-Measurement is the projected output of a pipeline: one identified observation
-with provenance, timing, quality, and its metric projections. It carries no
-market semantics — Label names what was measured, Source names what produced
-it, and both are plain strings.
+Measurement is the native data type in nomagique, and in most cases should be
+leveraged to build a system that is easy to work with, because of a mostly
+mono-typed architecture.
+
+It implements Identifiable, so it can work with nomagique stores that use index
+addressable storage slots for O(1) reads. The register yields a working copy of
+a slot; published snapshots that appear as peers are not written.
+
+Label is often used as a named canonical group that makes sense in a given
+project, while SeqIdx is the workspace observation index used as a
+synchronization anchor. Zero means the observation has not been stamped.
+
+At should generally always be set to the timestamp of the event that fills
+the Measurement, while From is optional, but has value beyond just defining
+a window of time for the measurement. It can also be used to derive rudimentary
+performance and latency diagnostics.
 
 Quality is not caller-supplied. Maturity and SNR are derived by the Finalizer
-primitive from the measurement's own estimator facts, so no later step can
-fake or reward-hack them by writing the fields directly.
+primitive from the measurement's own estimator facts, these values represent
+the amount of trust to put in the overal Measurement, and the Metrics it contains.
 */
 type Measurement[T any] struct {
 	ID         int                  `json:"id"`
 	Label      string               `json:"label"`
 	Source     string               `json:"source"`
 	SeqIdx     int64                `json:"seqIdx"`
+	Timestamp  int64                `json:"timestamp"`
 	At         time.Time            `json:"at"`
 	From       time.Time            `json:"from,omitempty"`
 	Maturity   float64              `json:"maturity"`
@@ -60,63 +73,19 @@ func NewMeasurement[T any](
 	}
 }
 
-func (measurement *Measurement[T]) Identify() int {
+/*
+Identity names the register slot this measurement's consumer node owns.
+*/
+func (measurement *Measurement[T]) Identity() int {
 	return measurement.ID
 }
 
 /*
-Clone returns an independent deep copy of the measurement and its mappings.
+Identify names the register slot this measurement's consumer node owns.
 */
-func (measurement *Measurement[T]) Clone() *Measurement[T] {
-	if measurement == nil {
-		return nil
-	}
-
-	metrics := make(map[string]Metric[T], len(measurement.Metrics))
-
-	maps.Copy(metrics, measurement.Metrics)
-
-	var metadata map[string]string
-
-	if measurement.Metadata != nil {
-		metadata = make(map[string]string, len(measurement.Metadata))
-		maps.Copy(metadata, measurement.Metadata)
-	}
-
-	var provenance map[string]string
-
-	if measurement.Provenance != nil {
-		provenance = make(map[string]string, len(measurement.Provenance))
-
-		for key, val := range measurement.Provenance {
-			provenance[key] = val
-		}
-	}
-
-	var peers []*Measurement[T]
-
-	if len(measurement.Peers) != 0 {
-		peers = make([]*Measurement[T], len(measurement.Peers))
-		copy(peers, measurement.Peers)
-	}
-
-	return &Measurement[T]{
-		ID:         measurement.ID,
-		Label:      measurement.Label,
-		Source:     measurement.Source,
-		SeqIdx:     measurement.SeqIdx,
-		At:         measurement.At,
-		From:       measurement.From,
-		Maturity:   measurement.Maturity,
-		SNR:        measurement.SNR,
-		SNRDefined: measurement.SNRDefined,
-		Estimated:  measurement.Estimated,
-		Err:        measurement.Err,
-		Metrics:    metrics,
-		Metadata:   metadata,
-		Provenance: provenance,
-		Peers:      peers,
-	}
+func (measurement *Measurement[T]) Identify(id int) Identifiable[T] {
+	measurement.ID = id
+	return measurement
 }
 
 /*
@@ -137,11 +106,65 @@ func (measurement *Measurement[T]) FindPeer(predicate func(*Measurement[T]) bool
 }
 
 /*
-Absorb updates runtime facts, metrics, metadata, and provenance from another
-measurement while keeping this measurement's identity and source intact.
+Clone returns an independent copy of the measurement and its mappings. Peer
+pointers are copied, not cloned: the register attaches live published snapshots.
 */
-func (measurement *Measurement[T]) Absorb(other *Measurement[T]) {
-	if other == nil || measurement == nil {
+func (measurement *Measurement[T]) Clone() *Measurement[T] {
+	if measurement == nil {
+		return nil
+	}
+
+	metrics := make(map[string]Metric[T], len(measurement.Metrics))
+	maps.Copy(metrics, measurement.Metrics)
+
+	var metadata map[string]string
+
+	if measurement.Metadata != nil {
+		metadata = make(map[string]string, len(measurement.Metadata))
+		maps.Copy(metadata, measurement.Metadata)
+	}
+
+	var provenance map[string]string
+
+	if measurement.Provenance != nil {
+		provenance = make(map[string]string, len(measurement.Provenance))
+		maps.Copy(provenance, measurement.Provenance)
+	}
+
+	var peers []*Measurement[T]
+
+	if len(measurement.Peers) != 0 {
+		peers = make([]*Measurement[T], len(measurement.Peers))
+		copy(peers, measurement.Peers)
+	}
+
+	return &Measurement[T]{
+		ID:         measurement.ID,
+		Label:      measurement.Label,
+		Source:     measurement.Source,
+		SeqIdx:     measurement.SeqIdx,
+		Timestamp:  measurement.Timestamp,
+		At:         measurement.At,
+		From:       measurement.From,
+		Maturity:   measurement.Maturity,
+		SNR:        measurement.SNR,
+		SNRDefined: measurement.SNRDefined,
+		Estimated:  measurement.Estimated,
+		Err:        measurement.Err,
+		Metrics:    metrics,
+		Metadata:   metadata,
+		Provenance: provenance,
+		Peers:      peers,
+	}
+}
+
+/*
+Pull copies event identity, provenance, and the named metrics from other onto
+this measurement. The source is not mutated. Identity, source, and metadata
+stay with this measurement.
+*/
+func (measurement *Measurement[T]) Pull(other *Measurement[T], keys ...string) {
+	if measurement == nil || other == nil {
 		return
 	}
 
@@ -149,27 +172,7 @@ func (measurement *Measurement[T]) Absorb(other *Measurement[T]) {
 	measurement.At = other.At
 	measurement.From = other.From
 	measurement.SeqIdx = other.SeqIdx
-	measurement.Maturity = other.Maturity
-	measurement.SNR = other.SNR
-	measurement.SNRDefined = other.SNRDefined
-	measurement.Estimated = other.Estimated
-	measurement.Err = other.Err
-
-	if other.Metrics != nil {
-		if measurement.Metrics == nil {
-			measurement.Metrics = make(map[string]Metric[T], len(other.Metrics))
-		}
-
-		maps.Copy(measurement.Metrics, other.Metrics)
-	}
-
-	if other.Metadata != nil {
-		if measurement.Metadata == nil {
-			measurement.Metadata = make(map[string]string, len(other.Metadata))
-		}
-
-		maps.Copy(measurement.Metadata, other.Metadata)
-	}
+	measurement.Timestamp = other.Timestamp
 
 	if other.Provenance != nil {
 		if measurement.Provenance == nil {
@@ -177,6 +180,20 @@ func (measurement *Measurement[T]) Absorb(other *Measurement[T]) {
 		}
 
 		maps.Copy(measurement.Provenance, other.Provenance)
+	}
+
+	if len(keys) == 0 {
+		return
+	}
+
+	if measurement.Metrics == nil {
+		measurement.Metrics = make(map[string]Metric[T], len(keys))
+	}
+
+	for _, key := range keys {
+		if metric, ok := other.Metrics[key]; ok {
+			measurement.Metrics[key] = metric
+		}
 	}
 }
 
@@ -305,102 +322,6 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 Error records the first error it sees and joins any subsequent errors to it.
 */
 func (op *Finalizer[Value]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
-Cloner yields one independent deep copy of each arriving measurement and its
-mappings.
-*/
-type Cloner[Value any] struct {
-	err error
-	out *Measurement[Value]
-}
-
-/*
-NewCloner creates the measurement deep-copy primitive.
-*/
-func NewCloner[Value any]() core.Primitive {
-	return &Cloner[Value]{}
-}
-
-func (op *Cloner[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			measurement := *(**Measurement[Value])(arriving)
-
-			if measurement == nil {
-				op.out = nil
-
-				if !yield(unsafe.Pointer(&op.out)) {
-					return
-				}
-
-				continue
-			}
-
-			metrics := make(map[string]Metric[Value], len(measurement.Metrics))
-			maps.Copy(metrics, measurement.Metrics)
-
-			var metadata map[string]string
-
-			if measurement.Metadata != nil {
-				metadata = make(map[string]string, len(measurement.Metadata))
-				maps.Copy(metadata, measurement.Metadata)
-			}
-
-			var provenance map[string]string
-
-			if measurement.Provenance != nil {
-				provenance = make(map[string]string, len(measurement.Provenance))
-
-				for key, val := range measurement.Provenance {
-					provenance[key] = val
-				}
-			}
-
-			var peers []*Measurement[Value]
-
-			if len(measurement.Peers) != 0 {
-				peers = make([]*Measurement[Value], len(measurement.Peers))
-				copy(peers, measurement.Peers)
-			}
-
-			op.out = &Measurement[Value]{
-				ID:         measurement.ID,
-				Label:      measurement.Label,
-				Source:     measurement.Source,
-				SeqIdx:     measurement.SeqIdx,
-				At:         measurement.At,
-				From:       measurement.From,
-				Maturity:   measurement.Maturity,
-				SNR:        measurement.SNR,
-				SNRDefined: measurement.SNRDefined,
-				Estimated:  measurement.Estimated,
-				Err:        measurement.Err,
-				Metrics:    metrics,
-				Metadata:   metadata,
-				Provenance: provenance,
-				Peers:      peers,
-			}
-
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
-			}
-		}
-	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Cloner[Value]) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {
 			op.err = errors.Join(op.err, err)

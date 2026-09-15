@@ -1271,6 +1271,21 @@ func (op *Engine) census() map[string]int32 {
 	return res
 }
 
+// Census reads how often each class has been observed.
+func (op *Engine) Census() map[string]int32 {
+	return op.census()
+}
+
+// Len returns the number of entries stored in the immutable radix trie.
+func (op *Engine) Len() int {
+	root := op.root.Load()
+	if root == nil {
+		return 0
+	}
+
+	return root.Len()
+}
+
 func (op *Engine) distinctClasses() int {
 	count := 0
 	op.classCounts.Range(func(_, _ any) bool {

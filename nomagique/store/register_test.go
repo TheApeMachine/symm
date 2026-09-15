@@ -2,8 +2,6 @@ package store_test
 
 import (
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -33,7 +31,7 @@ func TestRegister(t *testing.T) {
 		subject := &slot{}
 
 		Convey("identify appends the payload and stamps the subject with its slot", func() {
-			query := store.NewQuery[int](subject, data.ActionIdentify, 7)
+			query := store.NewQuery(subject, data.ActionIdentify, data.NewValue(7))
 			value := data.Read[int](register.Next(data.NewValue(*query)))
 
 			So(subject.Identity(), ShouldEqual, 0)
@@ -42,7 +40,7 @@ func TestRegister(t *testing.T) {
 		})
 
 		Convey("a read outside the register is a shape failure", func() {
-			query := store.NewQuery[int](subject, data.ActionRead)
+			query := store.NewQuery(subject, data.ActionRead, nil)
 			data.Read[int](register.Next(data.NewValue(*query)))
 
 			So(register.Error(), ShouldNotBeNil)
@@ -53,21 +51,21 @@ func TestRegister(t *testing.T) {
 		register := store.NewRegister[int]()
 		subject := &slot{}
 
-		identify := store.NewQuery[int](subject, data.ActionIdentify, 7)
+		identify := store.NewQuery(subject, data.ActionIdentify, data.NewValue(7))
 		data.Read[int](register.Next(data.NewValue(*identify)))
 
 		Convey("a read returns the stored value", func() {
-			query := store.NewQuery[int](subject, data.ActionRead)
+			query := store.NewQuery(subject, data.ActionRead, nil)
 			value := data.Read[int](register.Next(data.NewValue(*query)))
 
 			So(value, ShouldEqual, 7)
 		})
 
 		Convey("a write into the identified slot replaces the value", func() {
-			write := store.NewQuery[int](subject, data.ActionWrite, 9)
+			write := store.NewQuery(subject, data.ActionWrite, data.NewValue(9))
 			data.Read[int](register.Next(data.NewValue(*write)))
 
-			query := store.NewQuery[int](subject, data.ActionRead)
+			query := store.NewQuery(subject, data.ActionRead, nil)
 			value := data.Read[int](register.Next(data.NewValue(*query)))
 
 			So(value, ShouldEqual, 9)
@@ -76,7 +74,7 @@ func TestRegister(t *testing.T) {
 
 		Convey("a write from an unidentified subject is a shape failure", func() {
 			stranger := &slot{id: 3}
-			write := store.NewQuery[int](stranger, data.ActionWrite, 9)
+			write := store.NewQuery(stranger, data.ActionWrite, data.NewValue(9))
 			data.Read[int](register.Next(data.NewValue(*write)))
 
 			So(register.Error(), ShouldNotBeNil)
@@ -95,71 +93,92 @@ func (slotItem *measSlot) Identify(id int) data.Identifiable[*data.Measurement[f
 	return slotItem
 }
 
-func TestRegisterConcurrency(t *testing.T) {
+func TestRegisterPeers(t *testing.T) {
 	Convey("Given a register populated with measurement slots", t, func() {
 		register := store.NewRegister[*data.Measurement[float64]]()
-		const nodeCount = 16
+		const nodeCount = 4
 		slots := make([]*measSlot, nodeCount)
 
 		for index := 0; index < nodeCount; index++ {
 			slots[index] = &measSlot{}
-			meas := data.NewMeasurement[float64](fmt.Sprintf("node-%d", index), map[string]data.Metric[float64]{
-				"price": data.NewMetric[float64]("price", data.UnitDimensionless, data.TimescaleInstantaneous, 100, 100),
-				"qty":   data.NewMetric[float64]("qty", data.UnitDimensionless, data.TimescaleInstantaneous, 1, 1),
+			meas := data.NewMeasurement(fmt.Sprintf("node-%d", index), map[string]data.Metric[float64]{
+				"price": data.NewMetric[float64]("price", data.UnitDimensionless, data.TimescaleInstantaneous, float64(100+index), float64(100+index)),
 			})
 			meas.Label = "BTC/USD"
 			meas.Metadata["peer-interest"] = "*"
 
-			identify := store.NewQuery[*data.Measurement[float64]](slots[index], data.ActionIdentify, meas)
+			identify := store.NewQuery(slots[index], data.ActionIdentify, data.NewValue(meas))
 			data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*identify)))
 		}
 
-		Convey("concurrent reads and writes execute without race conditions or map panics", func() {
-			var waitGroup sync.WaitGroup
-			var nilCount atomic.Int64
-			iterations := 100
+		Convey("a read populates peers from matching slots", func() {
+			query := store.NewQuery(slots[0], data.ActionRead, nil)
+			val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query)))
 
-			for index := 0; index < nodeCount; index++ {
-				slotIndex := index
-				waitGroup.Add(2)
+			So(val, ShouldNotBeNil)
+			So(len(val.Peers), ShouldEqual, 3)
+			So(val.Peers[0].Source, ShouldEqual, "node-1")
+			So(val.Peers[1].Source, ShouldEqual, "node-2")
+			So(val.Peers[2].Source, ShouldEqual, "node-3")
+		})
 
-				go func() {
-					defer waitGroup.Done()
+		Convey("peer limit restricts the scan range", func() {
+			query := store.NewQuery(slots[2], data.ActionRead, nil)
+			query.SetPeerLimit(2)
+			val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query)))
 
-					for iterCount := 0; iterCount < iterations; iterCount++ {
-						query := store.NewQuery[*data.Measurement[float64]](slots[slotIndex], data.ActionRead)
-						query.SetPeerLimit(3)
-						val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query)))
+			So(val, ShouldNotBeNil)
+			So(len(val.Peers), ShouldEqual, 2)
+			So(val.Peers[0].Source, ShouldEqual, "node-0")
+			So(val.Peers[1].Source, ShouldEqual, "node-1")
+		})
 
-						if val != nil {
-							val.Metrics["price"] = data.NewMetric[float64](
-								"price", data.UnitDimensionless, data.TimescaleInstantaneous,
-								float64(100+iterCount), float64(100+iterCount),
-							)
-						}
+		Convey("a later write to a cloned working copy does not mutate a live peer snapshot", func() {
+			readPeer := store.NewQuery(slots[0], data.ActionRead, nil)
+			holder := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*readPeer)))
+			So(holder, ShouldNotBeNil)
+			So(len(holder.Peers), ShouldEqual, 3)
 
-						writeQuery := store.NewQuery[*data.Measurement[float64]](slots[slotIndex], data.ActionWrite, val)
-						data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*writeQuery)))
-					}
-				}()
+			snapshot := holder.Peers[0]
+			So(snapshot.Source, ShouldEqual, "node-1")
+			So(snapshot.Metrics["price"].Center, ShouldEqual, 101)
 
-				go func() {
-					defer waitGroup.Done()
+			workingQuery := store.NewQuery(slots[1], data.ActionRead, nil)
+			working := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*workingQuery)))
+			So(working, ShouldNotBeNil)
+			working.Metrics["price"] = data.NewMetric[float64](
+				"price", data.UnitDimensionless, data.TimescaleInstantaneous, 999, 999,
+			)
 
-					for iterCount := 0; iterCount < iterations; iterCount++ {
-						query := store.NewQuery[*data.Measurement[float64]](slots[slotIndex], data.ActionRead)
-						query.SetPeerLimit(3)
-						val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query)))
+			write := store.NewQuery(slots[1], data.ActionWrite, data.NewValue(working))
+			data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*write)))
 
-						if val == nil {
-							nilCount.Add(1)
-						}
-					}
-				}()
+			So(snapshot.Metrics["price"].Center, ShouldEqual, 101)
+
+			reread := store.NewQuery(slots[0], data.ActionRead, nil)
+			updated := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*reread)))
+			So(updated.Peers[0].Metrics["price"].Center, ShouldEqual, 999)
+		})
+
+		Convey("sequential read-write cycles update the slot value", func() {
+			for iterCount := 0; iterCount < 10; iterCount++ {
+				readQuery := store.NewQuery(slots[0], data.ActionRead, nil)
+				val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*readQuery)))
+				So(val, ShouldNotBeNil)
+
+				val.Metrics["price"] = data.NewMetric[float64](
+					"price", data.UnitDimensionless, data.TimescaleInstantaneous,
+					float64(200+iterCount), float64(200+iterCount),
+				)
+
+				writeQuery := store.NewQuery(slots[0], data.ActionWrite, data.NewValue(val))
+				data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*writeQuery)))
 			}
 
-			waitGroup.Wait()
-			So(nilCount.Load(), ShouldEqual, 0)
+			finalQuery := store.NewQuery(slots[0], data.ActionRead, nil)
+			final := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*finalQuery)))
+			So(final, ShouldNotBeNil)
+			So(final.Metrics["price"].Center, ShouldEqual, 209)
 			So(register.Error(), ShouldBeNil)
 		})
 	})

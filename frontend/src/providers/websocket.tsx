@@ -5,6 +5,7 @@ import {
 	evictStaleSymbols,
 	evictSymbol,
 	focusAtom,
+	manifoldStore,
 	observeSymbols,
 	onlineAtom,
 	RingBuffer,
@@ -63,6 +64,24 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 			observeSymbols([symbol]);
 		}
 
+		const at = row.at();
+		if (at > 0n) {
+			updateClock(at);
+		}
+		const tick = row.tick();
+		if (tick > 0n) {
+			tickCountAtom.set(Number(tick));
+		}
+
+		if (source === "manifold") {
+			manifoldStore.setState((prev: Record<string, unknown>) => ({
+				...prev,
+				[symbol]: row.unpack(),
+			}));
+			touched.add(source);
+			continue;
+		}
+
 		const signalStore = signals[source];
 		if (!signalStore) {
 			continue;
@@ -86,15 +105,6 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 			if (currentFocus) {
 				signalStore.state[currentFocus] = ring;
 			}
-		}
-
-		const at = row.at();
-		if (at > 0n) {
-			updateClock(at);
-		}
-		const tick = row.tick();
-		if (tick > 0n) {
-			tickCountAtom.set(Number(tick));
 		}
 	}
 

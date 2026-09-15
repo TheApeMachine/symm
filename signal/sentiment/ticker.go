@@ -56,53 +56,42 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	input := measurement
-
 	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" {
+		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
+			if candidate.Label == "" {
 				return false
 			}
-			if m, ok := p.Metrics["last"]; ok && m.Raw > 0 {
-				return true
-			}
-			if m, ok := p.Metrics["last_price"]; ok && m.Raw > 0 {
-				return true
-			}
-			if m, ok := p.Metrics["price"]; ok && m.Raw > 0 {
-				return true
-			}
-			return false
+
+			return quotedPrice(candidate) > 0
 		})
 
 		if peer == nil {
 			return measurement
 		}
 
-		price := 0.0
-		if m, ok := peer.Metrics["last"]; ok && m.Raw > 0 {
-			price = m.Raw
-		} else if m, ok := peer.Metrics["last_price"]; ok && m.Raw > 0 {
-			price = m.Raw
-		} else if m, ok := peer.Metrics["price"]; ok && m.Raw > 0 {
-			price = m.Raw
-		}
-
-		input = peer.Clone()
-		if _, ok := input.Metrics["last"]; !ok {
-			input.Metrics["last"] = data.NewMetric[float64]("last", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
-		}
-		input.Metrics["last"] = input.Metrics["last"].Write(price)
+		measurement.Pull(peer)
+		measurement.Metrics["last"] = measurement.Metrics["last"].Write(quotedPrice(peer))
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	))
 
-	if res != nil && res != measurement {
-		measurement.Absorb(res)
+	if res == nil {
 		return measurement
 	}
 
 	return res
+}
+
+func quotedPrice(measurement *data.Measurement[float64]) float64 {
+	for _, key := range []string{"last", "last_price", "price"} {
+		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
+			return metric.Raw
+		}
+	}
+
+	return 0
 }
 
 /*

@@ -66,6 +66,73 @@ func TestMeasurementFinalize(t *testing.T) {
 	})
 }
 
+func TestMeasurementClone(t *testing.T) {
+	Convey("Given a measurement with metrics, metadata, and a peer", t, func() {
+		peer := NewMeasurement("public", map[string]Metric[float64]{
+			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
+		})
+		measurement := NewMeasurement("liquidity", map[string]Metric[float64]{
+			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
+		})
+		measurement.Label = "BTC/USD"
+		measurement.Metadata["peer-interest"] = "*"
+		measurement.Provenance["channel"] = "ticker"
+		measurement.Peers = []*Measurement[float64]{peer}
+		measurement.Metrics["bid"] = measurement.Metrics["bid"].Write(100)
+
+		clone := measurement.Clone()
+
+		Convey("the clone is independent of later writes", func() {
+			So(clone == measurement, ShouldBeFalse)
+			So(clone.Label, ShouldEqual, "BTC/USD")
+			So(clone.Metadata["peer-interest"], ShouldEqual, "*")
+			So(clone.Provenance["channel"], ShouldEqual, "ticker")
+			So(clone.Peers[0], ShouldEqual, peer)
+
+			measurement.Metrics["bid"] = measurement.Metrics["bid"].Write(200)
+			measurement.Metadata["peer-interest"] = "hawkes"
+			So(clone.Metrics["bid"].Raw, ShouldEqual, 100)
+			So(clone.Metadata["peer-interest"], ShouldEqual, "*")
+		})
+	})
+}
+
+func TestMeasurementPull(t *testing.T) {
+	Convey("Given a feed measurement and an instrument measurement", t, func() {
+		feed := NewMeasurement("public", map[string]Metric[float64]{
+			"bid":    NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
+			"ask":    NewMetric[float64]("ask", UnitRate, TimescaleInstantaneous, 0, 1),
+			"volume": NewMetric[float64]("volume", UnitCount, TimescaleInstantaneous, 0, 1),
+		})
+		feed.Label = "ETH/USD"
+		feed.Provenance["side"] = "buy"
+		feed.Metrics["bid"] = feed.Metrics["bid"].Write(10)
+		feed.Metrics["ask"] = feed.Metrics["ask"].Write(11)
+		feed.Metrics["volume"] = feed.Metrics["volume"].Write(5)
+
+		owned := NewMeasurement("liquidity", map[string]Metric[float64]{
+			"bid": NewMetric[float64]("bid", UnitRate, TimescaleInstantaneous, 0, 1),
+			"ask": NewMetric[float64]("ask", UnitRate, TimescaleInstantaneous, 0, 1),
+		})
+		owned.Metadata["peer-interest"] = "*"
+		owned.Pull(feed, "bid", "ask")
+
+		Convey("named feed facts move without sharing the source map", func() {
+			So(owned.Source, ShouldEqual, "liquidity")
+			So(owned.Label, ShouldEqual, "ETH/USD")
+			So(owned.Provenance["side"], ShouldEqual, "buy")
+			So(owned.Metadata["peer-interest"], ShouldEqual, "*")
+			So(owned.Metrics["bid"].Raw, ShouldEqual, 10)
+			So(owned.Metrics["ask"].Raw, ShouldEqual, 11)
+			_, hasVolume := owned.Metrics["volume"]
+			So(hasVolume, ShouldBeFalse)
+
+			owned.Metrics["bid"] = owned.Metrics["bid"].Write(99)
+			So(feed.Metrics["bid"].Raw, ShouldEqual, 10)
+		})
+	})
+}
+
 func BenchmarkMeasurementFinalize(b *testing.B) {
 	measurement := NewMeasurement("source", map[string]Metric[float64]{})
 	measurement.Label, measurement.At, measurement.From = "label", time.Now(), time.Now()

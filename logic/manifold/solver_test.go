@@ -7,6 +7,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
@@ -88,6 +89,21 @@ func TestDatasetAndSolverAdvance(t *testing.T) {
 			So(reading, ShouldNotBeNil)
 			So(reading.Reading.CoherenceMag2, ShouldBeGreaterThanOrEqualTo, 0)
 
+			measurement := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
+				"coherence_mag2": data.NewMetric[float64](
+					"coherence_mag2", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+				),
+				"particle_count": data.NewMetric[float64](
+					"particle_count", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+				),
+			})
+			measurement.Label = "BTC/USD"
+
+			steppedMeasurement := solver.Step(measurement)
+			So(steppedMeasurement, ShouldNotBeNil)
+			So(steppedMeasurement.Metrics["coherence_mag2"].Raw, ShouldEqual, reading.Reading.CoherenceMag2)
+			So(steppedMeasurement.Metrics["particle_count"].Raw, ShouldEqual, float64(reading.State.N))
+
 			solver.publish()
 			So(viewer.manifold, ShouldNotBeNil)
 			So(viewer.manifold.Reading.CoherenceMag2, ShouldBeGreaterThanOrEqualTo, 0)
@@ -105,6 +121,9 @@ func TestDatasetAndSolverAdvance(t *testing.T) {
 			}
 			solver.Transition(runtime.READY)
 			defer solver.Close()
+
+			idle := solver.Register()
+			So(solver.Step(idle), ShouldEqual, idle)
 
 			viewer := &testViewer{wants: true}
 			solver.SetViewer(viewer)

@@ -156,14 +156,16 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			m := *(**data.Measurement[float64])(arriving)
 			p := op.history.at(m.Label)
 
-			metadata := map[string]string{data.MetadataSupport: strconv.FormatFloat(p.support(), 'f', -1, 64)}
-
-			if p.hasSNR {
-				metadata[data.MetadataDivergence] = strconv.FormatFloat(p.divergence(), 'f', -1, 64)
-				metadata[data.MetadataNoiseVariance] = "1"
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string, 3)
 			}
 
-			m.Metadata = metadata
+			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(p.support(), 'f', -1, 64)
+
+			if p.hasSNR {
+				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(p.divergence(), 'f', -1, 64)
+				m.Metadata[data.MetadataNoiseVariance] = "1"
+			}
 
 			if m.Err != nil || !p.modelReady {
 				if !yield(arriving) {

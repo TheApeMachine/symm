@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
@@ -27,7 +28,6 @@ import (
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -94,15 +94,16 @@ var (
 			epoch := processStartedAt.UnixNano()
 
 			uiTee := ui.NewUITee("uiTee", 131072)
-			storeTee := nmruntime.NewTee[*data.Measurement[float64]]("storeTee", 131072)
+			storeTee := hindsight.NewStoreTee("storeTee", 131072)
+			webrtcTee := ui.NewWebRTCTee("webrtcTee", 131072)
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
 			// them; everything a reader queries lives in the catalog.
-			catalog := tables.Open(cmd.Context(), storeTee)
+			catalog := tables.Open(ctx, storeTee)
 			catalog.Drain(ctx, epoch)
 
-			if err := catalog.Ensure(cmd.Context()); err != nil {
+			if err := catalog.Ensure(ctx); err != nil {
 				return err
 			}
 
@@ -165,7 +166,6 @@ var (
 				))
 			}
 
-			register := store.NewRegister[*data.Measurement[float64]]()
 			training := strategy.NewTraining(ctx, api)
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
@@ -181,9 +181,6 @@ var (
 			hub.SetHindsightStore(catalog)
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
-			webrtcTee := ui.NewWebRTCTee("webrtcTee", 1024, hub.Fluid(), manifoldSolver)
-			manifoldSolver.SetViewer(webrtcTee)
-			manifoldSolver.SetPhysicsMonitor(hub.PhysicsMonitor())
 			manifoldSolver.Start()
 
 			workspace := nmruntime.NewWorkspace(
@@ -226,7 +223,6 @@ var (
 						training,
 					},
 				},
-				register,
 				uiTee,
 				storeTee,
 				webrtcTee,

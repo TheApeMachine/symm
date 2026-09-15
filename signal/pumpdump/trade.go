@@ -205,7 +205,7 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 			return m
 		}
 
-		input = peer.Clone()
+		input = peer
 	}
 
 	priceMetric, hasPrice := input.Metrics["price"]

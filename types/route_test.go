@@ -4,40 +4,63 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func TestRoute(t *testing.T) {
-	Convey("Given route tracking and filtering", t, func() {
-		original := Route()
+func TestAllowsRoute(t *testing.T) {
+	Convey("Given dashboard route gating", t, func() {
+		originalRoute := Route()
+		originalFocus := Focus()
+
 		Reset(func() {
-			SetRoute(original)
+			SetRoute(originalRoute)
+			SetFocus(originalFocus)
 		})
 
-		Convey("Defaults to dashboard", func() {
-			SetRoute("")
-			So(Route(), ShouldEqual, "dashboard")
-			So(AllowsRoute("cvd"), ShouldBeTrue)
-			So(AllowsRoute("training"), ShouldBeTrue)
+		liquidity := data.NewMeasurement[float64]("liquidity", nil)
+		liquidity.Label = "BTC/USD"
+		resonance := data.NewMeasurement[float64]("resonance", nil)
+		resonance.Label = "BTC/USD"
+		manifold := data.NewMeasurement[float64]("manifold", nil)
+		manifold.Label = "BTC/USD"
+		unlabeled := data.NewMeasurement[float64]("liquidity", nil)
+		eth := data.NewMeasurement[float64]("hawkes", nil)
+		eth.Label = "ETH/USD"
+
+		Convey("dashboard publishes the focused signal and resonance", func() {
+			SetRoute("dashboard")
+			SetFocus("BTC/USD")
+
+			So(AllowsRoute(liquidity), ShouldBeTrue)
+			So(AllowsRoute(resonance), ShouldBeTrue)
+			So(AllowsRoute(eth), ShouldBeFalse)
+			So(RouteDropReason(eth), ShouldEqual, "focus")
+			So(AllowsRoute(manifold), ShouldBeFalse)
+			So(AllowsRoute(unlabeled), ShouldBeFalse)
+			So(RouteDropReason(unlabeled), ShouldEqual, "empty-label")
 		})
 
-		Convey("When on fluid route", func() {
-			SetRoute("/fluid")
-			So(Route(), ShouldEqual, "fluid")
-			So(AllowsRoute("cvd"), ShouldBeFalse)
-			So(AllowsRoute("hawkes"), ShouldBeFalse)
-			So(AllowsRoute("depthflow"), ShouldBeFalse)
-			So(AllowsRoute("training"), ShouldBeTrue)
-			So(AllowsRoute(""), ShouldBeTrue)
+		Convey("colon-suffixed kernel sources still count as signals", func() {
+			SetRoute("dashboard")
+			SetFocus("BTC/USD")
+
+			level3 := data.NewMeasurement[float64]("pumpdump:level3", nil)
+			level3.Label = "BTC/USD"
+			So(AllowsRoute(level3), ShouldBeTrue)
+			So(RouteDropReason(level3), ShouldEqual, "")
+
+			other := data.NewMeasurement[float64]("toxicity:level3", nil)
+			other.Label = "ZEC/USD"
+			So(AllowsRoute(other), ShouldBeFalse)
+			So(RouteDropReason(other), ShouldEqual, "focus")
 		})
 
-		Convey("When on learning route", func() {
-			SetRoute("learning")
-			So(Route(), ShouldEqual, "learning")
-			So(AllowsRoute("cvd"), ShouldBeFalse)
-			So(AllowsRoute("category"), ShouldBeTrue)
-			So(AllowsRoute("cognition"), ShouldBeTrue)
-			So(AllowsRoute("resonance"), ShouldBeTrue)
-			So(AllowsRoute("training"), ShouldBeTrue)
+		Convey("fluid publishes manifold measurements", func() {
+			SetRoute("fluid")
+
+			So(AllowsRoute(manifold), ShouldBeTrue)
+			So(AllowsRoute(liquidity), ShouldBeFalse)
+			So(AllowsRoute(resonance), ShouldBeFalse)
 		})
 	})
 }

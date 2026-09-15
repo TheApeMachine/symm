@@ -73,38 +73,37 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	input := measurement
-
 	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(p *data.Measurement[float64]) bool {
-			_, hasP := p.Metrics["price"]
-			_, hasQ := p.Metrics["qty"]
-			return hasP && hasQ && p.Label != ""
+		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
+			_, hasPrice := candidate.Metrics["price"]
+			_, hasQty := candidate.Metrics["qty"]
+			return hasPrice && hasQty && candidate.Label != ""
 		})
 
 		if peer == nil {
 			return measurement
 		}
 
-		input = peer.Clone()
+		measurement.Pull(peer, "price", "qty")
 	}
 
-	if input.Label == "" {
+	if measurement.Label == "" {
 		return measurement
 	}
 
-	if _, hasPrice := input.Metrics["price"]; !hasPrice {
+	if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
 		return measurement
 	}
 
-	if _, hasQty := input.Metrics["qty"]; !hasQty {
+	if _, hasQty := measurement.Metrics["qty"]; !hasQty {
 		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(input.Label).Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)))
+	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
+		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	))
 
-	if res != nil && res != measurement {
-		measurement.Absorb(res)
+	if res == nil {
 		return measurement
 	}
 

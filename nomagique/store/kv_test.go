@@ -12,7 +12,7 @@ import (
 func TestKVNext(t *testing.T) {
 	Convey("A fresh KV merges arrivals without mutating the configured source", t, func() {
 		seed := map[string]float64{"existing": 7}
-		op := store.NewKV[string, float64](seed)
+		op := store.NewKV(seed)
 
 		m1 := map[string]float64{"mean": 10}
 		m2 := map[string]float64{"count": 3}

@@ -19,7 +19,7 @@ func row(
 	mutBid, mutAsk float64,
 	at time.Time,
 ) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 		"observed_notional:bid":         data.NewMetric[float64]("observed_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(obsBid),
 		"observed_notional:ask":         data.NewMetric[float64]("observed_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(obsAsk),
 		"add_notional:bid":              data.NewMetric[float64]("add_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(addBid),

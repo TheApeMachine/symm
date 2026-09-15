@@ -43,9 +43,9 @@ experimental:
 
 runtime:
   workspace:
-    # Disruptor slot count. Sized to 1 so each sequence completes all stages
-    # sequentially across the shared pre-allocated register before the next sequence enters.
-    buffer: 1
+    # Disruptor slot count. Must be a power of two. Each sequence keeps its own
+    # feed snapshot so signals see that event, not only the latest register slot.
+    buffer: 256
 
 system:
   data_path: ~/.symm/data

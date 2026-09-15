@@ -173,7 +173,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 			return m
 		}
 
-		input = peer.Clone()
+		input = peer
 	}
 
 	obsBid := input.Metrics["observed_notional:bid"].Raw
@@ -275,7 +275,7 @@ Values are empty; the workload uses this at startup to allocate the metric
 schema before feeding streaming records.
 */
 func (level3 *Level3) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("depthflow:level3", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("depthflow:level3", map[string]data.Metric[float64]{
 		"observed_notional:bid":                  data.NewMetric[float64]("observed_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"observed_notional:ask":                  data.NewMetric[float64]("observed_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 		"observed_notional":                      data.NewMetric[float64]("observed_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1),

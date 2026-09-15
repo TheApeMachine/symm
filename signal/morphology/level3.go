@@ -150,7 +150,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 			return m
 		}
 
-		input = peer.Clone()
+		input = peer
 	}
 
 	distance := input.Metrics["book_shape_distance"].Raw

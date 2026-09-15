@@ -217,9 +217,6 @@ func (solver *Solver) run() {
 			return
 		case <-solver.wake:
 		case <-ticker.C:
-			if solver.viewer == nil || !solver.viewer.WantsManifold() {
-				continue
-			}
 		}
 
 		started := time.Now()
@@ -256,16 +253,6 @@ func (solver *Solver) run() {
 
 /*
 Step dispatches on the envelope kind:
-
-  - EnvelopeTrade: if envelope.Hawkes carries valid excitation fractions, record
-    them as the symbol's forcing state. No physics field advance and no
-    envelope.Manifold emission happen here — the trade event only updates the
-    resident forcing, never steps the domain.
-  - EnvelopeLevel3: apply the message's order lifecycle and project its resting
-    orders — loading the latest causally-available forcing into the resting-
-    order energy — into the pending accumulator the advance loop drains. The
-    field is not stepped here.
-  - Any other kind is a no-op.
 */
 func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if solver.Status() != runtime.READY || solver.Error() != nil {
@@ -290,19 +277,27 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	for _, peer := range measurement.Peers {
-		if peer != nil && peer.Source == "hawkes" {
+		if peer == nil {
+			continue
+		}
+
+		if peer.Source == "hawkes" {
 			solver.recordForcing(peer.Label, peer)
+		}
+
+		if peer.Label == "" {
+			continue
+		}
+
+		solver.markDirty(peer.Label)
+
+		if symbol == "" {
+			symbol = peer.Label
 		}
 	}
 
-	if symbol == "" {
-		for _, peer := range measurement.Peers {
-			if peer != nil && peer.Label != "" {
-				solver.markDirty(peer.Label)
-			}
-		}
-	} else {
-		solver.markDirty(symbol)
+	if symbol != "" {
+		measurement.Label = symbol
 	}
 
 	select {
@@ -310,66 +305,70 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	default:
 	}
 
-	state := solver.Snapshot()
+	reading := solver.Reading()
+
+	if reading == nil {
+		return measurement
+	}
 
 	if m, ok := measurement.Metrics["divergence"]; ok {
-		measurement.Metrics["divergence"] = m.Write(state.Reading.Divergence)
+		measurement.Metrics["divergence"] = m.Write(reading.Reading.Divergence)
 	}
 
 	if m, ok := measurement.Metrics["guidance_speed"]; ok {
-		measurement.Metrics["guidance_speed"] = m.Write(state.Reading.GuidanceSpeed)
+		measurement.Metrics["guidance_speed"] = m.Write(reading.Reading.GuidanceSpeed)
 	}
 
 	if m, ok := measurement.Metrics["coherence_mag2"]; ok {
-		measurement.Metrics["coherence_mag2"] = m.Write(state.Reading.CoherenceMag2)
+		measurement.Metrics["coherence_mag2"] = m.Write(reading.Reading.CoherenceMag2)
 	}
 
 	if m, ok := measurement.Metrics["pressure_grad_norm"]; ok {
-		measurement.Metrics["pressure_grad_norm"] = m.Write(state.Reading.PressureGradNorm)
+		measurement.Metrics["pressure_grad_norm"] = m.Write(reading.Reading.PressureGradNorm)
 	}
 
 	if m, ok := measurement.Metrics["viscosity_proxy"]; ok {
-		measurement.Metrics["viscosity_proxy"] = m.Write(state.Reading.ViscosityProxy)
+		measurement.Metrics["viscosity_proxy"] = m.Write(reading.Reading.ViscosityProxy)
 	}
 
 	if m, ok := measurement.Metrics["kuramoto_r"]; ok {
-		measurement.Metrics["kuramoto_r"] = m.Write(state.Reading.KuramotoR)
+		measurement.Metrics["kuramoto_r"] = m.Write(reading.Reading.KuramotoR)
 	}
 
 	if m, ok := measurement.Metrics["gas_kinetic"]; ok {
-		measurement.Metrics["gas_kinetic"] = m.Write(state.Reading.Health.Gas.Kinetic)
+		measurement.Metrics["gas_kinetic"] = m.Write(reading.Reading.Health.Gas.Kinetic)
 	}
 
 	if m, ok := measurement.Metrics["gas_internal"]; ok {
-		measurement.Metrics["gas_internal"] = m.Write(state.Reading.Health.Gas.Internal)
+		measurement.Metrics["gas_internal"] = m.Write(reading.Reading.Health.Gas.Internal)
 	}
 
 	if m, ok := measurement.Metrics["wave_norm"]; ok {
-		measurement.Metrics["wave_norm"] = m.Write(state.Reading.Health.Wave.Norm)
+		measurement.Metrics["wave_norm"] = m.Write(reading.Reading.Health.Wave.Norm)
 	}
 
 	if m, ok := measurement.Metrics["vorticity_rms"]; ok {
-		measurement.Metrics["vorticity_rms"] = m.Write(state.Reading.Health.Gas.VorticityRMS)
+		measurement.Metrics["vorticity_rms"] = m.Write(reading.Reading.Health.Gas.VorticityRMS)
 	}
 
 	if m, ok := measurement.Metrics["strain_rms"]; ok {
-		measurement.Metrics["strain_rms"] = m.Write(state.Reading.Health.Gas.StrainRMS)
+		measurement.Metrics["strain_rms"] = m.Write(reading.Reading.Health.Gas.StrainRMS)
 	}
 
 	if m, ok := measurement.Metrics["max_mach"]; ok {
-		measurement.Metrics["max_mach"] = m.Write(state.Reading.Health.Gas.MaxMach)
+		measurement.Metrics["max_mach"] = m.Write(reading.Reading.Health.Gas.MaxMach)
 	}
 
-	if m, ok := measurement.Metrics["particle_count"]; ok {
-		measurement.Metrics["particle_count"] = m.Write(float64(state.State.N))
+	if m, ok := measurement.Metrics["particle_count"]; ok && reading.State != nil {
+		measurement.Metrics["particle_count"] = m.Write(float64(reading.State.N))
 	}
 
 	if m, ok := measurement.Metrics["particle_thermal"]; ok {
-		measurement.Metrics["particle_thermal"] = m.Write(state.Reading.Health.ParticleThermal)
+		measurement.Metrics["particle_thermal"] = m.Write(reading.Reading.Health.ParticleThermal)
 	}
 
 	if m, ok := measurement.Metrics["particle_kinetic"]; ok {
-		measurement.Metrics["particle_kinetic"] = m.Write(state.Reading.Health.ParticleKinetic)
+		measurement.Metrics["particle_kinetic"] = m.Write(reading.Reading.Health.ParticleKinetic)
 	}
 
 	return measurement

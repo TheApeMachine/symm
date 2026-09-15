@@ -50,50 +50,75 @@ func Route() string {
 }
 
 /*
-AllowsRoute reports whether a measurement from the given source should be
-transmitted over the dashboard WebSocket while on the current route.
+AllowsRoute reports whether a measurement should go on the dashboard websocket
+for the current page. Raw venue feeds stay off the wire. Focus still limits
+which symbol is published so the UI is not flooded.
 */
 func AllowsRoute(measurement *data.Measurement[float64]) bool {
+	if measurement == nil || measurement.Label == "" {
+		return false
+	}
+
 	switch Route() {
 	case "dashboard":
-		return isSignalAndFocus(measurement, SignalSourceStrings...) || isLogicAndFocus(measurement, "resonance")
+		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, "resonance")) &&
+			Allows(measurement.Label)
 	case "learning":
-		return isStrategyAndFocus(measurement, "training")
+		return isStrategy(measurement, "training") && Allows(measurement.Label)
 	case "fluid":
 		return isLogic(measurement, "manifold")
 	case "journal", "hindsight", "workbench", "pipeline":
 		return false
 	default:
-		return true
+		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, LogicSourceStrings...)) &&
+			Allows(measurement.Label)
 	}
 }
 
-func isSignalAndFocus(measurement *data.Measurement[float64], signals ...string) bool {
-	return isSignal(measurement, signals...) && measurement.Label == Focus()
-}
+/*
+RouteDropReason names why AllowsRoute rejected a measurement. Empty means it
+would be published. Used to prove where the live websocket goes silent.
+*/
+func RouteDropReason(measurement *data.Measurement[float64]) string {
+	if measurement == nil {
+		return "nil"
+	}
 
-func isLogicAndFocus(measurement *data.Measurement[float64], solverNames ...string) bool {
-	return isLogic(measurement, solverNames...) && measurement.Label == Focus()
-}
+	if measurement.Label == "" {
+		return "empty-label"
+	}
 
-func isStrategyAndFocus(measurement *data.Measurement[float64], strategies ...string) bool {
-	return isStrategy(measurement, strategies...) && measurement.Label == Focus()
+	if AllowsRoute(measurement) {
+		return ""
+	}
+
+	if Route() == "dashboard" && !isSignal(measurement, SignalSourceStrings...) && !isLogic(measurement, "resonance") {
+		return "source"
+	}
+
+	if !Allows(measurement.Label) {
+		return "focus"
+	}
+
+	return "route"
 }
 
 func isSignal(measurement *data.Measurement[float64], signals ...string) bool {
-	return slices.Contains(
-		signals, measurement.Source,
-	)
+	return slices.Contains(signals, kernelSource(measurement.Source))
 }
 
 func isLogic(measurement *data.Measurement[float64], solverNames ...string) bool {
-	return slices.Contains(
-		solverNames, measurement.Source,
-	)
+	return slices.Contains(solverNames, kernelSource(measurement.Source))
 }
 
 func isStrategy(measurement *data.Measurement[float64], strategies ...string) bool {
-	return slices.Contains(
-		strategies, measurement.Source,
-	)
+	return slices.Contains(strategies, kernelSource(measurement.Source))
+}
+
+func kernelSource(source string) string {
+	if index := strings.IndexByte(source, ':'); index >= 0 {
+		return source[:index]
+	}
+
+	return source
 }

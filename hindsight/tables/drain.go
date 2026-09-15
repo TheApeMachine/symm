@@ -57,7 +57,7 @@ func (catalog *Catalog) Drain(
 			select {
 			case <-ctx.Done():
 				for {
-					measurement := catalog.storeTee.Next()
+					measurement := *(**data.Measurement[float64])(catalog.storeTee.Next())
 
 					if measurement == nil {
 						break
@@ -90,7 +90,7 @@ func (catalog *Catalog) Drain(
 
 			case <-flushTicker.C:
 				for {
-					measurement := catalog.storeTee.Next()
+					measurement := *(**data.Measurement[float64])(catalog.storeTee.Next())
 
 					if measurement == nil {
 						break

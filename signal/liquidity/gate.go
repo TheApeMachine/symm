@@ -36,7 +36,11 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			bid, ask := m.Metrics["bid"].Raw, m.Metrics["ask"].Raw
 			bidQty, askQty := m.Metrics["bid_qty"].Raw, m.Metrics["ask_qty"].Raw
 
-			m.Metadata = map[string]string{data.MetadataSupport: "0"}
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string, 1)
+			}
+
+			m.Metadata[data.MetadataSupport] = "0"
 
 			if bid == 0 || ask == 0 {
 				m.Err = fmt.Errorf("%w: liquidity: ticker requires bid and ask", core.ErrDomain)

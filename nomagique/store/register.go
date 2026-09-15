@@ -1,11 +1,14 @@
 package store
 
 import (
+	"fmt"
 	"iter"
+	"slices"
+	"strconv"
 	"strings"
-	"sync"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -14,12 +17,12 @@ import (
 Register is a fixed-slot O(1) lookup table. Slots are assigned once, when a
 subject identifies itself: it is appended and answered its index. From then
 on reads and writes are direct slot access — a write replaces, never
-appends. All slots are synchronized via RWMutex, and reads of measurement
-slots yield isolated clones so concurrent consumers never race on map state.
+appends. A measurement read yields a working clone of the slot so the
+consumer mutates only that copy; peers are live pointers to other slots'
+published snapshots.
 */
 type Register[T any] struct {
 	*core.PrimitiveError
-	mu    sync.RWMutex
 	slots []T
 }
 
@@ -44,88 +47,94 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 		switch query.Action() {
 		case data.ActionIdentify:
-			op.mu.Lock()
-			op.slots = append(op.slots, query.payload...)
-			slotID := len(op.slots) - 1
-			query.Identify(slotID)
-
-			if slotID >= 0 {
-				if meas, ok := any(op.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
-					meas.ID = slotID
-				}
+			for ptr := range query.payload {
+				op.slots = append(op.slots, *(*T)(ptr))
 			}
 
-			slotVal := op.slots[query.Identity()]
-			op.mu.Unlock()
+			query.Identify(len(op.slots) - 1)
 
-			if !yield(unsafe.Pointer(&slotVal)) {
+			var (
+				measurement *data.Measurement[float64]
+				ok          bool
+			)
+
+			if measurement, ok = any(
+				op.slots[query.Identity()],
+			).(*data.Measurement[float64]); ok && measurement != nil {
+				measurement.Identify(query.Identity())
+			}
+
+			if !yield(unsafe.Pointer(&measurement)) {
 				return
 			}
 		case data.ActionWrite:
-			op.mu.Lock()
-
 			if query.Identity() < 0 || query.Identity() >= len(op.slots) {
-				op.mu.Unlock()
 				op.Error(core.ErrShape)
 				return
 			}
 
-			if len(query.payload) > 0 {
-				op.slots[query.Identity()] = query.payload[0]
+			if query.payload != nil {
+				op.slots[query.Identity()] = data.Read[T](query.payload)
 			}
 
-			slotVal := op.slots[query.Identity()]
-			op.mu.Unlock()
-
-			if !yield(unsafe.Pointer(&slotVal)) {
+			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
 				return
 			}
 		case data.ActionRead:
-			op.mu.RLock()
-
-			if query.Identity() < 0 {
-				slotsCopy := make([]T, len(op.slots))
-				copy(slotsCopy, op.slots)
-				op.mu.RUnlock()
-
-				for index := range slotsCopy {
-					if !yield(unsafe.Pointer(&slotsCopy[index])) {
-						return
-					}
-				}
-
-				return
-			}
-
 			if query.Identity() >= len(op.slots) {
-				op.mu.RUnlock()
 				op.Error(core.ErrShape)
 				return
 			}
 
-			limit := query.Identity()
+			slotVal := op.slots[query.Identity()]
 
-			if query.PeerLimit() >= 0 {
-				limit = query.PeerLimit()
-			}
+			if measurement, ok := any(slotVal).(*data.Measurement[float64]); ok && measurement != nil {
+				interest := measurement.Metadata["peer-interest"]
 
-			meas, ok := any(op.slots[query.Identity()]).(*data.Measurement[float64])
+				if interest != "" {
+					measurement.Peers = measurement.Peers[:0]
 
-			if ok && meas != nil {
-				out := any(meas.Clone()).(T)
-				outMeas := any(out).(*data.Measurement[float64])
-				op.populatePeers(outMeas, query.Identity(), limit)
-				op.mu.RUnlock()
+					// TODO: Move this into a AddPeer method on Measurement
+					//       to lift this out of the hot path.
+					interests := strings.Split(strings.ReplaceAll(
+						strings.ReplaceAll(interest, " ", ""), fmt.Sprintf(",%d,", query.Identity()), ",",
+					), ",")
 
-				if !yield(unsafe.Pointer(&out)) {
-					return
+					if slices.Contains(interests, "*") {
+						measurement.Peers = any(
+							slices.Clone(op.slots),
+						).([]*data.Measurement[float64])
+
+						// We have it all, bail!
+						if !yield(unsafe.Pointer(&slotVal)) {
+							return
+						}
+					}
+
+					for _, interest := range interests {
+						id, err := strconv.Atoi(interest)
+
+						if err != nil {
+							errnie.Error(errnie.Err(
+								errnie.Validation,
+								"[register] unable to convery peer interest to id",
+								err,
+							))
+
+							continue
+						}
+
+						measurement.Peers = append(
+							measurement.Peers,
+							any(op.slots[id]).(*data.Measurement[float64]),
+						)
+					}
 				}
 
-				return
+				if !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
 			}
-
-			slotVal := op.slots[query.Identity()]
-			op.mu.RUnlock()
 
 			if !yield(unsafe.Pointer(&slotVal)) {
 				return
@@ -135,53 +144,4 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			return
 		}
 	}
-}
-
-func (op *Register[T]) populatePeers(meas *data.Measurement[float64], slotIndex int, limit int) {
-	if meas == nil || meas.Metadata == nil {
-		return
-	}
-
-	interest, holds := meas.Metadata["peer-interest"]
-
-	if !holds || interest == "" {
-		return
-	}
-
-	meas.Peers = meas.Peers[:0]
-	interests := strings.Split(interest, ",")
-
-	for idx := range interests {
-		interests[idx] = strings.TrimSpace(interests[idx])
-	}
-
-	if limit > len(op.slots) {
-		limit = len(op.slots)
-	}
-
-	for idx := 0; idx < limit; idx++ {
-		if idx == slotIndex {
-			continue
-		}
-
-		peer, isMeas := any(op.slots[idx]).(*data.Measurement[float64])
-
-		if !isMeas || peer == nil {
-			continue
-		}
-
-		if matchPeer(peer, interests) {
-			meas.Peers = append(meas.Peers, peer.Clone())
-		}
-	}
-}
-
-func matchPeer(peer *data.Measurement[float64], interests []string) bool {
-	for _, interest := range interests {
-		if interest == "*" || interest == peer.Source || interest == peer.Label {
-			return true
-		}
-	}
-
-	return false
 }

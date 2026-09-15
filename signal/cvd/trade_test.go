@@ -13,7 +13,7 @@ import (
 schema is the register's declared metric set the workload's data management
 hands the signal: every producible metric, none valued.
 */
-var schema = new(Trade).Register().Metrics
+var _ = new(Trade).Register().Metrics
 
 /*
 row builds the measurement a trade row lifts into: the feed fills the price
@@ -22,7 +22,7 @@ and names the symbol and venue timestamp. Zero or negative price/quantity is
 an invalid execution.
 */
 func row(symbol, side string, price, qty float64, at time.Time) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
+	m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
 		"price": data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
 		"qty":   data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
 	})

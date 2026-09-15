@@ -201,7 +201,6 @@ export const RtcFeed = () => {
 				RECONNECT_MAX_MS,
 			);
 
-			setTransport("OFFLINE");
 			reconnectTimer = setTimeout(() => {
 				reconnectTimer = null;
 				reconnectAttempts += 1;
@@ -224,7 +223,6 @@ export const RtcFeed = () => {
 			}
 
 			destroy();
-			setTransport("CONNECTING");
 
 			const connection = new RTCPeerConnection();
 			peer = connection;
@@ -281,9 +279,10 @@ export const RtcFeed = () => {
 					return;
 				}
 
-				setTransport(
-					connection.connectionState === "connected" ? "ONLINE" : "CONNECTING",
-				);
+				if (connection.connectionState === "connected") {
+					setTransport("ONLINE");
+					reconnectAttempts = 0;
+				}
 
 				if (TERMINAL_CONNECTION_STATES.has(connection.connectionState)) {
 					fail();

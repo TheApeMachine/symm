@@ -47,16 +47,23 @@ type Training struct {
 	pipeline    *nomagique.Number
 	engine      *cognition.Engine
 	trader      *Trader
+	space       *grid.Space
 }
 
-func NewTraining(ctx context.Context, api *websocket.API) *Training {
+func NewTraining(ctx context.Context, api *websocket.API, space ...*grid.Space) *Training {
 	engine := cognition.NewEngine(cognition.Config{})
 	precursor := NewPrecursor()
 
+	gridSpace := grid.NewSpace()
+	if len(space) > 0 && space[0] != nil {
+		gridSpace = space[0]
+	}
+
 	training := &Training{
 		precursor: precursor,
+		space:     gridSpace,
 		pipeline: nomagique.NewNumber(
-			grid.NewSpace(),
+			gridSpace,
 			precursor,
 			engine,
 		),
@@ -67,6 +74,15 @@ func NewTraining(ctx context.Context, api *websocket.API) *Training {
 	training.Register()
 	training.System = runtime.NewSystem(ctx, "strategy", training)
 	return training
+}
+
+func (training *Training) Reset() {
+	training.mu.Lock()
+	defer training.mu.Unlock()
+	training.precursor.Reset()
+	if training.space != nil {
+		training.space.Reset()
+	}
 }
 
 /*
@@ -152,11 +168,14 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		return current
 	}
 
-	eval := data.Read[cognition.Evaluation](training.pipeline.Next(data.NewValue(measurement)))
+	wireIn := func(yield func(unsafe.Pointer) bool) {
+		yield(unsafe.Pointer(measurement))
+	}
+	eval := data.Read[cognition.Evaluation](training.pipeline.Next(wireIn))
 	action := Action(eval.WinnerClass)
 
-	// Step remains inert on market action until model is confident enough.
-	confident := eval.Confidence >= 0.70 && eval.Contrast > 0.50
+	// Step remains inert on market action until model has support, positive contrast, and low ambiguity.
+	confident := eval.Support > 0 && !eval.IsBreak && eval.Contrast > 0 && eval.Ambiguity < 1.0
 
 	if confident && (action == ActionEnter || action == ActionExit) {
 		training.trader.OnAction(current.Label, action)
@@ -166,7 +185,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	stepsMetric := current.Metrics["steps"]
 	stepsMetric = stepsMetric.Write(stepsMetric.Raw + 1)
 	current.Metrics["steps"] = stepsMetric
-	current.Metrics["support"] = current.Metrics["support"].Write(stepsMetric.Raw)
+	current.Metrics["support"] = current.Metrics["support"].Write(float64(eval.Support))
 	current.Metrics["decisions"] = current.Metrics["decisions"].Write(stepsMetric.Raw)
 
 	current.Metrics["confidence"] = current.Metrics["confidence"].Write(eval.Confidence)
@@ -208,13 +227,18 @@ func (training *Training) Learn(
 			if index < len(training.excursions) {
 				excursion = &training.excursions[index]
 				training.precursor.SetExcursion(excursion)
+				if training.space != nil {
+					training.space.Reset()
+				}
 			}
 
+			fragmentSteps := 0
 			for range training.pipeline.Next(fragment) {
 				totalSteps++
+				fragmentSteps++
 			}
 
-			if excursion != nil && excursion.Direction == "upward" && excursion.ClearsFriction {
+			if fragmentSteps > 0 && excursion != nil && excursion.Direction == "upward" && excursion.ClearsFriction {
 				totalWins++
 			}
 
@@ -233,7 +257,7 @@ func (training *Training) Learn(
 					held.Metrics["progress"] = held.Metrics["progress"].Write(float64(index+1) / float64(len(training.excursions)))
 				}
 
-				if index+1 > 0 {
+				if totalSteps > 0 && index+1 > 0 {
 					winRate := float64(totalWins) / float64(index+1)
 					held.Metrics["win_rate"] = held.Metrics["win_rate"].Write(winRate)
 					held.Metrics["edge"] = held.Metrics["edge"].Write((winRate - 0.5) * 100)
@@ -246,6 +270,9 @@ func (training *Training) Learn(
 		}
 
 		training.precursor.SetExcursion(nil)
+		if training.space != nil {
+			training.space.Reset()
+		}
 		training.excursions = nil
 	})
 }

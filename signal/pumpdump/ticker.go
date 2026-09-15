@@ -130,38 +130,46 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 		return m
 	}
 
-	input := m
+	source := m
 
 	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" {
+		peer := m.FindPeer(func(candidate *data.Measurement[float64]) bool {
+			if candidate.Label == "" {
 				return false
 			}
-			b := p.Metrics["best_bid"].Raw
-			if b == 0 {
-				b = p.Metrics["bid"].Raw
+
+			bid := candidate.Metrics["best_bid"].Raw
+
+			if bid == 0 {
+				bid = candidate.Metrics["bid"].Raw
 			}
-			a := p.Metrics["best_ask"].Raw
-			if a == 0 {
-				a = p.Metrics["ask"].Raw
+
+			ask := candidate.Metrics["best_ask"].Raw
+
+			if ask == 0 {
+				ask = candidate.Metrics["ask"].Raw
 			}
-			return b > 0 && a > 0
+
+			return bid > 0 && ask > 0
 		})
 
 		if peer == nil {
 			return m
 		}
 
-		input = peer.Clone()
+		source = peer
 	}
 
-	bid := input.Metrics["best_bid"].Raw
+	bid := source.Metrics["best_bid"].Raw
+
 	if bid == 0 {
-		bid = input.Metrics["bid"].Raw
+		bid = source.Metrics["bid"].Raw
 	}
-	ask := input.Metrics["best_ask"].Raw
+
+	ask := source.Metrics["best_ask"].Raw
+
 	if ask == 0 {
-		ask = input.Metrics["ask"].Raw
+		ask = source.Metrics["ask"].Raw
 	}
 
 	if bid <= 0 || ask <= 0 {
@@ -203,8 +211,8 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 		}
 	}
 
-	m.Label = input.Label
-	m.At = input.At
+	m.Label = source.Label
+	m.At = source.At
 	m.Finalize()
 	return m
 }

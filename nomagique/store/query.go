@@ -20,7 +20,7 @@ type Query[T any] struct {
 	data.Actionable
 	err       error
 	subject   data.Identifiable[T]
-	payload   []T
+	payload   iter.Seq[unsafe.Pointer]
 	peerLimit int
 }
 
@@ -30,13 +30,19 @@ query, so an unstamped subject asks for an append and a stamped one addresses
 its slot.
 */
 func NewQuery[T any](
-	subject data.Identifiable[T], action data.Actionable, payload ...T,
+	subject data.Identifiable[T], action data.Actionable, payload ...iter.Seq[unsafe.Pointer],
 ) *Query[T] {
+	var seq iter.Seq[unsafe.Pointer]
+
+	if len(payload) > 0 {
+		seq = payload[0]
+	}
+
 	return &Query[T]{
 		Identifiable: subject,
 		Actionable:   action,
 		subject:      subject,
-		payload:      payload,
+		payload:      seq,
 		peerLimit:    -1,
 	}
 }
@@ -70,7 +76,7 @@ func (op *Query[T]) Identify(id int) data.Identifiable[T] {
 }
 
 func (op *Query[T]) First() T {
-	return op.payload[0]
+	return data.Read[T](op.payload)
 }
 
 func (op *Query[T]) PeerLimit() int {
@@ -81,7 +87,6 @@ func (op *Query[T]) SetPeerLimit(limit int) *Query[T] {
 	op.peerLimit = limit
 	return op
 }
-
 
 func (op *Query[T]) Error(errs ...error) error {
 	for _, err := range errs {

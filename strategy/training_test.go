@@ -10,32 +10,65 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 )
 
+func newTestFormedSpace(symbol string) *grid.Space {
+	gridSpace := grid.NewSpace(4)
+	for i := 1; i <= 8; i++ {
+		sign := 1.0
+		if i%2 == 0 {
+			sign = -1.0
+		}
+
+		m := data.NewMeasurement("spot", map[string]data.Metric[float64]{
+			"price":  {Label: "price", Raw: 100.0 + float64(i)*sign},
+			"volume": {Label: "volume", Raw: 10.0 - float64(i)*sign},
+		})
+		m.Label = symbol
+		m.SeqIdx = int64(i)
+		m.At = time.Now()
+
+		in := func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(m))
+		}
+
+		for range gridSpace.Next(in) {
+		}
+	}
+
+	return gridSpace
+}
+
 func TestTraining_Learn(t *testing.T) {
-	Convey("Given a Training instance with a cognitive radix trie", t, func() {
+	Convey("Given a Training instance with a formed cognitive pipeline", t, func() {
 		ctx := context.Background()
-		training := NewTraining(ctx, nil)
 
 		Convey("When replaying a profitable upward excursion", func() {
+			gridSpace := newTestFormedSpace("BTC/USD")
+			So(gridSpace.Formed(), ShouldBeTrue)
+
+			training := NewTraining(ctx, nil, gridSpace)
+
 			excursion := tables.ExcursionRecord{
 				ID:                 "exc-1",
 				Symbol:             "BTC/USD",
 				Direction:          "upward",
 				ClearsFriction:     true,
-				PrecursorStartTick: 1,
-				AnchorTick:         5,
-				ExtremumTick:       8,
-				ExitTick:           10,
-				PostEndTick:        12,
+				PrecursorStartTick: 9,
+				AnchorTick:         14,
+				ExtremumTick:       17,
+				ExitTick:           19,
+				PostEndTick:        20,
 			}
 
-			ticks := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+			ticks := []int64{9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
 			measurements := make([]*data.Measurement[float64], len(ticks))
 
 			for idx, tick := range ticks {
 				measurement := data.NewMeasurement("spot", map[string]data.Metric[float64]{
-					"price": {Label: "price", Raw: 100.0 + float64(tick)},
+					"price":  {Label: "price", Raw: 100.0 + float64(tick)},
+					"volume": {Label: "volume", Raw: 20.0 + float64(tick%3)},
 				})
 				measurement.Label = "BTC/USD"
 				measurement.SeqIdx = tick
@@ -57,31 +90,60 @@ func TestTraining_Learn(t *testing.T) {
 			training.Learn([]tables.ExcursionRecord{excursion}, fragments)
 			training.wg.Wait()
 
-			Convey("The cognitive engine should have learned associations in the radix trie", func() {
+			Convey("The cognitive engine should have learned actual associations in the radix trie", func() {
+				So(training.engine.Len(), ShouldBeGreaterThan, 0)
+
+				census := training.engine.Census()
+				So(census[string(ActionEnter)], ShouldBeGreaterThan, 0)
+				So(census[string(ActionExit)], ShouldBeGreaterThan, 0)
+
 				export := training.engine.ExportTree(nil, 10)
-				So(len(export.Branches), ShouldBeGreaterThan, 0)
+				So(len(export.Branches), ShouldBeGreaterThan, 1)
+
+				held := training.Register()
+				So(held.Metrics["steps"].Raw, ShouldBeGreaterThan, 0)
+				So(held.Metrics["win_rate"].Raw, ShouldEqual, 1.0)
+			})
+
+			Convey("Subsequent live Step queries on precursor patterns should evaluate with confidence", func() {
+				// Step through precursor frames up to the anchor tick
+				var stepOutput *data.Measurement[float64]
+				for _, m := range measurements[:6] { // ticks 9 to 14 (AnchorTick)
+					stepOutput = training.Step(m)
+				}
+
+				So(stepOutput, ShouldNotBeNil)
+				So(stepOutput.Metrics["action"].Raw, ShouldEqual, 1.0) // ActionEnter
+				So(stepOutput.Metrics["support"].Raw, ShouldBeGreaterThan, 0.0)
+				So(stepOutput.Metrics["confidence"].Raw, ShouldBeGreaterThan, 0.0)
 			})
 		})
 
 		Convey("When replaying a downward excursion that does not clear friction", func() {
+			gridSpace := newTestFormedSpace("ETH/USD")
+			So(gridSpace.Formed(), ShouldBeTrue)
+
+			training := NewTraining(ctx, nil, gridSpace)
+
 			excursion := tables.ExcursionRecord{
 				ID:                 "exc-2",
 				Symbol:             "ETH/USD",
 				Direction:          "downward",
 				ClearsFriction:     false,
-				PrecursorStartTick: 1,
-				AnchorTick:         5,
-				ExtremumTick:       8,
-				ExitTick:           10,
-				PostEndTick:        12,
+				PrecursorStartTick: 9,
+				AnchorTick:         14,
+				ExtremumTick:       17,
+				ExitTick:           19,
+				PostEndTick:        20,
 			}
 
-			ticks := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+			ticks := []int64{9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
 			measurements := make([]*data.Measurement[float64], len(ticks))
 
 			for idx, tick := range ticks {
 				measurement := data.NewMeasurement("spot", map[string]data.Metric[float64]{
-					"price": {Label: "price", Raw: 50.0 - float64(tick)},
+					"price":  {Label: "price", Raw: 50.0 - float64(tick)},
+					"volume": {Label: "volume", Raw: 15.0 - float64(tick%3)},
 				})
 				measurement.Label = "ETH/USD"
 				measurement.SeqIdx = tick
@@ -104,8 +166,24 @@ func TestTraining_Learn(t *testing.T) {
 			training.wg.Wait()
 
 			Convey("The cognitive engine should have learned the wait action", func() {
+				So(training.engine.Len(), ShouldBeGreaterThan, 0)
+
+				census := training.engine.Census()
+				So(census[string(ActionWait)], ShouldBeGreaterThan, 0)
+
 				export := training.engine.ExportTree(nil, 10)
-				So(len(export.Branches), ShouldBeGreaterThan, 0)
+				So(len(export.Branches), ShouldBeGreaterThan, 1)
+			})
+
+			Convey("Live Step queries on downward patterns should evaluate to ActionWait", func() {
+				var stepOutput *data.Measurement[float64]
+				for _, m := range measurements[:6] {
+					stepOutput = training.Step(m)
+				}
+
+				So(stepOutput, ShouldNotBeNil)
+				So(stepOutput.Metrics["action"].Raw, ShouldEqual, 0.0) // ActionWait
+				So(stepOutput.Metrics["support"].Raw, ShouldBeGreaterThan, 0.0)
 			})
 		})
 	})
@@ -146,7 +224,9 @@ func TestTraining_RegisterAndStep(t *testing.T) {
 			So(output, ShouldNotBeNil)
 			So(output.Source, ShouldEqual, "training")
 			So(output.Metrics["confidence"].Raw, ShouldEqual, 0)
+			So(output.Metrics["action"].Raw, ShouldEqual, 0)
 		})
 	})
 }
+
 

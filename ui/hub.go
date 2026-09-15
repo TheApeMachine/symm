@@ -55,7 +55,7 @@ handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
 	*runtime.System
-	uiTee            runtime.Tee[[]byte]
+	uiTee            runtime.Tee
 	physics          sensorium.PhysicsMonitor
 	app              *fiber.App
 	listenAddr       string
@@ -76,7 +76,7 @@ registers it on the workspace so live frames reach it through Step.
 */
 func NewHub(
 	ctx context.Context,
-	uiTee runtime.Tee[[]byte],
+	uiTee runtime.Tee,
 ) *Hub {
 	viper.SetDefault("ui.websocket.learning_interval", "250ms")
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
@@ -365,7 +365,7 @@ func NewHub(
 				continue
 			}
 
-			payload := hub.uiTee.Next()
+			payload := *(*[]byte)(hub.uiTee.Next())
 
 			if len(payload) == 0 {
 				time.Sleep(100 * time.Microsecond)
