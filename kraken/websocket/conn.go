@@ -98,6 +98,7 @@ func NewAPI(
 		return api
 	}
 
+	// Construction must preserve the transports' connected, pre-ingress states.
 	api.Transition(runtime.WAITING)
 
 	client := private.Client()
@@ -130,22 +131,6 @@ func (api *API) Normalizer() *spot.Normalizer {
 	return api.normalizer
 }
 
-func (api *API) Transition(stage runtime.Stage) {
-	api.System.Transition(stage)
-
-	if api.public != nil {
-		api.public.Transition(stage)
-	}
-
-	if api.futures != nil && api.futures.System != nil {
-		api.futures.Transition(stage)
-	}
-
-	if api.private != nil {
-		api.private.Transition(stage)
-	}
-}
-
 func (api *API) Private() Conn                             { return api.private }
 func (api *API) Books() *sync.Map                          { return api.private.Books() }
 func (api *API) Book(symbol string, read func(*book.Book)) { api.private.Book(symbol, read) }
@@ -156,6 +141,7 @@ func (api *API) SubTrades(symbols []string)                { api.public.SubTrade
 func (api *API) UnsubTicker(symbols []string)              { api.public.UnsubTicker(symbols) }
 func (api *API) UnsubTrades(symbols []string)              { api.public.UnsubTrades(symbols) }
 func (api *API) UnsubL3(symbols []string)                  { api.private.UnsubL3(symbols) }
+
 func (api *API) Balance() (*kraken.Balance, error) {
 	balance, err := api.private.Balance()
 
@@ -171,6 +157,7 @@ func (api *API) Balance() (*kraken.Balance, error) {
 
 	return kraken.NewBalanceFromMap(assets), nil
 }
+
 func (api *API) TradesHistory() (spot.TradesHistoryResult, error)  { return api.private.TradesHistory() }
 func (api *API) TradeBalance() (*kraken.TradeBalanceResult, error) { return api.private.TradeBalance() }
 
