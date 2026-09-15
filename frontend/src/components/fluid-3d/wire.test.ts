@@ -2,8 +2,10 @@ import * as flatbuffers from "flatbuffers";
 import { describe, expect, it } from "vitest";
 import { Message } from "#/providers/telemetry/telemetry/message";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
+import { IntegratorHealthT } from "#/providers/telemetry/telemetry/integrator-health";
 import { ManifoldFrameT } from "#/providers/telemetry/telemetry/manifold-frame";
 import { ManifoldReadingT } from "#/providers/telemetry/telemetry/manifold-reading";
+import { PhysicsHealthT } from "#/providers/telemetry/telemetry/physics-health";
 import { WaveModeT } from "#/providers/telemetry/telemetry/wave-mode";
 import { decodeManifold } from "./wire";
 
@@ -22,8 +24,30 @@ const encode = (frame: ManifoldFrameT): Uint8Array => {
 
 describe("decodeManifold", () => {
 	it("decodes one particle's fields, grid, and wave modes from a real ManifoldFrame", () => {
+		const health = new PhysicsHealthT(
+			new IntegratorHealthT(
+				0.01,
+				0.01,
+				0.01,
+				0.01,
+				0.01,
+				0.001,
+				1.234,
+				0.02,
+				0.02,
+				0.02,
+				0.02,
+				0.02,
+				0.01,
+				4,
+				0,
+			),
+		);
+
 		const frame = new ManifoldFrameT(
 			BigInt(7),
+			BigInt(1000),
+			BigInt(1),
 			BigInt(1),
 			[10n],
 			[11n],
@@ -39,7 +63,7 @@ describe("decodeManifold", () => {
 			[1, 2, 3],
 			[false],
 			[false],
-			new ManifoldReadingT(1.5, 2.5, 3.5, 4.5, 5.5, 0.75),
+			new ManifoldReadingT(1.5, 2.5, 3.5, 4.5, 5.5, 0.75, health),
 			2,
 			2,
 			2,
@@ -84,14 +108,16 @@ describe("decodeManifold", () => {
 			Amplitude: 9,
 		});
 
-		expect(decoded.phase.reading).toEqual({
-			divergence: 1.5,
-			guidanceSpeed: 2.5,
-			coherenceMag2: 3.5,
-			pressureGradNorm: 4.5,
-			viscosityProxy: 5.5,
-			kuramotoR: 0.75,
-		});
+		expect(decoded.phase.reading.divergence).toBe(1.5);
+		expect(decoded.phase.reading.guidanceSpeed).toBe(2.5);
+		expect(decoded.phase.reading.coherenceMag2).toBe(3.5);
+		expect(decoded.phase.reading.pressureGradNorm).toBe(4.5);
+		expect(decoded.phase.reading.viscosityProxy).toBe(5.5);
+		expect(decoded.phase.reading.kuramotoR).toBe(0.75);
+		expect(decoded.phase.reading.version).toBe(1n);
+		expect(decoded.phase.reading.at).toBe(1000n);
+		expect(decoded.phase.reading.health?.integrator?.substeps).toBe(4);
+		expect(decoded.phase.reading.health?.integrator?.time).toBeCloseTo(1.234, 3);
 		expect(decoded.phase.oscillators).toHaveLength(1);
 		expect(decoded.phase.oscillators[0]).toEqual({
 			phase: expect.closeTo(0.1, 5),

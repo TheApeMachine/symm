@@ -16,7 +16,7 @@ type WaveMode struct {
 type ManifoldState struct {
 	At            time.Time
 	Version       uint64
-	State         sensorium.State
+	State         *sensorium.State
 	Reading       sensorium.Reading
 	GridX         int
 	GridY         int

@@ -640,6 +640,85 @@ table ErrorFrame {
   time:string;
 }
 
+table IntegratorHealth {
+  contactDt:double;
+  requestedDt:double;
+  targetDt:double;
+  acceptedDt:double;
+  lastDt:double;
+  minDt:double;
+  time:double;
+  hyperbolicDt:double;
+  viscousDt:double;
+  thermalDt:double;
+  particleDt:double;
+  phaseDt:double;
+  combinedDt:double;
+  substeps:int;
+  rejections:int;
+}
+
+table GasHealth {
+  mass:double;
+  internal:double;
+  kinetic:double;
+  total:double;
+  momentum:[double];
+  minDensity:double;
+  minPressure:double;
+  minTemperature:double;
+  maxSpeed:double;
+  maxSound:double;
+  maxMach:double;
+  vorticityRms:double;
+  vorticityMax:double;
+  strainRms:double;
+  strainMax:double;
+  viscousPower:double;
+}
+
+table WaveHealth {
+  norm:double;
+  kinetic:double;
+  potential:double;
+  nonlinear:double;
+  chemical:double;
+  projectedNorm:double;
+  phasePotential:double;
+}
+
+table PilotHealth {
+  densityP01:double;
+  densityP10:double;
+  densityMedian:double;
+  integrationErrorMax:double;
+  speedRms:double;
+  speedMax:double;
+  displacementRms:double;
+  displacementMax:double;
+  minDensity:double;
+}
+
+table SourceLedger {
+  gasEnergyResidual:double;
+  conservativeWaveError:double;
+  picDepositEnergyResidual:double;
+  particleBalanceResidual:double;
+  gravityBalanceResidual:double;
+}
+
+table PhysicsHealth {
+  integrator:IntegratorHealth;
+  gas:GasHealth;
+  wave:WaveHealth;
+  pilot:PilotHealth;
+  sources:SourceLedger;
+  particleThermal:double;
+  particleOscillator:double;
+  particleKinetic:double;
+  particleMaterialTotal:double;
+}
+
 table ManifoldReading {
   divergence:double;
   guidanceSpeed:double;
@@ -647,6 +726,7 @@ table ManifoldReading {
   pressureGradNorm:double;
   viscosityProxy:double;
   kuramotoR:double;
+  health:PhysicsHealth;
 }
 
 /*
@@ -657,6 +737,8 @@ nothing upstream of that boundary encodes or shapes this data.
 */
 table ManifoldFrame {
   sequence:ulong;
+  at:long;
+  version:ulong;
   n:long;
   bytes:[long] (required);
   seqs:[long] (required);

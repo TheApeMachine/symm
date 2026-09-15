@@ -2,8 +2,6 @@ package ui
 
 import (
 	"context"
-	"slices"
-	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -65,11 +63,11 @@ func (tee *UITee) Next() []byte {
 	for len(batch) < batchCapacity {
 		measurement, ok := tee.ring.Get()
 
-		if !ok {
-			break
+		if !ok || measurement == nil {
+			continue
 		}
 
-		if measurement != nil && !IsRawMarketData(measurement) && isWireAllowed(measurement) {
+		if types.AllowsRoute(measurement) {
 			batch = append(batch, measurement)
 		}
 	}
@@ -95,58 +93,4 @@ func (tee *UITee) Next() []byte {
 	}
 
 	return payload
-}
-
-/*
-IsRawMarketData reports whether a measurement carries raw spot or futures market data
-that should not be broadcast over the dashboard websocket.
-*/
-func IsRawMarketData(measurement *data.Measurement[float64]) bool {
-	if measurement == nil {
-		return true
-	}
-
-	source := strings.ToLower(measurement.Source)
-
-	if source == "websocket" || source == "public" || source == "private" || source == "spot" || source == "futures" {
-		return true
-	}
-
-	if slices.Contains(types.SignalSourceStrings, source) || slices.Contains(types.LogicSourceStrings, source) ||
-		strings.HasPrefix(source, "pumpdump") || strings.HasPrefix(source, "toxicity") ||
-		strings.HasPrefix(source, "depthflow") || strings.HasPrefix(source, "morphology") ||
-		strings.HasPrefix(source, "derivatives") || strings.HasPrefix(source, "cognition") ||
-		strings.HasPrefix(source, "training") {
-		return false
-	}
-
-	if measurement.Provenance != nil {
-		channel := strings.ToLower(measurement.Provenance["channel"])
-
-		if channel == "ticker" || channel == "trade" || channel == "level3" || channel == "book" ||
-			strings.HasPrefix(channel, "futures.") {
-			return true
-		}
-	}
-
-	return false
-}
-
-/*
-IsAllowedTelemetry reports whether a measurement is permitted for dashboard telemetry broadcast.
-*/
-func IsAllowedTelemetry(measurement *data.Measurement[float64]) bool {
-	return !IsRawMarketData(measurement)
-}
-
-func isWireAllowed(measurement *data.Measurement[float64]) bool {
-	if measurement == nil || IsRawMarketData(measurement) {
-		return false
-	}
-
-	if strings.HasPrefix(strings.ToLower(measurement.Source), "training") {
-		return true
-	}
-
-	return types.Allows(measurement.Label)
 }

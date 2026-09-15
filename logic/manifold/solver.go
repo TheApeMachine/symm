@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
@@ -149,7 +150,6 @@ func NewSolver(ctx context.Context, api *websocket.API) *Solver {
 	solver.System = runtime.NewSystem(ctx, "manifold", solver.physics)
 	solver.Transition(runtime.READY)
 
-
 	return solver
 }
 
@@ -273,6 +273,12 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	if measurement == nil {
+		solver.Error(errnie.Err(
+			errnie.NotFound,
+			"[manifold] Step must be invoked with a non-nil Measurement",
+			nil,
+		))
+
 		return nil
 	}
 
@@ -280,7 +286,6 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	if measurement.Source == "hawkes" {
 		solver.recordForcing(symbol, measurement)
-
 		return measurement
 	}
 
@@ -305,76 +310,66 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	default:
 	}
 
-	var r sensorium.Reading
-	var particleCount float64
-	if state := solver.reading.Load(); state != nil {
-		r = state.Reading
-		particleCount = float64(state.State.N)
-	} else if solver.physics != nil {
-		r = solver.physics.Reading()
-		if s := solver.physics.State(); s != nil {
-			particleCount = float64(s.N)
-		}
-	}
+	state := solver.Snapshot()
 
 	if m, ok := measurement.Metrics["divergence"]; ok {
-		measurement.Metrics["divergence"] = m.Write(r.Divergence)
+		measurement.Metrics["divergence"] = m.Write(state.Reading.Divergence)
 	}
 
 	if m, ok := measurement.Metrics["guidance_speed"]; ok {
-		measurement.Metrics["guidance_speed"] = m.Write(r.GuidanceSpeed)
+		measurement.Metrics["guidance_speed"] = m.Write(state.Reading.GuidanceSpeed)
 	}
 
 	if m, ok := measurement.Metrics["coherence_mag2"]; ok {
-		measurement.Metrics["coherence_mag2"] = m.Write(r.CoherenceMag2)
+		measurement.Metrics["coherence_mag2"] = m.Write(state.Reading.CoherenceMag2)
 	}
 
 	if m, ok := measurement.Metrics["pressure_grad_norm"]; ok {
-		measurement.Metrics["pressure_grad_norm"] = m.Write(r.PressureGradNorm)
+		measurement.Metrics["pressure_grad_norm"] = m.Write(state.Reading.PressureGradNorm)
 	}
 
 	if m, ok := measurement.Metrics["viscosity_proxy"]; ok {
-		measurement.Metrics["viscosity_proxy"] = m.Write(r.ViscosityProxy)
+		measurement.Metrics["viscosity_proxy"] = m.Write(state.Reading.ViscosityProxy)
 	}
 
 	if m, ok := measurement.Metrics["kuramoto_r"]; ok {
-		measurement.Metrics["kuramoto_r"] = m.Write(r.KuramotoR)
+		measurement.Metrics["kuramoto_r"] = m.Write(state.Reading.KuramotoR)
 	}
 
 	if m, ok := measurement.Metrics["gas_kinetic"]; ok {
-		measurement.Metrics["gas_kinetic"] = m.Write(r.Health.Gas.Kinetic)
+		measurement.Metrics["gas_kinetic"] = m.Write(state.Reading.Health.Gas.Kinetic)
 	}
 
 	if m, ok := measurement.Metrics["gas_internal"]; ok {
-		measurement.Metrics["gas_internal"] = m.Write(r.Health.Gas.Internal)
+		measurement.Metrics["gas_internal"] = m.Write(state.Reading.Health.Gas.Internal)
 	}
 
 	if m, ok := measurement.Metrics["wave_norm"]; ok {
-		measurement.Metrics["wave_norm"] = m.Write(r.Health.Wave.Norm)
+		measurement.Metrics["wave_norm"] = m.Write(state.Reading.Health.Wave.Norm)
 	}
 
 	if m, ok := measurement.Metrics["vorticity_rms"]; ok {
-		measurement.Metrics["vorticity_rms"] = m.Write(r.Health.Gas.VorticityRMS)
+		measurement.Metrics["vorticity_rms"] = m.Write(state.Reading.Health.Gas.VorticityRMS)
 	}
 
 	if m, ok := measurement.Metrics["strain_rms"]; ok {
-		measurement.Metrics["strain_rms"] = m.Write(r.Health.Gas.StrainRMS)
+		measurement.Metrics["strain_rms"] = m.Write(state.Reading.Health.Gas.StrainRMS)
 	}
 
 	if m, ok := measurement.Metrics["max_mach"]; ok {
-		measurement.Metrics["max_mach"] = m.Write(r.Health.Gas.MaxMach)
+		measurement.Metrics["max_mach"] = m.Write(state.Reading.Health.Gas.MaxMach)
 	}
 
 	if m, ok := measurement.Metrics["particle_count"]; ok {
-		measurement.Metrics["particle_count"] = m.Write(particleCount)
+		measurement.Metrics["particle_count"] = m.Write(float64(state.State.N))
 	}
 
 	if m, ok := measurement.Metrics["particle_thermal"]; ok {
-		measurement.Metrics["particle_thermal"] = m.Write(r.Health.ParticleThermal)
+		measurement.Metrics["particle_thermal"] = m.Write(state.Reading.Health.ParticleThermal)
 	}
 
 	if m, ok := measurement.Metrics["particle_kinetic"]; ok {
-		measurement.Metrics["particle_kinetic"] = m.Write(r.Health.ParticleKinetic)
+		measurement.Metrics["particle_kinetic"] = m.Write(state.Reading.Health.ParticleKinetic)
 	}
 
 	return measurement
@@ -520,13 +515,8 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 
 	seen := make(map[int64]struct{}, len(solver.loaded))
 	states := make([]*sensorium.State, 0, len(solver.loaded))
-	symbols := solver.api.Books()
 
-	if symbols == nil {
-		return nil, nil
-	}
-
-	symbols.Range(func(key, value any) bool {
+	solver.api.Books().Range(func(key, value any) bool {
 		symbol, ok := key.(string)
 
 		if !ok || symbol == "" {
@@ -643,103 +633,78 @@ domain and steps the field exactly once, however many Level3 messages that
 covers. It is the run loop's body, exported so a test can drive the advance
 deterministically instead of waiting on the goroutine.
 */
-func (solver *Solver) Advance() *State {
-	if solver.physics == nil {
-		return nil
-	}
-
+func (solver *Solver) Advance() {
 	departures, batch := solver.project()
+
 	if err := solver.dataset.Error(); err != nil {
 		solver.Error(err)
-		return nil
-	}
-
-	if len(departures) == 0 && batch == nil {
-		if solver.viewer != nil && solver.viewer.WantsManifold() {
-			solver.publish()
-		}
-
-		return nil
+		return
 	}
 
 	solver.advanceMu.Lock()
 
-	started := time.Now()
-	remaining, err := solver.physics.Remove(departures)
+	_, err := solver.physics.Remove(departures)
 
 	if err != nil {
 		solver.advanceMu.Unlock()
 		solver.Error(err)
 
-		return nil
+		return
 	}
 
-	if batch == nil && remaining == 0 {
+	if len(solver.loaded) == 0 && batch == nil {
 		solver.advanceMu.Unlock()
-
-		if solver.viewer != nil && solver.viewer.WantsManifold() {
-			solver.publish()
-		}
-
-		return nil
+		solver.publish()
+		return
 	}
 
 	state, err := solver.physics.Step(batch)
 
 	if err != nil {
 		solver.advanceMu.Unlock()
-		return nil
+		solver.Error(err)
+
+		return
 	}
 
-	if state == nil {
-		solver.advanceMu.Unlock()
-		return nil
+	if state != nil {
+		solver.publishReading(state)
 	}
 
-	reading := solver.publishReading(state)
 	solver.advanceMu.Unlock()
 
-	if solver.monitor != nil && solver.monitor.WantsSnapshot() {
-		pop := 0
-		if state != nil {
-			pop = state.N
-		}
-		snap, err := sensorium.NewPhysicsSnapshot(solver.version, time.Now(), pop, reading.Reading)
-		if err != nil {
-			solver.monitor.Reject(err)
-		} else if err := solver.monitor.Observe(snap); err != nil {
-			solver.monitor.Reject(err)
-		}
-	}
-
-	if solver.ObserveModule != nil {
-		solver.ObserveModule("manifold", time.Since(started))
-	}
-
 	solver.publish()
-
-	return reading
 }
 
-/*
-publishReading freezes one completed advance for downstream consumers. The
-caller holds advanceMu; publication never includes the Eulerian grid arrays.
-*/
+func (solver *Solver) publish() {
+	if solver.viewer != nil && solver.viewer.WantsManifold() {
+		snapshot := solver.Snapshot()
+		if snapshot != nil {
+			solver.viewer.PublishManifold(snapshot)
+		}
+	}
+}
+
 func (solver *Solver) publishReading(state *sensorium.State) *State {
 	modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
 	modes := make([]WaveMode, len(modeOmega))
 
 	for index := range modeOmega {
 		modes[index] = WaveMode{
-			Omega: modeOmega[index], Real: modeReal[index],
-			Imag: modeImag[index], Linewidth: modeLinewidth[index],
+			Omega:     modeOmega[index],
+			Real:      modeReal[index],
+			Imag:      modeImag[index],
+			Linewidth: modeLinewidth[index],
 		}
 	}
 
 	solver.version++
 	reading := State{
-		At: time.Now(), Version: solver.version,
-		State: cloneState(state), Reading: solver.physics.Reading(), Modes: modes,
+		At:      time.Now(),
+		Version: solver.version,
+		State:   state,
+		Reading: solver.physics.Reading(),
+		Modes:   modes,
 	}
 	solver.reading.Store(&reading)
 
@@ -752,27 +717,6 @@ latest advance. Eulerian grid fields remain exclusive to Snapshot.
 */
 func (solver *Solver) Reading() *State {
 	return solver.reading.Load()
-}
-
-
-/*
-publish materializes the resident particles and fields into an envelope of their
-own and hands it to the viewer. The snapshot is only taken when a viewer is
-attached and its transport is ready for another frame, so a run nobody is
-watching — and a viewer still draining the previous frame — costs nothing.
-*/
-func (solver *Solver) publish() {
-	if solver.viewer == nil || !solver.viewer.WantsManifold() {
-		return
-	}
-
-	snapshot := solver.Snapshot()
-
-	if snapshot == nil {
-		return
-	}
-
-	solver.viewer.PublishManifold(snapshot)
 }
 
 /*
@@ -788,11 +732,7 @@ func (solver *Solver) Crystallize(
 	forcing forcingState,
 	candidateLevels []float64,
 	relaxationSteps int,
-) ([]float64, *State) {
-	if solver == nil || solver.physics == nil || solver.api == nil {
-		return nil, nil
-	}
-
+) []float64 {
 	states := make([]*sensorium.State, 0)
 
 	solver.api.Book(symbol, func(spotbook *book.Book) {
@@ -816,12 +756,12 @@ func (solver *Solver) Crystallize(
 		for _, state := range states {
 			sensorium.StatePool.Put(state)
 		}
-		return nil, nil
+		return nil
 	}
 	batch := collectStates(states)
 
 	if batch == nil || batch.N == 0 {
-		return nil, nil
+		return nil
 	}
 
 	solver.advanceMu.Lock()
@@ -833,7 +773,7 @@ func (solver *Solver) Crystallize(
 		}
 
 		if err := solver.injectProbeParticle(batch, price, symbol); err != nil {
-			return nil, nil
+			return nil
 		}
 	}
 
@@ -843,28 +783,18 @@ func (solver *Solver) Crystallize(
 
 	clampedSnapshot := snapshotClamped(batch)
 
-	var (
-		state *sensorium.State
-		err   error
-	)
-
+	var err error
 	for step := 0; step < relaxationSteps; step++ {
-		state, err = solver.physics.Step(batch)
+		_, err = solver.physics.Step(batch)
 
 		if err != nil {
-			return nil, nil
+			return nil
 		}
 
 		solver.enforceBoundaryConditions(batch, clampedSnapshot)
 	}
 
-	var reading *State
-
-	if state != nil && state.N != 0 {
-		reading = solver.publishReading(state)
-	}
-
-	return solver.extractCrystallizedProbes(batch), reading
+	return solver.extractCrystallizedProbes(batch)
 }
 
 /*
@@ -1045,12 +975,6 @@ func (solver *Solver) Snapshot() *State {
 	state := solver.physics.State()
 	reading := solver.Reading()
 
-	var stateVal sensorium.State
-
-	if state != nil && state.N > 0 {
-		stateVal = cloneState(state)
-	}
-
 	var readingVal sensorium.Reading
 	var modes []WaveMode
 	var at time.Time
@@ -1093,9 +1017,8 @@ func (solver *Solver) Snapshot() *State {
 	)
 
 	return &State{
-		State:         stateVal,
-		Reading:       readingVal,
 		At:            at,
+		Reading:       readingVal,
 		Version:       version,
 		GridX:         gridX,
 		GridY:         gridY,
@@ -1110,26 +1033,6 @@ func (solver *Solver) Snapshot() *State {
 		EnergyScale:   energyScale,
 		WaveScale:     waveScale,
 		Modes:         modes,
-	}
-}
-
-func cloneState(state *sensorium.State) sensorium.State {
-	n := state.N
-	return sensorium.State{
-		N:          n,
-		Bytes:      append([]int64(nil), state.Bytes[:n]...),
-		Seqs:       append([]int64(nil), state.Seqs[:n]...),
-		TokenIDs:   append([]int64(nil), state.TokenIDs[:n]...),
-		ContentIDs: append([]int64(nil), state.ContentIDs[:n]...),
-		Phase:      append([]float32(nil), state.Phase[:n]...),
-		Omega:      append([]float32(nil), state.Omega[:n]...),
-		Energy:     append([]float32(nil), state.Energy[:n]...),
-		Mass:       append([]float32(nil), state.Mass[:n]...),
-		Heat:       append([]float32(nil), state.Heat[:n]...),
-		Amp:        append([]float32(nil), state.Amp[:n]...),
-		Pos:        append([]float32(nil), state.Pos[:n*3]...),
-		Vel:        append([]float32(nil), state.Vel[:n*3]...),
-		Clamped:    append([]bool(nil), state.Clamped[:n]...),
-		Dark:       append([]bool(nil), state.Dark[:n]...),
+		State:         state,
 	}
 }

@@ -13,12 +13,14 @@ type ManifoldReadingT struct {
 	PressureGradNorm float64 `json:"pressureGradNorm"`
 	ViscosityProxy float64 `json:"viscosityProxy"`
 	KuramotoR float64 `json:"kuramotoR"`
+	Health *PhysicsHealthT `json:"health"`
 }
 
 func (t *ManifoldReadingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
+	healthOffset := t.Health.Pack(builder)
 	ManifoldReadingStart(builder)
 	ManifoldReadingAddDivergence(builder, t.Divergence)
 	ManifoldReadingAddGuidanceSpeed(builder, t.GuidanceSpeed)
@@ -26,6 +28,7 @@ func (t *ManifoldReadingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffse
 	ManifoldReadingAddPressureGradNorm(builder, t.PressureGradNorm)
 	ManifoldReadingAddViscosityProxy(builder, t.ViscosityProxy)
 	ManifoldReadingAddKuramotoR(builder, t.KuramotoR)
+	ManifoldReadingAddHealth(builder, healthOffset)
 	return ManifoldReadingEnd(builder)
 }
 
@@ -36,6 +39,7 @@ func (rcv *ManifoldReading) UnPackTo(t *ManifoldReadingT) {
 	t.PressureGradNorm = rcv.PressureGradNorm()
 	t.ViscosityProxy = rcv.ViscosityProxy()
 	t.KuramotoR = rcv.KuramotoR()
+	t.Health = rcv.Health(nil).UnPack()
 }
 
 func (rcv *ManifoldReading) UnPack() *ManifoldReadingT {
@@ -154,8 +158,21 @@ func (rcv *ManifoldReading) MutateKuramotoR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
 
+func (rcv *ManifoldReading) Health(obj *PhysicsHealth) *PhysicsHealth {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(PhysicsHealth)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
 func ManifoldReadingStart(builder *flatbuffers.Builder) {
-	builder.StartObject(6)
+	builder.StartObject(7)
 }
 func ManifoldReadingAddDivergence(builder *flatbuffers.Builder, divergence float64) {
 	builder.PrependFloat64Slot(0, divergence, 0.0)
@@ -174,6 +191,9 @@ func ManifoldReadingAddViscosityProxy(builder *flatbuffers.Builder, viscosityPro
 }
 func ManifoldReadingAddKuramotoR(builder *flatbuffers.Builder, kuramotoR float64) {
 	builder.PrependFloat64Slot(5, kuramotoR, 0.0)
+}
+func ManifoldReadingAddHealth(builder *flatbuffers.Builder, health flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(health), 0)
 }
 func ManifoldReadingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

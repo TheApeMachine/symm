@@ -24,7 +24,6 @@ import (
 	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"golang.design/x/lockfree/wf"
 )
 
 /*
@@ -457,65 +456,6 @@ func (hub *Hub) PhysicsMonitor() *sensorium.PhysicsMonitor {
 	return &hub.physics
 }
 
-
-/*
-writeFrontend encodes one measurement as a MeasurementsFrame and writes it to the dashboard socket.
-Used by tests and direct inspection publishers.
-*/
-func (hub *Hub) writeFrontend(measurement *data.Measurement[float64]) {
-	hub.frontendMu.Lock()
-	defer hub.frontendMu.Unlock()
-
-	if hub.frontend == nil || measurement == nil || IsRawMarketData(measurement) {
-		return
-	}
-
-	err := types.EncodeMeasurementsFrameWith([]*data.Measurement[float64]{measurement}, func(payload []byte) error {
-		if err := hub.frontend.WriteMessage(websocket.BinaryMessage, payload); err != nil {
-			hub.frontend = nil
-		}
-		return nil
-	})
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hub: failed to encode measurement for frontend",
-			err,
-		))
-	}
-}
-
-/*
-Drain drains measurements from an external wait-free ring buffer for asynchronous
-consumption by telemetry and tests.
-*/
-func (hub *Hub) Drain(ring *wf.RingBuffer[*data.Measurement[float64]]) {
-	if ring == nil {
-		return
-	}
-
-	for {
-		select {
-		case <-hub.Context().Done():
-			return
-		default:
-		}
-
-		measurement, ok := ring.Get()
-		if !ok {
-			time.Sleep(100 * time.Microsecond)
-			continue
-		}
-
-		hub.writeFrontend(measurement)
-	}
-}
-
-func (hub *Hub) isWireAllowed(measurement *data.Measurement[float64]) bool {
-	return isWireAllowed(measurement)
-}
-
 /*
 Close shuts down the HTTP server, cancels clients, and waits for ingress drain.
 */
@@ -573,6 +513,7 @@ func (hub *Hub) handleCommand(payload []byte) {
 	var request struct {
 		Type      string `json:"type"`
 		Symbol    string `json:"symbol"`
+		Route     string `json:"route"`
 		At        string `json:"at"`
 		CaptureID int64  `json:"captureId"`
 	}
@@ -584,6 +525,8 @@ func (hub *Hub) handleCommand(payload []byte) {
 	switch request.Type {
 	case "focus":
 		types.SetFocus(request.Symbol)
+	case "route":
+		types.SetRoute(request.Route)
 	case "position.exit":
 		if hub.exitHandler != nil && request.Symbol != "" {
 			hub.exitHandler(request.Symbol)

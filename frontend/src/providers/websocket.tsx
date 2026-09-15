@@ -8,6 +8,7 @@ import {
 	observeSymbols,
 	onlineAtom,
 	RingBuffer,
+	routeAtom,
 	signals,
 	symbolsAtom,
 	tickCountAtom,
@@ -25,6 +26,13 @@ export const sendPositionExit = (symbol: string) => {
 	globalWsWorker?.postMessage({
 		type: "POSITION_EXIT",
 		symbol,
+	});
+};
+
+export const sendRoute = (route: string) => {
+	globalWsWorker?.postMessage({
+		type: "ROUTE",
+		route,
 	});
 };
 
@@ -149,6 +157,10 @@ export const WsFeed = () => {
 			wsWorker.postMessage({ type: "FOCUS", symbol });
 		});
 
+		const unsubscribeRoute = routeAtom.subscribe((route: string) => {
+			wsWorker.postMessage({ type: "ROUTE", route });
+		});
+
 		const evictionInterval = setInterval(() => {
 			evictStaleSymbols();
 		}, 60_000);
@@ -156,6 +168,7 @@ export const WsFeed = () => {
 		return () => {
 			clearInterval(evictionInterval);
 			unsubscribeFocus.unsubscribe();
+			unsubscribeRoute.unsubscribe();
 			wsWorker.postMessage({ type: "DISCONNECT" });
 			wsWorker.terminate();
 			globalWsWorker = null;

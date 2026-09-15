@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/crc32"
-	"maps"
 	"math/big"
-	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -129,21 +127,20 @@ func (book *Book) Expect(symbols []string) {
 	book.status.Transition(runtime.BUSY)
 }
 
-/* Wait blocks boot on the owner's readiness, never on elapsed market time. */
+/*
+Wait blocks boot on the owner's readiness, never on elapsed market time.
+*/
 func (book *Book) Wait() error {
-	book.mu.RLock()
-	pending := slices.Sorted(maps.Keys(book.pending))
-	book.mu.RUnlock()
-	if len(pending) > 0 {
-		errnie.Info(fmt.Sprintf("book: waiting for seed snapshots: %v", pending))
-	}
 	for book.Status() != runtime.READY {
 		select {
 		case <-book.ctx.Done():
-			return errnie.Error(errnie.Err(errnie.IO, "book: seed interrupted", book.ctx.Err()))
+			return errnie.Error(errnie.Err(
+				errnie.IO, "book: seed interrupted", book.ctx.Err(),
+			))
 		case <-book.seeded:
 		}
 	}
+
 	return nil
 }
 
@@ -158,6 +155,7 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	if _, diverging := book.diverging[symbol]; diverging {
 		return
 	}
+
 	managed := book.manager.GetBook(symbol)
 
 	if managed != nil {
@@ -242,7 +240,7 @@ func (book *Book) Update(
 	}
 
 	if applyErr != nil {
-		return applyErr
+		return errnie.Error(applyErr)
 	}
 
 	for _, data := range accepted {
@@ -261,11 +259,13 @@ func (book *Book) Update(
 
 			if len(book.pending) == 0 && len(book.diverging) == 0 {
 				book.status.Transition(runtime.READY)
+
 				select {
 				case book.seeded <- struct{}{}:
 				default:
 				}
 			}
+
 			book.mu.Unlock()
 		}
 	}
@@ -290,170 +290,188 @@ func (book *Book) apply(
 	book.touches = book.touches[:0]
 	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
+	group, ctx := errgroup.WithContext(book.ctx)
+	var symbolBook *spotbook.Book
+
 	for index, data := range payload.Data {
-		data.Type = payload.Type
-		symbolBook := book.manager.GetBook(data.Symbol)
-
-		depth := viper.GetInt("market.l3_depth")
-
-		if depth <= 0 {
-			depth = 10
-		}
-
-		if symbolBook == nil {
-			symbolBook = book.manager.CreateBook(data.Symbol, depth)
-		}
-
-		_, diverged := book.diverging[data.Symbol]
-
-		if payload.Type == "snapshot" {
-			delete(book.diverging, data.Symbol)
-			diverged = false
-			symbolBook = book.manager.CreateBook(
-				data.Symbol,
-				depth,
-			)
-		}
-
-		if diverged {
-			continue
-		}
-
-		for sideIndex, level3data := range []*[]kraken.Level3Order{
-			&data.Bids, &data.Asks,
-		} {
-			symbolSide := symbolBook.Bids
-			direction := spotbook.BookDirection(spotbook.Bid)
-
-			if sideIndex == 1 {
-				symbolSide = symbolBook.Asks
-				direction = spotbook.BookDirection(spotbook.Ask)
+		group.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return errnie.Error(ctx.Err())
+			default:
 			}
 
-			filtered := make([]kraken.Level3Order, 0, len(*level3data))
+			data.Type = payload.Type
+			symbolBook = book.manager.GetBook(data.Symbol)
 
-			for _, order := range *level3data {
-				if order.Event == "delete" && order.LimitPrice == nil {
-					for _, level := range symbolSide.Levels {
-						if level == nil {
-							continue
-						}
+			depth := viper.GetInt("market.l3_depth")
 
-						for _, queued := range level.Queue() {
-							if queued.ID == order.OrderID {
-								order.LimitPrice = level.Price
+			if depth <= 0 {
+				depth = 10
+			}
+
+			if symbolBook == nil {
+				symbolBook = book.manager.CreateBook(data.Symbol, depth)
+			}
+
+			_, diverged := book.diverging[data.Symbol]
+
+			if payload.Type == "snapshot" {
+				delete(book.diverging, data.Symbol)
+				diverged = false
+				symbolBook = book.manager.CreateBook(
+					data.Symbol,
+					depth,
+				)
+			}
+
+			if diverged {
+				return nil
+			}
+
+			for sideIndex, level3data := range []*[]kraken.Level3Order{
+				&data.Bids, &data.Asks,
+			} {
+				symbolSide := symbolBook.Bids
+				direction := spotbook.BookDirection(spotbook.Bid)
+
+				if sideIndex == 1 {
+					symbolSide = symbolBook.Asks
+					direction = spotbook.BookDirection(spotbook.Ask)
+				}
+
+				filtered := make([]kraken.Level3Order, 0, len(*level3data))
+
+				for _, order := range *level3data {
+					if order.Event == "delete" && order.LimitPrice == nil {
+						for _, level := range symbolSide.Levels {
+							if level == nil {
+								continue
+							}
+
+							for _, queued := range level.Queue() {
+								if queued.ID == order.OrderID {
+									order.LimitPrice = level.Price
+									break
+								}
+							}
+
+							if order.LimitPrice != nil {
 								break
 							}
 						}
-
-						if order.LimitPrice != nil {
-							break
-						}
 					}
-				}
 
-				if order.LimitPrice == nil {
-					continue
-				}
+					if order.LimitPrice == nil {
+						continue
+					}
 
-				if order.OrderID != "" {
-					for _, level := range symbolSide.Levels {
-						if level == nil || level.Price == nil || level.Price.Cmp(order.LimitPrice) == 0 {
-							continue
-						}
+					if order.OrderID != "" {
+						for _, level := range symbolSide.Levels {
+							if level == nil || level.Price == nil || level.Price.Cmp(order.LimitPrice) == 0 {
+								continue
+							}
 
-						for _, queued := range level.Queue() {
-							if queued.ID == order.OrderID {
-								symbolBook.Update(&spotbook.UpdateOptions{
-									Direction: direction,
-									ID:        order.OrderID,
-									Price:     level.Price,
-									Quantity:  decimal.NewFromInt64(0),
-									Silent:    true,
-								})
-								break
+							for _, queued := range level.Queue() {
+								if queued.ID == order.OrderID {
+									symbolBook.Update(&spotbook.UpdateOptions{
+										Direction: direction,
+										ID:        order.OrderID,
+										Price:     level.Price,
+										Quantity:  decimal.NewFromInt64(0),
+										Silent:    true,
+									})
+									break
+								}
 							}
 						}
 					}
+
+					quantity := order.OrderQty
+
+					if order.Event == "delete" || quantity == nil {
+						quantity = decimal.NewFromInt64(0)
+					}
+
+					// The SDK dereferences an absent level on zero-quantity updates.
+					// Absence is a lost-book precondition, not an empty order to insert.
+					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
+						book.manager.CreateBook(data.Symbol, depth)
+						book.diverging[data.Symbol] = struct{}{}
+						book.status.Transition(runtime.ERROR)
+
+						return errnie.Error(errnie.Err(
+							errnie.Validation,
+							fmt.Sprintf("level3 %s order %s references absent level %s for %s; awaiting snapshot",
+								order.Event, order.OrderID, order.LimitPrice.String(), data.Symbol),
+							nil,
+						))
+					}
+
+					symbolBook.Update(&spotbook.UpdateOptions{
+						Direction: direction,
+						ID:        order.OrderID,
+						Price:     order.LimitPrice,
+						Quantity:  quantity,
+						Timestamp: order.Timestamp,
+						Silent:    true,
+					})
+
+					filtered = append(filtered, order)
 				}
 
-				quantity := order.OrderQty
+				*level3data = filtered
+			}
 
-				if order.Event == "delete" || quantity == nil {
-					quantity = decimal.NewFromInt64(0)
-				}
+			if data.Bids == nil {
+				data.Bids = []kraken.Level3Order{}
+			}
 
-				// The SDK dereferences an absent level on zero-quantity updates.
-				// Absence is a lost-book precondition, not an empty order to insert.
-				if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
+			if data.Asks == nil {
+				data.Asks = []kraken.Level3Order{}
+			}
+
+			symbolBook.EnforceDepth()
+
+			payload.Data[index] = data
+			if data.Checksum != 0 && !fastL3Checksum(symbolBook, data.Checksum) {
+				checksum := symbolBook.L3Checksum(strconv.FormatUint(
+					uint64(data.Checksum),
+					10,
+				))
+
+				if !checksum.Match {
+					// The venue checksum is authority. Local state is known wrong,
+					// so it is discarded rather than kept serving corrupt depth,
+					// the symbol is marked diverged so later deltas are dropped,
+					// and the transport is asked to resubscribe — only a fresh
+					// snapshot restores trust.
 					book.manager.CreateBook(data.Symbol, depth)
-					book.diverging[data.Symbol] = struct{}{}
-					book.status.Transition(runtime.ERROR)
 
-					return nil, append(resynced, data.Symbol), errnie.Error(errnie.Err(
+					if _, marked := book.diverging[data.Symbol]; !marked {
+						book.diverging[data.Symbol] = struct{}{}
+						resynced = append(resynced, data.Symbol)
+					}
+
+					return errnie.Error(errnie.Err(
 						errnie.Validation,
-						fmt.Sprintf("level3 %s order %s references absent level %s for %s; awaiting snapshot",
-							order.Event, order.OrderID, order.LimitPrice.String(), data.Symbol),
+						fmt.Sprintf(
+							"level3 checksum mismatch for %s: local %s, server %s",
+							data.Symbol,
+							checksum.LocalChecksum,
+							checksum.ServerChecksum,
+						),
 						nil,
 					))
 				}
-
-				symbolBook.Update(&spotbook.UpdateOptions{
-					Direction: direction,
-					ID:        order.OrderID,
-					Price:     order.LimitPrice,
-					Quantity:  quantity,
-					Timestamp: order.Timestamp,
-					Silent:    true,
-				})
-
-				filtered = append(filtered, order)
 			}
 
-			*level3data = filtered
-		}
+			return nil
+		})
 
-		if data.Bids == nil {
-			data.Bids = []kraken.Level3Order{}
-		}
-
-		if data.Asks == nil {
-			data.Asks = []kraken.Level3Order{}
-		}
-
-		symbolBook.EnforceDepth()
-
-		payload.Data[index] = data
-		if data.Checksum != 0 && !fastL3Checksum(symbolBook, data.Checksum) {
-			checksum := symbolBook.L3Checksum(strconv.FormatUint(
-				uint64(data.Checksum),
-				10,
-			))
-
-			if !checksum.Match {
-				// The venue checksum is authority. Local state is known wrong,
-				// so it is discarded rather than kept serving corrupt depth,
-				// the symbol is marked diverged so later deltas are dropped,
-				// and the transport is asked to resubscribe — only a fresh
-				// snapshot restores trust.
-				book.manager.CreateBook(data.Symbol, depth)
-
-				if _, marked := book.diverging[data.Symbol]; !marked {
-					book.diverging[data.Symbol] = struct{}{}
-					resynced = append(resynced, data.Symbol)
-				}
-
-				return nil, resynced, errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf(
-						"level3 checksum mismatch for %s: local %s, server %s",
-						data.Symbol,
-						checksum.LocalChecksum,
-						checksum.ServerChecksum,
-					),
-					nil,
-				))
-			}
+		if err := group.Wait(); err != nil {
+			errnie.Error(err)
+			return nil, nil, err
 		}
 
 		accepted = append(accepted, data)
@@ -578,4 +596,3 @@ func fastL3Checksum(b *spotbook.Book, expected uint32) bool {
 
 	return crc == expected
 }
-

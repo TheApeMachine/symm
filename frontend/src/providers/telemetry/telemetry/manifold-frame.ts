@@ -32,330 +32,348 @@ sequence():bigint {
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
-n():bigint {
+at():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 6);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
-bytes(index: number):bigint|null {
+version():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+n():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+bytes(index: number):bigint|null {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.readInt64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : BigInt(0);
 }
 
 bytesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 seqs(index: number):bigint|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? this.bb!.readInt64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : BigInt(0);
 }
 
 seqsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 tokenIds(index: number):bigint|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.readInt64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : BigInt(0);
 }
 
 tokenIdsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 contentIds(index: number):bigint|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.readInt64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : BigInt(0);
 }
 
 contentIdsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 phase(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 phaseLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 phaseArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 omega(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 omegaLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 omegaArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 energy(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 energyLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 energyArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 mass(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
+  const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 massLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
+  const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 massArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
+  const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 heat(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
+  const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 heatLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
+  const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 heatArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
+  const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 amp(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 ampLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 ampArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 pos(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 posLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 posArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 vel(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 velLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 velArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 clamped(index: number):boolean|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? !!this.bb!.readInt8(this.bb!.__vector(this.bb_pos + offset) + index) : false;
 }
 
 clampedLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 clampedArray():Int8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? new Int8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 dark(index: number):boolean|null {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? !!this.bb!.readInt8(this.bb!.__vector(this.bb_pos + offset) + index) : false;
 }
 
 darkLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 darkArray():Int8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? new Int8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 reading(obj?:ManifoldReading):ManifoldReading|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+  const offset = this.bb!.__offset(this.bb_pos, 40);
   return offset ? (obj || new ManifoldReading()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 gridX():number {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
-}
-
-gridY():number {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
-}
-
-gridZ():number {
   const offset = this.bb!.__offset(this.bb_pos, 42);
   return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
 }
 
-gridSpacing():number {
+gridY():number {
   const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
+
+gridZ():number {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
+
+gridSpacing():number {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 momRho(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
+  const offset = this.bb!.__offset(this.bb_pos, 50);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 momRhoLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
+  const offset = this.bb!.__offset(this.bb_pos, 50);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 momRhoArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
+  const offset = this.bb!.__offset(this.bb_pos, 50);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 fieldEnergy(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 fieldEnergyLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 fieldEnergyArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 waveReal(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
+  const offset = this.bb!.__offset(this.bb_pos, 54);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 waveRealLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
+  const offset = this.bb!.__offset(this.bb_pos, 54);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 waveRealArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
+  const offset = this.bb!.__offset(this.bb_pos, 54);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 waveImag(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
+  const offset = this.bb!.__offset(this.bb_pos, 56);
   return offset ? this.bb!.readFloat32(this.bb!.__vector(this.bb_pos + offset) + index * 4) : 0;
 }
 
 waveImagLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
+  const offset = this.bb!.__offset(this.bb_pos, 56);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 waveImagArray():Float32Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
+  const offset = this.bb!.__offset(this.bb_pos, 56);
   return offset ? new Float32Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 densityScale():number {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
-
-momentumScale():number {
-  const offset = this.bb!.__offset(this.bb_pos, 56);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
-
-energyScale():number {
   const offset = this.bb!.__offset(this.bb_pos, 58);
   return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
 }
 
-waveScale():number {
+momentumScale():number {
   const offset = this.bb!.__offset(this.bb_pos, 60);
   return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
 }
 
-modes(index: number, obj?:WaveMode):WaveMode|null {
+energyScale():number {
   const offset = this.bb!.__offset(this.bb_pos, 62);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
+waveScale():number {
+  const offset = this.bb!.__offset(this.bb_pos, 64);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
+modes(index: number, obj?:WaveMode):WaveMode|null {
+  const offset = this.bb!.__offset(this.bb_pos, 66);
   return offset ? (obj || new WaveMode()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 modesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 62);
+  const offset = this.bb!.__offset(this.bb_pos, 66);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startManifoldFrame(builder:flatbuffers.Builder) {
-  builder.startObject(30);
+  builder.startObject(32);
 }
 
 static addSequence(builder:flatbuffers.Builder, sequence:bigint) {
   builder.addFieldInt64(0, sequence, BigInt('0'));
 }
 
+static addAt(builder:flatbuffers.Builder, at:bigint) {
+  builder.addFieldInt64(1, at, BigInt('0'));
+}
+
+static addVersion(builder:flatbuffers.Builder, version:bigint) {
+  builder.addFieldInt64(2, version, BigInt('0'));
+}
+
 static addN(builder:flatbuffers.Builder, n:bigint) {
-  builder.addFieldInt64(1, n, BigInt('0'));
+  builder.addFieldInt64(3, n, BigInt('0'));
 }
 
 static addBytes(builder:flatbuffers.Builder, bytesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, bytesOffset, 0);
+  builder.addFieldOffset(4, bytesOffset, 0);
 }
 
 static createBytesVector(builder:flatbuffers.Builder, data:bigint[]):flatbuffers.Offset {
@@ -371,7 +389,7 @@ static startBytesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addSeqs(builder:flatbuffers.Builder, seqsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, seqsOffset, 0);
+  builder.addFieldOffset(5, seqsOffset, 0);
 }
 
 static createSeqsVector(builder:flatbuffers.Builder, data:bigint[]):flatbuffers.Offset {
@@ -387,7 +405,7 @@ static startSeqsVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addTokenIds(builder:flatbuffers.Builder, tokenIdsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, tokenIdsOffset, 0);
+  builder.addFieldOffset(6, tokenIdsOffset, 0);
 }
 
 static createTokenIdsVector(builder:flatbuffers.Builder, data:bigint[]):flatbuffers.Offset {
@@ -403,7 +421,7 @@ static startTokenIdsVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addContentIds(builder:flatbuffers.Builder, contentIdsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, contentIdsOffset, 0);
+  builder.addFieldOffset(7, contentIdsOffset, 0);
 }
 
 static createContentIdsVector(builder:flatbuffers.Builder, data:bigint[]):flatbuffers.Offset {
@@ -419,7 +437,7 @@ static startContentIdsVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addPhase(builder:flatbuffers.Builder, phaseOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, phaseOffset, 0);
+  builder.addFieldOffset(8, phaseOffset, 0);
 }
 
 static createPhaseVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -440,7 +458,7 @@ static startPhaseVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addOmega(builder:flatbuffers.Builder, omegaOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, omegaOffset, 0);
+  builder.addFieldOffset(9, omegaOffset, 0);
 }
 
 static createOmegaVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -461,7 +479,7 @@ static startOmegaVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addEnergy(builder:flatbuffers.Builder, energyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, energyOffset, 0);
+  builder.addFieldOffset(10, energyOffset, 0);
 }
 
 static createEnergyVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -482,7 +500,7 @@ static startEnergyVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addMass(builder:flatbuffers.Builder, massOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, massOffset, 0);
+  builder.addFieldOffset(11, massOffset, 0);
 }
 
 static createMassVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -503,7 +521,7 @@ static startMassVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addHeat(builder:flatbuffers.Builder, heatOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, heatOffset, 0);
+  builder.addFieldOffset(12, heatOffset, 0);
 }
 
 static createHeatVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -524,7 +542,7 @@ static startHeatVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addAmp(builder:flatbuffers.Builder, ampOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, ampOffset, 0);
+  builder.addFieldOffset(13, ampOffset, 0);
 }
 
 static createAmpVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -545,7 +563,7 @@ static startAmpVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addPos(builder:flatbuffers.Builder, posOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, posOffset, 0);
+  builder.addFieldOffset(14, posOffset, 0);
 }
 
 static createPosVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -566,7 +584,7 @@ static startPosVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addVel(builder:flatbuffers.Builder, velOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(13, velOffset, 0);
+  builder.addFieldOffset(15, velOffset, 0);
 }
 
 static createVelVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -587,7 +605,7 @@ static startVelVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addClamped(builder:flatbuffers.Builder, clampedOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, clampedOffset, 0);
+  builder.addFieldOffset(16, clampedOffset, 0);
 }
 
 static createClampedVector(builder:flatbuffers.Builder, data:boolean[]):flatbuffers.Offset {
@@ -603,7 +621,7 @@ static startClampedVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addDark(builder:flatbuffers.Builder, darkOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(15, darkOffset, 0);
+  builder.addFieldOffset(17, darkOffset, 0);
 }
 
 static createDarkVector(builder:flatbuffers.Builder, data:boolean[]):flatbuffers.Offset {
@@ -619,27 +637,27 @@ static startDarkVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addReading(builder:flatbuffers.Builder, readingOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, readingOffset, 0);
+  builder.addFieldOffset(18, readingOffset, 0);
 }
 
 static addGridX(builder:flatbuffers.Builder, gridX:number) {
-  builder.addFieldInt32(17, gridX, 0);
+  builder.addFieldInt32(19, gridX, 0);
 }
 
 static addGridY(builder:flatbuffers.Builder, gridY:number) {
-  builder.addFieldInt32(18, gridY, 0);
+  builder.addFieldInt32(20, gridY, 0);
 }
 
 static addGridZ(builder:flatbuffers.Builder, gridZ:number) {
-  builder.addFieldInt32(19, gridZ, 0);
+  builder.addFieldInt32(21, gridZ, 0);
 }
 
 static addGridSpacing(builder:flatbuffers.Builder, gridSpacing:number) {
-  builder.addFieldFloat64(20, gridSpacing, 0.0);
+  builder.addFieldFloat64(22, gridSpacing, 0.0);
 }
 
 static addMomRho(builder:flatbuffers.Builder, momRhoOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(21, momRhoOffset, 0);
+  builder.addFieldOffset(23, momRhoOffset, 0);
 }
 
 static createMomRhoVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -660,7 +678,7 @@ static startMomRhoVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addFieldEnergy(builder:flatbuffers.Builder, fieldEnergyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(22, fieldEnergyOffset, 0);
+  builder.addFieldOffset(24, fieldEnergyOffset, 0);
 }
 
 static createFieldEnergyVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -681,7 +699,7 @@ static startFieldEnergyVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addWaveReal(builder:flatbuffers.Builder, waveRealOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(23, waveRealOffset, 0);
+  builder.addFieldOffset(25, waveRealOffset, 0);
 }
 
 static createWaveRealVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -702,7 +720,7 @@ static startWaveRealVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addWaveImag(builder:flatbuffers.Builder, waveImagOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(24, waveImagOffset, 0);
+  builder.addFieldOffset(26, waveImagOffset, 0);
 }
 
 static createWaveImagVector(builder:flatbuffers.Builder, data:number[]|Float32Array):flatbuffers.Offset;
@@ -723,23 +741,23 @@ static startWaveImagVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addDensityScale(builder:flatbuffers.Builder, densityScale:number) {
-  builder.addFieldFloat32(25, densityScale, 0.0);
+  builder.addFieldFloat32(27, densityScale, 0.0);
 }
 
 static addMomentumScale(builder:flatbuffers.Builder, momentumScale:number) {
-  builder.addFieldFloat32(26, momentumScale, 0.0);
+  builder.addFieldFloat32(28, momentumScale, 0.0);
 }
 
 static addEnergyScale(builder:flatbuffers.Builder, energyScale:number) {
-  builder.addFieldFloat32(27, energyScale, 0.0);
+  builder.addFieldFloat32(29, energyScale, 0.0);
 }
 
 static addWaveScale(builder:flatbuffers.Builder, waveScale:number) {
-  builder.addFieldFloat32(28, waveScale, 0.0);
+  builder.addFieldFloat32(30, waveScale, 0.0);
 }
 
 static addModes(builder:flatbuffers.Builder, modesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(29, modesOffset, 0);
+  builder.addFieldOffset(31, modesOffset, 0);
 }
 
 static createModesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -756,26 +774,26 @@ static startModesVector(builder:flatbuffers.Builder, numElems:number) {
 
 static endManifoldFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
-  builder.requiredField(offset, 8) // bytes
-  builder.requiredField(offset, 10) // seqs
-  builder.requiredField(offset, 12) // tokenIds
-  builder.requiredField(offset, 14) // contentIds
-  builder.requiredField(offset, 16) // phase
-  builder.requiredField(offset, 18) // omega
-  builder.requiredField(offset, 20) // energy
-  builder.requiredField(offset, 22) // mass
-  builder.requiredField(offset, 24) // heat
-  builder.requiredField(offset, 26) // amp
-  builder.requiredField(offset, 28) // pos
-  builder.requiredField(offset, 30) // vel
-  builder.requiredField(offset, 32) // clamped
-  builder.requiredField(offset, 34) // dark
-  builder.requiredField(offset, 36) // reading
-  builder.requiredField(offset, 46) // momRho
-  builder.requiredField(offset, 48) // fieldEnergy
-  builder.requiredField(offset, 50) // waveReal
-  builder.requiredField(offset, 52) // waveImag
-  builder.requiredField(offset, 62) // modes
+  builder.requiredField(offset, 12) // bytes
+  builder.requiredField(offset, 14) // seqs
+  builder.requiredField(offset, 16) // tokenIds
+  builder.requiredField(offset, 18) // contentIds
+  builder.requiredField(offset, 20) // phase
+  builder.requiredField(offset, 22) // omega
+  builder.requiredField(offset, 24) // energy
+  builder.requiredField(offset, 26) // mass
+  builder.requiredField(offset, 28) // heat
+  builder.requiredField(offset, 30) // amp
+  builder.requiredField(offset, 32) // pos
+  builder.requiredField(offset, 34) // vel
+  builder.requiredField(offset, 36) // clamped
+  builder.requiredField(offset, 38) // dark
+  builder.requiredField(offset, 40) // reading
+  builder.requiredField(offset, 50) // momRho
+  builder.requiredField(offset, 52) // fieldEnergy
+  builder.requiredField(offset, 54) // waveReal
+  builder.requiredField(offset, 56) // waveImag
+  builder.requiredField(offset, 66) // modes
   return offset;
 }
 
@@ -783,6 +801,8 @@ static endManifoldFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
 unpack(): ManifoldFrameT {
   return new ManifoldFrameT(
     this.sequence(),
+    this.at(),
+    this.version(),
     this.n(),
     this.bb!.createScalarList<bigint>(this.bytes.bind(this), this.bytesLength()),
     this.bb!.createScalarList<bigint>(this.seqs.bind(this), this.seqsLength()),
@@ -818,6 +838,8 @@ unpack(): ManifoldFrameT {
 
 unpackTo(_o: ManifoldFrameT): void {
   _o.sequence = this.sequence();
+  _o.at = this.at();
+  _o.version = this.version();
   _o.n = this.n();
   _o.bytes = this.bb!.createScalarList<bigint>(this.bytes.bind(this), this.bytesLength());
   _o.seqs = this.bb!.createScalarList<bigint>(this.seqs.bind(this), this.seqsLength());
@@ -853,6 +875,8 @@ unpackTo(_o: ManifoldFrameT): void {
 export class ManifoldFrameT implements flatbuffers.IGeneratedObject {
 constructor(
   public sequence: bigint = BigInt('0'),
+  public at: bigint = BigInt('0'),
+  public version: bigint = BigInt('0'),
   public n: bigint = BigInt('0'),
   public bytes: (bigint)[] = [],
   public seqs: (bigint)[] = [],
@@ -909,6 +933,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
 
   ManifoldFrame.startManifoldFrame(builder);
   ManifoldFrame.addSequence(builder, this.sequence);
+  ManifoldFrame.addAt(builder, this.at);
+  ManifoldFrame.addVersion(builder, this.version);
   ManifoldFrame.addN(builder, this.n);
   ManifoldFrame.addBytes(builder, bytes);
   ManifoldFrame.addSeqs(builder, seqs);

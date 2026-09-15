@@ -1,6 +1,7 @@
 import * as flatbuffers from "flatbuffers";
 import { ManifoldFrame } from "#/providers/telemetry/telemetry/manifold-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
+import { PhysicsHealth, type PhysicsHealthT } from "#/providers/telemetry/telemetry/physics-health";
 import { WaveMode as WaveModeTable } from "#/providers/telemetry/telemetry/wave-mode";
 
 export type FluidGrid = {
@@ -94,6 +95,9 @@ export type FluidPhaseReading = {
 	pressureGradNorm: number;
 	viscosityProxy: number;
 	kuramotoR: number;
+	health?: PhysicsHealthT | null;
+	version?: bigint;
+	at?: bigint;
 };
 
 export type FluidWaveMode = {
@@ -129,6 +133,7 @@ export type FluidManifoldFrame = {
 };
 
 const modeObj = new WaveModeTable();
+const healthTable = new PhysicsHealth();
 
 /*
 decodeManifold reads one ManifoldFrame flatbuffer, exactly as
@@ -223,6 +228,9 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 		});
 	}
 
+	const readingHealth = reading.health(healthTable);
+	const health = readingHealth !== null ? readingHealth.unpack() : null;
+
 	const phase: FluidPhase = {
 		sequence,
 		reading: {
@@ -232,6 +240,9 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 			pressureGradNorm: reading.pressureGradNorm(),
 			viscosityProxy: reading.viscosityProxy(),
 			kuramotoR: reading.kuramotoR(),
+			health,
+			version: frame.version(),
+			at: frame.at(),
 		},
 		oscillators,
 		modes,

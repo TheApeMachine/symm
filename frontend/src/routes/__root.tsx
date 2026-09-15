@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
-import { errorAtom, focusAtom } from "#/collections/app";
+import { errorAtom, focusAtom, routeAtom } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { CommandPalette } from "#/components/terminal/palette";
 import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
@@ -82,6 +82,10 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const location = useLocation();
 	const surface = parseSurface(location.pathname);
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
+
+	useEffect(() => {
+		routeAtom.set(surface);
+	}, [surface]);
 	const {
 		openPalette,
 		closePalette,

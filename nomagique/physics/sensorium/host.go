@@ -72,7 +72,6 @@ func (manifold *Manifold) Close() error {
 	return nil
 }
 
-
 func (manifold *Manifold) State() *State {
 	if manifold == nil {
 		return nil

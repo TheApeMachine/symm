@@ -181,7 +181,8 @@ var (
 			hub.SetHindsightStore(catalog)
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
-			manifoldSolver.SetViewer(hub.Fluid())
+			webrtcTee := ui.NewWebRTCTee("webrtcTee", 1024, hub.Fluid(), manifoldSolver)
+			manifoldSolver.SetViewer(webrtcTee)
 			manifoldSolver.SetPhysicsMonitor(hub.PhysicsMonitor())
 			manifoldSolver.Start()
 
@@ -228,6 +229,7 @@ var (
 				register,
 				uiTee,
 				storeTee,
+				webrtcTee,
 			)
 
 			// Subscribe and seed while transports remain BUSY. Only a complete

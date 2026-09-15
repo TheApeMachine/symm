@@ -1,93 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { hubBaseUrl } from "#/lib/hub";
 import type { FluidPhaseReading } from "./wire";
-
-export type PhysicsSnapshotResponse = {
-	schema: string;
-	version: number;
-	at_unix_nano: number;
-	population: number;
-	reading: {
-		Divergence: number;
-		GuidanceSpeed: number;
-		CoherenceMag2: number;
-		PressureGradNorm: number;
-		ViscosityProxy: number;
-		KuramotoR: number;
-		Health: {
-			Integrator: {
-				ContactDT: number;
-				RequestedDT: number;
-				TargetDT: number;
-				AcceptedDT: number;
-				LastDT: number;
-				MinDT: number;
-				Time: number;
-				HyperbolicDT: number;
-				ViscousDT: number;
-				ThermalDT: number;
-				ParticleDT: number;
-				PhaseDT: number;
-				CombinedDT: number;
-				Substeps: number;
-				Rejections: number;
-			};
-			Gas: {
-				Mass: number;
-				Internal: number;
-				Kinetic: number;
-				Total: number;
-				Momentum: [number, number, number];
-				MinDensity: number;
-				MinPressure: number;
-				MinTemperature: number;
-				MaxSpeed: number;
-				MaxSound: number;
-				MaxMach: number;
-				VorticityRMS: number;
-				VorticityMax: number;
-				StrainRMS: number;
-				StrainMax: number;
-				ViscousPower: number;
-			};
-			Wave: {
-				Norm: number;
-				Kinetic: number;
-				Potential: number;
-				Nonlinear: number;
-				Chemical: number;
-				ProjectedNorm: number;
-				PhasePotential: number;
-			};
-			Pilot: {
-				DensityP01: number;
-				DensityP10: number;
-				DensityMedian: number;
-				IntegrationErrorMax: number;
-				SpeedRMS: number;
-				SpeedMax: number;
-				DisplacementRMS: number;
-				DisplacementMax: number;
-				MinDensity: number;
-			};
-			Sources: {
-				GasEnergyResidual: number;
-				ConservativeWaveError: number;
-				PICDepositEnergyResidual: number;
-				ParticleBalanceResidual: number;
-				GravityBalanceResidual: number;
-			};
-			ParticleThermal: number;
-			ParticleOscillator: number;
-			ParticleKinetic: number;
-			ParticleMaterialTotal: number;
-		};
-	};
-};
 
 type DiagnosticTab = "integrator" | "gas" | "wave" | "residuals";
 
@@ -109,73 +25,32 @@ export const PhysicsDiagnosticsHUD = ({
 	particleCount: number;
 }) => {
 	const [tab, setTab] = useState<DiagnosticTab>("integrator");
-	const [snapshot, setSnapshot] = useState<PhysicsSnapshotResponse | null>(null);
-	const [fetchError, setFetchError] = useState<string | null>(null);
-
-	// Poll /physics/health periodically when HUD is open
-	useEffect(() => {
-		if (!isOpen) return;
-
-		let active = true;
-		const pollHealth = async () => {
-			try {
-				const res = await fetch(`${hubBaseUrl()}/physics/health`, {
-					headers: { Accept: "application/json" },
-				});
-				if (!res.ok) {
-					throw new Error(`HTTP ${res.status}`);
-				}
-				const data = (await res.json()) as PhysicsSnapshotResponse;
-				if (active) {
-					setSnapshot(data);
-					setFetchError(null);
-				}
-			} catch (err) {
-				if (active) {
-					setFetchError(err instanceof Error ? err.message : String(err));
-				}
-			}
-		};
-
-		void pollHealth();
-		const interval = setInterval(pollHealth, 500);
-
-		return () => {
-			active = false;
-			clearInterval(interval);
-		};
-	}, [isOpen]);
 
 	if (!isOpen) return null;
 
-	const health = snapshot?.reading?.Health;
-	const integrator = health?.Integrator;
-	const gas = health?.Gas;
-	const wave = health?.Wave;
-	const pilot = health?.Pilot;
-	const sources = health?.Sources;
+	const health = phaseReading?.health;
+	const integrator = health?.integrator;
+	const gas = health?.gas;
+	const wave = health?.wave;
+	const pilot = health?.pilot;
+	const sources = health?.sources;
 
-	const machVal = gas?.MaxMach ?? 0;
-	const vorticityVal = gas?.VorticityRMS ?? 0;
-	const strainVal = gas?.StrainRMS ?? 0;
-	const gasKinetic = gas?.Kinetic ?? 0;
-	const gasInternal = gas?.Internal ?? 0;
-	const waveNorm = wave?.Norm ?? 0;
-	const kuramotoR =
-		snapshot?.reading?.KuramotoR ?? phaseReading?.kuramotoR ?? 0;
-	const divergence =
-		snapshot?.reading?.Divergence ?? phaseReading?.divergence ?? 0;
-	const guidanceSpeed =
-		snapshot?.reading?.GuidanceSpeed ?? phaseReading?.guidanceSpeed ?? 0;
-	const coherenceMag2 =
-		snapshot?.reading?.CoherenceMag2 ?? phaseReading?.coherenceMag2 ?? 0;
-	const viscosityProxy =
-		snapshot?.reading?.ViscosityProxy ?? phaseReading?.viscosityProxy ?? 0;
-	const totalParticles =
-		snapshot?.population ?? particleCount ?? 0;
+	const machVal = gas?.maxMach ?? 0;
+	const vorticityVal = gas?.vorticityRms ?? 0;
+	const strainVal = gas?.strainRms ?? 0;
+	const gasKinetic = gas?.kinetic ?? 0;
+	const gasInternal = gas?.internal ?? 0;
+	const waveNorm = wave?.norm ?? 0;
+	const kuramotoR = phaseReading?.kuramotoR ?? 0;
+	const divergence = phaseReading?.divergence ?? 0;
+	const guidanceSpeed = phaseReading?.guidanceSpeed ?? 0;
+	const coherenceMag2 = phaseReading?.coherenceMag2 ?? 0;
+	const viscosityProxy = phaseReading?.viscosityProxy ?? 0;
+	const totalParticles = particleCount ?? 0;
 
-	const rejections = integrator?.Rejections ?? 0;
-	const substeps = integrator?.Substeps ?? 0;
+	const rejections = integrator?.rejections ?? 0;
+	const substeps = integrator?.substeps ?? 0;
+	const version = phaseReading?.version;
 
 	return (
 		<div className="absolute top-14 right-3 z-30 flex max-h-[85vh] w-[460px] flex-col overflow-hidden rounded-lg border border-(--line) bg-[color-mix(in_srgb,var(--bg)_95%,transparent)] shadow-2xl backdrop-blur-md">
@@ -191,9 +66,9 @@ export const PhysicsDiagnosticsHUD = ({
 						label={rejections > 0 ? `${rejections} REJECTIONS` : "STABLE"}
 						dot
 					/>
-					{snapshot?.version ? (
+					{version !== undefined && version > 0n ? (
 						<Typography.Mono size="xxs" tone="f4">
-							v{snapshot.version}
+							v{version.toString()}
 						</Typography.Mono>
 					) : null}
 				</Flex.Row>
@@ -249,6 +124,12 @@ export const PhysicsDiagnosticsHUD = ({
 
 			{/* Tab Content Body */}
 			<div className="flex-1 overflow-y-auto p-3 text-xs">
+				{phaseReading === null && (
+					<div className="mb-3 rounded border border-(--line) bg-(--surface) p-2 text-center text-[11px] text-(--f4)">
+						Waiting for WebRTC manifold stream...
+					</div>
+				)}
+
 				{tab === "integrator" && (
 					<div className="space-y-3 font-mono">
 						<div className="grid grid-cols-3 gap-2">
@@ -257,7 +138,7 @@ export const PhysicsDiagnosticsHUD = ({
 									Accepted Δt
 								</div>
 								<div className="text-sm font-semibold text-(--f1)">
-									{formatSci(integrator?.AcceptedDT, 5)}
+									{formatSci(integrator?.acceptedDt, 5)}
 								</div>
 							</div>
 							<div className="rounded border border-(--line) bg-(--surface) p-2">
@@ -290,37 +171,37 @@ export const PhysicsDiagnosticsHUD = ({
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Hyperbolic Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.HyperbolicDT, 5)}
+										{formatSci(integrator?.hyperbolicDt, 5)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Viscous Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.ViscousDT, 5)}
+										{formatSci(integrator?.viscousDt, 5)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Particle Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.ParticleDT, 5)}
+										{formatSci(integrator?.particleDt, 5)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Phase Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.PhaseDT, 5)}
+										{formatSci(integrator?.phaseDt, 5)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Thermal Δt:</span>
 									<span className="text-(--f2)">
-										{formatSci(integrator?.ThermalDT, 5)}
+										{formatSci(integrator?.thermalDt, 5)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Combined Δt:</span>
 									<span className="text-accent font-semibold">
-										{formatSci(integrator?.CombinedDT, 5)}
+										{formatSci(integrator?.combinedDt, 5)}
 									</span>
 								</div>
 							</div>
@@ -329,7 +210,10 @@ export const PhysicsDiagnosticsHUD = ({
 						<div className="flex justify-between rounded border border-(--line) bg-(--surface) p-2 text-[11px]">
 							<span className="text-(--f4)">Integrated Sim Time:</span>
 							<span className="text-(--f1)">
-								{integrator?.Time?.toFixed(4) ?? "0.0000"} s
+								{integrator?.time !== undefined && integrator.time > 0
+									? integrator.time.toFixed(4)
+									: "0.0000"}{" "}
+								s
 							</span>
 						</div>
 					</div>
@@ -366,7 +250,7 @@ export const PhysicsDiagnosticsHUD = ({
 									Velocity vs Sound
 								</div>
 								<div className="text-sm font-semibold text-(--f1)">
-									{formatSci(gas?.MaxSpeed, 3)} / {formatSci(gas?.MaxSound, 3)}
+									{formatSci(gas?.maxSpeed, 3)} / {formatSci(gas?.maxSound, 3)}
 								</div>
 								<div className="text-[9px] text-(--f4)">v_max / c_sound</div>
 							</div>
@@ -384,7 +268,7 @@ export const PhysicsDiagnosticsHUD = ({
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Vorticity Max:</span>
 									<span className="text-(--f2)">
-										{formatSci(gas?.VorticityMax, 4)}
+										{formatSci(gas?.vorticityMax, 4)}
 									</span>
 								</div>
 								<div className="flex justify-between">
@@ -394,13 +278,13 @@ export const PhysicsDiagnosticsHUD = ({
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Strain Max:</span>
 									<span className="text-(--f2)">
-										{formatSci(gas?.StrainMax, 4)}
+										{formatSci(gas?.strainMax, 4)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Viscous Power:</span>
 									<span className="text-(--f2)">
-										{formatSci(gas?.ViscousPower, 5)}
+										{formatSci(gas?.viscousPower, 5)}
 									</span>
 								</div>
 								<div className="flex justify-between">
@@ -429,24 +313,24 @@ export const PhysicsDiagnosticsHUD = ({
 									<span className="text-(--f4)">Min Density ρ:</span>
 									<span
 										className={
-											(gas?.MinDensity ?? 0) <= 0
+											(gas?.minDensity ?? 0) <= 0
 												? "text-(--error)"
 												: "text-(--f2)"
 										}
 									>
-										{formatSci(gas?.MinDensity, 4)}
+										{formatSci(gas?.minDensity, 4)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Min Pressure P:</span>
 									<span
 										className={
-											(gas?.MinPressure ?? 0) <= 0
+											(gas?.minPressure ?? 0) <= 0
 												? "text-(--error)"
 												: "text-(--f2)"
 										}
 									>
-										{formatSci(gas?.MinPressure, 4)}
+										{formatSci(gas?.minPressure, 4)}
 									</span>
 								</div>
 							</div>
@@ -465,7 +349,7 @@ export const PhysicsDiagnosticsHUD = ({
 									{formatSci(waveNorm, 4)}
 								</div>
 								<div className="text-[9px] text-(--f4)">
-									Projected: {formatSci(wave?.ProjectedNorm, 4)}
+									Projected: {formatSci(wave?.projectedNorm, 4)}
 								</div>
 							</div>
 							<div className="rounded border border-(--line) bg-(--surface) p-2">
@@ -496,20 +380,20 @@ export const PhysicsDiagnosticsHUD = ({
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Wave Kinetic:</span>
-									<span className="text-(--f2)">{formatSci(wave?.Kinetic, 4)}</span>
+									<span className="text-(--f2)">{formatSci(wave?.kinetic, 4)}</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Wave Potential:</span>
-									<span className="text-(--f2)">{formatSci(wave?.Potential, 4)}</span>
+									<span className="text-(--f2)">{formatSci(wave?.potential, 4)}</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Chemical Pot μ:</span>
-									<span className="text-(--f2)">{formatSci(wave?.Chemical, 4)}</span>
+									<span className="text-(--f2)">{formatSci(wave?.chemical, 4)}</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Phase Potential:</span>
 									<span className="text-(--f2)">
-										{formatSci(wave?.PhasePotential, 4)}
+										{formatSci(wave?.phasePotential, 4)}
 									</span>
 								</div>
 							</div>
@@ -522,24 +406,24 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Speed RMS:</span>
-									<span className="text-(--f2)">{formatSci(pilot?.SpeedRMS, 4)}</span>
+									<span className="text-(--f2)">{formatSci(pilot?.speedRms, 4)}</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Displacement RMS:</span>
 									<span className="text-(--f2)">
-										{formatSci(pilot?.DisplacementRMS, 4)}
+										{formatSci(pilot?.displacementRms, 4)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Density Median:</span>
 									<span className="text-(--f2)">
-										{formatSci(pilot?.DensityMedian, 4)}
+										{formatSci(pilot?.densityMedian, 4)}
 									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Integration Error:</span>
 									<span className="text-(--f2)">
-										{formatSci(pilot?.IntegrationErrorMax, 5)}
+										{formatSci(pilot?.integrationErrorMax, 5)}
 									</span>
 								</div>
 							</div>
@@ -558,42 +442,42 @@ export const PhysicsDiagnosticsHUD = ({
 									<span className="text-(--f4)">Gas Energy Residual:</span>
 									<span
 										className={`font-semibold ${
-											Math.abs(sources?.GasEnergyResidual ?? 0) > 1e-3
+											Math.abs(sources?.gasEnergyResidual ?? 0) > 1e-3
 												? "text-(--error)"
 												: "text-(--success)"
 										}`}
 									>
-										{formatSci(sources?.GasEnergyResidual, 6)}
+										{formatSci(sources?.gasEnergyResidual, 6)}
 									</span>
 								</div>
 								<div className="flex justify-between items-center border-b border-(--line) pb-1">
 									<span className="text-(--f4)">Conservative Wave Error:</span>
 									<span
 										className={`font-semibold ${
-											Math.abs(sources?.ConservativeWaveError ?? 0) > 1e-3
+											Math.abs(sources?.conservativeWaveError ?? 0) > 1e-3
 												? "text-(--error)"
 												: "text-(--success)"
 										}`}
 									>
-										{formatSci(sources?.ConservativeWaveError, 6)}
+										{formatSci(sources?.conservativeWaveError, 6)}
 									</span>
 								</div>
 								<div className="flex justify-between items-center border-b border-(--line) pb-1">
 									<span className="text-(--f4)">PIC Deposit Residual:</span>
 									<span className="text-(--f2)">
-										{formatSci(sources?.PICDepositEnergyResidual, 6)}
+										{formatSci(sources?.picDepositEnergyResidual, 6)}
 									</span>
 								</div>
 								<div className="flex justify-between items-center border-b border-(--line) pb-1">
 									<span className="text-(--f4)">Particle Balance Residual:</span>
 									<span className="text-(--f2)">
-										{formatSci(sources?.ParticleBalanceResidual, 6)}
+										{formatSci(sources?.particleBalanceResidual, 6)}
 									</span>
 								</div>
 								<div className="flex justify-between items-center">
 									<span className="text-(--f4)">Gravity Balance Residual:</span>
 									<span className="text-(--f2)">
-										{formatSci(sources?.GravityBalanceResidual, 6)}
+										{formatSci(sources?.gravityBalanceResidual, 6)}
 									</span>
 								</div>
 							</div>
@@ -610,16 +494,10 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="flex justify-between py-0.5">
 								<span className="text-(--f4)">Particle Material Total:</span>
 								<span className="text-(--f1)">
-									{formatSci(health?.ParticleMaterialTotal, 4)}
+									{formatSci(health?.particleMaterialTotal, 4)}
 								</span>
 							</div>
 						</div>
-					</div>
-				)}
-
-				{fetchError && (
-					<div className="mt-2 rounded border border-(--line) bg-(--surface) p-2 text-[10px] text-(--f4)">
-						WebRTC stream active (diagnostics health poller: {fetchError})
 					</div>
 				)}
 			</div>

@@ -8,6 +8,8 @@ import (
 
 type ManifoldFrameT struct {
 	Sequence uint64 `json:"sequence"`
+	At int64 `json:"at"`
+	Version uint64 `json:"version"`
 	N int64 `json:"n"`
 	Bytes []int64 `json:"bytes"`
 	Seqs []int64 `json:"seqs"`
@@ -221,6 +223,8 @@ func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	}
 	ManifoldFrameStart(builder)
 	ManifoldFrameAddSequence(builder, t.Sequence)
+	ManifoldFrameAddAt(builder, t.At)
+	ManifoldFrameAddVersion(builder, t.Version)
 	ManifoldFrameAddN(builder, t.N)
 	ManifoldFrameAddBytes(builder, bytesOffset)
 	ManifoldFrameAddSeqs(builder, seqsOffset)
@@ -255,6 +259,8 @@ func (t *ManifoldFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 
 func (rcv *ManifoldFrame) UnPackTo(t *ManifoldFrameT) {
 	t.Sequence = rcv.Sequence()
+	t.At = rcv.At()
+	t.Version = rcv.Version()
 	t.N = rcv.N()
 	bytesLength := rcv.BytesLength()
 	t.Bytes = make([]int64, bytesLength)
@@ -420,7 +426,7 @@ func (rcv *ManifoldFrame) MutateSequence(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(4, n)
 }
 
-func (rcv *ManifoldFrame) N() int64 {
+func (rcv *ManifoldFrame) At() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
@@ -428,12 +434,36 @@ func (rcv *ManifoldFrame) N() int64 {
 	return 0
 }
 
-func (rcv *ManifoldFrame) MutateN(n int64) bool {
+func (rcv *ManifoldFrame) MutateAt(n int64) bool {
 	return rcv._tab.MutateInt64Slot(6, n)
 }
 
-func (rcv *ManifoldFrame) Bytes(j int) int64 {
+func (rcv *ManifoldFrame) Version() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *ManifoldFrame) MutateVersion(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(8, n)
+}
+
+func (rcv *ManifoldFrame) N() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *ManifoldFrame) MutateN(n int64) bool {
+	return rcv._tab.MutateInt64Slot(10, n)
+}
+
+func (rcv *ManifoldFrame) Bytes(j int) int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetInt64(a + flatbuffers.UOffsetT(j*8))
@@ -442,7 +472,7 @@ func (rcv *ManifoldFrame) Bytes(j int) int64 {
 }
 
 func (rcv *ManifoldFrame) BytesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -450,7 +480,7 @@ func (rcv *ManifoldFrame) BytesLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateBytes(j int, n int64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateInt64(a+flatbuffers.UOffsetT(j*8), n)
@@ -459,7 +489,7 @@ func (rcv *ManifoldFrame) MutateBytes(j int, n int64) bool {
 }
 
 func (rcv *ManifoldFrame) Seqs(j int) int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetInt64(a + flatbuffers.UOffsetT(j*8))
@@ -468,7 +498,7 @@ func (rcv *ManifoldFrame) Seqs(j int) int64 {
 }
 
 func (rcv *ManifoldFrame) SeqsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -476,7 +506,7 @@ func (rcv *ManifoldFrame) SeqsLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateSeqs(j int, n int64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateInt64(a+flatbuffers.UOffsetT(j*8), n)
@@ -485,7 +515,7 @@ func (rcv *ManifoldFrame) MutateSeqs(j int, n int64) bool {
 }
 
 func (rcv *ManifoldFrame) TokenIds(j int) int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetInt64(a + flatbuffers.UOffsetT(j*8))
@@ -494,7 +524,7 @@ func (rcv *ManifoldFrame) TokenIds(j int) int64 {
 }
 
 func (rcv *ManifoldFrame) TokenIdsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -502,7 +532,7 @@ func (rcv *ManifoldFrame) TokenIdsLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateTokenIds(j int, n int64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateInt64(a+flatbuffers.UOffsetT(j*8), n)
@@ -511,7 +541,7 @@ func (rcv *ManifoldFrame) MutateTokenIds(j int, n int64) bool {
 }
 
 func (rcv *ManifoldFrame) ContentIds(j int) int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetInt64(a + flatbuffers.UOffsetT(j*8))
@@ -520,7 +550,7 @@ func (rcv *ManifoldFrame) ContentIds(j int) int64 {
 }
 
 func (rcv *ManifoldFrame) ContentIdsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -528,7 +558,7 @@ func (rcv *ManifoldFrame) ContentIdsLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateContentIds(j int, n int64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateInt64(a+flatbuffers.UOffsetT(j*8), n)
@@ -537,7 +567,7 @@ func (rcv *ManifoldFrame) MutateContentIds(j int, n int64) bool {
 }
 
 func (rcv *ManifoldFrame) Phase(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -546,7 +576,7 @@ func (rcv *ManifoldFrame) Phase(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) PhaseLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -554,7 +584,7 @@ func (rcv *ManifoldFrame) PhaseLength() int {
 }
 
 func (rcv *ManifoldFrame) MutatePhase(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -563,7 +593,7 @@ func (rcv *ManifoldFrame) MutatePhase(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Omega(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -572,7 +602,7 @@ func (rcv *ManifoldFrame) Omega(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) OmegaLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -580,7 +610,7 @@ func (rcv *ManifoldFrame) OmegaLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateOmega(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -589,7 +619,7 @@ func (rcv *ManifoldFrame) MutateOmega(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Energy(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -598,7 +628,7 @@ func (rcv *ManifoldFrame) Energy(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) EnergyLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -606,7 +636,7 @@ func (rcv *ManifoldFrame) EnergyLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateEnergy(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -615,7 +645,7 @@ func (rcv *ManifoldFrame) MutateEnergy(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Mass(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -624,7 +654,7 @@ func (rcv *ManifoldFrame) Mass(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) MassLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -632,7 +662,7 @@ func (rcv *ManifoldFrame) MassLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateMass(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -641,7 +671,7 @@ func (rcv *ManifoldFrame) MutateMass(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Heat(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -650,7 +680,7 @@ func (rcv *ManifoldFrame) Heat(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) HeatLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -658,7 +688,7 @@ func (rcv *ManifoldFrame) HeatLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateHeat(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -667,7 +697,7 @@ func (rcv *ManifoldFrame) MutateHeat(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Amp(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -676,7 +706,7 @@ func (rcv *ManifoldFrame) Amp(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) AmpLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -684,7 +714,7 @@ func (rcv *ManifoldFrame) AmpLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateAmp(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -693,7 +723,7 @@ func (rcv *ManifoldFrame) MutateAmp(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Pos(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -702,7 +732,7 @@ func (rcv *ManifoldFrame) Pos(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) PosLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -710,7 +740,7 @@ func (rcv *ManifoldFrame) PosLength() int {
 }
 
 func (rcv *ManifoldFrame) MutatePos(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -719,7 +749,7 @@ func (rcv *ManifoldFrame) MutatePos(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Vel(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -728,7 +758,7 @@ func (rcv *ManifoldFrame) Vel(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) VelLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -736,7 +766,7 @@ func (rcv *ManifoldFrame) VelLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateVel(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -745,7 +775,7 @@ func (rcv *ManifoldFrame) MutateVel(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) Clamped(j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetBool(a + flatbuffers.UOffsetT(j*1))
@@ -754,7 +784,7 @@ func (rcv *ManifoldFrame) Clamped(j int) bool {
 }
 
 func (rcv *ManifoldFrame) ClampedLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -762,7 +792,7 @@ func (rcv *ManifoldFrame) ClampedLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateClamped(j int, n bool) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateBool(a+flatbuffers.UOffsetT(j*1), n)
@@ -771,7 +801,7 @@ func (rcv *ManifoldFrame) MutateClamped(j int, n bool) bool {
 }
 
 func (rcv *ManifoldFrame) Dark(j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetBool(a + flatbuffers.UOffsetT(j*1))
@@ -780,7 +810,7 @@ func (rcv *ManifoldFrame) Dark(j int) bool {
 }
 
 func (rcv *ManifoldFrame) DarkLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -788,7 +818,7 @@ func (rcv *ManifoldFrame) DarkLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateDark(j int, n bool) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateBool(a+flatbuffers.UOffsetT(j*1), n)
@@ -797,7 +827,7 @@ func (rcv *ManifoldFrame) MutateDark(j int, n bool) bool {
 }
 
 func (rcv *ManifoldFrame) Reading(obj *ManifoldReading) *ManifoldReading {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -810,30 +840,6 @@ func (rcv *ManifoldFrame) Reading(obj *ManifoldReading) *ManifoldReading {
 }
 
 func (rcv *ManifoldFrame) GridX() int32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
-	if o != 0 {
-		return rcv._tab.GetInt32(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *ManifoldFrame) MutateGridX(n int32) bool {
-	return rcv._tab.MutateInt32Slot(38, n)
-}
-
-func (rcv *ManifoldFrame) GridY() int32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
-	if o != 0 {
-		return rcv._tab.GetInt32(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *ManifoldFrame) MutateGridY(n int32) bool {
-	return rcv._tab.MutateInt32Slot(40, n)
-}
-
-func (rcv *ManifoldFrame) GridZ() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -841,12 +847,36 @@ func (rcv *ManifoldFrame) GridZ() int32 {
 	return 0
 }
 
-func (rcv *ManifoldFrame) MutateGridZ(n int32) bool {
+func (rcv *ManifoldFrame) MutateGridX(n int32) bool {
 	return rcv._tab.MutateInt32Slot(42, n)
 }
 
-func (rcv *ManifoldFrame) GridSpacing() float64 {
+func (rcv *ManifoldFrame) GridY() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *ManifoldFrame) MutateGridY(n int32) bool {
+	return rcv._tab.MutateInt32Slot(44, n)
+}
+
+func (rcv *ManifoldFrame) GridZ() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *ManifoldFrame) MutateGridZ(n int32) bool {
+	return rcv._tab.MutateInt32Slot(46, n)
+}
+
+func (rcv *ManifoldFrame) GridSpacing() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -854,11 +884,11 @@ func (rcv *ManifoldFrame) GridSpacing() float64 {
 }
 
 func (rcv *ManifoldFrame) MutateGridSpacing(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(44, n)
+	return rcv._tab.MutateFloat64Slot(48, n)
 }
 
 func (rcv *ManifoldFrame) MomRho(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -867,7 +897,7 @@ func (rcv *ManifoldFrame) MomRho(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) MomRhoLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -875,7 +905,7 @@ func (rcv *ManifoldFrame) MomRhoLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateMomRho(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -884,7 +914,7 @@ func (rcv *ManifoldFrame) MutateMomRho(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) FieldEnergy(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -893,7 +923,7 @@ func (rcv *ManifoldFrame) FieldEnergy(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) FieldEnergyLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -901,7 +931,7 @@ func (rcv *ManifoldFrame) FieldEnergyLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateFieldEnergy(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -910,7 +940,7 @@ func (rcv *ManifoldFrame) MutateFieldEnergy(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) WaveReal(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -919,7 +949,7 @@ func (rcv *ManifoldFrame) WaveReal(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) WaveRealLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -927,7 +957,7 @@ func (rcv *ManifoldFrame) WaveRealLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateWaveReal(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -936,7 +966,7 @@ func (rcv *ManifoldFrame) MutateWaveReal(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) WaveImag(j int) float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat32(a + flatbuffers.UOffsetT(j*4))
@@ -945,7 +975,7 @@ func (rcv *ManifoldFrame) WaveImag(j int) float32 {
 }
 
 func (rcv *ManifoldFrame) WaveImagLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -953,7 +983,7 @@ func (rcv *ManifoldFrame) WaveImagLength() int {
 }
 
 func (rcv *ManifoldFrame) MutateWaveImag(j int, n float32) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat32(a+flatbuffers.UOffsetT(j*4), n)
@@ -962,30 +992,6 @@ func (rcv *ManifoldFrame) MutateWaveImag(j int, n float32) bool {
 }
 
 func (rcv *ManifoldFrame) DensityScale() float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
-	if o != 0 {
-		return rcv._tab.GetFloat32(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *ManifoldFrame) MutateDensityScale(n float32) bool {
-	return rcv._tab.MutateFloat32Slot(54, n)
-}
-
-func (rcv *ManifoldFrame) MomentumScale() float32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
-	if o != 0 {
-		return rcv._tab.GetFloat32(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *ManifoldFrame) MutateMomentumScale(n float32) bool {
-	return rcv._tab.MutateFloat32Slot(56, n)
-}
-
-func (rcv *ManifoldFrame) EnergyScale() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
 		return rcv._tab.GetFloat32(o + rcv._tab.Pos)
@@ -993,11 +999,11 @@ func (rcv *ManifoldFrame) EnergyScale() float32 {
 	return 0.0
 }
 
-func (rcv *ManifoldFrame) MutateEnergyScale(n float32) bool {
+func (rcv *ManifoldFrame) MutateDensityScale(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(58, n)
 }
 
-func (rcv *ManifoldFrame) WaveScale() float32 {
+func (rcv *ManifoldFrame) MomentumScale() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
 		return rcv._tab.GetFloat32(o + rcv._tab.Pos)
@@ -1005,12 +1011,36 @@ func (rcv *ManifoldFrame) WaveScale() float32 {
 	return 0.0
 }
 
-func (rcv *ManifoldFrame) MutateWaveScale(n float32) bool {
+func (rcv *ManifoldFrame) MutateMomentumScale(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(60, n)
 }
 
-func (rcv *ManifoldFrame) Modes(obj *WaveMode, j int) bool {
+func (rcv *ManifoldFrame) EnergyScale() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	if o != 0 {
+		return rcv._tab.GetFloat32(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ManifoldFrame) MutateEnergyScale(n float32) bool {
+	return rcv._tab.MutateFloat32Slot(62, n)
+}
+
+func (rcv *ManifoldFrame) WaveScale() float32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
+	if o != 0 {
+		return rcv._tab.GetFloat32(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *ManifoldFrame) MutateWaveScale(n float32) bool {
+	return rcv._tab.MutateFloat32Slot(64, n)
+}
+
+func (rcv *ManifoldFrame) Modes(obj *WaveMode, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -1022,7 +1052,7 @@ func (rcv *ManifoldFrame) Modes(obj *WaveMode, j int) bool {
 }
 
 func (rcv *ManifoldFrame) ModesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -1030,151 +1060,157 @@ func (rcv *ManifoldFrame) ModesLength() int {
 }
 
 func ManifoldFrameStart(builder *flatbuffers.Builder) {
-	builder.StartObject(30)
+	builder.StartObject(32)
 }
 func ManifoldFrameAddSequence(builder *flatbuffers.Builder, sequence uint64) {
 	builder.PrependUint64Slot(0, sequence, 0)
 }
+func ManifoldFrameAddAt(builder *flatbuffers.Builder, at int64) {
+	builder.PrependInt64Slot(1, at, 0)
+}
+func ManifoldFrameAddVersion(builder *flatbuffers.Builder, version uint64) {
+	builder.PrependUint64Slot(2, version, 0)
+}
 func ManifoldFrameAddN(builder *flatbuffers.Builder, n int64) {
-	builder.PrependInt64Slot(1, n, 0)
+	builder.PrependInt64Slot(3, n, 0)
 }
 func ManifoldFrameAddBytes(builder *flatbuffers.Builder, bytes flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(bytes), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(bytes), 0)
 }
 func ManifoldFrameStartBytesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
 func ManifoldFrameAddSeqs(builder *flatbuffers.Builder, seqs flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(seqs), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(seqs), 0)
 }
 func ManifoldFrameStartSeqsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
 func ManifoldFrameAddTokenIds(builder *flatbuffers.Builder, tokenIds flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(tokenIds), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(tokenIds), 0)
 }
 func ManifoldFrameStartTokenIdsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
 func ManifoldFrameAddContentIds(builder *flatbuffers.Builder, contentIds flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(contentIds), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(contentIds), 0)
 }
 func ManifoldFrameStartContentIdsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
 func ManifoldFrameAddPhase(builder *flatbuffers.Builder, phase flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(phase), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(phase), 0)
 }
 func ManifoldFrameStartPhaseVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddOmega(builder *flatbuffers.Builder, omega flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(omega), 0)
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(omega), 0)
 }
 func ManifoldFrameStartOmegaVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddEnergy(builder *flatbuffers.Builder, energy flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(energy), 0)
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(energy), 0)
 }
 func ManifoldFrameStartEnergyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddMass(builder *flatbuffers.Builder, mass flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(mass), 0)
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(mass), 0)
 }
 func ManifoldFrameStartMassVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddHeat(builder *flatbuffers.Builder, heat flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(heat), 0)
+	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(heat), 0)
 }
 func ManifoldFrameStartHeatVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddAmp(builder *flatbuffers.Builder, amp flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(amp), 0)
+	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(amp), 0)
 }
 func ManifoldFrameStartAmpVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddPos(builder *flatbuffers.Builder, pos flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(pos), 0)
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(pos), 0)
 }
 func ManifoldFrameStartPosVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddVel(builder *flatbuffers.Builder, vel flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(vel), 0)
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(vel), 0)
 }
 func ManifoldFrameStartVelVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddClamped(builder *flatbuffers.Builder, clamped flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(clamped), 0)
+	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(clamped), 0)
 }
 func ManifoldFrameStartClampedVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
 func ManifoldFrameAddDark(builder *flatbuffers.Builder, dark flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(dark), 0)
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(dark), 0)
 }
 func ManifoldFrameStartDarkVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
 func ManifoldFrameAddReading(builder *flatbuffers.Builder, reading flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(reading), 0)
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(reading), 0)
 }
 func ManifoldFrameAddGridX(builder *flatbuffers.Builder, gridX int32) {
-	builder.PrependInt32Slot(17, gridX, 0)
+	builder.PrependInt32Slot(19, gridX, 0)
 }
 func ManifoldFrameAddGridY(builder *flatbuffers.Builder, gridY int32) {
-	builder.PrependInt32Slot(18, gridY, 0)
+	builder.PrependInt32Slot(20, gridY, 0)
 }
 func ManifoldFrameAddGridZ(builder *flatbuffers.Builder, gridZ int32) {
-	builder.PrependInt32Slot(19, gridZ, 0)
+	builder.PrependInt32Slot(21, gridZ, 0)
 }
 func ManifoldFrameAddGridSpacing(builder *flatbuffers.Builder, gridSpacing float64) {
-	builder.PrependFloat64Slot(20, gridSpacing, 0.0)
+	builder.PrependFloat64Slot(22, gridSpacing, 0.0)
 }
 func ManifoldFrameAddMomRho(builder *flatbuffers.Builder, momRho flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(momRho), 0)
+	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(momRho), 0)
 }
 func ManifoldFrameStartMomRhoVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddFieldEnergy(builder *flatbuffers.Builder, fieldEnergy flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(fieldEnergy), 0)
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(fieldEnergy), 0)
 }
 func ManifoldFrameStartFieldEnergyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddWaveReal(builder *flatbuffers.Builder, waveReal flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(waveReal), 0)
+	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(waveReal), 0)
 }
 func ManifoldFrameStartWaveRealVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddWaveImag(builder *flatbuffers.Builder, waveImag flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(waveImag), 0)
+	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(waveImag), 0)
 }
 func ManifoldFrameStartWaveImagVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ManifoldFrameAddDensityScale(builder *flatbuffers.Builder, densityScale float32) {
-	builder.PrependFloat32Slot(25, densityScale, 0.0)
+	builder.PrependFloat32Slot(27, densityScale, 0.0)
 }
 func ManifoldFrameAddMomentumScale(builder *flatbuffers.Builder, momentumScale float32) {
-	builder.PrependFloat32Slot(26, momentumScale, 0.0)
+	builder.PrependFloat32Slot(28, momentumScale, 0.0)
 }
 func ManifoldFrameAddEnergyScale(builder *flatbuffers.Builder, energyScale float32) {
-	builder.PrependFloat32Slot(27, energyScale, 0.0)
+	builder.PrependFloat32Slot(29, energyScale, 0.0)
 }
 func ManifoldFrameAddWaveScale(builder *flatbuffers.Builder, waveScale float32) {
-	builder.PrependFloat32Slot(28, waveScale, 0.0)
+	builder.PrependFloat32Slot(30, waveScale, 0.0)
 }
 func ManifoldFrameAddModes(builder *flatbuffers.Builder, modes flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(29, flatbuffers.UOffsetT(modes), 0)
+	builder.PrependUOffsetTSlot(31, flatbuffers.UOffsetT(modes), 0)
 }
 func ManifoldFrameStartModesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

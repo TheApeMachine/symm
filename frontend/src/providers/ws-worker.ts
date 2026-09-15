@@ -15,6 +15,15 @@ const sendPositionExit = (symbol: string) => {
 	}
 };
 
+let currentRoute = "dashboard";
+
+const sendRoute = (route: string) => {
+	currentRoute = route;
+	if (socket !== null && socket.readyState === WebSocket.OPEN && typeof route === "string") {
+		socket.send(JSON.stringify({ type: "route", route }));
+	}
+};
+
 const sendFocus = (symbol: string) => {
 	if (socket !== null && socket.readyState === WebSocket.OPEN && typeof symbol === "string") {
 		socket.send(JSON.stringify({ type: "focus", symbol }));
@@ -74,6 +83,9 @@ const connect = (url: string) => {
 
 		reconnectAttempts = 0;
 		self.postMessage({ type: "STATUS", status: "ONLINE" });
+		if (currentRoute) {
+			sendRoute(currentRoute);
+		}
 	});
 
 	socket.addEventListener("close", () => {
@@ -132,6 +144,7 @@ self.addEventListener("message", (event: MessageEvent) => {
 		type: string;
 		url?: string;
 		symbol?: string;
+		route?: string;
 	};
 
 	switch (message.type) {
@@ -151,6 +164,9 @@ self.addEventListener("message", (event: MessageEvent) => {
 			return;
 		case "FOCUS":
 			sendFocus(message.symbol ?? "");
+			return;
+		case "ROUTE":
+			sendRoute(message.route ?? "");
 			return;
 		case "POSITION_EXIT":
 			sendPositionExit(message.symbol ?? "");

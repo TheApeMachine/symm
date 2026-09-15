@@ -103,6 +103,10 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 
 	if dataChannel.ReadyState() == webrtc.DataChannelStateOpen {
 		channel.start()
+
+		errnie.Info(fmt.Sprintf(
+			"fluid: started data channel %s (state=%s)", label, dataChannel.ReadyState(),
+		))
 	}
 }
 
@@ -201,11 +205,11 @@ func (transport dataChannelTransport) BufferedAmount() uint64 {
 }
 
 func (transport dataChannelTransport) Send(segment []byte) error {
-	return transport.channel.Send(segment)
+	return errnie.Error(transport.channel.Send(segment))
 }
 
 func (transport dataChannelTransport) Close() error {
-	return transport.channel.Close()
+	return errnie.Error(transport.channel.Close())
 }
 
 func newFluidChannel(
@@ -255,7 +259,7 @@ It never blocks and never errors: a fresher record simply replaces the pending
 one, which is the only behaviour a live replaceable snapshot can want.
 */
 func (channel *fluidChannel) enqueue(payload []byte) {
-	if channel.ctx.Err() != nil {
+	if errnie.Error(channel.ctx.Err()) != nil {
 		return
 	}
 
@@ -324,7 +328,7 @@ func (channel *fluidChannel) takeLatest() []byte {
 }
 
 func (channel *fluidChannel) failSend(err error) {
-	if channel.ctx.Err() != nil || channel.transport == nil {
+	if errnie.Error(channel.ctx.Err()) != nil || channel.transport == nil {
 		return
 	}
 
@@ -419,17 +423,17 @@ func (channel *fluidChannel) sendSegment(segment []byte, generation uint64) erro
 		// to drain; abandon the stale frame rather than holding the fresher
 		// one behind it.
 		if channel.sendGen.Load() != generation {
-			return errFrameSuperseded
+			return errnie.Error(errFrameSuperseded)
 		}
 
 		select {
 		case <-channel.ctx.Done():
-			return channel.ctx.Err()
+			return errnie.Error(channel.ctx.Err())
 		case <-channel.drained:
 		case <-time.After(5 * time.Millisecond):
 		case <-channel.latestReady:
 			if channel.sendGen.Load() != generation {
-				return errFrameSuperseded
+				return errnie.Error(errFrameSuperseded)
 			}
 		}
 	}
@@ -437,10 +441,10 @@ func (channel *fluidChannel) sendSegment(segment []byte, generation uint64) erro
 	// Supersession and drainage can become ready together. Recheck after
 	// leaving the wait, regardless of which wake-up the select consumed.
 	if channel.sendGen.Load() != generation {
-		return errFrameSuperseded
+		return errnie.Error(errFrameSuperseded)
 	}
 
-	return channel.transport.Send(segment)
+	return errnie.Error(channel.transport.Send(segment))
 }
 
 func (channel *fluidChannel) close() {

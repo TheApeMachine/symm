@@ -59,6 +59,9 @@ Single-value Atoms
 export const focusAtom = createAtomic<string>(DEFAULT_FOCUS_SYMBOL);
 export const focusStore = focusAtom;
 
+export const routeAtom = createAtomic<string>("dashboard");
+export const routeStore = routeAtom;
+
 export const focusMetricAtom = createAtomic<string>("");
 export const focusMetric = focusMetricAtom;
 
