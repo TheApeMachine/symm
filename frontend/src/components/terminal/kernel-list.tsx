@@ -1,9 +1,10 @@
+import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import {
 	DEFAULT_KERNELS,
 	focusMetric,
 	focusStore,
-	RingBuffer,
+	type RingBuffer,
 	signals,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -12,14 +13,13 @@ import {
 	Button,
 	Flex,
 	Meter,
+	Sparkline,
 	setBadge,
 	setMeter,
 	setSparkline,
-	Sparkline,
 	Typography,
 } from "#/components/ui";
 import { cn, memoizedQuery, renderValue } from "#/lib/utils";
-import { useSelector } from "@tanstack/react-store";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 const KernelRow = ({
@@ -38,7 +38,10 @@ const KernelRow = ({
 
 		const badgeEl = memoizedQuery(btn, '[data-k="badge"]') as HTMLElement;
 		const areaEl = memoizedQuery(btn, '[data-k="area"]') as SVGPolylineElement;
-		const sparkEl = memoizedQuery(btn, '[data-k="spark"]') as SVGPolylineElement;
+		const sparkEl = memoizedQuery(
+			btn,
+			'[data-k="spark"]',
+		) as SVGPolylineElement;
 		const barEl = memoizedQuery(btn, '[data-k="bar"]') as HTMLElement;
 		const valueEl = memoizedQuery(btn, '[data-k="value"]') as HTMLElement;
 
@@ -74,8 +77,9 @@ const KernelRow = ({
 			setSparkline(sparkEl, areaEl, values, true);
 		};
 
-		const initial = signals[source]?.state[symbol] ?? signals[source]?.state[""];
-		
+		const initial =
+			signals[source]?.state[symbol] ?? signals[source]?.state[""];
+
 		if (initial) {
 			update(initial);
 		}
@@ -104,7 +108,7 @@ const KernelRow = ({
 				terminalStore.actions.inspectSource(source);
 			}}
 		>
-			<Flex.Row align="center" justify="between" gap={2}>
+			<Flex.Row align="center" justify="between" gap={2} fullWidth>
 				<Typography.Span
 					variant="f1"
 					semibold
@@ -113,25 +117,10 @@ const KernelRow = ({
 				>
 					{source.toUpperCase()}
 				</Typography.Span>
-				<Badge
-					data-k="badge"
-					label="Standby"
-					variant="disabled"
-					size="xxs"
-				/>
-			</Flex.Row>	
-			<Typography.Label
-				size="xxs"
-				tone="f4"
-				className="mt-0.5 shrink-0 font-mono truncate"
-			>
-				{source}
-			</Typography.Label>
-			<Sparkline
-				data-k="sparkline"
-				title={`${source} sparkline`}
-			/>
-			<Flex.Row align="center" gap={2}>
+				<Badge data-k="badge" label="Standby" variant="disabled" size="xxs" />
+			</Flex.Row>
+			<Sparkline data-k="sparkline" title={`${source} sparkline`} />
+			<Flex.Row align="center" gap={2} fullWidth>
 				<Meter
 					data-k="bar"
 					layout="bar"
@@ -165,10 +154,7 @@ export const KernelList = ({
 }: KernelListProps = {}) => {
 	return (
 		<Flex.Column
-			className={cn(
-				"min-h-0 flex-1 overflow-auto",
-				compact && "text-[10px]",
-			)}
+			className={cn("min-h-0 flex-1 overflow-auto", compact && "text-[10px]")}
 		>
 			{sources.map((source) => (
 				<KernelRow key={source} source={source} compact={compact} />

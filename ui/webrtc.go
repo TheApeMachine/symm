@@ -119,6 +119,25 @@ func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
 }
 
 /*
+WantsManifold reports whether any connected viewer owns the manifold channel
+and is ready to receive another frame. It satisfies manifold.Viewer.
+*/
+func (fluidTransport *FluidRTC) WantsManifold() bool {
+	return fluidTransport.Wants(types.ManifoldChannel)
+}
+
+/*
+PublishManifold satisfies manifold.Viewer by serializing one manifold advance
+into a ManifoldFrame flatbuffer and broadcasting it across the manifold WebRTC
+data channel.
+*/
+func (fluidTransport *FluidRTC) PublishManifold(state *types.ManifoldState) {
+	if err := fluidTransport.Publish(state); err != nil {
+		errnie.Error(err)
+	}
+}
+
+/*
 PublishResonance fans one resonance artifact to every viewer owning
 the resonance channel, wrapped in a canonical ResonanceFrame.
 */

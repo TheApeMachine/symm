@@ -177,6 +177,14 @@ var (
 				errnie.Warn(fmt.Sprintf("cmd: record run fact: %v", err))
 			}
 
+			hub := ui.NewHub(ctx, uiTee)
+			hub.SetHindsightStore(catalog)
+
+			manifoldSolver := manifold.NewSolver(ctx, api)
+			manifoldSolver.SetViewer(hub.Fluid())
+			manifoldSolver.SetPhysicsMonitor(hub.PhysicsMonitor())
+			manifoldSolver.Start()
+
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				"workspace",
@@ -208,7 +216,7 @@ var (
 						resonance.NewSolver(
 							ctx, system.Cfg.Resonance.LearningRate,
 						),
-						manifold.NewSolver(ctx, api),
+						manifoldSolver,
 					},
 					{
 						cognition.NewSolver(ctx),
@@ -306,7 +314,6 @@ var (
 				}
 			}()
 
-			hub := ui.NewHub(ctx, uiTee)
 			return hub.Run()
 		},
 	}

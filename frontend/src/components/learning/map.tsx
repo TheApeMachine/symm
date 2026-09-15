@@ -38,7 +38,11 @@ export const ImpulseMap = ({
 	return (
 		<Canvas
 			title="Impulse map"
-			meta={`${points.length} numeric cells · ${regions.length} hot regions`}
+			meta={
+				<span data-l="map-meta">
+					{`${points.length} numeric cells · ${regions.length} hot regions`}
+				</span>
+			}
 			className={cn("min-h-80 flex-1", className)}
 			footer="Position: learned affinity · brightness: current activity · hover to inspect"
 		>
@@ -53,33 +57,35 @@ export const ImpulseMap = ({
 					stroke="var(--line)"
 					strokeWidth="0.5"
 				/>
-				{points.length === 0 && (
-					<text
-						x="0"
-						y="0"
-						textAnchor="middle"
-						fill="var(--f3)"
-						fontSize="14"
-						fontFamily="monospace"
-					>
-						No numeric cells yet — waiting for tape
-					</text>
-				)}
-				{points.map((point) => {
-					const light = energy > 0 ? Math.sqrt(point.energy / energy) : 0;
-					return (
-						<circle
-							key={point.id}
-							cx={point.x * scale}
-							cy={point.y * scale}
-							r={peaks.has(point.id) ? 6 : 3}
-							fill={peaks.has(point.id) ? "var(--acc)" : "var(--info)"}
-							opacity={point.present ? 0.15 + 0.85 * light : 0.08}
-						>
-							<title>{`#${point.id} ${point.source} / ${point.label}\nValue ${point.value}\nActivity ${point.energy}\nAuthority ${point.authority}\n${point.present ? "Present" : "Absent on latest update"}`}</title>
-						</circle>
-					);
-				})}
+				<text
+					data-l="map-empty"
+					x="0"
+					y="0"
+					textAnchor="middle"
+					fill="var(--f3)"
+					fontSize="14"
+					fontFamily="monospace"
+					style={{ display: points.length === 0 ? undefined : "none" }}
+				>
+					No numeric cells yet — waiting for tape
+				</text>
+				<g data-l="map-points">
+					{points.map((point) => {
+						const light = energy > 0 ? Math.sqrt(point.energy / energy) : 0;
+						return (
+							<circle
+								key={point.id}
+								cx={point.x * scale}
+								cy={point.y * scale}
+								r={peaks.has(point.id) ? 6 : 3}
+								fill={peaks.has(point.id) ? "var(--acc)" : "var(--info)"}
+								opacity={point.present ? 0.15 + 0.85 * light : 0.08}
+							>
+								<title>{`#${point.id} ${point.source} / ${point.label}\nValue ${point.value}\nActivity ${point.energy}\nAuthority ${point.authority}\n${point.present ? "Present" : "Absent on latest update"}`}</title>
+							</circle>
+						);
+					})}
+				</g>
 			</svg>
 		</Canvas>
 	);

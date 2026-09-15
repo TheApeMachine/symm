@@ -14,9 +14,10 @@ import {
 	PhasePortrait,
 	type PhasePortraitPoint,
 } from "./phase-portrait";
+import { PhysicsDiagnosticsHUD } from "./physics-diagnostics";
 import { FluidScene, type FluidSceneOptions } from "./scene";
 import { FluidWebRTCFeed } from "./transport";
-import type { FluidGrid, FluidParticle } from "./wire";
+import type { FluidGrid, FluidParticle, FluidPhaseReading } from "./wire";
 
 const initialOptions: FluidSceneOptions = {
 	particles: true,
@@ -136,6 +137,8 @@ export const FluidInspector = () => {
 	});
 
 	const [hydro, setHydro] = useState<Record<string, number> | null>(null);
+	const [phaseReading, setPhaseReading] = useState<FluidPhaseReading | null>(null);
+	const [showDiagnostics, setShowDiagnostics] = useState(true);
 
 	const connect = () => {
 		setError(null);
@@ -172,6 +175,7 @@ export const FluidInspector = () => {
 			onPhase: (phase) => {
 				console.log("phase", phase);
 				const { reading, oscillators, modes } = phase;
+				setPhaseReading(reading);
 
 				// Hydrodynamic panel: the live scalar reading from the kernel.
 				setHydro({
@@ -321,6 +325,12 @@ export const FluidInspector = () => {
 					<Toggle active={options.slices} onClick={() => toggle("slices")}>
 						slices
 					</Toggle>
+					<Toggle
+						active={showDiagnostics}
+						onClick={() => setShowDiagnostics((current) => !current)}
+					>
+						diagnostics
+					</Toggle>
 					<Slider
 						label="EV"
 						value={Math.min(options.exposure / maximumVisualExposure, 1)}
@@ -421,6 +431,13 @@ export const FluidInspector = () => {
 					</Button>
 				</Flex.Row>
 			)}
+
+			<PhysicsDiagnosticsHUD
+				isOpen={showDiagnostics}
+				onClose={() => setShowDiagnostics(false)}
+				phaseReading={phaseReading}
+				particleCount={particleCount}
+			/>
 		</Section>
 	);
 };

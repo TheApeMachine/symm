@@ -436,6 +436,29 @@ func (hub *Hub) SetExitHandler(handler func(symbol string)) {
 }
 
 /*
+Fluid returns the WebRTC transport boundary used by live visualization viewers.
+*/
+func (hub *Hub) Fluid() *FluidRTC {
+	if hub == nil {
+		return nil
+	}
+
+	return hub.fluid
+}
+
+/*
+PhysicsMonitor returns the physics monitor attached to the hub.
+*/
+func (hub *Hub) PhysicsMonitor() *sensorium.PhysicsMonitor {
+	if hub == nil {
+		return nil
+	}
+
+	return &hub.physics
+}
+
+
+/*
 writeFrontend encodes one measurement as a MeasurementsFrame and writes it to the dashboard socket.
 Used by tests and direct inspection publishers.
 */

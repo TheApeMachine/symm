@@ -80,7 +80,8 @@ type Solver struct {
 	reading atomic.Pointer[State]
 	version uint64 // Owned by advanceMu, together with the published reading.
 
-	viewer Viewer
+	viewer  Viewer
+	monitor *sensorium.PhysicsMonitor
 }
 
 /*
@@ -167,6 +168,10 @@ SetViewer attaches the publication boundary the advance loop renders into. It
 is set once during construction, before any envelope is stepped.
 */
 func (solver *Solver) SetViewer(viewer Viewer) { solver.viewer = viewer }
+
+func (solver *Solver) SetPhysicsMonitor(monitor *sensorium.PhysicsMonitor) {
+	solver.monitor = monitor
+}
 
 /*
 RecordForcing records Hawkes excitation fractions for the given symbol directly.
@@ -300,16 +305,127 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	default:
 	}
 
+	var r sensorium.Reading
+	var particleCount float64
+	if state := solver.reading.Load(); state != nil {
+		r = state.Reading
+		particleCount = float64(state.State.N)
+	} else if solver.physics != nil {
+		r = solver.physics.Reading()
+		if s := solver.physics.State(); s != nil {
+			particleCount = float64(s.N)
+		}
+	}
+
+	if m, ok := measurement.Metrics["divergence"]; ok {
+		measurement.Metrics["divergence"] = m.Write(r.Divergence)
+	}
+
+	if m, ok := measurement.Metrics["guidance_speed"]; ok {
+		measurement.Metrics["guidance_speed"] = m.Write(r.GuidanceSpeed)
+	}
+
+	if m, ok := measurement.Metrics["coherence_mag2"]; ok {
+		measurement.Metrics["coherence_mag2"] = m.Write(r.CoherenceMag2)
+	}
+
+	if m, ok := measurement.Metrics["pressure_grad_norm"]; ok {
+		measurement.Metrics["pressure_grad_norm"] = m.Write(r.PressureGradNorm)
+	}
+
+	if m, ok := measurement.Metrics["viscosity_proxy"]; ok {
+		measurement.Metrics["viscosity_proxy"] = m.Write(r.ViscosityProxy)
+	}
+
+	if m, ok := measurement.Metrics["kuramoto_r"]; ok {
+		measurement.Metrics["kuramoto_r"] = m.Write(r.KuramotoR)
+	}
+
+	if m, ok := measurement.Metrics["gas_kinetic"]; ok {
+		measurement.Metrics["gas_kinetic"] = m.Write(r.Health.Gas.Kinetic)
+	}
+
+	if m, ok := measurement.Metrics["gas_internal"]; ok {
+		measurement.Metrics["gas_internal"] = m.Write(r.Health.Gas.Internal)
+	}
+
+	if m, ok := measurement.Metrics["wave_norm"]; ok {
+		measurement.Metrics["wave_norm"] = m.Write(r.Health.Wave.Norm)
+	}
+
+	if m, ok := measurement.Metrics["vorticity_rms"]; ok {
+		measurement.Metrics["vorticity_rms"] = m.Write(r.Health.Gas.VorticityRMS)
+	}
+
+	if m, ok := measurement.Metrics["strain_rms"]; ok {
+		measurement.Metrics["strain_rms"] = m.Write(r.Health.Gas.StrainRMS)
+	}
+
+	if m, ok := measurement.Metrics["max_mach"]; ok {
+		measurement.Metrics["max_mach"] = m.Write(r.Health.Gas.MaxMach)
+	}
+
+	if m, ok := measurement.Metrics["particle_count"]; ok {
+		measurement.Metrics["particle_count"] = m.Write(particleCount)
+	}
+
+	if m, ok := measurement.Metrics["particle_thermal"]; ok {
+		measurement.Metrics["particle_thermal"] = m.Write(r.Health.ParticleThermal)
+	}
+
+	if m, ok := measurement.Metrics["particle_kinetic"]; ok {
+		measurement.Metrics["particle_kinetic"] = m.Write(r.Health.ParticleKinetic)
+	}
+
 	return measurement
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement[float64]("manifold", map[string]data.Metric[float64]{
+	measurement := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
 		"divergence": data.NewMetric[float64](
 			"divergence", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
 		),
+		"guidance_speed": data.NewMetric[float64](
+			"guidance_speed", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"coherence_mag2": data.NewMetric[float64](
+			"coherence_mag2", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"pressure_grad_norm": data.NewMetric[float64](
+			"pressure_grad_norm", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"viscosity_proxy": data.NewMetric[float64](
+			"viscosity_proxy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
 		"kuramoto_r": data.NewMetric[float64](
 			"kuramoto_r", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"gas_kinetic": data.NewMetric[float64](
+			"gas_kinetic", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"gas_internal": data.NewMetric[float64](
+			"gas_internal", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"wave_norm": data.NewMetric[float64](
+			"wave_norm", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"vorticity_rms": data.NewMetric[float64](
+			"vorticity_rms", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"strain_rms": data.NewMetric[float64](
+			"strain_rms", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"max_mach": data.NewMetric[float64](
+			"max_mach", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"particle_count": data.NewMetric[float64](
+			"particle_count", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"particle_thermal": data.NewMetric[float64](
+			"particle_thermal", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
+		),
+		"particle_kinetic": data.NewMetric[float64](
+			"particle_kinetic", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
 
@@ -582,6 +698,19 @@ func (solver *Solver) Advance() *State {
 
 	reading := solver.publishReading(state)
 	solver.advanceMu.Unlock()
+
+	if solver.monitor != nil && solver.monitor.WantsSnapshot() {
+		pop := 0
+		if state != nil {
+			pop = state.N
+		}
+		snap, err := sensorium.NewPhysicsSnapshot(solver.version, time.Now(), pop, reading.Reading)
+		if err != nil {
+			solver.monitor.Reject(err)
+		} else if err := solver.monitor.Observe(snap); err != nil {
+			solver.monitor.Reject(err)
+		}
+	}
 
 	if solver.ObserveModule != nil {
 		solver.ObserveModule("manifold", time.Since(started))

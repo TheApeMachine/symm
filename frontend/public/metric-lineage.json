@@ -1948,6 +1948,17 @@
       "kernelOnly": false
     },
     {
+      "id": "hawkes/coherence_mag2",
+      "source": "hawkes",
+      "metric": "coherence_mag2",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 391,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "hawkes/compensator:buy",
       "source": "hawkes",
       "metric": "compensator",
@@ -2084,7 +2095,7 @@
       "metric": "divergence",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 308,
+      "line": 385,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2341,7 +2352,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 116
+          "line": 117
         }
       ],
       "dead": false,
@@ -2361,7 +2372,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 121
+          "line": 122
         }
       ],
       "dead": false,
@@ -2620,12 +2631,45 @@
       "kernelOnly": false
     },
     {
+      "id": "hawkes/gas_internal",
+      "source": "hawkes",
+      "metric": "gas_internal",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 406,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/gas_kinetic",
+      "source": "hawkes",
+      "metric": "gas_kinetic",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 403,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/guidance_speed",
+      "source": "hawkes",
+      "metric": "guidance_speed",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 388,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "hawkes/kuramoto_r",
       "source": "hawkes",
       "metric": "kuramoto_r",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 311,
+      "line": 400,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2787,6 +2831,17 @@
       "kernelOnly": false
     },
     {
+      "id": "hawkes/max_mach",
+      "source": "hawkes",
+      "metric": "max_mach",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 418,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "hawkes/offspring:buy_from_buy",
       "source": "hawkes",
       "metric": "offspring",
@@ -2867,6 +2922,50 @@
       "kernelOnly": false
     },
     {
+      "id": "hawkes/particle_count",
+      "source": "hawkes",
+      "metric": "particle_count",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 421,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/particle_kinetic",
+      "source": "hawkes",
+      "metric": "particle_kinetic",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 427,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/particle_thermal",
+      "source": "hawkes",
+      "metric": "particle_thermal",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 424,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/pressure_grad_norm",
+      "source": "hawkes",
+      "metric": "pressure_grad_norm",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 394,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "hawkes/snr",
       "source": "hawkes",
       "metric": "snr",
@@ -2897,6 +2996,50 @@
       "package": "github.com/theapemachine/symm/signal/hawkes",
       "file": "signal/hawkes/trade.go",
       "line": 265,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/strain_rms",
+      "source": "hawkes",
+      "metric": "strain_rms",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 415,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/viscosity_proxy",
+      "source": "hawkes",
+      "metric": "viscosity_proxy",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 397,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/vorticity_rms",
+      "source": "hawkes",
+      "metric": "vorticity_rms",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 412,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "hawkes/wave_norm",
+      "source": "hawkes",
+      "metric": "wave_norm",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 409,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4053,12 +4196,56 @@
       "kernelOnly": false
     },
     {
+      "id": "manifold/coherence_mag2",
+      "source": "manifold",
+      "metric": "coherence_mag2",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 391,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "manifold/divergence",
       "source": "manifold",
       "metric": "divergence",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 308,
+      "line": 385,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_internal",
+      "source": "manifold",
+      "metric": "gas_internal",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 406,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/gas_kinetic",
+      "source": "manifold",
+      "metric": "gas_kinetic",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 403,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/guidance_speed",
+      "source": "manifold",
+      "metric": "guidance_speed",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 388,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4069,7 +4256,106 @@
       "metric": "kuramoto_r",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 311,
+      "line": 400,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/max_mach",
+      "source": "manifold",
+      "metric": "max_mach",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 418,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/particle_count",
+      "source": "manifold",
+      "metric": "particle_count",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 421,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/particle_kinetic",
+      "source": "manifold",
+      "metric": "particle_kinetic",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 427,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/particle_thermal",
+      "source": "manifold",
+      "metric": "particle_thermal",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 424,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/pressure_grad_norm",
+      "source": "manifold",
+      "metric": "pressure_grad_norm",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 394,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/strain_rms",
+      "source": "manifold",
+      "metric": "strain_rms",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 415,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/viscosity_proxy",
+      "source": "manifold",
+      "metric": "viscosity_proxy",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 397,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/vorticity_rms",
+      "source": "manifold",
+      "metric": "vorticity_rms",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 412,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/wave_norm",
+      "source": "manifold",
+      "metric": "wave_norm",
+      "package": "github.com/theapemachine/symm/logic/manifold",
+      "file": "logic/manifold/solver.go",
+      "line": 409,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6406,7 +6692,7 @@
       "kind": "catalog",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 116,
+      "line": 117,
       "targets": [
         "hawkes/excitation_fraction:buy",
         "hawkes/excitation_fraction:sell"
@@ -6440,8 +6726,8 @@
     }
   ],
   "summary": {
-    "totalProducers": 387,
-    "deadProducers": 225,
+    "totalProducers": 413,
+    "deadProducers": 251,
     "referencedProducers": 162,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,

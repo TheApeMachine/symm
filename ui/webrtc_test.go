@@ -38,6 +38,7 @@ func TestFluidWebRTCRealConnection(t *testing.T) {
 
 		Convey("server reports that it wants manifold frames", func() {
 			So(server.Wants(types.ManifoldChannel), ShouldBeTrue)
+			So(server.WantsManifold(), ShouldBeTrue)
 
 			// Publish a full 64x64x64 manifold state (~7.3MB, ~449 chunks)
 			dim := 64
