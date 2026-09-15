@@ -5,6 +5,7 @@ import (
 	"iter"
 	"unsafe"
 
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -37,14 +38,16 @@ type Training struct {
 	*runtime.System
 	fragments []iter.Seq[unsafe.Pointer]
 	pipeline  *nomagique.Number
+	trader    *Trader
 }
 
-func NewStrategy(ctx context.Context) *Training {
+func NewStrategy(ctx context.Context, api *websocket.API) *Training {
 	training := &Training{
 		pipeline: nomagique.NewNumber(
 			grid.NewSpace(),
 			cognition.NewEngine(cognition.Config{}),
 		),
+		trader: NewTrader(ctx, api),
 	}
 
 	training.System = runtime.NewSystem(ctx, "strategy", training)
@@ -58,10 +61,8 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 	action := data.Read[Action](training.pipeline.Next(data.NewValue(measurement)))
 
 	switch action {
-	case ActionEnter:
-		// TODO: Open a new position.
-	case ActionExit:
-		// TODO: Exit the position.
+	case ActionEnter, ActionExit:
+		training.trader.OnAction(measurement.Label, action)
 	case ActionWait:
 		// TODO: Do nothing.
 	}

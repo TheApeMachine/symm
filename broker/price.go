@@ -127,7 +127,6 @@ func (price *Price) Mark(symbol string, side Direction) *decimal.Decimal {
 	tick := price.Tick(symbol)
 
 	if tick == nil {
-		errnie.Error(errnie.Err(errnie.NotFound, "price: ticker unavailable for "+symbol, nil))
 		return nil
 	}
 
@@ -147,43 +146,66 @@ func notional(unit, quantity *decimal.Decimal) *decimal.Decimal {
 }
 
 /* PnL values the remaining inventory, including its retained entry fee. */
-func (price *Price) PnL(symbol string, holding *types.Holding) *decimal.Decimal {
-	if holding == nil || holding.Mark == nil || holding.Qty == nil || holding.Basis == nil || holding.EntryFee == nil {
+func (price *Price) PnL(symbol string, position *Position) *decimal.Decimal {
+	exit := price.ExitValue(symbol, position)
+
+	if exit == nil || position == nil {
 		return nil
 	}
 
-	exit := price.ExitValue(symbol, holding)
+	entryPrice := position.Price()
+	entryVolume := position.Volume()
 
-	if exit == nil {
+	if entryPrice == nil || entryVolume == nil {
 		return nil
 	}
 
-	return exit.Sub(holding.Basis).Sub(holding.EntryFee)
+	basis := notional(entryPrice, entryVolume)
+	return exit.Sub(basis)
 }
 
-/* Value reports the net liquidation value of a holding. */
-func (price *Price) Value(symbol string, holding *types.Holding) *decimal.Decimal {
-	return price.ExitValue(symbol, holding)
+/* Value reports the net liquidation value of a position. */
+func (price *Price) Value(symbol string, position *Position) *decimal.Decimal {
+	return price.ExitValue(symbol, position)
 }
 
-func (price *Price) ExitValue(symbol string, holding *types.Holding) *decimal.Decimal {
-	if holding == nil || holding.Mark == nil || holding.Qty == nil {
+func (price *Price) ExitValue(symbol string, position *Position) *decimal.Decimal {
+	if position == nil {
+		return nil
+	}
+
+	volume := position.Volume()
+
+	if volume == nil {
+		return nil
+	}
+
+	tick := price.Tick(symbol)
+
+	if tick == nil || tick.Bid == nil {
 		return nil
 	}
 
 	return price.WithFee(
-		symbol, notional(holding.Mark, holding.Qty), SELL,
+		symbol, notional(tick.Bid, volume), SELL,
 	)
 }
 
-func (price *Price) ReturnPct(symbol string, holding *types.Holding) float64 {
-	pnl := price.PnL(symbol, holding)
+func (price *Price) ReturnPct(symbol string, position *Position) float64 {
+	pnl := price.PnL(symbol, position)
 
-	if pnl == nil || holding.Basis == nil || holding.EntryFee == nil {
+	if pnl == nil || position == nil {
 		return 0
 	}
 
-	denom := holding.Basis.Add(holding.EntryFee)
+	entryPrice := position.Price()
+	entryVolume := position.Volume()
+
+	if entryPrice == nil || entryVolume == nil {
+		return 0
+	}
+
+	denom := notional(entryPrice, entryVolume)
 
 	if denom.Sign() == 0 {
 		return 0
@@ -483,17 +505,7 @@ func (price *Price) Tradable(symbol string, quantity, unit *decimal.Decimal) boo
 
 /* Fee returns the taker fee for a symbol. */
 func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
-	fee := price.FeeIfAvailable(symbol)
-
-	if fee == nil {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"fee not found for "+symbol,
-			nil,
-		))
-	}
-
-	return fee
+	return price.FeeIfAvailable(symbol)
 }
 
 /*
@@ -572,23 +584,11 @@ func (price *Price) WithFee(
 ) *decimal.Decimal {
 	fee := price.Fee(symbol)
 
-	if fee == nil || fee.Fee == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: taker fee required for fee calculation",
-			nil,
-		))
-
-		return nil
-	}
-
-	if amount == nil {
-		errnie.Error(errnie.Err(errnie.Validation, "price: amount required", nil))
+	if fee == nil || fee.Fee == nil || amount == nil {
 		return nil
 	}
 
 	if direction != BUY && direction != SELL {
-		errnie.Error(errnie.Err(errnie.Validation, "price: buy or sell direction required", nil))
 		return nil
 	}
 
@@ -602,146 +602,6 @@ func (price *Price) WithFee(
 	return amount.SetScale(scale).OffsetPercent(rate)
 }
 
-/*
-ApplyFill consumes cumulative venue facts. Partial sales allocate finite basis
-and fees, retaining the remainder by subtraction; final sales take it all.
-*/
-func (price *Price) ApplyFill(
-	holding *types.Holding,
-	execution kraken.ExecutionData,
-	previous kraken.ExecutionData,
-) error {
-	if execution.CumQty == nil || execution.CumQty.Sign() == 0 {
-		return nil
-	}
-
-	if execution.CumCost == nil || execution.FeeUsdEquiv == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "price: cumulative fill cost and fee required", nil,
-		))
-	}
-
-	prevQty := decimalZero
-	prevCost := decimalZero
-	prevFee := decimalZero
-
-	if previous.CumQty != nil {
-		prevQty = previous.CumQty
-	}
-
-	if previous.CumCost != nil {
-		prevCost = previous.CumCost
-	}
-
-	if previous.FeeUsdEquiv != nil {
-		prevFee = previous.FeeUsdEquiv
-	}
-
-	quantity := execution.CumQty.Sub(prevQty)
-	cost := execution.CumCost.Sub(prevCost)
-	fee := execution.FeeUsdEquiv.Sub(prevFee)
-
-	if quantity.Sign() < 0 || cost.Sign() < 0 || fee.Sign() < 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "price: cumulative fill economics moved backwards", nil,
-		))
-	}
-
-	for _, field := range []**decimal.Decimal{
-		&holding.Qty,
-		&holding.Basis,
-		&holding.EntryCost,
-		&holding.EntryFee,
-		&holding.EntryFees,
-		&holding.EntryQty,
-		&holding.ExitCost,
-		&holding.ExitQty,
-		&holding.ExitFees,
-		&holding.RealizedPnL,
-		&holding.RealizedReturn,
-	} {
-		if *field == nil {
-			*field = decimalZero
-		}
-	}
-
-	if execution.Side == "buy" {
-		holding.Qty = holding.Qty.Add(quantity)
-		holding.SellableQty = holding.Qty
-		holding.Basis = holding.Basis.Add(cost)
-		holding.EntryCost = holding.EntryCost.Add(cost)
-		holding.EntryFee = holding.EntryFee.Add(fee)
-		holding.EntryFees = holding.EntryFees.Add(fee)
-		holding.EntryQty = holding.EntryQty.Add(quantity)
-		holding.EntryPrice = holding.Basis.Div(holding.Qty)
-		holding.EntryVWAP = holding.EntryCost.Div(holding.EntryQty)
-
-		if holding.EntryAt == nil {
-			holding.EntryAt = &execution.Timestamp
-		}
-
-		return nil
-	}
-
-	if execution.Side != "sell" || quantity.Cmp(holding.Qty) > 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "price: fill side or sold quantity is invalid", nil,
-		))
-	}
-
-	basis, entryFee := decimalZero, decimalZero
-
-	if quantity.Sign() > 0 {
-		basis, entryFee = holding.Basis, holding.EntryFee
-
-		if quantity.Cmp(holding.Qty) < 0 {
-			share := quantity.SetScale(decimal.DefaultScale).Div(holding.Qty)
-			basis = holding.Basis.Mul(share)
-			entryFee = holding.EntryFee.Mul(share)
-		}
-	}
-
-	holding.Qty = holding.Qty.Sub(quantity)
-	holding.SellableQty = holding.Qty
-	holding.Basis = holding.Basis.Sub(basis)
-	holding.EntryFee = holding.EntryFee.Sub(entryFee)
-	holding.ExitCost = holding.ExitCost.Add(cost)
-	holding.ExitQty = holding.ExitQty.Add(quantity)
-	holding.ExitFees = holding.ExitFees.Add(fee)
-	holding.ExitFee = holding.ExitFees
-	holdingCost := cost.SetScale(decimal.DefaultScale)
-	holding.RealizedPnL = holding.RealizedPnL.Add(
-		holdingCost.Sub(fee).Sub(basis).Sub(entryFee),
-	)
-	if execution.AvgPrice != nil {
-		holding.ExitPrice = execution.AvgPrice
-	}
-
-	if holding.ExitQty.Sign() > 0 {
-		holding.ExitVWAP = holding.ExitCost.Div(holding.ExitQty)
-
-		if holding.ExitPrice == nil {
-			holding.ExitPrice = holding.ExitVWAP
-		}
-	}
-
-	entryTotal := holding.EntryCost.Add(holding.EntryFees)
-
-	if entryTotal.Sign() > 0 {
-		holding.RealizedReturn = holding.RealizedPnL.Div(entryTotal)
-	}
-
-	if holding.Qty.Sign() == 0 {
-		holding.ExitAt = &execution.Timestamp
-		holding.PnL = holding.RealizedPnL
-
-		if holding.RealizedReturn != nil {
-			holding.ReturnPct = holding.RealizedReturn.Float64() * 100
-		}
-	}
-
-	return nil
-}
 
 func (price *Price) recordAnomaly(symbol string, kind AnomalyKind) {
 	if price == nil || price.anomalies == nil {

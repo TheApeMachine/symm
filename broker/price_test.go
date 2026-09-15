@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	venue "github.com/theapemachine/symm/tests/venue"
-	"github.com/theapemachine/symm/types"
 )
 
 /* newPriceSurface creates a price surface with the symbol's executable fee row. */
@@ -135,39 +134,44 @@ func TestPriceMark(t *testing.T) {
 func TestPricePnL(t *testing.T) {
 	Convey("Setup", t, func() {
 		price, _ := newPriceSurface(t, "TEST3")
-		holding := &types.Holding{
-			Symbol:     "TEST3",
-			Qty:        decimal.NewFromFloat64(1.0),
-			Basis:      decimal.NewFromFloat64(45000.00),
-			EntryPrice: decimal.NewFromFloat64(45000.00),
-			EntryFee:   decimal.NewFromInt64(0),
+		position := &Position{
+			EntryOrder: &spot.AddOrderRequest{
+				Pair:   "TEST3",
+				Volume: "1.0",
+				Price:  "45000.00",
+			},
 		}
 
 		Convey("Given an authoritative economic mark", func() {
-			mark := decimal.NewFromFloat64(49950.00)
-			holding.Mark = mark
+			price.Update(&kraken.TickerData{
+				Symbol: "TEST3",
+				Bid:    decimal.NewFromFloat64(49950.00),
+				Ask:    decimal.NewFromFloat64(50050.00),
+			})
 
-			Convey("When the PnL is calculated for a holding", func() {
-				pnl := price.PnL("TEST3", holding)
+			Convey("When the PnL is calculated for a position", func() {
+				pnl := price.PnL("TEST3", position)
 
 				Convey("It should return the profit or loss based on the authoritative mark, including fees", func() {
+					So(pnl, ShouldNotBeNil)
 					So(pnl.Float64(), ShouldAlmostEqual, 4825.125, 1e-12)
 				})
 			})
 		})
 	})
 
-	Convey("Given a holding before its mark is set", t, func() {
+	Convey("Given a position before its mark is set", t, func() {
 		price, _ := newPriceSurface(t, "COLD/USD")
-		holding := &types.Holding{
-			Qty:        decimal.NewFromFloat64(1),
-			Basis:      decimal.NewFromFloat64(100),
-			EntryPrice: decimal.NewFromFloat64(100),
-			EntryFee:   decimal.NewFromInt64(0),
+		position := &Position{
+			EntryOrder: &spot.AddOrderRequest{
+				Pair:   "COLD/USD",
+				Volume: "1.0",
+				Price:  "100",
+			},
 		}
 
 		Convey("It should reject the incomplete valuation without dereferencing it", func() {
-			So(price.PnL("COLD/USD", holding), ShouldBeNil)
+			So(price.PnL("COLD/USD", position), ShouldBeNil)
 		})
 	})
 }
@@ -175,21 +179,26 @@ func TestPricePnL(t *testing.T) {
 func TestPriceExitValue(t *testing.T) {
 	Convey("Setup", t, func() {
 		price, _ := newPriceSurface(t, "TEST4")
-		holding := &types.Holding{
-			Symbol:     "TEST4",
-			Qty:        decimal.NewFromFloat64(2.0),
-			Basis:      decimal.NewFromFloat64(120000.00),
-			EntryPrice: decimal.NewFromFloat64(60000.00),
-			EntryFee:   decimal.NewFromInt64(0),
+		position := &Position{
+			EntryOrder: &spot.AddOrderRequest{
+				Pair:   "TEST4",
+				Volume: "2.0",
+				Price:  "60000.00",
+			},
 		}
 
 		Convey("Given an authoritative economic mark", func() {
-			holding.Mark = decimal.NewFromFloat64(64950.00)
+			price.Update(&kraken.TickerData{
+				Symbol: "TEST4",
+				Bid:    decimal.NewFromFloat64(64950.00),
+				Ask:    decimal.NewFromFloat64(65050.00),
+			})
 
-			Convey("When the exit value is calculated for a holding", func() {
-				exitValue := price.ExitValue("TEST4", holding)
+			Convey("When the exit value is calculated for a position", func() {
+				exitValue := price.ExitValue("TEST4", position)
 
 				Convey("It should return the exit value based on the authoritative mark, fee-net", func() {
+					So(exitValue, ShouldNotBeNil)
 					So(exitValue.Float64(), ShouldAlmostEqual, 129575.25, 1e-12)
 				})
 			})
@@ -233,48 +242,6 @@ func TestPriceTradable(t *testing.T) {
 	})
 }
 
-func TestPriceApplyFill(t *testing.T) {
-	Convey("Given an empty holding", t, func() {
-		price, _ := newPriceSurface(t, "AAA/USD")
-		holding := &types.Holding{
-			Symbol: "AAA/USD",
-			Status: types.INITIALIZING,
-		}
-		now := time.Now().UTC()
-
-		Convey("Buy fill accumulates quantity, cost, fees and VWAP", func() {
-			fill := kraken.ExecutionData{
-				Side:        "buy",
-				CumQty:      decimal.NewFromInt64(10),
-				CumCost:     decimal.NewFromInt64(1000),
-				FeeUsdEquiv: decimal.NewFromFloat64(2.5),
-				Timestamp:   now,
-			}
-			err := price.ApplyFill(holding, fill, kraken.ExecutionData{})
-			So(err, ShouldBeNil)
-			So(holding.Qty.Float64(), ShouldEqual, 10)
-			So(holding.Basis.Float64(), ShouldEqual, 1000)
-			So(holding.EntryFee.Float64(), ShouldEqual, 2.5)
-			So(holding.EntryVWAP.Float64(), ShouldEqual, 100)
-
-			Convey("Partial sell allocates basis and fee exactly", func() {
-				sellFill := kraken.ExecutionData{
-					Side:        "sell",
-					CumQty:      decimal.NewFromInt64(4),
-					CumCost:     decimal.NewFromInt64(480),
-					FeeUsdEquiv: decimal.NewFromFloat64(1.2),
-					AvgPrice:    decimal.NewFromInt64(120),
-					Timestamp:   now.Add(time.Minute),
-				}
-				err := price.ApplyFill(holding, sellFill, kraken.ExecutionData{})
-				So(err, ShouldBeNil)
-				So(holding.Qty.Float64(), ShouldEqual, 6)
-				So(holding.Basis.Float64(), ShouldEqual, 600)
-				So(holding.RealizedPnL.Sign(), ShouldBeGreaterThan, 0)
-			})
-		})
-	})
-}
 
 func TestPriceGetFees(t *testing.T) {
 	Convey("Given a mock API responding with trade volume fee data", t, func() {
