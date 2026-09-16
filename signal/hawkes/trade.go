@@ -52,8 +52,9 @@ func NewTrade(ctx context.Context) *Trade {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
+Step supplies public spot trade arrivals to the pipeline. Book mutations and
+futures arrivals are different point processes, even when they share a symbol
+and carry price and quantity fields.
 */
 func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if trade.Status() != runtime.READY {
@@ -71,13 +72,15 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
 			_, hasPrice := candidate.Metrics["price"]
 			_, hasQty := candidate.Metrics["qty"]
-			return hasPrice && hasQty && candidate.Label != "" && candidate.Err == nil
+			return candidate.Provenance["channel"] == "trade" &&
+				hasPrice && hasQty && candidate.Label != "" && candidate.Err == nil
 		})
 
 		if peer == nil {
 			return nil
 		}
 
+		measurement.Reset()
 		measurement.Pull(peer, "price", "qty")
 	}
 

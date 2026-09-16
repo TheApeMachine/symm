@@ -1,9 +1,6 @@
 package runtime
 
 import (
-	"context"
-
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -20,43 +17,50 @@ appends it and answers the slot, and the node is told its identity so the
 values it produces name their own register slot.
 */
 type Consumer[T any] struct {
-	*System
 	node      Node[T]
 	register  *store.Register[T]
-	tees      []Tee
 	ID        int
 	peerLimit int
+	tees      []Tee
+	owner     string
 }
 
 func NewConsumer[T any](
-	ctx context.Context,
-	node Node[T],
-	register *store.Register[T],
-	tees ...Tee,
+	node Node[T], register *store.Register[T], tees ...Tee,
 ) *Consumer[T] {
 	consumer := &Consumer[T]{
-		node:     node,
-		register: register,
-		tees:     tees,
+		node:      node,
+		register:  register,
+		peerLimit: -1,
+		tees:      tees,
 	}
 
-	consumer.System = NewSystem(ctx, "consumer", consumer)
-
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"system":   consumer.System,
-		"node":     consumer.node,
-		"register": consumer.register,
-	})); err != nil {
-		return nil
+	if node == nil || register == nil {
+		return consumer
 	}
 
-	// This will obtain a slot in the register, and call Identify on both the
-	// consumer as well as the measurement (obtained via node.Register()), so both
-	// will be stamped with the same ID, corresponding to the register slot index.
+	val := node.Register()
+
+	if named, ok := any(node).(interface{ Name() string }); ok {
+		consumer.owner = named.Name()
+	}
+
 	data.Read[*store.Query[T]](consumer.register.Next(data.NewValue(*store.NewQuery(
-		consumer, data.ActionIdentify, data.NewValue(node.Register()),
+		consumer, data.ActionIdentify, data.NewValue(val),
 	))))
 
+	if meas, ok := any(val).(*data.Measurement[float64]); ok && meas != nil {
+		meas.ID = consumer.ID
+	}
+
+	return consumer
+}
+
+/*
+SetPeerLimit restricts the consumer's peer queries to register slots strictly below limit.
+*/
+func (consumer *Consumer[T]) SetPeerLimit(limit int) *Consumer[T] {
+	consumer.peerLimit = limit
 	return consumer
 }
 
@@ -81,37 +85,71 @@ func (consumer *Consumer[T]) Identify(id int) data.Identifiable[T] {
 Handle steps one node over every slot in [lower, upper]. Each invocation
 reads the node's registered data back out of the register, passes it to Step,
 and puts what Step returns back into the register under the node's slot.
-Before READY, Handle drops the range without stepping or publishing.
+Measurement sequences are one-based because zero means unstamped. Nil outputs
+clear that sequence slot without replacing the node's last working state.
 */
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
-	if consumer.Status() != READY {
-		errnie.Warn(consumer.Name() + ": Handle called before READY; dropping event")
-		return
-	}
+	for sequence := lower; sequence <= upper; sequence++ {
+		result := consumer.step(sequence)
+		payload := data.NewValue(result)
 
-	for seq := lower; seq <= upper; seq++ {
-		val := consumer.register.Next(data.NewValue(
-			*store.NewQuery(consumer, data.ActionRead),
-		))
-
-		if data.Read[*data.Measurement[float64]](val) == nil {
-			consumer.Error(errnie.Err(
-				errnie.NotFound,
-				"[consumer] no measurement found for consumer",
-				nil,
-			))
+		if measurement, ok := any(result).(*data.Measurement[float64]); any(result) == nil || (ok && measurement == nil) {
+			payload = nil
 		}
 
-		result := consumer.node.Step(data.Read[T](val))
+		query := store.NewQuery(consumer, data.ActionWrite, payload).SetSequence(sequence)
 
-		out := data.Read[*data.Measurement[float64]](consumer.register.Next(
-			data.NewValue(*store.NewQuery(
-				consumer, data.ActionWrite, data.NewValue(result),
-			)),
-		))
+		out := data.Read[T](consumer.register.Next(data.NewValue(*query)))
+		measurement, ok := any(out).(*data.Measurement[float64])
+
+		if !ok || measurement == nil {
+			continue
+		}
 
 		for _, tee := range consumer.tees {
-			tee.Push(out)
+			if tee != nil {
+				tee.Push(measurement)
+			}
 		}
 	}
+}
+
+func (consumer *Consumer[T]) step(sequence int64) T {
+	var empty T
+	query := store.NewQuery(consumer, data.ActionRead).SetSequence(sequence)
+
+	if consumer.peerLimit >= 0 {
+		query.SetPeerLimit(consumer.peerLimit)
+	}
+
+	value := data.Read[T](consumer.register.Next(data.NewValue(*query)))
+
+	if measurement, ok := any(value).(*data.Measurement[float64]); ok && measurement != nil {
+		peers := measurement.Peers[:0]
+
+		for _, peer := range measurement.Peers {
+			if peer != nil && peer.SeqIdx == sequence+1 {
+				peers = append(peers, peer)
+			}
+		}
+
+		measurement.Peers = peers
+
+		if consumer.peerLimit != 0 && measurement.Metadata["peer-interest"] != "" && len(peers) == 0 {
+			return empty
+		}
+
+		measurement.SeqIdx = sequence + 1
+		measurement.Result = nil
+		measurement.Err = nil
+	}
+
+	result := consumer.node.Step(value)
+
+	if measurement, ok := any(result).(*data.Measurement[float64]); ok && measurement != nil {
+		measurement.SeqIdx = sequence + 1
+		measurement.Provenance["owner"] = consumer.owner
+	}
+
+	return result
 }

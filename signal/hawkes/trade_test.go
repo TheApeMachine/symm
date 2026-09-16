@@ -18,6 +18,13 @@ so every producible metric is present and unvalued before the feed writes.
 */
 var schema = new(Trade).Register().Metrics
 
+// readyTrade activates the shared processing fixture explicitly.
+func readyTrade() *Trade {
+	entity := NewTrade(context.Background())
+	entity.Transition(runtime.READY)
+	return entity
+}
+
 /*
 trade builds the measurement the trade feed hands the signal: the register's
 declared schema, the row's price, quantity, and trade id written as metrics,
@@ -26,7 +33,7 @@ the side carried as provenance, the symbol as label, and the venue timestamp.
 func trade(symbol string, side string, at time.Time) *data.Measurement[float64] {
 	m := data.NewMeasurement[float64]("hawkes", maps.Clone(schema))
 	m.Label, m.At, m.From = symbol, at, at
-	m.Provenance = map[string]string{"side": side}
+	m.Provenance = map[string]string{"side": side, "channel": "trade"}
 
 	m.Metrics["price"] = m.Metrics["price"].Write(100.0)
 	m.Metrics["qty"] = m.Metrics["qty"].Write(1.0)
@@ -82,8 +89,59 @@ func seedClusteredTrades(entity *Trade, symbol string, count int, offsetSeconds 
 }
 
 func TestTradeStep(t *testing.T) {
+	Convey("Only public spot trades enter the Hawkes arrival process", t, func() {
+		entity := readyTrade()
+		measurement := entity.Register()
+		at := time.Unix(1000, 0)
+
+		for _, channel := range []string{"level3", "futures.trade", "executions"} {
+			peer := trade("BTC/USD", "buy", at)
+			peer.Provenance["channel"] = channel
+			measurement.Peers = []*data.Measurement[float64]{peer}
+			So(entity.Step(measurement), ShouldBeNil)
+		}
+
+		measurement.Peers = []*data.Measurement[float64]{trade("BTC/USD", "sell", at)}
+		result := entity.Step(measurement)
+		So(result.Err, ShouldBeNil)
+		So(result.Metrics["event_count"].Raw, ShouldEqual, 1)
+		So(result.Metrics["event_count:sell"].Raw, ShouldEqual, 1)
+
+		book := trade("BTC/USD", "buy", at.Add(time.Second))
+		book.Provenance["channel"] = "level3"
+		measurement.Peers = []*data.Measurement[float64]{book, trade("BTC/USD", "buy", at.Add(time.Second))}
+		result = entity.Step(measurement)
+		So(result.Err, ShouldBeNil)
+		So(result.Metrics["event_count"].Raw, ShouldEqual, 2)
+	})
+
+	Convey("A reused registered slot cannot lend a fitted symbol's values to a new symbol", t, func() {
+		entity := readyTrade()
+		seedClusteredTrades(entity, "BTC/USD", 180, 1000)
+		measurement := step(entity, "BTC/USD", "buy", time.Unix(1060, 0))
+		So(measurement.Metrics["conditional_intensity"].Standardized, ShouldNotBeNil)
+		So(measurement.SNRDefined, ShouldBeTrue)
+
+		peer := trade("ETH/USD", "sell", time.Unix(1061, 0))
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		result := entity.Step(measurement)
+		So(result.Err, ShouldBeNil)
+		So(result.Label, ShouldEqual, "ETH/USD")
+		So(result.Metrics["event_count"].Raw, ShouldEqual, 1)
+		So(result.Metrics["conditional_intensity"].Standardized, ShouldBeNil)
+		So(result.Metrics["excitation_decay"].Standardized, ShouldBeNil)
+		So(result.SNRDefined, ShouldBeFalse)
+
+		measurement.Peers = []*data.Measurement[float64]{trade("BTC/USD", "sell", time.Unix(1062, 0))}
+		result = entity.Step(measurement)
+		So(result.Err, ShouldBeNil)
+		So(result.Label, ShouldEqual, "BTC/USD")
+		So(result.Metrics["conditional_intensity"].Standardized, ShouldNotBeNil)
+		So(result.SNRDefined, ShouldBeTrue)
+	})
+
 	Convey("Given a fresh arrival-dynamics instrument", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 
 		Convey("the first buy event reports empirical counts with no warmup gating", func() {
 			measurement := step(entity, "BTC/USD", "buy", time.Unix(1000, 0))
@@ -129,7 +187,7 @@ func TestTradeStep(t *testing.T) {
 	})
 
 	Convey("Given a regressing event time", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
 			step(entity, "BTC/USD", "buy", time.Unix(1000, 0))
@@ -141,7 +199,7 @@ func TestTradeStep(t *testing.T) {
 	})
 
 	Convey("Register declares the full metric schema without values", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		measurement := entity.Register()
 
 		Convey("every declared metric is unvalued", func() {
@@ -167,7 +225,7 @@ metrics would then be present with exactly those values.
 */
 func TestNoMagicFallback(t *testing.T) {
 	Convey("Given a single early trade with no possible fit support", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		measurement := step(entity, "BTC/USD", "buy", time.Unix(1000, 0))
 
 		Convey("every fit-dependent metric must be unvalued, not a fallback constant", func() {
@@ -197,7 +255,7 @@ equal here, failing this test.
 */
 func TestBackgroundRateIsNotEmpiricalRate(t *testing.T) {
 	Convey("Given a sustained clustered burst with real self-excitation", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		seedClusteredTrades(entity, "BTC/USD", 240, 1_700_000_000)
 		measurement := step(entity, "BTC/USD", "buy", time.Unix(1_700_000_000+72, 200_000_000))
 
@@ -227,8 +285,8 @@ sellPath disagree here.
 */
 func TestCurrentEventCannotExciteItself(t *testing.T) {
 	Convey("Given identical prior history fed to two entities", t, func() {
-		buyPath := NewTrade(context.Background())
-		sellPath := NewTrade(context.Background())
+		buyPath := readyTrade()
+		sellPath := readyTrade()
 		// Stay well within the retained arrival path's fixed capacity
 		// (nomagique/statistic/hawkes.MaxArrivalSamples = 64): once the ring
 		// is full it evicts the oldest event on every new arrival, and
@@ -293,7 +351,7 @@ update.
 */
 func TestCurrentEventCannotRefitItsOwnModel(t *testing.T) {
 	Convey("Given a burst that grows past a refit boundary", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		seedClusteredTrades(entity, "BTC/USD", 200, 1_700_000_000)
 		base := time.Unix(1_700_000_000+60, 0)
 
@@ -307,7 +365,7 @@ func TestCurrentEventCannotRefitItsOwnModel(t *testing.T) {
 			// same history MINUS the final event must publish the identical
 			// amplitude for that final event, proving the final event's own
 			// arrival played no part in selecting the model that judged it.
-			replay := NewTrade(context.Background())
+			replay := readyTrade()
 			seedClusteredTrades(replay, "BTC/USD", 200, 1_700_000_000)
 			replayMeasurement := step(replay, "BTC/USD", "buy", base)
 			replayAmplitude := replayMeasurement.Metrics["excitation_amplitude:buy_from_buy"].Raw
@@ -330,7 +388,7 @@ compensator or double-counting events would break.
 */
 func TestExactLikelihoodMatchesHandComputation(t *testing.T) {
 	Convey("Given a converged fit over a clustered burst", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		seedClusteredTrades(entity, "BTC/USD", 200, 1_700_000_000)
 		measurement := step(entity, "BTC/USD", "buy", time.Unix(1_700_000_000+60, 0))
 
@@ -370,8 +428,8 @@ a bound or seed without normalizing to relative gaps) would diverge here.
 */
 func TestTimeTranslationInvariance(t *testing.T) {
 	Convey("Given the same relative event geometry at two very different epochs", t, func() {
-		early := NewTrade(context.Background())
-		late := NewTrade(context.Background())
+		early := readyTrade()
+		late := readyTrade()
 		seedClusteredTrades(early, "BTC/USD", 200, 1_700_000_000)
 		seedClusteredTrades(late, "BTC/USD", 200, 1_700_000_000+1_000_000)
 
@@ -402,8 +460,8 @@ much longer span, since the exponential kernel only knows real time.
 */
 func TestUnevenCadenceUsesRealEventTime(t *testing.T) {
 	Convey("Given the same event count compressed vs. stretched over wall-clock time", t, func() {
-		fast := NewTrade(context.Background())
-		slow := NewTrade(context.Background())
+		fast := readyTrade()
+		slow := readyTrade()
 
 		seedAtCadence := func(entity *Trade, cadence time.Duration) time.Time {
 			base := time.Unix(1_700_000_000, 0)
@@ -448,7 +506,7 @@ handler.
 */
 func TestArchitectureOwnsNoEstimatorState(t *testing.T) {
 	Convey("Given a fresh arrival-dynamics instrument", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 
 		Convey("it composes the runtime system and closes cleanly", func() {
 			So(entity, ShouldNotBeNil)
@@ -467,7 +525,7 @@ regress into unbounded memory.
 */
 func TestBoundedRetainedHistory(t *testing.T) {
 	Convey("Given far more arrivals than the retained path can hold uncapped", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		var lastErr error
 
 		base := time.Unix(1_700_000_000, 0)
@@ -495,7 +553,7 @@ func TestBoundedRetainedHistory(t *testing.T) {
 
 func TestSNRUndefinedWithoutCompensator(t *testing.T) {
 	Convey("Given a single early trade with no compensator support", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		measurement := step(entity, "BTC/USD", "buy", time.Unix(1000, 0))
 
 		Convey("SNR must be unvalued, not zero-substituted evidence", func() {
@@ -507,7 +565,7 @@ func TestSNRUndefinedWithoutCompensator(t *testing.T) {
 
 func TestMaturityReflectsFittedModelSupportNotEventCount(t *testing.T) {
 	Convey("Given only a couple of trades, far below fit identifiability", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		step(entity, "BTC/USD", "buy", time.Unix(1000, 0))
 		second := step(entity, "BTC/USD", "sell", time.Unix(1001, 0))
 
@@ -517,7 +575,7 @@ func TestMaturityReflectsFittedModelSupportNotEventCount(t *testing.T) {
 	})
 
 	Convey("Given a burst dense enough for a fit to converge", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		seedClusteredTrades(entity, "BTC/USD", 40, 1_700_000_000)
 		measurement := step(entity, "BTC/USD", "buy", time.Unix(1_700_000_000+12, 0))
 
@@ -529,7 +587,7 @@ func TestMaturityReflectsFittedModelSupportNotEventCount(t *testing.T) {
 
 func TestUnsupportedSideRejected(t *testing.T) {
 	Convey("Given a trade with an unrecognized side", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		measurement := step(entity, "BTC/USD", "liquidation", time.Unix(1000, 0))
 
 		Convey("Step reports an error rather than silently folding it into a mark", func() {
@@ -551,7 +609,7 @@ requires the model to keep changing throughout.
 */
 func TestRefitCadenceSurvivesRingCapacity(t *testing.T) {
 	Convey("Given far more clustered arrivals than the retained ring can hold", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		var observedAlphas []float64
 		var lastAlpha float64
 		hasLast := false
@@ -612,7 +670,7 @@ which this fixture's dense clustering is built to produce.
 */
 func TestSelfOnlyBaselineIsIndependentlyFitted(t *testing.T) {
 	Convey("Given a converged fit with genuine self-excitation", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		seedClusteredTrades(entity, "BTC/USD", 40, 1_700_000_000)
 		measurement := step(entity, "BTC/USD", "buy", time.Unix(1_700_000_000+12, 0))
 
@@ -642,7 +700,7 @@ generally would not preserve as cleanly under further refits).
 */
 func TestLikelihoodDoesNotAccumulateAcrossRefits(t *testing.T) {
 	Convey("Given many refits worth of clustered arrivals", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		var measurement *data.Measurement[float64]
 
 		base := time.Unix(1_700_000_000, 0)
@@ -683,7 +741,7 @@ func TestLikelihoodDoesNotAccumulateAcrossRefits(t *testing.T) {
 
 func TestSimultaneousArrivalsProduceNoNaNOrInf(t *testing.T) {
 	Convey("Given a fitted model followed by simultaneous arrivals at identical timestamps", t, func() {
-		entity := NewTrade(context.Background())
+		entity := readyTrade()
 		seedClusteredTrades(entity, "XRP/USD", 120, 0)
 
 		base := time.Unix(1000, 0)
@@ -703,15 +761,17 @@ func TestSimultaneousArrivalsProduceNoNaNOrInf(t *testing.T) {
 }
 
 func BenchmarkTradeStep(b *testing.B) {
-	entity := NewTrade(context.Background())
+	entity := readyTrade()
 	at := time.Date(2026, time.September, 1, 22, 53, 2, 957_587_000, time.UTC)
-	measurement := trade("SOL/USD", "buy", at)
+	peer := trade("SOL/USD", "buy", at)
+	measurement := entity.Register()
+	measurement.Peers = []*data.Measurement[float64]{peer}
 
 	b.ReportAllocs()
 
 	for i := 0; b.Loop(); i++ {
-		measurement.At = at.Add(time.Duration(i) * time.Millisecond)
-		measurement.Metrics["trade_id"] = measurement.Metrics["trade_id"].Write(float64(i))
+		peer.At = at.Add(time.Duration(i) * time.Millisecond)
+		peer.Metrics["trade_id"] = peer.Metrics["trade_id"].Write(float64(i))
 		result := entity.Step(measurement)
 
 		if result.Err != nil {

@@ -367,8 +367,29 @@ func TestSolverStepMeasurement(t *testing.T) {
 }
 
 func TestSolverStep(t *testing.T) {
+	Convey("Complete categories survive a multi-symbol registered observation", t, func() {
+		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
+		measurement := solver.Register()
+		measurement.Peers = []*data.Measurement[float64]{
+			categoryMeasurement("ETH/USD", true, 0.4),
+			categoryMeasurement("BTC/USD", true, 0.8),
+		}
+		result := solver.Step(measurement)
+		batches, ok := result.Result.([][]types.Category)
+		So(ok, ShouldBeTrue)
+		So(len(batches), ShouldEqual, 2)
+		for index, symbol := range []string{"BTC/USD", "ETH/USD"} {
+			So(batches[index][0].Symbol, ShouldEqual, symbol)
+			So(batches[index][0].At, ShouldEqual, time.Unix(0, 1))
+			So(batches[index][0].Strength, ShouldBeGreaterThan, 0)
+			So(batches[index][0].Supporting, ShouldNotBeEmpty)
+		}
+	})
+
 	Convey("Given one measurement carrying multiple signal peers", t, func() {
 		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
 		at := time.Unix(1, 0)
 		m := solver.Register()
 		m.Label, m.At, m.From = "BTC/USD", at, at
@@ -396,6 +417,7 @@ func TestSolverStep(t *testing.T) {
 
 	Convey("Given measurements with sub-100ms clock differences and negative z-scores", t, func() {
 		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
 		at1 := time.Unix(10, 0)
 		at2 := at1.Add(5 * time.Millisecond)
 
@@ -486,5 +508,38 @@ func TestSolverStepReadiness(t *testing.T) {
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
+	})
+}
+
+func BenchmarkSolverStep(b *testing.B) {
+	solver := NewSolver(b.Context())
+	solver.Transition(runtime.READY)
+	measurement := solver.Register()
+	measurement.Peers = []*data.Measurement[float64]{
+		categoryMeasurement("BTC/USD", true, 0.8),
+		categoryMeasurement("ETH/USD", true, 0.4),
+	}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		solver.Step(measurement)
+
+		if err := solver.Error(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestSolverStepUnmeasured(t *testing.T) {
+	Convey("Inputs without a category coordinate do not publish a registration as evidence", t, func() {
+		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
+		measurement := solver.Register()
+		peer := data.NewMeasurement[float64]("public", nil)
+		peer.Label = "BTC/USD"
+		peer.At = time.Unix(1, 0)
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		So(solver.Step(measurement), ShouldBeNil)
+		So(solver.Error(), ShouldBeNil)
 	})
 }

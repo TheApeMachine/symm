@@ -138,12 +138,6 @@ func NewWithClient(
 		quote:      system.Cfg.Market.QuoteCurrency,
 	}
 
-	live.paper.executions = func(execution *kraken.Execution) {
-		for _, report := range execution.Data {
-			live.queue.Enqueue(map[string]any{"channel": "executions", "execution": report})
-		}
-	}
-
 	live.client.Store(client)
 
 	live.pinger = NewPinger("websocket", func() error {
@@ -506,37 +500,14 @@ func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement
 		return nil
 	}
 
-	if row["channel"] == "executions" {
-		var report kraken.ExecutionData
-
-		if captured, ok := row["execution"].(kraken.ExecutionData); ok {
-			report = captured
-		}
-
-		if _, captured := row["execution"]; !captured {
-			payload, err := sonic.Marshal(row)
-
-			if err != nil {
-				measurement.Err = errnie.Error(err)
-				return measurement
-			}
-
-			if err := sonic.Unmarshal(payload, &report); err != nil {
-				measurement.Err = errnie.Error(err)
-				return measurement
-			}
-		}
-
-		measurement.Label = live.normalizer.Name(report.Symbol)
-		report.Symbol = measurement.Label
-		measurement.At = report.Timestamp
-		measurement.Metrics = nil
-		measurement.Provenance = map[string]string{"channel": "executions"}
-		measurement.Err = nil
-		return measurement
+	if measurement == nil {
+		measurement = live.Register()
 	}
 
 	measurement.Provenance = make(map[string]string, 4)
+	measurement.Metadata["venue"] = "true"
+	measurement.Metadata["volume-unit"] = "base"
+	measurement.Maturity = 1
 	measurement.Metrics = make(map[string]data.Metric[float64], len(row))
 	measurement.Err = nil
 	measurement.At = time.Time{}
@@ -619,9 +590,7 @@ Register implements the runtime.Node interface: it declares every numeric field
 the venue's spot rows can produce, none valued.
 */
 func (live *Live) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement("websocket", map[string]data.Metric[float64]{})
-	measurement.Metadata["venue"] = "true"
-	return measurement
+	return data.NewMeasurement("websocket", map[string]data.Metric[float64]{})
 }
 
 /*
@@ -698,12 +667,9 @@ func (live *Live) resume() error {
 		}
 	}
 
-	if live.Status() == runtime.READY {
-		live.Transition(runtime.READY)
-		return nil
+	if live.Status() != runtime.READY {
+		live.Transition(runtime.BUSY)
 	}
-
-	live.Transition(runtime.BUSY)
 	return nil
 }
 
@@ -1001,24 +967,24 @@ func (live *Live) subscribeLevel3Group(conn *Live) error {
 		time.Sleep(viper.GetDuration("market.subscribe.pace"))
 	}
 
-	// A seeded child must not open ingress before its owning session.
-	conn.Transition(live.Status())
-
 	return nil
 }
 
-func (live *Live) Transition(stage runtime.Stage) {
-	live.System.Transition(stage)
+// Connections exposes the Level 3 owners for explicit startup activation.
+// Enumerating them never changes a connection's lifecycle.
+func (live *Live) Connections() []*Live {
+	var connections []*Live
 
-	if live.level3 != nil {
-		live.level3.Range(func(_, value any) bool {
-			if child, ok := value.(*Live); ok && child != nil {
-				child.Transition(stage)
-			}
-
-			return true
-		})
+	if live.level3 == nil {
+		return connections
 	}
+
+	live.level3.Range(func(_, value any) bool {
+		connections = append(connections, value.(*Live))
+		return true
+	})
+
+	return connections
 }
 
 /*

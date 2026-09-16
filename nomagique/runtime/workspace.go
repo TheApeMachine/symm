@@ -14,23 +14,15 @@ func optionList[O any](initial ...O) []O {
 }
 
 /*
-Workspace is SYMM's real-time streaming execution fabric. Every node declares
-exactly two things at registration: the type it wants and the type it returns.
-The workspace is the sole router — when it has a value of some type, it calls
-Step on every node that wants that type, on that node's own dedicated ring, and
-recursively dispatches whatever each Step returns the same way. There is no
-topic string, and nothing ever calls a "Publish" method to hand a value to the
-bus: a node's Step return value IS its emission, and Feed is the only entry
-point for a value with no upstream producer (e.g. a value parsed off a
-websocket).
+Workspace runs registered nodes in dependency stages. Nodes in one stage may
+execute concurrently and query only peers owned by earlier stages. Step admits
+work while READY; each consumer writes its sequence-owned result and immediately
+pushes it to the Tees.
 */
 type Workspace[T any] struct {
 	*System
-	channel   disruptor.Disruptor
-	buffer    []T
-	register  *store.Register[T]
-	consumers []*Consumer[T]
-	tees      []Tee
+	channel  disruptor.Disruptor
+	register *store.Register[T]
 }
 
 func NewWorkspace[T any](
@@ -40,9 +32,7 @@ func NewWorkspace[T any](
 	tees ...Tee,
 ) *Workspace[T] {
 	workload := &Workspace[T]{
-		buffer:   make([]T, system.Cfg.Runtime.Workspace.Buffer),
-		register: store.NewRegister[T](),
-		tees:     tees,
+		register: store.NewRegister[T](int(system.Cfg.Runtime.Workspace.Buffer)),
 	}
 
 	opts := optionList(
@@ -51,13 +41,16 @@ func NewWorkspace[T any](
 		),
 	)
 
+	peerLimit := 0
+
 	for _, stage := range stages {
 		group := make([]disruptor.Handler, len(stage))
+		stageLimit := peerLimit
 
 		for index, node := range stage {
-			consumer := NewConsumer(ctx, node, workload.register, tees...)
-			workload.consumers = append(workload.consumers, consumer)
-			group[index] = consumer
+			consumer := NewConsumer(node, workload.register, tees...)
+			group[index] = consumer.SetPeerLimit(stageLimit)
+			peerLimit = consumer.Identity() + 1
 		}
 
 		if len(group) > 0 {
@@ -84,19 +77,8 @@ func NewWorkspace[T any](
 	return workload
 }
 
-// Transition opens downstream consumers before workspace admission. Pausing the
-// workspace stops new admission while already committed work can finish.
-func (workspace *Workspace[T]) Transition(stage Stage) {
-	if stage == READY {
-		for index := len(workspace.consumers) - 1; index >= 0; index-- {
-			workspace.consumers[index].Transition(READY)
-		}
-	}
-
-	workspace.System.Transition(stage)
-}
-
-// Step drops input without reserving a ring slot until the workspace is ready.
+// Step commits work without waiting for completion. The Disruptor's capacity
+// barrier prevents reuse until all stages, including each consumer's Tee calls, finish.
 func (workspace *Workspace[T]) Step(payload T) T {
 	if workspace.Status() != READY {
 		errnie.Warn(workspace.Name() + ": Step called before READY; dropping event")
@@ -119,8 +101,6 @@ func (workspace *Workspace[T]) Step(payload T) T {
 	}
 
 	seq := workspace.channel.Reserve(1)
-	slot := &workspace.buffer[seq&system.Cfg.Runtime.Workspace.Mask]
-	*slot = payload
 	workspace.channel.Commit(seq, seq)
 
 	return payload

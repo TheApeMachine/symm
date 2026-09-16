@@ -32,6 +32,7 @@ func tradeRow(
 func TestTradeStep(t *testing.T) {
 	Convey("Given a touch of 100/102", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		const bidPrice, askPrice, bidQty, askQty = 100.0, 102.0, 10.0, 20.0
 
 		Convey("a sell at the bid touch attributes a fill", func() {
@@ -103,6 +104,7 @@ func TestTradeStep(t *testing.T) {
 func TestTradeRegister(t *testing.T) {
 	Convey("Given a Trade entity", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		schema := entity.Register()
 
 		So(schema, ShouldNotBeNil)
@@ -147,4 +149,33 @@ func TestTradeStepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestTradeStepUnrelatedPeer(t *testing.T) {
+	Convey("An unrelated peer is not a fresh signal observation", t, func() {
+		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
+		measurement := entity.Register()
+		peer := data.NewMeasurement[float64]("unrelated", nil)
+		peer.Label = "BTC/USD"
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		So(entity.Step(measurement), ShouldBeNil)
+	})
+}
+
+func BenchmarkTradeStepUnrelatedPeer(b *testing.B) {
+	entity := NewTrade(b.Context())
+	entity.Transition(runtime.READY)
+	measurement := entity.Register()
+	peer := data.NewMeasurement[float64]("unrelated", nil)
+	peer.Label = "BTC/USD"
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		if entity.Step(measurement) != nil {
+			b.Fatal("unrelated peer published a signal")
+		}
+	}
 }

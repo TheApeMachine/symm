@@ -24,6 +24,7 @@ type MeasurementT struct {
 	Metadata []*NamedNumberT `json:"metadata"`
 	Provenance []*NamedStringT `json:"provenance"`
 	Peers []*MeasurementT `json:"peers"`
+	Grid *LearningDevelopmentT `json:"grid"`
 }
 
 func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -92,6 +93,7 @@ func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		}
 		peersOffset = builder.EndVector(peersLength)
 	}
+	gridOffset := t.Grid.Pack(builder)
 	MeasurementStart(builder)
 	MeasurementAddId(builder, idOffset)
 	MeasurementAddSource(builder, sourceOffset)
@@ -110,6 +112,7 @@ func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	MeasurementAddMetadata(builder, metadataOffset)
 	MeasurementAddProvenance(builder, provenanceOffset)
 	MeasurementAddPeers(builder, peersOffset)
+	MeasurementAddGrid(builder, gridOffset)
 	return MeasurementEnd(builder)
 }
 
@@ -155,6 +158,7 @@ func (rcv *Measurement) UnPackTo(t *MeasurementT) {
 		rcv.Peers(&x, j)
 		t.Peers[j] = x.UnPack()
 	}
+	t.Grid = rcv.Grid(nil).UnPack()
 }
 
 func (rcv *Measurement) UnPack() *MeasurementT {
@@ -421,8 +425,21 @@ func (rcv *Measurement) PeersLength() int {
 	return 0
 }
 
+func (rcv *Measurement) Grid(obj *LearningDevelopment) *LearningDevelopment {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(LearningDevelopment)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
 func MeasurementStart(builder *flatbuffers.Builder) {
-	builder.StartObject(17)
+	builder.StartObject(18)
 }
 func MeasurementAddId(builder *flatbuffers.Builder, id flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(id), 0)
@@ -486,6 +503,9 @@ func MeasurementAddPeers(builder *flatbuffers.Builder, peers flatbuffers.UOffset
 }
 func MeasurementStartPeersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
+}
+func MeasurementAddGrid(builder *flatbuffers.Builder, grid flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(grid), 0)
 }
 func MeasurementEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

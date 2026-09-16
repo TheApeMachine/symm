@@ -2,36 +2,42 @@ package hindsight
 
 import (
 	"context"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"golang.design/x/lockfree/wf"
+	"golang.design/x/lockfree/lf"
 )
 
 /*
 StoreTee queues measurements for the catalog drain. It implements runtime.Tee
-and remains idle until startup explicitly transitions it to READY.
+and remains idle until startup explicitly transitions it to READY. Its bounded
+lock-free queue accepts concurrent workspace consumers without waiting for the
+catalog drain.
 */
 type StoreTee struct {
 	*runtime.System
-	queue *wf.RingBuffer[*data.Measurement[float64]]
+	queue    *lf.Queue[*data.Measurement[float64]]
+	pending  atomic.Int64
+	capacity int64
 }
 
 /*
 NewStoreTee creates an idle storage off-ramp.
 */
-func NewStoreTee(label string, capacity int) *StoreTee {
+func NewStoreTee(ctx context.Context, label string, capacity int) *StoreTee {
 	if capacity < 1 {
 		capacity = 1
 	}
 
 	tee := &StoreTee{
-		queue: wf.NewRingBuffer[*data.Measurement[float64]](capacity),
+		queue:    lf.NewQueue[*data.Measurement[float64]](),
+		capacity: int64(capacity),
 	}
 
-	tee.System = runtime.NewSystem(context.Background(), label, tee)
+	tee.System = runtime.NewSystem(ctx, label, tee)
 	return tee
 }
 
@@ -48,13 +54,17 @@ func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	if !tee.queue.Put(measurement.Clone()) {
+	if tee.pending.Add(1) > tee.capacity {
+		tee.pending.Add(-1)
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"store tee: measurement queue is full",
 			nil,
 		))
+		return
 	}
+
+	tee.queue.Enqueue(measurement.Clone())
 }
 
 /*
@@ -66,11 +76,17 @@ func (tee *StoreTee) Next() unsafe.Pointer {
 		return nil
 	}
 
-	measurement, ok := tee.queue.Get()
+	measurement, ok := tee.queue.Dequeue()
 
 	if !ok {
 		return nil
 	}
 
+	tee.pending.Add(-1)
 	return unsafe.Pointer(measurement)
+}
+
+// Pending reports accepted observations waiting for the catalog drain.
+func (tee *StoreTee) Pending() int {
+	return int(tee.pending.Load())
 }

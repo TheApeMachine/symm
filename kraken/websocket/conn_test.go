@@ -24,9 +24,15 @@ func TestNewAPI(t *testing.T) {
 			So(futures.Status(), ShouldEqual, stage)
 
 			if stage == runtime.BUSY {
-				Convey("Explicit activation still opens all connected transports", func() {
+				Convey("API activation preserves each transport until explicitly activated", func() {
 					api.Transition(runtime.READY)
 					So(api.Status(), ShouldEqual, runtime.READY)
+					So(public.Status(), ShouldEqual, runtime.BUSY)
+					So(private.Status(), ShouldEqual, runtime.BUSY)
+					So(futures.Status(), ShouldEqual, runtime.BUSY)
+					public.Transition(runtime.READY)
+					private.Transition(runtime.READY)
+					futures.Transition(runtime.READY)
 					So(public.Status(), ShouldEqual, runtime.READY)
 					So(private.Status(), ShouldEqual, runtime.READY)
 					So(futures.Status(), ShouldEqual, runtime.READY)

@@ -3,7 +3,9 @@ package category
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -126,14 +128,22 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		}
 	}
 
-	for sym, symMeasurements := range bySymbol {
-		categories := solver.stepMeasurements(symMeasurements)
+	results := make([][]types.Category, 0, len(bySymbol))
+
+	for _, symbol := range slices.Sorted(maps.Keys(bySymbol)) {
+		categories := solver.stepMeasurements(bySymbol[symbol])
 
 		if solver.Error() != nil {
 			return nil
 		}
 
-		measurement.Label = sym
+		if len(categories) == 0 {
+			continue
+		}
+
+		results = append(results, categories)
+		measurement.Label = symbol
+		measurement.At = categories[0].At
 
 		for _, cat := range categories {
 			if cat.Type != "" {
@@ -145,6 +155,12 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			}
 		}
 	}
+
+	if len(results) == 0 {
+		return nil
+	}
+
+	measurement.Result = results
 
 	return measurement
 }

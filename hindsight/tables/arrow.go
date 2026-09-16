@@ -1,6 +1,10 @@
 package tables
 
 import (
+	"errors"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -107,22 +111,35 @@ func fillMeasurements(
 			}
 		}
 
-		if len(measurement.Provenance) == 0 {
+		if len(measurement.Provenance) == 0 && len(measurement.Metrics) == 0 && measurement.Err == nil {
 			provenanceBuilder.AppendNull()
 		}
 
-		if len(measurement.Provenance) > 0 {
+		if len(measurement.Provenance) > 0 || len(measurement.Metrics) > 0 || measurement.Err != nil {
 			provenanceBuilder.Append(true)
 
 			for provKey, provVal := range measurement.Provenance {
 				provenanceKey.Append(provKey)
 				provenanceVal.Append(provVal)
 			}
+			if measurement.Err != nil {
+				provenanceKey.Append("symm:error")
+				provenanceVal.Append(measurement.Err.Error())
+			}
+			provenanceKey.Append("symm:estimated")
+			provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
+			for key, metric := range measurement.Metrics {
+				if metric.Exact != nil {
+					provenanceKey.Append("symm:exact:" + key)
+					provenanceVal.Append(metric.Exact.String())
+				}
+			}
+
 		}
 	}
 }
 
-func readMeasurements(batch arrow.RecordBatch) []*data.Measurement[float64] {
+func readMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], error) {
 	totalRows := int(batch.NumRows())
 	measurements := make([]*data.Measurement[float64], 0, totalRows)
 
@@ -225,14 +242,39 @@ func readMeasurements(batch arrow.RecordBatch) []*data.Measurement[float64] {
 			endOffset := int(offsets[rowIdx+1])
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				measurement.Provenance[keyArray.Value(itemIdx)] = valArray.Value(itemIdx)
+				key, value := keyArray.Value(itemIdx), valArray.Value(itemIdx)
+				if key == "symm:error" {
+					measurement.Err = errors.New(value)
+					continue
+				}
+
+				if key == "symm:estimated" {
+					measurement.Estimated = value == "true"
+					continue
+				}
+
+				if strings.HasPrefix(key, "symm:exact:") {
+					metricKey := strings.TrimPrefix(key, "symm:exact:")
+					exact, err := decimal.NewFromString(value)
+
+					if err != nil {
+						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid original decimal quantity", err))
+					}
+
+					metric := measurement.Metrics[metricKey]
+					metric.Exact = exact
+					measurement.Metrics[metricKey] = metric
+					continue
+				}
+
+				measurement.Provenance[key] = value
 			}
 		}
 
 		measurements = append(measurements, measurement)
 	}
 
-	return measurements
+	return measurements, nil
 }
 
 func fillRuns(recordBuilder *array.RecordBuilder, runs []Run) {
@@ -593,4 +635,3 @@ func excursionRecords(
 
 	return reader, nil
 }
-

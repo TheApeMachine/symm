@@ -24,7 +24,6 @@ import appCss from "../app.css?url";
 const SURFACE_VALUES = new Set<TerminalSurface>([
 	"dashboard",
 	"learning",
-	"graph",
 	"influence",
 	"lineage",
 	"fluid",
@@ -33,7 +32,6 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 	"xray",
 	"cortex",
 	"allocation",
-	"regulator",
 	"diagnostics",
 	"hindsight",
 	"workbench",
@@ -44,15 +42,12 @@ const SURFACE_ALIASES: Record<string, TerminalSurface> = {
 	insight: "signals",
 	alloc: "allocation",
 	trade: "journal",
-	graphs: "graph",
-	reg: "regulator",
 	diag: "diagnostics",
 };
 
 const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	dashboard: "/",
 	learning: "/learning",
-	graph: "/graph",
 	influence: "/influence",
 	lineage: "/lineage",
 	fluid: "/fluid",
@@ -61,7 +56,6 @@ const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	xray: "/xray",
 	cortex: "/cortex",
 	allocation: "/allocation",
-	regulator: "/regulator",
 	diagnostics: "/diagnostics",
 	hindsight: "/hindsight",
 	workbench: "/workbench",

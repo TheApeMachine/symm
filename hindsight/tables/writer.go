@@ -142,27 +142,25 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 		return err
 	}
 
-	if err := writer.commitExcursions(ctx, forceAll); err != nil {
+	// Outcome references become visible only after every tape family is durable.
+	if !forceAll {
+		return nil
+	}
+
+	if err := writer.commitExcursions(ctx); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (writer *Writer) commitExcursions(ctx context.Context, forceAll bool) error {
+func (writer *Writer) commitExcursions(ctx context.Context) error {
 	writer.mutex.Lock()
 
 	rowsToCommit := writer.excursions
 	writer.excursions = nil
 
 	if len(rowsToCommit) == 0 {
-		writer.mutex.Unlock()
-
-		return nil
-	}
-
-	if !forceAll && len(rowsToCommit) < 10 {
-		writer.excursions = rowsToCommit
 		writer.mutex.Unlock()
 
 		return nil

@@ -50,6 +50,9 @@ type Measurement[T any] struct {
 	Metadata   map[string]string    `json:"metadata,omitempty"`
 	Provenance map[string]string    `json:"provenance,omitempty"`
 	Peers      []*Measurement[T]    `json:"peers"`
+	// Result is the completed, immutable structured output of this observation.
+	// The register and tees share it; numeric persistence uses Metrics.
+	Result any `json:"-"`
 }
 
 /*
@@ -155,6 +158,7 @@ func (measurement *Measurement[T]) Clone() *Measurement[T] {
 		Metadata:   metadata,
 		Provenance: provenance,
 		Peers:      peers,
+		Result:     measurement.Result,
 	}
 }
 

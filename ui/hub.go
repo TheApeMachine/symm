@@ -50,7 +50,7 @@ type Hub struct {
 	store            *tables.Catalog
 	tradeStore       TradeJournalSource
 	exitHandler      func(symbol string)
-	fluid            *FluidRTC
+	Fluid            *FluidRTC
 	learningInterval time.Duration
 	lastLearning     time.Time
 }
@@ -65,7 +65,6 @@ func NewHub(
 	hindsightStore *tables.Catalog,
 	uiTee runtime.Tee,
 ) *Hub {
-	viper.SetDefault("ui.websocket.learning_interval", "250ms")
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
 
@@ -80,7 +79,7 @@ func NewHub(
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		fluid:      NewFluidRTC(ctx, "hub"),
+		Fluid:      NewFluidRTC(ctx, "hub"),
 		tradeStore: trades,
 		store:      hindsightStore,
 	}
@@ -349,7 +348,7 @@ func NewHub(
 			default:
 			}
 
-			if hub.uiTee == nil {
+			if hub.Status() != runtime.READY || hub.uiTee == nil {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}

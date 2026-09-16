@@ -15,6 +15,7 @@ type LearningQuantityT struct {
 	Activity float64 `json:"activity"`
 	Quality float64 `json:"quality"`
 	Present bool `json:"present"`
+	Id uint64 `json:"id"`
 }
 
 func (t *LearningQuantityT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -38,6 +39,7 @@ func (t *LearningQuantityT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffs
 	LearningQuantityAddActivity(builder, t.Activity)
 	LearningQuantityAddQuality(builder, t.Quality)
 	LearningQuantityAddPresent(builder, t.Present)
+	LearningQuantityAddId(builder, t.Id)
 	return LearningQuantityEnd(builder)
 }
 
@@ -50,6 +52,7 @@ func (rcv *LearningQuantity) UnPackTo(t *LearningQuantityT) {
 	t.Activity = rcv.Activity()
 	t.Quality = rcv.Quality()
 	t.Present = rcv.Present()
+	t.Id = rcv.Id()
 }
 
 func (rcv *LearningQuantity) UnPack() *LearningQuantityT {
@@ -184,8 +187,20 @@ func (rcv *LearningQuantity) MutatePresent(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
 
+func (rcv *LearningQuantity) Id() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningQuantity) MutateId(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(20, n)
+}
+
 func LearningQuantityStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(9)
 }
 func LearningQuantityAddSource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(source), 0)
@@ -210,6 +225,9 @@ func LearningQuantityAddQuality(builder *flatbuffers.Builder, quality float64) {
 }
 func LearningQuantityAddPresent(builder *flatbuffers.Builder, present bool) {
 	builder.PrependBoolSlot(7, present, false)
+}
+func LearningQuantityAddId(builder *flatbuffers.Builder, id uint64) {
+	builder.PrependUint64Slot(8, id, 0)
 }
 func LearningQuantityEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

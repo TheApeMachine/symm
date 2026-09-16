@@ -155,11 +155,13 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 		})
 
 		if peer == nil {
-			return m
+			return nil
 		}
 
 		source = peer
 	}
+
+	m.Pull(source)
 
 	bid := source.Metrics["best_bid"].Raw
 

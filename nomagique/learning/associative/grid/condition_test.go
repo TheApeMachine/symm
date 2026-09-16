@@ -23,7 +23,7 @@ func tokenOf(t testing.TB, quantity uint64, level, change float64) uint64 {
 	return 0
 }
 
-func TestConditionToken(t *testing.T) {
+func TestCondition(t *testing.T) {
 	Convey("The same hot quantity distinguishes buildup, stagnation and reversal", t, func() {
 		seen := map[uint64]bool{}
 
@@ -60,7 +60,7 @@ func TestRemapCondition(t *testing.T) {
 
 func BenchmarkConditionToken(b *testing.B) {
 	for b.Loop() {
-		if _, err := conditionToken(1, -1, 1); err != nil {
+		if _, err := Condition(1, -1, 1); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -73,7 +73,7 @@ func TestConditionQuantity(t *testing.T) {
 
 			for _, level := range []float64{-1, 0, 1} {
 				for _, change := range []float64{-1, 0, 1} {
-					token, err := conditionToken(quantity, level, change)
+					token, err := Condition(quantity, level, change)
 					So(err, ShouldBeNil)
 					So(conditionQuantity(token), ShouldEqual, quantity)
 				}
@@ -83,7 +83,7 @@ func TestConditionQuantity(t *testing.T) {
 }
 
 func BenchmarkConditionQuantity(b *testing.B) {
-	token, err := conditionToken(793, -1, 1)
+	token, err := Condition(793, -1, 1)
 
 	if err != nil {
 		b.Fatal(err)

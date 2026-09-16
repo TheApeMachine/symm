@@ -225,9 +225,7 @@ func NewFuturesWithClient(
 
 		errnie.Info(fmt.Sprintf("futures: connected to %s", futures.Client().URL))
 
-		if futures.Status() == runtime.READY {
-			futures.Transition(runtime.READY)
-		} else {
+		if futures.Status() != runtime.READY {
 			futures.Transition(runtime.BUSY)
 		}
 
@@ -574,7 +572,13 @@ func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.M
 		return nil
 	}
 
+	if measurement == nil {
+		measurement = futures.Register()
+	}
+
 	measurement.Provenance = make(map[string]string, 4)
+	measurement.Metadata["venue"] = "true"
+	measurement.Maturity = 1
 	measurement.Metrics = make(map[string]data.Metric[float64], len(row))
 	measurement.Err = nil
 	measurement.At = time.Time{}
@@ -644,9 +648,7 @@ Register implements the runtime.Node interface: it declares every numeric field
 the venue's futures rows can produce, none valued.
 */
 func (futures *FuturesLive) Register() *data.Measurement[float64] {
-	measurement := data.NewMeasurement("futures", map[string]data.Metric[float64]{})
-	measurement.Metadata["venue"] = "true"
-	return measurement
+	return data.NewMeasurement("futures", map[string]data.Metric[float64]{})
 }
 
 /*

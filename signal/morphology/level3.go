@@ -148,7 +148,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		})
 
 		if peer == nil {
-			return m
+			return nil
 		}
 
 		input = peer

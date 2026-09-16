@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -33,6 +34,7 @@ its per-symbol evidence and drive that family's declared category verdict.
 func TestStepIngestsStrandedFamilies(t *testing.T) {
 	Convey("Given a category solver over the declared vocabulary", t, func() {
 		solver := NewSolver(context.Background())
+		solver.Transition(runtime.READY)
 		at := time.Unix(100, 0)
 
 		cases := []struct {

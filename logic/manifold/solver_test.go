@@ -133,6 +133,7 @@ func TestSolverStepArtifact(t *testing.T) {
 
 		result := solver.Step(measurement)
 		So(result, ShouldEqual, measurement)
+		So(result.Result, ShouldEqual, reading)
 		So(reading.GridX, ShouldEqual, 8)
 		So(reading.GridY, ShouldEqual, 8)
 		So(reading.GridZ, ShouldEqual, 8)

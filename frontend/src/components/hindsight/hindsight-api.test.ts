@@ -55,16 +55,24 @@ describe("Hindsight archive reads", () => {
 	});
 
 	it("surfaces a failed timeline WebSocket connection instead of returning an empty archive", async () => {
-		vi.stubGlobal("window", {
-			location: { protocol: "http:", hostname: "localhost" },
-		});
-		await expect(fetchHindsightTimeline({ run: "run" })).rejects.toThrow("WebSocket");
+		respond(200, []);
+		vi.stubGlobal(
+			"WebSocket",
+			class {
+				onerror: (() => void) | null = null;
+
+				constructor() {
+					queueMicrotask(() => this.onerror?.());
+				}
+			},
+		);
+		await expect(fetchHindsightTimeline({ run: "run" })).rejects.toThrow(
+			"WebSocket",
+		);
 	});
 
 	it("streams and decodes FlatBuffers MeasurementsFrame over WebSocket", async () => {
-		vi.stubGlobal("window", {
-			location: { protocol: "http:", hostname: "localhost" },
-		});
+		respond(200, []);
 
 		const builder = new flatbuffers.Builder(1024);
 		const source = builder.createString("spot_ticker");
@@ -76,7 +84,9 @@ describe("Hindsight archive reads", () => {
 		Measurement.addAt(builder, 1000000000000n);
 		const measurementOffset = Measurement.endMeasurement(builder);
 
-		const rowsOffset = MeasurementsFrame.createRowsVector(builder, [measurementOffset]);
+		const rowsOffset = MeasurementsFrame.createRowsVector(builder, [
+			measurementOffset,
+		]);
 		MeasurementsFrame.startMeasurementsFrame(builder);
 		MeasurementsFrame.addRows(builder, rowsOffset);
 		const frameOffset = MeasurementsFrame.endMeasurementsFrame(builder);

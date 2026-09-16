@@ -29,6 +29,7 @@ func pumpdumpTouch(symbol string, bid float64, ask float64, at time.Time) *data.
 func TestLevel3Step(t *testing.T) {
 	Convey("Given a message with an executable touch", t, func() {
 		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("Step derives the touch from the message's own orders", func() {
@@ -49,6 +50,7 @@ func TestLevel3Step(t *testing.T) {
 
 	Convey("Given a symbol whose book has never shown both sides", t, func() {
 		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("Step yields no measurement rather than an error", func() {
@@ -62,6 +64,7 @@ func TestLevel3Step(t *testing.T) {
 
 	Convey("Given a symbol that has seen both sides across separate messages", t, func() {
 		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		// First observation carries bid only
@@ -83,6 +86,7 @@ func TestLevel3Step(t *testing.T) {
 func TestLevel3Register(t *testing.T) {
 	Convey("Given a Level3 entity", t, func() {
 		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
 		schema := entity.Register()
 
 		So(schema, ShouldNotBeNil)
@@ -117,4 +121,36 @@ func TestLevel3StepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestLevel3StepUnrelatedPeer(t *testing.T) {
+	Convey("An unrelated peer does not publish registration values as a fresh observation", t, func() {
+		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
+		measurement := entity.Register()
+		peer := data.NewMeasurement[float64]("unrelated", nil)
+		peer.Label = "BTC/USD"
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		So(entity.Step(measurement), ShouldBeNil)
+		So(measurement.Label, ShouldBeEmpty)
+	})
+}
+
+func BenchmarkLevel3Step(b *testing.B) {
+	entity := NewLevel3(b.Context())
+	entity.Transition(runtime.READY)
+	peer := pumpdumpTouch("BTC/USD", 99, 101, time.Unix(1, 0))
+	measurement := entity.Register()
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		peer.At = peer.At.Add(time.Second)
+		result := entity.Step(measurement)
+
+		if result == nil || result.Err != nil {
+			b.Fatal("valid peer was not processed")
+		}
+	}
 }

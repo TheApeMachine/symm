@@ -22,6 +22,7 @@ type Query[T any] struct {
 	subject   data.Identifiable[T]
 	payload   iter.Seq[unsafe.Pointer]
 	peerLimit int
+	sequence  int64
 }
 
 /*
@@ -44,6 +45,7 @@ func NewQuery[T any](
 		subject:      subject,
 		payload:      seq,
 		peerLimit:    -1,
+		sequence:     -1,
 	}
 }
 
@@ -85,6 +87,12 @@ func (op *Query[T]) PeerLimit() int {
 
 func (op *Query[T]) SetPeerLimit(limit int) *Query[T] {
 	op.peerLimit = limit
+	return op
+}
+
+// SetSequence addresses the committed Disruptor slot instead of latest peer state.
+func (op *Query[T]) SetSequence(sequence int64) *Query[T] {
+	op.sequence = sequence
 	return op
 }
 

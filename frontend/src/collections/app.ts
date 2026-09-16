@@ -1,14 +1,6 @@
 import { type Atom, createAtom } from "@tanstack/react-store";
 import { createStore, type Store } from "@tanstack/store";
-import type { RingBuffer as RingBufferType } from "ring-buffer-ts";
-import ringBufferPkg from "ring-buffer-ts";
-
-// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman.
-const RingBuffer = ((ringBufferPkg as any).RingBuffer ??
-	// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman.
-	(ringBufferPkg as any).default?.RingBuffer ??
-	ringBufferPkg) as typeof RingBufferType;
-type RingBuffer<T> = RingBufferType<T>;
+import { RingBuffer } from "./ring";
 export { RingBuffer };
 
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";

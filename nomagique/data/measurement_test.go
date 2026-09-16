@@ -80,10 +80,13 @@ func TestMeasurementClone(t *testing.T) {
 		measurement.Peers = []*Measurement[float64]{peer}
 		measurement.Metrics["bid"] = measurement.Metrics["bid"].Write(100)
 
+		result := &struct{ Count int }{Count: 3}
+		measurement.Result = result
 		clone := measurement.Clone()
 
 		Convey("the clone is independent of later writes", func() {
 			So(clone == measurement, ShouldBeFalse)
+			So(clone.Result, ShouldEqual, result)
 			So(clone.Label, ShouldEqual, "BTC/USD")
 			So(clone.Metadata["peer-interest"], ShouldEqual, "*")
 			So(clone.Provenance["channel"], ShouldEqual, "ticker")

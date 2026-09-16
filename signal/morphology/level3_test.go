@@ -34,6 +34,7 @@ func row(
 func TestLevel3Step(t *testing.T) {
 	Convey("Given a book morphology measuring instrument", t, func() {
 		level3 := NewLevel3(t.Context())
+		level3.Transition(runtime.READY)
 
 		Convey("the first observation yields point metrics with no prior change", func() {
 			measurement := level3.Step(row("BTC/USD", 0.05, 0.02, 0.4, 0.4, 1.2, 1.2, baseTime))
@@ -75,6 +76,7 @@ func TestLevel3Step(t *testing.T) {
 func TestLevel3Register(t *testing.T) {
 	Convey("Given a Level3 entity", t, func() {
 		level3 := NewLevel3(t.Context())
+		level3.Transition(runtime.READY)
 		schema := level3.Register()
 
 		So(schema, ShouldNotBeNil)
@@ -113,4 +115,33 @@ func TestLevel3StepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestLevel3StepUnrelatedPeer(t *testing.T) {
+	Convey("An unrelated peer is not a fresh signal observation", t, func() {
+		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
+		measurement := entity.Register()
+		peer := data.NewMeasurement[float64]("unrelated", nil)
+		peer.Label = "BTC/USD"
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		So(entity.Step(measurement), ShouldBeNil)
+	})
+}
+
+func BenchmarkLevel3StepUnrelatedPeer(b *testing.B) {
+	entity := NewLevel3(b.Context())
+	entity.Transition(runtime.READY)
+	measurement := entity.Register()
+	peer := data.NewMeasurement[float64]("unrelated", nil)
+	peer.Label = "BTC/USD"
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		if entity.Step(measurement) != nil {
+			b.Fatal("unrelated peer published a signal")
+		}
+	}
 }

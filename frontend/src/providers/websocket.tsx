@@ -57,7 +57,9 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 		if (!row) continue;
 
 		const rawSource = (row.source() ?? "").toLowerCase();
-		const source = rawSource.includes(":") ? rawSource.split(":")[0] : rawSource;
+		const source = rawSource.includes(":")
+			? rawSource.split(":")[0]
+			: rawSource;
 		const symbol = row.symbol() ?? "";
 
 		if (symbol && !symbolsAtom.get().includes(symbol)) {
@@ -100,11 +102,6 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 		if (source === "training") {
 			signalStore.state[""] = ring;
 			signalStore.state["learner"] = ring;
-			const currentFocus = focusAtom.get();
-
-			if (currentFocus) {
-				signalStore.state[currentFocus] = ring;
-			}
 		}
 	}
 
@@ -149,8 +146,7 @@ export const WsFeed = () => {
 					const bytes = new Uint8Array(data.buffer);
 					const buffer = new flatbuffers.ByteBuffer(bytes);
 
-					const frame =
-						MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
+					const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
 
 					storeBatch(() => {
 						dispatchMeasurements(frame);
@@ -161,6 +157,7 @@ export const WsFeed = () => {
 			}
 		});
 
+		wsWorker.postMessage({ type: "ROUTE", route: routeAtom.get() });
 		wsWorker.postMessage({ type: "CONNECT", url: wsUrl });
 
 		const unsubscribeFocus = focusAtom.subscribe((symbol: string) => {

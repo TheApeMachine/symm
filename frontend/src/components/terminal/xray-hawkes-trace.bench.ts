@@ -13,4 +13,8 @@ describe("xray-hawkes-trace", () => {
 	bench("hawkesTrace", () => {
 		hawkesTrace(samples, 1200);
 	});
+
+	bench("hawkesTrace quiet market clock", () => {
+		hawkesTrace(samples, 1200, samples[samples.length - 1].at + 1_000_000_000n);
+	});
 });

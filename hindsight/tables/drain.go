@@ -5,33 +5,23 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-// Drain persists owned observations and passes completed, paired excursions and
-// tape fragments to the learner. A persistence or learning failure is returned.
+// Drain persists owned observations. Complete training publications feed the
+// cold learner; its resolved outcomes are persisted through the same writer.
 func (catalog *Catalog) Drain(
 	ctx context.Context,
 	epoch int64,
-	learn ...func(ExcursionRecord, [][]*data.Measurement[float64]) error,
+	tee *hindsight.StoreTee,
+	learn ...func(*data.Measurement[float64]) ([]ExcursionRecord, error),
 ) error {
-	if catalog == nil || catalog.storeTee == nil {
+	if catalog == nil || tee == nil {
 		return nil
 	}
 
 	writer := NewWriter(catalog, epoch)
-	var completed ExcursionRecord
-	var err error
-	detector := NewStreamingDetector(epoch, 200.0, func(record ExcursionRecord) {
-		writer.AddExcursion(record)
-		completed = record
-	})
-
-	if len(learn) > 0 {
-		detector.SetFragmentSink(func(frames [][]*data.Measurement[float64]) {
-			err = learn[0](completed, frames)
-		})
-	}
 
 	// These are storage batching cadences, not market observation horizons.
 	flushTicker := time.NewTicker(50 * time.Millisecond)
@@ -40,8 +30,10 @@ func (catalog *Catalog) Drain(
 	defer commitTicker.Stop()
 
 	drain := func() error {
-		for {
-			measurement := (*data.Measurement[float64])(catalog.storeTee.Next())
+		// Bound each batch by the observations already waiting, so continuous
+		// ingress cannot postpone commits indefinitely.
+		for remaining := tee.Pending(); remaining > 0; remaining-- {
+			measurement := (*data.Measurement[float64])(tee.Next())
 
 			if measurement == nil {
 				return nil
@@ -51,28 +43,36 @@ func (catalog *Catalog) Drain(
 				return errnie.Error(errnie.Err(errnie.Validation, "catalog: observation has no workspace sequence", nil))
 			}
 
-			if measurement.Metadata["venue"] == "true" && measurement.Provenance["channel"] != "executions" {
-				detector.Process(measurement)
-			}
-
-			if err != nil {
-				return errnie.Error(err)
+			if measurement.Source == "training" && len(learn) > 0 {
+				records, err := learn[0](measurement)
+				if err != nil {
+					return err
+				}
+				for _, record := range records {
+					writer.AddExcursion(record)
+				}
 			}
 
 			writer.Add(deriveChannel(measurement), measurement)
-
-			if err := writer.CommitReady(ctx, false); err != nil {
-				return err
-			}
 		}
+
+		return nil
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return writer.CommitReady(context.Background(), true)
+			if err := drain(); err != nil {
+				return err
+			}
+
+			return writer.CommitReady(context.WithoutCancel(ctx), true)
 		case <-flushTicker.C:
 			if err := drain(); err != nil {
+				return err
+			}
+
+			if err := writer.CommitReady(ctx, false); err != nil {
 				return err
 			}
 		case <-commitTicker.C:

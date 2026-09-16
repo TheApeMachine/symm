@@ -55,7 +55,10 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
 			_, hasBid := candidate.Metrics["bid"]
 			_, hasAsk := candidate.Metrics["ask"]
-			return hasBid && hasAsk && candidate.Label != ""
+			_, hasBidQuantity := candidate.Metrics["bid_qty"]
+			_, hasAskQuantity := candidate.Metrics["ask_qty"]
+
+			return hasBid && hasAsk && hasBidQuantity && hasAskQuantity && candidate.Label != ""
 		})
 
 		if peer == nil {

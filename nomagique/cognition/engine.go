@@ -34,7 +34,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -79,6 +78,8 @@ Question is the context being asked about.
 */
 type Question struct {
 	Context []byte
+	// Exact prevents token backoff across structured application key boundaries.
+	Exact bool
 }
 
 /*
@@ -127,7 +128,7 @@ the observation clock it decays against, and the class census. Concurrent
 observes publish through compare-and-swap; evaluations read immutable roots.
 */
 type Engine struct {
-	err         error
+	err         atomic.Pointer[engineError]
 	cfg         Config
 	root        atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter atomic.Uint64
@@ -135,6 +136,8 @@ type Engine struct {
 	classCounts sync.Map
 	remReplays  atomic.Uint64
 }
+
+type engineError struct{ err error }
 
 /*
 NewEngine instantiates the cognitive engine Primitive. Unset bounds in the
@@ -151,122 +154,30 @@ func NewEngine(cfg Config) *Engine {
 	return engine
 }
 
-/*
-Next executes each arriving command, impulse or token sequence and yields its result.
-If in is nil, it rejects doing anything and returns nil.
-When an impulse or context arrives, it evaluates the sensory tokens and yields the Evaluation.
-*/
+/* Next executes typed Command pointers and yields the command result. */
 func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if in == nil || op.err != nil {
-		return nil
-	}
-
 	return func(yield func(unsafe.Pointer) bool) {
-		var activeSeq []byte
-
 		for arriving := range in {
-			if arriving == nil {
-				continue
-			}
+			command := (*Command)(arriving)
+			result, err := op.execute(command)
 
-			if cmd := parseEngineCommand(arriving); cmd != nil {
-				result, err := op.execute(cmd)
-				if err != nil {
-					op.Error(err)
-					return
-				}
-
-				if cmd.Evaluate != nil {
-					if !yield(unsafe.Pointer(&result.Evaluation)) {
-						return
-					}
-					continue
-				}
-
-				if !yield(unsafe.Pointer(&result)) {
-					return
-				}
-				continue
-			}
-
-			token := ExtractToken(arriving)
-			if len(token) == 0 {
-				continue
-			}
-
-			activeSeq = append(activeSeq, token...)
-			result, err := op.evaluate(activeSeq)
 			if err != nil {
 				op.Error(err)
 				return
 			}
 
-			if result.Evaluation.IsBreak {
-				activeSeq = activeSeq[:0]
+			if command.Evaluate != nil {
+				if !yield(unsafe.Pointer(&result.Evaluation)) {
+					return
+				}
+				continue
 			}
 
-			if result.Evaluation.WinnerClass == "" {
-				result.Evaluation.WinnerClass = string(ActionWait)
-			}
-
-			if !yield(unsafe.Pointer(&result.Evaluation)) {
+			if !yield(unsafe.Pointer(&result)) {
 				return
 			}
 		}
 	}
-}
-
-func parseEngineCommand(arriving unsafe.Pointer) *Command {
-	if arriving == nil {
-		return nil
-	}
-
-	cmd := (*Command)(arriving)
-	intents := 0
-	if cmd.Observe != nil {
-		intents++
-	}
-	if cmd.Evaluate != nil {
-		intents++
-	}
-	if cmd.Snapshot != nil {
-		intents++
-	}
-	if cmd.Restore != nil {
-		intents++
-	}
-	if cmd.Census != nil {
-		intents++
-	}
-	if cmd.Root != nil {
-		intents++
-	}
-
-	if intents == 1 {
-		return cmd
-	}
-
-	return nil
-}
-
-func ExtractToken(arriving unsafe.Pointer) []byte {
-	if arriving == nil {
-		return nil
-	}
-
-	imp := (*grid.Impulse)(arriving)
-	if imp.Ready {
-		var b strings.Builder
-		for _, region := range imp.Regions {
-			fmt.Fprintf(&b, "%s_%d_", imp.Label, region.Condition)
-		}
-		if b.Len() == 0 && imp.Label != "" {
-			fmt.Fprintf(&b, "%s_", imp.Label)
-		}
-		return []byte(b.String())
-	}
-
-	return nil
 }
 
 /*
@@ -274,12 +185,24 @@ Error records the first error it sees and joins any subsequent errors to it.
 */
 func (op *Engine) Error(errs ...error) error {
 	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
+		if err == nil {
+			continue
+		}
+		for {
+			previous := op.err.Load()
+			joined := err
+			if previous != nil {
+				joined = errors.Join(previous.err, err)
+			}
+			if op.err.CompareAndSwap(previous, &engineError{joined}) {
+				break
+			}
 		}
 	}
-
-	return op.err
+	if recorded := op.err.Load(); recorded != nil {
+		return recorded.err
+	}
+	return nil
 }
 
 /*
@@ -324,7 +247,7 @@ func (op *Engine) execute(command *Command) (Result, error) {
 	}
 
 	if command.Evaluate != nil {
-		return op.evaluate(command.Evaluate.Context)
+		return op.evaluate(command.Evaluate.Context, command.Evaluate.Exact)
 	}
 
 	if command.Snapshot != nil {
@@ -992,7 +915,7 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 evaluate performs single-pass classification, ambiguity gating, surprisal
 calculation, and lookahead.
 */
-func (op *Engine) evaluate(context []byte) (Result, error) {
+func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 	if len(context) == 0 {
 		return Result{Evaluation: Evaluation{
 			Surprisal: op.cfg.SurprisalBreakBits,
@@ -1038,7 +961,7 @@ func (op *Engine) evaluate(context []byte) (Result, error) {
 	}
 
 	// Fallback: if no exact match, use prefix and suffix backoff via direct SeekPrefix
-	if acc.count == 0 {
+	if acc.count == 0 && (len(exact) == 0 || !exact[0]) {
 		maxSteps := op.cfg.MaxBackoffOrder
 
 		prefixes, suffixes := backoffCandidates(context, maxSteps)

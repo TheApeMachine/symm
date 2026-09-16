@@ -8,6 +8,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -15,8 +16,11 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func TestFluidWebRTCRealConnection(t *testing.T) {
+func TestFluidRTCPublish(t *testing.T) {
 	Convey("Given a FluidRTC server with a connected viewer peer", t, func() {
+		originalRoute := types.Route()
+		types.SetRoute("fluid")
+		defer types.SetRoute(originalRoute)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
@@ -65,10 +69,10 @@ func TestFluidWebRTCRealConnection(t *testing.T) {
 			state.WaveReal[len(state.WaveReal)-1] = 4
 			state.WaveImag[len(state.WaveImag)-1] = -5
 
-			tee := NewWebRTCTee("fluid-input", 4)
+			tee := NewWebRTCTee(t.Context(), "fluid-input", 131072)
 			tee.Transition(runtime.READY)
 			defer func() { So(tee.Close(), ShouldBeNil) }()
-			measurement := &data.Measurement[float64]{Artifact: state}
+			measurement := &data.Measurement[float64]{Source: "manifold", Result: state}
 			tee.Push(measurement)
 			// Reusing the measurement must not replace its already queued artifact.
 			err := server.drain(tee)
@@ -113,5 +117,78 @@ func TestFluidWebRTCRealConnection(t *testing.T) {
 			So(frame.WaveImag, ShouldResemble, state.WaveImag)
 
 		})
+	})
+}
+
+func TestFluidRTCRun(t *testing.T) {
+	Convey("Published owner state crosses an actual WebRTC data channel", t, func() {
+		originalRoute := types.Route()
+		types.SetRoute("fluid")
+		defer types.SetRoute(originalRoute)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		previous := viper.GetDuration("ui.websocket.learning_interval")
+		viper.Set("ui.websocket.learning_interval", time.Millisecond)
+		defer viper.Set("ui.websocket.learning_interval", previous)
+		server := NewFluidRTC(ctx, "loopback")
+		defer func() { So(server.Close(), ShouldBeNil) }()
+		settings := webrtc.SettingEngine{}
+		settings.SetIncludeLoopbackCandidate(true)
+		client, err := webrtc.NewAPI(webrtc.WithSettingEngine(settings)).NewPeerConnection(webrtc.Configuration{})
+		So(err, ShouldBeNil)
+		defer func() { So(client.Close(), ShouldBeNil) }()
+		ordered := false
+		retransmits := uint16(0)
+		channel, err := client.CreateDataChannel(types.ManifoldChannel, &webrtc.DataChannelInit{Ordered: &ordered, MaxRetransmits: &retransmits})
+		So(err, ShouldBeNil)
+		received := make(chan []byte, 1)
+		channel.OnMessage(func(message webrtc.DataChannelMessage) {
+			select {
+			case received <- message.Data:
+			default:
+			}
+		})
+		offer, err := client.CreateOffer(nil)
+		So(err, ShouldBeNil)
+		gathered := webrtc.GatheringCompletePromise(client)
+		So(client.SetLocalDescription(offer), ShouldBeNil)
+		select {
+		case <-gathered:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		answer, err := server.Answer(*client.LocalDescription())
+		So(err, ShouldBeNil)
+		So(client.SetRemoteDescription(answer), ShouldBeNil)
+		state := &types.ManifoldState{Version: 7, At: time.Unix(100, 0), GridX: 1, GridY: 1, GridZ: 1,
+			GridSpacing: 1, MomRho: []float32{1, 2, 3, 4}, FieldEnergy: []float32{5}, WaveReal: []float32{6}, WaveImag: []float32{7}}
+		tee := NewWebRTCTee(t.Context(), "loopback-input", 131072)
+		tee.Transition(runtime.READY)
+		defer func() { So(tee.Close(), ShouldBeNil) }()
+		finished := make(chan error, 1)
+		go func() { finished <- server.Run(tee) }()
+		defer func() {
+			cancel()
+			So(<-finished, ShouldBeNil)
+		}()
+		// Repeated owner notifications also exercise latest-wins publication during negotiation.
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				t.Fatal("No decoded WebRTC frame: ", ctx.Err())
+			case <-tick.C:
+				tee.Push(&data.Measurement[float64]{Source: "manifold", Result: state})
+			case packet := <-received:
+				So(string(packet[:4]), ShouldEqual, "SFD1")
+				So(binary.LittleEndian.Uint32(packet[12:16]), ShouldEqual, 1)
+				decoded := telemetry.GetRootAsMessage(packet[fluidChunkHeaderSize:], 0).UnPack()
+				frame := decoded.Frame.Value.(*telemetry.ManifoldFrameT)
+				So(frame.MomRho, ShouldResemble, state.MomRho)
+				So(frame.FieldEnergy, ShouldResemble, state.FieldEnergy)
+				return
+			}
+		}
 	})
 }

@@ -136,8 +136,6 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return nil
 	}
 
-	var categories []types.Category
-
 	// Registration binds cognition's sole dependency to the category slot.
 	if len(measurement.Peers) != 1 || measurement.Peers[0] == nil {
 		solver.Error(errnie.Err(
@@ -147,16 +145,32 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	peer := measurement.Peers[0]
+	batches, ok := peer.Result.([][]types.Category)
 
-	for catName, metric := range peer.Metrics {
-		categories = append(categories, types.Category{
-			Symbol:     peer.Label,
-			Type:       types.CategoryType(catName),
-			Confidence: metric.Raw,
-		})
+	if !ok {
+		solver.Error(errnie.Err(
+			errnie.Validation, "cognition: completed category batches are required", nil,
+		))
+		return nil
 	}
 
-	if reading := solver.StepCategories(categories); reading != nil {
+	results := make([]types.Cognition, 0, len(batches))
+
+	for _, categories := range batches {
+		reading := solver.StepCategories(categories)
+
+		if solver.Error() != nil {
+			return nil
+		}
+
+		if reading == nil {
+			continue
+		}
+
+		results = append(results, reading.Clone())
+		measurement.Label = reading.Symbol
+		measurement.At = reading.At
+
 		if m, ok := measurement.Metrics["surprisal"]; ok {
 			measurement.Metrics["surprisal"] = m.Write(reading.InterpolatedSurprisal)
 		}
@@ -176,6 +190,12 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 			measurement.Metrics["ambiguity"] = m.Write(ambiguityVal)
 		}
 	}
+
+	if len(results) == 0 {
+		return nil
+	}
+
+	measurement.Result = results
 
 	return measurement
 }
@@ -287,7 +307,6 @@ func (solver *Solver) processBatch(
 		solver.treeMu.Lock()
 		outcome := solver.tree.ExecuteREMSleepConsolidation(0, transitionOrdinal)
 		discrim := solver.tree.ExtractDiscriminativeSymbols(16)
-		solver.treeMu.Unlock()
 
 		solver.remOutcome = outcome
 		solver.remThrough = at
@@ -308,6 +327,7 @@ func (solver *Solver) processBatch(
 		}
 
 		solver.symbols = symbols
+		solver.treeMu.Unlock()
 	}
 
 	// 2. Evaluate if appending this category causes a Sequence Break
@@ -504,6 +524,11 @@ func (solver *Solver) processBatch(
 		contributions = nil
 	}
 
+	solver.treeMu.RLock()
+	symbols, dreams := solver.symbols, solver.dreams
+	remFrom, remThrough, remOutcome := solver.remFrom, solver.remThrough, solver.remOutcome
+	solver.treeMu.RUnlock()
+
 	cognition := types.Cognition{
 		Source:           "cognition",
 		Symbol:           symbol,
@@ -538,13 +563,13 @@ func (solver *Solver) processBatch(
 		InterpolatedSurprisal: analysis.AverageSurprisal,
 		Contributions:         contributions,
 		Lexical:               solver.lexical(activeTokens),
-		Symbols:               solver.symbols,
-		Dreams:                solver.dreams,
-		REMFrom:               solver.remFrom,
-		REMThrough:            solver.remThrough,
-		REMReplays:            int(solver.remOutcome.ReplayedObservations),
-		REMDecayFactor:        solver.remOutcome.DecayFactor,
-		REMInhibitionPct:      solver.remOutcome.RetroactiveInhibitionPct,
+		Symbols:               symbols,
+		Dreams:                dreams,
+		REMFrom:               remFrom,
+		REMThrough:            remThrough,
+		REMReplays:            int(remOutcome.ReplayedObservations),
+		REMDecayFactor:        remOutcome.DecayFactor,
+		REMInhibitionPct:      remOutcome.RetroactiveInhibitionPct,
 		// A pass runs synchronously inline on the 128-tick schedule
 		// below, so "consolidating" is true only for the reading
 		// published on the very tick that triggered it — every other

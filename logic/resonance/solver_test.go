@@ -129,6 +129,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 	Convey("Given a resonance solver receiving interspersed signals", t, func() {
 		solver := NewSolver(context.Background(), 0.05)
 		defer solver.Close()
+		solver.Transition(runtime.READY)
 
 		createMetric := func(label, metricName string, val float64, support float64) *data.Measurement[float64] {
 			measurement := data.NewMeasurement[float64](label, nil)
@@ -225,6 +226,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			m.Metrics["midpoint"] = priceMetric.Write(50000.0 + float64(step)*10.0)
 
 			res := solver.Step(m)
+			lastArtifact, _ = res.Result.(*types.ResonanceArtifact)
 			So(res, ShouldNotBeNil)
 		}
 

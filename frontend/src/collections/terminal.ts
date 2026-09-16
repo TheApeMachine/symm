@@ -4,7 +4,6 @@ import { DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 export type TerminalSurface =
 	| "dashboard"
 	| "learning"
-	| "graph"
 	| "influence"
 	| "lineage"
 	| "fluid"
@@ -13,7 +12,6 @@ export type TerminalSurface =
 	| "xray"
 	| "cortex"
 	| "allocation"
-	| "regulator"
 	| "diagnostics"
 	| "hindsight"
 	| "workbench"

@@ -12,6 +12,12 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
+func readyTicker(ctx context.Context) *Ticker {
+	ticker := NewTicker(ctx)
+	ticker.Transition(runtime.READY)
+	return ticker
+}
+
 /*
 tick builds the measurement the workload's data management would hand the
 signal: the register's declared schema with the feed's touch quote written.
@@ -47,7 +53,7 @@ all four published facts must reference the SAME pre-observation baseline.
 */
 func TestTickerStepPreObservationBaseline(t *testing.T) {
 	Convey("Given bid depth 100 then 200", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		base := time.Unix(1_700_000_000, 0)
 
 		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
@@ -65,7 +71,7 @@ func TestTickerStepPreObservationBaseline(t *testing.T) {
 	})
 
 	Convey("the ask-side and spread facts follow the same contract", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		base := time.Unix(20, 0)
 
 		// Ask notional stays 102 across both steps (askQty constant), so the
@@ -87,7 +93,7 @@ degenerate.
 */
 func TestTickerStepDegenerateNoise(t *testing.T) {
 	Convey("Given no prior observation", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		first := entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, time.Unix(1, 0)))
 
 		Convey("no baseline produces no z-score", func() {
@@ -97,7 +103,7 @@ func TestTickerStepDegenerateNoise(t *testing.T) {
 	})
 
 	Convey("Given a single prior observation (degenerate residual scale)", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		base := time.Unix(1, 0)
 		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
 		second := entity.Step(tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
@@ -115,7 +121,7 @@ is estimable and positive, the z-score is present and equals divergence/noise.
 */
 func TestTickerStepZScorePresent(t *testing.T) {
 	Convey("Given a history with non-zero residual dispersion", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		base := time.Unix(1000, 0)
 
 		// Vary the bid depth so the residual dispersion is non-zero, then
@@ -142,7 +148,7 @@ single prior observation N_eff == 2, so Maturity == 0.5; with none, 0.
 */
 func TestTickerMaturityUsesNEff(t *testing.T) {
 	Convey("Given one then two observations", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		base := time.Unix(1, 0)
 
 		first := entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
@@ -170,7 +176,7 @@ func TestTickerIrregularTimeRegression(t *testing.T) {
 		// trajectory; the estimator must recover the same slope regardless of
 		// the sampling grid. This is asserted directly at the statistic level
 		// in TestLocalRegressionIrregularGrid in nomagique/statistic.
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 
 		// Feed enough history that the divergence path accumulates several
 		// in-horizon samples and the causal local regression becomes defined —
@@ -207,7 +213,7 @@ never emitted as a fabricated slope.
 */
 func TestTickerVelocityUndefinedAbsent(t *testing.T) {
 	Convey("Given two observations (insufficient regression support)", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		base := time.Unix(1, 0)
 
 		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
@@ -226,7 +232,7 @@ once the regression is defined, and equals the velocity fit's own SNR.
 */
 func TestTickerVelocitySNRPresent(t *testing.T) {
 	Convey("Given a divergence trajectory with enough in-horizon support", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		base := time.Unix(1, 0)
 		depths := []float64{1.0, 2.0, 1.5, 3.0, 2.5, 4.0, 3.5, 5.0, 4.5, 6.0}
 		offsets := []time.Duration{0, time.Second, 3 * time.Second, 5 * time.Second, 8 * time.Second, 10 * time.Second, 13 * time.Second, 15 * time.Second, 18 * time.Second, 20 * time.Second}
@@ -249,7 +255,7 @@ func TestTickerVelocitySNRPresent(t *testing.T) {
 
 func TestTickerStepPeerIsolation(t *testing.T) {
 	Convey("Given a quoted peer and an owned liquidity measurement", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 		peer := data.NewMeasurement("public", map[string]data.Metric[float64]{
 			"bid":     data.NewMetric[float64]("bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 			"ask":     data.NewMetric[float64]("ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
@@ -307,7 +313,7 @@ func TestTickerStepConcurrentPeers(t *testing.T) {
 			go func() {
 				defer group.Done()
 
-				entity := NewTicker(context.Background())
+				entity := readyTicker(t.Context())
 				owned := entity.Register()
 				owned.Peers = []*data.Measurement[float64]{peer}
 
@@ -328,7 +334,7 @@ func TestTickerStepConcurrentPeers(t *testing.T) {
 
 func TestTickerStep(t *testing.T) {
 	Convey("Given a liquidity ticker-path instrument", t, func() {
-		entity := NewTicker(context.Background())
+		entity := readyTicker(t.Context())
 
 		Convey("the first tick yields one measurement with the touch written", func() {
 			measurement := entity.Step(tick("BTC/USD", 100, 102, 1, 1, time.Unix(1, 0)))
@@ -390,4 +396,43 @@ func TestTickerStepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestTickerStepQuoteSelection(t *testing.T) {
+	Convey("Only complete touch quotes belong to liquidity", t, func() {
+		ticker := readyTicker(t.Context())
+		incomplete := data.NewMeasurement("futures", map[string]data.Metric[float64]{
+			"bid": {Raw: 100}, "ask": {Raw: 102},
+		})
+		incomplete.Label = "BTC/USD"
+		owned := ticker.Register()
+		owned.Peers = []*data.Measurement[float64]{incomplete}
+
+		Convey("an incomplete quote does not become zero displayed liquidity", func() {
+			So(ticker.Step(owned), ShouldBeNil)
+		})
+
+		Convey("a complete quote after it supplies the observation", func() {
+			complete := tick("BTC/USD", 100, 102, 2, 3, time.Unix(1, 0))
+			owned.Peers = append(owned.Peers, complete)
+			result := ticker.Step(owned)
+			So(result.Err, ShouldBeNil)
+			So(result.Metrics["touch_notional:bid"].Raw, ShouldEqual, 200)
+			So(result.Metrics["touch_notional:ask"].Raw, ShouldEqual, 306)
+		})
+	})
+}
+
+func BenchmarkTickerStep(b *testing.B) {
+	ticker := readyTicker(b.Context())
+	peer := tick("BTC/USD", 100, 102, 2, 3, time.Unix(1, 0))
+	owned := ticker.Register()
+	owned.Peers = []*data.Measurement[float64]{peer}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		peer.At = peer.At.Add(time.Second)
+		ticker.Step(owned)
+	}
 }

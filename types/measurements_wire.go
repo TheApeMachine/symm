@@ -6,6 +6,7 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -15,11 +16,6 @@ var measurementsBuilderPool = sync.Pool{
 	},
 }
 
-/*
-EncodeMeasurementsFrameWith serializes a batch of measurements and passes the
-borrowed FlatBuffer bytes directly to fn, returning the builder to the pool once
-fn returns. This avoids defensive heap cloning when writing directly to sockets.
-*/
 /*
 MeasurementToWire converts a data.Measurement to wire.MeasurementT including
 metrics, metadata, and provenance. Peers stay off the dashboard frame: they are
@@ -65,7 +61,7 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 		})
 	}
 
-	return &wire.MeasurementT{
+	row := &wire.MeasurementT{
 		Source:       measurement.Source,
 		Symbol:       measurement.Label,
 		Tick:         measurement.SeqIdx,
@@ -78,6 +74,26 @@ func MeasurementToWire(measurement *data.Measurement[float64]) *wire.Measurement
 		Metadata:     metadata,
 		Provenance:   provenance,
 	}
+
+	if snapshot, ok := measurement.Result.(*grid.Snapshot); ok {
+		row.Grid = &wire.LearningDevelopmentT{Symbol: snapshot.Label, Volume: snapshot.Volume}
+
+		for _, cell := range snapshot.Cells {
+			row.Grid.Quantities = append(row.Grid.Quantities, &wire.LearningQuantityT{
+				Id: cell.ID, Source: cell.Source, Label: cell.Label, X: cell.X, Y: cell.Y,
+				Value: cell.Value, Activity: cell.Activity, Quality: cell.Quality, Present: cell.Present,
+			})
+		}
+
+		for _, region := range snapshot.Regions {
+			row.Grid.Regions = append(row.Grid.Regions, &wire.LearningRegionT{
+				Id: region.ID, Condition: region.Condition, Level: region.Level, Change: region.Change,
+				Strength: region.Strength, Authority: region.Authority, Members: int32(region.Members),
+			})
+		}
+	}
+
+	return row
 }
 
 /*

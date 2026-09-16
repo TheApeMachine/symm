@@ -25,11 +25,7 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		label: "Forward learning",
 		hint: "Impulse map · independent wallets · learned actions",
 	},
-	{
-		id: "graph",
-		label: "Market graph",
-		hint: "Relational topology · node inspection",
-	},
+
 	{
 		id: "influence",
 		label: "Influence field",
@@ -59,11 +55,7 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		label: "Hindsight",
 		hint: "Capture tape · provenance · scrub state",
 	},
-	{
-		id: "regulator",
-		label: "Global regulator",
-		hint: "Predictive control · wallet return",
-	},
+
 	{
 		id: "diagnostics",
 		label: "System diagnostics",

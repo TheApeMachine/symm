@@ -30,10 +30,11 @@ const XrayPaintBridge = () => {
 
 	useEffect(() => {
 		const updatePaint = (state: typeof resonanceStore.state) => {
-			const ring = state[focusSymbol];
-			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
+			for (const ring of Object.values(state)) {
+				const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
-			if (last) {
+				if (!last) continue;
+
 				const row = (typeof (last as any).unpack === "function"
 					? (last as any).unpack()
 					: last) as unknown as Record<string, unknown>;

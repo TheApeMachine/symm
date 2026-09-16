@@ -2,84 +2,90 @@ package ui
 
 import (
 	"context"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
-	"golang.design/x/lockfree/wf"
+	"golang.design/x/lockfree/lf"
 )
 
-type SnapshotProvider interface {
-	Snapshot() *types.ManifoldState
-}
-
 /*
-WebRTCTee is a concrete off-ramp that accepts *data.Measurement[float64]
-and fans manifold state out to connected WebRTC peers.
-It satisfies runtime.Tee[*data.Measurement[float64]].
+WebRTCTee accepts completed immutable results directly from concurrent workspace
+consumers. Route exclusions are dropped before entering its lock-free queue.
 */
 type WebRTCTee struct {
 	*runtime.System
-	ring     *wf.RingBuffer[*data.Measurement[float64]]
-	fluid    *FluidRTC
-	provider SnapshotProvider
+	queue    *lf.Queue[any]
+	pending  atomic.Int64
+	capacity int64
 }
 
-/*
-NewWebRTCTee creates a new wait-free WebRTCTee off-ramp.
-*/
-func NewWebRTCTee(label string, capacity int) *WebRTCTee {
-	tee := &WebRTCTee{
-		ring: wf.NewRingBuffer[*data.Measurement[float64]](capacity),
+func NewWebRTCTee(ctx context.Context, label string, capacity int) *WebRTCTee {
+	return &WebRTCTee{
+		System:   runtime.NewSystem(ctx, label),
+		queue:    lf.NewQueue[any](),
+		capacity: int64(capacity),
 	}
-
-	tee.System = runtime.NewSystem(context.Background(), label, tee)
-	return tee
 }
 
-/*
-Push receives measurements from the workspace. When a manifold measurement arrives,
-and a WebRTC viewer is ready, it serializes and publishes the manifold state.
-*/
 func (tee *WebRTCTee) Push(measurement *data.Measurement[float64]) {
 	if tee.Status() != runtime.READY {
 		errnie.Warn(tee.Name() + ": Push called before READY; dropping event")
 		return
 	}
 
-	if !tee.ring.Put(measurement) {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[webrtc] internal error encountered: unable to push measurement",
-			nil,
-		))
-
-		tee.Transition(runtime.ERROR)
+	if measurement == nil || !types.AllowsWebRTC(measurement.Source, measurement.Label) {
+		return
 	}
+
+	var artifact any
+
+	switch result := measurement.Result.(type) {
+	case *types.ManifoldState:
+		if result != nil {
+			artifact = result
+		}
+	case *types.ResonanceArtifact:
+		if result != nil {
+			artifact = result
+		}
+	}
+
+	if artifact == nil {
+		return
+	}
+
+	if tee.pending.Add(1) > tee.capacity {
+		tee.pending.Add(-1)
+		errnie.Warn(tee.Name() + ": result queue is full; dropping visualization update")
+		return
+	}
+
+	tee.queue.Enqueue(artifact)
 }
 
-/*
-Next drains available measurements from the ring buffer.
-*/
+// Next also drops pending results excluded by a subsequent route/focus change.
 func (tee *WebRTCTee) Next() unsafe.Pointer {
 	if tee.Status() != runtime.READY {
-		errnie.Warn("pushing to a non-ready system may have unintended consequences")
+		errnie.Warn(tee.Name() + ": Next called before READY")
 		return nil
 	}
 
-	measurement, ok := tee.ring.Get()
+	for artifact, ok := tee.queue.Dequeue(); ok; artifact, ok = tee.queue.Dequeue() {
+		tee.pending.Add(-1)
+		source, label := "manifold", ""
 
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[webrtc] unable to process measurement",
-			nil,
-		))
+		if result, ok := artifact.(*types.ResonanceArtifact); ok {
+			source, label = "resonance", result.Symbol
+		}
 
-		return nil
+		if types.AllowsWebRTC(source, label) {
+			return unsafe.Pointer(&artifact)
+		}
 	}
 
-	return unsafe.Pointer(measurement)
+	return nil
 }

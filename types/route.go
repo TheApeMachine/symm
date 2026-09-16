@@ -59,10 +59,18 @@ func AllowsRoute(measurement *data.Measurement[float64]) bool {
 		return false
 	}
 
+	// The resonance channel carries the complete predictive result. Publishing
+	// its scalar summary here would overwrite that result in the same UI store.
+	if isLogic(measurement, "resonance") {
+		return false
+	}
+
 	switch Route() {
 	case "dashboard":
-		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, "resonance")) &&
+		return isSignal(measurement, SignalSourceStrings...) &&
 			Allows(measurement.Label)
+	case "xray":
+		return isSignal(measurement, "hawkes") && Allows(measurement.Label)
 	case "learning":
 		return isStrategy(measurement, "training") && Allows(measurement.Label)
 	case "fluid":
@@ -73,6 +81,23 @@ func AllowsRoute(measurement *data.Measurement[float64]) bool {
 		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, LogicSourceStrings...)) &&
 			Allows(measurement.Label)
 	}
+}
+
+/*
+AllowsWebRTC selects structured results before the Tee retains them. X-Ray needs
+all symbols for its universe scatter; other predictive views need only focus.
+The fluid state is global and belongs only to the fluid surface.
+*/
+func AllowsWebRTC(source, label string) bool {
+	switch kernelSource(source) {
+	case "manifold":
+		return Route() == "fluid"
+	case "resonance":
+		return label != "" && (Route() == "xray" ||
+			(Route() == "dashboard" && Allows(label)))
+	}
+
+	return false
 }
 
 /*
@@ -92,7 +117,11 @@ func RouteDropReason(measurement *data.Measurement[float64]) string {
 		return ""
 	}
 
-	if Route() == "dashboard" && !isSignal(measurement, SignalSourceStrings...) && !isLogic(measurement, "resonance") {
+	if isLogic(measurement, "resonance") {
+		return "webrtc"
+	}
+
+	if Route() == "dashboard" && !isSignal(measurement, SignalSourceStrings...) {
 		return "source"
 	}
 

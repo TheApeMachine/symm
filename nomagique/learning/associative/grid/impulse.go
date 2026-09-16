@@ -1,18 +1,12 @@
 package grid
 
-import (
-	"slices"
-	"time"
-)
+import "time"
 
-/*
-Impulse is the event-owned activation sequence inside the fixed regions.
-Ready means formation has completed; a quiet sequence does not undo formation.
+// FormatVersion identifies the coordinate, region and volume-clock replay contract.
+const FormatVersion = 1
 
-The impulse carries no trading semantics. It is the grid's current activation
-pattern — a sequence of region tokens that the learner uses as context for
-choosing an action. What the learner should do is the learner's decision.
-*/
+// Impulse is a borrowed region sequence, valid until its producer steps again.
+// SeqIdx identifies the recorded input boundary; time fields are display facts.
 type Impulse struct {
 	Label    string
 	SeqIdx   int64
@@ -22,28 +16,29 @@ type Impulse struct {
 	Regions  []Region
 }
 
-/* impulse copies the current activation sequence without rebuilding regions. */
-func (op *Space) impulse(label string, at, from time.Time) (Impulse, error) {
-	op.mu.Lock()
-	defer op.mu.Unlock()
+// Region is the current activation of one geometric watershed basin.
+type Region struct {
+	Condition uint64  `json:"condition"`
+	Level     float64 `json:"level"`
+	Change    float64 `json:"change"`
+	ID        uint64  `json:"id"`
+	Strength  float64 `json:"strength"`
+	Authority float64 `json:"authority"`
+	Members   int     `json:"members"`
+}
 
-	contextLabel := label
+// Snapshot is an immutable visualization captured at a publication boundary.
+type Snapshot struct {
+	Label    string
+	Sequence int64
+	Volume   string
+	Cells    []Quantity
+	Regions  []Region
+}
 
-	if contextLabel == "" {
-		contextLabel = op.updated
-	}
-
-	if contextLabel == "" {
-		return Impulse{At: at, From: from, Ready: false}, nil
-	}
-	measured, version, err := op.regionsLocked(contextLabel)
-
-	if err != nil {
-		return Impulse{}, err
-	}
-
-	return Impulse{
-		Label: contextLabel, At: at, From: from, Version: version,
-		Ready: op.formed, Regions: slices.Clone(measured),
-	}, nil
+type Quantity struct {
+	ID                             uint64
+	Source, Label                  string
+	X, Y, Value, Activity, Quality float64
+	Present                        bool
 }

@@ -204,7 +204,7 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		})
 
 		if peer == nil {
-			return m
+			return nil
 		}
 
 		input = peer

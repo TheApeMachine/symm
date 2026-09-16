@@ -13,7 +13,7 @@ import (
 ConditionToken preserves a quantity's identity and the directions of its level
 relative to its causal baseline and its latest change. Zero, positive and
 negative are exact order relations, not selected thresholds. Magnitude and
-measurement quality remain in Space activity and observation authority.
+measurement quality remain in region activity and observation authority.
 
 Bit 52 distinguishes conditioned tokens from historical quantity IDs.
 Four low bits hold the two ternary signs; the remaining 48 bits name a quantity,
@@ -132,7 +132,7 @@ func (op *Token) execute(command *TokenCommand) (TokenResult, error) {
 	}
 
 	if command.Condition != nil {
-		token, err := conditionToken(command.Condition.Quantity, command.Condition.Level, command.Condition.Change)
+		token, err := Condition(command.Condition.Quantity, command.Condition.Level, command.Condition.Change)
 
 		if err != nil {
 			return TokenResult{}, err
@@ -154,8 +154,8 @@ func (op *Token) execute(command *TokenCommand) (TokenResult, error) {
 	return TokenResult{Quantity: conditionQuantity(command.Quantity.Token)}, nil
 }
 
-/* conditionToken builds one quantity's fully conditioned token. */
-func conditionToken(quantity uint64, level, change float64) (uint64, error) {
+/* Condition builds one quantity's fully conditioned token. */
+func Condition(quantity uint64, level, change float64) (uint64, error) {
 	if quantity == 0 || quantity >= 1<<48 {
 		return 0, fmt.Errorf(
 			"%w: grid: condition quantity does not fit token encoding",

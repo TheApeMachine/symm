@@ -24,7 +24,7 @@ export const computeSparklinePath = (
 		const x = (i / (count - 1)) * width;
 		const y =
 			height - padding - ((points[i] - min) / range) * (height - padding * 2);
-		d += (i === 0 ? "M " : " L ") + x.toFixed(1) + "," + y.toFixed(1);
+		d += `${(i === 0 ? "M " : " L ") + x.toFixed(1)},${y.toFixed(1)}`;
 	}
 
 	return d;

@@ -15,6 +15,31 @@ import (
 )
 
 func TestSolverStep(t *testing.T) {
+	Convey("Registered category batches preserve strength, symbols and timestamps", t, func() {
+		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
+		category := data.NewMeasurement[float64]("category", nil)
+		category.Result = [][]types.Category{
+			{
+				{Symbol: "BTC/USD", At: time.Unix(10, 0), Type: types.Turbulent, Confidence: 1, Strength: 0.1},
+				{Symbol: "BTC/USD", At: time.Unix(10, 0), Type: types.OrganicTrend, Confidence: 0.8, Strength: 1},
+			},
+			{{Symbol: "ETH/USD", At: time.Unix(11, 0), Type: types.Turbulent, Confidence: 1, Strength: 1}},
+		}
+		measurement := solver.Register()
+		measurement.Peers = []*data.Measurement[float64]{category}
+		result := solver.Step(measurement)
+		readings, ok := result.Result.([]types.Cognition)
+		So(ok, ShouldBeTrue)
+		So(len(readings), ShouldEqual, 2)
+		So(readings[0].Symbol, ShouldEqual, "BTC/USD")
+		So(readings[0].At, ShouldEqual, time.Unix(10, 0))
+		So(readings[0].Sequence, ShouldContainSubstring, string(types.OrganicTrend))
+		So(readings[1].Symbol, ShouldEqual, "ETH/USD")
+		So(readings[1].At, ShouldEqual, time.Unix(11, 0))
+		So(solver.Error(), ShouldBeNil)
+	})
+
 	Convey("Given a Cognition Solver", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -45,10 +70,10 @@ func TestSolverStep(t *testing.T) {
 						m.Label = sym
 						cat := data.NewMeasurement[float64]("category", nil)
 						cat.Label = sym
-						cat.Metrics[string(categoryType)] = data.Metric[float64]{
-							Label: string(categoryType),
-							Raw:   0.95,
-						}
+						cat.Result = [][]types.Category{{{
+							Symbol: sym, At: time.Unix(int64(batchIndex+1), 0),
+							Type: categoryType, Confidence: 0.95, Strength: 1,
+						}}}
 						m.Peers = []*data.Measurement[float64]{cat}
 
 						_ = solver.Step(m)
@@ -152,5 +177,43 @@ func TestSolverStepReadiness(t *testing.T) {
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
+	})
+}
+
+func BenchmarkSolverStep(b *testing.B) {
+	solver := NewSolver(b.Context())
+	solver.Transition(runtime.READY)
+	measurement := solver.Register()
+	category := data.NewMeasurement[float64]("category", nil)
+	measurement.Peers = []*data.Measurement[float64]{category}
+	categories := [][]types.Category{{{
+		Symbol: "BTC/USD", Confidence: 0.8, Strength: 1,
+	}}}
+	category.Result = categories
+	sequence := int64(0)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		sequence++
+		categories[0][0].At = time.Unix(sequence, 0)
+		categories[0][0].Type = []types.CategoryType{types.OrganicTrend, types.Turbulent}[sequence%2]
+		solver.Step(measurement)
+
+		if err := solver.Error(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestSolverStepEmptyBatch(t *testing.T) {
+	Convey("An empty category publication produces no cognition observation", t, func() {
+		solver := NewSolver(t.Context())
+		solver.Transition(runtime.READY)
+		category := data.NewMeasurement[float64]("category", nil)
+		category.Result = [][]types.Category{}
+		measurement := solver.Register()
+		measurement.Peers = []*data.Measurement[float64]{category}
+		So(solver.Step(measurement), ShouldBeNil)
+		So(solver.Error(), ShouldBeNil)
 	})
 }

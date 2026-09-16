@@ -25,6 +25,7 @@ func toxicityTouch(symbol string, at time.Time, bidPrice, bidQty, askPrice, askQ
 func TestLevel3Step(t *testing.T) {
 	Convey("Given a sequence of touch observations", t, func() {
 		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the first observation anchors the previous touch", func() {
 			measurement := entity.Step(toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))
@@ -76,6 +77,7 @@ func TestLevel3Step(t *testing.T) {
 
 	Convey("Given a crossed touch", t, func() {
 		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
 			measurement := entity.Step(toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 101, 10, 99, 12))
@@ -89,6 +91,7 @@ func TestLevel3Step(t *testing.T) {
 func TestLevel3Register(t *testing.T) {
 	Convey("Given a Level3 entity", t, func() {
 		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
 		schema := entity.Register()
 
 		So(schema, ShouldNotBeNil)
@@ -140,4 +143,33 @@ func TestLevel3StepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestLevel3StepUnrelatedPeer(t *testing.T) {
+	Convey("An unrelated peer is not a fresh signal observation", t, func() {
+		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
+		measurement := entity.Register()
+		peer := data.NewMeasurement[float64]("unrelated", nil)
+		peer.Label = "BTC/USD"
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		So(entity.Step(measurement), ShouldBeNil)
+	})
+}
+
+func BenchmarkLevel3StepUnrelatedPeer(b *testing.B) {
+	entity := NewLevel3(b.Context())
+	entity.Transition(runtime.READY)
+	measurement := entity.Register()
+	peer := data.NewMeasurement[float64]("unrelated", nil)
+	peer.Label = "BTC/USD"
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		if entity.Step(measurement) != nil {
+			b.Fatal("unrelated peer published a signal")
+		}
+	}
 }

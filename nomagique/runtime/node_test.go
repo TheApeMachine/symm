@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -13,11 +14,16 @@ countingNode counts Step invocations and produces a fresh measurement when
 the consumer registers it.
 */
 type countingNode struct {
-	steps int
+	steps  int
+	onStep func(*data.Measurement[float64]) *data.Measurement[float64]
 }
 
 func (node *countingNode) Step(state *data.Measurement[float64]) *data.Measurement[float64] {
 	node.steps++
+
+	if node.onStep != nil {
+		return node.onStep(state)
+	}
 
 	return state
 }
@@ -28,18 +34,15 @@ func (node *countingNode) Register() *data.Measurement[float64] {
 
 func TestConsumerHandle(t *testing.T) {
 	Convey("Given a node bound to a register", t, func() {
-		register := store.NewRegister[*data.Measurement[float64]]()
+		register := store.NewRegister[*data.Measurement[float64]](8)
 		node := &countingNode{}
-		consumer := NewConsumer(t.Context(), node, register)
-		consumer.Transition(READY)
+		consumer := NewConsumer(node, register)
 
-		Convey("Paused consumers drop a range and resume without replaying it", func() {
-			consumer.Transition(WAITING)
+		Convey("Consumers process consecutive committed ranges without lifecycle setup", func() {
 			consumer.Handle(0, 3)
-			So(node.steps, ShouldEqual, 0)
-			consumer.Transition(READY)
+			So(node.steps, ShouldEqual, 4)
 			consumer.Handle(4, 4)
-			So(node.steps, ShouldEqual, 1)
+			So(node.steps, ShouldEqual, 5)
 		})
 
 		Convey("the consumer identified the node's register slot", func() {
@@ -64,17 +67,69 @@ func TestConsumerHandle(t *testing.T) {
 
 			So(node.steps, ShouldEqual, 4)
 		})
+
+		Convey("Committed observations are stamped before calculation and publication", func() {
+			var inputs []int64
+			node.onStep = func(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+				inputs = append(inputs, measurement.SeqIdx)
+				return data.NewMeasurement[float64]("fresh-output", nil)
+			}
+			consumer.Handle(0, 1)
+			consumer.Handle(2, 2)
+			So(inputs, ShouldResemble, []int64{1, 2, 3})
+			for sequence := int64(0); sequence < 3; sequence++ {
+				query := store.NewQuery[*data.Measurement[float64]](nil, data.ActionRead).SetSequence(sequence)
+				So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))).SeqIdx, ShouldEqual, sequence+1)
+			}
+		})
+
+		Convey("A node with no new observation does not republish its old register value", func() {
+			node.onStep = func(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+				if node.steps == 2 {
+					return nil
+				}
+
+				return measurement
+			}
+			consumer.Handle(0, 2)
+			query := store.NewQuery[*data.Measurement[float64]](nil, data.ActionRead).SetSequence(1)
+			So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))), ShouldBeNil)
+		})
+
+		Convey("Observation errors stay on their recorded boundary and do not poison the next input", func() {
+			node.onStep = func(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+				So(measurement.Err, ShouldBeNil)
+
+				if node.steps == 1 {
+					measurement.Err = errors.New("rejected observation")
+				}
+				return measurement
+			}
+			consumer.Handle(0, 1)
+			query := store.NewQuery[*data.Measurement[float64]](nil, data.ActionRead).SetSequence(0)
+			So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))).Err, ShouldNotBeNil)
+			query.SetSequence(1)
+			So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))).Err, ShouldBeNil)
+		})
+
+		Convey("Each calculation starts without the previous structured result", func() {
+			node.onStep = func(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+				So(measurement.Result, ShouldBeNil)
+				measurement.Result = node.steps
+				return measurement
+			}
+			consumer.Handle(0, 2)
+			So(node.steps, ShouldEqual, 3)
+		})
 	})
 
 	Convey("Given a peer-aware node registered alongside a source node", t, func() {
-		register := store.NewRegister[*data.Measurement[float64]]()
+		register := store.NewRegister[*data.Measurement[float64]](8)
 		sourceNode := &countingNode{}
-		sourceConsumer := NewConsumer(t.Context(), sourceNode, register)
-		sourceConsumer.Transition(READY)
+		sourceConsumer := NewConsumer(sourceNode, register)
 
 		peerNode := &peerAwareNode{}
-		peerConsumer := NewConsumer(t.Context(), peerNode, register)
-		peerConsumer.Transition(READY)
+		peerConsumer := NewConsumer(peerNode, register)
 
 		So(sourceConsumer.Identity(), ShouldEqual, 0)
 		So(peerConsumer.Identity(), ShouldEqual, 1)
@@ -100,22 +155,16 @@ func (node *peerAwareNode) Step(state *data.Measurement[float64]) *data.Measurem
 
 func (node *peerAwareNode) Register() *data.Measurement[float64] {
 	measurement := data.NewMeasurement[float64]("solver", nil)
-	// The source consumer owns register slot zero in this fixture.
-	measurement.Metadata["peer-interest"] = "0"
+	measurement.Metadata["peer-interest"] = "counting"
 
 	return measurement
 }
 
 func BenchmarkConsumerHandle(b *testing.B) {
-	register := store.NewRegister[*data.Measurement[float64]]()
-	consumer := NewConsumer(b.Context(), &countingNode{}, register)
-	consumer.Transition(READY)
+	register := store.NewRegister[*data.Measurement[float64]](8)
+	consumer := NewConsumer(&countingNode{}, register)
 	b.ResetTimer()
 	for sequence := 0; sequence < b.N; sequence++ {
 		consumer.Handle(int64(sequence), int64(sequence))
-	}
-	b.StopTimer()
-	if err := consumer.Close(); err != nil {
-		b.Fatal(err)
 	}
 }

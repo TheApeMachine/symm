@@ -93,14 +93,13 @@ var (
 			// thus no need to call a deferred Close method for anything.
 			epoch := processStartedAt.UnixNano()
 
-			uiTee := ui.NewUITee("uiTee", 131072)
-			storeTee := hindsight.NewStoreTee("storeTee", 131072)
-			webrtcTee := ui.NewWebRTCTee("webrtcTee", 131072)
+			uiTee := ui.NewUITee(ctx, "uiTee", 131072)
+			storeTee := hindsight.NewStoreTee(ctx, "storeTee", 131072)
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
 			// them; everything a reader queries lives in the catalog.
-			catalog := tables.Open(ctx, storeTee)
+			catalog := tables.Open(ctx)
 
 			if catalog == nil {
 				return errnie.Error(errnie.Err(
@@ -171,22 +170,24 @@ var (
 				))
 			}
 
-			training := strategy.NewTraining(ctx, api)
+			training := strategy.NewTraining(ctx, epoch, price)
+			if err := training.Rehearsal.Restore(catalog); err != nil {
+				return err
+			}
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
-				BuildID:      "symm-live",
+				BuildID:      strategy.TrainingFormat,
 				ConfigDigest: viper.GetString("system.log.level"),
 				Status:       "ACTIVE",
 			}); err != nil {
-				errnie.Warn(fmt.Sprintf("cmd: record run fact: %v", err))
+				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
 			hub := ui.NewHub(ctx, nil, catalog, uiTee)
 			hub.Run()
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
-			manifoldSolver.Start()
 
 			correlationTicker := correlation.NewTicker(ctx)
 			leadlagTicker := leadlag.NewTicker(ctx)
@@ -209,6 +210,7 @@ var (
 				ctx, system.Cfg.Resonance.LearningRate,
 			)
 			cognitionSolver := cognition.NewSolver(ctx)
+			webrtcTee := ui.NewWebRTCTee(ctx, "webrtcTee", 131072)
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
@@ -273,15 +275,16 @@ var (
 
 			// Start consumers before opening market ingress. All construction,
 			// subscriptions and seeding have completed at this point.
-			go catalog.Drain(ctx, epoch)
-
 			for _, runsys := range []nmruntime.RuntimeSystem{
-				hub,
 				uiTee,
 				storeTee,
 				webrtcTee,
+				hub,
 				training,
 				manifoldSolver,
+				categorySolver,
+				resonanceSolver,
+				cognitionSolver,
 				correlationTicker,
 				leadlagTicker,
 				liquidityTicker,
@@ -299,11 +302,31 @@ var (
 				derivativesTrade,
 				workspace,
 				api,
-				public,
-				private,
-				futures,
 			} {
 				runsys.Transition(nmruntime.READY)
+			}
+
+			drainErrors := make(chan error, 1)
+
+			go func() {
+				drainErrors <- catalog.Drain(ctx, epoch, storeTee, training.Rehearsal.Step)
+			}()
+
+			manifoldSolver.Start()
+
+			transportErrors := make(chan error, 1)
+
+			go func() {
+				transportErrors <- hub.Fluid.Run(webrtcTee)
+			}()
+
+			// Every processing and off-ramp owner is ready before ingress opens.
+			for _, connection := range private.Connections() {
+				connection.Transition(nmruntime.READY)
+			}
+
+			for _, transport := range []nmruntime.RuntimeSystem{public, private, futures} {
+				transport.Transition(nmruntime.READY)
 			}
 
 			var totalSteps atomic.Uint64
@@ -312,6 +335,12 @@ var (
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
+				case err := <-transportErrors:
+					return errnie.Error(errnie.Err(errnie.IO, "symm: WebRTC publisher stopped", err))
+				case err := <-drainErrors:
+					return errnie.Error(errnie.Err(
+						errnie.IO, "symm: catalog drain stopped", err,
+					))
 				default:
 				}
 

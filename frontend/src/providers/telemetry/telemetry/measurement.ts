@@ -5,6 +5,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { LearningDevelopment, LearningDevelopmentT } from '../telemetry/learning-development.js';
 import { Metric, MetricT } from '../telemetry/metric.js';
 import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
 import { NamedString, NamedStringT } from '../telemetry/named-string.js';
@@ -141,8 +142,13 @@ peersLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+grid(obj?:LearningDevelopment):LearningDevelopment|null {
+  const offset = this.bb!.__offset(this.bb_pos, 38);
+  return offset ? (obj || new LearningDevelopment()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
 static startMeasurement(builder:flatbuffers.Builder) {
-  builder.startObject(17);
+  builder.startObject(18);
 }
 
 static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
@@ -261,6 +267,10 @@ static startPeersVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addGrid(builder:flatbuffers.Builder, gridOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(17, gridOffset, 0);
+}
+
 static endMeasurement(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 6) // source
@@ -268,27 +278,6 @@ static endMeasurement(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createMeasurement(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, sourceOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, tick:bigint, peerOffset:flatbuffers.Offset, at:bigint, observedFrom:bigint, horizon:bigint, peerAt:bigint, peerObservedFrom:bigint, maturity:number, snr:number, snrDefined:boolean, metricsOffset:flatbuffers.Offset, metadataOffset:flatbuffers.Offset, provenanceOffset:flatbuffers.Offset, peersOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Measurement.startMeasurement(builder);
-  Measurement.addId(builder, idOffset);
-  Measurement.addSource(builder, sourceOffset);
-  Measurement.addSymbol(builder, symbolOffset);
-  Measurement.addTick(builder, tick);
-  Measurement.addPeer(builder, peerOffset);
-  Measurement.addAt(builder, at);
-  Measurement.addObservedFrom(builder, observedFrom);
-  Measurement.addHorizon(builder, horizon);
-  Measurement.addPeerAt(builder, peerAt);
-  Measurement.addPeerObservedFrom(builder, peerObservedFrom);
-  Measurement.addMaturity(builder, maturity);
-  Measurement.addSnr(builder, snr);
-  Measurement.addSnrDefined(builder, snrDefined);
-  Measurement.addMetrics(builder, metricsOffset);
-  Measurement.addMetadata(builder, metadataOffset);
-  Measurement.addProvenance(builder, provenanceOffset);
-  Measurement.addPeers(builder, peersOffset);
-  return Measurement.endMeasurement(builder);
-}
 
 unpack(): MeasurementT {
   return new MeasurementT(
@@ -308,7 +297,8 @@ unpack(): MeasurementT {
     this.bb!.createObjList<Metric, MetricT>(this.metrics.bind(this), this.metricsLength()),
     this.bb!.createObjList<NamedNumber, NamedNumberT>(this.metadata.bind(this), this.metadataLength()),
     this.bb!.createObjList<NamedString, NamedStringT>(this.provenance.bind(this), this.provenanceLength()),
-    this.bb!.createObjList<Measurement, MeasurementT>(this.peers.bind(this), this.peersLength())
+    this.bb!.createObjList<Measurement, MeasurementT>(this.peers.bind(this), this.peersLength()),
+    (this.grid() !== null ? this.grid()!.unpack() : null)
   );
 }
 
@@ -331,6 +321,7 @@ unpackTo(_o: MeasurementT): void {
   _o.metadata = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.metadata.bind(this), this.metadataLength());
   _o.provenance = this.bb!.createObjList<NamedString, NamedStringT>(this.provenance.bind(this), this.provenanceLength());
   _o.peers = this.bb!.createObjList<Measurement, MeasurementT>(this.peers.bind(this), this.peersLength());
+  _o.grid = (this.grid() !== null ? this.grid()!.unpack() : null);
 }
 }
 
@@ -352,7 +343,8 @@ constructor(
   public metrics: (MetricT)[] = [],
   public metadata: (NamedNumberT)[] = [],
   public provenance: (NamedStringT)[] = [],
-  public peers: (MeasurementT)[] = []
+  public peers: (MeasurementT)[] = [],
+  public grid: LearningDevelopmentT|null = null
 ){}
 
 
@@ -365,25 +357,28 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const metadata = Measurement.createMetadataVector(builder, builder.createObjectOffsetList(this.metadata));
   const provenance = Measurement.createProvenanceVector(builder, builder.createObjectOffsetList(this.provenance));
   const peers = Measurement.createPeersVector(builder, builder.createObjectOffsetList(this.peers));
+  const grid = (this.grid !== null ? this.grid!.pack(builder) : 0);
 
-  return Measurement.createMeasurement(builder,
-    id,
-    source,
-    symbol,
-    this.tick,
-    peer,
-    this.at,
-    this.observedFrom,
-    this.horizon,
-    this.peerAt,
-    this.peerObservedFrom,
-    this.maturity,
-    this.snr,
-    this.snrDefined,
-    metrics,
-    metadata,
-    provenance,
-    peers
-  );
+  Measurement.startMeasurement(builder);
+  Measurement.addId(builder, id);
+  Measurement.addSource(builder, source);
+  Measurement.addSymbol(builder, symbol);
+  Measurement.addTick(builder, this.tick);
+  Measurement.addPeer(builder, peer);
+  Measurement.addAt(builder, this.at);
+  Measurement.addObservedFrom(builder, this.observedFrom);
+  Measurement.addHorizon(builder, this.horizon);
+  Measurement.addPeerAt(builder, this.peerAt);
+  Measurement.addPeerObservedFrom(builder, this.peerObservedFrom);
+  Measurement.addMaturity(builder, this.maturity);
+  Measurement.addSnr(builder, this.snr);
+  Measurement.addSnrDefined(builder, this.snrDefined);
+  Measurement.addMetrics(builder, metrics);
+  Measurement.addMetadata(builder, metadata);
+  Measurement.addProvenance(builder, provenance);
+  Measurement.addPeers(builder, peers);
+  Measurement.addGrid(builder, grid);
+
+  return Measurement.endMeasurement(builder);
 }
 }

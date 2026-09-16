@@ -31,6 +31,7 @@ table Measurement {
   metadata:[NamedNumber];
   provenance:[NamedString];
   peers:[Measurement];
+  grid:LearningDevelopment;
 }
 
 table MeasurementsFrame { rows:[Measurement] (required); }
@@ -890,7 +891,7 @@ table LearningAgent {
  open:int;
 }
 table LearningRegion { id:ulong; condition:ulong; level:double; change:double; strength:double; authority:double; members:int; }
-table LearningQuantity { source:string; label:string; x:double; y:double; value:double; activity:double; quality:double; present:bool; }
+table LearningQuantity { source:string; label:string; x:double; y:double; value:double; activity:double; quality:double; present:bool; id:ulong; }
 table LearningDevelopment {
  symbol:string; atNs:long; status:string; decisions:ulong;
  context:[string]; regions:[LearningRegion]; quantities:[LearningQuantity]; fromNs:long;
@@ -898,6 +899,7 @@ table LearningDevelopment {
  // MaxTemporalContextDepth. context flattens their conditions, so its length
  // counts tokens rather than transitions.
  depth:int;
+ volume:string;
 }
 // Original rehearsal counters: pool counts are per pass, trained is cumulative.
 table LearningRehearsal {

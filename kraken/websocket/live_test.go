@@ -19,3 +19,24 @@ func TestLiveStepReadiness(t *testing.T) {
 		}
 	})
 }
+
+func TestLiveConnections(t *testing.T) {
+	Convey("Root activates Level 3 owners explicitly after preparing consumers", t, func() {
+		parent := &Live{System: runtime.NewSystem(t.Context(), "private")}
+		child := &Live{System: runtime.NewSystem(t.Context(), "level3")}
+		child.Transition(runtime.BUSY)
+		parent.AttachLevel3("BTC/USD", child)
+		So(parent.Connections(), ShouldResemble, []*Live{child})
+		So(child.Status(), ShouldEqual, runtime.BUSY)
+		parent.Transition(runtime.READY)
+		So(child.Status(), ShouldEqual, runtime.BUSY)
+
+		for _, connection := range parent.Connections() {
+			connection.Transition(runtime.READY)
+		}
+
+		So(child.Status(), ShouldEqual, runtime.READY)
+		parent.Transition(runtime.WAITING)
+		So(child.Status(), ShouldEqual, runtime.READY)
+	})
+}

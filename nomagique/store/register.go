@@ -1,14 +1,10 @@
 package store
 
 import (
-	"fmt"
 	"iter"
-	"slices"
-	"strconv"
 	"strings"
 	"unsafe"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -19,18 +15,28 @@ subject identifies itself: it is appended and answered its index. From then
 on reads and writes are direct slot access — a write replaces, never
 appends. A measurement read yields a working clone of the slot so the
 consumer mutates only that copy; peers are live pointers to other slots'
-published snapshots.
+published snapshots. Sequenced queries read per-observation ring slots; the
+Disruptor's dependency and wrap barriers own their publication and reuse.
 */
 type Register[T any] struct {
 	*core.PrimitiveError
-	slots []T
+	slots    []T
+	frames   [][]T
+	capacity int
 }
 
 /*
 NewRegister creates a register primitive holding no slots.
 */
-func NewRegister[T any]() *Register[T] {
+func NewRegister[T any](capacity ...int) *Register[T] {
+	size := 1
+
+	if len(capacity) > 0 {
+		size = capacity[0]
+	}
+
 	return &Register[T]{
+		capacity:       size,
 		PrimitiveError: core.NewPrimitiveError(),
 	}
 }
@@ -49,22 +55,21 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 		case data.ActionIdentify:
 			for ptr := range query.payload {
 				op.slots = append(op.slots, *(*T)(ptr))
+				op.frames = append(op.frames, make([]T, op.capacity))
 			}
 
-			query.Identify(len(op.slots) - 1)
+			slotID := len(op.slots) - 1
+			query.Identify(slotID)
 
-			var (
-				measurement *data.Measurement[float64]
-				ok          bool
-			)
-
-			if measurement, ok = any(
-				op.slots[query.Identity()],
-			).(*data.Measurement[float64]); ok && measurement != nil {
-				measurement.Identify(query.Identity())
+			if slotID >= 0 {
+				if meas, ok := any(op.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
+					meas.ID = slotID
+				}
 			}
 
-			if !yield(unsafe.Pointer(&measurement)) {
+			slotVal := op.slots[query.Identity()]
+
+			if !yield(unsafe.Pointer(&slotVal)) {
 				return
 			}
 		case data.ActionWrite:
@@ -73,14 +78,34 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				return
 			}
 
+			var value T
+
 			if query.payload != nil {
-				op.slots[query.Identity()] = data.Read[T](query.payload)
+				value = data.Read[T](query.payload)
+				op.slots[query.Identity()] = value
 			}
 
-			if !yield(unsafe.Pointer(&op.slots[query.Identity()])) {
+			if query.sequence >= 0 {
+				op.frames[query.Identity()][query.sequence%int64(op.capacity)] = value
+			}
+
+			if !yield(unsafe.Pointer(&value)) {
 				return
 			}
+
 		case data.ActionRead:
+			if query.Identity() < 0 {
+				for index := range op.slots {
+					value := op.published(index, query.sequence)
+
+					if !yield(unsafe.Pointer(&value)) {
+						return
+					}
+				}
+
+				return
+			}
+
 			if query.Identity() >= len(op.slots) {
 				op.Error(core.ErrShape)
 				return
@@ -88,52 +113,54 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 			slotVal := op.slots[query.Identity()]
 
-			if measurement, ok := any(slotVal).(*data.Measurement[float64]); ok && measurement != nil {
-				interest := measurement.Metadata["peer-interest"]
+			if meas, ok := any(slotVal).(*data.Measurement[float64]); ok && meas != nil {
+				working := meas.Clone()
+				interest := ""
+
+				if working.Metadata != nil {
+					interest = working.Metadata["peer-interest"]
+				}
 
 				if interest != "" {
-					measurement.Peers = measurement.Peers[:0]
+					working.Peers = working.Peers[:0]
+					interests := strings.Split(interest, ",")
 
-					// TODO: Move this into a AddPeer method on Measurement
-					//       to lift this out of the hot path.
-					interests := strings.Split(strings.ReplaceAll(
-						strings.ReplaceAll(interest, " ", ""), fmt.Sprintf(",%d,", query.Identity()), ",",
-					), ",")
-
-					if slices.Contains(interests, "*") {
-						measurement.Peers = any(
-							slices.Clone(op.slots),
-						).([]*data.Measurement[float64])
-
-						// We have it all, bail!
-						if !yield(unsafe.Pointer(&slotVal)) {
-							return
-						}
+					for idx := range interests {
+						interests[idx] = strings.TrimSpace(interests[idx])
 					}
 
-					for _, interest := range interests {
-						id, err := strconv.Atoi(interest)
+					limit := len(op.slots)
 
-						if err != nil {
-							errnie.Error(errnie.Err(
-								errnie.Validation,
-								"[register] unable to convery peer interest to id",
-								err,
-							))
+					if query.PeerLimit() >= 0 && query.PeerLimit() < limit {
+						limit = query.PeerLimit()
+					}
 
+					for idx := 0; idx < limit; idx++ {
+						if idx == query.Identity() {
 							continue
 						}
 
-						measurement.Peers = append(
-							measurement.Peers,
-							any(op.slots[id]).(*data.Measurement[float64]),
-						)
+						value := op.published(idx, query.sequence)
+
+						peer, peerOk := any(value).(*data.Measurement[float64])
+
+						if !peerOk || peer == nil {
+							continue
+						}
+
+						if matchPeer(peer, interests) {
+							working.Peers = append(working.Peers, peer)
+						}
 					}
 				}
 
-				if !yield(unsafe.Pointer(&measurement)) {
+				out := any(working).(T)
+
+				if !yield(unsafe.Pointer(&out)) {
 					return
 				}
+
+				return
 			}
 
 			if !yield(unsafe.Pointer(&slotVal)) {
@@ -144,4 +171,23 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			return
 		}
 	}
+}
+
+func matchPeer(peer *data.Measurement[float64], interests []string) bool {
+	for _, interest := range interests {
+		if interest == "*" || interest == peer.Source || interest == peer.Label {
+			return true
+		}
+	}
+
+	return false
+}
+
+// published reads a sequence slot whose writer has passed the dependency barrier.
+func (op *Register[T]) published(identity int, sequence int64) T {
+	if sequence >= 0 {
+		return op.frames[identity][sequence%int64(op.capacity)]
+	}
+
+	return op.slots[identity]
 }

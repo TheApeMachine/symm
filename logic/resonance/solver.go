@@ -152,16 +152,14 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 		return nil
 	}
 
-	symbol := measurement.Label
-
-	if symbol == "" {
-		for _, peer := range measurement.Peers {
-			if peer != nil && peer.Label != "" {
-				symbol = peer.Label
-				break
-			}
+	for _, peer := range measurement.Peers {
+		if peer != nil && peer.Label != "" {
+			measurement.Pull(peer)
+			break
 		}
 	}
+
+	symbol := measurement.Label
 
 	if symbol == "" {
 		return measurement
@@ -247,6 +245,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	features := scorer.Step(signals)
 
 	resonance := solver.Update(symbol, at, features, midpoint)
+	measurement.Result = resonance
 
 	if resonance != nil && resonance.Snapshot != nil {
 		if energyMetric, ok := measurement.Metrics["energy"]; ok {

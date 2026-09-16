@@ -1,11 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef, useState } from "react";
-import {
-	focusStore,
-	type RingBuffer,
-	signals,
-	trainingStore,
-} from "#/collections/app";
+import { focusStore, type RingBuffer, trainingStore } from "#/collections/app";
+import { RingCursor } from "#/collections/ring";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
@@ -13,7 +9,6 @@ import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
 import { memoizedQuery, renderValue } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import type { MetricT } from "../hindsight/hindsight-types";
 import { CandidateReview } from "./candidate-review";
 import {
 	CandidatePanel,
@@ -49,11 +44,11 @@ export const LearningDashboard = () => {
 		if (!root) return;
 
 		const seen = new WeakSet<MeasurementT>();
+		const cursor = new RingCursor<MeasurementT>();
 
 		const update = (ring: RingBuffer<MeasurementT>) => {
 			if (!ring || ring.isEmpty()) return;
 
-			const len = ring.getBufferLength();
 			const metaEl = memoizedQuery(
 				root,
 				'[data-l="header-meta"]',
@@ -87,12 +82,7 @@ export const LearningDashboard = () => {
 				'[data-l="activity-list"]',
 			) as HTMLElement;
 
-			for (let i = 0; i < len; i++) {
-				const measurement = ring.get(i);
-				if (measurement === undefined) {
-					continue;
-				}
-
+			cursor.read(ring, (measurement) => {
 				const metricMap: Record<string, number> = {};
 				for (const m of measurement.metrics ?? []) {
 					if (!m?.name) continue;
@@ -150,8 +140,8 @@ export const LearningDashboard = () => {
 				const confidence = metricMap.confidence ?? 0;
 				const contrast = metricMap.contrast ?? 0;
 				const edge = metricMap.edge ?? 0;
-				const support = metricMap.support ?? 0;
-				const isTrading = confidence >= 0.7 && contrast > 0.5;
+				const evaluated = metricMap.evaluated ?? 0;
+				const isTrading = false;
 
 				if (metaEl) {
 					metaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`;
@@ -162,17 +152,11 @@ export const LearningDashboard = () => {
 				}
 
 				if (gateCountEl) {
-					const gates = [
-						support >= 10,
-						edge > 0,
-						confidence >= 0.7,
-						contrast > 0.5,
-					].filter(Boolean).length;
-					gateCountEl.innerText = `${gates}/4 criteria`;
+					gateCountEl.innerText = "Training only";
 				}
 
 				if (forwardMetaEl) {
-					forwardMetaEl.innerText = `${Math.floor(resolved).toLocaleString()} completed evaluations`;
+					forwardMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} completed evaluations`;
 				}
 
 				if (recogMetaEl) {
@@ -182,11 +166,11 @@ export const LearningDashboard = () => {
 				if (recogStatusEl) {
 					recogStatusEl.innerText = isTrading
 						? "Execution active · Model meets confidence and contrast criteria"
-						: "Training precursor associations · Execution remains inert until confident";
+						: "Training precursor associations · Quoted returns, no orders";
 				}
 
 				if (skillMetaEl) {
-					skillMetaEl.innerText = `${Math.floor(resolved).toLocaleString()} forward evaluations · ${isTrading ? "trading" : "learning"}`;
+					skillMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} forward evaluations · ${isTrading ? "trading" : "learning"}`;
 				}
 
 				if (activityListEl && !seen.has(measurement)) {
@@ -232,213 +216,191 @@ export const LearningDashboard = () => {
 						activityListEl.lastElementChild?.remove();
 					}
 				}
-			}
 
-			// 4. Update Hot Regions and Impulse Map from live signals
-			const activeSources = Object.keys(signals).filter(
-				(s) => s !== "training",
-			);
-			const activeRegions: Array<{
-				source: string;
-				snr: number;
-				maturity: number;
-				metrics: MetricT[];
-			}> = [];
+				// Coordinates, membership and activity are the backend's actual readout.
+				const grid = measurement.grid;
+				const quantities = grid?.symbol === focusSymbol ? grid.quantities : [];
+				const measuredRegions =
+					grid?.symbol === focusSymbol ? grid.regions : [];
+				const activeRegions = measuredRegions.map((region) => ({
+					source: String(
+						quantities.find((cell) => cell.id === region.id)?.label ??
+							region.id,
+					),
+					snr: region.strength,
+					maturity: region.authority,
+				}));
 
-			for (const source of activeSources) {
-				const sRing =
-					signals[source]?.state[focusSymbol] ?? signals[source]?.state[""];
-				if (!sRing || sRing.isEmpty()) continue;
-				const lastMeas = sRing.getLast();
-				if (!lastMeas) continue;
+				// Paint Hot Regions
+				const hotRegionsEl = memoizedQuery(
+					root,
+					'[data-l="hot-regions"]',
+				) as HTMLElement;
+				const hotEmptyEl = memoizedQuery(
+					root,
+					'[data-l="hot-regions-empty"]',
+				) as HTMLElement;
 
-				activeRegions.push({
-					source,
-					snr: lastMeas.snr ?? 0,
-					maturity: lastMeas.maturity ?? 0,
-					metrics: lastMeas.metrics ?? [],
-				});
-			}
-
-			// Paint Hot Regions
-			const hotRegionsEl = memoizedQuery(
-				root,
-				'[data-l="hot-regions"]',
-			) as HTMLElement;
-			const hotEmptyEl = memoizedQuery(
-				root,
-				'[data-l="hot-regions-empty"]',
-			) as HTMLElement;
-
-			if (hotRegionsEl) {
-				const sortedRegions = [...activeRegions].sort((a, b) => b.snr - a.snr);
-				const maxSnr = Math.max(...sortedRegions.map((r) => r.snr), 1);
-
-				if (hotEmptyEl) {
-					const nextDisplay = sortedRegions.length === 0 ? "" : "none";
-					if (hotEmptyEl.style.display !== nextDisplay) {
-						hotEmptyEl.style.display = nextDisplay;
-					}
-				}
-
-				while (hotRegionsEl.children.length - 1 < sortedRegions.length) {
-					const rowDiv = document.createElement("div");
-					rowDiv.className = "flex items-center gap-2 font-mono text-xs";
-					const nameSpan = document.createElement("span");
-					nameSpan.className = "w-24 shrink-0 truncate uppercase text-(--f2)";
-					const barTrack = document.createElement("div");
-					barTrack.className =
-						"flex-1 h-1.5 rounded-full bg-(--surface) overflow-hidden";
-					const barFill = document.createElement("div");
-					barFill.className = "h-full bg-(--acc) transition-all";
-					barTrack.appendChild(barFill);
-					const snrSpan = document.createElement("span");
-					snrSpan.className = "w-14 shrink-0 text-right text-(--f4)";
-
-					rowDiv.appendChild(nameSpan);
-					rowDiv.appendChild(barTrack);
-					rowDiv.appendChild(snrSpan);
-					hotRegionsEl.appendChild(rowDiv);
-				}
-
-				while (hotRegionsEl.children.length - 1 > sortedRegions.length) {
-					hotRegionsEl.removeChild(hotRegionsEl.lastElementChild as Node);
-				}
-
-				for (let i = 0; i < sortedRegions.length; i++) {
-					const r = sortedRegions[i];
-					const rowDiv = hotRegionsEl.children[i + 1] as HTMLElement;
-					const nameSpan = rowDiv.children[0] as HTMLElement;
-					const barFill = (rowDiv.children[1] as HTMLElement)
-						.children[0] as HTMLElement;
-					const snrSpan = rowDiv.children[2] as HTMLElement;
-
-					const nameText = r.source.toUpperCase();
-					const snrText = `${r.snr.toFixed(2)}`;
-					const widthPct = `${Math.min(100, Math.max(5, (r.snr / maxSnr) * 100)).toFixed(0)}%`;
-
-					if (nameSpan.textContent !== nameText)
-						nameSpan.textContent = nameText;
-					if (snrSpan.textContent !== snrText) snrSpan.textContent = snrText;
-					if (barFill.style.width !== widthPct) barFill.style.width = widthPct;
-				}
-			}
-
-			// Paint Impulse Map SVG
-			const mapPointsEl = memoizedQuery(
-				root,
-				'[data-l="map-points"]',
-			) as SVGGElement;
-			const mapEmptyEl = memoizedQuery(
-				root,
-				'[data-l="map-empty"]',
-			) as SVGTextElement;
-			const mapMetaEl = memoizedQuery(
-				root,
-				'[data-l="map-meta"]',
-			) as HTMLElement;
-
-			if (mapPointsEl) {
-				const points: Point[] = [];
-				const regions: Region[] = [];
-				let pointId = 0;
-
-				for (let sIdx = 0; sIdx < activeRegions.length; sIdx++) {
-					const r = activeRegions[sIdx];
-					const angle =
-						(sIdx / Math.max(1, activeRegions.length)) * 2 * Math.PI;
-					const radius = 120 + ((r.snr * 15) % 80);
-					const sx = Math.cos(angle) * radius;
-					const sy = Math.sin(angle) * radius;
-
-					regions.push({
-						id: pointId,
-						strength: r.snr,
-						authority: r.maturity,
-						members: r.metrics.length || 1,
-					});
-
-					for (const m of r.metrics) {
-						if (!m?.name) continue;
-						points.push({
-							id: pointId++,
-							source: r.source,
-							label: String(m.name),
-							x: sx + ((pointId * 19) % 40) - 20,
-							y: sy + ((pointId * 29) % 40) - 20,
-							value: m.raw ?? 0,
-							energy: r.snr,
-							authority: r.maturity,
-							present: true,
-						});
-					}
-				}
-
-				if (mapMetaEl) {
-					const next = `${points.length} numeric cells · ${regions.length} hot regions`;
-					if (mapMetaEl.textContent !== next) mapMetaEl.textContent = next;
-				}
-
-				if (mapEmptyEl) {
-					const nextDisplay = points.length === 0 ? "" : "none";
-					if (mapEmptyEl.style.display !== nextDisplay) {
-						mapEmptyEl.style.display = nextDisplay;
-					}
-				}
-
-				const extent = Math.max(
-					...points.flatMap((point) => [Math.abs(point.x), Math.abs(point.y)]),
-					0,
-				);
-				const scale = extent > 0 ? 240 / extent : 0;
-				const maxEnergy = Math.max(...points.map((point) => point.energy), 0);
-				const peakSet = new Set(regions.map((reg) => reg.id));
-
-				while (mapPointsEl.children.length < points.length) {
-					const circle = document.createElementNS(
-						"http://www.w3.org/2000/svg",
-						"circle",
+				if (hotRegionsEl) {
+					const sortedRegions = [...activeRegions].sort(
+						(a, b) => b.snr - a.snr,
 					);
-					const title = document.createElementNS(
-						"http://www.w3.org/2000/svg",
-						"title",
-					);
-					circle.appendChild(title);
-					mapPointsEl.appendChild(circle);
-				}
+					const maxSnr = Math.max(...sortedRegions.map((r) => r.snr), 1);
 
-				while (mapPointsEl.children.length > points.length) {
-					mapPointsEl.removeChild(mapPointsEl.lastElementChild as Node);
-				}
+					if (hotEmptyEl) {
+						const nextDisplay = sortedRegions.length === 0 ? "" : "none";
+						if (hotEmptyEl.style.display !== nextDisplay) {
+							hotEmptyEl.style.display = nextDisplay;
+						}
+					}
 
-				for (let i = 0; i < points.length; i++) {
-					const pt = points[i];
-					const circle = mapPointsEl.children[i] as SVGCircleElement;
-					const title = circle.firstElementChild as SVGTitleElement;
-					const cx = String((pt.x * scale).toFixed(1));
-					const cy = String((pt.y * scale).toFixed(1));
-					const isPeak = peakSet.has(pt.id);
-					const r = isPeak ? "6" : "3";
-					const fill = isPeak ? "var(--acc)" : "var(--info)";
-					const light = maxEnergy > 0 ? Math.sqrt(pt.energy / maxEnergy) : 0;
-					const opacity = String(
-						(pt.present ? 0.15 + 0.85 * light : 0.08).toFixed(2),
-					);
+					while (hotRegionsEl.children.length - 1 < sortedRegions.length) {
+						const rowDiv = document.createElement("div");
+						rowDiv.className = "flex items-center gap-2 font-mono text-xs";
+						const nameSpan = document.createElement("span");
+						nameSpan.className = "w-24 shrink-0 truncate uppercase text-(--f2)";
+						const barTrack = document.createElement("div");
+						barTrack.className =
+							"flex-1 h-1.5 rounded-full bg-(--surface) overflow-hidden";
+						const barFill = document.createElement("div");
+						barFill.className = "h-full bg-(--acc) transition-all";
+						barTrack.appendChild(barFill);
+						const snrSpan = document.createElement("span");
+						snrSpan.className = "w-14 shrink-0 text-right text-(--f4)";
 
-					if (circle.getAttribute("cx") !== cx) circle.setAttribute("cx", cx);
-					if (circle.getAttribute("cy") !== cy) circle.setAttribute("cy", cy);
-					if (circle.getAttribute("r") !== r) circle.setAttribute("r", r);
-					if (circle.getAttribute("fill") !== fill)
-						circle.setAttribute("fill", fill);
-					if (circle.getAttribute("opacity") !== opacity)
-						circle.setAttribute("opacity", opacity);
+						rowDiv.appendChild(nameSpan);
+						rowDiv.appendChild(barTrack);
+						rowDiv.appendChild(snrSpan);
+						hotRegionsEl.appendChild(rowDiv);
+					}
 
-					const titleText = `#${pt.id} ${pt.source} / ${pt.label}\nValue ${pt.value}\nActivity ${pt.energy}\nAuthority ${pt.authority}\n${pt.present ? "Present" : "Absent on latest update"}`;
-					if (title && title.textContent !== titleText) {
-						title.textContent = titleText;
+					while (hotRegionsEl.children.length - 1 > sortedRegions.length) {
+						hotRegionsEl.removeChild(hotRegionsEl.lastElementChild as Node);
+					}
+
+					for (let i = 0; i < sortedRegions.length; i++) {
+						const r = sortedRegions[i];
+						const rowDiv = hotRegionsEl.children[i + 1] as HTMLElement;
+						const nameSpan = rowDiv.children[0] as HTMLElement;
+						const barFill = (rowDiv.children[1] as HTMLElement)
+							.children[0] as HTMLElement;
+						const snrSpan = rowDiv.children[2] as HTMLElement;
+
+						const nameText = r.source.toUpperCase();
+						const snrText = `${r.snr.toFixed(2)}`;
+						const widthPct = `${Math.min(100, Math.max(5, (r.snr / maxSnr) * 100)).toFixed(0)}%`;
+
+						if (nameSpan.textContent !== nameText)
+							nameSpan.textContent = nameText;
+						if (snrSpan.textContent !== snrText) snrSpan.textContent = snrText;
+						if (barFill.style.width !== widthPct)
+							barFill.style.width = widthPct;
 					}
 				}
-			}
+
+				// Paint Impulse Map SVG
+				const mapPointsEl = memoizedQuery(
+					root,
+					'[data-l="map-points"]',
+				) as SVGGElement;
+				const mapEmptyEl = memoizedQuery(
+					root,
+					'[data-l="map-empty"]',
+				) as SVGTextElement;
+				const mapMetaEl = memoizedQuery(
+					root,
+					'[data-l="map-meta"]',
+				) as HTMLElement;
+
+				if (mapPointsEl) {
+					const points: Point[] = quantities.map((cell) => ({
+						id: Number(cell.id),
+						source: String(cell.source ?? ""),
+						label: String(cell.label ?? ""),
+						x: cell.x,
+						y: cell.y,
+						value: cell.value,
+						energy: cell.activity,
+						authority: cell.quality,
+						present: cell.present,
+					}));
+					const regions: Region[] = measuredRegions.map((region) => ({
+						id: Number(region.id),
+						strength: region.strength,
+						authority: region.authority,
+						members: region.members,
+					}));
+
+					if (mapMetaEl) {
+						const next = `${points.length} numeric cells · ${regions.length} hot regions`;
+						if (mapMetaEl.textContent !== next) mapMetaEl.textContent = next;
+					}
+
+					if (mapEmptyEl) {
+						const nextDisplay = points.length === 0 ? "" : "none";
+						if (mapEmptyEl.style.display !== nextDisplay) {
+							mapEmptyEl.style.display = nextDisplay;
+						}
+					}
+
+					const extent = Math.max(
+						...points.flatMap((point) => [
+							Math.abs(point.x),
+							Math.abs(point.y),
+						]),
+						0,
+					);
+					const scale = extent > 0 ? 240 / extent : 0;
+					const maxEnergy = Math.max(...points.map((point) => point.energy), 0);
+					const peakSet = new Set(regions.map((reg) => reg.id));
+
+					while (mapPointsEl.children.length < points.length) {
+						const circle = document.createElementNS(
+							"http://www.w3.org/2000/svg",
+							"circle",
+						);
+						const title = document.createElementNS(
+							"http://www.w3.org/2000/svg",
+							"title",
+						);
+						circle.appendChild(title);
+						mapPointsEl.appendChild(circle);
+					}
+
+					while (mapPointsEl.children.length > points.length) {
+						mapPointsEl.removeChild(mapPointsEl.lastElementChild as Node);
+					}
+
+					for (let i = 0; i < points.length; i++) {
+						const pt = points[i];
+						const circle = mapPointsEl.children[i] as SVGCircleElement;
+						const title = circle.firstElementChild as SVGTitleElement;
+						const cx = String((pt.x * scale).toFixed(1));
+						const cy = String((pt.y * scale).toFixed(1));
+						const isPeak = peakSet.has(pt.id);
+						const r = isPeak ? "6" : "3";
+						const fill = isPeak ? "var(--acc)" : "var(--info)";
+						const light = maxEnergy > 0 ? Math.sqrt(pt.energy / maxEnergy) : 0;
+						const opacity = String(
+							(pt.present ? 0.15 + 0.85 * light : 0.08).toFixed(2),
+						);
+
+						if (circle.getAttribute("cx") !== cx) circle.setAttribute("cx", cx);
+						if (circle.getAttribute("cy") !== cy) circle.setAttribute("cy", cy);
+						if (circle.getAttribute("r") !== r) circle.setAttribute("r", r);
+						if (circle.getAttribute("fill") !== fill)
+							circle.setAttribute("fill", fill);
+						if (circle.getAttribute("opacity") !== opacity)
+							circle.setAttribute("opacity", opacity);
+
+						const titleText = `#${pt.id} ${pt.source} / ${pt.label}\nValue ${pt.value}\nActivity ${pt.energy}\nAuthority ${pt.authority}\n${pt.present ? "Present" : "Absent on latest update"}`;
+						if (title && title.textContent !== titleText) {
+							title.textContent = titleText;
+						}
+					}
+				}
+			});
+			root.dataset.dropped = String(cursor.dropped);
 		};
 
 		const getTrainingRing = (

@@ -5,15 +5,29 @@ import (
 )
 
 /*
-EncodeWire projects a domain ResonanceArtifact into the FlatBuffer wire representation.
+EncodeWire sends the settled latent pair for the universe scatter. Only focused
+readings include the full hierarchy, forecast and diagnostics.
 */
-func (artifact *ResonanceArtifact) EncodeWire() *telemetry.ResonanceT {
+func (artifact *ResonanceArtifact) EncodeWire(focused bool) *telemetry.ResonanceT {
 	if artifact == nil {
 		return nil
 	}
 
+	var embedding []float64
+
+	if artifact.Snapshot != nil && len(artifact.Snapshot.Latent) >= 2 {
+		embedding = append([]float64(nil), artifact.Snapshot.Latent[:2]...)
+	}
+
+	if !focused {
+		return &telemetry.ResonanceT{
+			Symbol: artifact.Symbol, At: artifact.At.UnixNano(), Embedding: embedding,
+		}
+	}
+
 	wire := &telemetry.ResonanceT{
 		Symbol:                   artifact.Symbol,
+		Embedding:                embedding,
 		At:                       artifact.At.UnixNano(),
 		ForwardCurve:             artifact.ForwardCurve,
 		ForwardRetention:         artifact.ForwardRetention,

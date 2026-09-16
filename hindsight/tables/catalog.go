@@ -26,7 +26,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -41,7 +40,6 @@ type Catalog struct {
 	cacheMutex   sync.RWMutex
 	cachedEpochs []int64
 	epochsLoaded time.Time
-	storeTee     *hindsight.StoreTee
 }
 
 /*
@@ -56,7 +54,7 @@ func Wrap(underlying icecat.Catalog) *Catalog {
 /*
 Open connects to the Iceberg REST catalog configured in system.Cfg.Storage.
 */
-func Open(ctx context.Context, storeTee *hindsight.StoreTee) *Catalog {
+func Open(ctx context.Context) *Catalog {
 	storageConfig := system.Cfg.Storage
 
 	if storageConfig == nil || storageConfig.Iceberg == nil {
@@ -173,13 +171,12 @@ func Open(ctx context.Context, storeTee *hindsight.StoreTee) *Catalog {
 
 	cat := Wrap(connected)
 	cat.awsConfig = &awsCfg
-	cat.storeTee = storeTee
 
 	return cat
 }
 
 /*
-Ensure creates the Hindsight namespace and every canonical table if not already present.
+Ensure creates missing canonical tables and applies configured properties to existing tables.
 */
 func (catalog *Catalog) Ensure(ctx context.Context) error {
 	if err := catalog.ensureBuckets(ctx); err != nil {
@@ -252,7 +249,7 @@ func (catalog *Catalog) ensureTable(
 	}
 
 	if exists {
-		return nil
+		return catalog.ensureProperties(ctx, name, properties)
 	}
 
 	if _, err := catalog.underlying.CreateTable(
@@ -260,7 +257,7 @@ func (catalog *Catalog) ensureTable(
 		icecat.WithPartitionSpec(&partitioning), icecat.WithProperties(properties),
 	); err != nil {
 		if errors.Is(err, icecat.ErrTableAlreadyExists) {
-			return nil
+			return catalog.ensureProperties(ctx, name, properties)
 		}
 
 		return errnie.Error(errnie.Err(
@@ -268,6 +265,42 @@ func (catalog *Catalog) ensureTable(
 			"[iceberg] failed to create table "+name,
 			err,
 		))
+	}
+
+	return nil
+}
+
+func (catalog *Catalog) ensureProperties(ctx context.Context, name string, properties iceberg.Properties) error {
+	if len(properties) == 0 {
+		return nil
+	}
+
+	loaded, err := catalog.Load(ctx, name)
+
+	if err != nil {
+		return err
+	}
+
+	changed := iceberg.Properties{}
+
+	for key, value := range properties {
+		if loaded.Properties()[key] != value {
+			changed[key] = value
+		}
+	}
+
+	if len(changed) == 0 {
+		return nil
+	}
+
+	transaction := loaded.NewTransaction()
+
+	if err := transaction.SetProperties(changed); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "[iceberg] invalid properties for "+name, err))
+	}
+
+	if _, err := transaction.Commit(ctx); err != nil {
+		return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] failed to configure "+name, err))
 	}
 
 	return nil

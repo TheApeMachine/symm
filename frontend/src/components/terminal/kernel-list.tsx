@@ -7,6 +7,7 @@ import {
 	type RingBuffer,
 	signals,
 } from "#/collections/app";
+import { RingCursor } from "#/collections/ring";
 import { terminalStore } from "#/collections/terminal";
 import {
 	Badge,
@@ -45,7 +46,17 @@ const KernelRow = ({
 		const barEl = memoizedQuery(btn, '[data-k="bar"]') as HTMLElement;
 		const valueEl = memoizedQuery(btn, '[data-k="value"]') as HTMLElement;
 
+		const cursor = new RingCursor<MeasurementT>();
+		const values: number[] = [];
+		let observedRing: RingBuffer<MeasurementT> | undefined;
+		let generation = -1;
+
 		const update = (ring: RingBuffer<MeasurementT>) => {
+			if (observedRing !== ring || generation !== ring.generation) {
+				values.length = 0;
+				observedRing = ring;
+				generation = ring.generation;
+			}
 			if (!ring || ring.isEmpty()) {
 				setBadge(badgeEl, "disabled", "STANDBY");
 				setMeter(barEl, 0, "disabled");
@@ -53,17 +64,10 @@ const KernelRow = ({
 				return;
 			}
 
-			const values: number[] = [];
-			const len = ring.getBufferLength();
-
-			for (let i = 0; i < len; i++) {
-				const measurement = ring.get(i);
-				if (measurement === undefined) {
-					continue;
-				}
-
+			cursor.read(ring, (measurement) => {
 				const snr = measurement.snr;
 				values.push(snr);
+				if (values.length > ring.getSize()) values.shift();
 
 				renderValue(valueEl, snr);
 				setBadge(badgeEl, "success", "HEALTHY");
@@ -72,7 +76,8 @@ const KernelRow = ({
 					const conf = Math.min(1, Math.max(0, measurement.maturity || snr));
 					setMeter(barEl, conf * 100, "brand");
 				}
-			}
+			});
+			btn.dataset.dropped = String(cursor.dropped);
 
 			setSparkline(sparkEl, areaEl, values, true);
 		};
@@ -102,13 +107,14 @@ const KernelRow = ({
 			ref={rowRef}
 			variant="bare"
 			shape="block"
+			className="border-(--line) border-b"
 			data-kernel={source}
 			onClick={() => {
 				focusMetric.setState(() => source);
 				terminalStore.actions.inspectSource(source);
 			}}
 		>
-			<Flex.Row align="center" justify="between" gap={2} fullWidth>
+			<Flex.Row align="center" justify="between" gap={2} padding={2} fullWidth>
 				<Typography.Span
 					variant="f1"
 					semibold
@@ -120,13 +126,13 @@ const KernelRow = ({
 				<Badge data-k="badge" label="Standby" variant="disabled" size="xxs" />
 			</Flex.Row>
 			<Sparkline data-k="sparkline" title={`${source} sparkline`} />
-			<Flex.Row align="center" gap={2} fullWidth>
+			<Flex.Row align="center" gap={2} padding={2} fullWidth>
 				<Meter
 					data-k="bar"
 					layout="bar"
 					size="xxs"
 					percent={0}
-					variant="info"
+					variant="warning"
 					className="flex-1"
 					title={`${source} confidence`}
 				/>

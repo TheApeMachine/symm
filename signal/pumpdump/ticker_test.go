@@ -23,6 +23,7 @@ func spotTicker(symbol string, bid float64, ask float64, at time.Time) *data.Mea
 func TestTickerStep(t *testing.T) {
 	Convey("Given a valid executable touch", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the first data point yields the touch and its own baseline", func() {
@@ -68,6 +69,7 @@ func TestTickerStep(t *testing.T) {
 
 	Convey("Given a crossed touch snapshot", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
 			measurement := entity.Step(spotTicker("BTC/USD", 101, 99, time.Unix(1_700_000_000, 0)))
@@ -81,6 +83,7 @@ func TestTickerStep(t *testing.T) {
 func TestTickerRegister(t *testing.T) {
 	Convey("Given a Ticker entity", t, func() {
 		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
 		schema := entity.Register()
 
 		So(schema, ShouldNotBeNil)
@@ -119,4 +122,36 @@ func TestTickerStepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestTickerStepUnrelatedPeer(t *testing.T) {
+	Convey("An unrelated peer does not publish registration values as a fresh observation", t, func() {
+		entity := NewTicker(t.Context())
+		entity.Transition(runtime.READY)
+		measurement := entity.Register()
+		peer := data.NewMeasurement[float64]("unrelated", nil)
+		peer.Label = "BTC/USD"
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		So(entity.Step(measurement), ShouldBeNil)
+		So(measurement.Label, ShouldBeEmpty)
+	})
+}
+
+func BenchmarkTickerStep(b *testing.B) {
+	entity := NewTicker(b.Context())
+	entity.Transition(runtime.READY)
+	peer := spotTicker("BTC/USD", 99, 101, time.Unix(1, 0))
+	measurement := entity.Register()
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		peer.At = peer.At.Add(time.Second)
+		result := entity.Step(measurement)
+
+		if result == nil || result.Err != nil {
+			b.Fatal("valid peer was not processed")
+		}
+	}
 }

@@ -22,6 +22,7 @@ func spotTrade(symbol string, price float64, qty float64, at time.Time) *data.Me
 func TestTradeStep(t *testing.T) {
 	Convey("Given a multi-leg volume-clock sequence", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the opening trade seeds an open bar", func() {
@@ -76,6 +77,7 @@ func TestTradeStep(t *testing.T) {
 
 	Convey("Given non-positive price or quantity", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 
 		Convey("measurement carries the error", func() {
 			measurement := entity.Step(spotTrade("BTC/USD", 0, 1, time.Unix(1_700_000_000, 0)))
@@ -89,6 +91,7 @@ func TestTradeStep(t *testing.T) {
 func TestTradeRegister(t *testing.T) {
 	Convey("Given a Trade entity", t, func() {
 		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
 		schema := entity.Register()
 
 		So(schema, ShouldNotBeNil)
@@ -135,4 +138,36 @@ func TestTradeStepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestTradeStepUnrelatedPeer(t *testing.T) {
+	Convey("An unrelated peer does not publish registration values as a fresh observation", t, func() {
+		entity := NewTrade(t.Context())
+		entity.Transition(runtime.READY)
+		measurement := entity.Register()
+		peer := data.NewMeasurement[float64]("unrelated", nil)
+		peer.Label = "BTC/USD"
+		measurement.Peers = []*data.Measurement[float64]{peer}
+		So(entity.Step(measurement), ShouldBeNil)
+		So(measurement.Label, ShouldBeEmpty)
+	})
+}
+
+func BenchmarkTradeStep(b *testing.B) {
+	entity := NewTrade(b.Context())
+	entity.Transition(runtime.READY)
+	peer := spotTrade("BTC/USD", 100, 2, time.Unix(1, 0))
+	measurement := entity.Register()
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		peer.At = peer.At.Add(time.Second)
+		result := entity.Step(measurement)
+
+		if result == nil || result.Err != nil {
+			b.Fatal("valid peer was not processed")
+		}
+	}
 }

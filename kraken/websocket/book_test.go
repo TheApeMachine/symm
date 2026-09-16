@@ -439,6 +439,20 @@ func TestBookApply(t *testing.T) {
 			})
 		})
 
+		Convey("Every entry in a venue frame is applied in order", func() {
+			payload := &kraken.Level3{Type: "update", Data: []kraken.Level3Data{
+				{Symbol: "BTC/USD", Bids: []kraken.Level3Order{order("add", "first", 101, 3)}},
+				{Symbol: "BTC/USD", Bids: []kraken.Level3Order{order("add", "second", 102, 4)}},
+			}}
+			accepted, resynced, err := managed.apply(payload)
+			So(err, ShouldBeNil)
+			So(accepted, ShouldHaveLength, 2)
+			So(resynced, ShouldBeEmpty)
+			managed.Book("BTC/USD", func(current *spotbook.Book) {
+				So(current.BestBid().Price.Float64(), ShouldEqual, 102)
+			})
+		})
+
 		Convey("An unknown deleted level fails explicitly and requests exactly one fresh snapshot", func() {
 			bad := frame(order("delete", "missing", 98, 0))
 			accepted, resynced, err := managed.apply(bad)

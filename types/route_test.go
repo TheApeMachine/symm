@@ -27,17 +27,25 @@ func TestAllowsRoute(t *testing.T) {
 		eth := data.NewMeasurement[float64]("hawkes", nil)
 		eth.Label = "ETH/USD"
 
-		Convey("dashboard publishes the focused signal and resonance", func() {
+		Convey("dashboard publishes the focused signal while resonance uses WebRTC", func() {
 			SetRoute("dashboard")
 			SetFocus("BTC/USD")
 
 			So(AllowsRoute(liquidity), ShouldBeTrue)
-			So(AllowsRoute(resonance), ShouldBeTrue)
+			So(AllowsRoute(resonance), ShouldBeFalse)
+			So(RouteDropReason(resonance), ShouldEqual, "webrtc")
 			So(AllowsRoute(eth), ShouldBeFalse)
 			So(RouteDropReason(eth), ShouldEqual, "focus")
 			So(AllowsRoute(manifold), ShouldBeFalse)
 			So(AllowsRoute(unlabeled), ShouldBeFalse)
 			So(RouteDropReason(unlabeled), ShouldEqual, "empty-label")
+		})
+
+		Convey("no page sends a scalar resonance packet over the full WebRTC result", func() {
+			for _, route := range []string{"dashboard", "xray", "signals", "cortex"} {
+				SetRoute(route)
+				So(AllowsRoute(resonance), ShouldBeFalse)
+			}
 		})
 
 		Convey("colon-suffixed kernel sources still count as signals", func() {
@@ -62,5 +70,23 @@ func TestAllowsRoute(t *testing.T) {
 			So(AllowsRoute(liquidity), ShouldBeFalse)
 			So(AllowsRoute(resonance), ShouldBeFalse)
 		})
+	})
+}
+
+func TestAllowsWebRTC(t *testing.T) {
+	Convey("Routes select structured result sources and symbol scope", t, func() {
+		originalRoute, originalFocus := Route(), Focus()
+		defer SetRoute(originalRoute)
+		defer SetFocus(originalFocus)
+		SetFocus("BTC/USD")
+
+		for _, route := range []string{"dashboard", "xray", "fluid", "learning", "signals", "cortex", "journal", "diagnostics"} {
+			SetRoute(route)
+			So(AllowsWebRTC("manifold", ""), ShouldEqual, route == "fluid")
+			So(AllowsWebRTC("resonance", "BTC/USD"), ShouldEqual, route == "dashboard" || route == "xray")
+			So(AllowsWebRTC("resonance:solver", "ETH/USD"), ShouldEqual, route == "xray")
+			So(AllowsWebRTC("resonance", ""), ShouldBeFalse)
+			So(AllowsWebRTC("public", "BTC/USD"), ShouldBeFalse)
+		}
 	})
 }

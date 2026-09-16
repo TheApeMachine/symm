@@ -93,8 +93,15 @@ depth():number {
   return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
 }
 
+volume():string|null
+volume(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+volume(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
 static startLearningDevelopment(builder:flatbuffers.Builder) {
-  builder.startObject(9);
+  builder.startObject(10);
 }
 
 static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
@@ -169,12 +176,16 @@ static addDepth(builder:flatbuffers.Builder, depth:number) {
   builder.addFieldInt32(8, depth, 0);
 }
 
+static addVolume(builder:flatbuffers.Builder, volumeOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(9, volumeOffset, 0);
+}
+
 static endLearningDevelopment(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningDevelopment(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, atNs:bigint, statusOffset:flatbuffers.Offset, decisions:bigint, contextOffset:flatbuffers.Offset, regionsOffset:flatbuffers.Offset, quantitiesOffset:flatbuffers.Offset, fromNs:bigint, depth:number):flatbuffers.Offset {
+static createLearningDevelopment(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, atNs:bigint, statusOffset:flatbuffers.Offset, decisions:bigint, contextOffset:flatbuffers.Offset, regionsOffset:flatbuffers.Offset, quantitiesOffset:flatbuffers.Offset, fromNs:bigint, depth:number, volumeOffset:flatbuffers.Offset):flatbuffers.Offset {
   LearningDevelopment.startLearningDevelopment(builder);
   LearningDevelopment.addSymbol(builder, symbolOffset);
   LearningDevelopment.addAtNs(builder, atNs);
@@ -185,6 +196,7 @@ static createLearningDevelopment(builder:flatbuffers.Builder, symbolOffset:flatb
   LearningDevelopment.addQuantities(builder, quantitiesOffset);
   LearningDevelopment.addFromNs(builder, fromNs);
   LearningDevelopment.addDepth(builder, depth);
+  LearningDevelopment.addVolume(builder, volumeOffset);
   return LearningDevelopment.endLearningDevelopment(builder);
 }
 
@@ -198,7 +210,8 @@ unpack(): LearningDevelopmentT {
     this.bb!.createObjList<LearningRegion, LearningRegionT>(this.regions.bind(this), this.regionsLength()),
     this.bb!.createObjList<LearningQuantity, LearningQuantityT>(this.quantities.bind(this), this.quantitiesLength()),
     this.fromNs(),
-    this.depth()
+    this.depth(),
+    this.volume()
   );
 }
 
@@ -213,6 +226,7 @@ unpackTo(_o: LearningDevelopmentT): void {
   _o.quantities = this.bb!.createObjList<LearningQuantity, LearningQuantityT>(this.quantities.bind(this), this.quantitiesLength());
   _o.fromNs = this.fromNs();
   _o.depth = this.depth();
+  _o.volume = this.volume();
 }
 }
 
@@ -226,7 +240,8 @@ constructor(
   public regions: (LearningRegionT)[] = [],
   public quantities: (LearningQuantityT)[] = [],
   public fromNs: bigint = BigInt('0'),
-  public depth: number = 0
+  public depth: number = 0,
+  public volume: string|Uint8Array|null = null
 ){}
 
 
@@ -236,6 +251,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const context = LearningDevelopment.createContextVector(builder, builder.createObjectOffsetList(this.context));
   const regions = LearningDevelopment.createRegionsVector(builder, builder.createObjectOffsetList(this.regions));
   const quantities = LearningDevelopment.createQuantitiesVector(builder, builder.createObjectOffsetList(this.quantities));
+  const volume = (this.volume !== null ? builder.createString(this.volume!) : 0);
 
   return LearningDevelopment.createLearningDevelopment(builder,
     symbol,
@@ -246,7 +262,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     regions,
     quantities,
     this.fromNs,
-    this.depth
+    this.depth,
+    volume
   );
 }
 }

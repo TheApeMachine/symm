@@ -280,6 +280,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	}
 
 	reading := solver.Reading()
+	measurement.Result = reading
 
 	if reading == nil {
 		return measurement

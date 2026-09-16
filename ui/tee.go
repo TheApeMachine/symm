@@ -2,8 +2,11 @@ package ui
 
 import (
 	"context"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -19,25 +22,29 @@ It satisfies runtime.Tee[*data.Measurement[float64], []byte].
 */
 type UITee struct {
 	*runtime.System
-	queue    *lf.Queue[*data.Measurement[float64]]
-	bound    uint64
-	snapshot func() *types.ManifoldState
+	queue              *lf.Queue[*data.Measurement[float64]]
+	bound              uint64
+	snapshot           func() *types.ManifoldState
+	projectionInterval time.Duration
+	lastProjection     atomic.Int64
 }
 
 /*
 NewUITee creates a new wait-free UITee off-ramp.
 */
-func NewUITee(label string, capacity int) *UITee {
+func NewUITee(ctx context.Context, label string, capacity int) *UITee {
 	if capacity < 1 {
 		capacity = 1
 	}
 
+	viper.SetDefault("ui.websocket.learning_interval", "250ms")
 	tee := &UITee{
-		queue: lf.NewQueue[*data.Measurement[float64]](),
-		bound: uint64(capacity),
+		queue:              lf.NewQueue[*data.Measurement[float64]](),
+		bound:              uint64(capacity),
+		projectionInterval: viper.GetDuration("ui.websocket.learning_interval"),
 	}
 
-	tee.System = runtime.NewSystem(context.Background(), label, tee)
+	tee.System = runtime.NewSystem(ctx, label, tee)
 	return tee
 }
 
@@ -64,7 +71,22 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	tee.queue.Enqueue(measurement.Clone())
+	if _, projection := measurement.Result.(interface{ Snapshot() any }); projection {
+		now := time.Now().UnixNano()
+		previous := tee.lastProjection.Load()
+
+		if now-previous < int64(tee.projectionInterval) || !tee.lastProjection.CompareAndSwap(previous, now) {
+			return
+		}
+	}
+
+	publication := measurement.Clone()
+
+	if projection, ok := measurement.Result.(interface{ Snapshot() any }); ok {
+		publication.Result = projection.Snapshot()
+	}
+
+	tee.queue.Enqueue(publication)
 }
 
 /*
@@ -87,7 +109,7 @@ func (tee *UITee) Next() unsafe.Pointer {
 			break
 		}
 
-		if measurement != nil {
+		if types.AllowsRoute(measurement) {
 			batch = append(batch, measurement)
 		}
 	}

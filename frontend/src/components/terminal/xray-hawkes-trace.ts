@@ -6,61 +6,65 @@ export type HawkesTraceSample = {
 	decay: number;
 };
 
-export type HawkesTracePoint = {
-	at: bigint;
-	intensity: number;
-};
+export type HawkesTracePoint = { at: bigint; intensity: number };
 
 /*
-hawkesTrace expands each observed arrival into its instantaneous excitation
-jump and exponential relaxation. Sampling density follows horizontal pixels,
-so the curve is smooth without a fixed temporal window or arbitrary step count.
+The viewport retains the observed event span (at least one fitted decay time).
+Market time advances its right edge even when this symbol has no new arrivals.
+Each segment uses the fit published with that event, never the newest fit
+retroactively. Equal-time arrivals remain separate jumps.
 */
 export const hawkesTrace = (
 	samples: HawkesTraceSample[],
 	horizontalPixels: number,
-): HawkesTracePoint[] => {
-	if (samples.length === 0) {
-		return [];
-	}
+	marketAt: bigint = samples.at(-1)?.at ?? 0n,
+) => {
+	const first = samples[0];
+	const last = samples.at(-1);
+	const points: HawkesTracePoint[] = [];
 
-	const first = samples[0] as HawkesTraceSample;
-	const last = samples[samples.length - 1] as HawkesTraceSample;
-	const span = last.at > first.at ? last.at - first.at : 1n;
-	const trace: HawkesTracePoint[] = [
-		{ at: first.at, intensity: first.intensity },
-	];
+	if (!first || !last) return { points, from: marketAt, through: marketAt };
+
+	const through = marketAt > last.at ? marketAt : last.at;
+	const eventSpan = last.at - first.at;
+	const decaySpan = BigInt(Math.ceil(1e9 / last.decay));
+	const span = eventSpan > decaySpan ? eventSpan : decaySpan;
+	const from = through - span;
 
 	for (let index = 0; index < samples.length; index++) {
 		const current = samples[index] as HawkesTraceSample;
-		trace.push({ at: current.at, intensity: current.postArrival });
 		const next = samples[index + 1];
+		const end = next?.at ?? through;
 
-		if (!next || next.at <= current.at) {
-			continue;
+		if (end < from || current.at > through) continue;
+
+		if (current.at >= from) {
+			points.push({ at: current.at, intensity: current.intensity });
+			points.push({ at: current.at, intensity: current.postArrival });
 		}
 
-		const gap = next.at - current.at;
+		const start = current.at > from ? current.at : from;
+		const gap = end - start;
+
+		if (gap <= 0n) continue;
+
 		const steps = Math.max(
 			1,
 			Math.ceil((Number(gap) / Number(span)) * horizontalPixels),
 		);
-		const gapSeconds = Number(gap) / 1e9;
 
-		for (let step = 1; step <= steps; step++) {
-			const fraction = step / steps;
-			const seconds = gapSeconds * fraction;
-			trace.push({
-				at: current.at + BigInt(Math.round(Number(gap) * fraction)),
+		for (let step = 0; step <= steps; step++) {
+			const at = start + BigInt(Math.round((Number(gap) * step) / steps));
+			const seconds = Number(at - current.at) / 1e9;
+			points.push({
+				at,
 				intensity:
 					current.baseline +
 					(current.postArrival - current.baseline) *
 						Math.exp(-current.decay * seconds),
 			});
 		}
-
-		trace.push({ at: next.at, intensity: next.intensity });
 	}
 
-	return trace;
+	return { points, from, through };
 };

@@ -69,8 +69,13 @@ present():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
+id():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startLearningQuantity(builder:flatbuffers.Builder) {
-  builder.startObject(8);
+  builder.startObject(9);
 }
 
 static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
@@ -105,12 +110,16 @@ static addPresent(builder:flatbuffers.Builder, present:boolean) {
   builder.addFieldInt8(7, +present, +false);
 }
 
+static addId(builder:flatbuffers.Builder, id:bigint) {
+  builder.addFieldInt64(8, id, BigInt('0'));
+}
+
 static endLearningQuantity(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningQuantity(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset, labelOffset:flatbuffers.Offset, x:number, y:number, value:number, activity:number, quality:number, present:boolean):flatbuffers.Offset {
+static createLearningQuantity(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset, labelOffset:flatbuffers.Offset, x:number, y:number, value:number, activity:number, quality:number, present:boolean, id:bigint):flatbuffers.Offset {
   LearningQuantity.startLearningQuantity(builder);
   LearningQuantity.addSource(builder, sourceOffset);
   LearningQuantity.addLabel(builder, labelOffset);
@@ -120,6 +129,7 @@ static createLearningQuantity(builder:flatbuffers.Builder, sourceOffset:flatbuff
   LearningQuantity.addActivity(builder, activity);
   LearningQuantity.addQuality(builder, quality);
   LearningQuantity.addPresent(builder, present);
+  LearningQuantity.addId(builder, id);
   return LearningQuantity.endLearningQuantity(builder);
 }
 
@@ -132,7 +142,8 @@ unpack(): LearningQuantityT {
     this.value(),
     this.activity(),
     this.quality(),
-    this.present()
+    this.present(),
+    this.id()
   );
 }
 
@@ -146,6 +157,7 @@ unpackTo(_o: LearningQuantityT): void {
   _o.activity = this.activity();
   _o.quality = this.quality();
   _o.present = this.present();
+  _o.id = this.id();
 }
 }
 
@@ -158,7 +170,8 @@ constructor(
   public value: number = 0.0,
   public activity: number = 0.0,
   public quality: number = 0.0,
-  public present: boolean = false
+  public present: boolean = false,
+  public id: bigint = BigInt('0')
 ){}
 
 
@@ -174,7 +187,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.value,
     this.activity,
     this.quality,
-    this.present
+    this.present,
+    this.id
   );
 }
 }

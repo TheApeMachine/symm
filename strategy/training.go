@@ -3,18 +3,16 @@ package strategy
 import (
 	"context"
 	"github.com/theapemachine/errnie"
-	"iter"
-	"sync"
-	"time"
+
 	"unsafe"
 
-	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/strategy/impulse"
 )
 
 type Action string
@@ -34,56 +32,32 @@ func LegalActions(holding bool) []Action {
 }
 
 /*
-Training owns the cognitive precursor learning model: one shared radix trie
-that compiles completed tape excursions directly into associative basins and
-runs offline REM consolidation and periodic decay pruning.
+Training composes the live owner-addressed impulse map with precursor encoding
+and one shared radix trie. Complete historical tapes train the trie through
+an independent map; the live path only evaluates current regions.
+Training does not submit orders: quoted outcome evidence is not execution proof.
 */
 type Training struct {
 	*runtime.System
-	wg          sync.WaitGroup
-	mu          sync.RWMutex
 	measurement *data.Measurement[float64]
 	precursor   *Precursor
-	excursions  []tables.ExcursionRecord
 	pipeline    *nomagique.Number
 	engine      *cognition.Engine
-	trader      *Trader
-	space       *grid.Space
+	Rehearsal   *Rehearsal
+	space       *impulse.Map
+	sequence    int64
 }
 
-func NewTraining(ctx context.Context, api *websocket.API, space ...*grid.Space) *Training {
-	engine := cognition.NewEngine(cognition.Config{})
-	precursor := NewPrecursor()
-
-	gridSpace := grid.NewSpace()
-	if len(space) > 0 && space[0] != nil {
-		gridSpace = space[0]
-	}
-
+func NewTraining(ctx context.Context, epoch int64, price *broker.Price) *Training {
 	training := &Training{
-		precursor: precursor,
-		space:     gridSpace,
-		pipeline: nomagique.NewNumber(
-			gridSpace,
-			precursor,
-			engine,
-		),
-		engine: engine,
-		trader: NewTrader(ctx, api),
+		precursor: NewPrecursor(), space: impulse.NewMap(),
+		engine: cognition.NewEngine(cognition.Config{MemoryScale: 1}),
 	}
-
+	training.Rehearsal = NewRehearsal(ctx, epoch, price, training.engine)
+	training.pipeline = nomagique.NewNumber(training.space, training.precursor, training.engine)
 	training.Register()
-	training.System = runtime.NewSystem(ctx, "strategy", training)
+	training.System = runtime.NewSystem(ctx, "training")
 	return training
-}
-
-func (training *Training) Reset() {
-	training.mu.Lock()
-	defer training.mu.Unlock()
-	training.precursor.Reset()
-	if training.space != nil {
-		training.space.Reset()
-	}
 }
 
 /*
@@ -91,28 +65,31 @@ Register initializes and returns the canonical training telemetry measurement
 populated with all metrics required by the frontend dashboard.
 */
 func (training *Training) Register() *data.Measurement[float64] {
-	training.mu.Lock()
-	defer training.mu.Unlock()
-
 	if training.measurement != nil {
 		return training.measurement
 	}
 
 	training.measurement = data.NewMeasurement("training", map[string]data.Metric[float64]{
-		"steps":      data.NewMetric[float64]("steps", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-		"decisions":  data.NewMetric[float64]("decisions", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-		"resolved":   data.NewMetric[float64]("resolved", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-		"confidence": data.NewMetric[float64]("confidence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"contrast":   data.NewMetric[float64]("contrast", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"surprisal":  data.NewMetric[float64]("surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1),
-		"ambiguity":  data.NewMetric[float64]("ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"action":     data.NewMetric[float64]("action", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"win_rate":   data.NewMetric[float64]("win_rate", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
-		"edge":       data.NewMetric[float64]("edge", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"progress":   data.NewMetric[float64]("progress", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
-		"accuracy":   data.NewMetric[float64]("accuracy", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
-		"support":    data.NewMetric[float64]("support", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-		"quality":    data.NewMetric[float64]("quality", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"evaluated":       {Label: "evaluated"},
+		"unsupported":     {Label: "unsupported"},
+		"previous_input":  {Label: "previous_input"},
+		"invalid_inputs":  {Label: "invalid_inputs"},
+		"impulse_version": {Label: "impulse_version", Raw: grid.FormatVersion},
+		"input_count":     data.NewMetric[float64]("input_count", data.UnitCount, data.TimescaleInstantaneous, 0, 0),
+		"steps":           data.NewMetric[float64]("steps", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"decisions":       data.NewMetric[float64]("decisions", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"resolved":        data.NewMetric[float64]("resolved", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"confidence":      data.NewMetric[float64]("confidence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"contrast":        data.NewMetric[float64]("contrast", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"surprisal":       data.NewMetric[float64]("surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1),
+		"ambiguity":       data.NewMetric[float64]("ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"action":          data.NewMetric[float64]("action", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
+		"win_rate":        data.NewMetric[float64]("win_rate", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
+		"edge":            data.NewMetric[float64]("edge", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
+		"progress":        data.NewMetric[float64]("progress", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
+		"accuracy":        data.NewMetric[float64]("accuracy", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
+		"support":         data.NewMetric[float64]("support", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
+		"quality":         data.NewMetric[float64]("quality", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
 
 	training.measurement.Label = "learner"
@@ -121,164 +98,76 @@ func (training *Training) Register() *data.Measurement[float64] {
 	return training.measurement
 }
 
-/*
-Step implements the runtime.Node interface. It remains inert on market entry
-until the model is confident enough, while updating and returning the held
-telemetry measurement so telemetryTee streams it to the frontend.
-*/
+/* Step evaluates the current owner-held metric publications in sequence order. */
 func (training *Training) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 	if training.Status() != runtime.READY {
 		errnie.Warn(training.Name() + ": Step called before READY; dropping event")
 		return measurement
 	}
 
-	training.mu.Lock()
-	current := training.measurement
-
-	if current == nil {
-		training.mu.Unlock()
-		current = training.Register()
-		training.mu.Lock()
-	}
-
-	if measurement != nil {
-		if measurement.Source == "training" {
-			training.measurement = measurement
-			current = measurement
-		}
-
-		if measurement.Source != "training" {
-			current.Label = measurement.Label
-			current.At = measurement.At
-			current.SeqIdx = measurement.SeqIdx
-		}
-
-		for _, peer := range measurement.Peers {
-			if peer == nil || peer.Label == "" || peer.Label == "learner" {
-				continue
-			}
-
-			current.Label = peer.Label
-			current.At = peer.At
-			current.SeqIdx = peer.SeqIdx
-			break
-		}
-	}
-
-	if current.Label == "" {
-		current.Label = "learner"
-	}
-	training.mu.Unlock()
-
 	if measurement == nil {
-		return current
+		return nil
 	}
 
-	wireIn := func(yield func(unsafe.Pointer) bool) {
-		yield(unsafe.Pointer(measurement))
-	}
-	eval := data.Read[cognition.Evaluation](training.pipeline.Next(wireIn))
-	action := Action(eval.WinnerClass)
+	current := measurement
 
-	// Step remains inert on market action until model has support, positive contrast, and low ambiguity.
-	confident := eval.Support > 0 && !eval.IsBreak && eval.Contrast > 0 && eval.Ambiguity < 1.0
-
-	if confident && (action == ActionEnter || action == ActionExit) {
-		training.trader.OnAction(current.Label, action)
+	if measurement.Source != "training" {
+		current = training.measurement
 	}
 
-	training.mu.Lock()
-	stepsMetric := current.Metrics["steps"]
-	stepsMetric = stepsMetric.Write(stepsMetric.Raw + 1)
-	current.Metrics["steps"] = stepsMetric
-	current.Metrics["support"] = current.Metrics["support"].Write(float64(eval.Support))
-	current.Metrics["decisions"] = current.Metrics["decisions"].Write(stepsMetric.Raw)
-
-	current.Metrics["confidence"] = current.Metrics["confidence"].Write(eval.Confidence)
-	current.Metrics["contrast"] = current.Metrics["contrast"].Write(eval.Contrast)
-	current.Metrics["surprisal"] = current.Metrics["surprisal"].Write(eval.Surprisal)
-	current.Metrics["ambiguity"] = current.Metrics["ambiguity"].Write(eval.Ambiguity)
-
-	actionVal := 0.0
-	if action == ActionEnter {
-		actionVal = 1.0
+	if reading := training.Rehearsal.published.Load(); reading != nil {
+		current.Metrics["decisions"] = current.Metrics["decisions"].Write(float64(reading.Learned))
+		current.Metrics["resolved"] = current.Metrics["resolved"].Write(float64(reading.Resolved))
+		current.Metrics["unsupported"] = current.Metrics["unsupported"].Write(float64(reading.Unsupported))
+		current.Metrics["evaluated"] = current.Metrics["evaluated"].Write(float64(reading.Predicted))
+		if reading.Entered > 0 {
+			current.Metrics["edge"] = current.Metrics["edge"].Write(reading.Return / float64(reading.Entered))
+			current.Metrics["win_rate"] = current.Metrics["win_rate"].Write(float64(reading.Profitable) / float64(reading.Entered))
+		}
+		if reading.Predicted > 0 {
+			current.Metrics["accuracy"] = current.Metrics["accuracy"].Write(float64(reading.Correct) / float64(reading.Predicted))
+		}
 	}
-	if action == ActionExit {
-		actionVal = 2.0
+
+	current.Metrics["previous_input"] = current.Metrics["previous_input"].Write(float64(training.sequence))
+	current.Metrics["input_count"] = current.Metrics["input_count"].Write(float64(len(measurement.Peers)))
+	input := func(yield func(unsafe.Pointer) bool) { yield(unsafe.Pointer(measurement)) }
+
+	for output := range training.pipeline.Next(input) {
+		evaluation := *(*cognition.Evaluation)(output)
+		current.Label = training.space.Current.Symbol
+		current.Result = training.space.Current
+		current.SeqIdx = measurement.SeqIdx
+		current.At = training.space.Current.At
+		current.Metrics["steps"] = current.Metrics["steps"].Write(current.Metrics["steps"].Raw + 1)
+		current.Metrics["support"] = current.Metrics["support"].Write(float64(evaluation.Support))
+		current.Metrics["confidence"] = current.Metrics["confidence"].Write(evaluation.Confidence)
+		current.Metrics["contrast"] = current.Metrics["contrast"].Write(evaluation.Contrast)
+		current.Metrics["surprisal"] = current.Metrics["surprisal"].Write(evaluation.Surprisal)
+		current.Metrics["ambiguity"] = current.Metrics["ambiguity"].Write(evaluation.Ambiguity)
+		action := Action(evaluation.WinnerClass)
+		actionValue := 0.0
+
+		if action == ActionEnter {
+			actionValue = 1
+		}
+
+		if action == ActionExit {
+			actionValue = 2
+		}
+
+		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
+
 	}
-	current.Metrics["action"] = current.Metrics["action"].Write(actionVal)
 
-	training.mu.Unlock()
+	if err := training.pipeline.Error(); err != nil {
+		current.Err = err
+		training.Error(err)
+		training.Transition(runtime.ERROR)
+	}
 
+	current.Metrics["invalid_inputs"] = current.Metrics["invalid_inputs"].Write(float64(training.space.Invalid))
+	training.sequence = measurement.SeqIdx
+	training.measurement = current
 	return current
-}
-
-/*
-Learn takes excursions and measurement fragments to train the engine,
-updating the held telemetry measurement throughout the learning process.
-*/
-func (training *Training) Learn(
-	excursions []tables.ExcursionRecord,
-	fragments iter.Seq[iter.Seq[unsafe.Pointer]],
-) {
-	training.excursions = excursions
-
-	training.wg.Go(func() {
-		index := 0
-		totalSteps := 0
-		totalWins := 0
-
-		for fragment := range fragments {
-			var excursion *tables.ExcursionRecord
-			if index < len(training.excursions) {
-				excursion = &training.excursions[index]
-				training.precursor.SetExcursion(excursion)
-				if training.space != nil {
-					training.space.Reset()
-				}
-			}
-
-			fragmentSteps := 0
-			for range training.pipeline.Next(fragment) {
-				totalSteps++
-				fragmentSteps++
-			}
-
-			if fragmentSteps > 0 && excursion != nil && excursion.Direction == "upward" && excursion.ClearsFriction {
-				totalWins++
-			}
-
-			training.mu.Lock()
-			if training.measurement != nil {
-				held := training.measurement
-				held.At = time.Now()
-				if excursion != nil {
-					held.Label = excursion.Symbol
-				}
-				held.Metrics["steps"] = held.Metrics["steps"].Write(float64(totalSteps))
-				held.Metrics["decisions"] = held.Metrics["decisions"].Write(float64(totalSteps))
-				held.Metrics["resolved"] = held.Metrics["resolved"].Write(float64(index + 1))
-
-				if len(training.excursions) > 0 {
-					held.Metrics["progress"] = held.Metrics["progress"].Write(float64(index+1) / float64(len(training.excursions)))
-				}
-
-				if totalSteps > 0 && index+1 > 0 {
-					winRate := float64(totalWins) / float64(index+1)
-					held.Metrics["win_rate"] = held.Metrics["win_rate"].Write(winRate)
-					held.Metrics["edge"] = held.Metrics["edge"].Write((winRate - 0.5) * 100)
-					held.Metrics["accuracy"] = held.Metrics["accuracy"].Write(winRate * 100)
-				}
-			}
-			training.mu.Unlock()
-
-			index++
-		}
-
-		training.precursor.SetExcursion(nil)
-		if training.space != nil {
-			training.space.Reset()
-		}
-		training.excursions = nil
-	})
 }

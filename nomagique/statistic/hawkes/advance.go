@@ -161,6 +161,8 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			}
 
 			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(p.support(), 'f', -1, 64)
+			delete(m.Metadata, data.MetadataDivergence)
+			delete(m.Metadata, data.MetadataNoiseVariance)
 
 			if p.hasSNR {
 				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(p.divergence(), 'f', -1, 64)

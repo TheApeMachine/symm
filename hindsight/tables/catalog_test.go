@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/iceberg-go/table"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/system"
@@ -16,6 +17,26 @@ import (
 )
 
 func TestCatalog_Ensure(t *testing.T) {
+	Convey("Configured commit retries also apply to tables created before that setting", t, func() {
+		savedConfig := system.Cfg
+		system.Cfg = &system.Config{}
+		Reset(func() { system.Cfg = savedConfig })
+		catalog := tablestest.New(t)
+		system.Cfg.Storage = &system.Storage{Iceberg: &system.Iceberg{CommitRetries: 4}}
+		So(catalog.Ensure(t.Context()), ShouldBeNil)
+
+		for _, name := range []string{tables.SpotTicker, tables.SpotTrade, tables.SpotLevel3, tables.Measurements, tables.Runs, tables.Excursions} {
+			loaded, err := catalog.Load(t.Context(), name)
+			So(err, ShouldBeNil)
+			So(loaded.Properties()[table.CommitNumRetriesKey], ShouldEqual, "4")
+			location := loaded.MetadataLocation()
+			So(catalog.Ensure(t.Context()), ShouldBeNil)
+			loaded, err = catalog.Load(t.Context(), name)
+			So(err, ShouldBeNil)
+			So(loaded.MetadataLocation(), ShouldEqual, location)
+		}
+	})
+
 	Convey("Given a mock SeaweedFS endpoint", t, func() {
 		var tableBucketCreated atomic.Int32
 		var s3BucketCreated atomic.Int32
@@ -161,3 +182,17 @@ func TestCatalog_ExcursionsRoundtrip(t *testing.T) {
 	})
 }
 
+func BenchmarkCatalog_Ensure(b *testing.B) {
+	savedConfig := system.Cfg
+	system.Cfg = &system.Config{Storage: &system.Storage{Iceberg: &system.Iceberg{CommitRetries: 4}}}
+	b.Cleanup(func() { system.Cfg = savedConfig })
+	catalog := tablestest.New(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for range b.N {
+		if err := catalog.Ensure(b.Context()); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

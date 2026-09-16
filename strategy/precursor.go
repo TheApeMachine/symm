@@ -1,148 +1,67 @@
 package strategy
 
 import (
-	"bytes"
-	"errors"
+	"encoding/binary"
 	"iter"
-	"sync"
 	"unsafe"
 
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 )
 
-/*
-Precursor is the streaming primitive between grid.Space and cognition.Engine.
-It accumulates active region tokens into temporal sequences and translates
-excursion ticks into supervised cognition.Association commands at AnchorTick and ExitTick.
-When running without an excursion (live inference), it translates active sequences into cognition.Question commands.
-*/
+/* Precursor encodes a market's ordered regions and position state into a borrowed trie key. */
 type Precursor struct {
-	mu        sync.RWMutex
-	err       error
-	excursion *tables.ExcursionRecord
-	activeSeq []byte
-	maxSeqLen int
+	*core.PrimitiveError
+	key      []byte
+	question cognition.Question
+	command  cognition.Command
 }
 
-func NewPrecursor(maxSeqLen ...int) *Precursor {
-	limit := 128
-	if len(maxSeqLen) > 0 && maxSeqLen[0] > 0 {
-		limit = maxSeqLen[0]
-	}
-
-	return &Precursor{
-		maxSeqLen: limit,
-	}
+func NewPrecursor() *Precursor {
+	return &Precursor{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (p *Precursor) SetExcursion(excursion *tables.ExcursionRecord) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.excursion = excursion
-	p.activeSeq = p.activeSeq[:0]
-}
-
-func (p *Precursor) Reset() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.activeSeq = p.activeSeq[:0]
-	p.excursion = nil
-}
-
-func (p *Precursor) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if in == nil || p.err != nil {
+func (precursor *Precursor) Encode(impulse *grid.Impulse, holding bool) []byte {
+	if !impulse.Ready || len(impulse.Regions) == 0 {
 		return nil
 	}
 
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if arriving == nil {
-				continue
-			}
+	size := 4 + len(impulse.Label) + 1 + 4 + 8*len(impulse.Regions)
 
-			token := cognition.ExtractToken(arriving)
-			if len(token) == 0 {
-				continue
-			}
-
-			p.mu.Lock()
-			p.activeSeq = append(p.activeSeq, token...)
-			if p.maxSeqLen > 0 && len(p.activeSeq) > p.maxSeqLen {
-				p.activeSeq = p.activeSeq[len(p.activeSeq)-p.maxSeqLen:]
-			}
-			context := bytes.Clone(p.activeSeq)
-			excursion := p.excursion
-			p.mu.Unlock()
-
-			imp := (*grid.Impulse)(arriving)
-			tick := imp.SeqIdx
-
-			if excursion == nil {
-				cmd := &cognition.Command{
-					Evaluate: &cognition.Question{
-						Context: context,
-					},
-				}
-
-				if !yield(unsafe.Pointer(cmd)) {
-					return
-				}
-
-				continue
-			}
-
-			if tick == excursion.AnchorTick {
-				class := ActionWait
-
-				if excursion.Direction == "upward" && excursion.ClearsFriction {
-					class = ActionEnter
-				}
-
-				cmd := &cognition.Command{
-					Observe: &cognition.Association{
-						Context: context,
-						Class:   []byte(class),
-					},
-				}
-
-				if !yield(unsafe.Pointer(cmd)) {
-					return
-				}
-
-				continue
-			}
-
-			if tick == excursion.ExitTick {
-				if excursion.Direction == "upward" && excursion.ClearsFriction {
-					cmd := &cognition.Command{
-						Observe: &cognition.Association{
-							Context: context,
-							Class:   []byte(ActionExit),
-						},
-					}
-
-					if !yield(unsafe.Pointer(cmd)) {
-						return
-					}
-				}
-
-				p.mu.Lock()
-				p.activeSeq = p.activeSeq[:0]
-				p.mu.Unlock()
-				continue
-			}
-		}
+	if cap(precursor.key) < size {
+		precursor.key = make([]byte, size)
 	}
+
+	precursor.key = precursor.key[:size]
+	binary.BigEndian.PutUint32(precursor.key, uint32(len(impulse.Label)))
+	copy(precursor.key[4:], impulse.Label)
+	offset := 4 + len(impulse.Label)
+	precursor.key[offset] = 0
+
+	if holding {
+		precursor.key[offset] = 1
+	}
+
+	offset++
+	binary.BigEndian.PutUint32(precursor.key[offset:], uint32(len(impulse.Regions)))
+
+	for index, region := range impulse.Regions {
+		binary.BigEndian.PutUint64(precursor.key[offset+4+index*8:], region.Condition)
+	}
+
+	return precursor.key
 }
 
-func (p *Precursor) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			p.err = errors.Join(p.err, err)
+func (precursor *Precursor) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range input {
+			precursor.question = cognition.Question{Context: precursor.Encode((*grid.Impulse)(arriving), false), Exact: true}
+			precursor.command = cognition.Command{Evaluate: &precursor.question}
+
+			if !yield(unsafe.Pointer(&precursor.command)) {
+				return
+			}
 		}
 	}
-
-	return p.err
 }

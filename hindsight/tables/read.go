@@ -3,7 +3,6 @@ package tables
 import (
 	"context"
 	"iter"
-	"unsafe"
 
 	"github.com/apache/iceberg-go"
 	icetable "github.com/apache/iceberg-go/table"
@@ -15,23 +14,23 @@ import (
 Scan reads measurements from a canonical table matching the epoch and filter predicates,
 projecting only the requested columns and stopping early if limit is reached.
 */
-func (catalog *Catalog) Scan(
+func (catalog *Catalog) scan(
 	ctx context.Context,
 	tableName string,
 	epoch int64,
 	filter iceberg.BooleanExpression,
 	limit int,
 	fields ...string,
-) iter.Seq[*data.Measurement[float64]] {
-	return func(yield func(*data.Measurement[float64]) bool) {
+) iter.Seq2[*data.Measurement[float64], error] {
+	return func(yield func(*data.Measurement[float64], error) bool) {
 		tbl, err := catalog.Load(ctx, tableName)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.NotFound,
 				"[catalog] unable to find: "+tableName,
 				err,
-			))
+			)))
 
 			return
 		}
@@ -51,11 +50,11 @@ func (catalog *Catalog) Scan(
 		tasks, err := tbl.Scan(options...).PlanFiles(ctx)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.BadGateway,
 				"[iceberg] failed to plan files for "+tableName,
 				err,
-			))
+			)))
 
 			return
 		}
@@ -63,11 +62,11 @@ func (catalog *Catalog) Scan(
 		_, batches, err := tbl.Scan(options...).ReadTasks(ctx, tasks)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.BadGateway,
 				"[iceberg] failed to read tasks for "+tableName,
 				err,
-			))
+			)))
 
 			return
 		}
@@ -76,21 +75,26 @@ func (catalog *Catalog) Scan(
 
 		for batch, batchErr := range batches {
 			if batchErr != nil {
-				errnie.Error(errnie.Err(
+				yield(nil, errnie.Error(errnie.Err(
 					errnie.BadGateway,
 					"[iceberg] batch decode failure for "+tableName,
 					batchErr,
-				))
+				)))
 
 				return
 			}
 
 			if batch != nil {
-				batchMeasurements := readMeasurements(batch)
+				batchMeasurements, err := readMeasurements(batch)
 				batch.Release()
 
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+
 				for _, measurement := range batchMeasurements {
-					if !yield(measurement) {
+					if !yield(measurement, nil) {
 						return
 					}
 
@@ -105,63 +109,19 @@ func (catalog *Catalog) Scan(
 	}
 }
 
-/*
-Replay loads all excursions for the given epoch and yields them alongside their
-accompanying measurements presented as an iter.Seq[iter.Seq[unsafe.Pointer]].
-Each inner sequence yields unsafe.Pointer(*data.Measurement[float64]).
-*/
-func (catalog *Catalog) Replay(
-	ctx context.Context,
-	epoch int64,
-) ([]ExcursionRecord, iter.Seq[iter.Seq[unsafe.Pointer]], error) {
-	excursions, err := catalog.Excursions(ctx, epoch, nil)
-
-	if err != nil {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[catalog] failed to load excursions for replay",
-			err,
-		))
-	}
-
-	fragments := func(yield func(iter.Seq[unsafe.Pointer]) bool) {
-		for _, excursion := range excursions {
-			predicate := iceberg.BooleanExpression(
-				iceberg.EqualTo(iceberg.Reference("symbol"), excursion.Symbol),
-			)
-
-			endTick := excursion.PostEndTick
-
-			if endTick <= 0 {
-				endTick = excursion.ExitTick
+// Scan exposes the existing display scan; replay uses scan directly to propagate failures.
+func (catalog *Catalog) Scan(ctx context.Context, tableName string, epoch int64,
+	filter iceberg.BooleanExpression, limit int, fields ...string,
+) iter.Seq[*data.Measurement[float64]] {
+	return func(yield func(*data.Measurement[float64]) bool) {
+		for measurement, err := range catalog.scan(ctx, tableName, epoch, filter, limit, fields...) {
+			if err != nil {
+				errnie.Error(err)
+				return
 			}
-
-			if endTick > 0 && excursion.PrecursorStartTick >= 0 {
-				predicate = iceberg.NewAnd(
-					predicate,
-					iceberg.NewAnd(
-						iceberg.GreaterThanEqual(iceberg.Reference("tick"), excursion.PrecursorStartTick),
-						iceberg.LessThanEqual(iceberg.Reference("tick"), endTick),
-					),
-				)
-			}
-
-			measurementsSeq := catalog.Scan(ctx, Measurements, epoch, predicate, 0)
-
-			inner := func(innerYield func(unsafe.Pointer) bool) {
-				for measurement := range measurementsSeq {
-					if !innerYield(unsafe.Pointer(measurement)) {
-						return
-					}
-				}
-			}
-
-			if !yield(inner) {
+			if !yield(measurement) {
 				return
 			}
 		}
 	}
-
-	return excursions, fragments, nil
 }
-

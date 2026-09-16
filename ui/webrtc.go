@@ -152,7 +152,7 @@ func (fluidTransport *FluidRTC) PublishResonance(artifact *types.ResonanceArtifa
 		return nil
 	}
 
-	wireRow := artifact.EncodeWire()
+	wireRow := artifact.EncodeWire(types.Allows(artifact.Symbol))
 
 	if wireRow == nil {
 		return nil

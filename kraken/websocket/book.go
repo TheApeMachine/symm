@@ -290,14 +290,17 @@ func (book *Book) apply(
 	book.touches = book.touches[:0]
 	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
-	group, ctx := errgroup.WithContext(book.ctx)
 	var symbolBook *spotbook.Book
 
 	for index, data := range payload.Data {
-		group.Go(func() error {
+		if _, diverged := book.diverging[data.Symbol]; diverged && payload.Type != "snapshot" {
+			continue
+		}
+
+		err := func() error {
 			select {
-			case <-ctx.Done():
-				return errnie.Error(ctx.Err())
+			case <-book.ctx.Done():
+				return errnie.Error(book.ctx.Err())
 			default:
 			}
 
@@ -314,19 +317,12 @@ func (book *Book) apply(
 				symbolBook = book.manager.CreateBook(data.Symbol, depth)
 			}
 
-			_, diverged := book.diverging[data.Symbol]
-
 			if payload.Type == "snapshot" {
 				delete(book.diverging, data.Symbol)
-				diverged = false
 				symbolBook = book.manager.CreateBook(
 					data.Symbol,
 					depth,
 				)
-			}
-
-			if diverged {
-				return nil
 			}
 
 			for sideIndex, level3data := range []*[]kraken.Level3Order{
@@ -399,6 +395,7 @@ func (book *Book) apply(
 						book.manager.CreateBook(data.Symbol, depth)
 						book.diverging[data.Symbol] = struct{}{}
 						book.status.Transition(runtime.ERROR)
+						resynced = append(resynced, data.Symbol)
 
 						return errnie.Error(errnie.Err(
 							errnie.Validation,
@@ -467,11 +464,10 @@ func (book *Book) apply(
 			}
 
 			return nil
-		})
+		}()
 
-		if err := group.Wait(); err != nil {
-			errnie.Error(err)
-			return nil, nil, err
+		if err != nil {
+			return accepted, resynced, err
 		}
 
 		accepted = append(accepted, data)

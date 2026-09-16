@@ -16,6 +16,7 @@ type LearningDevelopmentT struct {
 	Quantities []*LearningQuantityT `json:"quantities"`
 	FromNs int64 `json:"fromNs"`
 	Depth int32 `json:"depth"`
+	Volume string `json:"volume"`
 }
 
 func (t *LearningDevelopmentT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -69,6 +70,10 @@ func (t *LearningDevelopmentT) Pack(builder *flatbuffers.Builder) flatbuffers.UO
 		}
 		quantitiesOffset = builder.EndVector(quantitiesLength)
 	}
+	volumeOffset := flatbuffers.UOffsetT(0)
+	if t.Volume != "" {
+		volumeOffset = builder.CreateString(t.Volume)
+	}
 	LearningDevelopmentStart(builder)
 	LearningDevelopmentAddSymbol(builder, symbolOffset)
 	LearningDevelopmentAddAtNs(builder, t.AtNs)
@@ -79,6 +84,7 @@ func (t *LearningDevelopmentT) Pack(builder *flatbuffers.Builder) flatbuffers.UO
 	LearningDevelopmentAddQuantities(builder, quantitiesOffset)
 	LearningDevelopmentAddFromNs(builder, t.FromNs)
 	LearningDevelopmentAddDepth(builder, t.Depth)
+	LearningDevelopmentAddVolume(builder, volumeOffset)
 	return LearningDevelopmentEnd(builder)
 }
 
@@ -108,6 +114,7 @@ func (rcv *LearningDevelopment) UnPackTo(t *LearningDevelopmentT) {
 	}
 	t.FromNs = rcv.FromNs()
 	t.Depth = rcv.Depth()
+	t.Volume = string(rcv.Volume())
 }
 
 func (rcv *LearningDevelopment) UnPack() *LearningDevelopmentT {
@@ -275,8 +282,16 @@ func (rcv *LearningDevelopment) MutateDepth(n int32) bool {
 	return rcv._tab.MutateInt32Slot(20, n)
 }
 
+func (rcv *LearningDevelopment) Volume() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
 func LearningDevelopmentStart(builder *flatbuffers.Builder) {
-	builder.StartObject(9)
+	builder.StartObject(10)
 }
 func LearningDevelopmentAddSymbol(builder *flatbuffers.Builder, symbol flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(symbol), 0)
@@ -313,6 +328,9 @@ func LearningDevelopmentAddFromNs(builder *flatbuffers.Builder, fromNs int64) {
 }
 func LearningDevelopmentAddDepth(builder *flatbuffers.Builder, depth int32) {
 	builder.PrependInt32Slot(8, depth, 0)
+}
+func LearningDevelopmentAddVolume(builder *flatbuffers.Builder, volume flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(volume), 0)
 }
 func LearningDevelopmentEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
