@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -45,11 +46,10 @@ number of live orders rather than by the message rate.
 */
 type Solver struct {
 	*runtime.System
-	advanceMu     sync.Mutex
-	api           *websocket.API
-	dataset       *Dataset
-	physics       *sensorium.Manifold
-	ObserveModule func(string, time.Duration)
+	advanceMu sync.Mutex
+	api       *websocket.API
+	dataset   *Dataset
+	physics   *sensorium.Manifold
 
 	// forcing retains the latest causally-available Hawkes excitation fraction
 	// per symbol. A Trade event records it; the next Level3 event lifts the
@@ -75,25 +75,10 @@ type Solver struct {
 	// one reader, it owns its state outright, and none of it needs a lock.
 	loaded map[int64]struct{}
 
-	// reading publishes immutable particle and spectral state once per advance.
-	// Level3 envelopes share this pointer; the larger Eulerian grid fields are
-	// materialized only by Snapshot for a connected viewer.
+	// reading publishes an owned particle, spectral and grid frame per advance.
+	// Step and output tees share this pointer without touching mutable physics buffers.
 	reading atomic.Pointer[State]
 	version uint64 // Owned by advanceMu, together with the published reading.
-
-	viewer  Viewer
-	monitor *sensorium.PhysicsMonitor
-}
-
-/*
-Viewer is the manifold's publication boundary: the observer that renders the
-resident field. Wants is asked before a snapshot is materialized so a run with
-no viewer attached — or a viewer whose transport is still draining the previous
-frame — never pays for a full field readout it would only discard.
-*/
-type Viewer interface {
-	WantsManifold() bool
-	PublishManifold(*types.ManifoldState)
 }
 
 /*
@@ -148,29 +133,17 @@ func NewSolver(ctx context.Context, api *websocket.API) *Solver {
 	}
 
 	solver.System = runtime.NewSystem(ctx, "manifold", solver.physics)
-	solver.Transition(runtime.READY)
-
 	return solver
 }
 
 /*
 Start launches the field advance loop. It is deliberately separate from
 construction: nothing should advance — let alone publish — before the runtime
-has wired the solver's viewer, and a test drives Advance directly rather than
+has activated the output tees, and a test drives Advance directly rather than
 racing a goroutine for the same pending batch.
 */
 func (solver *Solver) Start() {
 	go solver.run()
-}
-
-/*
-SetViewer attaches the publication boundary the advance loop renders into. It
-is set once during construction, before any envelope is stepped.
-*/
-func (solver *Solver) SetViewer(viewer Viewer) { solver.viewer = viewer }
-
-func (solver *Solver) SetPhysicsMonitor(monitor *sensorium.PhysicsMonitor) {
-	solver.monitor = monitor
 }
 
 /*
@@ -258,10 +231,6 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
 		return measurement
-	}
-
-	if solver.Status() != runtime.READY || solver.Error() != nil {
-		return nil
 	}
 
 	if measurement == nil {
@@ -658,7 +627,6 @@ func (solver *Solver) Advance() {
 
 	if len(solver.loaded) == 0 && batch == nil {
 		solver.advanceMu.Unlock()
-		solver.publish()
 		return
 	}
 
@@ -676,17 +644,6 @@ func (solver *Solver) Advance() {
 	}
 
 	solver.advanceMu.Unlock()
-
-	solver.publish()
-}
-
-func (solver *Solver) publish() {
-	if solver.viewer != nil && solver.viewer.WantsManifold() {
-		snapshot := solver.Snapshot()
-		if snapshot != nil {
-			solver.viewer.PublishManifold(snapshot)
-		}
-	}
 }
 
 func (solver *Solver) publishReading(state *sensorium.State) *State {
@@ -702,11 +659,45 @@ func (solver *Solver) publishReading(state *sensorium.State) *State {
 		}
 	}
 
+	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
+	cells := gridX * gridY * gridZ
+	momRho := make([]float32, cells*4)
+	fieldEnergy := make([]float32, cells)
+	waveReal := make([]float32, cells)
+	waveImag := make([]float32, cells)
+	densityScale, momentumScale, energyScale, waveScale := solver.physics.PackFields(
+		momRho, fieldEnergy, waveReal, waveImag,
+	)
+
 	solver.version++
 	reading := State{
 		At:      time.Now(),
 		Version: solver.version,
-		State:   state,
+		State: &sensorium.State{
+			N:                 state.N,
+			CoherencePosition: slices.Clone(state.CoherencePosition),
+			Bytes:             slices.Clone(state.Bytes),
+			Seqs:              slices.Clone(state.Seqs),
+			TokenIDs:          slices.Clone(state.TokenIDs),
+			ContentIDs:        slices.Clone(state.ContentIDs),
+			Phase:             slices.Clone(state.Phase),
+			Omega:             slices.Clone(state.Omega),
+			Energy:            slices.Clone(state.Energy),
+			Mass:              slices.Clone(state.Mass),
+			Heat:              slices.Clone(state.Heat),
+			MaterialEnergy:    slices.Clone(state.MaterialEnergy),
+			Amp:               slices.Clone(state.Amp),
+			Pos:               slices.Clone(state.Pos),
+			Vel:               slices.Clone(state.Vel),
+			PilotVel:          slices.Clone(state.PilotVel),
+			PhasePotential:    slices.Clone(state.PhasePotential),
+			Clamped:           slices.Clone(state.Clamped),
+			Dark:              slices.Clone(state.Dark),
+		},
+		GridX: gridX, GridY: gridY, GridZ: gridZ, GridSpacing: gridSpacing,
+		MomRho: momRho, FieldEnergy: fieldEnergy, WaveReal: waveReal, WaveImag: waveImag,
+		DensityScale: densityScale, MomentumScale: momentumScale,
+		EnergyScale: energyScale, WaveScale: waveScale,
 		Reading: solver.physics.Reading(),
 		Modes:   modes,
 	}
@@ -717,7 +708,7 @@ func (solver *Solver) publishReading(state *sensorium.State) *State {
 
 /*
 Reading returns the immutable particle, spectral and scalar readout of the
-latest advance. Eulerian grid fields remain exclusive to Snapshot.
+latest advance, including the complete Eulerian grids.
 */
 func (solver *Solver) Reading() *State {
 	return solver.reading.Load()
@@ -960,83 +951,4 @@ func (solver *Solver) extractCrystallizedProbes(batch *sensorium.State) []float6
 	}
 
 	return predictions
-}
-
-/*
-Snapshot materializes the resident particles and fields for one published
-frame. It reuses the published immutable particles and modes; PackFields gathers
-the Eulerian grids only for this snapshot, so a run with no viewer allocates
-none of those grid arrays.
-*/
-func (solver *Solver) Snapshot() *State {
-	if solver == nil || solver.physics == nil {
-		return nil
-	}
-
-	solver.advanceMu.Lock()
-	defer solver.advanceMu.Unlock()
-
-	state := solver.physics.State()
-	reading := solver.Reading()
-
-	var readingVal sensorium.Reading
-	var modes []WaveMode
-	var at time.Time
-	var version uint64
-
-	if reading != nil {
-		readingVal = reading.Reading
-		modes = reading.Modes
-		at = reading.At
-		version = reading.Version
-	} else {
-		readingVal = solver.physics.Reading()
-		modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
-		modes = make([]WaveMode, len(modeOmega))
-
-		for index := range modeOmega {
-			modes[index] = WaveMode{
-				Omega: modeOmega[index], Real: modeReal[index],
-				Imag: modeImag[index], Linewidth: modeLinewidth[index],
-			}
-		}
-
-		at = time.Now()
-		version = solver.version
-	}
-
-	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
-	cells := gridX * gridY * gridZ
-
-	momRho := make([]float32, cells*4)
-	fieldEnergy := make([]float32, cells)
-	waveReal := make([]float32, cells)
-	waveImag := make([]float32, cells)
-
-	densityScale, momentumScale, energyScale, waveScale := solver.physics.PackFields(
-		momRho,
-		fieldEnergy,
-		waveReal,
-		waveImag,
-	)
-
-	return &State{
-		At:            at,
-		Reading:       readingVal,
-		Version:       version,
-		GridX:         gridX,
-		GridY:         gridY,
-		GridZ:         gridZ,
-		GridSpacing:   gridSpacing,
-		MomRho:        momRho,
-		FieldEnergy:   fieldEnergy,
-		WaveReal:      waveReal,
-		WaveImag:      waveImag,
-		DensityScale:  densityScale,
-		MomentumScale: momentumScale,
-		EnergyScale:   energyScale,
-		WaveScale:     waveScale,
-		Modes:         modes,
-		State:         state,
-	}
 }

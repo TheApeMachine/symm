@@ -48,7 +48,7 @@ func (tee *StoreTee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	if !tee.queue.Put(measurement) {
+	if !tee.queue.Put(measurement.Clone()) {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"store tee: measurement queue is full",
@@ -69,12 +69,6 @@ func (tee *StoreTee) Next() unsafe.Pointer {
 	measurement, ok := tee.queue.Get()
 
 	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[storetee] bad measurement retrieved from tie ring",
-			nil,
-		))
-
 		return nil
 	}
 

@@ -44,7 +44,6 @@ func NewTicker(ctx context.Context) *Ticker {
 	}
 
 	ticker.System = runtime.NewSystem(ctx, "sentiment:ticker", ticker)
-	ticker.Transition(runtime.READY)
 	return ticker
 }
 
@@ -72,7 +71,7 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		})
 
 		if peer == nil {
-			return measurement
+			return nil
 		}
 
 		measurement.Pull(peer)

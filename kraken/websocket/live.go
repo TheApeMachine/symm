@@ -138,6 +138,12 @@ func NewWithClient(
 		quote:      system.Cfg.Market.QuoteCurrency,
 	}
 
+	live.paper.executions = func(execution *kraken.Execution) {
+		for _, report := range execution.Data {
+			live.queue.Enqueue(map[string]any{"channel": "executions", "execution": report})
+		}
+	}
+
 	live.client.Store(client)
 
 	live.pinger = NewPinger("websocket", func() error {
@@ -497,6 +503,36 @@ func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement
 	row, ok := live.queue.Dequeue()
 
 	if !ok {
+		return nil
+	}
+
+	if row["channel"] == "executions" {
+		var report kraken.ExecutionData
+
+		if captured, ok := row["execution"].(kraken.ExecutionData); ok {
+			report = captured
+		}
+
+		if _, captured := row["execution"]; !captured {
+			payload, err := sonic.Marshal(row)
+
+			if err != nil {
+				measurement.Err = errnie.Error(err)
+				return measurement
+			}
+
+			if err := sonic.Unmarshal(payload, &report); err != nil {
+				measurement.Err = errnie.Error(err)
+				return measurement
+			}
+		}
+
+		measurement.Label = live.normalizer.Name(report.Symbol)
+		report.Symbol = measurement.Label
+		measurement.At = report.Timestamp
+		measurement.Metrics = nil
+		measurement.Provenance = map[string]string{"channel": "executions"}
+		measurement.Err = nil
 		return measurement
 	}
 
@@ -583,7 +619,9 @@ Register implements the runtime.Node interface: it declares every numeric field
 the venue's spot rows can produce, none valued.
 */
 func (live *Live) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("websocket", map[string]data.Metric[float64]{})
+	measurement := data.NewMeasurement("websocket", map[string]data.Metric[float64]{})
+	measurement.Metadata["venue"] = "true"
+	return measurement
 }
 
 /*

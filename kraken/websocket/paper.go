@@ -28,10 +28,11 @@ Private frames publish onto explicit typed subscriptions so Desk and tests use
 the same direct wiring as the live transport.
 */
 type Paper struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	simulator *Simulator
-	commandMu sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	simulator  *Simulator
+	commandMu  sync.Mutex
+	executions func(*kraken.Execution)
 }
 
 /*
@@ -238,7 +239,6 @@ func (paper *Paper) Close() error {
 	paper.cancel()
 	return nil
 }
-
 
 /*
 ResetPaperAccount calls `kraken paper reset --yes` via the system shell to restore
@@ -757,17 +757,8 @@ func (paper *Paper) placeOrder(
 	return model, nil
 }
 
-func (paper *Paper) publish(channel string, _ any) {
-	switch channel {
-	case "executions":
-		// A paper fill lands synchronously through AddOrder; its records are
-		// observable through the paper REST mirrors (Balances, OpenOrders,
-		// TradesHistory). The desk's execution fan-out is rewired with the
-		// workspace's measurement ingest and consumes nothing here yet.
-		_ = channel
-	case "balances", "add_order":
-		// Balances and order acks are consumed through the explicit REST
-		// methods (Balance, AddOrder) and their callbacks rather than a
-		// private fan-out.
+func (paper *Paper) publish(channel string, payload any) {
+	if channel == "executions" && paper.executions != nil {
+		paper.executions(payload.(*kraken.Execution))
 	}
 }

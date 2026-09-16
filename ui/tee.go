@@ -64,7 +64,7 @@ func (tee *UITee) Push(measurement *data.Measurement[float64]) {
 		return
 	}
 
-	tee.queue.Enqueue(measurement)
+	tee.queue.Enqueue(measurement.Clone())
 }
 
 /*
@@ -73,7 +73,7 @@ and returns an encoded FlatBuffer frame ([]byte).
 */
 func (tee *UITee) Next() unsafe.Pointer {
 	if tee.Status() != runtime.READY {
-		errnie.Warn("pushing to a non-ready system may have unintended consequences")
+		errnie.Warn("[tee] pulling from a non-ready system may have unintended consequences")
 		return nil
 	}
 

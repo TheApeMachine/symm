@@ -173,7 +173,6 @@ func NewTrade(ctx context.Context) *Trade {
 	}
 
 	trade.System = runtime.NewSystem(ctx, "toxicity:trade", trade)
-	trade.Transition(runtime.READY)
 	return trade
 }
 

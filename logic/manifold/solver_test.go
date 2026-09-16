@@ -10,20 +10,9 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/types"
 )
 
-type testViewer struct {
-	wants    bool
-	manifold *types.ManifoldState
-}
-
-func (v *testViewer) WantsManifold() bool { return v.wants }
-func (v *testViewer) PublishManifold(state *types.ManifoldState) {
-	v.manifold = state
-}
-
-func TestDatasetAndSolverAdvance(t *testing.T) {
+func TestSolverPublishReading(t *testing.T) {
 	Convey("Given a dataset and a spot book with orders", t, func() {
 		ds := NewDataset()
 		bk := spotbook.New()
@@ -70,10 +59,7 @@ func TestDatasetAndSolverAdvance(t *testing.T) {
 				wake:    make(chan struct{}, 1),
 			}
 			solver.Transition(runtime.READY)
-			defer solver.Close()
-
-			viewer := &testViewer{wants: true}
-			solver.SetViewer(viewer)
+			defer func() { So(solver.Close(), ShouldBeNil); So(physics.Close(), ShouldBeNil) }()
 
 			batch := collectStates(states)
 			So(batch, ShouldNotBeNil)
@@ -104,49 +90,19 @@ func TestDatasetAndSolverAdvance(t *testing.T) {
 			So(steppedMeasurement.Metrics["coherence_mag2"].Raw, ShouldEqual, reading.Reading.CoherenceMag2)
 			So(steppedMeasurement.Metrics["particle_count"].Raw, ShouldEqual, float64(reading.State.N))
 
-			solver.publish()
-			So(viewer.manifold, ShouldNotBeNil)
-			So(viewer.manifold.Reading.CoherenceMag2, ShouldBeGreaterThanOrEqualTo, 0)
+			So(reading.GridX, ShouldEqual, 8)
+			So(len(reading.MomRho), ShouldEqual, 8*8*8*4)
+			originalPosition := reading.State.Pos[0]
+			stepped.Pos[0]++
+			So(reading.State.Pos[0], ShouldEqual, originalPosition)
+			next := solver.publishReading(stepped)
+			So(next.Version, ShouldEqual, reading.Version+1)
+			So(next.State.Pos[0], ShouldEqual, stepped.Pos[0])
+			next.MomRho[0]++
+			So(next.MomRho[0], ShouldNotEqual, reading.MomRho[0])
+
 		})
 
-		Convey("And a solver with an empty manifold publishing to a viewer", func() {
-			physics := sensorium.NewManifold(8, 8, 8)
-			solver := &Solver{
-				System:  runtime.NewSystem(t.Context(), "manifold-empty"),
-				physics: physics,
-				dataset: ds,
-				loaded:  make(map[int64]struct{}),
-				dirty:   make(map[string]struct{}),
-				wake:    make(chan struct{}, 1),
-			}
-			solver.Transition(runtime.READY)
-			defer solver.Close()
-
-			idle := solver.Register()
-			So(solver.Step(idle), ShouldEqual, idle)
-
-			viewer := &testViewer{wants: true}
-			solver.SetViewer(viewer)
-
-			snapshot := solver.Snapshot()
-			So(snapshot, ShouldNotBeNil)
-			So(snapshot.GridX, ShouldEqual, 8)
-			So(snapshot.GridY, ShouldEqual, 8)
-			So(snapshot.GridZ, ShouldEqual, 8)
-			So(snapshot.State.N, ShouldEqual, 0)
-			So(len(snapshot.MomRho), ShouldEqual, 8*8*8*4)
-
-			solver.publish()
-			So(viewer.manifold, ShouldNotBeNil)
-			So(viewer.manifold.GridX, ShouldEqual, 8)
-			So(viewer.manifold.State.N, ShouldEqual, 0)
-
-			// Advance with no orders but an attached viewer that wants manifold publishes
-			viewer.manifold = nil
-			solver.Advance()
-			So(viewer.manifold, ShouldNotBeNil)
-			So(viewer.manifold.GridX, ShouldEqual, 8)
-		})
 	})
 }
 
@@ -161,4 +117,46 @@ func TestSolverStepReadiness(t *testing.T) {
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
+}
+
+func TestSolverStepArtifact(t *testing.T) {
+	Convey("Step publishes a complete physics frame through its measurement", t, func() {
+		physics := sensorium.NewManifold(8, 8, 8)
+		defer func() { So(physics.Close(), ShouldBeNil) }()
+		solver := &Solver{
+			System:  runtime.NewSystem(t.Context(), "manifold-artifact"),
+			physics: physics,
+		}
+		solver.Transition(runtime.READY)
+		reading := solver.publishReading(physics.State())
+		measurement := solver.Register()
+
+		result := solver.Step(measurement)
+		So(result, ShouldEqual, measurement)
+		So(reading.GridX, ShouldEqual, 8)
+		So(reading.GridY, ShouldEqual, 8)
+		So(reading.GridZ, ShouldEqual, 8)
+		So(reading.GridSpacing, ShouldBeGreaterThan, 0)
+		So(len(reading.MomRho), ShouldEqual, 8*8*8*4)
+		So(len(reading.FieldEnergy), ShouldEqual, 8*8*8)
+		So(len(reading.WaveReal), ShouldEqual, 8*8*8)
+		So(len(reading.WaveImag), ShouldEqual, 8*8*8)
+	})
+}
+
+// BenchmarkSolverPublishReading measures full production-sized grid publication.
+func BenchmarkSolverPublishReading(b *testing.B) {
+	physics := sensorium.NewManifold(64, 64, 64)
+	defer func() {
+		if err := physics.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}()
+	solver := &Solver{physics: physics}
+	state := physics.State()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		solver.publishReading(state)
+	}
 }

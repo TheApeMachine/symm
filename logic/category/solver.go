@@ -92,7 +92,6 @@ func NewSolver(ctx context.Context) *Solver {
 		System:     runtime.NewSystem(ctx, "category"),
 		categories: categories,
 	}
-	solver.Transition(runtime.READY)
 
 	return solver
 }

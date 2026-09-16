@@ -571,7 +571,7 @@ func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.M
 	row, ok := futures.queue.Dequeue()
 
 	if !ok {
-		return measurement
+		return nil
 	}
 
 	measurement.Provenance = make(map[string]string, 4)
@@ -644,7 +644,9 @@ Register implements the runtime.Node interface: it declares every numeric field
 the venue's futures rows can produce, none valued.
 */
 func (futures *FuturesLive) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("futures", map[string]data.Metric[float64]{})
+	measurement := data.NewMeasurement("futures", map[string]data.Metric[float64]{})
+	measurement.Metadata["venue"] = "true"
+	return measurement
 }
 
 /*

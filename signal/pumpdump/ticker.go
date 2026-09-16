@@ -110,7 +110,6 @@ func NewTicker(ctx context.Context) *Ticker {
 	}
 
 	ticker.System = runtime.NewSystem(ctx, "pumpdump:ticker", ticker)
-	ticker.Transition(runtime.READY)
 	return ticker
 }
 

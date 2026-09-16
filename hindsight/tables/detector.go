@@ -13,17 +13,17 @@ SymbolTracker maintains order book state, precursor buffers, and active excursio
 tracking for one instrument.
 */
 type symbolTracker struct {
-	symbol         string
-	bid            float64
-	ask            float64
-	last           float64
-	spread         float64
-	precursorTicks []int64
-	quietTicks     int
+	symbol           string
+	bid              float64
+	ask              float64
+	last             float64
+	spread           float64
+	precursorTicks   []int64
+	quietTicks       int
 	oscillationCount int
-	lastDirection  int
-	lastFlatTick   int64
-	lastChoppyTick int64
+	lastDirection    int
+	lastFlatTick     int64
+	lastChoppyTick   int64
 
 	// Active excursion tracking
 	inExcursion        bool
@@ -57,11 +57,8 @@ type symbolTracker struct {
 
 func newSymbolTracker(symbol string) *symbolTracker {
 	return &symbolTracker{
-		symbol:          symbol,
-		precursorTicks:  make([]int64, 0, 32),
-		precursorFrames: make([][]*data.Measurement[float64], 0, 32),
-		excursionFrames: make([][]*data.Measurement[float64], 0, 64),
-		postFrames:      make([][]*data.Measurement[float64], 0, 16),
+		symbol:         symbol,
+		precursorTicks: make([]int64, 0, 32),
 	}
 }
 
@@ -164,20 +161,36 @@ func (detector *StreamingDetector) Process(measurement *data.Measurement[float64
 		return
 	}
 
-	cloned := cloneMeasurement(measurement)
-	frame := []*data.Measurement[float64]{cloned}
+	detector.captureFrame(tracker, measurement)
 
 	if tracker.inExcursion {
-		if !tracker.exited {
-			tracker.excursionFrames = append(tracker.excursionFrames, frame)
-		}
-
-		if tracker.exited {
-			tracker.postFrames = append(tracker.postFrames, frame)
-		}
-
 		detector.advanceExcursion(tracker, measurement)
+		return
+	}
 
+	detector.recordPrecursor(tracker, measurement.SeqIdx)
+	detector.checkForExcursionStart(tracker, measurement)
+}
+
+// captureFrame retains owned tape data only when a fragment consumer is wired.
+// Record-only detection uses prices and tick counters, never the peer graph.
+func (detector *StreamingDetector) captureFrame(
+	tracker *symbolTracker,
+	measurement *data.Measurement[float64],
+) {
+	if detector.onFragment == nil {
+		return
+	}
+
+	frame := []*data.Measurement[float64]{measurement.Clone()}
+
+	if tracker.inExcursion && !tracker.exited {
+		tracker.excursionFrames = append(tracker.excursionFrames, frame)
+		return
+	}
+
+	if tracker.inExcursion {
+		tracker.postFrames = append(tracker.postFrames, frame)
 		return
 	}
 
@@ -186,16 +199,13 @@ func (detector *StreamingDetector) Process(measurement *data.Measurement[float64
 	if len(tracker.precursorFrames) > detector.precursorWindow {
 		tracker.precursorFrames = tracker.precursorFrames[1:]
 	}
-
-	detector.recordPrecursor(tracker, measurement.SeqIdx)
-	detector.checkForExcursionStart(tracker, measurement)
 }
 
 func (detector *StreamingDetector) updatePrices(
 	tracker *symbolTracker,
 	measurement *data.Measurement[float64],
 ) {
-	if measurement.Source == "spot_ticker" || measurement.Source == "ticker" {
+	if measurement.Provenance["channel"] == "ticker" || measurement.Source == "spot_ticker" || measurement.Source == "ticker" {
 		if bidMetric, ok := measurement.Metrics["bid"]; ok && bidMetric.Raw > 0 {
 			tracker.bid = bidMetric.Raw
 		}
@@ -215,7 +225,7 @@ func (detector *StreamingDetector) updatePrices(
 		return
 	}
 
-	if measurement.Source == "spot_trade" || measurement.Source == "trade" {
+	if measurement.Provenance["channel"] == "trade" || measurement.Source == "spot_trade" || measurement.Source == "trade" {
 		if priceMetric, ok := measurement.Metrics["price"]; ok && priceMetric.Raw > 0 {
 			tracker.last = priceMetric.Raw
 		}
@@ -553,7 +563,7 @@ func (detector *StreamingDetector) finalizeExcursion(
 		status = "declining"
 
 		// Only store if within balanced quota
-		if detector.downwardCount < (detector.profitableCount+4) {
+		if detector.downwardCount < (detector.profitableCount + 4) {
 			detector.downwardCount++
 			shouldStore = true
 		}
@@ -704,7 +714,7 @@ func (detector *StreamingDetector) sampleFlatSpan(
 	if detector.onFragment != nil {
 		allFrames := make([][]*data.Measurement[float64], 0, len(tracker.precursorFrames)+1)
 		allFrames = append(allFrames, tracker.precursorFrames...)
-		allFrames = append(allFrames, []*data.Measurement[float64]{cloneMeasurement(measurement)})
+		allFrames = append(allFrames, []*data.Measurement[float64]{measurement.Clone()})
 
 		detector.onFragment(allFrames)
 	}
@@ -789,7 +799,7 @@ func (detector *StreamingDetector) sampleChoppySpan(
 	if detector.onFragment != nil {
 		allFrames := make([][]*data.Measurement[float64], 0, len(tracker.precursorFrames)+1)
 		allFrames = append(allFrames, tracker.precursorFrames...)
-		allFrames = append(allFrames, []*data.Measurement[float64]{cloneMeasurement(measurement)})
+		allFrames = append(allFrames, []*data.Measurement[float64]{measurement.Clone()})
 
 		detector.onFragment(allFrames)
 	}
@@ -813,52 +823,4 @@ func (detector *StreamingDetector) AvailableBalance() float64 {
 	defer detector.mutex.Unlock()
 
 	return detector.availableBalance
-}
-
-func cloneMeasurement(measured *data.Measurement[float64]) *data.Measurement[float64] {
-	if measured == nil {
-		return nil
-	}
-
-	metrics := make(map[string]data.Metric[float64], len(measured.Metrics))
-
-	for key, value := range measured.Metrics {
-		metrics[key] = value
-	}
-
-	meta := make(map[string]string, len(measured.Metadata))
-
-	for key, value := range measured.Metadata {
-		meta[key] = value
-	}
-
-	prov := make(map[string]string, len(measured.Provenance))
-
-	for key, value := range measured.Provenance {
-		prov[key] = value
-	}
-
-	peers := make([]*data.Measurement[float64], len(measured.Peers))
-
-	for idx, peer := range measured.Peers {
-		peers[idx] = cloneMeasurement(peer)
-	}
-
-	return &data.Measurement[float64]{
-		ID:         measured.ID,
-		Label:      measured.Label,
-		Source:     measured.Source,
-		SeqIdx:     measured.SeqIdx,
-		At:         measured.At,
-		From:       measured.From,
-		Maturity:   measured.Maturity,
-		SNR:        measured.SNR,
-		SNRDefined: measured.SNRDefined,
-		Estimated:  measured.Estimated,
-		Err:        measured.Err,
-		Metrics:    metrics,
-		Metadata:   meta,
-		Provenance: prov,
-		Peers:      peers,
-	}
 }

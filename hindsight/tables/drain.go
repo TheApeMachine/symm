@@ -2,134 +2,93 @@ package tables
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/*
-Drain consumes *data.Measurement[float64] from the workspace ring buffer,
-routes each measurement to its canonical Iceberg table family, and commits snapshots
-using per-family batch thresholds and a periodic commit cadence.
-It blocks until cancellation and the final drain complete.
-*/
+// Drain persists owned observations and passes completed, paired excursions and
+// tape fragments to the learner. A persistence or learning failure is returned.
 func (catalog *Catalog) Drain(
 	ctx context.Context,
 	epoch int64,
-	deps ...any,
-) {
+	learn ...func(ExcursionRecord, [][]*data.Measurement[float64]) error,
+) error {
 	if catalog == nil || catalog.storeTee == nil {
-		return
-	}
-
-	var fragmentSink func([][]*data.Measurement[float64])
-	var groundTruthSink func(ExcursionRecord)
-
-	for _, dep := range deps {
-		switch dependency := dep.(type) {
-		case func([][]*data.Measurement[float64]):
-			fragmentSink = dependency
-		case func(ExcursionRecord):
-			groundTruthSink = dependency
-		}
+		return nil
 	}
 
 	writer := NewWriter(catalog, epoch)
+	var completed ExcursionRecord
+	var err error
 	detector := NewStreamingDetector(epoch, 200.0, func(record ExcursionRecord) {
 		writer.AddExcursion(record)
+		completed = record
+	})
 
-		if groundTruthSink != nil {
-			groundTruthSink(record)
-		}
-	}, fragmentSink)
+	if len(learn) > 0 {
+		detector.SetFragmentSink(func(frames [][]*data.Measurement[float64]) {
+			err = learn[0](completed, frames)
+		})
+	}
 
+	// These are storage batching cadences, not market observation horizons.
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
-
 	commitTicker := time.NewTicker(30 * time.Second)
 	defer commitTicker.Stop()
 
-	var tickCounter atomic.Int64
+	drain := func() error {
+		for {
+			measurement := (*data.Measurement[float64])(catalog.storeTee.Next())
+
+			if measurement == nil {
+				return nil
+			}
+
+			if measurement.SeqIdx <= 0 {
+				return errnie.Error(errnie.Err(errnie.Validation, "catalog: observation has no workspace sequence", nil))
+			}
+
+			if measurement.Metadata["venue"] == "true" && measurement.Provenance["channel"] != "executions" {
+				detector.Process(measurement)
+			}
+
+			if err != nil {
+				return errnie.Error(err)
+			}
+
+			writer.Add(deriveChannel(measurement), measurement)
+
+			if err := writer.CommitReady(ctx, false); err != nil {
+				return err
+			}
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			for {
-				measurement := (*data.Measurement[float64])(catalog.storeTee.Next())
-
-				if measurement == nil {
-					break
-				}
-
-				if measurement.SeqIdx <= 0 {
-					measurement.SeqIdx = tickCounter.Add(1)
-				}
-
-				detector.Process(measurement)
-
-				channel := deriveChannel(measurement)
-				writer.Add(channel, measurement)
-			}
-
-			if writer.Pending() > 0 {
-				if err := writer.CommitReady(context.Background(), true); err != nil {
-					errnie.Error(err)
-				}
-			}
-
-			return
-
-		case <-commitTicker.C:
-			if writer.Pending() > 0 {
-				if err := writer.CommitReady(ctx, true); err != nil {
-					errnie.Error(err)
-				}
-			}
-
+			return writer.CommitReady(context.Background(), true)
 		case <-flushTicker.C:
-			for {
-				measurement := (*data.Measurement[float64])(catalog.storeTee.Next())
-
-				if measurement == nil {
-					break
-				}
-
-				if measurement.SeqIdx <= 0 {
-					measurement.SeqIdx = tickCounter.Add(1)
-				}
-
-				detector.Process(measurement)
-
-				channel := deriveChannel(measurement)
-				writer.Add(channel, measurement)
-
-				if err := writer.CommitReady(ctx, false); err != nil {
-					errnie.Error(err)
-				}
+			if err := drain(); err != nil {
+				return err
+			}
+		case <-commitTicker.C:
+			if err := writer.CommitReady(ctx, true); err != nil {
+				return err
 			}
 		}
 	}
 }
 
 func deriveChannel(measurement *data.Measurement[float64]) string {
-	if measurement.Provenance != nil {
-		if channel, ok := measurement.Provenance["channel"]; ok && channel != "" {
+	if measurement.Metadata["venue"] == "true" {
+		switch channel := measurement.Provenance["channel"]; channel {
+		case "ticker", "trade", "level3":
 			return channel
 		}
-	}
-
-	if _, hasBid := measurement.Metrics["bid"]; hasBid {
-		return "ticker"
-	}
-
-	if _, hasPrice := measurement.Metrics["price"]; hasPrice {
-		return "trade"
-	}
-
-	if _, hasLimit := measurement.Metrics["limit_price"]; hasLimit {
-		return "level3"
 	}
 
 	return "measurements"

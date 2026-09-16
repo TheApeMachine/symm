@@ -114,7 +114,6 @@ func NewSolver(
 		branchDepth:    5,
 		maxBranchNodes: 192,
 	}
-	solver.Transition(runtime.READY)
 
 	return solver
 }
@@ -139,16 +138,22 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	var categories []types.Category
 
-	for _, peer := range measurement.Peers {
-		if peer != nil && peer.Source == "category" {
-			for catName, metric := range peer.Metrics {
-				categories = append(categories, types.Category{
-					Symbol:     peer.Label,
-					Type:       types.CategoryType(catName),
-					Confidence: metric.Raw,
-				})
-			}
-		}
+	// Registration binds cognition's sole dependency to the category slot.
+	if len(measurement.Peers) != 1 || measurement.Peers[0] == nil {
+		solver.Error(errnie.Err(
+			errnie.Validation, "cognition: one bound category measurement is required", nil,
+		))
+		return measurement
+	}
+
+	peer := measurement.Peers[0]
+
+	for catName, metric := range peer.Metrics {
+		categories = append(categories, types.Category{
+			Symbol:     peer.Label,
+			Type:       types.CategoryType(catName),
+			Confidence: metric.Raw,
+		})
 	}
 
 	if reading := solver.StepCategories(categories); reading != nil {

@@ -19,7 +19,7 @@ func TestCatalog_Drain(t *testing.T) {
 		Convey("Cancellation before activation finishes safely", func() {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			catalog.Drain(ctx, 1)
+			So(catalog.Drain(ctx, 1), ShouldBeNil)
 		})
 
 		Convey("An activated empty queue survives periodic polling and cancellation", func() {
@@ -27,7 +27,7 @@ func TestCatalog_Drain(t *testing.T) {
 			// Allow multiple 50ms flush ticks before exercising the final drain.
 			ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 			defer cancel()
-			catalog.Drain(ctx, 1)
+			So(catalog.Drain(ctx, 1), ShouldBeNil)
 			So(ctx.Err(), ShouldEqual, context.DeadlineExceeded)
 			So(tee.Error(), ShouldBeNil)
 		})

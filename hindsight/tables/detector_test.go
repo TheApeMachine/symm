@@ -12,10 +12,13 @@ import (
 func TestStreamingDetector(t *testing.T) {
 	Convey("Given a StreamingDetector with $200 initial balance", t, func() {
 		var completed []tables.ExcursionRecord
+		var fragments [][][]*data.Measurement[float64]
 		epoch := int64(1000)
 
 		detector := tables.NewStreamingDetector(epoch, 200.0, func(record tables.ExcursionRecord) {
 			completed = append(completed, record)
+		}, func(frames [][]*data.Measurement[float64]) {
+			fragments = append(fragments, frames)
 		})
 
 		Convey("When an upward price move clears friction and reverses", func() {
@@ -70,6 +73,8 @@ func TestStreamingDetector(t *testing.T) {
 			}
 
 			So(len(completed), ShouldBeGreaterThanOrEqualTo, 1)
+			So(len(fragments), ShouldBeGreaterThanOrEqualTo, 1)
+			So(fragments[0][0][0].Metrics["bid"].Raw, ShouldEqual, 50000)
 			first := completed[0]
 			So(first.Symbol, ShouldEqual, symbol)
 			So(first.Direction, ShouldEqual, "upward")
@@ -405,4 +410,42 @@ func TestStreamingDetector(t *testing.T) {
 			So(adaRec.Status, ShouldEqual, "flat")
 		})
 	})
+}
+
+// detectorMeasurement models a staged peer graph with shared upstream producers.
+func detectorMeasurement() *data.Measurement[float64] {
+	measurement := &data.Measurement[float64]{Source: "spot_ticker", Label: "BTC/USD", Metrics: map[string]data.Metric[float64]{"bid": {Raw: 50000}, "ask": {Raw: 50010}, "last": {Raw: 50005}}}
+	peer := &data.Measurement[float64]{Metrics: map[string]data.Metric[float64]{"signal": {Raw: 1}}}
+	// Five stages, each binding two shared upstream outputs.
+	for stage := 0; stage < 5; stage++ {
+		peer = &data.Measurement[float64]{Peers: []*data.Measurement[float64]{peer, peer}}
+	}
+	measurement.Peers = []*data.Measurement[float64]{peer}
+	return measurement
+}
+
+func TestStreamingDetectorProcess(t *testing.T) {
+	Convey("Record-only detection does not materialize unconsumed tape fragments", t, func() {
+		detector := tables.NewStreamingDetector(1, 200, nil)
+		measurement := detectorMeasurement()
+		// Warm tracker state and exhaust the existing flat-span sample quota.
+		for tick := 0; tick < 1000; tick++ {
+			detector.Process(measurement)
+		}
+		allocations := testing.AllocsPerRun(100, func() { detector.Process(measurement) })
+		So(allocations, ShouldEqual, 0)
+	})
+}
+
+func BenchmarkStreamingDetectorProcess(b *testing.B) {
+	detector := tables.NewStreamingDetector(1, 200, nil)
+	measurement := detectorMeasurement()
+	for tick := 0; tick < 1000; tick++ {
+		detector.Process(measurement)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		detector.Process(measurement)
+	}
 }

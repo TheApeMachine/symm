@@ -2,8 +2,6 @@ package ui
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +10,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -36,16 +35,12 @@ latest-wins, so the transport never queues a backlog of stale snapshots and
 never blocks the market pipeline.
 */
 type FluidRTC struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	errMutex      sync.RWMutex
-	err           error
+	*runtime.System
 	peersMutex    sync.RWMutex
 	peers         map[*webrtc.PeerConnection]*fluidPeer
 	consumerID    string
 	bufferedLimit uint64
 	sequence      atomic.Uint64
-	ObserveModule func(string, time.Duration)
 }
 
 /*
@@ -55,50 +50,80 @@ func NewFluidRTC(
 	ctx context.Context,
 	consumerID string,
 ) *FluidRTC {
-	ctx, cancel := context.WithCancel(ctx)
 	viper.SetDefault("ui.webrtc.buffered_segments", 64)
 	bufferedSegments := viper.GetUint64("ui.webrtc.buffered_segments")
+
 	fluidTransport := &FluidRTC{
-		ctx:           ctx,
-		cancel:        cancel,
 		peers:         make(map[*webrtc.PeerConnection]*fluidPeer),
 		consumerID:    consumerID,
 		bufferedLimit: bufferedSegments * fluidSegmentSize,
 	}
 
+	fluidTransport.System = runtime.NewSystem(ctx, "webrtc", fluidTransport)
+
 	if bufferedSegments < 1 {
-		fluidTransport.err = errnie.Error(fmt.Errorf(
+		fluidTransport.Error(errnie.Err(
+			errnie.Internal,
 			"webrtc: buffered_segments must be positive",
+			nil,
 		))
 	}
 
 	return fluidTransport
 }
 
-func (fluidTransport *FluidRTC) Name() string { return "fluid-webrtc" }
-
-func (fluidTransport *FluidRTC) Error() error {
-	fluidTransport.errMutex.RLock()
-	defer fluidTransport.errMutex.RUnlock()
-
-	return errnie.Error(fluidTransport.err)
-}
-
 /*
-Run drains direct manifold publications until shutdown or the first transport
+Run drains tee publications until shutdown or the first transport
 failure. Observer snapshots are replaceable: a bounded latest-wins boundary
 means a slow viewer receives a fresher replaceable state and, on a feed
 failure, the transport fails explicitly rather than silently losing frames.
 Durable historical truth lives in Hindsight/raw capture, never in this path.
 */
-func (fluidTransport *FluidRTC) Run() error {
-	if err := fluidTransport.Error(); err != nil {
-		return err
+func (fluidTransport *FluidRTC) Run(tee *WebRTCTee) error {
+	// This is the dashboard publication cadence, not a market sampling window.
+	interval := viper.GetDuration("ui.websocket.learning_interval")
+
+	if interval <= 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "fluid: publication interval must be positive", nil))
 	}
 
-	<-fluidTransport.ctx.Done()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-	return errnie.Error(fluidTransport.Error())
+	for {
+		select {
+		case <-fluidTransport.Context().Done():
+			return fluidTransport.Error()
+		case <-ticker.C:
+			if tee.Status() != runtime.READY {
+				continue
+			}
+
+			if err := fluidTransport.drain(tee); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// drain consumes producer artifacts only through the tee boundary.
+func (fluidTransport *FluidRTC) drain(tee *WebRTCTee) error {
+	for pointer := tee.Next(); pointer != nil; pointer = tee.Next() {
+		var err error
+		switch artifact := (*(*any)(pointer)).(type) {
+		case *types.ManifoldState:
+			err = fluidTransport.Publish(artifact)
+		case *types.ResonanceArtifact:
+			err = fluidTransport.PublishResonance(artifact)
+		default:
+			err = errnie.Error(errnie.Err(errnie.Validation, "fluid: unsupported tee artifact", nil))
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 /*
@@ -116,25 +141,6 @@ func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
 	payload := encodeManifold(state, sequence)
 
 	return fluidTransport.publishBytes(types.ManifoldChannel, payload)
-}
-
-/*
-WantsManifold reports whether any connected viewer owns the manifold channel
-and is ready to receive another frame. It satisfies manifold.Viewer.
-*/
-func (fluidTransport *FluidRTC) WantsManifold() bool {
-	return fluidTransport.Wants(types.ManifoldChannel)
-}
-
-/*
-PublishManifold satisfies manifold.Viewer by serializing one manifold advance
-into a ManifoldFrame flatbuffer and broadcasting it across the manifold WebRTC
-data channel.
-*/
-func (fluidTransport *FluidRTC) PublishManifold(state *types.ManifoldState) {
-	if err := fluidTransport.Publish(state); err != nil {
-		errnie.Error(err)
-	}
 }
 
 /*
@@ -437,14 +443,15 @@ func (fluidTransport *FluidRTC) Answer(
 	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{})
 
 	if err != nil {
-		return webrtc.SessionDescription{}, fluidError(
+		return webrtc.SessionDescription{}, fluidTransport.Error(errnie.Err(
+			errnie.IO,
 			"unable to create peer connection",
 			err,
-		)
+		))
 	}
 
 	peer := newFluidPeer(
-		fluidTransport.ctx,
+		fluidTransport.Context(),
 		func(err error) {
 			fluidTransport.remove(peerConnection)
 		},
@@ -478,9 +485,9 @@ func (fluidTransport *FluidRTC) Answer(
 	}
 
 	select {
-	case <-fluidTransport.ctx.Done():
+	case <-fluidTransport.Context().Done():
 		fluidTransport.remove(peerConnection)
-		return webrtc.SessionDescription{}, errnie.Error(fluidTransport.ctx.Err())
+		return webrtc.SessionDescription{}, errnie.Error(fluidTransport.Context().Err())
 	case <-gathered:
 	}
 
@@ -492,25 +499,6 @@ func (fluidTransport *FluidRTC) Answer(
 	}
 
 	return *local, nil
-}
-
-/*
-Close terminates every peer and stops publication fanout.
-*/
-func (fluidTransport *FluidRTC) Close() error {
-	fluidTransport.cancel()
-	fluidTransport.peersMutex.Lock()
-	peers := fluidTransport.peers
-	fluidTransport.peers = make(map[*webrtc.PeerConnection]*fluidPeer)
-	fluidTransport.peersMutex.Unlock()
-	var err error
-
-	for peerConnection, peer := range peers {
-		peer.close()
-		err = errors.Join(err, peerConnection.Close())
-	}
-
-	return err
 }
 
 func (fluidTransport *FluidRTC) add(

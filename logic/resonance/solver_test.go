@@ -2,11 +2,12 @@ package resonance
 
 import (
 	"context"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"strconv"
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -185,9 +186,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 		defer solver.Close()
 
 		var lastArtifact *types.ResonanceArtifact
-		solver.SetObserver(func(artifact *types.ResonanceArtifact) {
-			lastArtifact = artifact
-		})
+		solver.Transition(runtime.READY)
 
 		createMetric := func(source, metricName string, val, support float64) *data.Measurement[float64] {
 			measurement := data.NewMeasurement[float64](source, nil)

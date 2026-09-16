@@ -36,7 +36,6 @@ func NewTrade(ctx context.Context) *Trade {
 	}
 
 	trade.System = runtime.NewSystem(ctx, "derivatives:trade", trade)
-	trade.Transition(runtime.READY)
 	return trade
 }
 
@@ -66,7 +65,7 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		})
 
 		if peer == nil {
-			return measurement
+			return nil
 		}
 
 		measurement.Pull(peer, "price", "qty")

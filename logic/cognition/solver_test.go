@@ -20,6 +20,7 @@ func TestSolverStep(t *testing.T) {
 		defer cancel()
 
 		solver := NewSolver(ctx)
+		solver.Transition(runtime.READY)
 		So(solver, ShouldNotBeNil)
 
 		Convey("When processing concurrent category batches across 64 symbols", func() {

@@ -108,7 +108,6 @@ func NewLevel3(ctx context.Context) *Level3 {
 	}
 
 	level3.System = runtime.NewSystem(ctx, "pumpdump:level3", level3)
-	level3.Transition(runtime.READY)
 	return level3
 }
 

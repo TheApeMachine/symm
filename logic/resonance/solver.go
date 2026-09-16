@@ -82,14 +82,6 @@ type Solver struct {
 	// duration so the wiring diagram can profile the resonance stage like
 	// every other pipeline node.
 	ObserveModule func(string, time.Duration)
-	observe       func(*types.ResonanceArtifact)
-}
-
-/*
-SetObserver installs the synchronous observer for producer-owned model state.
-*/
-func (solver *Solver) SetObserver(observer func(*types.ResonanceArtifact)) {
-	solver.observe = observer
 }
 
 /*
@@ -137,7 +129,6 @@ func NewSolver(
 		steps:         &sync.Map{},
 		pace:          pace,
 	}
-	solver.Transition(runtime.READY)
 
 	return solver
 }
@@ -269,10 +260,6 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measure
 
 	measurement.Label = symbol
 	measurement.At = at
-
-	if resonance != nil && solver.observe != nil {
-		solver.observe(resonance)
-	}
 
 	return measurement
 }
