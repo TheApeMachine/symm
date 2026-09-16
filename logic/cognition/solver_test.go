@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"

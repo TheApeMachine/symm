@@ -1,15 +1,14 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -38,7 +37,8 @@ both interpolations. The current residual participates in its surprise
 statistic.
 */
 type Forecast struct {
-	err     error
+	*core.PrimitiveError
+
 	moments statistic.Moments
 	mix     core.Primitive
 	trust   float64
@@ -47,15 +47,14 @@ type Forecast struct {
 	out     ForecastReading
 }
 
-func NewForecast() core.Primitive {
-	return &Forecast{
-		mix:   calculus.NewMix(),
+func NewForecast() *Forecast {
+	return &Forecast{PrimitiveError: core.NewPrimitiveError(), mix: calculus.NewMix(),
 		trust: 1,
 		scale: 1,
 	}
 }
 
-func (op *Forecast) Next(
+func (forecast *Forecast) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -64,40 +63,40 @@ func (op *Forecast) Next(
 
 			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
 				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
-				op.Error(core.ErrDomain)
+				forecast.Error(core.ErrDomain)
 				return
 			}
 
 			residual := pair.Actual - pair.Predicted
-			moments := op.moments.Update(residual)
+			moments := forecast.moments.Update(residual)
 
 			if moments.Count > 1 {
-				op.rate = 0
+				forecast.rate = 0
 
 				if moments.Variance > 0 {
 					deviation := math.Abs(residual - moments.Mean)
 					spread := math.Sqrt(moments.Variance)
-					op.rate = deviation / spread
+					forecast.rate = deviation / spread
 				}
 
 				mixRec := calculus.MixRecord{
-					Left:   op.trust,
-					Right:  math.Max(0, 1-op.rate),
-					Weight: op.rate,
+					Left:   forecast.trust,
+					Right:  math.Max(0, 1-forecast.rate),
+					Weight: forecast.rate,
 				}
 
 				var trust float64
 
-				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
+				for out := range forecast.mix.Next(sequence.NewValues(mixRec).Next(nil)) {
 					trust = *(*float64)(out)
 				}
 
-				if err := op.mix.Error(); err != nil {
-					op.Error(err)
+				if err := forecast.mix.Error(); err != nil {
+					forecast.Error(err)
 					return
 				}
 
-				op.trust = trust
+				forecast.trust = trust
 
 				actualAbs := math.Abs(pair.Actual)
 				predictedAbs := math.Abs(pair.Predicted)
@@ -105,47 +104,37 @@ func (op *Forecast) Next(
 				target := math.Exp(math.Log(actualAbs) - math.Log(predictedAbs))
 
 				scaleMix := calculus.MixRecord{
-					Left:   op.scale,
+					Left:   forecast.scale,
 					Right:  target,
-					Weight: op.rate * (1 - op.trust),
+					Weight: forecast.rate * (1 - forecast.trust),
 				}
 
 				var scale float64
 
-				for out := range op.mix.Next(transport.NewValues(scaleMix).Next(nil)) {
+				for out := range forecast.mix.Next(sequence.NewValues(scaleMix).Next(nil)) {
 					scale = *(*float64)(out)
 				}
 
-				if err := op.mix.Error(); err != nil {
-					op.Error(err)
+				if err := forecast.mix.Error(); err != nil {
+					forecast.Error(err)
 					return
 				}
 
-				op.scale = scale
+				forecast.scale = scale
 			}
 
-			op.out = ForecastReading{
-				Value:       op.scale,
-				Scale:       op.scale,
-				Trust:       op.trust,
-				Rate:        op.rate,
+			forecast.out = ForecastReading{
+				Value:       forecast.scale,
+				Scale:       forecast.scale,
+				Trust:       forecast.trust,
+				Rate:        forecast.rate,
 				Count:       moments.Count,
 				WeightCount: moments.Count,
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&forecast.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Forecast) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -1,13 +1,12 @@
 package data
 
 import (
-	"errors"
 	"iter"
 	"strings"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -42,7 +41,8 @@ The error is recorded through Error so a caller can report it, but the metrics
 that were successfully measured still reach the observation.
 */
 type Lift struct {
-	err       error
+	*core.PrimitiveError
+
 	authority core.Primitive
 	out       LiftReading
 }
@@ -50,11 +50,11 @@ type Lift struct {
 /*
 NewLift creates the measurement flattening primitive.
 */
-func NewLift() core.Primitive {
-	return &Lift{authority: NewAuthority()}
+func NewLift() *Lift {
+	return &Lift{PrimitiveError: core.NewPrimitiveError(), authority: NewAuthority()}
 }
 
-func (op *Lift) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (lift *Lift) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			measurement := *(**Measurement[float64])(arriving)
@@ -63,53 +63,40 @@ func (op *Lift) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			if op.out.Values == nil {
-				op.out.Values = make(map[string]float64)
+			if lift.out.Values == nil {
+				lift.out.Values = make(map[string]float64)
 			}
 
 			if measurement.Err != nil {
-				op.Error(measurement.Err)
+				lift.Error(measurement.Err)
 				continue
 			}
 
 			var authority float64
 
-			for out := range op.authority.Next(transport.NewValues(qualityOf(measurement)).Next(nil)) {
+			for out := range lift.authority.Next(sequence.NewValues(qualityOf(measurement)).Next(nil)) {
 				authority = *(*float64)(out)
 			}
 
-			if err := op.authority.Error(); err != nil {
-				op.Error(err)
+			if err := lift.authority.Error(); err != nil {
+				lift.Error(err)
 				return
 			}
 
 			for label, metric := range measurement.Metrics {
 				if metric.Unit == UnitCount || strings.Contains(label, "ordinal") {
-					op.out.Values[measurement.Source+"/"+label] = metric.Raw
+					lift.out.Values[measurement.Source+"/"+label] = metric.Raw
 					continue
 				}
 
-				op.out.Values[measurement.Source+"/"+label] = metric.Raw * authority
+				lift.out.Values[measurement.Source+"/"+label] = metric.Raw * authority
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&lift.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Lift) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -119,7 +106,8 @@ Failed measurements are skipped with their error recorded, never silently
 discarded.
 */
 type LiftReadouts struct {
-	err       error
+	*core.PrimitiveError
+
 	finalizer core.Primitive
 	readout   core.Primitive
 	out       ReadoutLift
@@ -128,14 +116,13 @@ type LiftReadouts struct {
 /*
 NewLiftReadouts creates the measurement readout flattening primitive.
 */
-func NewLiftReadouts() core.Primitive {
-	return &LiftReadouts{
-		finalizer: NewFinalizer[float64](),
-		readout:   NewReadout(),
+func NewLiftReadouts() *LiftReadouts {
+	return &LiftReadouts{PrimitiveError: core.NewPrimitiveError(), finalizer: NewFinalizer[float64](),
+		readout: NewReadout(),
 	}
 }
 
-func (op *LiftReadouts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (liftReadouts *LiftReadouts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			measurement := *(**Measurement[float64])(arriving)
@@ -144,21 +131,21 @@ func (op *LiftReadouts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				continue
 			}
 
-			if op.out.Readouts == nil {
-				op.out.Readouts = make(map[string]Readout)
+			if liftReadouts.out.Readouts == nil {
+				liftReadouts.out.Readouts = make(map[string]Readout)
 			}
 
 			if measurement.Err != nil {
-				op.Error(measurement.Err)
+				liftReadouts.Error(measurement.Err)
 				continue
 			}
 
 			if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
-				for range op.finalizer.Next(transport.NewOne(arriving).Next(nil)) {
+				for range liftReadouts.finalizer.Next(sequence.NewOne(arriving).Next(nil)) {
 				}
 
-				if err := op.finalizer.Error(); err != nil {
-					op.Error(err)
+				if err := liftReadouts.finalizer.Error(); err != nil {
+					liftReadouts.Error(err)
 					return
 				}
 			}
@@ -174,10 +161,10 @@ func (op *LiftReadouts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 					continue
 				}
 
-				readingEval := transport.NewEvaluate(op.readout)
+				readingEval := liftReadouts.readout
 				var reading Readout
 
-				for out := range readingEval.Next(transport.NewValues(ReadoutInput{
+				for out := range readingEval.Next(sequence.NewValues(ReadoutInput{
 					QualityReading: qualityOf(measurement),
 					Raw:            raw,
 					Credibility:    1,
@@ -191,29 +178,16 @@ func (op *LiftReadouts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				err := readingEval.Error()
 
 				if err != nil {
-					op.Error(err)
+					liftReadouts.Error(err)
 					continue
 				}
 
-				op.out.Readouts[measurement.Source+"/"+label] = reading
+				liftReadouts.out.Readouts[measurement.Source+"/"+label] = reading
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&liftReadouts.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *LiftReadouts) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

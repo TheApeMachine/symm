@@ -3,17 +3,17 @@ package learning_test
 import (
 	"testing"
 
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestLearningPrimitiveIntegration(t *testing.T) {
 	pair := learning.Pair{Predicted: 10, Actual: 10}
 
-	trustEval := transport.NewEvaluate(learning.NewTrustWeight())
+	trustEval := learning.NewTrustWeight()
 	var trust learning.TrustReading
 
-	for out := range trustEval.Next(transport.NewValues(pair).Next(nil)) {
+	for out := range trustEval.Next(sequence.NewValues(pair).Next(nil)) {
 		trust = *(*learning.TrustReading)(out)
 	}
 
@@ -22,10 +22,10 @@ func TestLearningPrimitiveIntegration(t *testing.T) {
 		t.Fatalf("trust: %g, %v", trust.Value, err)
 	}
 
-	ratioEval := transport.NewEvaluate(learning.NewSampleRatio())
+	ratioEval := learning.NewSampleRatio()
 	var ratio learning.RatioReading
 
-	for out := range ratioEval.Next(transport.NewValues(pair).Next(nil)) {
+	for out := range ratioEval.Next(sequence.NewValues(pair).Next(nil)) {
 		ratio = *(*learning.RatioReading)(out)
 	}
 
@@ -34,10 +34,10 @@ func TestLearningPrimitiveIntegration(t *testing.T) {
 		t.Fatalf("ratio: %g, %v", ratio.Value, err)
 	}
 
-	forecastEval := transport.NewEvaluate(learning.NewForecast())
+	forecastEval := learning.NewForecast()
 	var forecast learning.ForecastReading
 
-	for out := range forecastEval.Next(transport.NewValues(pair).Next(nil)) {
+	for out := range forecastEval.Next(sequence.NewValues(pair).Next(nil)) {
 		forecast = *(*learning.ForecastReading)(out)
 	}
 

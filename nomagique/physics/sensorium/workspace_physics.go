@@ -13,62 +13,62 @@ type hydroParameters struct {
 	Reconstruction, Gravity                                   uint32
 }
 
-func (fluid *workspace) hydroParams(dt float32) hydroParameters {
-	d := fluid.domain
-	p := fluid.physics
+func (workspace *workspace) hydroParams(dt float32) hydroParameters {
+	d := workspace.domain
+	p := workspace.physics
 	return hydroParameters{uint32(d.CellCount()), uint32(d.GridX), uint32(d.GridY), uint32(d.GridZ),
 		float32(d.GridSpacing()), dt, float32(d.Gamma), float32(d.CV), float32(d.Mu), 0, float32(d.KThermal),
 		float32(p.EtaPressure), float32(p.EtaSync), float32(p.CFL), 1, 0}
 }
 
-func (fluid *workspace) snapshotPhysics() func() {
-	fluid.engine.Synchronize()
-	buffers := fluid.allBuffers()
+func (workspace *workspace) snapshotPhysics() func() {
+	workspace.engine.Synchronize()
+	buffers := workspace.allBuffers()
 	saved := make([][]uint32, len(buffers))
 	for i, b := range buffers {
 		if b != nil {
 			saved[i] = append([]uint32(nil), b.UInt32Slice()...)
 		}
 	}
-	waveReady := fluid.waveProjectionReady
-	rng := fluid.rngSeed
-	health := fluid.health
-	clock := fluid.physicalTime
-	phaseRate := fluid.lastPhaseRate
-	potential := append([]float32(nil), fluid.previousPotential...)
+	waveReady := workspace.waveProjectionReady
+	rng := workspace.rngSeed
+	health := workspace.health
+	clock := workspace.physicalTime
+	phaseRate := workspace.lastPhaseRate
+	potential := append([]float32(nil), workspace.previousPotential...)
 	return func() {
-		fluid.engine.Synchronize()
+		workspace.engine.Synchronize()
 		for i, b := range buffers {
 			if b != nil {
 				copy(b.UInt32Slice(), saved[i])
 			}
 		}
-		fluid.waveProjectionReady = waveReady
-		fluid.rngSeed = rng
-		fluid.health = health
-		fluid.physicalTime = clock
-		fluid.lastPhaseRate = phaseRate
-		copy(fluid.previousPotential, potential)
+		workspace.waveProjectionReady = waveReady
+		workspace.rngSeed = rng
+		workspace.health = health
+		workspace.physicalTime = clock
+		workspace.lastPhaseRate = phaseRate
+		copy(workspace.previousPotential, potential)
 	}
 }
-func (fluid *workspace) validateInputs() error {
-	if err := fluid.physics.validate(); err != nil {
+func (workspace *workspace) validateInputs() error {
+	if err := workspace.physics.validate(); err != nil {
 		return err
 	}
-	d := fluid.domain
+	d := workspace.domain
 	if !isPositiveFinite(d.CV) || !isPositiveFinite(d.Gamma-1) || !finite(d.Mu) || d.Mu < 0 || !finite(d.KThermal) || d.KThermal < 0 ||
 		math.Abs(d.RSpecific-(d.Gamma-1)*d.CV) > 16*math.Ldexp(1, -23)*math.Max(1, math.Abs(d.RSpecific)) {
 		return fmt.Errorf("inconsistent ideal-gas/material model")
 	}
-	if fluid.particles == 0 {
+	if workspace.particles == 0 {
 		return nil
 	}
-	m, q, e := fluid.mass.Float32Slice(), fluid.heat.Float32Slice(), fluid.oscEnergy.Float32Slice()
-	pos, vel := fluid.pos.Float32Slice(), fluid.vel.Float32Slice()
-	phase, omega := fluid.phase.Float32Slice(), fluid.omega.Float32Slice()
-	total, priorPosition := fluid.materialEnergy.Float32Slice(), fluid.coherencePosition.Float32Slice()
-	pilot, prior := fluid.pilotPrevious.Float32Slice(), fluid.phasePrior.Float32Slice()
-	for i := 0; i < fluid.particles; i++ {
+	m, q, e := workspace.mass.Float32Slice(), workspace.heat.Float32Slice(), workspace.oscEnergy.Float32Slice()
+	pos, vel := workspace.pos.Float32Slice(), workspace.vel.Float32Slice()
+	phase, omega := workspace.phase.Float32Slice(), workspace.omega.Float32Slice()
+	total, priorPosition := workspace.materialEnergy.Float32Slice(), workspace.coherencePosition.Float32Slice()
+	pilot, prior := workspace.pilotPrevious.Float32Slice(), workspace.phasePrior.Float32Slice()
+	for i := 0; i < workspace.particles; i++ {
 		if !isPositiveFinite(float64(m[i])) || !finite(float64(q[i])) || q[i] < 0 || !finite(float64(e[i])) || e[i] < 0 ||
 			!finite(float64(phase[i])) || !finite(float64(omega[i])) || !finite(float64(prior[i])) || !finite(float64(total[i])) || total[i] < 0 {
 			return &CoupledStepError{"input", i, false, fmt.Sprintf("m=%g Q=%g Eosc=%g phase=%g omega=%g", m[i], q[i], e[i], phase[i], omega[i])}
@@ -89,25 +89,25 @@ func checkFlags(label string, b *Buffer, n int) error {
 	}
 	return nil
 }
-func (fluid *workspace) depositDual() error {
-	fluid.engine.Synchronize()
-	fluid.hydro.Zero()
-	if fluid.particles > 0 {
-		if err := fluid.engine.DepositMaterial(fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.materialEnergy, fluid.hydro, fluid.particleStatus, fluid.particles, fluid.hydroParams(1)); err != nil {
+func (workspace *workspace) depositDual() error {
+	workspace.engine.Synchronize()
+	workspace.hydro.Zero()
+	if workspace.particles > 0 {
+		if err := workspace.engine.DepositMaterial(workspace.pos, workspace.vel, workspace.mass, workspace.heat, workspace.materialEnergy, workspace.hydro, workspace.particleStatus, workspace.particles, workspace.hydroParams(1)); err != nil {
 			return err
 		}
-		if err := checkFlags("PIC deposit", fluid.particleStatus, fluid.particles); err != nil {
+		if err := checkFlags("PIC deposit", workspace.particleStatus, workspace.particles); err != nil {
 			return err
 		}
 	}
-	fluid.health.Sources.PICDepositEnergyResidual += sumHydroEnergy(fluid.hydro.Float32Slice(), fluid.domain.GridSpacing()) - fluid.materialTotal()
-	return fluid.exportDual()
+	workspace.health.Sources.PICDepositEnergyResidual += sumHydroEnergy(workspace.hydro.Float32Slice(), workspace.domain.GridSpacing()) - workspace.materialTotal()
+	return workspace.exportDual()
 }
-func (fluid *workspace) exportDual() error {
-	if err := fluid.engine.ExportDual(fluid.hydro, fluid.rho, fluid.mom, fluid.energy, fluid.hydroStatus, fluid.hydroParams(1)); err != nil {
+func (workspace *workspace) exportDual() error {
+	if err := workspace.engine.ExportDual(workspace.hydro, workspace.rho, workspace.mom, workspace.energy, workspace.hydroStatus, workspace.hydroParams(1)); err != nil {
 		return err
 	}
-	return checkFlags("hydro primitive export", fluid.hydroStatus, fluid.domain.CellCount())
+	return checkFlags("hydro primitive export", workspace.hydroStatus, workspace.domain.CellCount())
 }
 func diagnosticBound(rate, factor float64) float64 {
 	if rate == 0 {
@@ -115,23 +115,23 @@ func diagnosticBound(rate, factor float64) float64 {
 	}
 	return factor / rate
 }
-func (fluid *workspace) stabilityLimit() (float64, error) {
-	if err := fluid.validateInputs(); err != nil {
+func (workspace *workspace) stabilityLimit() (float64, error) {
+	if err := workspace.validateInputs(); err != nil {
 		return 0, err
 	}
-	if err := fluid.depositDual(); err != nil {
+	if err := workspace.depositDual(); err != nil {
 		return 0, err
 	}
-	if err := fluid.engine.HydroRates(fluid.hydro, fluid.acceleration, fluid.hydroDiagnostics, fluid.hydroStatus, fluid.hydroParams(1)); err != nil {
+	if err := workspace.engine.HydroRates(workspace.hydro, workspace.acceleration, workspace.hydroDiagnostics, workspace.hydroStatus, workspace.hydroParams(1)); err != nil {
 		return 0, err
 	}
-	if err := checkFlags("hydro stability", fluid.hydroStatus, fluid.domain.CellCount()); err != nil {
+	if err := checkFlags("hydro stability", workspace.hydroStatus, workspace.domain.CellCount()); err != nil {
 		return 0, err
 	}
-	d := fluid.domain
+	d := workspace.domain
 	dx := d.GridSpacing()
-	rho, mom, e := fluid.rho.Float32Slice(), fluid.mom.Float32Slice(), fluid.energy.Float32Slice()
-	diag := fluid.hydroDiagnostics.Float32Slice()
+	rho, mom, e := workspace.rho.Float32Slice(), workspace.mom.Float32Slice(), workspace.energy.Float32Slice()
+	diag := workspace.hydroDiagnostics.Float32Slice()
 	maxRate, hyp, visc, thermal := 0.0, 0.0, 0.0, 0.0
 	for c := 0; c < d.CellCount(); c++ {
 		maxRate = math.Max(maxRate, float64(diag[8*c]))
@@ -150,9 +150,9 @@ func (fluid *workspace) stabilityLimit() (float64, error) {
 		thermal = math.Max(thermal, 12*d.KThermal/(r*d.CV*dx*dx))
 	}
 	speed := 0.0
-	if fluid.particles > 0 {
-		v := fluid.vel.Float32Slice()
-		for i := 0; i < fluid.particles; i++ {
+	if workspace.particles > 0 {
+		v := workspace.vel.Float32Slice()
+		for i := 0; i < workspace.particles; i++ {
 			s := 0.0
 			for a := 0; a < 3; a++ {
 				s += float64(v[3*i+a]) * float64(v[3*i+a])
@@ -160,14 +160,14 @@ func (fluid *workspace) stabilityLimit() (float64, error) {
 			speed = math.Max(speed, math.Sqrt(s))
 		}
 	}
-	phaseRate := fluid.lastPhaseRate
-	if fluid.particles > 0 {
-		for _, w := range fluid.omega.Float32Slice()[:fluid.particles] {
+	phaseRate := workspace.lastPhaseRate
+	if workspace.particles > 0 {
+		for _, w := range workspace.omega.Float32Slice()[:workspace.particles] {
 			phaseRate = math.Max(phaseRate, math.Abs(float64(w)))
 		}
 	}
-	p := fluid.physics
-	h := &fluid.health.Integrator
+	p := workspace.physics
+	h := &workspace.health.Integrator
 	h.HyperbolicDT = diagnosticBound(hyp, p.CFL)
 	h.ViscousDT = diagnosticBound(visc, p.CFL)
 	h.ThermalDT = diagnosticBound(thermal, p.CFL)
@@ -184,66 +184,66 @@ func (fluid *workspace) stabilityLimit() (float64, error) {
 	if speed > 0 {
 		bound = math.Min(bound, p.ParticleCells*dx/speed)
 	}
-	if fluid.physics.Contacts.Enabled {
-		limit, err := fluid.contactRates()
+	if workspace.physics.Contacts.Enabled {
+		limit, err := workspace.contactRates()
 		if err != nil {
 			return 0, err
 		}
 		bound = math.Min(bound, limit)
-		fluid.health.Integrator.ContactDT = limit
+		workspace.health.Integrator.ContactDT = limit
 	}
 	return bound, nil
 }
-func (fluid *workspace) gasDual(dt float32) error {
-	gravityBefore := fluid.health.Sources.GravityWork
+func (workspace *workspace) gasDual(dt float32) error {
+	gravityBefore := workspace.health.Sources.GravityWork
 	fieldBefore := 0.0
-	before := sumHydroEnergy(fluid.hydro.Float32Slice(), fluid.domain.GridSpacing())
-	if fluid.physics.GravityG > 0 {
-		fluid.gravityKickWork.Zero()
-		priorField := fluid.health.Sources.GravityFieldEnergy
-		if err := fluid.gravityKick(.5 * dt); err != nil {
+	before := sumHydroEnergy(workspace.hydro.Float32Slice(), workspace.domain.GridSpacing())
+	if workspace.physics.GravityG > 0 {
+		workspace.gravityKickWork.Zero()
+		priorField := workspace.health.Sources.GravityFieldEnergy
+		if err := workspace.gravityKick(.5 * dt); err != nil {
 			return err
 		}
-		fieldBefore = fluid.health.Sources.GravityFieldEnergy
-		copy(fluid.gravityPrior.UInt32Slice(), fluid.gravity.UInt32Slice())
-		copy(fluid.gravityFluxBase.UInt32Slice(), fluid.hydro.UInt32Slice())
+		fieldBefore = workspace.health.Sources.GravityFieldEnergy
+		copy(workspace.gravityPrior.UInt32Slice(), workspace.gravity.UInt32Slice())
+		copy(workspace.gravityFluxBase.UInt32Slice(), workspace.hydro.UInt32Slice())
 		// Rebuilding after particle transport/remapping or exogenous changes is
 		// recorded separately from the self-gravity hydro bracket residual.
-		fluid.health.Sources.GravityRebuildChange += fieldBefore - priorField
+		workspace.health.Sources.GravityRebuildChange += fieldBefore - priorField
 	}
-	if err := fluid.engine.HydroAdvance(fluid.hydro, fluid.hydroOut, fluid.hydroWork1, fluid.hydroWork2, fluid.hydroStatus, fluid.acceleration, fluid.hydroParams(dt)); err != nil {
+	if err := workspace.engine.HydroAdvance(workspace.hydro, workspace.hydroOut, workspace.hydroWork1, workspace.hydroWork2, workspace.hydroStatus, workspace.acceleration, workspace.hydroParams(dt)); err != nil {
 		return err
 	}
-	if err := checkFlags("gas RK2", fluid.hydroStatus, fluid.domain.CellCount()); err != nil {
+	if err := checkFlags("gas RK2", workspace.hydroStatus, workspace.domain.CellCount()); err != nil {
 		return err
 	}
-	if err := fluid.engine.HydroBudget(fluid.hydro, fluid.hydroWork1, fluid.hydroDiagnostics, fluid.hydroStatus, fluid.hydroParams(dt)); err != nil {
+	if err := workspace.engine.HydroBudget(workspace.hydro, workspace.hydroWork1, workspace.hydroDiagnostics, workspace.hydroStatus, workspace.hydroParams(dt)); err != nil {
 		return err
 	}
-	budget := fluid.hydroDiagnostics.Float32Slice()
-	vol := math.Pow(fluid.domain.GridSpacing(), 3)
-	for i := 0; i < fluid.domain.CellCount(); i++ {
-		fluid.health.Sources.ViscousToHeat += float64(budget[2*i]) * vol
-		fluid.health.Sources.ThermalConductionNet += float64(budget[2*i+1]) * vol
+	budget := workspace.hydroDiagnostics.Float32Slice()
+	vol := math.Pow(workspace.domain.GridSpacing(), 3)
+	for i := 0; i < workspace.domain.CellCount(); i++ {
+		workspace.health.Sources.ViscousToHeat += float64(budget[2*i]) * vol
+		workspace.health.Sources.ThermalConductionNet += float64(budget[2*i+1]) * vol
 	}
-	copy(fluid.hydro.UInt32Slice(), fluid.hydroOut.UInt32Slice())
-	if fluid.physics.GravityG > 0 {
-		if err := fluid.gravityKick(.5 * dt); err != nil {
+	copy(workspace.hydro.UInt32Slice(), workspace.hydroOut.UInt32Slice())
+	if workspace.physics.GravityG > 0 {
+		if err := workspace.gravityKick(.5 * dt); err != nil {
 			return err
 		}
-		beforeCompatible := sumHydroEnergy(fluid.hydro.Float32Slice(), fluid.domain.GridSpacing())
-		if err := fluid.engine.GravityCompatible(fluid.gravityFluxBase, fluid.hydroWork1, fluid.hydro, fluid.gravityPrior, fluid.gravity, fluid.gravityKickWork, fluid.hydroOut, fluid.hydroStatus, fluid.hydroParams(dt)); err != nil {
+		beforeCompatible := sumHydroEnergy(workspace.hydro.Float32Slice(), workspace.domain.GridSpacing())
+		if err := workspace.engine.GravityCompatible(workspace.gravityFluxBase, workspace.hydroWork1, workspace.hydro, workspace.gravityPrior, workspace.gravity, workspace.gravityKickWork, workspace.hydroOut, workspace.hydroStatus, workspace.hydroParams(dt)); err != nil {
 			return err
 		}
-		copy(fluid.hydro.UInt32Slice(), fluid.hydroOut.UInt32Slice())
-		fluid.health.Sources.GravityWork += sumHydroEnergy(fluid.hydro.Float32Slice(), fluid.domain.GridSpacing()) - beforeCompatible
+		copy(workspace.hydro.UInt32Slice(), workspace.hydroOut.UInt32Slice())
+		workspace.health.Sources.GravityWork += sumHydroEnergy(workspace.hydro.Float32Slice(), workspace.domain.GridSpacing()) - beforeCompatible
 	}
-	after := sumHydroEnergy(fluid.hydro.Float32Slice(), fluid.domain.GridSpacing())
-	fluid.health.Sources.GasEnergyResidual += after - before - (fluid.health.Sources.GravityWork - gravityBefore)
-	if fluid.physics.GravityG > 0 {
-		fluid.health.Sources.GravityBalanceResidual += fluid.health.Sources.GravityWork - gravityBefore + fluid.health.Sources.GravityFieldEnergy - fieldBefore
+	after := sumHydroEnergy(workspace.hydro.Float32Slice(), workspace.domain.GridSpacing())
+	workspace.health.Sources.GasEnergyResidual += after - before - (workspace.health.Sources.GravityWork - gravityBefore)
+	if workspace.physics.GravityG > 0 {
+		workspace.health.Sources.GravityBalanceResidual += workspace.health.Sources.GravityWork - gravityBefore + workspace.health.Sources.GravityFieldEnergy - fieldBefore
 	}
-	return fluid.exportDual()
+	return workspace.exportDual()
 }
 func sumHydroEnergy(u []float32, dx float64) float64 {
 	s := 0.0
@@ -252,12 +252,12 @@ func sumHydroEnergy(u []float32, dx float64) float64 {
 	}
 	return s * dx * dx * dx
 }
-func (fluid *workspace) particleTotals() (mass, thermal, osc, kinetic float64, momentum [3]float64) {
-	if fluid.particles == 0 {
+func (workspace *workspace) particleTotals() (mass, thermal, osc, kinetic float64, momentum [3]float64) {
+	if workspace.particles == 0 {
 		return
 	}
-	m, q, e, v := fluid.mass.Float32Slice(), fluid.heat.Float32Slice(), fluid.oscEnergy.Float32Slice(), fluid.vel.Float32Slice()
-	for i := 0; i < fluid.particles; i++ {
+	m, q, e, v := workspace.mass.Float32Slice(), workspace.heat.Float32Slice(), workspace.oscEnergy.Float32Slice(), workspace.vel.Float32Slice()
+	for i := 0; i < workspace.particles; i++ {
 		mi := float64(m[i])
 		mass += mi
 		thermal += float64(q[i])
@@ -270,34 +270,34 @@ func (fluid *workspace) particleTotals() (mass, thermal, osc, kinetic float64, m
 	}
 	return
 }
-func (fluid *workspace) gatherDual(dt float32) error {
-	if fluid.particles == 0 {
+func (workspace *workspace) gatherDual(dt float32) error {
+	if workspace.particles == 0 {
 		return nil
 	}
-	if err := fluid.engine.GatherDual(fluid.pos, fluid.mass, fluid.posOut, fluid.velOut, fluid.heatOut, fluid.hydro, fluid.particleStatus, fluid.particles, fluid.hydroParams(dt)); err != nil {
+	if err := workspace.engine.GatherDual(workspace.pos, workspace.mass, workspace.posOut, workspace.velOut, workspace.heatOut, workspace.hydro, workspace.particleStatus, workspace.particles, workspace.hydroParams(dt)); err != nil {
 		return err
 	}
-	if err := checkFlags("PIC gather", fluid.particleStatus, fluid.particles); err != nil {
+	if err := checkFlags("PIC gather", workspace.particleStatus, workspace.particles); err != nil {
 		return err
 	}
-	if err := fluid.engine.RemapConservative(fluid.hydro, fluid.posOut, fluid.mass, fluid.velOut, fluid.heatOut, fluid.materialEnergyOut, fluid.remapReport, fluid.particleStatus, fluid.particles, fluid.hydroParams(dt), float32(fluid.physics.RemapWidthCells), float32(fluid.physics.RemapTolerance), fluid.physics.RemapIterations, float32(fluid.physics.GravityG)); err != nil {
+	if err := workspace.engine.RemapConservative(workspace.hydro, workspace.posOut, workspace.mass, workspace.velOut, workspace.heatOut, workspace.materialEnergyOut, workspace.remapReport, workspace.particleStatus, workspace.particles, workspace.hydroParams(dt), float32(workspace.physics.RemapWidthCells), float32(workspace.physics.RemapTolerance), workspace.physics.RemapIterations, float32(workspace.physics.GravityG)); err != nil {
 		return err
 	}
-	report := fluid.remapReport.Float32Slice()
-	fluid.health.Remap = RemapHealth{MaxMarginalResidual: float64(report[0]), Iterations: int(report[1]), MassRoundoffScale: float64(report[2]), MixingToAuxiliary: float64(report[3]), EnergyResidual: float64(report[4]), MomentumResidual: [3]float64{float64(report[5]), float64(report[6]), float64(report[7])}, WidthCells: fluid.physics.RemapWidthCells}
-	fluid.health.Sources.RemapMixingToAuxiliary += float64(report[3])
-	if fluid.physics.GravityG > 0 {
-		fluid.health.Sources.GravityRemapWork += float64(report[8])
-		fluid.health.Sources.GravityFieldEnergy = float64(report[10])
-		fluid.health.Sources.GravityRemapResidual += float64(report[11])
+	report := workspace.remapReport.Float32Slice()
+	workspace.health.Remap = RemapHealth{MaxMarginalResidual: float64(report[0]), Iterations: int(report[1]), MassRoundoffScale: float64(report[2]), MixingToAuxiliary: float64(report[3]), EnergyResidual: float64(report[4]), MomentumResidual: [3]float64{float64(report[5]), float64(report[6]), float64(report[7])}, WidthCells: workspace.physics.RemapWidthCells}
+	workspace.health.Sources.RemapMixingToAuxiliary += float64(report[3])
+	if workspace.physics.GravityG > 0 {
+		workspace.health.Sources.GravityRemapWork += float64(report[8])
+		workspace.health.Sources.GravityFieldEnergy = float64(report[10])
+		workspace.health.Sources.GravityRemapResidual += float64(report[11])
 	}
-	n := fluid.particles
+	n := workspace.particles
 	// Material grid state is an intermediate representation. Its remap error is
 	// exposed as NUMERICAL discrepancy, never booked as an external source.
 	gridMass, gridEnergy := 0.0, 0.0
 	var gridP [3]float64
-	u := fluid.hydro.Float32Slice()
-	vol := math.Pow(fluid.domain.GridSpacing(), 3)
+	u := workspace.hydro.Float32Slice()
+	vol := math.Pow(workspace.domain.GridSpacing(), 3)
 	for i := 0; i < len(u); i += 6 {
 		gridMass += float64(u[i]) * vol
 		gridEnergy += float64(u[i+4]) * vol
@@ -305,14 +305,14 @@ func (fluid *workspace) gatherDual(dt float32) error {
 			gridP[a] += float64(u[i+1+a]) * vol
 		}
 	}
-	copy(fluid.pos.Float32Slice()[:3*n], fluid.posOut.Float32Slice()[:3*n])
-	copy(fluid.vel.Float32Slice()[:3*n], fluid.velOut.Float32Slice()[:3*n])
-	copy(fluid.heat.Float32Slice()[:n], fluid.heatOut.Float32Slice()[:n])
-	copy(fluid.materialEnergy.Float32Slice()[:n], fluid.materialEnergyOut.Float32Slice()[:n])
-	mass, _, _, _, mom := fluid.particleTotals()
-	s := &fluid.health.Sources
+	copy(workspace.pos.Float32Slice()[:3*n], workspace.posOut.Float32Slice()[:3*n])
+	copy(workspace.vel.Float32Slice()[:3*n], workspace.velOut.Float32Slice()[:3*n])
+	copy(workspace.heat.Float32Slice()[:n], workspace.heatOut.Float32Slice()[:n])
+	copy(workspace.materialEnergy.Float32Slice()[:n], workspace.materialEnergyOut.Float32Slice()[:n])
+	mass, _, _, _, mom := workspace.particleTotals()
+	s := &workspace.health.Sources
 	s.PICRemapMass += mass - gridMass
-	s.PICRemapEnergy += fluid.materialTotal() - gridEnergy - float64(report[8])
+	s.PICRemapEnergy += workspace.materialTotal() - gridEnergy - float64(report[8])
 	for a := 0; a < 3; a++ {
 		s.PICRemapMomentum[a] += mom[a] - gridP[a]
 	}
@@ -322,18 +322,18 @@ func (fluid *workspace) gatherDual(dt float32) error {
 // Gravity uses a solved periodic mean-subtracted Poisson field. Kicks update
 // total energy by the EXACT kinetic-energy increment and leave auxiliary heat
 // unchanged. Two kicks bracket hydro; no hidden forcing in PIC gather.
-func (fluid *workspace) gravityKick(dt float32) error {
-	p := fluid.hydroParams(dt)
-	if err := fluid.engine.Poisson(fluid.hydro, fluid.poissonState, fluid.gravity, fluid.acceleration, fluid.hydroStatus, p, float32(fluid.physics.GravityG)); err != nil {
+func (workspace *workspace) gravityKick(dt float32) error {
+	p := workspace.hydroParams(dt)
+	if err := workspace.engine.Poisson(workspace.hydro, workspace.poissonState, workspace.gravity, workspace.acceleration, workspace.hydroStatus, p, float32(workspace.physics.GravityG)); err != nil {
 		return err
 	}
-	if err := checkFlags("Poisson", fluid.hydroStatus, fluid.domain.CellCount()); err != nil {
+	if err := checkFlags("Poisson", workspace.hydroStatus, workspace.domain.CellCount()); err != nil {
 		return err
 	}
-	u, g := fluid.hydro.Float32Slice(), fluid.acceleration.Float32Slice()
-	phi := fluid.gravity.Float32Slice()
+	u, g := workspace.hydro.Float32Slice(), workspace.acceleration.Float32Slice()
+	phi := workspace.gravity.Float32Slice()
 	fieldEnergy := 0.0
-	d := fluid.domain
+	d := workspace.domain
 	vol := math.Pow(d.GridSpacing(), 3)
 	for x := 0; x < d.GridX; x++ {
 		for y := 0; y < d.GridY; y++ {
@@ -344,31 +344,31 @@ func (fluid *workspace) gravityKick(dt float32) error {
 			}
 		}
 	}
-	fluid.health.Sources.GravityFieldEnergy = fieldEnergy
+	workspace.health.Sources.GravityFieldEnergy = fieldEnergy
 	rate := 0.0
-	for i := 0; i < fluid.domain.CellCount(); i++ {
+	for i := 0; i < workspace.domain.CellCount(); i++ {
 		a2 := 0.0
 		for a := 0; a < 3; a++ {
 			a2 += float64(g[3*i+a]) * float64(g[3*i+a])
 		}
 		rate = math.Max(rate, math.Sqrt(a2))
 	}
-	if .5*rate*float64(2*dt)*float64(2*dt) > fluid.physics.ParticleCells*fluid.domain.GridSpacing() {
+	if .5*rate*float64(2*dt)*float64(2*dt) > workspace.physics.ParticleCells*workspace.domain.GridSpacing() {
 		return &CoupledStepError{"gravity displacement", -1, true, "gravity kick exceeds cell displacement criterion"}
 	}
-	before := sumHydroEnergy(u, fluid.domain.GridSpacing())
-	old := make([]float32, fluid.domain.CellCount())
+	before := sumHydroEnergy(u, workspace.domain.GridSpacing())
+	old := make([]float32, workspace.domain.CellCount())
 	for i := range old {
 		old[i] = u[6*i+4]
 	}
-	if err := fluid.engine.GravityKick(fluid.hydro, fluid.acceleration, fluid.hydroStatus, p); err != nil {
+	if err := workspace.engine.GravityKick(workspace.hydro, workspace.acceleration, workspace.hydroStatus, p); err != nil {
 		return err
 	}
-	if err := checkFlags("gravity kick", fluid.hydroStatus, fluid.domain.CellCount()); err != nil {
+	if err := checkFlags("gravity kick", workspace.hydroStatus, workspace.domain.CellCount()); err != nil {
 		return err
 	}
-	fluid.health.Sources.GravityWork += sumHydroEnergy(u, fluid.domain.GridSpacing()) - before
-	work := fluid.gravityKickWork.Float32Slice()
+	workspace.health.Sources.GravityWork += sumHydroEnergy(u, workspace.domain.GridSpacing()) - before
+	work := workspace.gravityKickWork.Float32Slice()
 	for i := range old {
 		work[i] += u[6*i+4] - old[i]
 	}
@@ -396,12 +396,12 @@ func (manifold *Manifold) SetPhysicsControls(p PhysicsControls) error {
 	return nil
 }
 
-func (fluid *workspace) materialTotal() float64 {
-	if fluid.particles == 0 {
+func (workspace *workspace) materialTotal() float64 {
+	if workspace.particles == 0 {
 		return 0
 	}
 	sum := 0.
-	for _, v := range fluid.materialEnergy.Float32Slice()[:fluid.particles] {
+	for _, v := range workspace.materialEnergy.Float32Slice()[:workspace.particles] {
 		sum += float64(v)
 	}
 	return sum
@@ -409,14 +409,14 @@ func (fluid *workspace) materialTotal() float64 {
 
 // A physical source changes conservative material energy and, separately, its
 // auxiliary reservoir. The float32 representation residual is always recorded.
-func (fluid *workspace) materialWork(i int, work float64) error {
-	data := fluid.materialEnergy.Float32Slice()
+func (workspace *workspace) materialWork(i int, work float64) error {
+	data := workspace.materialEnergy.Float32Slice()
 	old := float64(data[i])
 	next := float32(old + work)
 	if !finite(float64(next)) || next < 0 {
 		return &CoupledStepError{"material energy source", i, true, fmt.Sprintf("E=%g work=%g", old, work)}
 	}
 	data[i] = next
-	fluid.health.Sources.MaterialRoundoff += float64(next) - old - work
+	workspace.health.Sources.MaterialRoundoff += float64(next) - old - work
 	return nil
 }

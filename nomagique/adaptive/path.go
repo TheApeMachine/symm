@@ -1,43 +1,51 @@
 package adaptive
 
 import (
-	"errors"
 	"iter"
 	"slices"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 PathRetention owns the configured mean-shift policy for accepted observations.
 */
 type PathRetention struct {
-	err    error
+	*core.PrimitiveError
+
 	window core.Primitive
 	out    []temporal.Price
 }
 
-func NewPathRetention(window core.Primitive) core.Primitive {
-	return &PathRetention{window: window}
+func NewPathRetention(window core.Primitive) *PathRetention {
+	return &PathRetention{PrimitiveError: core.NewPrimitiveError(), window: window}
 }
 
-func (op *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (pathRetention *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		defer func() {
+
+			if pathRetention.window != nil {
+				if err := pathRetention.window.Error(); err != nil {
+					pathRetention.Error(err)
+				}
+			}
+		}()
 		for arriving := range in {
 			observations := *(*[]temporal.Price)(arriving)
 
 			if len(observations) == 0 {
-				op.err = errors.Join(op.err, core.ErrShape)
+				pathRetention.Error(core.ErrShape)
 				return
 			}
 
 			lastVal := observations[len(observations)-1].Value
 			var capacity float64
 
-			for wPtr := range op.window.Next(transport.NewOne(unsafe.Pointer(&lastVal)).Next(nil)) {
+			for wPtr := range pathRetention.window.Next(sequence.NewOne(unsafe.Pointer(&lastVal)).Next(nil)) {
 				w := *(*WindowReading)(wPtr)
 				capacity = w.Capacity
 			}
@@ -45,30 +53,14 @@ func (op *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			start := max(0, len(observations)-int(capacity))
 
 			if start == 0 {
-				op.out = observations
+				pathRetention.out = observations
 			} else {
-				op.out = slices.Clone(observations[start:])
+				pathRetention.out = slices.Clone(observations[start:])
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&pathRetention.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *PathRetention) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.window != nil {
-		if err := op.window.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

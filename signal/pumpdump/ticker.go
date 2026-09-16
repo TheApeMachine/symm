@@ -3,18 +3,19 @@ package pumpdump
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/errnie"
 	"iter"
 	"math"
 	"strconv"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tickerInput struct {
@@ -60,7 +61,7 @@ func (op *tickerPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 
 			var reading adaptive.BaselineReading
-			for rPtr := range op.baseline.Next(transport.NewOne(unsafe.Pointer(&relativeSpread)).Next(nil)) {
+			for rPtr := range op.baseline.Next(sequence.NewOne(unsafe.Pointer(&relativeSpread)).Next(nil)) {
 				reading = *(*adaptive.BaselineReading)(rPtr)
 			}
 
@@ -190,7 +191,7 @@ func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float
 
 	pipeInput := tickerInput{Bid: bid, Ask: ask}
 
-	for out := range ticker.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+	for out := range ticker.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*tickerResult)(out)
 
 		m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)

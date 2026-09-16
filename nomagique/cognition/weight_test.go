@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestPackedWeightRecord(t *testing.T) {
@@ -28,7 +28,7 @@ func TestWeightUnpacks(t *testing.T) {
 		unpack := NewWeight()
 		var unpacked PackedWeight
 
-		for out := range unpack.Next(transport.NewValues(WeightRecord(encoded[:])).Next(nil)) {
+		for out := range unpack.Next(sequence.NewValues(WeightRecord(encoded[:])).Next(nil)) {
 			unpacked = *(*PackedWeight)(out)
 		}
 
@@ -40,7 +40,7 @@ func TestWeightUnpacks(t *testing.T) {
 		unpack := NewWeight()
 		short := WeightRecord(make([]byte, 8))
 
-		for range unpack.Next(transport.NewValues(short).Next(nil)) {
+		for range unpack.Next(sequence.NewValues(short).Next(nil)) {
 		}
 
 		So(unpack.Error(), ShouldNotBeNil)
@@ -92,7 +92,7 @@ func TestKeyLayout(t *testing.T) {
 		}
 
 		for index := range commands {
-			for out := range keys.Next(transport.NewOne(unsafe.Pointer(&commands[index])).Next(nil)) {
+			for out := range keys.Next(sequence.NewOne(unsafe.Pointer(&commands[index])).Next(nil)) {
 				results = append(results, *(*KeyResult)(out))
 			}
 		}
@@ -112,7 +112,7 @@ func TestKeyLayout(t *testing.T) {
 		keys := NewKey()
 		command := KeyCommand{}
 
-		for range keys.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)) {
+		for range keys.Next(sequence.NewOne(unsafe.Pointer(&command)).Next(nil)) {
 		}
 
 		So(keys.Error(), ShouldNotBeNil)

@@ -15,8 +15,8 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
-	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmrelation "github.com/theapemachine/symm/nomagique/statistic/relation"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -97,15 +97,15 @@ lookup keys below are built from these selectors once during package setup, so
 runtime reads and generated metric lineage cannot drift into separate names.
 */
 var forcingInputs = struct {
-	Buy  relation.Selector
-	Sell relation.Selector
+	Buy  nmrelation.Selector
+	Sell nmrelation.Selector
 }{
-	Buy: relation.Selector{
+	Buy: nmrelation.Selector{
 		Source: "hawkes",
 		Metric: "excitation_fraction",
 		Side:   "buy",
 	},
-	Sell: relation.Selector{
+	Sell: nmrelation.Selector{
 		Source: "hawkes",
 		Metric: "excitation_fraction",
 		Side:   "sell",

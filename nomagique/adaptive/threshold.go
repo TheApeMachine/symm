@@ -1,13 +1,12 @@
 package adaptive
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -15,7 +14,8 @@ Threshold composes a moment estimator with a dispersion coefficient.
 A source with no dispersion has threshold one.
 */
 type Threshold struct {
-	err         error
+	*core.PrimitiveError
+
 	moments     core.Primitive
 	coefficient core.Primitive
 	out         float64
@@ -24,62 +24,53 @@ type Threshold struct {
 func NewThreshold(
 	moments core.Primitive,
 	coefficient core.Primitive,
-) core.Primitive {
-	return &Threshold{
-		moments:     moments,
+) *Threshold {
+	return &Threshold{PrimitiveError: core.NewPrimitiveError(), moments: moments,
 		coefficient: coefficient,
 	}
 }
 
-func (op *Threshold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (threshold *Threshold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for readingPtr := range op.moments.Next(in) {
+		defer func() {
+
+			if threshold.moments != nil {
+				if err := threshold.moments.Error(); err != nil {
+					threshold.Error(err)
+				}
+			}
+
+			if threshold.coefficient != nil {
+				if err := threshold.coefficient.Error(); err != nil {
+					threshold.Error(err)
+				}
+			}
+		}()
+		for readingPtr := range threshold.moments.Next(in) {
 			current := *(*statistic.MomentReading)(readingPtr)
-			coeffValEval := transport.NewEvaluate(op.coefficient)
+			coeffValEval := threshold.coefficient
 			var coeffVal float64
 
-			for out := range coeffValEval.Next(transport.NewValues(current.Count).Next(nil)) {
+			for out := range coeffValEval.Next(sequence.NewValues(current.Count).Next(nil)) {
 				coeffVal = *(*float64)(out)
 			}
 
 			err := coeffValEval.Error()
 
 			if err != nil {
-				op.err = errors.Join(op.err, err)
+				threshold.Error(err)
 				return
 			}
 
 			if current.Dispersion > 0 {
-				op.out = current.Dispersion * coeffVal
+				threshold.out = current.Dispersion * coeffVal
 			} else {
-				op.out = 1
+				threshold.out = 1
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&threshold.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Threshold) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.moments != nil {
-		if err := op.moments.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.coefficient != nil {
-		if err := op.coefficient.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

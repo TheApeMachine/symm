@@ -7,15 +7,16 @@ describe("LearningPerformanceBanner", () => {
 		const html = renderToStaticMarkup(<LearningPerformanceBanner />);
 
 		// Architecture
-		expect(html).toContain("PARALLEL LEARNERS (DECOUPLED)");
+		expect(html).toContain("VOLUME-CLOCK LEARNING");
 
 		// Pillar 1: Precursor model
 		expect(html).toContain("PRECURSOR COGNITION");
 		expect(html).toContain("Learned Situations");
 		expect(html).toContain('data-metric="decisions"');
 		expect(html).toContain('data-metric="steps"');
-		expect(html).toContain('data-metric="confidence"');
-		expect(html).toContain('data-metric="contrast"');
+		expect(html).toContain('data-metric="resolved"');
+		expect(html).toContain('data-metric="unsupported"');
+		expect(html).not.toContain('data-metric="confidence"');
 
 		// Pillar 2: Forward evaluation
 		expect(html).toContain("FORWARD EVALUATION");
@@ -23,10 +24,10 @@ describe("LearningPerformanceBanner", () => {
 		expect(html).toContain('data-metric="edge"');
 		expect(html).toContain('data-metric="win_rate"');
 		expect(html).toContain('data-metric="accuracy"');
-		expect(html).toContain('data-metric="resolved"');
+		expect(html).toContain('data-metric="evaluated"');
 
-		// Readiness gates
-		expect(html).toContain("Execution Readiness");
+		// Training does not claim execution readiness.
+		expect(html).toContain("Training only");
 		expect(html).toContain('data-l="gate-count"');
 	});
 });

@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -14,14 +13,14 @@ Atanh owns one field operation. What it hands over is the inverse hyperbolic
 tangent of each arrival, operating in-place on the wire pointer.
 */
 type Atanh struct {
-	err error
+	*core.PrimitiveError
 }
 
-func NewAtanh() core.Primitive {
-	return &Atanh{}
+func NewAtanh() *Atanh {
+	return &Atanh{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Atanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (atanh *Atanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			in := (*float64)(arriving)
@@ -32,14 +31,4 @@ func (op *Atanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Atanh) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

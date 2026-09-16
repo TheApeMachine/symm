@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestReadoutNext(t *testing.T) {
@@ -22,10 +22,10 @@ func TestReadoutNext(t *testing.T) {
 			{0.8, 5, 1, []float64{}, []float64{}, false, false},
 			{0.8, 5, 1, []float64{}, []float64{}, false, true},
 		} {
-			outEval := transport.NewEvaluate(node)
+			outEval := node
 			var out data.Readout
 
-			for pointer := range outEval.Next(transport.NewValues(data.ReadoutInput{
+			for pointer := range outEval.Next(sequence.NewValues(data.ReadoutInput{
 				QualityReading: data.QualityReading{
 					Maturity: test.maturity, SNR: test.snr, Estimated: true, SNRDefined: true,
 				},

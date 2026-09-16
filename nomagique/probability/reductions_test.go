@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestGeometricMeanComposition(t *testing.T) {
@@ -29,7 +29,7 @@ func TestGeometricMeanComposition(t *testing.T) {
 			{many, 1e-3},
 		} {
 			node := probability.NewGeometricMean()
-			out := tests.CollectSeq[float64](node.Next(transport.NewValues(test.values...).Next(nil)))
+			out := tests.CollectSeq[float64](node.Next(sequence.NewValues(test.values...).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldBeGreaterThan, 0)
 
@@ -42,7 +42,7 @@ func TestGeometricMeanComposition(t *testing.T) {
 			}
 		}
 
-		empty := tests.CollectSeq[float64](probability.NewGeometricMean().Next(transport.NewValues[float64]().Next(nil)))
+		empty := tests.CollectSeq[float64](probability.NewGeometricMean().Next(sequence.NewValue[float64]()))
 		So(len(empty), ShouldEqual, 0)
 	})
 }
@@ -60,10 +60,10 @@ func TestAmbiguityComposition(t *testing.T) {
 			{[]float64{1, 1, 2}, 1.5 * math.Ln2 / math.Log(3)},
 			{[]float64{.25, .25, .5}, 1.5 * math.Ln2 / math.Log(3)},
 		} {
-			outEval := transport.NewEvaluate(probability.NewAmbiguity())
+			outEval := probability.NewAmbiguity()
 			var out float64
 
-			for res := range outEval.Next(transport.NewValues(test.values...).Next(nil)) {
+			for res := range outEval.Next(sequence.NewValues(test.values...).Next(nil)) {
 				out = *(*float64)(res)
 			}
 
@@ -86,10 +86,10 @@ func TestSelectionComposition(t *testing.T) {
 			{[]float64{1, 9, 3}, 1, 9},
 			{[]float64{4, 4}, 0, 4},
 		} {
-			outEval := transport.NewEvaluate(node)
+			outEval := node
 			var out probability.ArgmaxResult
 
-			for res := range outEval.Next(transport.NewValues(test.values...).Next(nil)) {
+			for res := range outEval.Next(sequence.NewValues(test.values...).Next(nil)) {
 				out = *(*probability.ArgmaxResult)(res)
 			}
 
@@ -99,7 +99,7 @@ func TestSelectionComposition(t *testing.T) {
 			So(out.Value, ShouldEqual, test.value)
 		}
 
-		empty := tests.CollectSeq[probability.ArgmaxResult](node.Next(transport.NewValues[float64]().Next(nil)))
+		empty := tests.CollectSeq[probability.ArgmaxResult](node.Next(sequence.NewValue[float64]()))
 		So(node.Error(), ShouldBeNil)
 		So(len(empty), ShouldEqual, 0)
 	})
@@ -107,7 +107,7 @@ func TestSelectionComposition(t *testing.T) {
 
 func TestNewGeomean(t *testing.T) {
 	Convey("Geomean is the GeometricMean recurrence as a reduction Primitive", t, func() {
-		out := tests.CollectSeq[float64](probability.NewGeomean().Next(transport.NewValues(1.0, 2.0, 4.0).Next(nil)))
+		out := tests.CollectSeq[float64](probability.NewGeomean().Next(sequence.NewValues(1.0, 2.0, 4.0).Next(nil)))
 
 		So(len(out), ShouldEqual, 3)
 		So(out[0], ShouldAlmostEqual, 1, 1e-12)
@@ -118,7 +118,7 @@ func TestNewGeomean(t *testing.T) {
 
 func TestNewShannonAmbiguity(t *testing.T) {
 	Convey("ShannonAmbiguity yields the running normalized entropy after every arrival", t, func() {
-		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(transport.NewValues(1.0, 1.0, 1.0, 1.0).Next(nil)))
+		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(sequence.NewValues(1.0, 1.0, 1.0, 1.0).Next(nil)))
 
 		So(len(out), ShouldEqual, 4)
 		So(out[0], ShouldEqual, 0)
@@ -128,14 +128,14 @@ func TestNewShannonAmbiguity(t *testing.T) {
 	})
 
 	Convey("A skewed run converges to its normalized entropy", t, func() {
-		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(transport.NewValues(0.25, 0.25, 0.5).Next(nil)))
+		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(sequence.NewValues(0.25, 0.25, 0.5).Next(nil)))
 
 		So(len(out), ShouldEqual, 3)
 		So(out[2], ShouldAlmostEqual, 1.5*math.Ln2/math.Log(3), 1e-12)
 	})
 
 	Convey("A zero-total run stays at zero", t, func() {
-		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(transport.NewValues(0.0, 0.0).Next(nil)))
+		out := tests.CollectSeq[float64](probability.NewShannonAmbiguity().Next(sequence.NewValues(0.0, 0.0).Next(nil)))
 
 		So(out[0], ShouldEqual, 0)
 		So(out[1], ShouldEqual, 0)

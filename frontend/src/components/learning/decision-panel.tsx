@@ -9,13 +9,28 @@ export const ForwardPanel = () => (
 		/>
 		<Section.Body className="space-y-2 p-3">
 			<Typography.Mono>
-				Evaluated decisions: <span data-metric="resolved" data-format="integer">0</span> · Win rate: <span data-metric="win_rate" data-format="percent">0.0%</span> · Mean edge: <span data-metric="edge" data-format="basis">0.0 bp</span>
+				Evaluated decisions:{" "}
+				<span data-metric="evaluated" data-format="integer">
+					0
+				</span>{" "}
+				· Win rate:{" "}
+				<span data-metric="win_rate" data-format="percent">
+					0.0%
+				</span>{" "}
+				· Mean edge:{" "}
+				<span data-metric="edge" data-format="basis">
+					0.0 bp
+				</span>
 			</Typography.Mono>
 			<Typography.Mono>
-				Prediction accuracy: <span data-metric="accuracy" data-format="percent">0.0%</span>
+				Prediction accuracy:{" "}
+				<span data-metric="accuracy" data-format="percent">
+					0.0%
+				</span>
 			</Typography.Mono>
 			<Typography.Mono tone="f4">
-				Continuous causal evaluation streams verified predictions against honest market outcomes.
+				Continuous causal evaluation streams verified predictions against honest
+				market outcomes.
 			</Typography.Mono>
 		</Section.Body>
 	</Section>
@@ -29,7 +44,14 @@ export const ImpulsePanel = () => (
 		/>
 		<Section.Body className="p-3">
 			<Typography.Mono>
-				<span data-metric="ambiguity" data-format="spread">Spread 0.000</span> · <span data-metric="surprisal" data-format="surprisal">Surprisal 0.00 nat</span>
+				Producer inputs:{" "}
+				<span data-metric="input_count" data-format="integer">
+					0
+				</span>{" "}
+				· Invalid inputs:{" "}
+				<span data-metric="invalid_inputs" data-format="integer">
+					0
+				</span>
 			</Typography.Mono>
 		</Section.Body>
 	</Section>
@@ -43,7 +65,14 @@ export const CandidatePanel = () => (
 		/>
 		<Section.Body className="p-3">
 			<Typography.Mono>
-				Policy decision: <span data-metric="action" data-format="action">WAIT</span> · Conf <span data-metric="confidence" data-format="percent">0.0%</span> · Contrast <span data-metric="contrast" data-format="bits">0.00 bits</span> · Edge <span data-metric="edge" data-format="basis">0.0 bp</span>
+				Policy decision:{" "}
+				<span data-metric="action" data-format="action">
+					—
+				</span>{" "}
+				· Quoted edge:{" "}
+				<span data-metric="edge" data-format="basis">
+					—
+				</span>
 			</Typography.Mono>
 		</Section.Body>
 	</Section>
@@ -57,10 +86,17 @@ export const InfluencePanel = () => (
 		/>
 		<Section.Body className="p-3">
 			<Typography.Mono>
-				Contrast <span data-metric="contrast" data-format="bits">0.00 bits</span> · <span data-metric="surprisal" data-format="surprisal">Surprisal 0.00 nat</span> · <span data-metric="ambiguity" data-format="spread">Spread 0.000</span>
+				Learned:{" "}
+				<span data-metric="decisions" data-format="integer">
+					0
+				</span>{" "}
+				· Unsupported:{" "}
+				<span data-metric="unsupported" data-format="integer">
+					0
+				</span>
 			</Typography.Mono>
 			<Typography.Mono tone="f4" className="mt-2">
-				Direct precursor associations formed across parallel cognitive learners.
+				Completed outcomes update their recorded precursor addresses.
 			</Typography.Mono>
 		</Section.Body>
 	</Section>

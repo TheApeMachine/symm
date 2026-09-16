@@ -5,7 +5,7 @@ import (
 	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestDivideNext(t *testing.T) {
@@ -21,7 +21,7 @@ func TestDivideNext(t *testing.T) {
 			pair := [2]float64{1, 0}
 			answers := 0
 
-			for range op.Next(transport.NewOne(unsafe.Pointer(&pair)).Next(nil)) {
+			for range op.Next(sequence.NewOne(unsafe.Pointer(&pair)).Next(nil)) {
 				answers++
 			}
 

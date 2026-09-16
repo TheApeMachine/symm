@@ -1,7 +1,6 @@
 package data
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"strconv"
@@ -9,7 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /* MetricProjection names an explicit field; Defined gates optional evidence. */
@@ -39,7 +38,8 @@ type ProjectionInput struct {
 Projection translates declared paths into the domain-facing measurement.
 */
 type Projection struct {
-	err       error
+	*core.PrimitiveError
+
 	finalizer core.Primitive
 	Source    string
 	Identity  func() (label string, at time.Time, from time.Time)
@@ -60,9 +60,8 @@ func NewProjection(
 	facts []FactProjection,
 	accepted []string,
 	rejection error,
-) core.Primitive {
-	return &Projection{
-		Source:    source,
+) *Projection {
+	return &Projection{PrimitiveError: core.NewPrimitiveError(), Source: source,
 		Identity:  identity,
 		Metrics:   metrics,
 		Facts:     facts,
@@ -75,15 +74,15 @@ func NewProjection(
 Next translates each arriving record into the domain-facing measurement and
 yields it.
 */
-func (op *Projection) Next(
+func (projection *Projection) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*ProjectionInput)(arriving)
-			op.out = op.project(*input)
+			projection.out = projection.project(*input)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&projection.out)) {
 				return
 			}
 		}
@@ -91,30 +90,17 @@ func (op *Projection) Next(
 }
 
 /*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Projection) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
 project translates the declared record into the domain-facing measurement.
 */
-func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
-	measurement := NewMeasurement(op.Source, map[string]Metric[float64]{})
+func (projection *Projection) project(input ProjectionInput) *Measurement[float64] {
+	measurement := NewMeasurement(projection.Source, map[string]Metric[float64]{})
 
-	if op.Identity != nil {
-		measurement.Label, measurement.At, measurement.From = op.Identity()
+	if projection.Identity != nil {
+		measurement.Label, measurement.At, measurement.From = projection.Identity()
 	}
 
-	if len(op.Accepted) != 0 && !flagged(input, op.Accepted) {
-		measurement.Err = op.Rejection
+	if len(projection.Accepted) != 0 && !flagged(input, projection.Accepted) {
+		measurement.Err = projection.Rejection
 
 		if measurement.Err == nil {
 			measurement.Err = fmt.Errorf("projection: observation not accepted")
@@ -123,7 +109,7 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 		return measurement
 	}
 
-	for _, metric := range op.Metrics {
+	for _, metric := range projection.Metrics {
 		if len(metric.Defined) != 0 && !flagged(input, metric.Defined) {
 			continue
 		}
@@ -135,10 +121,10 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 		}
 	}
 
-	if len(op.Facts) != 0 {
-		measurement.Metadata = make(map[string]string, len(op.Facts))
+	if len(projection.Facts) != 0 {
+		measurement.Metadata = make(map[string]string, len(projection.Facts))
 
-		for _, fact := range op.Facts {
+		for _, fact := range projection.Facts {
 			if len(fact.Defined) != 0 && !flagged(input, fact.Defined) {
 				continue
 			}
@@ -149,11 +135,11 @@ func (op *Projection) project(input ProjectionInput) *Measurement[float64] {
 		}
 	}
 
-	if op.finalizer == nil {
-		op.finalizer = NewFinalizer[float64]()
+	if projection.finalizer == nil {
+		projection.finalizer = NewFinalizer[float64]()
 	}
 
-	for range op.finalizer.Next(transport.NewValues(measurement).Next(nil)) {
+	for range projection.finalizer.Next(sequence.NewValues(measurement).Next(nil)) {
 	}
 
 	return measurement

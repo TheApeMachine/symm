@@ -1,7 +1,6 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -14,7 +13,7 @@ Geomean folds a run of values into their running geometric mean,
 exp(mean(log x)), handing the aggregate over after every arrival. It is the
 canonical composition of the GeometricMean recurrence.
 */
-func NewGeomean() core.Primitive {
+func NewGeomean() *GeometricMean {
 	return NewGeometricMean()
 }
 
@@ -25,7 +24,8 @@ total, divided by the entropy of an equal-mass distribution over the same
 count. A one-member run has zero ambiguity by definition.
 */
 type ShannonAmbiguity struct {
-	err    error
+	*core.PrimitiveError
+
 	values []float64
 	total  float64
 }
@@ -33,40 +33,27 @@ type ShannonAmbiguity struct {
 /*
 NewShannonAmbiguity instantiates the normalized-entropy reduction Primitive.
 */
-func NewShannonAmbiguity() core.Primitive {
-	return &ShannonAmbiguity{}
+func NewShannonAmbiguity() *ShannonAmbiguity {
+	return &ShannonAmbiguity{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next folds every arriving weight into the run and rewrites the arrival with
 the running normalized entropy of everything seen so far.
 */
-func (op *ShannonAmbiguity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (shannonAmbiguity *ShannonAmbiguity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			val := *(*float64)(arriving)
-			op.values = append(op.values, val)
-			op.total += val
-			*(*float64)(arriving) = ambiguity(op.values, op.total)
+			shannonAmbiguity.values = append(shannonAmbiguity.values, val)
+			shannonAmbiguity.total += val
+			*(*float64)(arriving) = ambiguity(shannonAmbiguity.values, shannonAmbiguity.total)
 
 			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *ShannonAmbiguity) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*

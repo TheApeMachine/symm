@@ -1,9 +1,10 @@
 package depthflow
 
 import (
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"testing"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"

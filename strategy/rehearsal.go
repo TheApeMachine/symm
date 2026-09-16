@@ -3,18 +3,22 @@ package strategy
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"iter"
 	"slices"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/strategy/impulse"
 )
 
@@ -40,7 +44,10 @@ reads the shared trie and an atomic progress publication; it never waits here.
 */
 type Rehearsal struct {
 	ctx       context.Context
-	engine    *cognition.Engine
+	learn     *nomagique.Number
+	infer     *nomagique.Number
+	keys      [2][]byte
+	target    []byte
 	detector  *tables.StreamingDetector
 	space     *impulse.Map
 	precursor *Precursor
@@ -51,9 +58,35 @@ type Rehearsal struct {
 	records   []tables.ExcursionRecord
 }
 
-func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, engine *cognition.Engine) *Rehearsal {
-	return &Rehearsal{ctx: ctx, engine: engine, detector: tables.NewStreamingDetector(epoch, price),
+func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, model *store.Radix[float64]) *Rehearsal {
+	rehearsal := &Rehearsal{ctx: ctx, detector: tables.NewStreamingDetector(epoch, price),
 		space: impulse.NewMap(), precursor: NewPrecursor(), anchors: make(map[string]trainingAnchor)}
+	rehearsal.learn = nomagique.NewNumber(
+		transport.NewFan(
+			nomagique.NewNumber(
+				store.NewKeyQuery[float64](&rehearsal.keys[0], data.ActionIdentify, sequence.NewValues(0.0).Next(nil)), model,
+				transport.NewDiscard(),
+			),
+			nomagique.NewNumber(
+				store.NewKeyQuery[float64](&rehearsal.keys[1], data.ActionIdentify, sequence.NewValues(0.0).Next(nil)), model,
+				transport.NewDiscard(),
+			),
+			nomagique.NewNumber(
+				store.NewKeyQuery[float64](&rehearsal.target, data.ActionRead), model, sequence.
+					NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
+				store.NewKeyQuery[float64](&rehearsal.target, data.ActionWrite), model,
+			),
+		),
+	)
+	rehearsal.infer = nomagique.NewNumber(
+		store.NewKeyQuery[float64](&rehearsal.keys[1], data.ActionRead), model, sequence.
+			NewZip2[float64](nomagique.NewNumber(
+			store.NewKeyQuery[float64](&rehearsal.keys[0], data.ActionRead), model,
+		).Next(nil)), logic.NewGate(nomagique.NewNumber(
+			arithmetic.NewAdd(), sequence.NewZip2[float64](sequence.NewValues(0.0).Next(nil)), logic.NewGreater(),
+		), logic.NewGreater(), transport.NewDiscard()),
+	)
+	return rehearsal
 }
 
 // Step consumes the existing training publication, whose peers are its sealed inputs.
@@ -101,18 +134,22 @@ func (rehearsal *Rehearsal) Step(frame *data.Measurement[float64]) ([]tables.Exc
 }
 
 func (rehearsal *Rehearsal) capture(reading *grid.Impulse) error {
-	key := rehearsal.precursor.Encode(reading, false)
+	key := rehearsal.precursor.Encode(reading)
 	anchor := trainingAnchor{sequence: reading.SeqIdx, key: slices.Clone(key)}
-	command := cognition.Command{Evaluate: &cognition.Question{Context: key, Exact: true}}
-	pipeline := nomagique.NewNumber(rehearsal.engine)
-	input := func(yield func(unsafe.Pointer) bool) { yield(unsafe.Pointer(&command)) }
-
-	for output := range pipeline.Next(input) {
-		anchor.prediction = (*cognition.Evaluation)(output).WinnerClass
-	}
-
-	if err := pipeline.Error(); err != nil {
-		return errnie.Error(err)
+	if len(key) > 0 {
+		for index := range rehearsal.keys {
+			rehearsal.keys[index] = append(rehearsal.keys[index][:0], key...)
+			rehearsal.keys[index] = append(rehearsal.keys[index], byte(index))
+		}
+		for output := range rehearsal.infer.Next(nil) {
+			anchor.prediction = string(ActionWait)
+			if *(*bool)(output) {
+				anchor.prediction = string(ActionEnter)
+			}
+		}
+		if err := rehearsal.infer.Error(); err != nil {
+			return errnie.Error(err)
+		}
 	}
 
 	rehearsal.anchors[reading.Label] = anchor
@@ -159,21 +196,21 @@ func (rehearsal *Rehearsal) resolve(record tables.ExcursionRecord, exit *grid.Im
 		}
 	}
 
-	association := cognition.Association{Context: anchor.key, Class: []byte(action)}
-	if _, err := rehearsal.engine.Observe(association); err != nil {
+	for index := range rehearsal.keys {
+		rehearsal.keys[index] = append(rehearsal.keys[index][:0], anchor.key...)
+		rehearsal.keys[index] = append(rehearsal.keys[index], byte(index))
+	}
+	rehearsal.target = rehearsal.keys[0]
+	if action == ActionEnter {
+		rehearsal.target = rehearsal.keys[1]
+	}
+	for range rehearsal.learn.Next(nil) {
+	}
+	if err := rehearsal.learn.Error(); err != nil {
 		return errnie.Error(err)
 	}
-
 	rehearsal.reading.Learned++
-	// At a detected regime boundary the completed virtual position is closed.
-	// The holding bit keeps this lifecycle label separate from entry selection.
-	key := rehearsal.precursor.Encode(exit, true)
-	if len(key) > 0 {
-		if _, err := rehearsal.engine.Observe(cognition.Association{Context: key, Class: []byte(ActionExit)}); err != nil {
-			return errnie.Error(err)
-		}
-		rehearsal.reading.Learned++
-	}
+
 	return nil
 }
 
@@ -264,6 +301,10 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 		for _, record := range records {
 			through = max(through, record.ExitTick)
 		}
+		errnie.Info(fmt.Sprintf(
+			"training restore: replaying epoch %d through sequence %d (%d completed outcomes); live ingress remains closed",
+			run.Epoch, through, len(records),
+		))
 		records, frames, err := catalog.Replay(rehearsal.ctx, run.Epoch, through)
 		if err != nil {
 			return errnie.Error(err)
@@ -271,8 +312,14 @@ func (rehearsal *Rehearsal) Restore(catalog *tables.Catalog) error {
 		if err := rehearsal.Replay(records, frames); err != nil {
 			return err
 		}
+
+		errnie.Info(fmt.Sprintf("training restore: epoch %d complete", run.Epoch))
 	}
 	reading := rehearsal.reading
 	rehearsal.published.Store(&reading)
+	errnie.Info(fmt.Sprintf(
+		"training restore: complete; learned=%d resolved=%d unsupported=%d; continuing startup",
+		reading.Learned, reading.Resolved, reading.Unsupported,
+	))
 	return nil
 }

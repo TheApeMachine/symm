@@ -2,16 +2,17 @@ package sentiment
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/crosssection"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmcrosssection "github.com/theapemachine/symm/nomagique/statistic/crosssection"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -33,13 +34,12 @@ func NewTicker(ctx context.Context) *Ticker {
 
 	ticker := &Ticker{
 		pipeline: nomagique.NewNumber(
-			data.NewMetricGate("last"),
-			crosssection.NewUpdateMember("last", prices, changes),
-			crosssection.NewStampPeers(changes),
-			crosssection.NewChangeCounts(),
-			crosssection.NewChangeMedian(),
-			crosssection.NewChangeBaseline(),
-			data.NewFinalizer[float64](),
+			data.NewMetricGate("last"), nmcrosssection.
+				NewUpdateMember("last", prices, changes), nmcrosssection.
+				NewStampPeers(changes), nmcrosssection.
+				NewChangeCounts(), nmcrosssection.
+				NewChangeMedian(), nmcrosssection.
+				NewChangeBaseline(), data.NewFinalizer[float64](),
 		),
 	}
 
@@ -78,8 +78,8 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		measurement.Metrics["last"] = measurement.Metrics["last"].Write(quotedPrice(peer))
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.
+		NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

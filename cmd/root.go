@@ -171,6 +171,7 @@ var (
 			}
 
 			training := strategy.NewTraining(ctx, epoch, price)
+			uiTee.Grid = training.Grid
 			if err := training.Rehearsal.Restore(catalog); err != nil {
 				return err
 			}

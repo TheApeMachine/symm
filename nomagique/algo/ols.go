@@ -1,7 +1,6 @@
 package algo
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -42,7 +41,8 @@ ridge or invented rank: when the design matrix does not have full column
 rank the fit is undefined.
 */
 type OLS struct {
-	err    error
+	*core.PrimitiveError
+
 	solver core.Primitive
 	out    Fit
 }
@@ -52,53 +52,40 @@ NewOLS creates the ordinary-least-squares Primitive. The tolerance is
 retained for caller compatibility; the statistic layer's solver owns the
 numerical solve.
 */
-func NewOLS(tolerance float64) core.Primitive {
+func NewOLS(tolerance float64) *OLS {
 	_ = tolerance
 
-	return &OLS{solver: statistic.NewFitOLS()}
+	return &OLS{PrimitiveError: core.NewPrimitiveError(), solver: statistic.NewFitOLS()}
 }
 
 /*
 Next receives *Design payloads and yields a *Fit for each.
 */
-func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (ols *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			design := (*Design)(arriving)
 			request, err := flatten(design)
 
 			if err != nil {
-				op.Error(err)
+				ols.Error(err)
 				return
 			}
 
-			fit, err := op.fit(request)
+			fit, err := ols.fit(request)
 
 			if err != nil {
-				op.Error(err)
+				ols.Error(err)
 				return
 			}
 
-			op.out = fit
+			ols.out = fit
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&ols.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *OLS) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -149,14 +136,14 @@ func flatten(design *Design) (statistic.OLSRequest, error) {
 /*
 fit drives the statistic layer's solver for one request.
 */
-func (op *OLS) fit(request statistic.OLSRequest) (Fit, error) {
+func (ols *OLS) fit(request statistic.OLSRequest) (Fit, error) {
 	var solved statistic.OLSFit
 
-	for out := range op.solver.Next(single(&request)) {
+	for out := range ols.solver.Next(single(&request)) {
 		solved = *(*statistic.OLSFit)(out)
 	}
 
-	if err := op.solver.Error(); err != nil {
+	if err := ols.solver.Error(); err != nil {
 		return Fit{}, err
 	}
 

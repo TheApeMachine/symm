@@ -1,13 +1,12 @@
 package learning
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -92,7 +91,8 @@ That nested supervision is what makes each task row an honest forecast for its
 own horizon rather than a blend of several.
 */
 type TemporalLedger struct {
-	err        error
+	*core.PrimitiveError
+
 	maxHorizon int
 	manifold   core.Primitive
 	target     core.Primitive
@@ -116,27 +116,24 @@ func NewTemporalLedger(
 	maxHorizon int,
 	manifold core.Primitive,
 	target core.Primitive,
-) core.Primitive {
+) *TemporalLedger {
 	if maxHorizon <= 0 {
-		return &TemporalLedger{
-			err: fmt.Errorf(
-				"%w: ledger: horizon must be positive",
-				core.ErrDomain,
-			),
-		}
+		return &TemporalLedger{PrimitiveError: core.NewPrimitiveError(fmt.Errorf(
+			"%w: ledger: horizon must be positive",
+			core.ErrDomain,
+		),
+		)}
 	}
 
 	if manifold == nil || target == nil {
-		return &TemporalLedger{
-			err: fmt.Errorf(
-				"%w: ledger: requires a manifold and a target transform",
-				core.ErrShape,
-			),
-		}
+		return &TemporalLedger{PrimitiveError: core.NewPrimitiveError(fmt.Errorf(
+			"%w: ledger: requires a manifold and a target transform",
+			core.ErrShape,
+		),
+		)}
 	}
 
-	return &TemporalLedger{
-		maxHorizon: maxHorizon,
+	return &TemporalLedger{PrimitiveError: core.NewPrimitiveError(), maxHorizon: maxHorizon,
 		manifold:   manifold,
 		target:     target,
 		pending:    make(map[int64]*PendingReference),
@@ -149,10 +146,11 @@ func NewTemporalLedger(
 Next receives *LedgerCommand payloads and yields a *LedgerReading for each.
 Any invalid intent ends the stream with the error recorded.
 */
-func (op *TemporalLedger) Next(
+func (temporalLedger *TemporalLedger) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
+	if temporalLedger.Error() !=
+		nil {
 		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
@@ -161,7 +159,7 @@ func (op *TemporalLedger) Next(
 			command := (*LedgerCommand)(arriving)
 
 			if (command.Issue == nil) == (command.Resolve == nil) {
-				op.Error(fmt.Errorf(
+				temporalLedger.Error(fmt.Errorf(
 					"%w: ledger: command must set exactly one intent",
 					core.ErrShape,
 				))
@@ -169,24 +167,24 @@ func (op *TemporalLedger) Next(
 			}
 
 			if command.Issue != nil {
-				op.issue(command.Issue)
+				temporalLedger.issue(command.Issue)
 			}
 
 			if command.Resolve != nil {
-				if err := op.resolve(command.Resolve); err != nil {
-					op.Error(err)
+				if err := temporalLedger.resolve(command.Resolve); err != nil {
+					temporalLedger.Error(err)
 					return
 				}
 			}
 
-			op.out = LedgerReading{
-				Outcome:  op.last,
-				Resolved: op.resolved,
-				Total:    op.total,
-				Pending:  len(op.pending),
+			temporalLedger.out = LedgerReading{
+				Outcome:  temporalLedger.last,
+				Resolved: temporalLedger.resolved,
+				Total:    temporalLedger.total,
+				Pending:  len(temporalLedger.pending),
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&temporalLedger.out)) {
 				return
 			}
 		}
@@ -194,29 +192,16 @@ func (op *TemporalLedger) Next(
 }
 
 /*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *TemporalLedger) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
 issue records predictions and feature state for delayed evaluation. The ledger
 assigns its own strictly increasing sequence so resolution order is
 unambiguous.
 */
-func (op *TemporalLedger) issue(intent *IssueIntent) {
+func (temporalLedger *TemporalLedger) issue(intent *IssueIntent) {
 	if intent.Reference <= 0 || len(intent.Features) == 0 {
 		return
 	}
 
-	op.seq++
+	temporalLedger.seq++
 
 	horizon := intent.Horizon
 
@@ -224,19 +209,19 @@ func (op *TemporalLedger) issue(intent *IssueIntent) {
 		horizon = 1
 	}
 
-	if horizon > op.maxHorizon {
-		horizon = op.maxHorizon
+	if horizon > temporalLedger.maxHorizon {
+		horizon = temporalLedger.maxHorizon
 	}
 
-	op.pending[op.seq] = &PendingReference{
-		Seq:         op.seq,
+	temporalLedger.pending[temporalLedger.seq] = &PendingReference{
+		Seq:         temporalLedger.seq,
 		Reference:   intent.Reference,
 		Features:    append([]float64(nil), intent.Features...),
 		Predictions: append([]float64(nil), intent.Predictions...),
 		Horizon:     horizon,
 	}
-	op.references[op.seq] = intent.Reference
-	op.prune()
+	temporalLedger.references[temporalLedger.seq] = intent.Reference
+	temporalLedger.prune()
 }
 
 /*
@@ -247,18 +232,18 @@ so one sample per horizon is generated per step regardless of how the external
 step numbers jump or repeat. The outcome reports the row's own chosen horizon
 once its delayed target arrives.
 */
-func (op *TemporalLedger) resolve(intent *ResolveIntent) error {
-	if intent.Reference <= 0 || op.seq == 0 || op.maxHorizon < 1 {
+func (temporalLedger *TemporalLedger) resolve(intent *ResolveIntent) error {
+	if intent.Reference <= 0 || temporalLedger.seq == 0 || temporalLedger.maxHorizon < 1 {
 		return nil
 	}
 
-	refSeq := op.seq + 1
-	op.references[refSeq] = intent.Reference
+	refSeq := temporalLedger.seq + 1
+	temporalLedger.references[refSeq] = intent.Reference
 
 	var outcome *ResolutionOutcome
 
-	for key := op.oldest; key <= op.seq; key++ {
-		item, found := op.pending[key]
+	for key := temporalLedger.oldest; key <= temporalLedger.seq; key++ {
+		item, found := temporalLedger.pending[key]
 		if !found {
 			continue
 		}
@@ -267,8 +252,8 @@ func (op *TemporalLedger) resolve(intent *ResolveIntent) error {
 		// supervised up to the horizon whose reference has already arrived.
 		available := refSeq - item.Seq
 
-		if available > int64(op.maxHorizon) {
-			available = int64(op.maxHorizon)
+		if available > int64(temporalLedger.maxHorizon) {
+			available = int64(temporalLedger.maxHorizon)
 		}
 
 		if available <= int64(item.Resolved) {
@@ -276,13 +261,13 @@ func (op *TemporalLedger) resolve(intent *ResolveIntent) error {
 		}
 
 		for horizon := item.Resolved + 1; horizon <= int(available); horizon++ {
-			current, found := op.references[item.Seq+int64(horizon)]
+			current, found := temporalLedger.references[item.Seq+int64(horizon)]
 
 			if !found {
 				break
 			}
 
-			target, err := op.transform(current, item.Reference)
+			target, err := temporalLedger.transform(current, item.Reference)
 
 			if err != nil {
 				return fmt.Errorf("ledger: resolve failed for horizon %d: %w", horizon, err)
@@ -294,12 +279,12 @@ func (op *TemporalLedger) resolve(intent *ResolveIntent) error {
 				prediction = item.Predictions[horizon-1]
 			}
 
-			if err := op.observeTask(horizon, item.Features, prediction, target); err != nil {
+			if err := temporalLedger.observeTask(horizon, item.Features, prediction, target); err != nil {
 				return fmt.Errorf("ledger: resolve failed for horizon %d: %w", horizon, err)
 			}
 
 			item.Resolved = horizon
-			op.total++
+			temporalLedger.total++
 
 			if outcome == nil || horizon <= outcome.Horizon {
 				outcome = &ResolutionOutcome{
@@ -309,21 +294,21 @@ func (op *TemporalLedger) resolve(intent *ResolveIntent) error {
 					Error:      target - prediction,
 					Step:       intent.Step,
 				}
-				op.last = outcome
+				temporalLedger.last = outcome
 			}
 		}
 
-		if item.Resolved >= op.maxHorizon {
-			delete(op.pending, key)
-			op.resolved++
+		if item.Resolved >= temporalLedger.maxHorizon {
+			delete(temporalLedger.pending, key)
+			temporalLedger.resolved++
 		}
 	}
 
-	for op.oldest <= op.seq {
-		if _, found := op.pending[op.oldest]; found {
+	for temporalLedger.oldest <= temporalLedger.seq {
+		if _, found := temporalLedger.pending[temporalLedger.oldest]; found {
 			break
 		}
-		op.oldest++
+		temporalLedger.oldest++
 	}
 
 	return nil
@@ -333,11 +318,11 @@ func (op *TemporalLedger) resolve(intent *ResolveIntent) error {
 transform maps one resolved reference pair into its supervised target through
 the configured target primitive.
 */
-func (op *TemporalLedger) transform(current, past float64) (float64, error) {
-	evaluation := transport.NewEvaluate(op.target)
+func (temporalLedger *TemporalLedger) transform(current, past float64) (float64, error) {
+	evaluation := temporalLedger.target
 	var target float64
 
-	for out := range evaluation.Next(transport.NewValues(Observation{
+	for out := range evaluation.Next(sequence.NewValues(Observation{
 		Current: current,
 		Past:    past,
 	}).Next(nil)) {
@@ -354,15 +339,15 @@ func (op *TemporalLedger) transform(current, past float64) (float64, error) {
 /*
 observeTask forwards one supervised sample to the manifold's task head.
 */
-func (op *TemporalLedger) observeTask(
+func (temporalLedger *TemporalLedger) observeTask(
 	horizon int,
 	features []float64,
 	prediction float64,
 	target float64,
 ) error {
-	evaluation := transport.NewEvaluate(op.manifold)
+	evaluation := temporalLedger.manifold
 
-	for range evaluation.Next(transport.NewValues(ManifoldCommand{
+	for range evaluation.Next(sequence.NewValues(ManifoldCommand{
 		ObserveTask: &TaskIntent{
 			Horizon:    horizon,
 			Features:   features,
@@ -375,15 +360,15 @@ func (op *TemporalLedger) observeTask(
 	return evaluation.Error()
 }
 
-func (op *TemporalLedger) prune() {
-	if op.seq <= int64(op.maxHorizon) {
+func (temporalLedger *TemporalLedger) prune() {
+	if temporalLedger.seq <= int64(temporalLedger.maxHorizon) {
 		return
 	}
 
-	purgeBelow := op.seq - int64(op.maxHorizon)
-	for key := range op.references {
+	purgeBelow := temporalLedger.seq - int64(temporalLedger.maxHorizon)
+	for key := range temporalLedger.references {
 		if key < purgeBelow {
-			delete(op.references, key)
+			delete(temporalLedger.references, key)
 		}
 	}
 }

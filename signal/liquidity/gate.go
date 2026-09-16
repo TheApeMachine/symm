@@ -7,8 +7,8 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -57,7 +57,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			for _, value := range []float64{bid, ask, bidQty, askQty, bid * bidQty, ask * askQty} {
 				probe := value
 				var holds bool
-				for out := range op.finite.Next(transport.NewOne(unsafe.Pointer(&probe)).Next(nil)) {
+				for out := range op.finite.Next(sequence.NewOne(unsafe.Pointer(&probe)).Next(nil)) {
 					holds = *(*bool)(out)
 				}
 

@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -13,15 +12,16 @@ import (
 RatioTarget is the relative change, with an explicit nonzero past domain.
 */
 type RatioTarget struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewRatioTarget() core.Primitive {
-	return &RatioTarget{}
+func NewRatioTarget() *RatioTarget {
+	return &RatioTarget{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *RatioTarget) Next(
+func (ratioTarget *RatioTarget) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -31,25 +31,15 @@ func (op *RatioTarget) Next(
 			if math.IsNaN(sample.Current) || math.IsNaN(sample.Past) ||
 				math.IsInf(sample.Current, 0) || math.IsInf(sample.Past, 0) ||
 				sample.Past == 0 {
-				op.Error(core.ErrDomain)
+				ratioTarget.Error(core.ErrDomain)
 				return
 			}
 
-			op.out = sample.Current/sample.Past - 1
+			ratioTarget.out = sample.Current/sample.Past - 1
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&ratioTarget.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *RatioTarget) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

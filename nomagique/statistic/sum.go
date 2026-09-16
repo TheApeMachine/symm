@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,35 +11,26 @@ import (
 Sum owns the running arithmetic sum.
 */
 type Sum struct {
-	err   error
+	*core.PrimitiveError
+
 	total float64
 	out   float64
 }
 
-func NewSum() core.Primitive {
-	return &Sum{}
+func NewSum() *Sum {
+	return &Sum{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (sum *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			val := *(*float64)(arriving)
-			op.total += val
-			op.out = op.total
+			sum.total += val
+			sum.out = sum.total
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&sum.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Sum) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

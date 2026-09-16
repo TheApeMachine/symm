@@ -8,10 +8,72 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/tests/market"
 	"github.com/theapemachine/symm/tests/tablestest"
 )
+
+func TestRehearsalResolve(t *testing.T) {
+	Convey("Delayed labels update composed counts only after grading the frozen prediction", t, func() {
+		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
+		var context grid.Impulse
+
+		// Build the address from actual owner observations over rises and reversals.
+		for _, frame := range market.ImpulseTape("BTC/USD", 6) {
+			So(training.Grid.Step(frame), ShouldBeNil)
+			reading := training.Grid.Markets["BTC/USD"].Impulse
+
+			if len(reading.Regions) > 0 {
+				context = reading
+			}
+		}
+		So(len(context.Regions), ShouldBeGreaterThan, 0)
+		learner := training.Rehearsal
+		So(learner.capture(&context), ShouldBeNil)
+		So(learner.anchors[context.Label].prediction, ShouldEqual, "")
+
+		// These labels specify successive independent resolutions of the same context.
+		for index, clears := range []bool{true, false, false, true} {
+			context.SeqIdx++
+			record := tables.ExcursionRecord{Symbol: context.Label,
+				AnchorTick: context.SeqIdx - 1, ExitTick: context.SeqIdx,
+				ClearsFriction: clears, ProfitFraction: -0.01}
+
+			if clears {
+				record.ProfitFraction = 0.01
+			}
+			So(learner.resolve(record, &context), ShouldBeNil)
+			So(learner.reading.Learned, ShouldEqual, index+1)
+			So(learner.capture(&context), ShouldBeNil)
+			expected := []Action{ActionEnter, ActionWait, ActionWait, ActionWait}[index]
+			So(learner.anchors[context.Label].prediction, ShouldEqual, string(expected))
+		}
+
+		So(learner.reading.Predicted, ShouldEqual, 3)
+		So(learner.reading.Correct, ShouldEqual, 1)
+		So(learner.reading.Entered, ShouldEqual, 1)
+		So(learner.reading.Profitable, ShouldEqual, 0)
+		So(learner.reading.Return, ShouldEqual, -0.01)
+
+		Convey("An invalid exit does not change learned evidence", func() {
+			before := learner.reading
+			So(learner.resolve(tables.ExcursionRecord{Symbol: context.Label}, &context), ShouldNotBeNil)
+			So(learner.reading, ShouldResemble, before)
+		})
+
+		Convey("Another market cannot borrow this market's labels", func() {
+			context.Label = "ETH/USD"
+			So(learner.capture(&context), ShouldBeNil)
+			So(learner.anchors[context.Label].prediction, ShouldEqual, "")
+		})
+	})
+}
 
 func TestRehearsalStep(t *testing.T) {
 	Convey("Complete Tee boundaries resolve outcomes and train the same trie used by live inference", t, func() {
@@ -29,8 +91,10 @@ func TestRehearsalStep(t *testing.T) {
 		So(len(records), ShouldBeGreaterThan, 1)
 		So(training.Rehearsal.reading.Learned, ShouldBeGreaterThan, 0)
 		So(training.measurement.Metrics["decisions"].Raw, ShouldBeGreaterThan, 0)
-		So(training.engine.Len(), ShouldBeGreaterThan, 0)
-		So(training.space.Markets["BTC/USD"].Volume.String(), ShouldEqual,
+		key := training.Rehearsal.target
+		evidence := nomagique.NewNumber(store.NewKeyQuery[float64](&key, data.ActionRead), training.model)
+		So(sequence.Read[float64](evidence.Next(nil)), ShouldBeGreaterThan, 0)
+		So(training.Grid.Markets["BTC/USD"].Volume.String(), ShouldEqual,
 			training.Rehearsal.space.Markets["BTC/USD"].Volume.String())
 		Convey("Duplicate delivery is rejected without another learning update", func() {
 			before := training.Rehearsal.reading.Learned
@@ -83,19 +147,23 @@ func TestRehearsalReplay(t *testing.T) {
 		So(len(records), ShouldBeGreaterThan, 0)
 		restored := NewTraining(t.Context(), 2, market.TrainingPrice(t.Context()))
 		So(restored.Rehearsal.Replay(records, replay), ShouldBeNil)
-		So(restored.engine.Census(), ShouldResemble, training.engine.Census())
+		for _, key := range training.Rehearsal.keys {
+			source := nomagique.NewNumber(store.NewKeyQuery[float64](&key, data.ActionRead), training.model)
+			restoredRead := nomagique.NewNumber(store.NewKeyQuery[float64](&key, data.ActionRead), restored.model)
+			So(tests.CollectSeq[float64](restoredRead.Next(nil)), ShouldResemble, tests.CollectSeq[float64](source.Next(nil)))
+		}
 		So(restored.Rehearsal.reading, ShouldResemble, training.Rehearsal.reading)
 		Convey("Startup rebuilds only compatible completed training intervals", func() {
 			So(catalog.RecordRun(t.Context(), tables.Run{Epoch: 1, BuildID: TrainingFormat}), ShouldBeNil)
 			restarted := NewTraining(t.Context(), 3, market.TrainingPrice(t.Context()))
 			So(restarted.Rehearsal.Restore(catalog), ShouldBeNil)
-			So(restarted.engine.Census(), ShouldResemble, training.engine.Census())
+			So(restarted.Rehearsal.reading, ShouldResemble, training.Rehearsal.reading)
 		})
 		Convey("Repeated outcome identities fail rather than doubling evidence", func() {
 			duplicate := append(records, records[0])
 			fresh := NewTraining(t.Context(), 4, market.TrainingPrice(t.Context()))
 			So(fresh.Rehearsal.Replay(duplicate, trainingTape(frames)), ShouldNotBeNil)
-			So(fresh.engine.Len(), ShouldEqual, 0)
+			So(fresh.Rehearsal.reading.Learned, ShouldEqual, 0)
 		})
 	})
 }
@@ -104,8 +172,7 @@ func BenchmarkRehearsalStep(b *testing.B) {
 	training := NewTraining(b.Context(), 1, market.TrainingPrice(b.Context()))
 	frames := market.TrainingTape(6)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		frame := frames[index%len(frames)]
 		frame.SeqIdx = int64(index + 1)
 		metric := frame.Metrics["previous_input"]

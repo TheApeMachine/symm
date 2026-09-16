@@ -5,24 +5,24 @@ import (
 	"math"
 )
 
-func (fluid *workspace) sampleWaveDensity(x []float32) (float64, error) {
+func (workspace *workspace) sampleWaveDensity(x []float32) (float64, error) {
 	pos := [3]float64{float64(x[0]), float64(x[1]), float64(x[2])}
-	dims := [3]int{fluid.domain.GridX, fluid.domain.GridY, fluid.domain.GridZ}
-	re, _, err := samplePeriodicTrilinear(fluid.psiRe.Float32Slice(), pos, dims, fluid.domain.GridSpacing())
+	dims := [3]int{workspace.domain.GridX, workspace.domain.GridY, workspace.domain.GridZ}
+	re, _, err := samplePeriodicTrilinear(workspace.psiRe.Float32Slice(), pos, dims, workspace.domain.GridSpacing())
 	if err != nil {
 		return 0, err
 	}
-	im, _, err := samplePeriodicTrilinear(fluid.psiIm.Float32Slice(), pos, dims, fluid.domain.GridSpacing())
+	im, _, err := samplePeriodicTrilinear(workspace.psiIm.Float32Slice(), pos, dims, workspace.domain.GridSpacing())
 	if err != nil {
 		return 0, err
 	}
 	return re*re + im*im, nil
 }
 
-func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error {
-	n := int(fluid.domain.MaxModes)
-	acc := fluid.accums.Float32Slice()
-	ledger := fluid.waveLedger.Float32Slice()
+func (workspace *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error {
+	n := int(workspace.domain.MaxModes)
+	acc := workspace.accums.Float32Slice()
+	ledger := workspace.waveLedger.Float32Slice()
 	potential := make([]float32, n)
 	for i := 0; i < n; i++ {
 		for j := 0; j < 6; j++ {
@@ -31,19 +31,19 @@ func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error 
 			}
 		}
 		potential[i] = -acc[8*i+2]
-		if fluid.spectralPotential != nil {
-			potential[i] += fluid.spectralPotential.Float32Slice()[i]
+		if workspace.spectralPotential != nil {
+			potential[i] += workspace.spectralPotential.Float32Slice()[i]
 		}
 	}
-	dw := fluid.domain.binWidth()
+	dw := workspace.domain.binWidth()
 	energy := func(re, im, v []float32) (waveEnergy, error) {
 		var metric []float32
-		if fluid.spectralMetric != nil {
-			metric = fluid.spectralMetric.Float32Slice()[:n]
+		if workspace.spectralMetric != nil {
+			metric = workspace.spectralMetric.Float32Slice()[:n]
 		}
-		return spectralGeometryEnergy(re, im, v, metric, dw, fluid.physics.Units.Hbar, massEff, fluid.rates.gInteraction, 0)
+		return spectralGeometryEnergy(re, im, v, metric, dw, workspace.physics.Units.Hbar, massEff, workspace.rates.gInteraction, 0)
 	}
-	oldPotential := fluid.previousPotential[head*n : (head+1)*n]
+	oldPotential := workspace.previousPotential[head*n : (head+1)*n]
 	oldH, err := energy(oldRe, oldIm, oldPotential)
 	if err != nil {
 		return err
@@ -64,11 +64,11 @@ func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error 
 			return &CoupledStepError{"GPE stage ledger", stage, true, err.Error()}
 		}
 	}
-	s := &fluid.health.Sources
-	referencePotential := append([]float32(nil), fluid.reciprocalPotential.Float32Slice()[:n]...)
-	if fluid.spectralPotential != nil {
+	s := &workspace.health.Sources
+	referencePotential := append([]float32(nil), workspace.reciprocalPotential.Float32Slice()[:n]...)
+	if workspace.spectralPotential != nil {
 		for i := range referencePotential {
-			referencePotential[i] += fluid.spectralPotential.Float32Slice()[i]
+			referencePotential[i] += workspace.spectralPotential.Float32Slice()[i]
 		}
 	}
 	referenceH, err := energy(oldRe, oldIm, referencePotential)
@@ -87,7 +87,7 @@ func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error 
 	s.CoherenceDriveNorm += stages[2].Norm - stages[1].Norm
 	// Readouts sum independent heads. The mean head used for projection is not
 	// a replacement of their physical states, and is not added to this budget.
-	w := &fluid.health.Wave
+	w := &workspace.health.Wave
 	last := stages[2]
 	w.Norm += last.Norm
 	w.Kinetic += last.Kinetic
@@ -98,23 +98,23 @@ func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error 
 	return nil
 }
 
-func (fluid *workspace) measureHealth() error {
-	fluid.health.Implementation = PhysicsImplementation{ConservativeRemap: true, ReciprocalSpectralForce: true, NodeCheckedSpaceTimeGuidance: true, ProjectedSpatialWave: true, ExternalFieldDrive: true}
-	fluid.engine.Synchronize()
-	if err := fluid.validateInputs(); err != nil {
+func (workspace *workspace) measureHealth() error {
+	workspace.health.Implementation = PhysicsImplementation{ConservativeRemap: true, ReciprocalSpectralForce: true, NodeCheckedSpaceTimeGuidance: true, ProjectedSpatialWave: true, ExternalFieldDrive: true}
+	workspace.engine.Synchronize()
+	if err := workspace.validateInputs(); err != nil {
 		return err
 	}
-	if err := fluid.engine.HydroRates(fluid.hydro, fluid.acceleration, fluid.hydroDiagnostics, fluid.hydroStatus, fluid.hydroParams(1)); err != nil {
+	if err := workspace.engine.HydroRates(workspace.hydro, workspace.acceleration, workspace.hydroDiagnostics, workspace.hydroStatus, workspace.hydroParams(1)); err != nil {
 		return err
 	}
-	if err := checkFlags("gas health", fluid.hydroStatus, fluid.domain.CellCount()); err != nil {
+	if err := checkFlags("gas health", workspace.hydroStatus, workspace.domain.CellCount()); err != nil {
 		return err
 	}
-	d := fluid.domain
+	d := workspace.domain
 	dx := d.GridSpacing()
 	vol := dx * dx * dx
 	n := d.CellCount()
-	rho, mom, thermal, u, diag := fluid.rho.Float32Slice(), fluid.mom.Float32Slice(), fluid.energy.Float32Slice(), fluid.hydro.Float32Slice(), fluid.hydroDiagnostics.Float32Slice()
+	rho, mom, thermal, u, diag := workspace.rho.Float32Slice(), workspace.mom.Float32Slice(), workspace.energy.Float32Slice(), workspace.hydro.Float32Slice(), workspace.hydroDiagnostics.Float32Slice()
 	h := GasHealth{MinDensity: math.MaxFloat64, MinPressure: math.MaxFloat64, MinTemperature: math.MaxFloat64}
 	for z := 0; z < d.GridZ; z++ {
 		for y := 0; y < d.GridY; y++ {
@@ -145,7 +145,7 @@ func (fluid *workspace) measureHealth() error {
 				difference := math.Abs(float64(diag[8*i+2])) / math.Max(math.Abs(et), math.SmallestNonzeroFloat32)
 				h.DisagreementMean += difference
 				h.DisagreementMax = math.Max(h.DisagreementMax, difference)
-				if difference > fluid.physics.EtaPressure {
+				if difference > workspace.physics.EtaPressure {
 					h.DisagreementCount++
 				}
 				h.AuxiliaryFraction += float64(diag[8*i+7])
@@ -201,11 +201,11 @@ func (fluid *workspace) measureHealth() error {
 	h.AuxiliaryFraction /= float64(n)
 	h.VorticityRMS = math.Sqrt(h.VorticityRMS / float64(n))
 	h.StrainRMS = math.Sqrt(h.StrainRMS / float64(n))
-	fluid.health.Gas = h
-	_, fluid.health.ParticleThermal, fluid.health.ParticleOscillator, fluid.health.ParticleKinetic, _ = fluid.particleTotals()
-	fluid.health.ParticleMaterialTotal = fluid.materialTotal()
-	fluid.health.ParticleEnergyDisagreement = fluid.health.ParticleMaterialTotal - fluid.health.ParticleThermal - fluid.health.ParticleKinetic
-	re, im := fluid.psiRe.Float32Slice(), fluid.psiIm.Float32Slice()
+	workspace.health.Gas = h
+	_, workspace.health.ParticleThermal, workspace.health.ParticleOscillator, workspace.health.ParticleKinetic, _ = workspace.particleTotals()
+	workspace.health.ParticleMaterialTotal = workspace.materialTotal()
+	workspace.health.ParticleEnergyDisagreement = workspace.health.ParticleMaterialTotal - workspace.health.ParticleThermal - workspace.health.ParticleKinetic
+	re, im := workspace.psiRe.Float32Slice(), workspace.psiIm.Float32Slice()
 	norm := 0.0
 	for i := 0; i < n; i++ {
 		if !finite(float64(re[i])) || !finite(float64(im[i])) {
@@ -213,8 +213,8 @@ func (fluid *workspace) measureHealth() error {
 		}
 		norm += vol * (float64(re[i])*float64(re[i]) + float64(im[i])*float64(im[i]))
 	}
-	fluid.health.Wave.ProjectedNorm = norm
-	if !fluid.health.IsFinite() {
+	workspace.health.Wave.ProjectedNorm = norm
+	if !workspace.health.IsFinite() {
 		return fmt.Errorf("nonfinite physical-health metric")
 	}
 	return nil
@@ -222,10 +222,10 @@ func (fluid *workspace) measureHealth() error {
 
 // The phase subflow is a driven overdamped rotor in a frozen effective potential.
 // Its bath dissipation and drive work are distinct from oscillator thermal energy.
-func (fluid *workspace) accountPhase() error {
-	values, prior := fluid.phaseLedger.Float32Slice(), fluid.phasePrior.Float32Slice()
+func (workspace *workspace) accountPhase() error {
+	values, prior := workspace.phaseLedger.Float32Slice(), workspace.phasePrior.Float32Slice()
 	rate := 0.0
-	for i := 0; i < fluid.particles; i++ {
+	for i := 0; i < workspace.particles; i++ {
 		v := values[6*i : 6*i+6]
 		for _, x := range v {
 			if !finite(float64(x)) {
@@ -238,15 +238,15 @@ func (fluid *workspace) accountPhase() error {
 		if dissipation < -tol {
 			return &CoupledStepError{"phase gradient flow", i, true, fmt.Sprintf("potential increased by %g", -dissipation)}
 		}
-		fluid.health.Sources.PhasePotentialWork += u0 - float64(prior[i])
-		fluid.health.Sources.PhaseDriveWork += (u1 - u0) + (u3 - u2)
-		fluid.health.Sources.PhaseDissipation += dissipation // tiny negative roundoff is measured, not clamped
-		fluid.health.Wave.PhasePotential += u3
+		workspace.health.Sources.PhasePotentialWork += u0 - float64(prior[i])
+		workspace.health.Sources.PhaseDriveWork += (u1 - u0) + (u3 - u2)
+		workspace.health.Sources.PhaseDissipation += dissipation // tiny negative roundoff is measured, not clamped
+		workspace.health.Wave.PhasePotential += u3
 		prior[i] = v[3]
 		rate = math.Max(rate, float64(v[4]))
 	}
-	fluid.lastPhaseRate = rate
-	if rate*fluid.rates.deltaT > fluid.physics.PhaseRadians*(1+8*math.Ldexp(1, -23)) {
+	workspace.lastPhaseRate = rate
+	if rate*workspace.rates.deltaT > workspace.physics.PhaseRadians*(1+8*math.Ldexp(1, -23)) {
 		return &CoupledStepError{"phase resolution", -1, true, "accepted phase path exceeds configured angular accuracy bound"}
 	}
 	return nil

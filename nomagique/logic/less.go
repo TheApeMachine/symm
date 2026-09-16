@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,33 +12,24 @@ Less owns one ordering relation. Pairing is external: what arrives is already
 two values.
 */
 type Less struct {
-	err error
+	*core.PrimitiveError
+
 	out bool
 }
 
-func NewLess() core.Primitive {
-	return &Less{}
+func NewLess() *Less {
+	return &Less{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Less) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (less *Less) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			in := (*[2]float64)(arriving)
-			op.out = in[0] < in[1]
+			less.out = in[0] < in[1]
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&less.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Less) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

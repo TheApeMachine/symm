@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"slices"
 	"unsafe"
@@ -14,15 +13,16 @@ Median owns the central order statistic of one run. It averages the two central
 members. Empty runs report ErrShape.
 */
 type Median struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewMedian() core.Primitive {
-	return &Median{}
+func NewMedian() *Median {
+	return &Median{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Median) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (median *Median) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		var values []float64
 
@@ -31,24 +31,14 @@ func (op *Median) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		}
 
 		if len(values) == 0 {
-			op.err = errors.Join(op.err, core.ErrShape)
+			median.Error(core.ErrShape)
 			return
 		}
 
 		slices.Sort(values)
 		count := len(values)
-		op.out = (values[(count-1)/2] + values[count/2]) / 2
+		median.out = (values[(count-1)/2] + values[count/2]) / 2
 
-		yield(unsafe.Pointer(&op.out))
+		yield(unsafe.Pointer(&median.out))
 	}
-}
-
-func (op *Median) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -19,36 +19,26 @@ type ValidPairInput struct {
 ValidPair owns the supplied prediction/actual domain: nonzero values.
 */
 type ValidPair struct {
-	err error
+	*core.PrimitiveError
+
 	out bool
 }
 
-func NewValidPair() core.Primitive {
-	return &ValidPair{}
+func NewValidPair() *ValidPair {
+	return &ValidPair{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *ValidPair) Next(
+func (validPair *ValidPair) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*ValidPairInput)(arriving)
-			op.out = input.Predicted != 0 && input.Actual != 0
+			validPair.out = input.Predicted != 0 && input.Actual != 0
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&validPair.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *ValidPair) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

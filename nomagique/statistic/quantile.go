@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"slices"
@@ -16,16 +15,17 @@ sample quantile. Observations are local to a single Next delivery; the next
 delivery begins an independent reduction.
 */
 type Quantile struct {
-	err error
+	*core.PrimitiveError
+
 	q   float64
 	out float64
 }
 
-func NewQuantile(q float64) core.Primitive {
-	return &Quantile{q: q}
+func NewQuantile(q float64) *Quantile {
+	return &Quantile{PrimitiveError: core.NewPrimitiveError(), q: q}
 }
 
-func (op *Quantile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (quantile *Quantile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		var values []float64
 
@@ -34,40 +34,29 @@ func (op *Quantile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		}
 
 		if len(values) == 0 {
-			op.err = errors.Join(op.err, core.ErrShape)
+			quantile.Error(core.ErrShape)
 			return
 		}
 
-		if op.q < 0 || op.q > 1 {
-			op.err = errors.Join(op.err, core.ErrShape)
+		if quantile.q < 0 || quantile.q > 1 {
+			quantile.Error(core.ErrShape)
 			return
 		}
 
 		slices.Sort(values)
 
-		position := op.q * float64(len(values)-1)
+		position := quantile.q * float64(len(values)-1)
 		lower := math.Floor(position)
 		upper := math.Ceil(position)
 
 		if lower == upper {
-			op.out = values[int(lower)]
+			quantile.out = values[int(lower)]
 		} else {
-			op.out = values[int(lower)]*(upper-position) + values[int(upper)]*(position-lower)
+			quantile.out = values[int(lower)]*(upper-position) + values[int(upper)]*(position-lower)
 		}
 
-		if !yield(unsafe.Pointer(&op.out)) {
+		if !yield(unsafe.Pointer(&quantile.out)) {
 			return
 		}
 	}
-}
-
-func (op *Quantile) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

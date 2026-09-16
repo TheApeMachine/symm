@@ -1,14 +1,13 @@
 package data
 
 import (
-	"errors"
 	"iter"
 	"maps"
 	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -270,7 +269,7 @@ func (measurement *Measurement[Value]) Finalize() {
 	finalizer := NewFinalizer[Value]()
 	held := measurement
 
-	for range finalizer.Next(transport.NewOne(unsafe.Pointer(&held)).Next(nil)) {
+	for range finalizer.Next(sequence.NewOne(unsafe.Pointer(&held)).Next(nil)) {
 	}
 }
 
@@ -279,27 +278,28 @@ Finalizer derives Maturity and SNR from each arriving measurement's own
 estimator facts, mutating the measurement in place.
 */
 type Finalizer[Value any] struct {
-	err     error
+	*core.PrimitiveError
+
 	quality core.Primitive
 }
 
 /*
 NewFinalizer creates the measurement quality derivation primitive.
 */
-func NewFinalizer[Value any]() core.Primitive {
-	return &Finalizer[Value]{quality: NewQuality()}
+func NewFinalizer[Value any]() *Finalizer[Value] {
+	return &Finalizer[Value]{PrimitiveError: core.NewPrimitiveError(), quality: NewQuality()}
 }
 
-func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (finalizer *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			measurement := *(**Measurement[Value])(arriving)
 
 			if measurement != nil {
-				readingEval := transport.NewEvaluate(op.quality)
+				readingEval := finalizer.quality
 				var reading QualityReading
 
-				for out := range readingEval.Next(transport.NewValues(factsFromMetadata(measurement.Metadata)).Next(nil)) {
+				for out := range readingEval.Next(sequence.NewValues(factsFromMetadata(measurement.Metadata)).Next(nil)) {
 					reading = *(*QualityReading)(out)
 				}
 
@@ -320,17 +320,4 @@ func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Finalizer[Value]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

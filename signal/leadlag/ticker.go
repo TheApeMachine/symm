@@ -2,16 +2,17 @@ package leadlag
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	nmleadlag "github.com/theapemachine/symm/nomagique/leadlag"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
+	leadlag "github.com/theapemachine/symm/nomagique/statistic/leadlag"
 )
 
 /*
@@ -29,10 +30,9 @@ type Ticker struct {
 
 func NewTicker(ctx context.Context) *Ticker {
 	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(
-			nmleadlag.NewGate(),
-			nmleadlag.NewCross(algo.NewHayashiYoshida()),
-			data.NewFinalizer[float64](),
+		pipeline: nomagique.NewNumber(leadlag.
+			NewGate(), leadlag.
+			NewCross(algo.NewHayashiYoshida()), data.NewFinalizer[float64](),
 		),
 	}
 
@@ -73,8 +73,8 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		measurement.Metrics["last_price"] = measurement.Metrics["last_price"].Write(price)
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.
+		NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

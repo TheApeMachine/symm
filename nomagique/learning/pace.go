@@ -1,16 +1,14 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -41,7 +39,8 @@ Pace owns empirical prior-error rank and the bounded log-alpha controller.
 The calibrator owns history; Mix owns movement.
 */
 type Pace struct {
-	err        error
+	*core.PrimitiveError
+
 	config     PaceConfig
 	calibrator core.Primitive
 	mix        core.Primitive
@@ -52,83 +51,82 @@ type Pace struct {
 	out        PaceReading
 }
 
-func NewPace(config PaceConfig) core.Primitive {
-	return &Pace{
-		config:     config,
-		calibrator: probability.NewCalibrator(collection.NewTail[float64](int(config.Window))),
+func NewPace(config PaceConfig) *Pace {
+	return &Pace{PrimitiveError: core.NewPrimitiveError(), config: config,
+		calibrator: probability.NewCalibrator(sequence.NewTail[float64](int(config.Window))),
 		mix:        calculus.NewMix(),
 		bound:      calculus.NewBound(),
 	}
 }
 
-func (op *Pace) Next(
+func (pace *Pace) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			val := *(*float64)(arriving)
 
-			if err := op.validate(); err != nil {
-				op.Error(err)
+			if err := pace.validate(); err != nil {
+				pace.Error(err)
 				return
 			}
 
 			if math.IsNaN(val) || math.IsInf(val, 0) {
-				op.Error(core.ErrDomain)
+				pace.Error(core.ErrDomain)
 				return
 			}
 
-			if !op.seeded {
-				op.logAlpha = math.Log(op.config.Rest)
-				op.alpha = op.config.Rest
-				op.seeded = true
+			if !pace.seeded {
+				pace.logAlpha = math.Log(pace.config.Rest)
+				pace.alpha = pace.config.Rest
+				pace.seeded = true
 			}
 
 			var calibration probability.CalibratorReading
 
-			for out := range op.calibrator.Next(transport.NewValues(val).Next(nil)) {
+			for out := range pace.calibrator.Next(sequence.NewValues(val).Next(nil)) {
 				calibration = *(*probability.CalibratorReading)(out)
 			}
 
-			if err := op.calibrator.Error(); err != nil {
-				op.Error(err)
+			if err := pace.calibrator.Error(); err != nil {
+				pace.Error(err)
 				return
 			}
 
-			ready := op.config.Window <= calibration.PriorCount
-			count := math.Min(op.config.Window, calibration.PriorCount+1)
+			ready := pace.config.Window <= calibration.PriorCount
+			count := math.Min(pace.config.Window, calibration.PriorCount+1)
 			rank := 0.0
 
 			if ready {
 				rank = calibration.Value
-				logRest := math.Log(op.config.Rest)
-				logMin := math.Log(op.config.Lower)
-				logMax := math.Log(op.config.Upper)
+				logRest := math.Log(pace.config.Rest)
+				logMin := math.Log(pace.config.Lower)
+				logMax := math.Log(pace.config.Upper)
 
 				target := logRest
 
-				if rank < op.config.Band {
+				if rank < pace.config.Band {
 					target = logMax
 				}
 
-				if rank > 1-op.config.Band {
+				if rank > 1-pace.config.Band {
 					target = logMin
 				}
 
 				mixRec := calculus.MixRecord{
-					Left:   op.logAlpha,
+					Left:   pace.logAlpha,
 					Right:  target,
-					Weight: op.config.Gain,
+					Weight: pace.config.Gain,
 				}
 
 				var mixed float64
 
-				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
+				for out := range pace.mix.Next(sequence.NewValues(mixRec).Next(nil)) {
 					mixed = *(*float64)(out)
 				}
 
-				if err := op.mix.Error(); err != nil {
-					op.Error(err)
+				if err := pace.mix.Error(); err != nil {
+					pace.Error(err)
 					return
 				}
 
@@ -140,74 +138,64 @@ func (op *Pace) Next(
 
 				var logAlpha float64
 
-				for out := range op.bound.Next(transport.NewValues(boundRec).Next(nil)) {
+				for out := range pace.bound.Next(sequence.NewValues(boundRec).Next(nil)) {
 					logAlpha = *(*float64)(out)
 				}
 
-				if err := op.bound.Error(); err != nil {
-					op.Error(err)
+				if err := pace.bound.Error(); err != nil {
+					pace.Error(err)
 					return
 				}
 
 				alpha := math.Exp(logAlpha)
 				boundAlpha := calculus.BoundRecord{
 					Value: alpha,
-					Lower: op.config.Lower,
-					Upper: op.config.Upper,
+					Lower: pace.config.Lower,
+					Upper: pace.config.Upper,
 				}
 
-				for out := range op.bound.Next(transport.NewValues(boundAlpha).Next(nil)) {
+				for out := range pace.bound.Next(sequence.NewValues(boundAlpha).Next(nil)) {
 					alpha = *(*float64)(out)
 				}
 
-				if err := op.bound.Error(); err != nil {
-					op.Error(err)
+				if err := pace.bound.Error(); err != nil {
+					pace.Error(err)
 					return
 				}
 
-				op.logAlpha = logAlpha
-				op.alpha = alpha
+				pace.logAlpha = logAlpha
+				pace.alpha = alpha
 			}
 
-			op.out = PaceReading{
-				Alpha: op.alpha,
+			pace.out = PaceReading{
+				Alpha: pace.alpha,
 				Rank:  rank,
 				Ready: ready,
 				Count: count,
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&pace.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (op *Pace) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-func (op *Pace) validate() error {
+func (pace *Pace) validate() error {
 	for _, value := range []float64{
-		op.config.Rest, op.config.Lower, op.config.Upper,
-		op.config.Gain, op.config.Band, op.config.Window,
+		pace.config.Rest, pace.config.Lower, pace.config.Upper,
+		pace.config.Gain, pace.config.Band, pace.config.Window,
 	} {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return core.ErrDomain
 		}
 	}
 
-	if !(op.config.Lower > 0) ||
-		!(op.config.Lower <= op.config.Rest) ||
-		!(op.config.Rest <= op.config.Upper) ||
-		!(op.config.Window > 0) ||
-		math.Floor(op.config.Window) != op.config.Window {
+	if !(pace.config.Lower > 0) ||
+		!(pace.config.Lower <= pace.config.Rest) ||
+		!(pace.config.Rest <= pace.config.Upper) ||
+		!(pace.config.Window > 0) ||
+		math.Floor(pace.config.Window) != pace.config.Window {
 		return core.ErrDomain
 	}
 

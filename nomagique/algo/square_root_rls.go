@@ -1,7 +1,6 @@
 package algo
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -36,53 +35,44 @@ type Reading struct {
 SquareRootRLS owns the four posterior fields and predicts before it trains.
 */
 type SquareRootRLS struct {
-	err      error
+	*core.PrimitiveError
+
 	state    RLSState
 	ready    bool
 	variance float64
 	out      Reading
 }
 
-func NewSquareRootRLS(variance float64) core.Primitive {
-	return &SquareRootRLS{variance: variance}
+func NewSquareRootRLS(variance float64) *SquareRootRLS {
+	return &SquareRootRLS{PrimitiveError: core.NewPrimitiveError(), variance: variance}
 }
 
-func (op *SquareRootRLS) Next(
+func (squareRootRLS *SquareRootRLS) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			query := (*Query)(arriving)
-			reading, err := op.step(*query)
+			reading, err := squareRootRLS.step(*query)
 
 			if err != nil {
-				op.err = errors.Join(op.err, err)
+				squareRootRLS.Error(err)
 				return
 			}
 
-			op.out = reading
+			squareRootRLS.out = reading
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&squareRootRLS.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *SquareRootRLS) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
 step prepares one prior forecast and commits a validated posterior when labeled.
 */
-func (op *SquareRootRLS) step(query Query) (Reading, error) {
+func (squareRootRLS *SquareRootRLS) step(query Query) (Reading, error) {
 	if len(query.Design) == 0 {
 		return Reading{}, fmt.Errorf("%w: RLS design is empty", core.ErrShape)
 	}
@@ -91,53 +81,53 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 		return Reading{}, fmt.Errorf("%w: RLS forgetting factor must be in (0,1]", core.ErrDomain)
 	}
 
-	if !op.ready {
-		state, err := op.prior(query.Design)
+	if !squareRootRLS.ready {
+		state, err := squareRootRLS.prior(query.Design)
 
 		if err != nil {
 			return Reading{}, err
 		}
 
-		op.state = state
-		op.ready = true
+		squareRootRLS.state = state
+		squareRootRLS.ready = true
 	}
 
-	if len(query.Design) != len(op.state.Beta) {
+	if len(query.Design) != len(squareRootRLS.state.Beta) {
 		return Reading{}, fmt.Errorf("%w: RLS design dimension differs from the posterior", core.ErrShape)
 	}
 
-	op.state.Design = slices.Clone(query.Design)
-	op.state.Observations = 1
+	squareRootRLS.state.Design = slices.Clone(query.Design)
+	squareRootRLS.state.Observations = 1
 
-	factor := make([]float64, len(op.state.Design))
+	factor := make([]float64, len(squareRootRLS.state.Design))
 	value := 0.0
 
-	for row, feature := range op.state.Design {
-		if len(op.state.Root[row]) != len(op.state.Design) {
+	for row, feature := range squareRootRLS.state.Design {
+		if len(squareRootRLS.state.Root[row]) != len(squareRootRLS.state.Design) {
 			return Reading{}, fmt.Errorf("%w: RLS root must be square", core.ErrShape)
 		}
 
-		value += op.state.Beta[row] * feature
+		value += squareRootRLS.state.Beta[row] * feature
 
-		for column, coefficient := range op.state.Root[row] {
+		for column, coefficient := range squareRootRLS.state.Root[row] {
 			factor[column] += coefficient * feature
 		}
 	}
 
 	forecast := RLSForecast{
-		RLSState:   op.state,
+		RLSState:   squareRootRLS.state,
 		Prediction: value,
 		Factor:     factor,
 	}
 
-	if op.state.NoiseShape > 0 && op.state.NoiseScale > 0 {
+	if squareRootRLS.state.NoiseShape > 0 && squareRootRLS.state.NoiseScale > 0 {
 		energy := 0.0
 
 		for _, member := range factor {
 			energy += member * member
 		}
 
-		variance := (op.state.NoiseScale / op.state.NoiseShape) * (op.state.Observations + energy)
+		variance := (squareRootRLS.state.NoiseScale / squareRootRLS.state.NoiseShape) * (squareRootRLS.state.Observations + energy)
 
 		if !(variance > 0) {
 			return Reading{}, fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance)
@@ -145,7 +135,7 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 
 		forecast.PredictiveVariance = variance
 		forecast.Scale = math.Sqrt(variance)
-		forecast.DegreesOfFreedom = 2 * op.state.NoiseShape
+		forecast.DegreesOfFreedom = 2 * squareRootRLS.state.NoiseShape
 		forecast.Ready = true
 	}
 
@@ -194,14 +184,14 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 	}
 
 	noise := lambda*forecast.NoiseScale + 0.5*innovation*innovation/alpha
-	op.state.Beta = coefficients
-	op.state.Root = posterior
-	op.state.NoiseShape = lambda*forecast.NoiseShape + 0.5
-	op.state.NoiseScale = noise
+	squareRootRLS.state.Beta = coefficients
+	squareRootRLS.state.Root = posterior
+	squareRootRLS.state.NoiseShape = lambda*forecast.NoiseShape + 0.5
+	squareRootRLS.state.NoiseScale = noise
 
 	forecast.Beta = coefficients
 	forecast.Root = posterior
-	forecast.NoiseShape = op.state.NoiseShape
+	forecast.NoiseShape = squareRootRLS.state.NoiseShape
 	forecast.NoiseScale = noise
 
 	reading.RLSForecast = forecast
@@ -210,8 +200,8 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 	return reading, nil
 }
 
-func (op *SquareRootRLS) prior(design []float64) (RLSState, error) {
-	if !(op.variance > 0) {
+func (squareRootRLS *SquareRootRLS) prior(design []float64) (RLSState, error) {
+	if !(squareRootRLS.variance > 0) {
 		return RLSState{}, fmt.Errorf("%w: RLS prior variance must be positive", core.ErrDomain)
 	}
 
@@ -221,7 +211,7 @@ func (op *SquareRootRLS) prior(design []float64) (RLSState, error) {
 
 	for index := range root {
 		root[index] = storage[index*size : (index+1)*size]
-		root[index][index] = math.Sqrt(op.variance)
+		root[index][index] = math.Sqrt(squareRootRLS.variance)
 	}
 
 	return RLSState{

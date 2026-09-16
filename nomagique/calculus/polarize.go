@@ -32,15 +32,16 @@ Polarize splits a signed value into nonnegative components and normalizes
 against a configured scale.
 */
 type Polarize struct {
-	err error
+	*core.PrimitiveError
+
 	out PolarizeResult
 }
 
-func NewPolarize() core.Primitive {
-	return &Polarize{}
+func NewPolarize() *Polarize {
+	return &Polarize{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Polarize) Next(
+func (polarize *Polarize) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -57,33 +58,22 @@ func (op *Polarize) Next(
 				beta = 0
 			}
 
-			op.out = PolarizeResult{
+			polarize.out = PolarizeResult{
 				Alpha: alpha,
 				Beta:  beta,
 				Scale: input.Scale,
 			}
 
 			if input.Scale > 0 {
-				op.out.AlphaNormalized = alpha / (alpha + input.Scale)
-				op.out.BetaNormalized = beta / (beta + input.Scale)
+				polarize.out.AlphaNormalized = alpha / (alpha + input.Scale)
+				polarize.out.BetaNormalized = beta / (beta + input.Scale)
 			}
 
-			op.out.Value = op.out.AlphaNormalized - op.out.BetaNormalized
+			polarize.out.Value = polarize.out.AlphaNormalized - polarize.out.BetaNormalized
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&polarize.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Polarize) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

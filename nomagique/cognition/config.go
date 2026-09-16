@@ -45,43 +45,43 @@ func defaultBounds() Config {
 /*
 normalised fills unset bounds from the declared defaults.
 */
-func (c Config) normalised() Config {
+func (config Config) normalised() Config {
 	fallback := defaultBounds()
 
-	if c.MemoryScale == 0 {
-		c.MemoryScale = fallback.MemoryScale
+	if config.MemoryScale == 0 {
+		config.MemoryScale = fallback.MemoryScale
 	}
 
-	if c.DirichletAlpha <= 0 {
-		c.DirichletAlpha = fallback.DirichletAlpha
+	if config.DirichletAlpha <= 0 {
+		config.DirichletAlpha = fallback.DirichletAlpha
 	}
 
-	if c.MaxBackoffOrder <= 0 {
-		c.MaxBackoffOrder = fallback.MaxBackoffOrder
+	if config.MaxBackoffOrder <= 0 {
+		config.MaxBackoffOrder = fallback.MaxBackoffOrder
 	}
 
-	if c.BeamWidth <= 0 {
-		c.BeamWidth = fallback.BeamWidth
+	if config.BeamWidth <= 0 {
+		config.BeamWidth = fallback.BeamWidth
 	}
 
-	if c.MaxHops <= 0 {
-		c.MaxHops = fallback.MaxHops
+	if config.MaxHops <= 0 {
+		config.MaxHops = fallback.MaxHops
 	}
 
-	if c.SurprisalBreakBits <= 0 {
-		c.SurprisalBreakBits = fallback.SurprisalBreakBits
+	if config.SurprisalBreakBits <= 0 {
+		config.SurprisalBreakBits = fallback.SurprisalBreakBits
 	}
 
-	return c
+	return config
 }
 
 /*
 decayFactor computes λ = 1 - 1/M for the memory scale M.
 */
-func (c Config) decayFactor() float64 {
-	if c.MemoryScale <= 1.0 {
+func (config Config) decayFactor() float64 {
+	if config.MemoryScale <= 1.0 {
 		return 1.0
 	}
 
-	return 1.0 - (1.0 / c.MemoryScale)
+	return 1.0 - (1.0 / config.MemoryScale)
 }

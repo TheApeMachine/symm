@@ -1,14 +1,13 @@
 package algo
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/correlation"
+	nmcorrelation "github.com/theapemachine/symm/nomagique/statistic/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
@@ -18,77 +17,65 @@ paths. Each return contributes once to its energy and to every strictly
 overlapping cross-product. Support counts overlaps, not independent samples.
 */
 type HayashiYoshida struct {
-	err error
-	out correlation.LagEstimate
+	*core.PrimitiveError
+
+	out nmcorrelation.LagEstimate
 }
 
 /*
 NewHayashiYoshida creates a new HayashiYoshida primitive.
 */
-func NewHayashiYoshida() core.Primitive {
-	return &HayashiYoshida{}
+func NewHayashiYoshida() *HayashiYoshida {
+	return &HayashiYoshida{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next evaluates each arriving return-path pair at its requested timestamp
 offset and yields the estimate with its overlap support.
 */
-func (op *HayashiYoshida) Next(
+func (hayashiYoshida *HayashiYoshida) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			query := (*correlation.EstimateInput)(arriving)
-			reading, err := op.estimate(query)
+			query := (*nmcorrelation.EstimateInput)(arriving)
+			reading, err := hayashiYoshida.estimate(query)
 
 			if err != nil {
-				op.err = errors.Join(op.err, err)
+				hayashiYoshida.Error(err)
 				return
 			}
 
-			op.out = reading
+			hayashiYoshida.out = reading
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&hayashiYoshida.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error joins every error it observes.
-*/
-func (op *HayashiYoshida) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
 estimate owns covariance evaluation for one timestamp offset.
 */
-func (op *HayashiYoshida) estimate(
-	query *correlation.EstimateInput,
-) (correlation.LagEstimate, error) {
+func (hayashiYoshida *HayashiYoshida) estimate(
+	query *nmcorrelation.EstimateInput,
+) (nmcorrelation.LagEstimate, error) {
 	if len(query.Left) > 0 {
 		through := query.Left[len(query.Left)-1].To
 		from := query.Left[0].From
 
 		if (query.Lag > 0 && through > math.MaxInt64-query.Lag) || (query.Lag < 0 && from < math.MinInt64-query.Lag) {
-			return correlation.LagEstimate{}, fmt.Errorf(
+			return nmcorrelation.LagEstimate{}, fmt.Errorf(
 				"%w: hayashi-yoshida timestamp offset overflows int64",
 				core.ErrDomain,
 			)
 		}
 	}
 
-	covariance, support := op.overlap(query.Left, query.Right, query.Lag)
+	covariance, support := hayashiYoshida.overlap(query.Left, query.Right, query.Lag)
 	scale := math.Sqrt(query.LeftEnergy * query.RightEnergy)
-	reading := correlation.LagEstimate{
+	reading := nmcorrelation.LagEstimate{
 		Correlation: covariance / scale,
 		Covariance:  covariance,
 		Support:     support,
@@ -102,7 +89,7 @@ func (op *HayashiYoshida) estimate(
 /*
 overlap traverses borrowed, ordered return intervals without shifted copies.
 */
-func (op *HayashiYoshida) overlap(
+func (hayashiYoshida *HayashiYoshida) overlap(
 	left, right []temporal.LogReturn, lag int64,
 ) (covariance, support float64) {
 	leftIndex, rightIndex := 0, 0

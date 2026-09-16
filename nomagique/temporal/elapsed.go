@@ -13,36 +13,26 @@ Elapsed subtracts int64 nanoseconds before conversion to seconds so epoch
 magnitude cannot erase a small interval by cancellation.
 */
 type Elapsed struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewElapsed() core.Primitive {
-	return &Elapsed{}
+func NewElapsed() *Elapsed {
+	return &Elapsed{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Elapsed) Next(
+func (elapsed *Elapsed) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			interval := (*Interval)(arriving)
-			op.out = float64(interval.To-interval.From) / float64(time.Second)
+			elapsed.out = float64(interval.To-interval.From) / float64(time.Second)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&elapsed.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Elapsed) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

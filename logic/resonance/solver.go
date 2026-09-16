@@ -13,6 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 
 	"github.com/theapemachine/errnie"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -582,10 +582,10 @@ func stepCoder(
 	coder core.Primitive,
 	input learning.PredictiveInput,
 ) (learning.PredictiveOutput, error) {
-	evaluation := transport.NewEvaluate(coder)
+	evaluation := coder
 	var output learning.PredictiveOutput
 
-	for out := range evaluation.Next(transport.NewValues(input).Next(nil)) {
+	for out := range evaluation.Next(sequence.NewValues(input).Next(nil)) {
 		output = *(*learning.PredictiveOutput)(out)
 	}
 
@@ -650,7 +650,7 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement[float64]) [
 
 		var reading adaptive.BaselineReading
 
-		for out := range scorer.pipelines[index].Next(transport.NewOne(unsafe.Pointer(&val)).Next(nil)) {
+		for out := range scorer.pipelines[index].Next(sequence.NewOne(unsafe.Pointer(&val)).Next(nil)) {
 			reading = *(*adaptive.BaselineReading)(out)
 		}
 
@@ -673,7 +673,7 @@ func authorityOf(measurement *data.Measurement[float64]) float64 {
 	if !measurement.SNRDefined && measurement.Maturity == 0 {
 		held := measurement
 
-		for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&held)).Next(nil)) {
+		for range data.NewFinalizer[float64]().Next(sequence.NewOne(unsafe.Pointer(&held)).Next(nil)) {
 		}
 	}
 
@@ -684,10 +684,10 @@ func authorityOf(measurement *data.Measurement[float64]) float64 {
 		Maturity:   measurement.Maturity,
 	}
 
-	evidence := transport.NewEvaluate(data.NewAuthority())
+	evidence := data.NewAuthority()
 	var authority float64
 
-	for out := range evidence.Next(transport.NewOne(unsafe.Pointer(&quality)).Next(nil)) {
+	for out := range evidence.Next(sequence.NewOne(unsafe.Pointer(&quality)).Next(nil)) {
 		authority = *(*float64)(out)
 	}
 

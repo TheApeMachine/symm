@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -46,37 +45,37 @@ type PriorSummary struct {
 /*
 age discounts total weight; normalized moment and support are scale invariant.
 */
-func (moments *PriorMoments) age(epoch uint64, memory float64) {
-	if epoch <= moments.LastEpoch {
+func (priorMoments *PriorMoments) age(epoch uint64, memory float64) {
+	if epoch <= priorMoments.LastEpoch {
 		return
 	}
 
 	if memory > 1 {
-		gap := float64(epoch - moments.LastEpoch)
-		moments.Weight *= math.Exp(gap * math.Log(1-1/memory))
+		gap := float64(epoch - priorMoments.LastEpoch)
+		priorMoments.Weight *= math.Exp(gap * math.Log(1-1/memory))
 	}
-	moments.LastEpoch = epoch
+	priorMoments.LastEpoch = epoch
 }
 
 /*
 summary computes the same reliability-weighted variance and signal authority.
 */
-func (moments PriorMoments) summary(memory float64) PriorSummary {
-	reading := PriorSummary{Samples: moments.Samples, Pending: moments.Pending, Memory: memory}
+func (priorMoments PriorMoments) summary(memory float64) PriorSummary {
+	reading := PriorSummary{Samples: priorMoments.Samples, Pending: priorMoments.Pending, Memory: memory}
 
-	if moments.Weight <= 0 {
+	if priorMoments.Weight <= 0 {
 		return reading
 	}
-	reading.Defined, reading.Mean, reading.Support = true, moments.Mean, moments.Support
-	reading.EvidenceAuthority = moments.Weight / moments.Support
+	reading.Defined, reading.Mean, reading.Support = true, priorMoments.Mean, priorMoments.Support
+	reading.EvidenceAuthority = priorMoments.Weight / priorMoments.Support
 
-	if moments.Support <= 1 {
+	if priorMoments.Support <= 1 {
 		return reading
 	}
 	reading.VarianceDefined = true
-	reading.Variance = moments.Moment * (moments.Support / (moments.Support - 1))
-	reading.Maturity = (moments.Support - 1) / moments.Support
-	power := moments.Mean * moments.Mean
+	reading.Variance = priorMoments.Moment * (priorMoments.Support / (priorMoments.Support - 1))
+	reading.Maturity = (priorMoments.Support - 1) / priorMoments.Support
+	power := priorMoments.Mean * priorMoments.Mean
 	totalPower := power + reading.Variance
 
 	if totalPower > 0 {
@@ -89,7 +88,8 @@ func (moments PriorMoments) summary(memory float64) PriorSummary {
 PriorEstimator owns the reliability-weighted prior recurrence as a Primitive.
 */
 type PriorEstimator struct {
-	err     error
+	*core.PrimitiveError
+
 	moments PriorMoments
 	out     PriorSummary
 }
@@ -97,36 +97,36 @@ type PriorEstimator struct {
 /*
 NewPriorMoments instantiates the reliability-weighted prior Primitive.
 */
-func NewPriorMoments() core.Primitive {
-	return &PriorEstimator{}
+func NewPriorMoments() *PriorEstimator {
+	return &PriorEstimator{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next applies one observation or age-only query to the prior recurrence and
 hands over the resulting summary.
 */
-func (op *PriorEstimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (priorEstimator *PriorEstimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			observation := (*PriorObservation)(arriving)
 
 			if observation.AgeOnly {
-				if !op.observeQuery(observation) {
+				if !priorEstimator.observeQuery(observation) {
 					return
 				}
 
-				if !yield(unsafe.Pointer(&op.out)) {
+				if !yield(unsafe.Pointer(&priorEstimator.out)) {
 					return
 				}
 
 				continue
 			}
 
-			if !op.observe(observation) {
+			if !priorEstimator.observe(observation) {
 				return
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&priorEstimator.out)) {
 				return
 			}
 		}
@@ -136,14 +136,14 @@ func (op *PriorEstimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 /*
 observeQuery ages the causal clock without counting a sample.
 */
-func (op *PriorEstimator) observeQuery(observation *PriorObservation) bool {
+func (priorEstimator *PriorEstimator) observeQuery(observation *PriorObservation) bool {
 	if !observation.HasEpoch {
-		op.out = op.moments.summary(observation.Memory)
+		priorEstimator.out = priorEstimator.moments.summary(observation.Memory)
 		return true
 	}
 
-	op.moments.age(observation.Epoch, observation.Memory)
-	op.out = op.moments.summary(observation.Memory)
+	priorEstimator.moments.age(observation.Epoch, observation.Memory)
+	priorEstimator.out = priorEstimator.moments.summary(observation.Memory)
 	return true
 }
 
@@ -151,52 +151,39 @@ func (op *PriorEstimator) observeQuery(observation *PriorObservation) bool {
 observe records one completion, aging only through positive authority exactly
 as the recurrence requires.
 */
-func (op *PriorEstimator) observe(observation *PriorObservation) bool {
+func (priorEstimator *PriorEstimator) observe(observation *PriorObservation) bool {
 	if !(observation.Authority >= 0 && observation.Authority <= 1) {
-		op.err = fmt.Errorf("%w: prior authority must be in [0, 1]", core.ErrDomain)
+		priorEstimator.Error(fmt.Errorf("%w: prior authority must be in [0, 1]", core.ErrDomain))
 		return false
 	}
-	op.moments.Samples++
+	priorEstimator.moments.Samples++
 
 	if observation.Authority == 0 {
-		op.out = op.moments.summary(observation.Memory)
+		priorEstimator.out = priorEstimator.moments.summary(observation.Memory)
 		return true
 	}
 
 	if observation.HasEpoch {
-		op.moments.age(observation.Epoch, observation.Memory)
+		priorEstimator.moments.age(observation.Epoch, observation.Memory)
 	}
 
 	if !observation.HasEpoch && observation.Memory > 1 {
-		op.moments.Weight *= math.Exp(math.Log(1 - 1/observation.Memory))
+		priorEstimator.moments.Weight *= math.Exp(math.Log(1 - 1/observation.Memory))
 	}
 
-	if op.moments.Weight == 0 {
-		op.moments.Mean, op.moments.Weight = observation.Value, observation.Authority
-		op.moments.Support, op.moments.Moment = 1, 0
-		op.out = op.moments.summary(observation.Memory)
+	if priorEstimator.moments.Weight == 0 {
+		priorEstimator.moments.Mean, priorEstimator.moments.Weight = observation.Value, observation.Authority
+		priorEstimator.moments.Support, priorEstimator.moments.Moment = 1, 0
+		priorEstimator.out = priorEstimator.moments.summary(observation.Memory)
 		return true
 	}
-	total := op.moments.Weight + observation.Authority
-	retained, incoming := op.moments.Weight/total, observation.Authority/total
-	difference := observation.Value - op.moments.Mean
-	op.moments.Support = 1 / (retained*retained/op.moments.Support + incoming*incoming)
-	op.moments.Moment = retained*op.moments.Moment + (retained*incoming)*(difference*difference)
-	op.moments.Mean += incoming * difference
-	op.moments.Weight = total
-	op.out = op.moments.summary(observation.Memory)
+	total := priorEstimator.moments.Weight + observation.Authority
+	retained, incoming := priorEstimator.moments.Weight/total, observation.Authority/total
+	difference := observation.Value - priorEstimator.moments.Mean
+	priorEstimator.moments.Support = 1 / (retained*retained/priorEstimator.moments.Support + incoming*incoming)
+	priorEstimator.moments.Moment = retained*priorEstimator.moments.Moment + (retained*incoming)*(difference*difference)
+	priorEstimator.moments.Mean += incoming * difference
+	priorEstimator.moments.Weight = total
+	priorEstimator.out = priorEstimator.moments.summary(observation.Memory)
 	return true
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *PriorEstimator) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

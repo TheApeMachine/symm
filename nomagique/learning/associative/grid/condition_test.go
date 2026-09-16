@@ -5,7 +5,7 @@ import (
 	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /* tokenOf drives the token primitive for one condition. */
@@ -14,7 +14,7 @@ func tokenOf(t testing.TB, quantity uint64, level, change float64) uint64 {
 	token := NewToken()
 	command := TokenCommand{Condition: &TokenCondition{Quantity: quantity, Level: level, Change: change}}
 
-	for out := range token.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)) {
+	for out := range token.Next(sequence.NewOne(unsafe.Pointer(&command)).Next(nil)) {
 		return (*TokenResult)(out).Token
 	}
 
@@ -45,7 +45,7 @@ func TestRemapCondition(t *testing.T) {
 		remap := func(tokenVal, quantity uint64) uint64 {
 			command := TokenCommand{Remap: &TokenRemap{Token: tokenVal, Quantity: quantity}}
 
-			for out := range token.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)) {
+			for out := range token.Next(sequence.NewOne(unsafe.Pointer(&command)).Next(nil)) {
 				return (*TokenResult)(out).Token
 			}
 

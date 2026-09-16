@@ -1,12 +1,11 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -24,15 +23,16 @@ type Reading struct {
 Distribution owns softmax then the winner, confidence, ambiguity, and sharpness.
 */
 type Distribution struct {
-	err error
+	*core.PrimitiveError
+
 	out Reading
 }
 
-func NewDistribution() core.Primitive {
-	return &Distribution{}
+func NewDistribution() *Distribution {
+	return &Distribution{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (distribution *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		softmax := NewSoftmax()
 		var probabilities []float64
@@ -42,12 +42,12 @@ func (op *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 		}
 
 		if err := softmax.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
+			distribution.Error(err)
 			return
 		}
 
 		if len(probabilities) == 0 {
-			op.err = errors.Join(op.err, core.ErrShape)
+			distribution.Error(core.ErrShape)
 			return
 		}
 
@@ -59,21 +59,21 @@ func (op *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 		}
 
-		ambiguityValEval := transport.NewEvaluate(NewAmbiguity())
+		ambiguityValEval := NewAmbiguity()
 		var ambiguityVal float64
 
-		for out := range ambiguityValEval.Next(transport.NewValues(probabilities...).Next(nil)) {
+		for out := range ambiguityValEval.Next(sequence.NewValues(probabilities...).Next(nil)) {
 			ambiguityVal = *(*float64)(out)
 		}
 
 		err := ambiguityValEval.Error()
 
 		if err != nil {
-			op.err = errors.Join(op.err, err)
+			distribution.Error(err)
 			return
 		}
 
-		op.out = Reading{
+		distribution.out = Reading{
 			Probabilities: probabilities,
 			Winner:        winner,
 			Confidence:    probabilities[winner],
@@ -81,16 +81,6 @@ func (op *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			Sharpness:     1 - ambiguityVal,
 		}
 
-		yield(unsafe.Pointer(&op.out))
+		yield(unsafe.Pointer(&distribution.out))
 	}
-}
-
-func (op *Distribution) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

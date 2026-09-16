@@ -22,28 +22,28 @@ type bivariateFit struct {
 /*
 valid reports whether fit parameters are positive and subcritical.
 */
-func (fit bivariateFit) valid() bool {
-	return fit.muX > 0 &&
-		fit.muY > 0 &&
-		fit.beta > 0 &&
-		fit.alphaXX >= 0 &&
-		fit.alphaXY >= 0 &&
-		fit.alphaYX >= 0 &&
-		fit.alphaYY >= 0 &&
-		fit.spectralRadius >= 0 &&
-		fit.spectralRadius < criticalBranch
+func (bivariateFit bivariateFit) valid() bool {
+	return bivariateFit.muX > 0 &&
+		bivariateFit.muY > 0 &&
+		bivariateFit.beta > 0 &&
+		bivariateFit.alphaXX >= 0 &&
+		bivariateFit.alphaXY >= 0 &&
+		bivariateFit.alphaYX >= 0 &&
+		bivariateFit.alphaYY >= 0 &&
+		bivariateFit.spectralRadius >= 0 &&
+		bivariateFit.spectralRadius < criticalBranch
 }
 
-func (fit bivariateFit) branchingMatrix() [2][2]float64 {
-	return branchingMatrix(fit.alphaXX, fit.alphaXY, fit.alphaYX, fit.alphaYY, fit.beta)
+func (bivariateFit bivariateFit) branchingMatrix() [2][2]float64 {
+	return branchingMatrix(bivariateFit.alphaXX, bivariateFit.alphaXY, bivariateFit.alphaYX, bivariateFit.alphaYY, bivariateFit.beta)
 }
 
-func (fit bivariateFit) computeSpectralRadius() float64 {
-	if fit.beta <= 0 {
+func (bivariateFit bivariateFit) computeSpectralRadius() float64 {
+	if bivariateFit.beta <= 0 {
 		return math.Inf(1)
 	}
 
-	return spectralRadius(fit.branchingMatrix())
+	return spectralRadius(bivariateFit.branchingMatrix())
 }
 
 /*
@@ -51,12 +51,12 @@ logLikelihood returns the exact log-likelihood at horizon: the sum of
 log-intensities at every observed event, minus the compensator (the
 integrated intensity over the observation window).
 */
-func (fit bivariateFit) logLikelihood(stream arrivalStream, horizonSec float64) (float64, bool) {
-	if fit.muX <= 0 || fit.muY <= 0 || fit.beta <= 0 {
+func (bivariateFit bivariateFit) logLikelihood(stream arrivalStream, horizonSec float64) (float64, bool) {
+	if bivariateFit.muX <= 0 || bivariateFit.muY <= 0 || bivariateFit.beta <= 0 {
 		return 0, false
 	}
 
-	if fit.alphaXX < 0 || fit.alphaXY < 0 || fit.alphaYX < 0 || fit.alphaYY < 0 {
+	if bivariateFit.alphaXX < 0 || bivariateFit.alphaXY < 0 || bivariateFit.alphaYX < 0 || bivariateFit.alphaYY < 0 {
 		return 0, false
 	}
 
@@ -76,16 +76,16 @@ func (fit bivariateFit) logLikelihood(stream arrivalStream, horizonSec float64) 
 	logSum, ok := state.logLikelihoodSum(
 		marked,
 		stream.originSec, horizonSec,
-		fit.muX, fit.muY,
-		fit.alphaXX, fit.alphaXY, fit.alphaYX, fit.alphaYY,
-		fit.beta,
+		bivariateFit.muX, bivariateFit.muY,
+		bivariateFit.alphaXX, bivariateFit.alphaXY, bivariateFit.alphaYX, bivariateFit.alphaYY,
+		bivariateFit.beta,
 	)
 
 	if !ok {
 		return 0, false
 	}
 
-	compensator := fit.compensator(stream, horizonSec, span)
+	compensator := bivariateFit.compensator(stream, horizonSec, span)
 
 	return logSum - compensator, true
 }
@@ -93,20 +93,20 @@ func (fit bivariateFit) logLikelihood(stream arrivalStream, horizonSec float64) 
 /*
 withIntensitiesAt attaches horizon intensities to the fit.
 */
-func (fit bivariateFit) withIntensitiesAt(stream arrivalStream, horizonSec float64) bivariateFit {
-	result := fit
-	result.intensityX = stream.buyIntensityAt(horizonSec, fit.muX, fit.alphaXX, fit.alphaXY, fit.beta)
-	result.intensityY = stream.sellIntensityAt(horizonSec, fit.muY, fit.alphaYX, fit.alphaYY, fit.beta)
+func (bivariateFit bivariateFit) withIntensitiesAt(stream arrivalStream, horizonSec float64) bivariateFit {
+	result := bivariateFit
+	result.intensityX = stream.buyIntensityAt(horizonSec, bivariateFit.muX, bivariateFit.alphaXX, bivariateFit.alphaXY, bivariateFit.beta)
+	result.intensityY = stream.sellIntensityAt(horizonSec, bivariateFit.muY, bivariateFit.alphaYX, bivariateFit.alphaYY, bivariateFit.beta)
 
 	return result
 }
 
-func (fit bivariateFit) withCrossZeroed() bivariateFit {
-	if fit.alphaXY <= 0 && fit.alphaYX <= 0 {
-		return fit
+func (bivariateFit bivariateFit) withCrossZeroed() bivariateFit {
+	if bivariateFit.alphaXY <= 0 && bivariateFit.alphaYX <= 0 {
+		return bivariateFit
 	}
 
-	restricted := fit
+	restricted := bivariateFit
 	restricted.alphaXY = 0
 	restricted.alphaYX = 0
 	restricted.spectralRadius = restricted.computeSpectralRadius()
@@ -118,20 +118,20 @@ func (fit bivariateFit) withCrossZeroed() bivariateFit {
 compensator returns the integrated intensity over the observation window:
 Λ_x(horizon) + Λ_y(horizon), the subtracted term in the Hawkes log-likelihood.
 */
-func (fit bivariateFit) compensator(
+func (bivariateFit bivariateFit) compensator(
 	stream arrivalStream,
 	horizonSec float64,
 	span float64,
 ) float64 {
-	beta := fit.beta
+	beta := bivariateFit.beta
 	buySupport, sellSupport := stream.kernelIntegralSupport(horizonSec, beta)
 
-	buyIntegral := fit.muX*span +
-		(fit.alphaXX/beta)*buySupport +
-		(fit.alphaXY/beta)*sellSupport
-	sellIntegral := fit.muY*span +
-		(fit.alphaYX/beta)*buySupport +
-		(fit.alphaYY/beta)*sellSupport
+	buyIntegral := bivariateFit.muX*span +
+		(bivariateFit.alphaXX/beta)*buySupport +
+		(bivariateFit.alphaXY/beta)*sellSupport
+	sellIntegral := bivariateFit.muY*span +
+		(bivariateFit.alphaYX/beta)*buySupport +
+		(bivariateFit.alphaYY/beta)*sellSupport
 
 	return buyIntegral + sellIntegral
 }

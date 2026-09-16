@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -21,15 +20,16 @@ type BoundRecord struct {
 Bound selects lower, value, or upper.
 */
 type Bound struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewBound() core.Primitive {
-	return &Bound{}
+func NewBound() *Bound {
+	return &Bound{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Bound) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (bound *Bound) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			record := *(*BoundRecord)(arriving)
@@ -43,21 +43,11 @@ func (op *Bound) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				val = record.Upper
 			}
 
-			op.out = val
+			bound.out = val
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&bound.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Bound) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -7,9 +7,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -23,10 +23,10 @@ func canonicalSummary(
 ) statistic.PriorSummary {
 	t.Helper()
 
-	summaryEval := transport.NewEvaluate(node)
+	summaryEval := node
 	var summary statistic.PriorSummary
 
-	for out := range summaryEval.Next(transport.NewValues(request).Next(nil)) {
+	for out := range summaryEval.Next(sequence.NewValues(request).Next(nil)) {
 		summary = *(*statistic.PriorSummary)(out)
 	}
 
@@ -65,10 +65,10 @@ func TestPrimitiveNext(t *testing.T) {
 						request.HasEpoch = true
 					}
 
-					gotEval := transport.NewEvaluate(node)
+					gotEval := node
 					var got prior.Reading
 
-					for out := range gotEval.Next(transport.NewValues(observation).Next(nil)) {
+					for out := range gotEval.Next(sequence.NewValues(observation).Next(nil)) {
 						got = *(*prior.Reading)(out)
 					}
 
@@ -88,10 +88,10 @@ func TestPrimitiveNext(t *testing.T) {
 				}
 
 				for _, epoch := range []uint64{200, 300, 1000000, 1000000} {
-					gotEval := transport.NewEvaluate(node)
+					gotEval := node
 					var got prior.Reading
 
-					for out := range gotEval.Next(transport.NewValues(prior.Observation{Epoch: epoch, HasEpoch: true}).Next(nil)) {
+					for out := range gotEval.Next(sequence.NewValues(prior.Observation{Epoch: epoch, HasEpoch: true}).Next(nil)) {
 						got = *(*prior.Reading)(out)
 					}
 
@@ -108,10 +108,10 @@ func TestPrimitiveNext(t *testing.T) {
 				final := statistic.PriorObservation{
 					Value: 7, Authority: 0.5, Memory: memory, Epoch: 1000001, HasEpoch: true,
 				}
-				gotEval := transport.NewEvaluate(node)
+				gotEval := node
 				var got prior.Reading
 
-				for out := range gotEval.Next(transport.NewValues(prior.Observation{
+				for out := range gotEval.Next(sequence.NewValues(prior.Observation{
 					Value: 7, Authority: 0.5, HasValue: true, Epoch: 1000001, HasEpoch: true,
 				}).Next(nil)) {
 					got = *(*prior.Reading)(out)

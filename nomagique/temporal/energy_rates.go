@@ -21,37 +21,27 @@ type EnergyRateInput struct {
 EnergyRates owns r² / elapsed seconds over interval arrivals.
 */
 type EnergyRates struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewEnergyRates() core.Primitive {
-	return &EnergyRates{}
+func NewEnergyRates() *EnergyRates {
+	return &EnergyRates{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *EnergyRates) Next(
+func (energyRates *EnergyRates) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*EnergyRateInput)(arriving)
 			elapsed := float64(input.To-input.From) / float64(time.Second)
-			op.out = (input.Value * input.Value) / elapsed
+			energyRates.out = (input.Value * input.Value) / elapsed
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&energyRates.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *EnergyRates) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

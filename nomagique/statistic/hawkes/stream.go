@@ -1,7 +1,6 @@
 package hawkes
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
@@ -17,17 +16,17 @@ here and never reaches the arrival path. Every arrival is yielded exactly
 once, invalid or not.
 */
 type Gate struct {
-	err error
+	*core.PrimitiveError
 }
 
 /*
 NewGate creates the arrival classification stage.
 */
-func NewGate() core.Primitive {
-	return &Gate{}
+func NewGate() *Gate {
+	return &Gate{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (gate *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
@@ -50,14 +49,4 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Gate) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

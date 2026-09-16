@@ -1,7 +1,6 @@
 package hawkes
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -29,18 +28,19 @@ measurement. Every arrival is yielded exactly once, rejected or not; a
 rejected arrival leaves the history untouched.
 */
 type Counts struct {
-	err     error
+	*core.PrimitiveError
+
 	history *paths
 }
 
 /*
 NewCounts creates the empirical arrival stage over the shared registry.
 */
-func NewCounts(history *paths) core.Primitive {
-	return &Counts{history: history}
+func NewCounts(history *paths) *Counts {
+	return &Counts{PrimitiveError: core.NewPrimitiveError(), history: history}
 }
 
-func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (counts *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
@@ -53,7 +53,7 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			p := op.history.at(m.Label)
+			p := counts.history.at(m.Label)
 
 			side := m.Provenance["side"]
 			mark := -1.0
@@ -120,16 +120,6 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 }
 
-func (op *Counts) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
 /*
 Excitation measures the arrival against the model fitted strictly before it:
 conditional intensities, excitation decomposition, the branching matrix and
@@ -139,22 +129,23 @@ share carries the clustering the fit measured. Without a fitted model there
 is nothing to measure against and the measurement moves through untouched.
 */
 type Excitation struct {
-	err     error
+	*core.PrimitiveError
+
 	history *paths
 }
 
 /*
 NewExcitation creates the model-evaluation stage over the shared registry.
 */
-func NewExcitation(history *paths) core.Primitive {
-	return &Excitation{history: history}
+func NewExcitation(history *paths) *Excitation {
+	return &Excitation{PrimitiveError: core.NewPrimitiveError(), history: history}
 }
 
-func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (excitation *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
-			p := op.history.at(m.Label)
+			p := excitation.history.at(m.Label)
 
 			if m.Metadata == nil {
 				m.Metadata = make(map[string]string, 3)
@@ -189,7 +180,7 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			atSec := float64(m.At.UnixNano()) * 1e-9
 			span := atSec - float64(p.origin().UnixNano())*1e-9
 
-			op.evaluate(m, p, buyArrivals, sellArrivals, atSec, span, mark)
+			excitation.evaluate(m, p, buyArrivals, sellArrivals, atSec, span, mark)
 
 			if !yield(arriving) {
 				return
@@ -204,7 +195,7 @@ mathematics the fitted bivariate process defines: pre-arrival intensities,
 excitation decomposition, branching descent, likelihoods against nested
 restrictions, and compensator innovations.
 */
-func (op *Excitation) evaluate(
+func (excitation *Excitation) evaluate(
 	m *data.Measurement[float64],
 	p *path,
 	buyArrivals, sellArrivals []float64,
@@ -389,38 +380,29 @@ func (op *Excitation) evaluate(
 	}
 }
 
-func (op *Excitation) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
 /*
 Refit folds the accepted arrival into the retained history and re-estimates
 the model from it. The re-estimation only takes effect for the next arrival:
 this event was already measured against the model that existed before it.
 */
 type Refit struct {
-	err     error
+	*core.PrimitiveError
+
 	history *paths
 }
 
 /*
 NewRefit creates the history-advance stage over the shared registry.
 */
-func NewRefit(history *paths) core.Primitive {
-	return &Refit{history: history}
+func NewRefit(history *paths) *Refit {
+	return &Refit{PrimitiveError: core.NewPrimitiveError(), history: history}
 }
 
-func (op *Refit) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (refit *Refit) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**data.Measurement[float64])(arriving)
-			p := op.history.at(m.Label)
+			p := refit.history.at(m.Label)
 
 			if m.Err == nil {
 				side := m.Provenance["side"]
@@ -443,30 +425,20 @@ func (op *Refit) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 }
 
-func (op *Refit) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-func (p *path) support() float64 {
-	if !p.modelReady {
+func (path *path) support() float64 {
+	if !path.modelReady {
 		return 0
 	}
 
-	return p.modelSupport
+	return path.modelSupport
 }
 
-func (p *path) divergence() float64 {
-	if !p.hasSNR {
+func (path *path) divergence() float64 {
+	if !path.hasSNR {
 		return 0
 	}
 
-	return math.Sqrt(p.snr)
+	return math.Sqrt(path.snr)
 }
 
 /*

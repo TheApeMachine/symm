@@ -7,11 +7,11 @@ import (
 	"time"
 	"unsafe"
 
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -43,7 +43,7 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Unix(10, 0), time.Unix(10, 0)
 			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: value}
 			measurement.Metadata = map[string]string{data.MetadataSupport: "1"}
-			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+			for range data.NewFinalizer[float64]().Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
@@ -90,7 +90,7 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 				measurement.Label, measurement.At, measurement.From = "ETH/USD", time.Unix(sec, 0), time.Unix(sec, 0)
 				measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
 				measurement.Metadata = map[string]string{data.MetadataSupport: "1"}
-				for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+				for range data.NewFinalizer[float64]().Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 				}
 				return measurement
 			}
@@ -136,7 +136,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Now(), time.Now()
 			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
 			measurement.Metadata = map[string]string{data.MetadataSupport: strconv.FormatFloat(support, 'f', -1, 64)}
-			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+			for range data.NewFinalizer[float64]().Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
@@ -196,7 +196,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			measurement.From = measurement.At
 			measurement.Metrics[metricName] = data.Metric[float64]{Label: metricName, Raw: val}
 			measurement.Metadata = map[string]string{data.MetadataSupport: strconv.FormatFloat(support, 'f', -1, 64)}
-			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
+			for range data.NewFinalizer[float64]().Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
@@ -244,7 +244,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			}
 			So(hasNonZeroLatent, ShouldBeTrue)
 
-			wire := lastArtifact.EncodeWire()
+			wire := lastArtifact.EncodeWire(false)
 			So(wire, ShouldNotBeNil)
 			So(len(wire.Latent), ShouldEqual, len(lastArtifact.Snapshot.Latent))
 			So(len(wire.Layers), ShouldEqual, len(lastArtifact.Snapshot.Layers))

@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,76 +8,44 @@ import (
 )
 
 /*
-Values lifts a fixed list of payloads into a run of unsafe.Pointer.
-Next ignores the inbound run and yields a pointer to each held value;
-repeated calls re-yield, producing fresh runs.
+IO is a simple uni-directional pipe for transporting data. It does nothing
+more than connect two Primitives together across an arbitrary boundary.
+Any additional behavior should be suplied by the two Primitives that are
+connected. This does not need to be used by default when two Primitive's
+are already connected by means of proximity in a nomagique.Number pipeline.
+This is used to connect Primitives over an otherwise unreachable distance.
 */
-type Values[T any] struct {
-	err    error
-	values []T
+type IO[T any] struct {
+	*core.PrimitiveError
+	i core.Primitive
+	o core.Primitive
 }
 
 /*
-NewValues instantiates a Values source Primitive from a fixed payload list.
-The values are copied into storage the primitive owns: a variadic spread of
-an existing slice aliases the caller's backing array, and downstream
-primitives mutate their wire in place, so the source must own its storage.
+NewIO takes the input Primitive and the output Primitive, and keeps them
+as the local state. It returns the new IO Primitive instance.
 */
-func NewValues[T any](values ...T) core.Primitive {
-	owned := append([]T(nil), values...)
-
-	return &Values[T]{values: owned}
+func NewIO[T any](i, o core.Primitive) *IO[T] {
+	return &IO[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		i:              i,
+		o:              o,
+	}
 }
 
-func (op *Values[T]) Next(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+/*
+Next takes the input and proxies it through the input Primitive, then takes
+the result of the input Primitive's Next method, and passes that as the input
+to the output Primitive.
+*/
+func (io *IO[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for index := range op.values {
-			if !yield(unsafe.Pointer(&op.values[index])) {
+		defer func() { io.Error(io.i.Error(), io.o.Error()) }()
+
+		for i := range io.o.Next(io.i.Next(in)) {
+			if !yield(i) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Values[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
-One presents a single unsafe.Pointer as a run.
-Next ignores the inbound run and yields the held pointer; repeated
-calls re-yield, producing fresh runs.
-*/
-type One struct {
-	err   error
-	value unsafe.Pointer
-}
-
-/*
-NewOne instantiates a One source Primitive from a single pointer.
-*/
-func NewOne(value unsafe.Pointer) core.Primitive {
-	return &One{value: value}
-}
-
-func (op *One) Next(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		yield(op.value)
-	}
-}
-
-func (op *One) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

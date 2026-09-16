@@ -1,7 +1,6 @@
 package equation
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
@@ -42,22 +41,23 @@ func SamplingVariance(depth, contextLength, support, variance float64) (float64,
 SamplingVarianceOp binds that equation to the Primitive contract.
 */
 type SamplingVarianceOp struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
 /*
 NewSamplingVariance creates the specificity-debt equation Primitive.
 */
-func NewSamplingVariance() core.Primitive {
-	return &SamplingVarianceOp{}
+func NewSamplingVariance() *SamplingVarianceOp {
+	return &SamplingVarianceOp{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next receives *SamplingVarianceInput payloads and yields a *float64 sampling
 variance for each.
 */
-func (op *SamplingVarianceOp) Next(
+func (samplingVarianceOp *SamplingVarianceOp) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -66,28 +66,15 @@ func (op *SamplingVarianceOp) Next(
 			value, err := SamplingVariance(input.Depth, input.ContextLength, input.Support, input.Variance)
 
 			if err != nil {
-				op.Error(err)
+				samplingVarianceOp.Error(err)
 				return
 			}
 
-			op.out = value
+			samplingVarianceOp.out = value
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&samplingVarianceOp.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *SamplingVarianceOp) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

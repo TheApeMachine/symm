@@ -1,7 +1,6 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -20,15 +19,16 @@ type ArgmaxResult struct {
 Argmax preserves a winning value's ordinal through comparison.
 */
 type Argmax struct {
-	err error
+	*core.PrimitiveError
+
 	out ArgmaxResult
 }
 
-func NewArgmax() core.Primitive {
-	return &Argmax{}
+func NewArgmax() *Argmax {
+	return &Argmax{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Argmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (argmax *Argmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		var best ArgmaxResult
 		seen := false
@@ -49,17 +49,7 @@ func (op *Argmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			return
 		}
 
-		op.out = best
-		yield(unsafe.Pointer(&op.out))
+		argmax.out = best
+		yield(unsafe.Pointer(&argmax.out))
 	}
-}
-
-func (op *Argmax) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -57,15 +57,15 @@ func newPaths() *paths {
 /*
 at resolves one symbol's path, creating it on first sight.
 */
-func (registry *paths) at(label string) *path {
-	existing, found := registry.byLabel[label]
+func (paths *paths) at(label string) *path {
+	existing, found := paths.byLabel[label]
 
 	if found {
 		return existing
 	}
 
 	fresh := &path{samples: make([]sample, 0, MaxArrivalSamples)}
-	registry.byLabel[label] = fresh
+	paths.byLabel[label] = fresh
 
 	return fresh
 }
@@ -73,11 +73,11 @@ func (registry *paths) at(label string) *path {
 /*
 sides splits the retained history into per-side seconds positions.
 */
-func (p *path) sides() (buy []float64, sell []float64) {
-	buy = make([]float64, 0, len(p.samples))
-	sell = make([]float64, 0, len(p.samples))
+func (path *path) sides() (buy []float64, sell []float64) {
+	buy = make([]float64, 0, len(path.samples))
+	sell = make([]float64, 0, len(path.samples))
 
-	for _, s := range p.samples {
+	for _, s := range path.samples {
 		if s.mark > 0 {
 			buy = append(buy, s.atSec)
 			continue
@@ -92,20 +92,20 @@ func (p *path) sides() (buy []float64, sell []float64) {
 /*
 origin returns the earliest retained arrival, the observation window's start.
 */
-func (p *path) origin() time.Time {
-	return p.samples[0].at
+func (path *path) origin() time.Time {
+	return path.samples[0].at
 }
 
 /*
 remember incorporates one accepted arrival into the history, evicting the
 oldest once the retained path is at capacity.
 */
-func (p *path) remember(at time.Time, atSec float64, mark float64) {
-	if len(p.samples) >= MaxArrivalSamples {
-		p.samples = p.samples[1:]
+func (path *path) remember(at time.Time, atSec float64, mark float64) {
+	if len(path.samples) >= MaxArrivalSamples {
+		path.samples = path.samples[1:]
 	}
 
-	p.samples = append(p.samples, sample{at: at, atSec: atSec, mark: mark})
+	path.samples = append(path.samples, sample{at: at, atSec: atSec, mark: mark})
 }
 
 /*
@@ -114,14 +114,14 @@ the retained history, keeping the previous model when the data cannot
 identify a new one. Every bound, grid, and cadence gate comes from the
 observed events through the fit context.
 */
-func (p *path) refit(atSec float64) {
-	if len(p.samples) >= 2 {
-		if p.samples[len(p.samples)-1].at.Equal(p.samples[len(p.samples)-2].at) {
+func (path *path) refit(atSec float64) {
+	if len(path.samples) >= 2 {
+		if path.samples[len(path.samples)-1].at.Equal(path.samples[len(path.samples)-2].at) {
 			return
 		}
 	}
 
-	buyArrivals, sellArrivals := p.sides()
+	buyArrivals, sellArrivals := path.sides()
 
 	stream := newArrivalStream(buyArrivals, sellArrivals)
 	context, ok := newFitContext(stream, atSec)
@@ -130,16 +130,16 @@ func (p *path) refit(atSec float64) {
 		return
 	}
 
-	p.eventsSinceFit++
+	path.eventsSinceFit++
 
-	if p.modelReady && p.eventsSinceFit < context.minFitEvents {
+	if path.modelReady && path.eventsSinceFit < context.minFitEvents {
 		return
 	}
 
 	prior := bivariateFit{}
 
-	if p.modelReady {
-		prior = p.model
+	if path.modelReady {
+		prior = path.model
 	}
 
 	estimator := newBivariateEstimator(prior)
@@ -149,15 +149,15 @@ func (p *path) refit(atSec float64) {
 		return
 	}
 
-	p.model = fitted
-	p.modelReady = true
-	p.modelSupport = float64(context.totalEvents)
-	p.eventsSinceFit = 0
+	path.model = fitted
+	path.modelReady = true
+	path.modelSupport = float64(context.totalEvents)
+	path.eventsSinceFit = 0
 
 	selfOnly := estimator.fitSelfOnly(stream, atSec)
 
 	if selfOnly.valid() {
-		p.selfOnlyModel = selfOnly
-		p.selfOnlyReady = true
+		path.selfOnlyModel = selfOnly
+		path.selfOnlyReady = true
 	}
 }

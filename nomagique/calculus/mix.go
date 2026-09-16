@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -21,33 +20,24 @@ type MixRecord struct {
 Mix owns left + weight*(right-left). Zero preserves left; one selects right.
 */
 type Mix struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewMix() core.Primitive {
-	return &Mix{}
+func NewMix() *Mix {
+	return &Mix{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Mix) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (mix *Mix) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			record := *(*MixRecord)(arriving)
-			op.out = record.Left + record.Weight*(record.Right-record.Left)
+			mix.out = record.Left + record.Weight*(record.Right-record.Left)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&mix.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Mix) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

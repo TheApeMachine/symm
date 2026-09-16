@@ -8,13 +8,13 @@ import "fmt"
 // Setting geometry after evolution would require a parameter-work/coordinate
 // transformation operator, so this initializer rejects that ambiguous operation.
 // No market geometry is inferred, and no nontrivial metric is enabled by default.
-func (m *Manifold) SetSpectralGeometry(potential, metricVolume []float32) error {
-	if m == nil {
+func (manifold *Manifold) SetSpectralGeometry(potential, metricVolume []float32) error {
+	if manifold == nil {
 		return fmt.Errorf("nil manifold")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	f := m.work
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+	f := manifold.work
 	if f == nil {
 		return fmt.Errorf("closed manifold")
 	}

@@ -1,7 +1,6 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -13,15 +12,16 @@ import (
 Softmax owns the shifted exponential normalization of one run of logits.
 */
 type Softmax struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewSoftmax() core.Primitive {
-	return &Softmax{}
+func NewSoftmax() *Softmax {
+	return &Softmax{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (softmax *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		var logits []float64
 
@@ -29,7 +29,7 @@ func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			val := *(*float64)(arriving)
 
 			if math.IsNaN(val) || math.IsInf(val, 0) {
-				op.err = errors.Join(op.err, core.ErrShape)
+				softmax.Error(core.ErrShape)
 				return
 			}
 
@@ -37,7 +37,7 @@ func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		}
 
 		if len(logits) == 0 {
-			op.err = errors.Join(op.err, core.ErrNotHeld)
+			softmax.Error(core.ErrNotHeld)
 			return
 		}
 
@@ -58,21 +58,11 @@ func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		}
 
 		for _, val := range shifted {
-			op.out = val / total
+			softmax.out = val / total
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&softmax.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Softmax) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

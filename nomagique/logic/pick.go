@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,7 +12,8 @@ Pick owns selection of one candidate. The predicate sees the held value and the
 arrival as a pair and decides whether the arrival replaces what is held.
 */
 type Pick struct {
-	err       error
+	*core.PrimitiveError
+
 	predicate core.Primitive
 	held      bool
 	current   float64
@@ -21,22 +21,30 @@ type Pick struct {
 	pair      [2]float64
 }
 
-func NewPick(predicate core.Primitive) core.Primitive {
-	return &Pick{predicate: predicate}
+func NewPick(predicate core.Primitive) *Pick {
+	return &Pick{PrimitiveError: core.NewPrimitiveError(), predicate: predicate}
 }
 
-func (op *Pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (pick *Pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		defer func() {
+
+			if pick.predicate != nil {
+				if err := pick.predicate.Error(); err != nil {
+					pick.Error(err)
+				}
+			}
+		}()
 		for arriving := range in {
 			in := (*float64)(arriving)
 			val := *in
 
-			if !op.held {
-				op.held = true
-				op.current = val
-				op.out = val
+			if !pick.held {
+				pick.held = true
+				pick.current = val
+				pick.out = val
 
-				if !yield(unsafe.Pointer(&op.out)) {
+				if !yield(unsafe.Pointer(&pick.out)) {
 					return
 				}
 
@@ -44,38 +52,23 @@ func (op *Pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			take := false
-			op.pair = [2]float64{val, op.current}
+			pick.pair = [2]float64{val, pick.current}
 
-			for decision := range op.predicate.Next(func(yield func(unsafe.Pointer) bool) {
-				yield(unsafe.Pointer(&op.pair))
+			for decision := range pick.predicate.Next(func(yield func(unsafe.Pointer) bool) {
+				yield(unsafe.Pointer(&pick.pair))
 			}) {
 				dec := (*bool)(decision)
 				take = *dec
 			}
 
 			if take {
-				op.current = val
+				pick.current = val
 			}
 
-			op.out = op.current
-			if !yield(unsafe.Pointer(&op.out)) {
+			pick.out = pick.current
+			if !yield(unsafe.Pointer(&pick.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Pick) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-	if op.predicate != nil {
-		if err := op.predicate.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

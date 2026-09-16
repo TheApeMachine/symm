@@ -5,27 +5,27 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestBaseline(t *testing.T) {
 	Convey("A delivery run preserves every observation and prior returned value", t, func() {
 		baseline := adaptive.NewBaseline(adaptive.NewWindow())
-		output := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(transport.NewValues(1.0, 3.0, 5.0).Next(nil)))
+		output := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(sequence.NewValues(1.0, 3.0, 5.0).Next(nil)))
 		So(baseline.Error(), ShouldBeNil)
 		So(output, ShouldHaveLength, 3)
 		So(output[0].Mean, ShouldEqual, 1)
 		So(output[2].Mean, ShouldEqual, 3)
 		So(output[2].Prior.Mean, ShouldEqual, 2)
 
-		more := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(transport.NewValues(7.0).Next(nil)))
+		more := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(sequence.NewValues(7.0).Next(nil)))
 		So(more[0].Mean, ShouldEqual, 4)
 	})
 
 	Convey("A baseline starts with span 1 and expands adaptively", t, func() {
 		baseline := adaptive.NewBaseline(adaptive.NewWindow())
-		readings := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(transport.NewValues(42.0, 44.0).Next(nil)))
+		readings := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(sequence.NewValues(42.0, 44.0).Next(nil)))
 
 		So(baseline.Error(), ShouldBeNil)
 		So(readings, ShouldHaveLength, 2)
@@ -42,10 +42,10 @@ func TestBaseline(t *testing.T) {
 		second := adaptive.NewBaseline(adaptive.NewWindow())
 
 		values := []float64{1, 3, 5, 7}
-		out1 := tests.CollectSeq[adaptive.BaselineReading](first.Next(transport.NewValues(values...).Next(nil)))
+		out1 := tests.CollectSeq[adaptive.BaselineReading](first.Next(sequence.NewValues(values...).Next(nil)))
 
 		values2 := []float64{101, 103, 105, 107}
-		out2 := tests.CollectSeq[adaptive.BaselineReading](second.Next(transport.NewValues(values2...).Next(nil)))
+		out2 := tests.CollectSeq[adaptive.BaselineReading](second.Next(sequence.NewValues(values2...).Next(nil)))
 
 		So(out1[len(out1)-1].Mean, ShouldEqual, 4)
 		So(out2[len(out2)-1].Mean, ShouldEqual, 104)

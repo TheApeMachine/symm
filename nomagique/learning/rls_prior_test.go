@@ -6,16 +6,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestRlsPriorNext(t *testing.T) {
 	Convey("Given an affine design and a configured coefficient variance", t, func() {
 		node := algo.NewSquareRootRLS(9)
-		outputEval := transport.NewEvaluate(node)
+		outputEval := node
 		var output algo.Reading
 
-		for out := range outputEval.Next(transport.NewValues(algo.Query{
+		for out := range outputEval.Next(sequence.NewValues(algo.Query{
 			Design: []float64{1, 2, -3},
 			Lambda: 1,
 		}).Next(nil)) {
@@ -28,9 +28,9 @@ func TestRlsPriorNext(t *testing.T) {
 		So(output.Root, ShouldResemble, [][]float64{{3, 0, 0}, {0, 3, 0}, {0, 0, 3}})
 
 		Convey("An invalid prior variance cannot create a model", func() {
-			_Eval := transport.NewEvaluate(algo.NewSquareRootRLS(-1))
+			_Eval := algo.NewSquareRootRLS(-1)
 
-			for range _Eval.Next(transport.NewValues(algo.Query{
+			for range _Eval.Next(sequence.NewValues(algo.Query{
 				Design: []float64{1, 2, -3},
 				Lambda: 1,
 			}).Next(nil)) {

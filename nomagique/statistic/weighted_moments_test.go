@@ -1,9 +1,10 @@
 package statistic_test
 
 import (
+	"testing"
+
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"testing"
 )
 
 func TestWeightedMomentsUpdate(t *testing.T) {

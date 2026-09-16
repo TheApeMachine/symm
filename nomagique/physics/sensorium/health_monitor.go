@@ -27,11 +27,11 @@ func NewPhysicsSnapshot(version uint64, at time.Time, population int, reading Re
 	}
 	return PhysicsSnapshot{"sensorium-physics-health/v1", version, at.UnixNano(), population, reading}, nil
 }
-func (s PhysicsSnapshot) Marshal() ([]byte, error) {
-	if s.Schema != "sensorium-physics-health/v1" || s.Population < 0 || !s.Reading.IsFinite() {
+func (physicsSnapshot PhysicsSnapshot) Marshal() ([]byte, error) {
+	if physicsSnapshot.Schema != "sensorium-physics-health/v1" || physicsSnapshot.Population < 0 || !physicsSnapshot.Reading.IsFinite() {
 		return nil, fmt.Errorf("invalid physics snapshot contract")
 	}
-	return sonic.Marshal(s)
+	return sonic.Marshal(physicsSnapshot)
 }
 
 // PhysicsMonitor is a replaceable observational boundary, never an integrator.
@@ -44,50 +44,50 @@ type PhysicsMonitor struct {
 	failure     string
 }
 
-func (m *PhysicsMonitor) WantsSnapshot() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (physicsMonitor *PhysicsMonitor) WantsSnapshot() bool {
+	physicsMonitor.mu.Lock()
+	defer physicsMonitor.mu.Unlock()
 	now := time.Now()
-	return now.Before(m.until) && now.Sub(m.last) >= 200*time.Millisecond
+	return now.Before(physicsMonitor.until) && now.Sub(physicsMonitor.last) >= 200*time.Millisecond
 }
-func (m *PhysicsMonitor) Observe(s PhysicsSnapshot) error {
+func (physicsMonitor *PhysicsMonitor) Observe(s PhysicsSnapshot) error {
 	bytes, err := s.Marshal()
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	physicsMonitor.mu.Lock()
+	defer physicsMonitor.mu.Unlock()
 	if err != nil {
-		m.failure = err.Error()
+		physicsMonitor.failure = err.Error()
 		return err
 	}
-	m.data = bytes
-	m.failure = ""
-	m.last = time.Now()
+	physicsMonitor.data = bytes
+	physicsMonitor.failure = ""
+	physicsMonitor.last = time.Now()
 	return nil
 }
-func (m *PhysicsMonitor) Reject(err error) {
+func (physicsMonitor *PhysicsMonitor) Reject(err error) {
 	if err == nil {
 		return
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.failure = err.Error()
+	physicsMonitor.mu.Lock()
+	defer physicsMonitor.mu.Unlock()
+	physicsMonitor.failure = err.Error()
 }
 
-func (m *PhysicsMonitor) Poll() ([]byte, int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.until = time.Now().Add(5 * time.Second)
-	if m.failure != "" {
-		b, _ := json.Marshal(map[string]string{"error": m.failure})
+func (physicsMonitor *PhysicsMonitor) Poll() ([]byte, int) {
+	physicsMonitor.mu.Lock()
+	defer physicsMonitor.mu.Unlock()
+	physicsMonitor.until = time.Now().Add(5 * time.Second)
+	if physicsMonitor.failure != "" {
+		b, _ := json.Marshal(map[string]string{"error": physicsMonitor.failure})
 		return b, http.StatusUnprocessableEntity
 	}
-	if len(m.data) == 0 {
+	if len(physicsMonitor.data) == 0 {
 		return []byte(`{"error":"No published physics reading yet"}`), http.StatusServiceUnavailable
 	}
-	return append([]byte(nil), m.data...), http.StatusOK
+	return append([]byte(nil), physicsMonitor.data...), http.StatusOK
 }
 
 // ServeHTTP also makes the same component directly testable without Fiber.
-func (m *PhysicsMonitor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (physicsMonitor *PhysicsMonitor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -98,7 +98,7 @@ func (m *PhysicsMonitor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(PhysicsMonitorHTML))
 	case "/physics/health":
-		b, status := m.Poll()
+		b, status := physicsMonitor.Poll()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write(b)

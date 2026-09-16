@@ -1,57 +1,54 @@
 package transport_test
 
 import (
+	"errors"
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/probability"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestValuesNext(t *testing.T) {
-	Convey("Values ignores the inbound run and yields each held value", t, func() {
-		op := transport.NewValues(1.0, 2.0, 3.0)
-		out := tests.CollectSeq[float64](op.Next(nil))
+func TestIONext(t *testing.T) {
+	Convey("IO connects the output of its input primitive to its output primitive", t, func() {
+		input := sequence.NewValue(2.0, -3.0)
+		pipe := transport.NewIO[float64](calculus.NewSquare(), calculus.NewNegate())
+		So(tests.CollectSeq[float64](pipe.Next(input)), ShouldResemble, []float64{-4, -9})
+		So(pipe.Error(), ShouldBeNil)
 
-		So(out, ShouldResemble, []float64{1, 2, 3})
-		So(op.Error(), ShouldBeNil)
-	})
+		Convey("Reversing the endpoints reverses the operation order", func() {
+			reverse := transport.NewIO[float64](calculus.NewNegate(), calculus.NewSquare())
+			So(tests.CollectSeq[float64](reverse.Next(input)), ShouldResemble, []float64{4, 9})
+		})
 
-	Convey("Repeated Next calls re-yield a fresh run", t, func() {
-		op := transport.NewValues(4.0, 7.0)
-		in := transport.NewValues(9.0).Next(nil)
+		Convey("An upstream failure remains visible at the connection", func() {
+			pipe := transport.NewIO[float64](sequence.NewGather[float64]([]int{1}), sequence.NewTail[float64](1))
+			So(tests.CollectSeq[[]float64](pipe.Next(sequence.NewValue([]float64{2}))), ShouldBeEmpty)
+			So(errors.Is(pipe.Error(), core.ErrShape), ShouldBeTrue)
+		})
 
-		So(tests.CollectSeq[float64](op.Next(in)), ShouldResemble, []float64{4, 7})
-		So(tests.CollectSeq[float64](op.Next(nil)), ShouldResemble, []float64{4, 7})
-	})
-}
-
-func TestOneNext(t *testing.T) {
-	Convey("One ignores the inbound run and yields the held pointer", t, func() {
-		value := 5.0
-		op := transport.NewOne(unsafe.Pointer(&value))
-		out := tests.CollectSeq[float64](op.Next(transport.NewValues(1.0).Next(nil)))
-
-		So(out, ShouldResemble, []float64{5})
-		So(op.Error(), ShouldBeNil)
+		Convey("A downstream failure remains visible at the connection", func() {
+			pipe := transport.NewIO[float64](sequence.NewTail[float64](1), sequence.NewGather[float64]([]int{1}))
+			So(tests.CollectSeq[[]float64](pipe.Next(sequence.NewValue([]float64{2, 5}))), ShouldBeEmpty)
+			So(errors.Is(pipe.Error(), core.ErrShape), ShouldBeTrue)
+		})
 	})
 }
 
-/*
-TestValuesOwnsStorage proves the source copies a variadic spread: a variadic
-spread of an existing slice aliases the caller's backing array, and mutating
-primitives must never write through into the caller's data.
-*/
-func TestValuesOwnsStorage(t *testing.T) {
-	evidence := []float64{1, 1, 1.8}
-
-	for out := range probability.NewShannonAmbiguity().Next(transport.NewValues(evidence...).Next(nil)) {
-		_ = *(*float64)(out)
-	}
-
-	if evidence[0] != 1 || evidence[2] != 1.8 {
-		t.Fatalf("source aliased caller storage: %v", evidence)
+func BenchmarkIONext(b *testing.B) {
+	pipe := transport.NewIO[float64](calculus.NewSquare(), calculus.NewNegate())
+	input := sequence.NewValue(1.0, 2.0, 3.0, 4.0)
+	b.ReportAllocs()
+	for b.Loop() {
+		count := 0
+		for range pipe.Next(input) {
+			count++
+		}
+		if count != 4 {
+			b.Fatal(count)
+		}
 	}
 }

@@ -2,16 +2,17 @@ package cvd
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"sync"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	nmcvd "github.com/theapemachine/symm/nomagique/cvd"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
+	cvd "github.com/theapemachine/symm/nomagique/statistic/cvd"
 )
 
 /*
@@ -53,12 +54,11 @@ func (trade *Trade) pipelineFor(symbol string) core.Primitive {
 		return pipeline
 	}
 
-	pipeline = nomagique.NewNumber(
-		nmcvd.NewGate(),
-		nmcvd.NewQuantity(),
-		nmcvd.NewNotional(),
-		nmcvd.NewRates(),
-		data.NewFinalizer[float64](),
+	pipeline = nomagique.NewNumber(cvd.
+		NewGate(), cvd.
+		NewQuantity(), cvd.
+		NewNotional(), cvd.
+		NewRates(), data.NewFinalizer[float64](),
 	)
 	trade.pipelines[symbol] = pipeline
 	return pipeline
@@ -104,8 +104,8 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := sequence.Read[*data.Measurement[float64]](trade.pipelineFor(measurement.Label).Next(sequence.
+		NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func liftedMeasurements() []*Measurement[float64] {
@@ -23,7 +23,7 @@ func liftedMeasurements() []*Measurement[float64] {
 
 	finalizer := NewFinalizer[float64]()
 
-	for range finalizer.Next(transport.NewValues(measurementOne).Next(nil)) {
+	for range finalizer.Next(sequence.NewValues(measurementOne).Next(nil)) {
 	}
 
 	measurementTwo := NewMeasurement("depthflow", map[string]Metric[float64]{})
@@ -32,7 +32,7 @@ func liftedMeasurements() []*Measurement[float64] {
 		Label: "imbalance", Raw: 50.0,
 	}
 
-	for range finalizer.Next(transport.NewValues(measurementTwo).Next(nil)) {
+	for range finalizer.Next(sequence.NewValues(measurementTwo).Next(nil)) {
 	}
 
 	measurementFailing := NewMeasurement("broken", map[string]Metric[float64]{})
@@ -47,7 +47,7 @@ func TestLiftNext(t *testing.T) {
 		node := NewLift()
 		var reading *LiftReading
 
-		for out := range node.Next(transport.NewValues(liftedMeasurements()...).Next(nil)) {
+		for out := range node.Next(sequence.NewValues(liftedMeasurements()...).Next(nil)) {
 			reading = (*LiftReading)(out)
 		}
 
@@ -67,7 +67,7 @@ func TestLiftReadoutsNext(t *testing.T) {
 		node := NewLiftReadouts()
 		var reading *ReadoutLift
 
-		for out := range node.Next(transport.NewValues(liftedMeasurements()...).Next(nil)) {
+		for out := range node.Next(sequence.NewValues(liftedMeasurements()...).Next(nil)) {
 			reading = (*ReadoutLift)(out)
 		}
 
@@ -92,7 +92,7 @@ func BenchmarkLiftNext(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		for range node.Next(transport.NewValues(measurements...).Next(nil)) {
+		for range node.Next(sequence.NewValues(measurements...).Next(nil)) {
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
@@ -54,8 +55,8 @@ func TestConsumerHandle(t *testing.T) {
 
 			So(node.steps, ShouldEqual, 1)
 
-			measurement := data.Read[*data.Measurement[float64]](register.Next(
-				data.NewValue(*store.NewQuery(consumer, data.ActionRead)),
+			measurement := sequence.Read[*data.Measurement[float64]](register.Next(sequence.
+				NewValue(*store.NewQuery(consumer, data.ActionRead)),
 			))
 
 			So(measurement, ShouldNotBeNil)
@@ -79,7 +80,7 @@ func TestConsumerHandle(t *testing.T) {
 			So(inputs, ShouldResemble, []int64{1, 2, 3})
 			for sequence := int64(0); sequence < 3; sequence++ {
 				query := store.NewQuery[*data.Measurement[float64]](nil, data.ActionRead).SetSequence(sequence)
-				So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))).SeqIdx, ShouldEqual, sequence+1)
+				So(sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*query))).SeqIdx, ShouldEqual, sequence+1)
 			}
 		})
 
@@ -93,7 +94,7 @@ func TestConsumerHandle(t *testing.T) {
 			}
 			consumer.Handle(0, 2)
 			query := store.NewQuery[*data.Measurement[float64]](nil, data.ActionRead).SetSequence(1)
-			So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))), ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*query))), ShouldBeNil)
 		})
 
 		Convey("Observation errors stay on their recorded boundary and do not poison the next input", func() {
@@ -107,9 +108,9 @@ func TestConsumerHandle(t *testing.T) {
 			}
 			consumer.Handle(0, 1)
 			query := store.NewQuery[*data.Measurement[float64]](nil, data.ActionRead).SetSequence(0)
-			So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))).Err, ShouldNotBeNil)
+			So(sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*query))).Err, ShouldNotBeNil)
 			query.SetSequence(1)
-			So(data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query))).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*query))).Err, ShouldBeNil)
 		})
 
 		Convey("Each calculation starts without the previous structured result", func() {

@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -14,14 +13,14 @@ Tanh owns one field operation. What it hands over is the hyperbolic tangent
 of each arrival, operating in-place on the wire pointer.
 */
 type Tanh struct {
-	err error
+	*core.PrimitiveError
 }
 
-func NewTanh() core.Primitive {
-	return &Tanh{}
+func NewTanh() *Tanh {
+	return &Tanh{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Tanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (tanh *Tanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			in := (*float64)(arriving)
@@ -32,14 +31,4 @@ func (op *Tanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Tanh) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

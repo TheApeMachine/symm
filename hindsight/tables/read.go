@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
 	icetable "github.com/apache/iceberg-go/table"
 	"github.com/theapemachine/errnie"
@@ -11,18 +12,18 @@ import (
 )
 
 /*
-Scan reads measurements from a canonical table matching the epoch and filter predicates,
-projecting only the requested columns and stopping early if limit is reached.
+scanRecords borrows canonical Arrow batches until the next yield returns.
+The receiver must retain a batch if it needs it after that boundary.
 */
-func (catalog *Catalog) scan(
+func (catalog *Catalog) scanRecords(
 	ctx context.Context,
 	tableName string,
 	epoch int64,
 	filter iceberg.BooleanExpression,
 	limit int,
 	fields ...string,
-) iter.Seq2[*data.Measurement[float64], error] {
-	return func(yield func(*data.Measurement[float64], error) bool) {
+) iter.Seq2[arrow.RecordBatch, error] {
+	return func(yield func(arrow.RecordBatch, error) bool) {
 		tbl, err := catalog.Load(ctx, tableName)
 
 		if err != nil {
@@ -84,25 +85,46 @@ func (catalog *Catalog) scan(
 				return
 			}
 
-			if batch != nil {
-				batchMeasurements, err := readMeasurements(batch)
-				batch.Release()
+			if batch == nil {
+				continue
+			}
 
-				if err != nil {
-					yield(nil, err)
+			accepted := yield(batch, nil)
+			count += int(batch.NumRows())
+			batch.Release()
+
+			if !accepted || (limit > 0 && count >= limit) {
+				return
+			}
+		}
+	}
+}
+
+// scan decodes borrowed Arrow batches using the canonical measurement schema.
+func (catalog *Catalog) scan(ctx context.Context, tableName string, epoch int64,
+	filter iceberg.BooleanExpression, limit int, fields ...string,
+) iter.Seq2[*data.Measurement[float64], error] {
+	return func(yield func(*data.Measurement[float64], error) bool) {
+		count := 0
+		for batch, err := range catalog.scanRecords(ctx, tableName, epoch, filter, limit, fields...) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			measurements, err := readMeasurements(batch)
+
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			for _, measurement := range measurements {
+				if !yield(measurement, nil) {
 					return
 				}
+				count++
 
-				for _, measurement := range batchMeasurements {
-					if !yield(measurement, nil) {
-						return
-					}
-
-					count++
-
-					if limit > 0 && count >= limit {
-						return
-					}
+				if limit > 0 && count >= limit {
+					return
 				}
 			}
 		}
@@ -119,6 +141,7 @@ func (catalog *Catalog) Scan(ctx context.Context, tableName string, epoch int64,
 				errnie.Error(err)
 				return
 			}
+
 			if !yield(measurement) {
 				return
 			}

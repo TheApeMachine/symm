@@ -5,8 +5,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestWindow(t *testing.T) {
@@ -17,7 +17,7 @@ func TestWindow(t *testing.T) {
 			values[i] = 7
 		}
 
-		output := tests.CollectSeq[adaptive.WindowReading](window.Next(transport.NewValues(values...).Next(nil)))
+		output := tests.CollectSeq[adaptive.WindowReading](window.Next(sequence.NewValues(values...).Next(nil)))
 		So(window.Error(), ShouldBeNil)
 		So(len(output), ShouldEqual, 100)
 
@@ -30,7 +30,7 @@ func TestWindow(t *testing.T) {
 	Convey("Window sheds on mean shift", t, func() {
 		window := adaptive.NewWindow()
 		values := []float64{1, 3, 5, 7, 9, 11, 13, 15, 17, 19}
-		output := tests.CollectSeq[adaptive.WindowReading](window.Next(transport.NewValues(values...).Next(nil)))
+		output := tests.CollectSeq[adaptive.WindowReading](window.Next(sequence.NewValues(values...).Next(nil)))
 
 		So(window.Error(), ShouldBeNil)
 		So(len(output), ShouldEqual, len(values))

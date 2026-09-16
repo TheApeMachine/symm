@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -33,9 +32,9 @@ import (
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type Action string
@@ -128,6 +127,8 @@ the observation clock it decays against, and the class census. Concurrent
 observes publish through compare-and-swap; evaluations read immutable roots.
 */
 type Engine struct {
+	*core.PrimitiveError
+
 	err         atomic.Pointer[engineError]
 	cfg         Config
 	root        atomic.Pointer[iradix.Tree[[]byte]]
@@ -145,8 +146,7 @@ configuration fold to the declared defaults; the normalized values are
 computed here and owned by the engine.
 */
 func NewEngine(cfg Config) *Engine {
-	engine := &Engine{
-		cfg:         cfg.normalised(),
+	engine := &Engine{PrimitiveError: core.NewPrimitiveError(), cfg: cfg.normalised(),
 		decayFactor: cfg.normalised().decayFactor(),
 	}
 
@@ -155,14 +155,21 @@ func NewEngine(cfg Config) *Engine {
 }
 
 /* Next executes typed Command pointers and yields the command result. */
-func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (engine *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		defer func() {
+
+			if recorded := engine.Error().
+				Load(); recorded != nil {
+				return recorded.err
+			}
+		}()
 		for arriving := range in {
 			command := (*Command)(arriving)
-			result, err := op.execute(command)
+			result, err := engine.execute(command)
 
 			if err != nil {
-				op.Error(err)
+				engine.Error(err)
 				return
 			}
 
@@ -181,34 +188,9 @@ func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 }
 
 /*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Engine) Error(errs ...error) error {
-	for _, err := range errs {
-		if err == nil {
-			continue
-		}
-		for {
-			previous := op.err.Load()
-			joined := err
-			if previous != nil {
-				joined = errors.Join(previous.err, err)
-			}
-			if op.err.CompareAndSwap(previous, &engineError{joined}) {
-				break
-			}
-		}
-	}
-	if recorded := op.err.Load(); recorded != nil {
-		return recorded.err
-	}
-	return nil
-}
-
-/*
 execute dispatches one command to its intent and returns its result.
 */
-func (op *Engine) execute(command *Command) (Result, error) {
+func (engine *Engine) execute(command *Command) (Result, error) {
 	intents := 0
 
 	if command.Observe != nil {
@@ -243,41 +225,41 @@ func (op *Engine) execute(command *Command) (Result, error) {
 	}
 
 	if command.Observe != nil {
-		return op.observe(*command.Observe)
+		return engine.observe(*command.Observe)
 	}
 
 	if command.Evaluate != nil {
-		return op.evaluate(command.Evaluate.Context, command.Evaluate.Exact)
+		return engine.evaluate(command.Evaluate.Context, command.Evaluate.Exact)
 	}
 
 	if command.Snapshot != nil {
-		return op.snapshot()
+		return engine.snapshot()
 	}
 
 	if command.Restore != nil {
-		return op.restore(command.Restore)
+		return engine.restore(command.Restore)
 	}
 
 	if command.Census != nil {
-		return Result{Classes: op.census()}, nil
+		return Result{Classes: engine.census()}, nil
 	}
 
-	return Result{Tree: op.root.Load()}, nil
+	return Result{Tree: engine.root.Load()}, nil
 }
 
 // Evaluate classifies a context sequence against the radix trie.
-func (op *Engine) Evaluate(context []byte) (Result, error) {
-	return op.evaluate(context)
+func (engine *Engine) Evaluate(context []byte) (Result, error) {
+	return engine.evaluate(context)
 }
 
 // Observe records a context -> class association into the radix trie.
-func (op *Engine) Observe(assoc Association) (Result, error) {
-	return op.observe(assoc)
+func (engine *Engine) Observe(assoc Association) (Result, error) {
+	return engine.observe(assoc)
 }
 
 // Train ingests a sequence of sensory tokens associated with a target class,
 // decomposing it into suffix n-grams up to MaxBackoffOrder with surprisal-modulated plasticity.
-func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result, error) {
+func (engine *Engine) Train(sequence []byte, class []byte, feedback float64) (Result, error) {
 	if len(sequence) == 0 {
 		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: sequence is required for training", nil))
 	}
@@ -286,7 +268,7 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: class is required for training", nil))
 	}
 
-	evalResult, evalErr := op.evaluate(sequence)
+	evalResult, evalErr := engine.evaluate(sequence)
 
 	if evalErr != nil {
 		return Result{}, evalErr
@@ -326,7 +308,7 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 		}
 
 		if offset == len(sequence) && len(frameOffsets) > 0 {
-			maxOrder := op.cfg.MaxBackoffOrder
+			maxOrder := engine.cfg.MaxBackoffOrder
 
 			for startIdx := 0; startIdx < len(frameOffsets); startIdx++ {
 				limitIdx := min(len(frameOffsets), startIdx+maxOrder)
@@ -342,7 +324,7 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 						subContext = sequence[frameOffsets[startIdx]:]
 					}
 
-					lastResult, err = op.observe(Association{
+					lastResult, err = engine.observe(Association{
 						Context:  subContext,
 						Class:    class,
 						Feedback: effectiveFeedback,
@@ -361,14 +343,14 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 
 	if len(sequence)%8 == 0 && len(sequence) >= 8 {
 		tokenCount := len(sequence) / 8
-		maxOrder := op.cfg.MaxBackoffOrder
+		maxOrder := engine.cfg.MaxBackoffOrder
 
 		for startIdx := 0; startIdx < tokenCount; startIdx++ {
 			limitIdx := min(tokenCount, startIdx+maxOrder)
 
 			for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
 				subContext := sequence[startIdx*8 : endIdx*8]
-				lastResult, err = op.observe(Association{
+				lastResult, err = engine.observe(Association{
 					Context:  subContext,
 					Class:    class,
 					Feedback: effectiveFeedback,
@@ -421,14 +403,14 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 		}
 
 		if len(tokenBounds) > 0 {
-			maxOrder := op.cfg.MaxBackoffOrder
+			maxOrder := engine.cfg.MaxBackoffOrder
 
 			for startIdx := 0; startIdx < len(tokenBounds); startIdx++ {
 				limitIdx := min(len(tokenBounds), startIdx+maxOrder)
 
 				for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
 					subContext := sequence[tokenBounds[startIdx][0]:tokenBounds[endIdx-1][1]]
-					lastResult, err = op.observe(Association{
+					lastResult, err = engine.observe(Association{
 						Context:  subContext,
 						Class:    class,
 						Feedback: effectiveFeedback,
@@ -445,7 +427,7 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 		}
 	}
 
-	lastResult, err = op.observe(Association{
+	lastResult, err = engine.observe(Association{
 		Context:  sequence,
 		Class:    class,
 		Feedback: effectiveFeedback,
@@ -456,10 +438,10 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 		return Result{}, err
 	}
 
-	_, suffixes := backoffCandidates(sequence, op.cfg.MaxBackoffOrder)
+	_, suffixes := backoffCandidates(sequence, engine.cfg.MaxBackoffOrder)
 
 	for _, suffix := range suffixes {
-		lastResult, err = op.observe(Association{
+		lastResult, err = engine.observe(Association{
 			Context:  suffix,
 			Class:    class,
 			Feedback: effectiveFeedback,
@@ -476,7 +458,7 @@ func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result
 
 // Prune walks the radix trie and removes records whose effective count
 // has dropped below minEffectiveCount.
-func (op *Engine) Prune(minEffectiveCount float64) int {
+func (engine *Engine) Prune(minEffectiveCount float64) int {
 	if minEffectiveCount <= 0 {
 		minEffectiveCount = 0.05
 	}
@@ -484,8 +466,8 @@ func (op *Engine) Prune(minEffectiveCount float64) int {
 	prunedTotal := 0
 
 	for {
-		oldRoot := op.root.Load()
-		currentStep := op.stepCounter.Load()
+		oldRoot := engine.root.Load()
+		currentStep := engine.stepCounter.Load()
 		txn := oldRoot.Txn()
 
 		var keysToDelete [][]byte
@@ -496,7 +478,7 @@ func (op *Engine) Prune(minEffectiveCount float64) int {
 				continue
 			}
 
-			weight := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+			weight := decodeWeight(valBytes).effective(currentStep, engine.decayFactor)
 			effectiveMass := float64(weight.Count) * weight.Probability
 
 			if effectiveMass < minEffectiveCount {
@@ -514,7 +496,7 @@ func (op *Engine) Prune(minEffectiveCount float64) int {
 
 		newRoot := txn.Commit()
 
-		if op.root.CompareAndSwap(oldRoot, newRoot) {
+		if engine.root.CompareAndSwap(oldRoot, newRoot) {
 			prunedTotal = len(keysToDelete)
 			break
 		}
@@ -524,12 +506,12 @@ func (op *Engine) Prune(minEffectiveCount float64) int {
 }
 
 // Dream generates a candidate continuation sequence via temperature-guided lookahead.
-func (op *Engine) Dream(temperature float64, maxLength int) string {
+func (engine *Engine) Dream(temperature float64, maxLength int) string {
 	if maxLength <= 0 {
 		maxLength = 64
 	}
 
-	root := op.root.Load()
+	root := engine.root.Load()
 	currentSequence := ""
 
 	for hop := 0; hop < maxLength; hop++ {
@@ -604,8 +586,8 @@ func (op *Engine) Dream(temperature float64, maxLength int) string {
 }
 
 // Consolidate executes an offline REM sleep memory consolidation cycle.
-func (op *Engine) Consolidate(temperature float64) (string, string, float64, bool, error) {
-	classes := op.census()
+func (engine *Engine) Consolidate(temperature float64) (string, string, float64, bool, error) {
+	classes := engine.census()
 
 	if len(classes) == 0 {
 		return "", "", 0, false, nil
@@ -628,13 +610,13 @@ func (op *Engine) Consolidate(temperature float64) (string, string, float64, boo
 		}
 	}
 
-	dream := op.Dream(temperature, 64)
+	dream := engine.Dream(temperature, 64)
 
 	if len(dream) == 0 {
 		return "", targetClass, 0, false, nil
 	}
 
-	evalResult, evalErr := op.evaluate([]byte(dream))
+	evalResult, evalErr := engine.evaluate([]byte(dream))
 
 	if evalErr != nil {
 		return dream, targetClass, 0, false, evalErr
@@ -645,18 +627,18 @@ func (op *Engine) Consolidate(temperature float64) (string, string, float64, boo
 
 	if evalResult.Evaluation.WinnerClass == targetClass && confidence >= 0.80 {
 		basinKey := makeBasinKey([]byte(targetClass), []byte(dream))
-		root := op.root.Load()
+		root := engine.root.Load()
 		_, exists := root.Get(basinKey)
 		novel = !exists
 
 		if novel {
-			_, trainErr := op.Train([]byte(dream), []byte(targetClass), 1.0)
+			_, trainErr := engine.Train([]byte(dream), []byte(targetClass), 1.0)
 
 			if trainErr != nil {
 				return dream, targetClass, confidence, novel, trainErr
 			}
 
-			op.remReplays.Add(1)
+			engine.remReplays.Add(1)
 		}
 	}
 
@@ -664,9 +646,9 @@ func (op *Engine) Consolidate(temperature float64) (string, string, float64, boo
 }
 
 // ExtractSymbols identifies distinctive sequence motifs across attractor basins.
-func (op *Engine) ExtractSymbols() []Symbol {
-	root := op.root.Load()
-	currentStep := op.stepCounter.Load()
+func (engine *Engine) ExtractSymbols() []Symbol {
+	root := engine.root.Load()
+	currentStep := engine.stepCounter.Load()
 
 	contexts := make(map[string]map[string]float64)
 	contextTotals := make(map[string]float64)
@@ -685,7 +667,7 @@ func (op *Engine) ExtractSymbols() []Symbol {
 			continue
 		}
 
-		weight := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+		weight := decodeWeight(valBytes).effective(currentStep, engine.decayFactor)
 		effectiveCount := float64(weight.Count) * weight.Probability
 
 		if effectiveCount <= 0 {
@@ -739,13 +721,13 @@ func (op *Engine) ExtractSymbols() []Symbol {
 }
 
 // ExportTree constructs the prefix branches, lookahead beams, and class readouts for visualizers.
-func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
+func (engine *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
 	if maxBranches <= 0 {
 		maxBranches = 128
 	}
 
-	root := op.root.Load()
-	currentStep := op.stepCounter.Load()
+	root := engine.root.Load()
+	currentStep := engine.stepCounter.Load()
 	var branches []Branch
 	nodeMap := make(map[string]int)
 
@@ -780,7 +762,7 @@ func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
 		}
 
 		seqStr := string(seqBytes)
-		state := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+		state := decodeWeight(valBytes).effective(currentStep, engine.decayFactor)
 		parentID := 0
 		depth := 1
 		token := seqStr
@@ -824,8 +806,8 @@ func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
 		})
 	}
 
-	beams := beamSearch(root, activeContext, op.cfg.BeamWidth, op.cfg.MaxHops)
-	evalResult, _ := op.evaluate(activeContext)
+	beams := beamSearch(root, activeContext, engine.cfg.BeamWidth, engine.cfg.MaxHops)
+	evalResult, _ := engine.evaluate(activeContext)
 
 	return TreeExport{
 		Branches:  branches,
@@ -836,8 +818,8 @@ func (op *Engine) ExportTree(activeContext []byte, maxBranches int) TreeExport {
 }
 
 // REMReplays returns the total number of REM consolidations performed.
-func (op *Engine) REMReplays() int {
-	return int(op.remReplays.Load())
+func (engine *Engine) REMReplays() int {
+	return int(engine.remReplays.Load())
 }
 
 /*
@@ -845,7 +827,7 @@ observe registers context -> class in the existing packed basin and publishes
 the next immutable root through compare-and-swap. Keys are namespaced:
 b/<context>/<class> for basins; s/<context> for sensory transitions.
 */
-func (op *Engine) observe(assoc Association) (Result, error) {
+func (engine *Engine) observe(assoc Association) (Result, error) {
 	if len(assoc.Context) == 0 {
 		return Result{}, fmt.Errorf(
 			"%w: cognition: observation requires a context",
@@ -859,8 +841,8 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 	var valBuf [WeightSize]byte
 
 	for {
-		oldRoot := op.root.Load()
-		step := op.stepCounter.Add(1)
+		oldRoot := engine.root.Load()
+		step := engine.stepCounter.Add(1)
 		txn := oldRoot.Txn()
 
 		isNew := false
@@ -876,7 +858,7 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 			existing, found := oldRoot.Get(basinKey)
 
 			if found {
-				weight = decodeWeight(existing).effective(step, op.decayFactor)
+				weight = decodeWeight(existing).effective(step, engine.decayFactor)
 			}
 
 			isNew = !found
@@ -891,7 +873,7 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 		sState := PackedWeight{Count: 1, Probability: 1.0, WriteStep: step}
 
 		if existing, found := oldRoot.Get(sensoryKey); found {
-			prior := decodeWeight(existing).effective(step, op.decayFactor)
+			prior := decodeWeight(existing).effective(step, engine.decayFactor)
 			sState.Count = prior.Count + 1
 			sState.Probability = prior.Probability + (1.0-prior.Probability)/(float64(sState.Count)+1.0)
 		}
@@ -901,9 +883,9 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 
 		newRoot := txn.Commit()
 
-		if op.root.CompareAndSwap(oldRoot, newRoot) {
+		if engine.root.CompareAndSwap(oldRoot, newRoot) {
 			if isNew {
-				op.incrementClass(string(assoc.Class))
+				engine.incrementClass(string(assoc.Class))
 			}
 
 			return Result{Tree: newRoot}, nil
@@ -915,16 +897,16 @@ func (op *Engine) observe(assoc Association) (Result, error) {
 evaluate performs single-pass classification, ambiguity gating, surprisal
 calculation, and lookahead.
 */
-func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
+func (engine *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 	if len(context) == 0 {
 		return Result{Evaluation: Evaluation{
-			Surprisal: op.cfg.SurprisalBreakBits,
+			Surprisal: engine.cfg.SurprisalBreakBits,
 			IsBreak:   true,
 		}}, nil
 	}
 
-	root := op.root.Load()
-	step := op.stepCounter.Load()
+	root := engine.root.Load()
+	step := engine.stepCounter.Load()
 
 	// -------------------------------------------------------------
 	// 1. Attractor Basin Softmax & Contrast (Nomagique Probability)
@@ -955,14 +937,14 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 			continue
 		}
 
-		state := decodeWeight(v).effective(step, op.decayFactor)
+		state := decodeWeight(v).effective(step, engine.decayFactor)
 		mass := float64(state.Count) * state.Probability
-		acc.add(class, mass, state.Count, op.cfg.MaxBackoffOrder)
+		acc.add(class, mass, state.Count, engine.cfg.MaxBackoffOrder)
 	}
 
 	// Fallback: if no exact match, use prefix and suffix backoff via direct SeekPrefix
 	if acc.count == 0 && (len(exact) == 0 || !exact[0]) {
-		maxSteps := op.cfg.MaxBackoffOrder
+		maxSteps := engine.cfg.MaxBackoffOrder
 
 		prefixes, suffixes := backoffCandidates(context, maxSteps)
 		var keyBuf [512]byte
@@ -983,7 +965,7 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 			}
 
 			if _, exists := root.Get(sensoryKey); exists {
-				if searchSubPrefix(root, sub, step, op.decayFactor, 1, op.cfg.MaxBackoffOrder, &acc) {
+				if searchSubPrefix(root, sub, step, engine.decayFactor, 1, engine.cfg.MaxBackoffOrder, &acc) {
 					break
 				}
 			}
@@ -991,10 +973,10 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 
 		// Check prefixes if no suffix matched
 		if acc.count == 0 {
-			order := max(1, op.cfg.MaxBackoffOrder/2)
+			order := max(1, engine.cfg.MaxBackoffOrder/2)
 
 			for _, sub := range prefixes {
-				if searchSubPrefix(root, sub, step, op.decayFactor, order, op.cfg.MaxBackoffOrder, &acc) {
+				if searchSubPrefix(root, sub, step, engine.decayFactor, order, engine.cfg.MaxBackoffOrder, &acc) {
 					break
 				}
 			}
@@ -1004,7 +986,7 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 	eval := Evaluation{Context: context, Step: step}
 
 	if acc.count > 0 {
-		reading, err := op.classify(&acc)
+		reading, err := engine.classify(&acc)
 		if err != nil {
 			return Result{}, err
 		}
@@ -1029,25 +1011,25 @@ func (op *Engine) evaluate(context []byte, exact ...bool) (Result, error) {
 	}
 
 	if raw, found := root.Get(sensoryKey); found {
-		state := decodeWeight(raw).effective(step, op.decayFactor)
+		state := decodeWeight(raw).effective(step, engine.decayFactor)
 
-		prob := (float64(state.Count) + op.cfg.DirichletAlpha) / (totalSteps + op.cfg.DirichletAlpha*float64(maxSensoryCandidates))
+		prob := (float64(state.Count) + engine.cfg.DirichletAlpha) / (totalSteps + engine.cfg.DirichletAlpha*float64(maxSensoryCandidates))
 		if prob > 0 {
 			eval.Surprisal = -math.Log2(prob)
 		} else {
-			eval.Surprisal = op.cfg.SurprisalBreakBits
+			eval.Surprisal = engine.cfg.SurprisalBreakBits
 		}
 	} else {
 		// Unseen transition: surprisal derives from Dirichlet baseline over sensory space
-		eval.Surprisal = -math.Log2(op.cfg.DirichletAlpha / (totalSteps + op.cfg.DirichletAlpha*float64(maxSensoryCandidates)))
+		eval.Surprisal = -math.Log2(engine.cfg.DirichletAlpha / (totalSteps + engine.cfg.DirichletAlpha*float64(maxSensoryCandidates)))
 	}
 
-	eval.IsBreak = eval.Surprisal >= op.cfg.SurprisalBreakBits
+	eval.IsBreak = eval.Surprisal >= engine.cfg.SurprisalBreakBits
 
 	// -------------------------------------------------------------
 	// 3. Multi-Hop Lookahead (Beam Search)
 	// -------------------------------------------------------------
-	eval.Lookahead = beamSearch(root, context, op.cfg.BeamWidth, op.cfg.MaxHops)
+	eval.Lookahead = beamSearch(root, context, engine.cfg.BeamWidth, engine.cfg.MaxHops)
 
 	return Result{Evaluation: eval}, nil
 }
@@ -1071,7 +1053,7 @@ softmax densities scaled by backoff order, Dirichlet prior mass for unobserved
 candidates, and the canonical Argmax, EvidenceShare and ShannonAmbiguity
 reductions for the winner, its share, its contrast and the ambiguity.
 */
-func (op *Engine) classify(acc *classAccumulator) (classification, error) {
+func (engine *Engine) classify(acc *classAccumulator) (classification, error) {
 	var reading classification
 
 	if acc.count == 0 {
@@ -1083,11 +1065,11 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 		totalMass += acc.masses[i]
 	}
 
-	distinctTotal := op.distinctClasses()
+	distinctTotal := engine.distinctClasses()
 	k := max(acc.count+1, distinctTotal)
 	unobservedCount := k - acc.count
 
-	alpha := op.cfg.DirichletAlpha
+	alpha := engine.cfg.DirichletAlpha
 	denom := totalMass + float64(k)*alpha
 
 	densities := make([]float64, acc.count)
@@ -1179,9 +1161,9 @@ func (op *Engine) classify(acc *classAccumulator) (classification, error) {
 /*
 census reads how often each class has been observed.
 */
-func (op *Engine) census() map[string]int32 {
+func (engine *Engine) census() map[string]int32 {
 	res := make(map[string]int32)
-	op.classCounts.Range(func(key, value any) bool {
+	engine.classCounts.Range(func(key, value any) bool {
 		if k, ok := key.(string); ok {
 			if cnt, ok := value.(*atomic.Int32); ok {
 				res[k] = cnt.Load()
@@ -1195,13 +1177,13 @@ func (op *Engine) census() map[string]int32 {
 }
 
 // Census reads how often each class has been observed.
-func (op *Engine) Census() map[string]int32 {
-	return op.census()
+func (engine *Engine) Census() map[string]int32 {
+	return engine.census()
 }
 
 // Len returns the number of entries stored in the immutable radix trie.
-func (op *Engine) Len() int {
-	root := op.root.Load()
+func (engine *Engine) Len() int {
+	root := engine.root.Load()
 	if root == nil {
 		return 0
 	}
@@ -1209,17 +1191,17 @@ func (op *Engine) Len() int {
 	return root.Len()
 }
 
-func (op *Engine) distinctClasses() int {
+func (engine *Engine) distinctClasses() int {
 	count := 0
-	op.classCounts.Range(func(_, _ any) bool {
+	engine.classCounts.Range(func(_, _ any) bool {
 		count++
 		return true
 	})
 	return count
 }
 
-func (op *Engine) incrementClass(class string) {
-	val, _ := op.classCounts.LoadOrStore(class, &atomic.Int32{})
+func (engine *Engine) incrementClass(class string) {
+	val, _ := engine.classCounts.LoadOrStore(class, &atomic.Int32{})
 
 	if cnt, ok := val.(*atomic.Int32); ok {
 		cnt.Add(1)
@@ -1231,12 +1213,12 @@ snapshot serializes one immutable trie snapshot, its configuration and clock.
 There is no checkpoint model: the values are the same packed weights read by
 evaluate. Storage I/O belongs to the caller.
 */
-func (op *Engine) snapshot() (Result, error) {
-	root := op.root.Load()
+func (engine *Engine) snapshot() (Result, error) {
+	root := engine.root.Load()
 	var buffer bytes.Buffer
 	encoder := gob.NewEncoder(&buffer)
 
-	for _, value := range []any{"cognition/packed-weight/1", op.cfg, op.stepCounter.Load(), root.Len()} {
+	for _, value := range []any{"cognition/packed-weight/1", engine.cfg, engine.stepCounter.Load(), root.Len()} {
 		if err := encoder.Encode(value); err != nil {
 			return Result{}, errnie.Error(err)
 		}
@@ -1262,8 +1244,8 @@ restore reads a serialized model into a fresh engine before it is shared.
 Invalid or retired formats fail explicitly; neither partial state nor a
 replacement empty model is published after a failed read.
 */
-func (op *Engine) restore(encoded []byte) (Result, error) {
-	if op.root.Load().Len() != 0 || op.stepCounter.Load() != 0 {
+func (engine *Engine) restore(encoded []byte) (Result, error) {
+	if engine.root.Load().Len() != 0 || engine.stepCounter.Load() != 0 {
 		return Result{}, errnie.Error(errnie.Err(errnie.Conflict, "cognition: restore requires a fresh engine", nil))
 	}
 
@@ -1298,7 +1280,7 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 			}
 		}
 
-		if err := op.validate(key, value, step); err != nil {
+		if err := engine.validate(key, value, step); err != nil {
 			return Result{}, err
 		}
 
@@ -1313,11 +1295,11 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 		return Result{}, errnie.Error(errnie.Err(errnie.Validation, "cognition: trailing packed model data", err))
 	}
 
-	op.cfg = config
-	op.decayFactor = config.decayFactor()
-	op.stepCounter.Store(step)
+	engine.cfg = config
+	engine.decayFactor = config.decayFactor()
+	engine.stepCounter.Store(step)
 	root := transaction.Commit()
-	op.root.Store(root)
+	engine.root.Store(root)
 
 	return Result{Tree: root}, nil
 }
@@ -1326,7 +1308,7 @@ func (op *Engine) restore(encoded []byte) (Result, error) {
 validate rejects records that are neither packed basins nor sensory
 transitions, and weights outside their domain.
 */
-func (op *Engine) validate(key, value []byte, step uint64) error {
+func (engine *Engine) validate(key, value []byte, step uint64) error {
 	_, _, basin := parseBasinKey(key)
 	sensory := bytes.HasPrefix(key, []byte("s/")) && len(key) > len("s/")
 
@@ -1412,24 +1394,24 @@ type classAccumulator struct {
 	count  int
 }
 
-func (acc *classAccumulator) add(name []byte, mass float64, count uint64, order int) {
-	for i := 0; i < acc.count; i++ {
-		if bytes.Equal(acc.names[i], name) {
-			if order > acc.orders[i] || (order == acc.orders[i] && mass > acc.masses[i]) {
-				acc.masses[i] = mass
-				acc.counts[i] = count
-				acc.orders[i] = order
+func (classAccumulator *classAccumulator) add(name []byte, mass float64, count uint64, order int) {
+	for i := 0; i < classAccumulator.count; i++ {
+		if bytes.Equal(classAccumulator.names[i], name) {
+			if order > classAccumulator.orders[i] || (order == classAccumulator.orders[i] && mass > classAccumulator.masses[i]) {
+				classAccumulator.masses[i] = mass
+				classAccumulator.counts[i] = count
+				classAccumulator.orders[i] = order
 			}
 
 			return
 		}
 	}
 
-	acc.names = append(acc.names, name)
-	acc.masses = append(acc.masses, mass)
-	acc.counts = append(acc.counts, count)
-	acc.orders = append(acc.orders, order)
-	acc.count++
+	classAccumulator.names = append(classAccumulator.names, name)
+	classAccumulator.masses = append(classAccumulator.masses, mass)
+	classAccumulator.counts = append(classAccumulator.counts, count)
+	classAccumulator.orders = append(classAccumulator.orders, order)
+	classAccumulator.count++
 }
 
 /*
@@ -1604,11 +1586,11 @@ argmax reduces densities through the canonical Argmax primitive, preserving
 the winning value's ordinal.
 */
 func argmax(densities []float64) (probability.ArgmaxResult, bool) {
-	reduction := transport.NewEvaluate(probability.NewArgmax())
+	reduction := probability.NewArgmax()
 	var result probability.ArgmaxResult
 	found := false
 
-	for out := range reduction.Next(transport.NewValues(densities...).Next(nil)) {
+	for out := range reduction.Next(sequence.NewValues(densities...).Next(nil)) {
 		result = *(*probability.ArgmaxResult)(out)
 		found = true
 	}
@@ -1621,10 +1603,10 @@ evidenceShare reads one member's normalized share through the canonical
 composition.
 */
 func evidenceShare(densities []float64, index int) (float64, error) {
-	selection := transport.NewEvaluate(equation.NewEvidenceShare(index))
+	selection := equation.NewEvidenceShare(index)
 	var share float64
 
-	for out := range selection.Next(transport.NewOne(unsafe.Pointer(&densities)).Next(nil)) {
+	for out := range selection.Next(sequence.NewOne(unsafe.Pointer(&densities)).Next(nil)) {
 		share = *(*float64)(out)
 	}
 
@@ -1639,7 +1621,7 @@ func shannonAmbiguity(densities []float64) (float64, error) {
 	reduction := probability.NewShannonAmbiguity()
 	var ambiguity float64
 
-	for out := range reduction.Next(transport.NewValues(densities...).Next(nil)) {
+	for out := range reduction.Next(sequence.NewValues(densities...).Next(nil)) {
 		ambiguity = *(*float64)(out)
 	}
 

@@ -7,8 +7,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestRLSNext(t *testing.T) {
@@ -24,10 +24,10 @@ func TestRLSNext(t *testing.T) {
 				features[index] = float64(index + 1)
 			}
 
-			firstEval := transport.NewEvaluate(node)
+			firstEval := node
 			var first algo.Reading
 
-			for out := range firstEval.Next(transport.NewValues(learning.Sample{
+			for out := range firstEval.Next(sequence.NewValues(learning.Sample{
 				Features: features,
 				Target:   1,
 				Observed: true,
@@ -39,10 +39,10 @@ func TestRLSNext(t *testing.T) {
 			_ = first
 			So(err, ShouldBeNil)
 
-			queryEval := transport.NewEvaluate(node)
+			queryEval := node
 			var query algo.Reading
 
-			for out := range queryEval.Next(transport.NewValues(learning.Sample{Features: features}).Next(nil)) {
+			for out := range queryEval.Next(sequence.NewValues(learning.Sample{Features: features}).Next(nil)) {
 				query = *(*algo.Reading)(out)
 			}
 
@@ -74,9 +74,9 @@ func BenchmarkRLSNext(b *testing.B) {
 			features[index] = math.Sin(float64((step + 1) * (index + 1)))
 		}
 
-		trained := transport.NewEvaluate(node)
+		trained := node
 
-		for out := range trained.Next(transport.NewValues(learning.Sample{
+		for out := range trained.Next(sequence.NewValues(learning.Sample{
 			Features: features,
 			Target:   features[0] - features[1],
 			Observed: true,
@@ -88,9 +88,9 @@ func BenchmarkRLSNext(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		predicted := transport.NewEvaluate(node)
+		predicted := node
 
-		for out := range predicted.Next(transport.NewValues(learning.Sample{Features: features}).Next(nil)) {
+		for out := range predicted.Next(sequence.NewValues(learning.Sample{Features: features}).Next(nil)) {
 			_ = *(*algo.Reading)(out)
 		}
 

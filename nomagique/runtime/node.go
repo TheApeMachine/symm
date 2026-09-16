@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
@@ -44,9 +45,9 @@ func NewConsumer[T any](
 	if named, ok := any(node).(interface{ Name() string }); ok {
 		consumer.owner = named.Name()
 	}
-
-	data.Read[*store.Query[T]](consumer.register.Next(data.NewValue(*store.NewQuery(
-		consumer, data.ActionIdentify, data.NewValue(val),
+	sequence.
+		Read[*store.Query[T]](consumer.register.Next(sequence.NewValue(*store.NewQuery(
+		consumer, data.ActionIdentify, sequence.NewValue(val),
 	))))
 
 	if meas, ok := any(val).(*data.Measurement[float64]); ok && meas != nil {
@@ -91,7 +92,7 @@ clear that sequence slot without replacing the node's last working state.
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
 	for sequence := lower; sequence <= upper; sequence++ {
 		result := consumer.step(sequence)
-		payload := data.NewValue(result)
+		payload := sequence.NewValue(result)
 
 		if measurement, ok := any(result).(*data.Measurement[float64]); any(result) == nil || (ok && measurement == nil) {
 			payload = nil
@@ -99,7 +100,7 @@ func (consumer *Consumer[T]) Handle(lower, upper int64) {
 
 		query := store.NewQuery(consumer, data.ActionWrite, payload).SetSequence(sequence)
 
-		out := data.Read[T](consumer.register.Next(data.NewValue(*query)))
+		out := sequence.Read[T](consumer.register.Next(sequence.NewValue(*query)))
 		measurement, ok := any(out).(*data.Measurement[float64])
 
 		if !ok || measurement == nil {
@@ -122,7 +123,7 @@ func (consumer *Consumer[T]) step(sequence int64) T {
 		query.SetPeerLimit(consumer.peerLimit)
 	}
 
-	value := data.Read[T](consumer.register.Next(data.NewValue(*query)))
+	value := sequence.Read[T](consumer.register.Next(sequence.NewValue(*query)))
 
 	if measurement, ok := any(value).(*data.Measurement[float64]); ok && measurement != nil {
 		peers := measurement.Peers[:0]

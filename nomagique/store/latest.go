@@ -4,6 +4,7 @@ import (
 	"iter"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -33,7 +34,8 @@ write yields the reading with the value it replaced; a read yields the
 retained snapshot. It knows nothing about why the caller retains values.
 */
 type Latest[K comparable, V any] struct {
-	err     error
+	*core.PrimitiveError
+
 	current map[K]V
 	prior   map[K]V
 	has     map[K]bool
@@ -42,26 +44,25 @@ type Latest[K comparable, V any] struct {
 }
 
 func NewLatest[K comparable, V any]() *Latest[K, V] {
-	return &Latest[K, V]{
-		current: make(map[K]V),
-		prior:   make(map[K]V),
-		has:     make(map[K]bool),
+	return &Latest[K, V]{PrimitiveError: core.NewPrimitiveError(), current: make(map[K]V),
+		prior: make(map[K]V),
+		has:   make(map[K]bool),
 	}
 }
 
-func (op *Latest[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (latest *Latest[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			command := *(*LatestCommand[K, V])(arriving)
 
 			if command.Read {
-				op.snap = make(map[K]V, len(op.current))
+				latest.snap = make(map[K]V, len(latest.current))
 
-				for key, value := range op.current {
-					op.snap[key] = value
+				for key, value := range latest.current {
+					latest.snap[key] = value
 				}
 
-				if !yield(unsafe.Pointer(&op.snap)) {
+				if !yield(unsafe.Pointer(&latest.snap)) {
 					return
 				}
 
@@ -69,28 +70,17 @@ func (op *Latest[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 
 			reading := LatestReading[K, V]{Key: command.Key, Current: command.Value}
-			reading.Prior, reading.HasPrior = op.current[command.Key], op.has[command.Key]
+			reading.Prior, reading.HasPrior = latest.current[command.Key], latest.has[command.Key]
 
-			op.prior[command.Key] = op.current[command.Key]
-			op.current[command.Key] = command.Value
-			op.has[command.Key] = true
+			latest.prior[command.Key] = latest.current[command.Key]
+			latest.current[command.Key] = command.Value
+			latest.has[command.Key] = true
 
-			op.out = reading
+			latest.out = reading
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&latest.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Latest[K, V]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

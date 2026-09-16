@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestProjectionNext(t *testing.T) {
@@ -27,10 +27,10 @@ func TestProjectionNext(t *testing.T) {
 		}
 
 		for _, value := range []float64{2.5, 0, -1} {
-			measurementEval := transport.NewEvaluate(projection)
+			measurementEval := projection
 			var measurement *data.Measurement[float64]
 
-			for out := range measurementEval.Next(transport.NewValues(data.ProjectionInput{
+			for out := range measurementEval.Next(sequence.NewValues(data.ProjectionInput{
 				Values: map[string]float64{"alpha": value, "support": 4, "residual": 2, "variance": 1},
 				Flags:  map[string]bool{"beta_defined": false},
 			}).Next(nil)) {

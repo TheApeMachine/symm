@@ -38,8 +38,10 @@ func TestTrainingStep(t *testing.T) {
 		for _, frame := range market.ImpulseTape("BTC/USD", 4) {
 			output := training.Step(frame)
 			So(output.Err, ShouldBeNil)
-			So(output.Metrics["action"].Raw, ShouldEqual, 0)
-			So(output.Result, ShouldEqual, training.space.Markets["BTC/USD"])
+			_, selected := output.Metrics["action"]
+			So(selected, ShouldBeFalse)
+			So(output.Result, ShouldBeNil)
+			So(training.Grid.Markets["BTC/USD"].Sequence, ShouldEqual, frame.SeqIdx)
 			So(output.Metrics["input_count"].Raw, ShouldEqual, 3)
 		}
 	})
@@ -61,9 +63,8 @@ func BenchmarkTrainingStep(b *testing.B) {
 	training.Transition(runtime.READY)
 	frames := market.ImpulseTape("BTC/USD", 6)
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		frame := frames[index%len(frames)]
 		frame.SeqIdx = int64(index + 1)
 

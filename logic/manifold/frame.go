@@ -5,8 +5,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type frames struct {
@@ -36,7 +36,7 @@ func newAxis(span float64) *axis {
 func (axis *axis) observe(value float64) (position, zscore float64, moments statistic.Moments, err error) {
 	var reading statistic.MomentReading
 
-	for out := range axis.moments.Next(transport.NewValues(value).Next(nil)) {
+	for out := range axis.moments.Next(sequence.NewValues(value).Next(nil)) {
 		reading = *(*statistic.MomentReading)(out)
 	}
 
@@ -102,7 +102,7 @@ func evaluateCausalResidual(
 ) (statistic.CausalResidualResult, error) {
 	var result statistic.CausalResidualResult
 
-	for out := range residual.Next(transport.NewValues(reading).Next(nil)) {
+	for out := range residual.Next(sequence.NewValues(reading).Next(nil)) {
 		result = *(*statistic.CausalResidualResult)(out)
 	}
 

@@ -8,6 +8,6 @@ type Scalar float64
 type Number = Scalar
 
 // Through steps this carrier value through any Node.
-func (s Scalar) Through(node Node) Scalar {
-	return node.Step(s)
+func (scalar Scalar) Through(node Node) Scalar {
+	return node.Step(scalar)
 }

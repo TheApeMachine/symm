@@ -1,7 +1,9 @@
 package tables_test
 
 import (
+	"cmp"
 	"errors"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -19,8 +21,14 @@ func writeReplay(t testing.TB, catalog *tables.Catalog, frames []*data.Measureme
 	t.Helper()
 	writer := tables.NewWriter(catalog, 1)
 
-	// Two batches in reverse event order prove that file/append order is irrelevant.
-	for index := len(frames) - 1; index >= 0; index-- {
+	// Even and odd boundaries live in separate, reverse-ordered batches. Replay
+	// must interleave them without repeatedly decoding the same binary batch.
+	order := make([]int, len(frames))
+	for position := range order {
+		order[position] = len(frames) - 1 - position
+	}
+	slices.SortStableFunc(order, func(left, right int) int { return cmp.Compare(left%2, right%2) })
+	for position, index := range order {
 		frame := frames[index]
 
 		if frame == nil {
@@ -45,7 +53,7 @@ func writeReplay(t testing.TB, catalog *tables.Catalog, frames []*data.Measureme
 		seal.Provenance["owner"] = "training"
 		writer.Add("measurements", seal)
 
-		if index == len(frames)/2 {
+		if position == (len(frames)+1)/2-1 {
 			if err := writer.CommitReady(t.Context(), true); err != nil {
 				t.Fatal(err)
 			}
@@ -58,6 +66,35 @@ func writeReplay(t testing.TB, catalog *tables.Catalog, frames []*data.Measureme
 }
 
 func TestCatalogReplay(t *testing.T) {
+	Convey("Binary replay preserves stored floating-point states without JSON substitution", t, func() {
+		catalog := tablestest.New(t)
+		frames := market.ImpulseTape("BTC/USD", 2)
+		values := []float64{math.NaN(), math.Inf(1), math.Inf(-1), math.Copysign(0, -1)}
+
+		for index, value := range values {
+			frames[index].Peers[1].Metrics["value"] = data.Metric[float64]{Label: "value", Raw: value}
+		}
+		writeReplay(t, catalog, frames, false)
+		_, recorded, err := catalog.Replay(t.Context(), 1)
+		So(err, ShouldBeNil)
+		count := 0
+
+		for frame, err := range recorded {
+			So(err, ShouldBeNil)
+
+			if err != nil {
+				break
+			}
+			for _, observation := range frame.Peers {
+				if observation.Provenance["owner"] == "direct" && count < len(values) {
+					So(math.Float64bits(observation.Metrics["value"].Raw), ShouldEqual, math.Float64bits(values[count]))
+				}
+			}
+			count++
+		}
+		So(count, ShouldEqual, len(frames))
+	})
+
 	Convey("Recorded owner values reconstruct the same coordinates and regions", t, func() {
 		catalog := tablestest.New(t)
 		frames := market.ImpulseTape("BTC/USD", 6)

@@ -50,43 +50,43 @@ func NewCUDAEngine(device, gx, gy, gz int, spacing float32) (*Engine, error) {
 }
 
 // Err reports runtime/launch failures, not the gas solver's recoverable debug tags.
-func (e *Engine) Err() error {
-	if e == nil || e.ctx == nil {
+func (engine *Engine) Err() error {
+	if engine == nil || engine.ctx == nil {
 		return fmt.Errorf("sensorium: CUDA engine is closed")
 	}
-	message := C.GoString(C.manifold_last_error(e.ctx))
-	runtime.KeepAlive(e)
+	message := C.GoString(C.manifold_last_error(engine.ctx))
+	runtime.KeepAlive(engine)
 	if message != "" {
 		return fmt.Errorf("sensorium: CUDA: %s", message)
 	}
 	return nil
 }
 
-func (e *Engine) check() {
-	if err := e.Err(); err != nil {
+func (engine *Engine) check() {
+	if err := engine.Err(); err != nil {
 		panic(err)
 	}
 }
 
-func (e *Engine) Close() {
-	if e == nil || e.ctx == nil {
+func (engine *Engine) Close() {
+	if engine == nil || engine.ctx == nil {
 		return
 	}
 
-	runtime.SetFinalizer(e, nil)
-	C.manifold_destroy_context(e.ctx)
-	e.ctx = nil
+	runtime.SetFinalizer(engine, nil)
+	C.manifold_destroy_context(engine.ctx)
+	engine.ctx = nil
 }
 
-func (e *Engine) Synchronize() {
-	if e == nil || e.ctx == nil {
+func (engine *Engine) Synchronize() {
+	if engine == nil || engine.ctx == nil {
 		panic("sensorium: synchronize on closed CUDA engine")
 	}
-	if !bool(C.manifold_synchronize_checked(e.ctx)) {
-		e.check()
+	if !bool(C.manifold_synchronize_checked(engine.ctx)) {
+		engine.check()
 		panic("sensorium: CUDA synchronization failed")
 	}
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
 // ----------------------------------------------------------------------------
@@ -98,132 +98,132 @@ type Buffer struct {
 	owner *Engine
 }
 
-func (e *Engine) NewBuffer(bytes uint64, initialData unsafe.Pointer) *Buffer {
+func (engine *Engine) NewBuffer(bytes uint64, initialData unsafe.Pointer) *Buffer {
 	if bytes == 0 || bytes > uint64(^uint(0)>>1) {
 		panic("sensorium: invalid CUDA buffer size")
 	}
-	e.check()
-	cBuf := C.manifold_create_buffer(e.ctx, C.uint64_t(bytes), initialData)
-	runtime.KeepAlive(e)
+	engine.check()
+	cBuf := C.manifold_create_buffer(engine.ctx, C.uint64_t(bytes), initialData)
+	runtime.KeepAlive(engine)
 	if cBuf == nil {
-		e.check()
+		engine.check()
 		panic("sensorium: CUDA buffer allocation failed")
 	}
-	b := &Buffer{cBuf: cBuf, size: bytes, owner: e}
+	b := &Buffer{cBuf: cBuf, size: bytes, owner: engine}
 	runtime.SetFinalizer(b, func(obj *Buffer) {
 		obj.Close()
 	})
 	return b
 }
 
-func (b *Buffer) Close() {
-	if b == nil || b.cBuf == nil {
+func (buffer *Buffer) Close() {
+	if buffer == nil || buffer.cBuf == nil {
 		return
 	}
 
-	runtime.SetFinalizer(b, nil)
-	C.manifold_destroy_buffer(b.cBuf)
-	b.cBuf = nil
-	b.size = 0
-	b.owner = nil
+	runtime.SetFinalizer(buffer, nil)
+	C.manifold_destroy_buffer(buffer.cBuf)
+	buffer.cBuf = nil
+	buffer.size = 0
+	buffer.owner = nil
 }
 
-func (b *Buffer) Adopt() {
-	if b == nil {
+func (buffer *Buffer) Adopt() {
+	if buffer == nil {
 		return
 	}
 
-	runtime.SetFinalizer(b, nil)
+	runtime.SetFinalizer(buffer, nil)
 }
 
-func (b *Buffer) Zero() {
-	if b == nil || b.cBuf == nil {
+func (buffer *Buffer) Zero() {
+	if buffer == nil || buffer.cBuf == nil {
 		return
 	}
 
-	pointer := C.manifold_get_buffer_pointer(b.cBuf)
+	pointer := C.manifold_get_buffer_pointer(buffer.cBuf)
 	if pointer == nil {
-		b.owner.check()
+		buffer.owner.check()
 		panic("sensorium: CUDA buffer is unavailable")
 	}
 
-	C.memset(pointer, 0, C.size_t(b.size))
-	runtime.KeepAlive(b)
+	C.memset(pointer, 0, C.size_t(buffer.size))
+	runtime.KeepAlive(buffer)
 }
 
-func (b *Buffer) Float32Slice() []float32 {
-	ptr := C.manifold_get_buffer_pointer(b.cBuf)
+func (buffer *Buffer) Float32Slice() []float32 {
+	ptr := C.manifold_get_buffer_pointer(buffer.cBuf)
 	if ptr == nil {
-		b.owner.check()
+		buffer.owner.check()
 		panic("sensorium: CUDA buffer is unavailable")
 	}
-	view := unsafe.Slice((*float32)(ptr), b.size/4)
-	runtime.KeepAlive(b)
+	view := unsafe.Slice((*float32)(ptr), buffer.size/4)
+	runtime.KeepAlive(buffer)
 	return view
 }
 
-func (b *Buffer) Int32Slice() []int32 {
-	ptr := C.manifold_get_buffer_pointer(b.cBuf)
+func (buffer *Buffer) Int32Slice() []int32 {
+	ptr := C.manifold_get_buffer_pointer(buffer.cBuf)
 	if ptr == nil {
-		b.owner.check()
+		buffer.owner.check()
 		panic("sensorium: CUDA buffer is unavailable")
 	}
-	view := unsafe.Slice((*int32)(ptr), b.size/4)
-	runtime.KeepAlive(b)
+	view := unsafe.Slice((*int32)(ptr), buffer.size/4)
+	runtime.KeepAlive(buffer)
 	return view
 }
 
-func (b *Buffer) UInt32Slice() []uint32 {
-	ptr := C.manifold_get_buffer_pointer(b.cBuf)
+func (buffer *Buffer) UInt32Slice() []uint32 {
+	ptr := C.manifold_get_buffer_pointer(buffer.cBuf)
 	if ptr == nil {
-		b.owner.check()
+		buffer.owner.check()
 		panic("sensorium: CUDA buffer is unavailable")
 	}
-	view := unsafe.Slice((*uint32)(ptr), b.size/4)
-	runtime.KeepAlive(b)
+	view := unsafe.Slice((*uint32)(ptr), buffer.size/4)
+	runtime.KeepAlive(buffer)
 	return view
 }
 
 // ----------------------------------------------------------------------------
 // 1. Diagnostics & Field Operations
 // ----------------------------------------------------------------------------
-func (e *Engine) ClearField(field *Buffer) {
-	e.check()
-	C.manifold_clear_field(e.ctx, field.cBuf)
+func (engine *Engine) ClearField(field *Buffer) {
+	engine.check()
+	C.manifold_clear_field(engine.ctx, field.cBuf)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(field)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) ReduceEnergyStats(x, outStats *Buffer) {
-	e.check()
-	C.manifold_thermo_reduce_energy_stats(e.ctx, x.cBuf, outStats.cBuf)
+func (engine *Engine) ReduceEnergyStats(x, outStats *Buffer) {
+	engine.check()
+	C.manifold_thermo_reduce_energy_stats(engine.ctx, x.cBuf, outStats.cBuf)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(x)
 	runtime.KeepAlive(outStats)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
 // ----------------------------------------------------------------------------
 // 2. PIC & Sort-Based Scatter
 // ----------------------------------------------------------------------------
-func (e *Engine) ScatterSorted(
+func (engine *Engine) ScatterSorted(
 	pos, vel, mass, heat, energy *Buffer,
 	rhoField, momField, eField *Buffer,
 	numParticles int,
 ) {
-	e.check()
+	engine.check()
 	C.manifold_scatter_sorted(
-		e.ctx,
+		engine.ctx,
 		pos.cBuf, vel.cBuf, mass.cBuf, heat.cBuf, energy.cBuf,
 		rhoField.cBuf, momField.cBuf, eField.cBuf,
-		C.int64_t(e.GridSize[0]), C.int64_t(e.GridSize[1]), C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing),
+		C.int64_t(engine.GridSize[0]), C.int64_t(engine.GridSize[1]), C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(pos)
 	runtime.KeepAlive(vel)
 	runtime.KeepAlive(mass)
@@ -232,33 +232,33 @@ func (e *Engine) ScatterSorted(
 	runtime.KeepAlive(rhoField)
 	runtime.KeepAlive(momField)
 	runtime.KeepAlive(eField)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) PICGatherUpdate(
+func (engine *Engine) PICGatherUpdate(
 	posIn, mass, posOut, velOut, heatOut *Buffer,
 	rhoField, momField, eField, gravityPot *Buffer,
 	dbgHead, dbgWords *Buffer, dbgCapacity int,
 	dt, gamma, rSpecific, cv, rhoMin, pMin, gravityEnabled float32,
 ) {
-	e.check()
-	domainX := float32(e.GridSize[0]) * e.Spacing
-	domainY := float32(e.GridSize[1]) * e.Spacing
-	domainZ := float32(e.GridSize[2]) * e.Spacing
+	engine.check()
+	domainX := float32(engine.GridSize[0]) * engine.Spacing
+	domainY := float32(engine.GridSize[1]) * engine.Spacing
+	domainZ := float32(engine.GridSize[2]) * engine.Spacing
 
 	C.manifold_pic_gather_update_particles(
-		e.ctx,
+		engine.ctx,
 		posIn.cBuf, mass.cBuf, posOut.cBuf, velOut.cBuf, heatOut.cBuf,
 		rhoField.cBuf, momField.cBuf, eField.cBuf, gravityPot.cBuf,
 		dbgHead.cBuf, dbgWords.cBuf, C.int64_t(dbgCapacity),
-		C.int64_t(e.GridSize[0]), C.int64_t(e.GridSize[1]), C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing), C.float(dt),
+		C.int64_t(engine.GridSize[0]), C.int64_t(engine.GridSize[1]), C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing), C.float(dt),
 		C.float(domainX), C.float(domainY), C.float(domainZ),
 		C.float(gamma), C.float(rSpecific), C.float(cv),
 		C.float(rhoMin), C.float(pMin), C.float(gravityEnabled),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(posIn)
 	runtime.KeepAlive(mass)
 	runtime.KeepAlive(posOut)
@@ -270,30 +270,30 @@ func (e *Engine) PICGatherUpdate(
 	runtime.KeepAlive(gravityPot)
 	runtime.KeepAlive(dbgHead)
 	runtime.KeepAlive(dbgWords)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
 // ----------------------------------------------------------------------------
 // 3. Quantum Flow (Pilot-Wave)
 // ----------------------------------------------------------------------------
-func (e *Engine) ProjectModesToSpatial(
+func (engine *Engine) ProjectModesToSpatial(
 	modePsiReal, modePsiImag, modeAnchorIdx, modeAnchorWeight, particlePos *Buffer,
 	psiReField, psiImField *Buffer,
 	anchorsPerMode int,
 ) {
-	e.check()
+	engine.check()
 	C.manifold_project_modes_to_spatial_psi(
-		e.ctx,
+		engine.ctx,
 		modePsiReal.cBuf, modePsiImag.cBuf,
 		modeAnchorIdx.cBuf, modeAnchorWeight.cBuf,
 		particlePos.cBuf,
 		psiReField.cBuf, psiImField.cBuf,
 		C.int64_t(anchorsPerMode),
-		C.int64_t(e.GridSize[0]), C.int64_t(e.GridSize[1]), C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing),
+		C.int64_t(engine.GridSize[0]), C.int64_t(engine.GridSize[1]), C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(modePsiReal)
 	runtime.KeepAlive(modePsiImag)
 	runtime.KeepAlive(modeAnchorIdx)
@@ -301,58 +301,58 @@ func (e *Engine) ProjectModesToSpatial(
 	runtime.KeepAlive(particlePos)
 	runtime.KeepAlive(psiReField)
 	runtime.KeepAlive(psiImField)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) PilotWaveGather(
+func (engine *Engine) PilotWaveGather(
 	posIn, mass, posOut, velOut, psiRe, psiIm *Buffer,
 	numParticles int, dt float32,
 	hbarEff, epsDenom, massMin float32,
 ) {
-	e.check()
-	domainX := float32(e.GridSize[0]) * e.Spacing
-	domainY := float32(e.GridSize[1]) * e.Spacing
-	domainZ := float32(e.GridSize[2]) * e.Spacing
+	engine.check()
+	domainX := float32(engine.GridSize[0]) * engine.Spacing
+	domainY := float32(engine.GridSize[1]) * engine.Spacing
+	domainZ := float32(engine.GridSize[2]) * engine.Spacing
 
 	C.manifold_pic_gather_pilot_wave(
-		e.ctx,
+		engine.ctx,
 		posIn.cBuf, mass.cBuf, posOut.cBuf, velOut.cBuf,
 		psiRe.cBuf, psiIm.cBuf,
 		C.int64_t(numParticles),
-		C.int64_t(e.GridSize[0]), C.int64_t(e.GridSize[1]), C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing), C.float(dt),
+		C.int64_t(engine.GridSize[0]), C.int64_t(engine.GridSize[1]), C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing), C.float(dt),
 		C.float(domainX), C.float(domainY), C.float(domainZ),
 		C.float(hbarEff), C.float(epsDenom), C.float(massMin),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(posIn)
 	runtime.KeepAlive(mass)
 	runtime.KeepAlive(posOut)
 	runtime.KeepAlive(velOut)
 	runtime.KeepAlive(psiRe)
 	runtime.KeepAlive(psiIm)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) GasRK2Stage1(
+func (engine *Engine) GasRK2Stage1(
 	rho0, mom0, e0, rho1, mom1, e1, k1Rho, k1Mom, k1E *Buffer,
 	dbgHead, dbgWords *Buffer, dbgCapacity int,
 	dt, gamma, cv, rhoMin, pMin, mu, kThermal float32,
 ) {
-	e.check()
+	engine.check()
 	C.manifold_gas_rk2_stage1(
-		e.ctx,
+		engine.ctx,
 		rho0.cBuf, mom0.cBuf, e0.cBuf,
 		rho1.cBuf, mom1.cBuf, e1.cBuf,
 		k1Rho.cBuf, k1Mom.cBuf, k1E.cBuf,
 		dbgHead.cBuf, dbgWords.cBuf, C.int64_t(dbgCapacity),
-		C.int64_t(e.GridSize[0]), C.int64_t(e.GridSize[1]), C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing), C.float(dt), C.float(gamma), C.float(cv),
+		C.int64_t(engine.GridSize[0]), C.int64_t(engine.GridSize[1]), C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing), C.float(dt), C.float(gamma), C.float(cv),
 		C.float(rhoMin), C.float(pMin), C.float(mu), C.float(kThermal),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(rho0)
 	runtime.KeepAlive(mom0)
 	runtime.KeepAlive(e0)
@@ -364,29 +364,29 @@ func (e *Engine) GasRK2Stage1(
 	runtime.KeepAlive(k1E)
 	runtime.KeepAlive(dbgHead)
 	runtime.KeepAlive(dbgWords)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) GasRK2Stage2(
+func (engine *Engine) GasRK2Stage2(
 	rho0, mom0, e0, rho1, mom1, e1, k1Rho, k1Mom, k1E *Buffer,
 	rhoOut, momOut, eOut *Buffer,
 	dbgHead, dbgWords *Buffer, dbgCapacity int,
 	dt, gamma, cv, rhoMin, pMin, mu, kThermal float32,
 ) {
-	e.check()
+	engine.check()
 	C.manifold_gas_rk2_stage2(
-		e.ctx,
+		engine.ctx,
 		rho0.cBuf, mom0.cBuf, e0.cBuf,
 		rho1.cBuf, mom1.cBuf, e1.cBuf,
 		k1Rho.cBuf, k1Mom.cBuf, k1E.cBuf,
 		rhoOut.cBuf, momOut.cBuf, eOut.cBuf,
 		dbgHead.cBuf, dbgWords.cBuf, C.int64_t(dbgCapacity),
-		C.int64_t(e.GridSize[0]), C.int64_t(e.GridSize[1]), C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing), C.float(dt), C.float(gamma), C.float(cv),
+		C.int64_t(engine.GridSize[0]), C.int64_t(engine.GridSize[1]), C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing), C.float(dt), C.float(gamma), C.float(cv),
 		C.float(rhoMin), C.float(pMin), C.float(mu), C.float(kThermal),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(rho0)
 	runtime.KeepAlive(mom0)
 	runtime.KeepAlive(e0)
@@ -401,13 +401,13 @@ func (e *Engine) GasRK2Stage2(
 	runtime.KeepAlive(eOut)
 	runtime.KeepAlive(dbgHead)
 	runtime.KeepAlive(dbgWords)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
 // ----------------------------------------------------------------------------
 // 5. Coherence Lattice & GPE Step
 // ----------------------------------------------------------------------------
-func (e *Engine) CoherenceGPEStep(
+func (engine *Engine) CoherenceGPEStep(
 	oscPhase, oscOmega, oscAmp *Buffer,
 	carrierReal, carrierImag, carrierOmega, carrierGateWidth *Buffer,
 	kineticReal, kineticImag *Buffer,
@@ -419,10 +419,10 @@ func (e *Engine) CoherenceGPEStep(
 	metabolicRate, gateWidthMin, gateWidthMax, offenderWeightFloor, spatialSigma float32,
 	geometry ...*Buffer,
 ) {
-	e.check()
-	domainX := float32(e.GridSize[0]) * e.Spacing
-	domainY := float32(e.GridSize[1]) * e.Spacing
-	domainZ := float32(e.GridSize[2]) * e.Spacing
+	engine.check()
+	domainX := float32(engine.GridSize[0]) * engine.Spacing
+	domainY := float32(engine.GridSize[1]) * engine.Spacing
+	domainZ := float32(engine.GridSize[2]) * engine.Spacing
 
 	prm := C.SpectralModeParams{
 		num_osc:               C.uint32_t(numOsc),
@@ -466,7 +466,7 @@ func (e *Engine) CoherenceGPEStep(
 		metric = geometry[0].cBuf
 	}
 	C.manifold_coherence_gpe_step_geometry(
-		e.ctx,
+		engine.ctx,
 		oscPhase.cBuf, oscOmega.cBuf, oscAmp.cBuf,
 		carrierReal.cBuf, carrierImag.cBuf, carrierOmega.cBuf, carrierGateWidth.cBuf,
 		kineticReal.cBuf, kineticImag.cBuf,
@@ -475,7 +475,7 @@ func (e *Engine) CoherenceGPEStep(
 		prm, gp, extra, metric,
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(oscPhase)
 	runtime.KeepAlive(oscOmega)
 	runtime.KeepAlive(oscAmp)
@@ -491,64 +491,64 @@ func (e *Engine) CoherenceGPEStep(
 	runtime.KeepAlive(numCarriersSnapshot)
 	runtime.KeepAlive(particlePos)
 	runtime.KeepAlive(extraPotential)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) ScatterComputeCellIdx(pos, cellIdx *Buffer) {
-	e.check()
+func (engine *Engine) ScatterComputeCellIdx(pos, cellIdx *Buffer) {
+	engine.check()
 	C.manifold_scatter_compute_cell_idx(
-		e.ctx,
+		engine.ctx,
 		pos.cBuf,
 		cellIdx.cBuf,
-		C.int64_t(e.GridSize[0]),
-		C.int64_t(e.GridSize[1]),
-		C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing),
+		C.int64_t(engine.GridSize[0]),
+		C.int64_t(engine.GridSize[1]),
+		C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(pos)
 	runtime.KeepAlive(cellIdx)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) ScatterCountCells(cellIdx, cellCounts *Buffer) {
-	e.check()
+func (engine *Engine) ScatterCountCells(cellIdx, cellCounts *Buffer) {
+	engine.check()
 	C.manifold_scatter_count_cells(
-		e.ctx,
+		engine.ctx,
 		cellIdx.cBuf,
 		cellCounts.cBuf,
-		C.int64_t(e.GridSize[0]),
-		C.int64_t(e.GridSize[1]),
-		C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing),
+		C.int64_t(engine.GridSize[0]),
+		C.int64_t(engine.GridSize[1]),
+		C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(cellIdx)
 	runtime.KeepAlive(cellCounts)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) ScatterReorderParticles(
+func (engine *Engine) ScatterReorderParticles(
 	posIn, velIn, massIn, heatIn, energyIn *Buffer,
 	cellIdx, cellStarts, cellOffsets *Buffer,
 	posOut, velOut, massOut, heatOut, energyOut, originalIdx *Buffer,
 ) {
-	e.check()
+	engine.check()
 	C.manifold_scatter_reorder_particles(
-		e.ctx,
+		engine.ctx,
 		posIn.cBuf, velIn.cBuf, massIn.cBuf, heatIn.cBuf, energyIn.cBuf,
 		cellIdx.cBuf, cellStarts.cBuf, cellOffsets.cBuf,
 		posOut.cBuf, velOut.cBuf, massOut.cBuf, heatOut.cBuf, energyOut.cBuf,
 		originalIdx.cBuf,
-		C.int64_t(e.GridSize[0]),
-		C.int64_t(e.GridSize[1]),
-		C.int64_t(e.GridSize[2]),
-		C.float(e.Spacing),
+		C.int64_t(engine.GridSize[0]),
+		C.int64_t(engine.GridSize[1]),
+		C.int64_t(engine.GridSize[2]),
+		C.float(engine.Spacing),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(posIn)
 	runtime.KeepAlive(velIn)
 	runtime.KeepAlive(massIn)
@@ -563,10 +563,10 @@ func (e *Engine) ScatterReorderParticles(
 	runtime.KeepAlive(heatOut)
 	runtime.KeepAlive(energyOut)
 	runtime.KeepAlive(originalIdx)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) CoherenceAccumulateForces(
+func (engine *Engine) CoherenceAccumulateForces(
 	oscPhase, oscOmega, oscAmp, particlePos *Buffer,
 	carrierOmega, carrierGateWidth, carrierAnchorIdx, carrierAnchorWeight *Buffer,
 	accums, binStarts, carrierBinnedIdx, binParams *Buffer,
@@ -578,13 +578,13 @@ func (e *Engine) CoherenceAccumulateForces(
 	dt, metabolicRate, gateWidthMin, gateWidthMax, offenderWeightFloor float32,
 	spatialSigma float32,
 ) {
-	e.check()
-	domainX := float32(e.GridSize[0]) * e.Spacing
-	domainY := float32(e.GridSize[1]) * e.Spacing
-	domainZ := float32(e.GridSize[2]) * e.Spacing
+	engine.check()
+	domainX := float32(engine.GridSize[0]) * engine.Spacing
+	domainY := float32(engine.GridSize[1]) * engine.Spacing
+	domainZ := float32(engine.GridSize[2]) * engine.Spacing
 
 	C.manifold_coherence_accumulate_forces(
-		e.ctx,
+		engine.ctx,
 		oscPhase.cBuf, oscOmega.cBuf, oscAmp.cBuf, particlePos.cBuf,
 		carrierOmega.cBuf, carrierGateWidth.cBuf,
 		carrierAnchorIdx.cBuf, carrierAnchorWeight.cBuf,
@@ -603,7 +603,7 @@ func (e *Engine) CoherenceAccumulateForces(
 		C.float(spatialSigma),
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(oscPhase)
 	runtime.KeepAlive(oscOmega)
 	runtime.KeepAlive(oscAmp)
@@ -618,10 +618,10 @@ func (e *Engine) CoherenceAccumulateForces(
 	runtime.KeepAlive(binParams)
 	runtime.KeepAlive(particleHeat)
 	runtime.KeepAlive(numCarriersSnapshot)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
-func (e *Engine) CoherenceUpdateOscillatorPhases(
+func (engine *Engine) CoherenceUpdateOscillatorPhases(
 	oscPhase, oscOmega, oscAmp *Buffer,
 	carrierReal, carrierImag, carrierOmega, carrierGateWidth *Buffer,
 	carrierAnchorIdx, carrierAnchorWeight, numCarriersSnapshot *Buffer,
@@ -632,10 +632,10 @@ func (e *Engine) CoherenceUpdateOscillatorPhases(
 	particlePos *Buffer,
 	spatialSigma, metabolicRate, offenderWeightFloor float32,
 ) {
-	e.check()
-	domainX := float32(e.GridSize[0]) * e.Spacing
-	domainY := float32(e.GridSize[1]) * e.Spacing
-	domainZ := float32(e.GridSize[2]) * e.Spacing
+	engine.check()
+	domainX := float32(engine.GridSize[0]) * engine.Spacing
+	domainY := float32(engine.GridSize[1]) * engine.Spacing
+	domainZ := float32(engine.GridSize[2]) * engine.Spacing
 
 	prm := C.SpectralModeParams{
 		num_osc:               C.uint32_t(numOsc),
@@ -654,7 +654,7 @@ func (e *Engine) CoherenceUpdateOscillatorPhases(
 	}
 
 	C.manifold_coherence_update_oscillator_phases(
-		e.ctx,
+		engine.ctx,
 		oscPhase.cBuf, oscOmega.cBuf, oscAmp.cBuf,
 		carrierReal.cBuf, carrierImag.cBuf, carrierOmega.cBuf, carrierGateWidth.cBuf,
 		carrierAnchorIdx.cBuf, carrierAnchorWeight.cBuf,
@@ -665,7 +665,7 @@ func (e *Engine) CoherenceUpdateOscillatorPhases(
 		particlePos.cBuf,
 	)
 
-	e.check()
+	engine.check()
 	runtime.KeepAlive(oscPhase)
 	runtime.KeepAlive(oscOmega)
 	runtime.KeepAlive(oscAmp)
@@ -680,20 +680,20 @@ func (e *Engine) CoherenceUpdateOscillatorPhases(
 	runtime.KeepAlive(carrierBinnedIdx)
 	runtime.KeepAlive(binParams)
 	runtime.KeepAlive(particlePos)
-	runtime.KeepAlive(e)
+	runtime.KeepAlive(engine)
 }
 
 // ExclusiveScanU32 dispatches a complete hierarchical GPU scan. out has n+1 words.
-func (e *Engine) ExclusiveScanU32(in, out *Buffer, n int) error {
-	if e == nil || e.ctx == nil || in == nil || out == nil || n < 0 {
+func (engine *Engine) ExclusiveScanU32(in, out *Buffer, n int) error {
+	if engine == nil || engine.ctx == nil || in == nil || out == nil || n < 0 {
 		return fmt.Errorf("sensorium: invalid exclusive scan arguments")
 	}
-	ok := C.manifold_exclusive_scan_u32(e.ctx, in.cBuf, out.cBuf, C.int64_t(n))
-	runtime.KeepAlive(e)
+	ok := C.manifold_exclusive_scan_u32(engine.ctx, in.cBuf, out.cBuf, C.int64_t(n))
+	runtime.KeepAlive(engine)
 	runtime.KeepAlive(in)
 	runtime.KeepAlive(out)
 	if !bool(ok) {
-		return fmt.Errorf("sensorium scan: %s", C.GoString(C.manifold_last_error(e.ctx)))
+		return fmt.Errorf("sensorium scan: %s", C.GoString(C.manifold_last_error(engine.ctx)))
 	}
 	return nil
 }

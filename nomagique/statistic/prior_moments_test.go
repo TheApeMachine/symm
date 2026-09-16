@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestNewPriorMoments(t *testing.T) {
@@ -42,7 +42,7 @@ func TestNewPriorMomentsDomain(t *testing.T) {
 		operation := NewPriorMoments()
 		yielded := 0
 
-		for range operation.Next(transport.NewValues(PriorObservation{Value: 1, Authority: 1.5, Memory: 1}).Next(nil)) {
+		for range operation.Next(sequence.NewValues(PriorObservation{Value: 1, Authority: 1.5, Memory: 1}).Next(nil)) {
 			yielded++
 		}
 

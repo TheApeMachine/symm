@@ -1,7 +1,6 @@
 package temporal
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"time"
@@ -36,7 +35,8 @@ type RenewalReading struct {
 RenewalRate accumulates quantity until a configured target is reached.
 */
 type RenewalRate struct {
-	err         error
+	*core.PrimitiveError
+
 	target      float64
 	origin      int64
 	hasOrigin   bool
@@ -48,73 +48,63 @@ type RenewalRate struct {
 	out         RenewalReading
 }
 
-func NewRenewalRate(target float64) core.Primitive {
-	return &RenewalRate{target: target}
+func NewRenewalRate(target float64) *RenewalRate {
+	return &RenewalRate{PrimitiveError: core.NewPrimitiveError(), target: target}
 }
 
-func (op *RenewalRate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (renewalRate *RenewalRate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := *(*RenewalInput)(arriving)
 
-			if input.Increment < 0 || input.Sample <= 0 || op.target <= 0 {
-				op.err = errors.Join(op.err, core.ErrDomain)
+			if input.Increment < 0 || input.Sample <= 0 || renewalRate.target <= 0 {
+				renewalRate.Error(core.ErrDomain)
 				return
 			}
 
-			if !op.hasOrigin {
-				op.origin = input.At
-				op.hasOrigin = true
+			if !renewalRate.hasOrigin {
+				renewalRate.origin = input.At
+				renewalRate.hasOrigin = true
 			}
 
-			op.accumulated += input.Increment
-			elapsed := float64(input.At-op.origin) / float64(time.Second)
+			renewalRate.accumulated += input.Increment
+			elapsed := float64(input.At-renewalRate.origin) / float64(time.Second)
 			reading := RenewalReading{
-				Rate:     op.rate,
-				Target:   op.target,
+				Rate:     renewalRate.rate,
+				Target:   renewalRate.target,
 				Elapsed:  elapsed,
-				Spans:    op.spans,
-				Maturity: op.spans / (op.spans + 1),
+				Spans:    renewalRate.spans,
+				Maturity: renewalRate.spans / (renewalRate.spans + 1),
 			}
 
 			if elapsed < 0 {
-				op.err = errors.Join(op.err, core.ErrDomain)
+				renewalRate.Error(core.ErrDomain)
 				return
 			}
 
-			if op.accumulated >= op.target && elapsed > 0 {
-				reading.Rate = op.accumulated / elapsed
+			if renewalRate.accumulated >= renewalRate.target && elapsed > 0 {
+				reading.Rate = renewalRate.accumulated / elapsed
 				reading.Closed = true
-				reading.Spans = op.spans + 1
+				reading.Spans = renewalRate.spans + 1
 				reading.Maturity = reading.Spans / (reading.Spans + 1)
 
-				if op.hasSample {
-					reading.Change = math.Log(input.Sample / op.lastSample)
+				if renewalRate.hasSample {
+					reading.Change = math.Log(input.Sample / renewalRate.lastSample)
 				}
 
-				op.rate = reading.Rate
-				op.spans = reading.Spans
-				op.lastSample = input.Sample
-				op.hasSample = true
-				op.accumulated = 0
-				op.origin = input.At
+				renewalRate.rate = reading.Rate
+				renewalRate.spans = reading.Spans
+				renewalRate.lastSample = input.Sample
+				renewalRate.hasSample = true
+				renewalRate.accumulated = 0
+				renewalRate.origin = input.At
 			}
 
-			op.out = reading
+			renewalRate.out = reading
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&renewalRate.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *RenewalRate) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

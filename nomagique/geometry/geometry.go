@@ -14,7 +14,6 @@ primitive owns that mutex itself.
 package geometry
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -146,15 +145,16 @@ queries when every query is evaluated on the same path, so the path is
 constructed here rather than by each caller.
 */
 type PhasePath struct {
-	err error
+	*core.PrimitiveError
+
 	out PhasePathReading
 }
 
 /*
 NewPhasePath creates a PhasePath primitive.
 */
-func NewPhasePath() core.Primitive {
-	return &PhasePath{}
+func NewPhasePath() *PhasePath {
+	return &PhasePath{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
@@ -162,13 +162,13 @@ Next receives *int sample counts and yields a *PhasePathReading with the
 evenly spaced angles. A non-positive count is a domain failure: it is recorded
 and the stream ends.
 */
-func (op *PhasePath) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (phasePath *PhasePath) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			samples := *(*int)(arriving)
 
 			if samples <= 0 {
-				op.Error(fmt.Errorf(
+				phasePath.Error(fmt.Errorf(
 					"%w: geometry: phase path requires a positive sample count",
 					core.ErrDomain,
 				))
@@ -181,9 +181,9 @@ func (op *PhasePath) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				angles[index] = 2 * math.Pi * float64(index) / float64(samples)
 			}
 
-			op.out = PhasePathReading{Angles: angles}
+			phasePath.out = PhasePathReading{Angles: angles}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&phasePath.out)) {
 				return
 			}
 		}
@@ -191,37 +191,24 @@ func (op *PhasePath) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 }
 
 /*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *PhasePath) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
 Normalize owns unit-energy scaling of arriving dials.
 */
 type Normalize struct {
-	err error
+	*core.PrimitiveError
 }
 
 /*
 NewNormalize creates a Normalize primitive.
 */
-func NewNormalize() core.Primitive {
-	return &Normalize{}
+func NewNormalize() *Normalize {
+	return &Normalize{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next receives *PhaseDial pointers, normalizes each dial in place, and yields
 the same pointer. An empty or zero-energy dial passes through unchanged.
 */
-func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (normalize *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			dial := (*PhaseDial)(arriving)
@@ -232,19 +219,6 @@ func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Normalize) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -259,15 +233,16 @@ type OverlapPair struct {
 Overlap owns the normalized Hermitian inner product between two dials.
 */
 type Overlap struct {
-	err error
+	*core.PrimitiveError
+
 	out complex128
 }
 
 /*
 NewOverlap creates an Overlap primitive.
 */
-func NewOverlap() core.Primitive {
-	return &Overlap{}
+func NewOverlap() *Overlap {
+	return &Overlap{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
@@ -275,30 +250,17 @@ Next receives *OverlapPair payloads and yields a *complex128 normalized
 Hermitian overlap. Mismatched or empty pairs yield zero, matching the pure
 dial math.
 */
-func (op *Overlap) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (overlap *Overlap) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			pair := (*OverlapPair)(arriving)
-			op.out = dialOverlap(pair.Probe, pair.Entry)
+			overlap.out = dialOverlap(pair.Probe, pair.Entry)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&overlap.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Overlap) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -366,7 +328,8 @@ global phase scans. It is safe for concurrent reads and writes: the primitive
 owns the mutex around its retained entries.
 */
 type Corpus[Outcome any] struct {
-	err        error
+	*core.PrimitiveError
+
 	mu         sync.RWMutex
 	entries    []CorpusEntry[Outcome]
 	maxSize    int
@@ -380,15 +343,12 @@ NewCorpus creates a corpus primitive with maximum capacity; when full, the
 oldest entries are evicted to make room. A non-positive capacity is recorded
 as a domain failure and every stream over the primitive yields nothing.
 */
-func NewCorpus[Outcome any](maxSize int) core.Primitive {
+func NewCorpus[Outcome any](maxSize int) *Corpus[Outcome] {
 	if maxSize <= 0 {
-		return &Corpus[Outcome]{
-			err: fmt.Errorf("%w: geometry: corpus capacity must be positive", core.ErrDomain),
-		}
+		return &Corpus[Outcome]{PrimitiveError: core.NewPrimitiveError(fmt.Errorf("%w: geometry: corpus capacity must be positive", core.ErrDomain))}
 	}
 
-	return &Corpus[Outcome]{
-		entries: make([]CorpusEntry[Outcome], 0, maxSize),
+	return &Corpus[Outcome]{PrimitiveError: core.NewPrimitiveError(), entries: make([]CorpusEntry[Outcome], 0, maxSize),
 		maxSize: maxSize,
 	}
 }
@@ -398,47 +358,35 @@ Next receives *CorpusCommand payloads and yields a *CorpusResult for each:
 insertion acknowledgements, retained-entry counts, or per-angle top-K scan
 rows. Any invalid command ends the stream with the error recorded.
 */
-func (op *Corpus[Outcome]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
+func (corpus *Corpus[Outcome]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	if corpus.Error() !=
+		nil {
 		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			command := (*CorpusCommand[Outcome])(arriving)
-			result, err := op.execute(command)
+			result, err := corpus.execute(command)
 
 			if err != nil {
-				op.Error(err)
+				corpus.Error(err)
 				return
 			}
 
-			op.out = result
+			corpus.out = result
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&corpus.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Corpus[Outcome]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
 execute dispatches one command to its intent and returns its result.
 */
-func (op *Corpus[Outcome]) execute(
+func (corpus *Corpus[Outcome]) execute(
 	command *CorpusCommand[Outcome],
 ) (CorpusResult[Outcome], error) {
 	intents := 0
@@ -463,21 +411,21 @@ func (op *Corpus[Outcome]) execute(
 	}
 
 	if command.Insert != nil {
-		return op.insert(*command.Insert)
+		return corpus.insert(*command.Insert)
 	}
 
 	if command.Query != nil {
-		return op.scan(command.Query)
+		return corpus.scan(command.Query)
 	}
 
-	return CorpusResult[Outcome]{Size: op.size()}, nil
+	return CorpusResult[Outcome]{Size: corpus.size()}, nil
 }
 
 /*
 insert adds one observation. At capacity the oldest entry is evicted. The dial
 is normalized and copied so callers cannot mutate it after insertion.
 */
-func (op *Corpus[Outcome]) insert(
+func (corpus *Corpus[Outcome]) insert(
 	entry CorpusEntry[Outcome],
 ) (CorpusResult[Outcome], error) {
 	if err := validateDial(entry.Dial); err != nil {
@@ -486,28 +434,28 @@ func (op *Corpus[Outcome]) insert(
 
 	entry.Dial = copyAndNormalize(entry.Dial)
 
-	op.mu.Lock()
-	defer op.mu.Unlock()
+	corpus.mu.Lock()
+	defer corpus.mu.Unlock()
 
-	if op.dimensions == 0 {
-		op.dimensions = len(entry.Dial)
+	if corpus.dimensions == 0 {
+		corpus.dimensions = len(entry.Dial)
 	}
 
-	if len(entry.Dial) != op.dimensions {
+	if len(entry.Dial) != corpus.dimensions {
 		return CorpusResult[Outcome]{}, fmt.Errorf(
 			"%w: geometry: corpus dial has %d dimensions, expected %d",
-			core.ErrShape, len(entry.Dial), op.dimensions,
+			core.ErrShape, len(entry.Dial), corpus.dimensions,
 		)
 	}
 
-	if len(op.entries) < op.maxSize {
-		op.entries = append(op.entries, entry)
+	if len(corpus.entries) < corpus.maxSize {
+		corpus.entries = append(corpus.entries, entry)
 
 		return CorpusResult[Outcome]{Inserted: true}, nil
 	}
 
-	op.entries[op.next] = entry
-	op.next = (op.next + 1) % op.maxSize
+	corpus.entries[corpus.next] = entry
+	corpus.next = (corpus.next + 1) % corpus.maxSize
 
 	return CorpusResult[Outcome]{Inserted: true}, nil
 }
@@ -515,11 +463,11 @@ func (op *Corpus[Outcome]) insert(
 /*
 size returns the current number of retained entries under the read lock.
 */
-func (op *Corpus[Outcome]) size() int {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
+func (corpus *Corpus[Outcome]) size() int {
+	corpus.mu.RLock()
+	defer corpus.mu.RUnlock()
 
-	return len(op.entries)
+	return len(corpus.entries)
 }
 
 /*
@@ -528,7 +476,7 @@ overlaps are computed once, then analytically rotated, preserving both
 constructive and destructive interference without reallocating rotated
 fingerprints. Entries at the excluded timestamps are skipped.
 */
-func (op *Corpus[Outcome]) scan(
+func (corpus *Corpus[Outcome]) scan(
 	query *CorpusQuery,
 ) (CorpusResult[Outcome], error) {
 	if err := validateDial(query.Dial); err != nil {
@@ -561,21 +509,21 @@ func (op *Corpus[Outcome]) scan(
 		excluded[excludeTime.UnixNano()] = true
 	}
 
-	op.mu.RLock()
+	corpus.mu.RLock()
 
-	if op.dimensions != 0 && len(query.Dial) != op.dimensions {
-		op.mu.RUnlock()
+	if corpus.dimensions != 0 && len(query.Dial) != corpus.dimensions {
+		corpus.mu.RUnlock()
 
 		return CorpusResult[Outcome]{}, fmt.Errorf(
 			"%w: geometry: query dial has %d dimensions, expected %d",
-			core.ErrShape, len(query.Dial), op.dimensions,
+			core.ErrShape, len(query.Dial), corpus.dimensions,
 		)
 	}
 
-	entries := make([]CorpusEntry[Outcome], 0, len(op.entries))
-	overlaps := make([]complex128, 0, len(op.entries))
+	entries := make([]CorpusEntry[Outcome], 0, len(corpus.entries))
+	overlaps := make([]complex128, 0, len(corpus.entries))
 
-	for _, entry := range op.entries {
+	for _, entry := range corpus.entries {
 		if excluded[entry.At.UnixNano()] {
 			continue
 		}
@@ -584,7 +532,7 @@ func (op *Corpus[Outcome]) scan(
 		overlaps = append(overlaps, dialOverlap(query.Dial, entry.Dial))
 	}
 
-	op.mu.RUnlock()
+	corpus.mu.RUnlock()
 
 	responses := make([][]CorpusMatch[Outcome], len(query.Angles))
 	matches := make([]CorpusMatch[Outcome], len(entries))

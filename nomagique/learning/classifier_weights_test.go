@@ -5,8 +5,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func testClassifierConfig() learning.ClassifierWeightsConfig {
@@ -47,10 +47,10 @@ func score(
 	node core.Primitive,
 	features map[string]float64,
 ) learning.ClassifierReading {
-	evaluation := transport.NewEvaluate(node)
+	evaluation := node
 	var reading learning.ClassifierReading
 
-	for out := range evaluation.Next(transport.NewValues(features).Next(nil)) {
+	for out := range evaluation.Next(sequence.NewValues(features).Next(nil)) {
 		reading = *(*learning.ClassifierReading)(out)
 	}
 
@@ -110,7 +110,7 @@ func TestNewClassifierWeightsInvalidScale(testingTB *testing.T) {
 		Convey("It should record the failure and yield nothing", func() {
 			So(node.Error(), ShouldNotBeNil)
 
-			for range node.Next(transport.NewValues(
+			for range node.Next(sequence.NewValues(
 				map[string]float64{},
 			).Next(nil)) {
 				testingTB.Fatal("invalid classifier weights must yield nothing")

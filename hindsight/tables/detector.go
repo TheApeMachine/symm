@@ -11,8 +11,8 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type symbolTracker struct {
@@ -94,7 +94,7 @@ func (detector *StreamingDetector) advance(tracker *symbolTracker, measurement *
 	item := statistic.Weighted{Value: math.Log(price.Float64()), Weight: quantity.Float64()}
 	var reading adaptive.WindowReading
 
-	for pointer := range tracker.window.Next(transport.NewOne(unsafe.Pointer(&item)).Next(nil)) {
+	for pointer := range tracker.window.Next(sequence.NewOne(unsafe.Pointer(&item)).Next(nil)) {
 		reading = *(*adaptive.WindowReading)(pointer)
 	}
 

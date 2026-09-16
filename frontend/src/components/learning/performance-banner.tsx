@@ -18,29 +18,21 @@ export const LearningPerformanceBanner = () => {
 						</Typography.Label>
 						<Badge
 							variant="info"
-							label="PARALLEL LEARNERS (DECOUPLED)"
-							title="Parallel agents learn upward, downward, and stagnant movement precursors without economics"
+							label="VOLUME-CLOCK LEARNING"
+							title="Completed volume regimes train the shared trie from their recorded precursor contexts"
 						/>
 						<Typography.Mono size="s" tone="f4">
 							→
 						</Typography.Mono>
-						<Badge
-							variant="brand"
-							dot
-							label="FORWARD TESTING"
-						/>
+						<Badge variant="brand" dot label="FORWARD TESTING" />
 					</Flex.Row>
 
 					<Flex.Row align="center" gap={3}>
 						<Typography.Mono size="s" tone="f3">
-							Execution Readiness:
+							Execution:
 						</Typography.Mono>
-						<Typography.Mono
-							size="s"
-							tone="f3"
-							data-l="gate-count"
-						>
-							0/4 criteria
+						<Typography.Mono size="s" tone="f3" data-l="gate-count">
+							Training only
 						</Typography.Mono>
 					</Flex.Row>
 				</Flex.Row>
@@ -63,40 +55,55 @@ export const LearningPerformanceBanner = () => {
 								<Typography.Mono size="s" tone="f4">
 									Learned Situations
 								</Typography.Mono>
-								<Typography.Mono size="lg" tone="f1" data-metric="decisions" data-format="integer">
+								<Typography.Mono
+									size="lg"
+									tone="f1"
+									data-metric="decisions"
+									data-format="integer"
+								>
 									0
 								</Typography.Mono>
-								<Typography.Mono size="s" tone="f4" data-metric="steps" data-format="integer">
+								<Typography.Mono
+									size="s"
+									tone="f4"
+									data-metric="steps"
+									data-format="integer"
+								>
 									0 frames
 								</Typography.Mono>
 							</Flex.Column>
 
 							<Flex.Column className="gap-0.5">
 								<Typography.Mono size="s" tone="f4">
-									Confidence
+									Resolved
 								</Typography.Mono>
 								<Typography.Mono
 									size="lg"
 									tone="accent"
-									data-metric="confidence"
-									data-format="percent"
+									data-metric="resolved"
+									data-format="integer"
 								>
-									0.0%
+									0
 								</Typography.Mono>
-								<Typography.Mono size="s" tone="f4" data-metric="ambiguity" data-format="spread">
-									Spread 0.000
+								<Typography.Mono size="s" tone="f4">
+									Completed outcomes
 								</Typography.Mono>
 							</Flex.Column>
 
 							<Flex.Column className="gap-0.5">
 								<Typography.Mono size="s" tone="f4">
-									Contrast
+									Unsupported
 								</Typography.Mono>
-								<Typography.Mono size="lg" tone="f1" data-metric="contrast" data-format="bits">
-									0.00 bits
+								<Typography.Mono
+									size="lg"
+									tone="f1"
+									data-metric="unsupported"
+									data-format="integer"
+								>
+									0
 								</Typography.Mono>
-								<Typography.Mono size="s" tone="f4" data-metric="surprisal" data-format="surprisal">
-									Surprisal 0.00 nat
+								<Typography.Mono size="s" tone="f4">
+									No usable context
 								</Typography.Mono>
 							</Flex.Column>
 						</div>
@@ -108,10 +115,7 @@ export const LearningPerformanceBanner = () => {
 							<Typography.Label size="s" tone="f2" weight="normal">
 								FORWARD EVALUATION
 							</Typography.Label>
-							<Badge
-								variant="info"
-								label="MEASURING"
-							/>
+							<Badge variant="info" label="MEASURING" />
 						</Flex.Row>
 
 						<div className="grid grid-cols-4 gap-2">
@@ -170,7 +174,12 @@ export const LearningPerformanceBanner = () => {
 								<Typography.Mono size="s" tone="f4">
 									Evaluations
 								</Typography.Mono>
-								<Typography.Mono size="lg" tone="f1" data-metric="resolved" data-format="integer">
+								<Typography.Mono
+									size="lg"
+									tone="f1"
+									data-metric="evaluated"
+									data-format="integer"
+								>
 									0
 								</Typography.Mono>
 								<Typography.Mono size="s" tone="f4">

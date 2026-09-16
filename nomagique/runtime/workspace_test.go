@@ -1,12 +1,13 @@
 package runtime
 
 import (
-	"github.com/theapemachine/symm/system"
 	goruntime "runtime"
 	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/theapemachine/symm/system"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"

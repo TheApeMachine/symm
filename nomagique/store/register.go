@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -47,46 +48,46 @@ filled in: identify assigns a slot, a read fills Value from the slot the
 query names, a write replaces the slot the query names. A query addressing a
 slot outside the register is a shape failure that ends the stream.
 */
-func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (register *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := data.Read[Query[T]](in)
+		query := sequence.Read[Query[T]](in)
 
 		switch query.Action() {
 		case data.ActionIdentify:
 			for ptr := range query.payload {
-				op.slots = append(op.slots, *(*T)(ptr))
-				op.frames = append(op.frames, make([]T, op.capacity))
+				register.slots = append(register.slots, *(*T)(ptr))
+				register.frames = append(register.frames, make([]T, register.capacity))
 			}
 
-			slotID := len(op.slots) - 1
+			slotID := len(register.slots) - 1
 			query.Identify(slotID)
 
 			if slotID >= 0 {
-				if meas, ok := any(op.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
+				if meas, ok := any(register.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
 					meas.ID = slotID
 				}
 			}
 
-			slotVal := op.slots[query.Identity()]
+			slotVal := register.slots[query.Identity()]
 
 			if !yield(unsafe.Pointer(&slotVal)) {
 				return
 			}
 		case data.ActionWrite:
-			if query.Identity() < 0 || query.Identity() >= len(op.slots) {
-				op.Error(core.ErrShape)
+			if query.Identity() < 0 || query.Identity() >= len(register.slots) {
+				register.Error(core.ErrShape)
 				return
 			}
 
 			var value T
 
 			if query.payload != nil {
-				value = data.Read[T](query.payload)
-				op.slots[query.Identity()] = value
+				value = sequence.Read[T](query.payload)
+				register.slots[query.Identity()] = value
 			}
 
 			if query.sequence >= 0 {
-				op.frames[query.Identity()][query.sequence%int64(op.capacity)] = value
+				register.frames[query.Identity()][query.sequence%int64(register.capacity)] = value
 			}
 
 			if !yield(unsafe.Pointer(&value)) {
@@ -95,8 +96,8 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 
 		case data.ActionRead:
 			if query.Identity() < 0 {
-				for index := range op.slots {
-					value := op.published(index, query.sequence)
+				for index := range register.slots {
+					value := register.published(index, query.sequence)
 
 					if !yield(unsafe.Pointer(&value)) {
 						return
@@ -106,12 +107,12 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				return
 			}
 
-			if query.Identity() >= len(op.slots) {
-				op.Error(core.ErrShape)
+			if query.Identity() >= len(register.slots) {
+				register.Error(core.ErrShape)
 				return
 			}
 
-			slotVal := op.slots[query.Identity()]
+			slotVal := register.slots[query.Identity()]
 
 			if meas, ok := any(slotVal).(*data.Measurement[float64]); ok && meas != nil {
 				working := meas.Clone()
@@ -129,7 +130,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 						interests[idx] = strings.TrimSpace(interests[idx])
 					}
 
-					limit := len(op.slots)
+					limit := len(register.slots)
 
 					if query.PeerLimit() >= 0 && query.PeerLimit() < limit {
 						limit = query.PeerLimit()
@@ -140,7 +141,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 							continue
 						}
 
-						value := op.published(idx, query.sequence)
+						value := register.published(idx, query.sequence)
 
 						peer, peerOk := any(value).(*data.Measurement[float64])
 
@@ -167,7 +168,7 @@ func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				return
 			}
 		default:
-			op.Error(core.ErrShape)
+			register.Error(core.ErrShape)
 			return
 		}
 	}
@@ -184,10 +185,10 @@ func matchPeer(peer *data.Measurement[float64], interests []string) bool {
 }
 
 // published reads a sequence slot whose writer has passed the dependency barrier.
-func (op *Register[T]) published(identity int, sequence int64) T {
+func (register *Register[T]) published(identity int, sequence int64) T {
 	if sequence >= 0 {
-		return op.frames[identity][sequence%int64(op.capacity)]
+		return register.frames[identity][sequence%int64(register.capacity)]
 	}
 
-	return op.slots[identity]
+	return register.slots[identity]
 }

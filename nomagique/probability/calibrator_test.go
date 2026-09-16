@@ -5,35 +5,34 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestCalibratorRetention(t *testing.T) {
 	Convey("Rank is computed against the prior window, then the sample is retained", t, func() {
-		checkCalibrator(probability.NewCalibrator(collection.NewTail[float64](4)), 4)
+		checkCalibrator(probability.NewCalibrator(sequence.NewTail[float64](4)), 4)
 		checkCalibrator(probability.NewCalibrator(nil), 0)
 	})
 
 	Convey("Non-finite samples are refused without changing the prior window", t, func() {
 		for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 			node := probability.NewCalibrator(nil)
-			_Eval := transport.NewEvaluate(node)
+			_Eval := node
 
-			for range _Eval.Next(transport.NewValues(10.0).Next(nil)) {
+			for range _Eval.Next(sequence.NewValues(10.0).Next(nil)) {
 			}
 
 			err := _Eval.Error()
 			So(err, ShouldBeNil)
 
-			out := tests.CollectSeq[probability.CalibratorReading](node.Next(transport.NewValues(bad).Next(nil)))
+			out := tests.CollectSeq[probability.CalibratorReading](node.Next(sequence.NewValues(bad).Next(nil)))
 			So(len(out), ShouldEqual, 0)
 			So(node.Error(), ShouldNotBeNil)
 
-			got := tests.CollectSeq[probability.CalibratorReading](node.Next(transport.NewValues(5.0).Next(nil)))
+			got := tests.CollectSeq[probability.CalibratorReading](node.Next(sequence.NewValues(5.0).Next(nil)))
 			So(len(got), ShouldEqual, 1)
 			So(got[0].PriorCount, ShouldEqual, 1)
 			So(got[0].Value, ShouldEqual, 1)
@@ -57,10 +56,10 @@ func checkCalibrator(node core.Primitive, capacity int) {
 			want /= float64(len(history))
 		}
 
-		gotEval := transport.NewEvaluate(node)
+		gotEval := node
 		var got probability.CalibratorReading
 
-		for out := range gotEval.Next(transport.NewValues(sample).Next(nil)) {
+		for out := range gotEval.Next(sequence.NewValues(sample).Next(nil)) {
 			got = *(*probability.CalibratorReading)(out)
 		}
 

@@ -79,7 +79,9 @@ type PhysicsHealth struct {
 
 // Diagnostics are small fixed POD-like structs. Reflective traversal keeps new
 // floating fields subject to validation instead of forgetting a hand-written list.
-func (health PhysicsHealth) IsFinite() bool { return finiteHealthValue(reflect.ValueOf(health)) }
+func (physicsHealth PhysicsHealth) IsFinite() bool {
+	return finiteHealthValue(reflect.ValueOf(physicsHealth))
+}
 func finiteHealthValue(value reflect.Value) bool {
 	switch value.Kind() {
 	case reflect.Float64, reflect.Float32:

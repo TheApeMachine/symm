@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
@@ -119,10 +119,10 @@ func TestManifoldPrimitiveWire(t *testing.T) {
 		var manifold core.Primitive = NewResonanceManifold([]int{2, 4, 2}, 1, 2, 0.05, ReadoutAll)
 
 		Convey("A settle command yields exactly one reading", func() {
-			evaluation := transport.NewEvaluate(manifold)
+			evaluation := manifold
 			var reading ManifoldReading
 
-			for out := range evaluation.Next(transport.NewValues(ManifoldCommand{
+			for out := range evaluation.Next(sequence.NewValues(ManifoldCommand{
 				Settle: &SettleIntent{Input: []float64{0.5, -0.5}},
 			}).Next(nil)) {
 				reading = *(*ManifoldReading)(out)
@@ -136,7 +136,7 @@ func TestManifoldPrimitiveWire(t *testing.T) {
 		Convey("A rejected architecture yields nothing and records its error", func() {
 			rejected := NewResonanceManifold([]int{2}, 1, 2, 0.05, ReadoutAll)
 
-			for range rejected.Next(transport.NewValues(ManifoldCommand{
+			for range rejected.Next(sequence.NewValues(ManifoldCommand{
 				Settle: &SettleIntent{Input: []float64{0.5}},
 			}).Next(nil)) {
 				t.Fatal("rejected manifold must yield nothing")

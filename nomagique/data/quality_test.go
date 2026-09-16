@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestQualityNext(t *testing.T) {
@@ -27,10 +27,10 @@ func TestQualityNext(t *testing.T) {
 			{Support: 4, Divergence: 0, NoiseVariance: 1, HasSupport: true, HasDivergence: true, HasNoise: true},
 			{},
 		} {
-			readingEval := transport.NewEvaluate(quality)
+			readingEval := quality
 			var reading data.QualityReading
 
-			for out := range readingEval.Next(transport.NewValues(facts).Next(nil)) {
+			for out := range readingEval.Next(sequence.NewValues(facts).Next(nil)) {
 				reading = *(*data.QualityReading)(out)
 			}
 
@@ -77,10 +77,10 @@ func TestQualityNext(t *testing.T) {
 				}
 			}
 
-			weightEval := transport.NewEvaluate(authority)
+			weightEval := authority
 			var weight float64
 
-			for out := range weightEval.Next(transport.NewValues(reading).Next(nil)) {
+			for out := range weightEval.Next(sequence.NewValues(reading).Next(nil)) {
 				weight = *(*float64)(out)
 			}
 

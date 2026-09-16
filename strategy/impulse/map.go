@@ -3,12 +3,9 @@ package impulse
 import (
 	"cmp"
 	"fmt"
-	"iter"
 	"slices"
-	"unsafe"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
 )
@@ -20,16 +17,14 @@ protect its borrowed publications. One consumer owns each Map, including
 replay; a historical run never writes the live Map.
 */
 type Map struct {
-	*core.PrimitiveError
 	Markets  map[string]*Market
-	Current  *Market
-	active   []*Market
+	Active   []*Market
 	sequence int64
 	Invalid  int
 }
 
 func NewMap() *Map {
-	return &Map{PrimitiveError: core.NewPrimitiveError(), Markets: make(map[string]*Market)}
+	return &Map{Markets: make(map[string]*Market)}
 }
 
 /*
@@ -39,10 +34,12 @@ Results are borrowed until the next Step. At/From are display facts only.
 */
 func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 	if input.SeqIdx <= impulseMap.sequence {
-		return errnie.Error(errnie.Err(errnie.Conflict, "impulse: input sequence must increase", nil))
+		return errnie.Error(errnie.Err(
+			errnie.Conflict, "impulse: input sequence must increase", nil,
+		))
 	}
 
-	impulseMap.active = impulseMap.active[:0]
+	impulseMap.Active = impulseMap.Active[:0]
 	impulseMap.Invalid = 0
 	observations := input.Peers
 
@@ -56,12 +53,29 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 		}
 
 		if observation.Err != nil {
-			errnie.Error(errnie.Err(errnie.Validation, "impulse: rejected observation from "+observation.Provenance["owner"], observation.Err))
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("impulse: %s sequence %d rejected observation from %s for %s",
+					input.Source, input.SeqIdx, observation.Provenance["owner"], observation.Label),
+				observation.Err,
+			))
+
 			impulseMap.Invalid++
 		}
 
 		if observation.Label == "" || observation.SeqIdx != input.SeqIdx {
-			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("impulse: producer %q source %q symbol %q sequence %d, expected %d", observation.Provenance["owner"], observation.Source, observation.Label, observation.SeqIdx, input.SeqIdx), nil))
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"impulse: producer %q source %q symbol %q sequence %d, expected %d",
+					observation.Provenance["owner"],
+					observation.Source,
+					observation.Label,
+					observation.SeqIdx,
+					input.SeqIdx,
+				),
+				nil,
+			))
 		}
 
 		market := impulseMap.Markets[observation.Label]
@@ -75,7 +89,7 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 			market.Sequence = input.SeqIdx
 			market.volumeIncrement = 0
 			market.valid = true
-			impulseMap.active = append(impulseMap.active, market)
+			impulseMap.Active = append(impulseMap.Active, market)
 		}
 
 		if observation.Err != nil {
@@ -87,9 +101,11 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 		}
 	}
 
-	slices.SortFunc(impulseMap.active, func(left, right *Market) int { return cmp.Compare(left.Symbol, right.Symbol) })
+	slices.SortFunc(impulseMap.Active, func(left, right *Market) int {
+		return cmp.Compare(left.Symbol, right.Symbol)
+	})
 
-	for _, market := range impulseMap.active {
+	for _, market := range impulseMap.Active {
 		market.prepare()
 
 		for _, cell := range market.Cells {
@@ -102,6 +118,7 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 				reading := market.pairs[index].Update(left.Movement, right.Movement, market.volumeIncrement)
 				market.edges[index].Strength = reading.Strength
 			}
+
 			geometry.Relaxation{}.Step(market.points, market.edges)
 			geometry.Watershed{}.Step(market.points, market.edges)
 		}
@@ -113,23 +130,4 @@ func (impulseMap *Map) Step(input *data.Measurement[float64]) error {
 
 	impulseMap.sequence = input.SeqIdx
 	return nil
-}
-
-func (impulseMap *Map) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range input {
-			if err := impulseMap.Step((*data.Measurement[float64])(arriving)); err != nil {
-				impulseMap.Error(err)
-				return
-			}
-
-			for _, market := range impulseMap.active {
-				impulseMap.Current = market
-
-				if !yield(unsafe.Pointer(&market.Impulse)) {
-					return
-				}
-			}
-		}
-	}
 }

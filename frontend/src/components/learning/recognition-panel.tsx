@@ -12,15 +12,54 @@ export const RecognitionPanel = () => (
 			/>
 			<Section.Body scroll={false} className="p-3">
 				<Flex.Row className="gap-6 flex-wrap">
-					<Stat label="Confidence" value={<span data-metric="confidence" data-format="percent">0.0%</span>} />
-					<Stat label="Contrast" value={<span data-metric="contrast" data-format="bits">0.00 bits</span>} />
-					<Stat label="Spread" value={<span data-metric="ambiguity" data-format="spread">Spread 0.000</span>} />
-					<Stat label="Surprisal" value={<span data-metric="surprisal" data-format="surprisal">Surprisal 0.00 nat</span>} />
-					<Stat label="Resolved" value={<span data-metric="resolved" data-format="integer">0</span>} />
+					<Stat
+						label="Learned"
+						value={
+							<span data-metric="decisions" data-format="integer">
+								0
+							</span>
+						}
+					/>
+					<Stat
+						label="Evaluated"
+						value={
+							<span data-metric="evaluated" data-format="integer">
+								0
+							</span>
+						}
+					/>
+					<Stat
+						label="Accuracy"
+						value={
+							<span data-metric="accuracy" data-format="percent">
+								—
+							</span>
+						}
+					/>
+					<Stat
+						label="Unsupported"
+						value={
+							<span data-metric="unsupported" data-format="integer">
+								0
+							</span>
+						}
+					/>
+					<Stat
+						label="Resolved"
+						value={
+							<span data-metric="resolved" data-format="integer">
+								0
+							</span>
+						}
+					/>
 				</Flex.Row>
 			</Section.Body>
-			<Typography.Mono size="s" className="p-3 opacity-70" data-l="recog-status">
-				Training precursor associations · Execution remains inert until confident
+			<Typography.Mono
+				size="s"
+				className="p-3 opacity-70"
+				data-l="recog-status"
+			>
+				Training precursor associations · Quoted returns, no orders
 			</Typography.Mono>
 		</Section>
 	</Flex.Column>

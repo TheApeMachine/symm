@@ -1,15 +1,14 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -29,7 +28,8 @@ TrustWeight owns that recurrence. Invalid inputs fail before entering retained
 state.
 */
 type TrustWeight struct {
-	err   error
+	*core.PrimitiveError
+
 	span  core.Primitive
 	mix   core.Primitive
 	abs   core.Primitive
@@ -42,16 +42,15 @@ type TrustWeight struct {
 	out   TrustReading
 }
 
-func NewTrustWeight() core.Primitive {
-	return &TrustWeight{
-		span:  statistic.NewResidualSpan(),
+func NewTrustWeight() *TrustWeight {
+	return &TrustWeight{PrimitiveError: core.NewPrimitiveError(), span: statistic.NewResidualSpan(),
 		mix:   calculus.NewMix(),
 		abs:   calculus.NewAbsolute(),
 		trust: 1,
 	}
 }
 
-func (op *TrustWeight) Next(
+func (trustWeight *TrustWeight) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -60,92 +59,82 @@ func (op *TrustWeight) Next(
 
 			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
 				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
-				op.Error(core.ErrDomain)
+				trustWeight.Error(core.ErrDomain)
 				return
 			}
 
 			residual := pair.Actual - pair.Predicted
 			spanInput := statistic.ResidualSpanInput{
-				Count:    op.count,
-				Minimum:  op.min,
-				Maximum:  op.max,
+				Count:    trustWeight.count,
+				Minimum:  trustWeight.min,
+				Maximum:  trustWeight.max,
 				Residual: residual,
 			}
 
 			var span statistic.ResidualSpanResult
 
-			for out := range op.span.Next(transport.NewValues(spanInput).Next(nil)) {
+			for out := range trustWeight.span.Next(sequence.NewValues(spanInput).Next(nil)) {
 				span = *(*statistic.ResidualSpanResult)(out)
 			}
 
-			if err := op.span.Error(); err != nil {
-				op.Error(err)
+			if err := trustWeight.span.Error(); err != nil {
+				trustWeight.Error(err)
 				return
 			}
 
-			op.count = span.Count
-			op.min = span.Minimum
-			op.max = span.Maximum
+			trustWeight.count = span.Count
+			trustWeight.min = span.Minimum
+			trustWeight.max = span.Maximum
 
-			if op.count > 1 {
+			if trustWeight.count > 1 {
 				if !(span.Span > 0) {
-					op.Error(core.ErrDomain)
+					trustWeight.Error(core.ErrDomain)
 					return
 				}
 
 				magnitude := residual
 
-				for out := range op.abs.Next(transport.NewValues(magnitude).Next(nil)) {
+				for out := range trustWeight.abs.Next(sequence.NewValues(magnitude).Next(nil)) {
 					magnitude = *(*float64)(out)
 				}
 
-				if err := op.abs.Error(); err != nil {
-					op.Error(err)
+				if err := trustWeight.abs.Error(); err != nil {
+					trustWeight.Error(err)
 					return
 				}
 
-				op.rate = magnitude / span.Span
+				trustWeight.rate = magnitude / span.Span
 				mixRec := calculus.MixRecord{
-					Left:   op.trust,
-					Right:  math.Max(0, 1-op.rate),
-					Weight: op.rate,
+					Left:   trustWeight.trust,
+					Right:  math.Max(0, 1-trustWeight.rate),
+					Weight: trustWeight.rate,
 				}
 
 				var trust float64
 
-				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
+				for out := range trustWeight.mix.Next(sequence.NewValues(mixRec).Next(nil)) {
 					trust = *(*float64)(out)
 				}
 
-				if err := op.mix.Error(); err != nil {
-					op.Error(err)
+				if err := trustWeight.mix.Error(); err != nil {
+					trustWeight.Error(err)
 					return
 				}
 
-				op.trust = trust
-				op.prev = pair.Predicted
+				trustWeight.trust = trust
+				trustWeight.prev = pair.Predicted
 			}
 
-			op.out = TrustReading{
-				Value: op.trust,
-				Trust: op.trust,
-				Rate:  op.rate,
-				Count: op.count,
+			trustWeight.out = TrustReading{
+				Value: trustWeight.trust,
+				Trust: trustWeight.trust,
+				Rate:  trustWeight.rate,
+				Count: trustWeight.count,
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&trustWeight.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *TrustWeight) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -8,8 +8,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestGaussJordanNext(t *testing.T) {
@@ -50,7 +50,7 @@ func TestGaussJordanNext(t *testing.T) {
 				right[row][row+1] = 1
 			}
 
-			out := tests.CollectSeq[algo.Solution](node.Next(transport.NewValues(algo.System{Left: left, Right: right}).Next(nil)))
+			out := tests.CollectSeq[algo.Solution](node.Next(sequence.NewValues(algo.System{Left: left, Right: right}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
 			solution := out[0]
@@ -80,7 +80,7 @@ func TestGaussJordanNext(t *testing.T) {
 		}
 
 		Convey("A singular system is undefined, and a later solve is independent", func() {
-			outSingular := tests.CollectSeq[algo.Solution](node.Next(transport.NewValues(algo.System{
+			outSingular := tests.CollectSeq[algo.Solution](node.Next(sequence.NewValues(algo.System{
 				Left:  [][]float64{{1, 2}, {2, 4}},
 				Right: [][]float64{{1}, {2}},
 			}).Next(nil)))
@@ -88,7 +88,7 @@ func TestGaussJordanNext(t *testing.T) {
 			So(outSingular[0].Defined, ShouldBeFalse)
 			So(len(outSingular[0].Solution), ShouldEqual, 0)
 
-			outSol := tests.CollectSeq[algo.Solution](node.Next(transport.NewValues(algo.System{
+			outSol := tests.CollectSeq[algo.Solution](node.Next(sequence.NewValues(algo.System{
 				Left:  [][]float64{{2, 0}, {0, 3}},
 				Right: [][]float64{{4}, {9}},
 			}).Next(nil)))
@@ -100,7 +100,7 @@ func TestGaussJordanNext(t *testing.T) {
 
 		Convey("A non-square system is a shape error", func() {
 			errNode := algo.NewGaussJordan(1e-15)
-			_ = tests.CollectSeq[algo.Solution](errNode.Next(transport.NewValues(algo.System{
+			_ = tests.CollectSeq[algo.Solution](errNode.Next(sequence.NewValues(algo.System{
 				Left:  [][]float64{{1, 2, 3}, {4, 5, 6}},
 				Right: [][]float64{{1}, {2}},
 			}).Next(nil)))

@@ -3,8 +3,9 @@
 package sensorium
 
 import (
-	. "github.com/smartystreets/goconvey/convey"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestNewEngine(t *testing.T) {

@@ -50,7 +50,6 @@ func NewConn() *Conn {
 
 func (conn *Conn) Close() error { return nil }
 
-
 func (conn *Conn) Client() *spot.WebSocket { return nil }
 
 func (conn *Conn) Status() runtime.Stage { return conn.status }

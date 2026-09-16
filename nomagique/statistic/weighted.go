@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -20,95 +19,77 @@ type Weighted struct {
 WeightedMean owns sum(w x) / sum(w).
 */
 type WeightedMean struct {
-	err   error
+	*core.PrimitiveError
+
 	mass  float64
 	total float64
 	out   float64
 }
 
-func NewWeightedMean() core.Primitive {
-	return &WeightedMean{}
+func NewWeightedMean() *WeightedMean {
+	return &WeightedMean{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *WeightedMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (weightedMean *WeightedMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			item := *(*Weighted)(arriving)
-			op.mass += item.Weight
-			op.total += item.Weight * item.Value
+			weightedMean.mass += item.Weight
+			weightedMean.total += item.Weight * item.Value
 
-			if op.mass != 0 {
-				op.out = op.total / op.mass
+			if weightedMean.mass != 0 {
+				weightedMean.out = weightedMean.total / weightedMean.mass
 			} else {
-				op.out = 0
+				weightedMean.out = 0
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&weightedMean.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *WeightedMean) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
 WeightedVariance owns E_w[x²] - E_w[x]².
 */
 type WeightedVariance struct {
-	err    error
+	*core.PrimitiveError
+
 	mass   float64
 	first  float64
 	second float64
 	out    float64
 }
 
-func NewWeightedVariance() core.Primitive {
-	return &WeightedVariance{}
+func NewWeightedVariance() *WeightedVariance {
+	return &WeightedVariance{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *WeightedVariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (weightedVariance *WeightedVariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			item := *(*Weighted)(arriving)
-			op.mass += item.Weight
-			op.first += item.Weight * item.Value
-			op.second += item.Weight * item.Value * item.Value
+			weightedVariance.mass += item.Weight
+			weightedVariance.first += item.Weight * item.Value
+			weightedVariance.second += item.Weight * item.Value * item.Value
 
-			if op.mass != 0 {
-				mean := op.first / op.mass
-				val := op.second/op.mass - mean*mean
+			if weightedVariance.mass != 0 {
+				mean := weightedVariance.first / weightedVariance.mass
+				val := weightedVariance.second/weightedVariance.mass - mean*mean
 
 				if val < 0 {
 					val = 0
 				}
 
-				op.out = val
+				weightedVariance.out = val
 			} else {
-				op.out = 0
+				weightedVariance.out = 0
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&weightedVariance.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *WeightedVariance) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

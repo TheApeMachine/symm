@@ -50,6 +50,13 @@ describe("LearningDashboard", () => {
 		trainingStore.setState(() => ({ "BTC/USD": ring }));
 		const { container } = render(<LearningDashboard />);
 		expect(
+			container.querySelector<HTMLElement>('[data-metric="action"]')?.innerText,
+		).toEqual("—");
+		expect(
+			container.querySelector<HTMLElement>('[data-metric="edge"]')?.innerText,
+		).toEqual("—");
+		expect(container.querySelector('[data-metric="confidence"]')).toBeNull();
+		expect(
 			container.querySelector('[data-l="map-meta"]')?.textContent,
 		).toContain("2 numeric cells · 1 hot regions");
 		const circles = container.querySelectorAll('[data-l="map-points"] circle');

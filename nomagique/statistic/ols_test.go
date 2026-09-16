@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -15,10 +15,10 @@ evaluateOLS fits one request through the OLS Primitive.
 func evaluateOLS(t *testing.T, request OLSRequest) OLSFit {
 	t.Helper()
 
-	fitEval := transport.NewEvaluate(NewFitOLS())
+	fitEval := NewFitOLS()
 	var fit OLSFit
 
-	for out := range fitEval.Next(transport.NewValues(request).Next(nil)) {
+	for out := range fitEval.Next(sequence.NewValues(request).Next(nil)) {
 		fit = *(*OLSFit)(out)
 	}
 
@@ -37,10 +37,10 @@ evaluateSNR scores one pair through the coefficient SNR Primitive.
 func evaluateSNR(t *testing.T, pair CoefficientSNRPair) float64 {
 	t.Helper()
 
-	snrEval := transport.NewEvaluate(NewCoefficientSNR())
+	snrEval := NewCoefficientSNR()
 	var snr float64
 
-	for out := range snrEval.Next(transport.NewValues(pair).Next(nil)) {
+	for out := range snrEval.Next(sequence.NewValues(pair).Next(nil)) {
 		snr = *(*float64)(out)
 	}
 
@@ -119,7 +119,7 @@ func collectReadings[T any, U any](t *testing.T, operation core.Primitive, input
 	var readings []U
 
 	for index := range inputs {
-		for out := range operation.Next(transport.NewValues(inputs[index]).Next(nil)) {
+		for out := range operation.Next(sequence.NewValues(inputs[index]).Next(nil)) {
 			readings = append(readings, *(*U)(out))
 		}
 	}

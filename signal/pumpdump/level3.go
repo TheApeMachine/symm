@@ -3,15 +3,16 @@ package pumpdump
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/errnie"
 	"iter"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type level3EntityInput struct {
@@ -177,7 +178,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	pipeInput := level3EntityInput{Bid: bid, Ask: ask}
 
 	var valid bool
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+	for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*level3EntityResult)(out)
 		if !res.Valid {
 			return nil

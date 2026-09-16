@@ -5,7 +5,6 @@ retrieval over them.
 package data
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
@@ -47,7 +46,8 @@ newest value observed no later than a queried event time. The series never
 explains an event with a later observation.
 */
 type Series[Value any] struct {
-	err      error
+	*core.PrimitiveError
+
 	capacity int
 	rings    map[string]*seriesRing[Value]
 	reading  SeriesReading[Value]
@@ -66,13 +66,13 @@ NewSeries creates fixed storage for each key observed by one owner. A
 non-positive capacity is recorded through Error and the primitive yields
 nothing.
 */
-func NewSeries[Value any](capacity int) core.Primitive {
-	series := &Series[Value]{capacity: capacity}
+func NewSeries[Value any](capacity int) *Series[Value] {
+	series := &Series[Value]{PrimitiveError: core.NewPrimitiveError(), capacity: capacity}
 
 	if capacity <= 0 {
-		series.err = fmt.Errorf(
+		series.Error(fmt.Errorf(
 			"data: series capacity %d must be positive: %w", capacity, core.ErrDomain,
-		)
+		))
 	}
 
 	return series
@@ -82,13 +82,13 @@ func NewSeries[Value any](capacity int) core.Primitive {
 Next folds each arriving observation into its key's ring, or answers each
 arriving as-of query from it.
 */
-func (op *Series[Value]) Next(
+func (series *Series[Value]) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*SeriesInput[Value])(arriving)
-			op.reading = SeriesReading[Value]{
+			series.reading = SeriesReading[Value]{
 				Key:   input.Key,
 				Sec:   input.Sec,
 				Nsec:  input.Nsec,
@@ -96,16 +96,16 @@ func (op *Series[Value]) Next(
 			}
 
 			if input.Query {
-				op.reading.Value, op.reading.Found = op.asOf(
+				series.reading.Value, series.reading.Found = series.asOf(
 					input.Key, input.Sec, input.Nsec,
 				)
 			} else {
-				op.reading.Found = op.observe(
+				series.reading.Found = series.observe(
 					input.Key, input.Sec, input.Nsec, input.Value,
 				)
 			}
 
-			if !yield(unsafe.Pointer(&op.reading)) {
+			if !yield(unsafe.Pointer(&series.reading)) {
 				return
 			}
 		}
@@ -113,46 +113,33 @@ func (op *Series[Value]) Next(
 }
 
 /*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Series[Value]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
 observe retains one timestamped value. A repeated event time replaces the
 earlier value in place.
 */
-func (op *Series[Value]) observe(
+func (series *Series[Value]) observe(
 	key string,
 	sec float64,
 	nsec float64,
 	value Value,
 ) bool {
-	if op.capacity <= 0 || key == "" || nsec < 0 || nsec >= 1e9 {
+	if series.capacity <= 0 || key == "" || nsec < 0 || nsec >= 1e9 {
 		return false
 	}
 
-	ring := op.rings[key]
+	ring := series.rings[key]
 
 	if ring == nil {
 		ring = &seriesRing[Value]{
-			sec:    make([]float64, op.capacity),
-			nsec:   make([]float64, op.capacity),
-			values: make([]Value, op.capacity),
+			sec:    make([]float64, series.capacity),
+			nsec:   make([]float64, series.capacity),
+			values: make([]Value, series.capacity),
 		}
 
-		if op.rings == nil {
-			op.rings = make(map[string]*seriesRing[Value])
+		if series.rings == nil {
+			series.rings = make(map[string]*seriesRing[Value])
 		}
 
-		op.rings[key] = ring
+		series.rings[key] = ring
 	}
 
 	for index := range ring.count {
@@ -165,9 +152,9 @@ func (op *Series[Value]) observe(
 	ring.sec[ring.next] = sec
 	ring.nsec[ring.next] = nsec
 	ring.values[ring.next] = value
-	ring.next = (ring.next + 1) % op.capacity
+	ring.next = (ring.next + 1) % series.capacity
 
-	if ring.count < op.capacity {
+	if ring.count < series.capacity {
 		ring.count++
 	}
 
@@ -178,7 +165,7 @@ func (op *Series[Value]) observe(
 asOf returns the newest retained value observed no later than the queried
 event time.
 */
-func (op *Series[Value]) asOf(
+func (series *Series[Value]) asOf(
 	key string,
 	sec float64,
 	nsec float64,
@@ -189,7 +176,7 @@ func (op *Series[Value]) asOf(
 		return missing, false
 	}
 
-	ring := op.rings[key]
+	ring := series.rings[key]
 
 	if ring == nil {
 		return missing, false

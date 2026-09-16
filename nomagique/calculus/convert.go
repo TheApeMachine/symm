@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,14 +11,14 @@ import (
 Convert owns one representation pass-through on the wire.
 */
 type Convert struct {
-	err error
+	*core.PrimitiveError
 }
 
-func NewConvert() core.Primitive {
-	return &Convert{}
+func NewConvert() *Convert {
+	return &Convert{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Convert) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (convert *Convert) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			if !yield(arriving) {
@@ -27,14 +26,4 @@ func (op *Convert) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Convert) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

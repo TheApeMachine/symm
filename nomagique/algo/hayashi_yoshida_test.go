@@ -9,10 +9,10 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/correlation"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	nmcorrelation "github.com/theapemachine/symm/nomagique/statistic/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/tests/market"
 )
 
@@ -26,10 +26,10 @@ func prices(at []int64, values []float64) []temporal.Price {
 	return out
 }
 
-func pathQuery(left, right []temporal.Price) correlation.EstimateInput {
+func pathQuery(left, right []temporal.Price) nmcorrelation.EstimateInput {
 	leftReturns := makeReturns(left)
 	rightReturns := makeReturns(right)
-	return correlation.EstimateInput{
+	return nmcorrelation.EstimateInput{
 		Left:        leftReturns,
 		Right:       rightReturns,
 		LeftEnergy:  calcEnergy(leftReturns),
@@ -46,7 +46,7 @@ func TestHayashiYoshidaNext(t *testing.T) {
 		node := algo.NewHayashiYoshida()
 
 		for range 3 {
-			out := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(query).Next(nil)))
+			out := tests.CollectSeq[nmcorrelation.LagEstimate](node.Next(sequence.NewValues(query).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
 			So(out[0].Covariance, ShouldEqual, 2)
@@ -61,7 +61,7 @@ func TestHayashiYoshidaNext(t *testing.T) {
 func TestHayashiEmptyAndTouch(t *testing.T) {
 	Convey("Touching intervals contribute no overlap, and empty paths stay undefined", t, func() {
 		node := algo.NewHayashiYoshida()
-		fields := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(
+		fields := tests.CollectSeq[nmcorrelation.LagEstimate](node.Next(sequence.NewValues(pathQuery(
 			prices([]int64{0, 1}, []float64{1, 2}),
 			prices([]int64{1, 2}, []float64{1, 2}),
 		)).Next(nil)))
@@ -69,7 +69,7 @@ func TestHayashiEmptyAndTouch(t *testing.T) {
 		So(fields[0].Correlation, ShouldEqual, 0)
 
 		node = algo.NewHayashiYoshida()
-		empty := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(nil, nil)).Next(nil)))
+		empty := tests.CollectSeq[nmcorrelation.LagEstimate](node.Next(sequence.NewValues(pathQuery(nil, nil)).Next(nil)))
 		So(math.IsNaN(empty[0].Correlation), ShouldBeTrue)
 	})
 }
@@ -109,7 +109,7 @@ func TestHayashiReference(t *testing.T) {
 			}
 
 			node := algo.NewHayashiYoshida()
-			out := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(prices(lt, lp), prices(rt, rp))).Next(nil)))
+			out := tests.CollectSeq[nmcorrelation.LagEstimate](node.Next(sequence.NewValues(pathQuery(prices(lt, lp), prices(rt, rp))).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(out[0].Covariance, ShouldEqual, covariance)
 			So(out[0].Support, ShouldEqual, support)
@@ -135,7 +135,7 @@ func BenchmarkNewHayashiYoshida(b *testing.B) {
 	for b.Loop() {
 		count := 0
 
-		for range graph.Next(transport.NewValues(input).Next(nil)) {
+		for range graph.Next(sequence.NewValues(input).Next(nil)) {
 			count++
 		}
 
@@ -162,8 +162,8 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 		original := slices.Clone(leftReturns)
 		estimator := algo.NewHayashiYoshida()
 
-		estimate := func(lag int64) (correlation.LagEstimate, error) {
-			out := tests.CollectSeq[correlation.LagEstimate](estimator.Next(transport.NewValues(correlation.EstimateInput{
+		estimate := func(lag int64) (nmcorrelation.LagEstimate, error) {
+			out := tests.CollectSeq[nmcorrelation.LagEstimate](estimator.Next(sequence.NewValues(nmcorrelation.EstimateInput{
 				Left:        leftReturns,
 				Right:       rightReturns,
 				LeftEnergy:  leftEnergy,
@@ -172,7 +172,7 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 			}).Next(nil)))
 
 			if len(out) == 0 {
-				return correlation.LagEstimate{}, estimator.Error()
+				return nmcorrelation.LagEstimate{}, estimator.Error()
 			}
 
 			return out[0], estimator.Error()

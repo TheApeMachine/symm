@@ -3,10 +3,11 @@ package correlation
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"maps"
 	"testing"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"

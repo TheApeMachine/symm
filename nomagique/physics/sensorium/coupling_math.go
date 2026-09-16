@@ -124,7 +124,9 @@ func samplePeriodicTrilinear(field []float32, position [3]float64, dims [3]int, 
 
 type waveEnergy struct{ Norm, Kinetic, Potential, Nonlinear, Chemical float64 }
 
-func (w waveEnergy) total() float64 { return w.Kinetic + w.Potential + w.Nonlinear + w.Chemical }
+func (waveEnergy waveEnergy) total() float64 {
+	return waveEnergy.Kinetic + waveEnergy.Potential + waveEnergy.Nonlinear + waveEnergy.Chemical
+}
 
 // Same discrete Hamiltonian as the FFT kinetic eigenvalue. dw=1 for the
 // degenerate single-site lattice is an explicit quadrature convention.

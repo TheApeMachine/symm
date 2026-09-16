@@ -29,38 +29,28 @@ IntervalOverlap is (left.from < right.to) AND (right.from < left.to).
 Endpoints touching at a single instant do not overlap for (from,to] spans.
 */
 type IntervalOverlap struct {
-	err error
+	*core.PrimitiveError
+
 	out bool
 }
 
-func NewIntervalOverlap() core.Primitive {
-	return &IntervalOverlap{}
+func NewIntervalOverlap() *IntervalOverlap {
+	return &IntervalOverlap{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *IntervalOverlap) Next(
+func (intervalOverlap *IntervalOverlap) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			pair := (*IntervalPair)(arriving)
-			op.out = pair.Left.From < pair.Right.To && pair.Right.From < pair.Left.To
+			intervalOverlap.out = pair.Left.From < pair.Right.To && pair.Right.From < pair.Left.To
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&intervalOverlap.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *IntervalOverlap) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -77,15 +67,16 @@ do not overlap. It advances the interval ending first, visiting O(left+right)
 intervals instead of constructing a Cartesian product.
 */
 type IntervalJoin struct {
-	err error
+	*core.PrimitiveError
+
 	out IntervalPair
 }
 
-func NewIntervalJoin() core.Primitive {
-	return &IntervalJoin{}
+func NewIntervalJoin() *IntervalJoin {
+	return &IntervalJoin{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *IntervalJoin) Next(
+func (intervalJoin *IntervalJoin) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -93,12 +84,12 @@ func (op *IntervalJoin) Next(
 			input := (*IntervalJoinInput)(arriving)
 
 			if err := ordered(input.Left); err != nil {
-				op.err = err
+				intervalJoin.Error(err)
 				return
 			}
 
 			if err := ordered(input.Right); err != nil {
-				op.err = err
+				intervalJoin.Error(err)
 				return
 			}
 
@@ -108,9 +99,9 @@ func (op *IntervalJoin) Next(
 				a, b := input.Left[left], input.Right[right]
 
 				if a.From < b.To && b.From < a.To {
-					op.out = IntervalPair{Left: a, Right: b}
+					intervalJoin.out = IntervalPair{Left: a, Right: b}
 
-					if !yield(unsafe.Pointer(&op.out)) {
+					if !yield(unsafe.Pointer(&intervalJoin.out)) {
 						return
 					}
 				}
@@ -125,17 +116,6 @@ func (op *IntervalJoin) Next(
 			}
 		}
 	}
-}
-
-func (op *IntervalJoin) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }
 
 func ordered(path []Interval) error {

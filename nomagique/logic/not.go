@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,33 +11,24 @@ import (
 Not inverts each arrival.
 */
 type Not struct {
-	err error
+	*core.PrimitiveError
+
 	out bool
 }
 
-func NewNot() core.Primitive {
-	return &Not{}
+func NewNot() *Not {
+	return &Not{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Not) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (not *Not) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			in := (*bool)(arriving)
-			op.out = !*in
+			not.out = !*in
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&not.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Not) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

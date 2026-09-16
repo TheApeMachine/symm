@@ -8,10 +8,10 @@ import (
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestThresholdNext(t *testing.T) {
@@ -50,7 +50,7 @@ func TestThresholdNext(t *testing.T) {
 						want = policy.want(count, m2/(count-1))
 					}
 
-					out := tests.CollectSeq[float64](policy.node.Next(transport.NewValues(value).Next(nil)))
+					out := tests.CollectSeq[float64](policy.node.Next(sequence.NewValues(value).Next(nil)))
 					So(policy.node.Error(), ShouldBeNil)
 					So(out[0], ShouldAlmostEqual, want, 1e-12)
 				}

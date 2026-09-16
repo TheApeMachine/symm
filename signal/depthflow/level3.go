@@ -2,18 +2,19 @@ package depthflow
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"iter"
 	"strconv"
 	"time"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type depthInput struct {
@@ -75,7 +76,7 @@ func (op *depthPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				imbalance := observedDiff / observed
 				op.out.ObservedImbalance = imbalance
 
-				for rPtr := range op.imbalance.Next(transport.NewOne(unsafe.Pointer(&imbalance)).Next(nil)) {
+				for rPtr := range op.imbalance.Next(sequence.NewOne(unsafe.Pointer(&imbalance)).Next(nil)) {
 					op.out.ImbalanceReading = *(*adaptive.BaselineReading)(rPtr)
 				}
 			}
@@ -92,7 +93,7 @@ func (op *depthPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 					op.out.Rate = rate
 					op.out.HasRate = true
 
-					for rPtr := range op.rate.Next(transport.NewOne(unsafe.Pointer(&rate)).Next(nil)) {
+					for rPtr := range op.rate.Next(sequence.NewOne(unsafe.Pointer(&rate)).Next(nil)) {
 						op.out.RateReading = *(*adaptive.BaselineReading)(rPtr)
 					}
 				}
@@ -225,7 +226,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		At:          input.At,
 	}
 
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+	for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*depthResult)(out)
 
 		m.Metrics["observed_notional"] = m.Metrics["observed_notional"].Write(res.Observed)

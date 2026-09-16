@@ -1,8 +1,9 @@
 package geometry
 
 import (
-	. "github.com/smartystreets/goconvey/convey"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestRelaxationStep(t *testing.T) {

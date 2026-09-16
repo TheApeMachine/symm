@@ -28,22 +28,22 @@ func newGapSummaryFromGaps(gaps []float64) gapSummary {
 reset rebuilds the summary from marked events into the caller-owned backing
 array, avoiding an allocation on every workspace reuse.
 */
-func (summary *gapSummary) reset(marked []markedEvent) {
-	summary.sorted = summary.sorted[:0]
+func (gapSummary *gapSummary) reset(marked []markedEvent) {
+	gapSummary.sorted = gapSummary.sorted[:0]
 
 	for index := 1; index < len(marked); index++ {
 		gap := marked[index].atSec - marked[index-1].atSec
 
 		if gap > 0 {
-			summary.sorted = append(summary.sorted, gap)
+			gapSummary.sorted = append(gapSummary.sorted, gap)
 		}
 	}
 
-	sort.Float64s(summary.sorted)
+	sort.Float64s(gapSummary.sorted)
 }
 
-func (summary gapSummary) finite() bool {
-	for _, value := range summary.sorted {
+func (gapSummary gapSummary) finite() bool {
+	for _, value := range gapSummary.sorted {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return false
 		}
@@ -55,34 +55,34 @@ func (summary gapSummary) finite() bool {
 /*
 median returns the middle inter-arrival gap.
 */
-func (summary gapSummary) median() (float64, bool) {
-	if len(summary.sorted) == 0 || !summary.finite() {
+func (gapSummary gapSummary) median() (float64, bool) {
+	if len(gapSummary.sorted) == 0 || !gapSummary.finite() {
 		return 0, false
 	}
 
-	middle := len(summary.sorted) / 2
+	middle := len(gapSummary.sorted) / 2
 
-	if len(summary.sorted)%2 == 0 {
-		return (summary.sorted[middle-1] + summary.sorted[middle]) / 2, true
+	if len(gapSummary.sorted)%2 == 0 {
+		return (gapSummary.sorted[middle-1] + gapSummary.sorted[middle]) / 2, true
 	}
 
-	return summary.sorted[middle], true
+	return gapSummary.sorted[middle], true
 }
 
 /*
 quartiles returns the lower and upper quartile inter-arrival gaps.
 */
-func (summary gapSummary) quartiles() (float64, float64, error) {
-	if len(summary.sorted) == 0 {
+func (gapSummary gapSummary) quartiles() (float64, float64, error) {
+	if len(gapSummary.sorted) == 0 {
 		return 0, 0, fmt.Errorf("hawkes grid: quartiles require values")
 	}
 
-	if !summary.finite() {
+	if !gapSummary.finite() {
 		return 0, 0, fmt.Errorf("hawkes grid: quartiles sample is non-finite")
 	}
 
-	lower := stat.Quantile(0.25, stat.LinInterp, summary.sorted, nil)
-	upper := stat.Quantile(0.75, stat.LinInterp, summary.sorted, nil)
+	lower := stat.Quantile(0.25, stat.LinInterp, gapSummary.sorted, nil)
+	upper := stat.Quantile(0.75, stat.LinInterp, gapSummary.sorted, nil)
 
 	return lower, upper, nil
 }

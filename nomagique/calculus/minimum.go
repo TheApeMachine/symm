@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -15,36 +14,25 @@ from. What it hands over is the running minimum after every arrival, operating i
 on the wire pointer.
 */
 type Minimum struct {
-	err error
+	*core.PrimitiveError
+
 	acc float64
 }
 
-func NewMinimum(current float64) core.Primitive {
-	return &Minimum{
-		acc: current,
-	}
+func NewMinimum(current float64) *Minimum {
+	return &Minimum{PrimitiveError: core.NewPrimitiveError(), acc: current}
 }
 
-func (op *Minimum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (minimum *Minimum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			in := (*float64)(arriving)
-			op.acc = math.Min(op.acc, *in)
-			*in = op.acc
+			minimum.acc = math.Min(minimum.acc, *in)
+			*in = minimum.acc
 
 			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Minimum) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

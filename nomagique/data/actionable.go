@@ -1,5 +1,6 @@
 package data
 
+// TODO: Actionable has become part of core, so remove here soon!
 type ActionType uint8
 
 const (

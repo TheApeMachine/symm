@@ -19,11 +19,11 @@ logLikelihoodGradient returns log-likelihood and partial derivatives at
 horizon with respect to (muX, muY, alphaXX, alphaXY, alphaYX, alphaYY, beta),
 in that natural-parameter order.
 */
-func (fit bivariateFit) logLikelihoodGradient(
+func (bivariateFit bivariateFit) logLikelihoodGradient(
 	stream arrivalStream,
 	horizonSec float64,
 ) (logLikelihood float64, gradient [bivariateParamCount]float64, ok bool) {
-	if fit.muX <= 0 || fit.muY <= 0 || fit.beta <= 0 {
+	if bivariateFit.muX <= 0 || bivariateFit.muY <= 0 || bivariateFit.beta <= 0 {
 		return math.Inf(-1), gradient, false
 	}
 
@@ -39,23 +39,23 @@ func (fit bivariateFit) logLikelihoodGradient(
 		return math.Inf(-1), gradient, false
 	}
 
-	eventGradient := fit.eventLogLikelihoodGradient(marked, stream.originSec, horizonSec, fit.beta)
+	eventGradient := bivariateFit.eventLogLikelihoodGradient(marked, stream.originSec, horizonSec, bivariateFit.beta)
 
 	if !eventGradient.valid {
 		return math.Inf(-1), gradient, false
 	}
 
-	buySupport, sellSupport := stream.kernelIntegralSupport(horizonSec, fit.beta)
-	buySupportBeta := kernelIntegralSupportBetaDerivative(stream.buy, stream.originSec, horizonSec, fit.beta)
-	sellSupportBeta := kernelIntegralSupportBetaDerivative(stream.sell, stream.originSec, horizonSec, fit.beta)
-	beta := fit.beta
+	buySupport, sellSupport := stream.kernelIntegralSupport(horizonSec, bivariateFit.beta)
+	buySupportBeta := kernelIntegralSupportBetaDerivative(stream.buy, stream.originSec, horizonSec, bivariateFit.beta)
+	sellSupportBeta := kernelIntegralSupportBetaDerivative(stream.sell, stream.originSec, horizonSec, bivariateFit.beta)
+	beta := bivariateFit.beta
 
-	compensator := fit.muX*span +
-		(fit.alphaXX/beta)*buySupport +
-		(fit.alphaXY/beta)*sellSupport +
-		fit.muY*span +
-		(fit.alphaYX/beta)*buySupport +
-		(fit.alphaYY/beta)*sellSupport
+	compensator := bivariateFit.muX*span +
+		(bivariateFit.alphaXX/beta)*buySupport +
+		(bivariateFit.alphaXY/beta)*sellSupport +
+		bivariateFit.muY*span +
+		(bivariateFit.alphaYX/beta)*buySupport +
+		(bivariateFit.alphaYY/beta)*sellSupport
 
 	gradient[0] = eventGradient.muX - span
 	gradient[1] = eventGradient.muY - span
@@ -63,7 +63,7 @@ func (fit bivariateFit) logLikelihoodGradient(
 	gradient[3] = eventGradient.alphaXY - sellSupport/beta
 	gradient[4] = eventGradient.alphaYX - buySupport/beta
 	gradient[5] = eventGradient.alphaYY - sellSupport/beta
-	gradient[6] = eventGradient.beta - fit.compensatorBetaDerivative(
+	gradient[6] = eventGradient.beta - bivariateFit.compensatorBetaDerivative(
 		buySupport, sellSupport, buySupportBeta, sellSupportBeta,
 	)
 
@@ -72,7 +72,7 @@ func (fit bivariateFit) logLikelihoodGradient(
 	return logLikelihood, gradient, true
 }
 
-func (fit bivariateFit) eventLogLikelihoodGradient(
+func (bivariateFit bivariateFit) eventLogLikelihoodGradient(
 	marked []markedEvent,
 	originSec, horizonSec float64,
 	beta float64,
@@ -112,28 +112,28 @@ func (fit bivariateFit) eventLogLikelihoodGradient(
 			for _, event := range marked[index:end] {
 				switch event.side {
 				case sideBuy:
-					lambda := fit.muX + fit.alphaXX*buySupport + fit.alphaXY*sellSupport
+					lambda := bivariateFit.muX + bivariateFit.alphaXX*buySupport + bivariateFit.alphaXY*sellSupport
 
 					if lambda <= 0 {
 						return likelihoodGradient{}
 					}
 
 					inverse := 1 / lambda
-					lambdaBeta := fit.alphaXX*dBuySupport + fit.alphaXY*dSellSupport
+					lambdaBeta := bivariateFit.alphaXX*dBuySupport + bivariateFit.alphaXY*dSellSupport
 					result.logSum += math.Log(lambda)
 					result.muX += inverse
 					result.alphaXX += inverse * buySupport
 					result.alphaXY += inverse * sellSupport
 					result.beta += inverse * lambdaBeta
 				case sideSell:
-					lambda := fit.muY + fit.alphaYX*buySupport + fit.alphaYY*sellSupport
+					lambda := bivariateFit.muY + bivariateFit.alphaYX*buySupport + bivariateFit.alphaYY*sellSupport
 
 					if lambda <= 0 {
 						return likelihoodGradient{}
 					}
 
 					inverse := 1 / lambda
-					lambdaBeta := fit.alphaYX*dBuySupport + fit.alphaYY*dSellSupport
+					lambdaBeta := bivariateFit.alphaYX*dBuySupport + bivariateFit.alphaYY*dSellSupport
 					result.logSum += math.Log(lambda)
 					result.muY += inverse
 					result.alphaYX += inverse * buySupport
@@ -158,14 +158,14 @@ func (fit bivariateFit) eventLogLikelihoodGradient(
 	return result
 }
 
-func (fit bivariateFit) compensatorBetaDerivative(
+func (bivariateFit bivariateFit) compensatorBetaDerivative(
 	buySupport, sellSupport, buySupportBeta, sellSupportBeta float64,
 ) float64 {
-	beta := fit.beta
-	branchX := fit.alphaXX / beta
-	branchCrossToX := fit.alphaXY / beta
-	branchCrossToY := fit.alphaYX / beta
-	branchY := fit.alphaYY / beta
+	beta := bivariateFit.beta
+	branchX := bivariateFit.alphaXX / beta
+	branchCrossToX := bivariateFit.alphaXY / beta
+	branchCrossToY := bivariateFit.alphaYX / beta
+	branchY := bivariateFit.alphaYY / beta
 
 	return -branchX/beta*buySupport +
 		branchX*buySupportBeta +

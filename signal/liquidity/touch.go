@@ -9,9 +9,9 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type path struct {
@@ -108,7 +108,7 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			var reading statistic.JointReading
 			input := statistic.JointInput{Values: logged}
-			for out := range state.estimator.Next(transport.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+			for out := range state.estimator.Next(sequence.NewOne(unsafe.Pointer(&input)).Next(nil)) {
 				reading = *(*statistic.JointReading)(out)
 			}
 
@@ -153,7 +153,7 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				observation := temporal.Price{At: m.At.UnixNano(), Value: channel.Residual}
 				var summary statistic.LocalRegressionReading
-				for out := range state.velocity[index].Next(transport.NewOne(unsafe.Pointer(&observation)).Next(nil)) {
+				for out := range state.velocity[index].Next(sequence.NewOne(unsafe.Pointer(&observation)).Next(nil)) {
 					summary = *(*statistic.LocalRegressionReading)(out)
 				}
 

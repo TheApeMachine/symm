@@ -82,4 +82,3 @@ type TreeExport struct {
 	Classes   []ClassCandidate
 	NodeCount int
 }
-

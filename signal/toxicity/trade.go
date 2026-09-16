@@ -2,18 +2,19 @@ package toxicity
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"iter"
 	"strconv"
 	"time"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tradeInput struct {
@@ -118,14 +119,14 @@ func (op *tradePipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			var bidReading, askReading adaptive.BaselineReading
 
 			if bidFillFrac > 0 {
-				for rPtr := range op.bidBaseline.Next(transport.NewOne(unsafe.Pointer(&bidFillFrac)).Next(nil)) {
+				for rPtr := range op.bidBaseline.Next(sequence.NewOne(unsafe.Pointer(&bidFillFrac)).Next(nil)) {
 					bidReading = *(*adaptive.BaselineReading)(rPtr)
 				}
 				op.bidFractionSamples++
 			}
 
 			if askFillFrac > 0 {
-				for rPtr := range op.askBaseline.Next(transport.NewOne(unsafe.Pointer(&askFillFrac)).Next(nil)) {
+				for rPtr := range op.askBaseline.Next(sequence.NewOne(unsafe.Pointer(&askFillFrac)).Next(nil)) {
 					askReading = *(*adaptive.BaselineReading)(rPtr)
 				}
 				op.askFractionSamples++
@@ -310,7 +311,7 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		At:       input.At,
 	}
 
-	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+	for out := range trade.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*tradeResult)(out)
 
 		m.Metrics["bracket_trade_quantity"] = m.Metrics["bracket_trade_quantity"].Write(res.BracketQty)

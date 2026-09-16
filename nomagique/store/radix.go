@@ -2,83 +2,78 @@ package store
 
 import (
 	"bytes"
-	"errors"
 	"iter"
+	"sync/atomic"
 	"unsafe"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Radix associates values with ordered keys. It never mutates its configured
-source: each arrival is applied to a tree and the next tree is handed over.
+Radix owns immutable addressed values. One writer publishes new roots; readers
+borrow values from the root they loaded. Read misses yield nothing. Identify
+inserts its explicit initial payload only when the key is absent. Payloads must
+be values without mutable aliases: the store copies T, not an object graph.
+Writes retain their own key bytes; reads borrow the caller's address.
 */
-type Radix struct {
-	err  error
-	held *iradix.Tree[[]byte]
-	out  *iradix.Tree[[]byte]
+type Radix[T any] struct {
+	*core.PrimitiveError
+	root atomic.Pointer[iradix.Tree[T]]
 }
 
-func NewRadix(current ...*iradix.Tree[[]byte]) core.Primitive {
-	held := iradix.New[[]byte]()
-
-	if len(current) > 0 && current[0] != nil {
-		held = current[0]
-	}
-
-	return &Radix{held: held}
+func NewRadix[T any]() *Radix[T] {
+	radix := &Radix[T]{PrimitiveError: core.NewPrimitiveError()}
+	radix.root.Store(iradix.New[T]())
+	return radix
 }
 
-func (op *Radix) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (radix *Radix[T]) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if op.held == nil {
-				op.held = iradix.New[[]byte]()
+		for arriving := range input {
+			query := (*Query[T])(arriving)
+			if query.key == nil || len(*query.key) == 0 {
+				radix.Error(core.ErrShape)
+				return
 			}
-
-			fields := *(*map[string][]byte)(arriving)
-			selector, selecting := fields["selector"]
-			data, writing := fields["data"]
-
-			if !writing {
-				op.out = op.held
-
-				if !yield(unsafe.Pointer(&op.out)) {
+			root := radix.root.Load()
+			value, found := root.Get(*query.key)
+			if query.Action() == data.ActionRead {
+				if found && !yield(unsafe.Pointer(&value)) {
 					return
 				}
-
 				continue
 			}
-
-			if !selecting {
-				op.Error(core.ErrShape)
-				op.out = op.held
-
-				if !yield(unsafe.Pointer(&op.out)) {
+			if query.Action() != data.ActionWrite && query.Action() != data.ActionIdentify {
+				radix.Error(core.ErrShape)
+				return
+			}
+			if query.Action() == data.ActionIdentify && found {
+				if !yield(unsafe.Pointer(&value)) {
 					return
 				}
-
 				continue
 			}
-
-			written, _, _ := op.held.Insert(selector, bytes.Clone(data))
-			op.held = written
-			op.out = written
-
-			if !yield(unsafe.Pointer(&op.out)) {
+			received := false
+			for payload := range query.payload {
+				if received {
+					radix.Error(core.ErrShape)
+					return
+				}
+				value, received = *(*T)(payload), true
+			}
+			if !received {
+				radix.Error(core.ErrNotHeld)
+				return
+			}
+			// The query's payload may itself read this store; publish afterwards.
+			root = radix.root.Load()
+			updated, _, _ := root.Insert(bytes.Clone(*query.key), value)
+			radix.root.Store(updated)
+			if !yield(unsafe.Pointer(&value)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Radix) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

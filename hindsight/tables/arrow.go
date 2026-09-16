@@ -2,10 +2,11 @@ package tables
 
 import (
 	"errors"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -200,9 +201,8 @@ func readMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 
 			keyArray := metricsCol.Keys().(*array.String)
 			valArray := metricsCol.Items().(*array.Float64)
-			offsets := metricsCol.Offsets()
-			startOffset := int(offsets[rowIdx])
-			endOffset := int(offsets[rowIdx+1])
+			start, end := metricsCol.ValueOffsets(rowIdx)
+			startOffset, endOffset := int(start), int(end)
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				metricKey := keyArray.Value(itemIdx)
@@ -221,9 +221,8 @@ func readMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 
 			keyArray := metadataCol.Keys().(*array.String)
 			valArray := metadataCol.Items().(*array.String)
-			offsets := metadataCol.Offsets()
-			startOffset := int(offsets[rowIdx])
-			endOffset := int(offsets[rowIdx+1])
+			start, end := metadataCol.ValueOffsets(rowIdx)
+			startOffset, endOffset := int(start), int(end)
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				measurement.Metadata[keyArray.Value(itemIdx)] = valArray.Value(itemIdx)
@@ -237,9 +236,8 @@ func readMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 
 			keyArray := provenanceCol.Keys().(*array.String)
 			valArray := provenanceCol.Items().(*array.String)
-			offsets := provenanceCol.Offsets()
-			startOffset := int(offsets[rowIdx])
-			endOffset := int(offsets[rowIdx+1])
+			start, end := provenanceCol.ValueOffsets(rowIdx)
+			startOffset, endOffset := int(start), int(end)
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				key, value := keyArray.Value(itemIdx), valArray.Value(itemIdx)

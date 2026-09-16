@@ -1,13 +1,12 @@
 package prior
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -26,29 +25,30 @@ type Observation struct {
 Primitive binds configured memory to the canonical numeric prior recurrence.
 */
 type Primitive struct {
-	err      error
+	*core.PrimitiveError
+
 	moments  core.Primitive
 	memory   float64
 	out      Reading
 	replayed Reading
 }
 
-func New(memory float64) core.Primitive {
-	return &Primitive{moments: statistic.NewPriorMoments(), memory: memory}
+func New(memory float64) *Primitive {
+	return &Primitive{PrimitiveError: core.NewPrimitiveError(), moments: statistic.NewPriorMoments(), memory: memory}
 }
 
-func (op *Primitive) Next(
+func (primitive *Primitive) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			observation := (*Observation)(arriving)
 
-			if !op.step(observation) {
+			if !primitive.step(observation) {
 				return
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&primitive.out)) {
 				return
 			}
 		}
@@ -59,57 +59,47 @@ func (op *Primitive) Next(
 step drives the canonical prior Primitive with one observation, or replays the
 unchanged reading for a query that neither observes nor ages.
 */
-func (op *Primitive) step(observation *Observation) bool {
+func (primitive *Primitive) step(observation *Observation) bool {
 	if observation.HasValue {
 		request := statistic.PriorObservation{
 			Value:     observation.Value,
 			Authority: observation.Authority,
-			Memory:    op.memory,
+			Memory:    primitive.memory,
 			Epoch:     observation.Epoch,
 			HasEpoch:  observation.HasEpoch,
 		}
 
-		return op.deliver(request)
+		return primitive.deliver(request)
 	}
 
 	if observation.HasEpoch {
 		request := statistic.PriorObservation{
-			Memory:   op.memory,
+			Memory:   primitive.memory,
 			Epoch:    observation.Epoch,
 			HasEpoch: true,
 			AgeOnly:  true,
 		}
 
-		return op.deliver(request)
+		return primitive.deliver(request)
 	}
 
-	op.out = op.replayed
+	primitive.out = primitive.replayed
 	return true
 }
 
 /*
 deliver folds one request through the canonical prior Primitive.
 */
-func (op *Primitive) deliver(request statistic.PriorObservation) bool {
-	for summary := range op.moments.Next(transport.NewOne(unsafe.Pointer(&request)).Next(nil)) {
-		op.out = fromSummary(*(*statistic.PriorSummary)(summary))
+func (primitive *Primitive) deliver(request statistic.PriorObservation) bool {
+	for summary := range primitive.moments.Next(sequence.NewOne(unsafe.Pointer(&request)).Next(nil)) {
+		primitive.out = fromSummary(*(*statistic.PriorSummary)(summary))
 	}
 
-	if err := op.moments.Error(); err != nil {
-		op.err = errors.Join(op.err, err)
+	if err := primitive.moments.Error(); err != nil {
+		primitive.Error(err)
 		return false
 	}
 
-	op.replayed = op.out
+	primitive.replayed = primitive.out
 	return true
-}
-
-func (op *Primitive) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,39 +11,30 @@ import (
 Mean owns the running arithmetic mean.
 */
 type Mean struct {
-	err   error
+	*core.PrimitiveError
+
 	count float64
 	mean  float64
 	out   float64
 }
 
-func NewMean() core.Primitive {
-	return &Mean{}
+func NewMean() *Mean {
+	return &Mean{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Mean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (mean *Mean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		count, mean := 0.0, 0.0
+		count, average := 0.0, 0.0
 
 		for arriving := range in {
 			val := *(*float64)(arriving)
 			count++
-			mean += (val - mean) / count
-			op.out = mean
+			average += (val - average) / count
+			mean.out = average
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&mean.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Mean) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

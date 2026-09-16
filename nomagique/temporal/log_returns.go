@@ -22,18 +22,19 @@ type LogReturn struct {
 LogReturns computes adjacent log differences of sequential price points.
 */
 type LogReturns struct {
-	err     error
+	*core.PrimitiveError
+
 	out     LogReturn
 	seen    bool
 	through int64
 	prevLog float64
 }
 
-func NewLogReturns() core.Primitive {
-	return &LogReturns{}
+func NewLogReturns() *LogReturns {
+	return &LogReturns{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *LogReturns) Next(
+func (logReturns *LogReturns) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -41,40 +42,29 @@ func (op *LogReturns) Next(
 			price := (*Price)(arriving)
 			logVal := math.Log(price.Value)
 
-			if !op.seen {
-				op.seen = true
-				op.through = price.At
-				op.prevLog = logVal
+			if !logReturns.seen {
+				logReturns.seen = true
+				logReturns.through = price.At
+				logReturns.prevLog = logVal
 				continue
 			}
 
-			if price.At <= op.through {
-				op.err = fmt.Errorf("%w: log return time %d must follow %d", core.ErrShape, price.At, op.through)
+			if price.At <= logReturns.through {
+				logReturns.Error(fmt.Errorf("%w: log return time %d must follow %d", core.ErrShape, price.At, logReturns.through))
 				return
 			}
 
-			op.out = LogReturn{
-				From:  op.through,
+			logReturns.out = LogReturn{
+				From:  logReturns.through,
 				To:    price.At,
-				Value: logVal - op.prevLog,
+				Value: logVal - logReturns.prevLog,
 			}
-			op.through = price.At
-			op.prevLog = logVal
+			logReturns.through = price.At
+			logReturns.prevLog = logVal
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&logReturns.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *LogReturns) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestForecastNext(t *testing.T) {
@@ -21,10 +21,10 @@ func TestForecastNext(t *testing.T) {
 				residual = 0.4 * math.Sin(float64(index)*0.17)
 			}
 
-			gotEval := transport.NewEvaluate(node)
+			gotEval := node
 			var got learning.ForecastReading
 
-			for out := range gotEval.Next(transport.NewValues(learning.Pair{
+			for out := range gotEval.Next(sequence.NewValues(learning.Pair{
 				Predicted: predicted,
 				Actual:    predicted + residual,
 			}).Next(nil)) {

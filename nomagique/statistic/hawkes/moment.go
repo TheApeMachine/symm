@@ -53,7 +53,7 @@ func newMomentDiagnostic(momentR, momentS float64) (momentDiagnostic, error) {
 measure evaluates empirical moments against a fitted process's implied
 branching moments.
 */
-func (diagnostic momentDiagnostic) measure(
+func (momentDiagnostic momentDiagnostic) measure(
 	sample momentSample,
 	muX, muY, alphaXX, alphaXY, alphaYX, alphaYY, beta float64,
 ) (momentResult, error) {
@@ -69,10 +69,10 @@ func (diagnostic momentDiagnostic) measure(
 		)
 	}
 
-	empirical := stat.BivariateMoment(diagnostic.momentR, diagnostic.momentS, sample.x, sample.y, sample.weights)
+	empirical := stat.BivariateMoment(momentDiagnostic.momentR, momentDiagnostic.momentS, sample.x, sample.y, sample.weights)
 	estimate, estimateOK := branchingMomentEstimate(
 		muX, muY, alphaXX, alphaXY, alphaYX, alphaYY, beta,
-		diagnostic.momentR, diagnostic.momentS,
+		momentDiagnostic.momentR, momentDiagnostic.momentS,
 	)
 
 	if !estimateOK {

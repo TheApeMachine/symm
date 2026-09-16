@@ -5,9 +5,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPathRetention(t *testing.T) {
@@ -18,7 +18,7 @@ func TestPathRetention(t *testing.T) {
 		obs2 := []temporal.Price{{At: 1, Value: 100}, {At: 2, Value: 101}}
 		obs3 := []temporal.Price{{At: 1, Value: 100}, {At: 2, Value: 101}, {At: 3, Value: 102}}
 
-		out := tests.CollectSeq[[]temporal.Price](path.Next(transport.NewValues(obs1, obs2, obs3).Next(nil)))
+		out := tests.CollectSeq[[]temporal.Price](path.Next(sequence.NewValues(obs1, obs2, obs3).Next(nil)))
 		So(path.Error(), ShouldBeNil)
 		So(len(out), ShouldEqual, 3)
 		So(len(out[2]), ShouldEqual, 3)

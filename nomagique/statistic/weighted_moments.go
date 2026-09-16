@@ -5,39 +5,39 @@ type WeightedMoments struct {
 	Mass, Squared, Mean, M2 float64
 }
 
-func (moments *WeightedMoments) Update(value, weight float64) {
+func (weightedMoments *WeightedMoments) Update(value, weight float64) {
 	if weight <= 0 {
 		panic("weighted moments: weight must be positive")
 	}
 
-	moments.Mass += weight
-	moments.Squared += weight * weight
-	delta := value - moments.Mean
-	moments.Mean += weight * delta / moments.Mass
-	moments.M2 += weight * delta * (value - moments.Mean)
+	weightedMoments.Mass += weight
+	weightedMoments.Squared += weight * weight
+	delta := value - weightedMoments.Mean
+	weightedMoments.Mean += weight * delta / weightedMoments.Mass
+	weightedMoments.M2 += weight * delta * (value - weightedMoments.Mean)
 }
 
-func (moments WeightedMoments) Support() float64 {
-	if moments.Mass == 0 {
+func (weightedMoments WeightedMoments) Support() float64 {
+	if weightedMoments.Mass == 0 {
 		return 0
 	}
 
-	return moments.Mass * moments.Mass / moments.Squared
+	return weightedMoments.Mass * weightedMoments.Mass / weightedMoments.Squared
 }
 
-func (moments *WeightedMoments) Merge(other WeightedMoments) {
+func (weightedMoments *WeightedMoments) Merge(other WeightedMoments) {
 	if other.Mass == 0 {
 		return
 	}
-	if moments.Mass == 0 {
-		*moments = other
+	if weightedMoments.Mass == 0 {
+		*weightedMoments = other
 		return
 	}
 
-	mass := moments.Mass + other.Mass
-	delta := other.Mean - moments.Mean
-	moments.M2 += other.M2 + delta*delta*moments.Mass*other.Mass/mass
-	moments.Mean += delta * other.Mass / mass
-	moments.Mass = mass
-	moments.Squared += other.Squared
+	mass := weightedMoments.Mass + other.Mass
+	delta := other.Mean - weightedMoments.Mean
+	weightedMoments.M2 += other.M2 + delta*delta*weightedMoments.Mass*other.Mass/mass
+	weightedMoments.Mean += delta * other.Mass / mass
+	weightedMoments.Mass = mass
+	weightedMoments.Squared += other.Squared
 }

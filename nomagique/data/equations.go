@@ -1,13 +1,12 @@
 package data
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -16,7 +15,7 @@ drive evaluates one scalar payload through one primitive.
 func drive[From, To any](op core.Primitive, payload *From) To {
 	var answer To
 
-	for out := range op.Next(transport.NewOne(unsafe.Pointer(payload)).Next(nil)) {
+	for out := range op.Next(sequence.NewOne(unsafe.Pointer(payload)).Next(nil)) {
 		answer = *(*To)(out)
 	}
 
@@ -31,7 +30,7 @@ func driveAll[From, To any](op core.Primitive, payload *From) (To, bool) {
 	var answer To
 	answered := false
 
-	for out := range op.Next(transport.NewOne(unsafe.Pointer(payload)).Next(nil)) {
+	for out := range op.Next(sequence.NewOne(unsafe.Pointer(payload)).Next(nil)) {
 		answer = *(*To)(out)
 		answered = true
 	}
@@ -61,18 +60,19 @@ An operation that yields no fact leaves its output unwritten, so undefined
 stays unwritten.
 */
 type Equations struct {
-	err      error
+	*core.PrimitiveError
+
 	bindings []Equation
 }
 
 /*
 NewEquations creates the fact-equation stage from declared bindings.
 */
-func NewEquations(bindings ...Equation) core.Primitive {
-	return &Equations{bindings: bindings}
+func NewEquations(bindings ...Equation) *Equations {
+	return &Equations{PrimitiveError: core.NewPrimitiveError(), bindings: bindings}
 }
 
-func (op *Equations) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (equations *Equations) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**Measurement[float64])(arriving)
@@ -85,8 +85,8 @@ func (op *Equations) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				continue
 			}
 
-			for _, binding := range op.bindings {
-				if !op.apply(m, binding) {
+			for _, binding := range equations.bindings {
+				if !equations.apply(m, binding) {
 					break
 				}
 			}
@@ -103,7 +103,7 @@ apply evaluates one binding against the measurement. It reports whether the
 measurement may carry on to further bindings: a binding naming a fact the
 measurement does not hold fails the measurement.
 */
-func (op *Equations) apply(m *Measurement[float64], binding Equation) bool {
+func (equations *Equations) apply(m *Measurement[float64], binding Equation) bool {
 	left, holds := m.Metrics[binding.Left]
 
 	if !holds {
@@ -139,14 +139,4 @@ func (op *Equations) apply(m *Measurement[float64], binding Equation) bool {
 	}
 
 	return true
-}
-
-func (op *Equations) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

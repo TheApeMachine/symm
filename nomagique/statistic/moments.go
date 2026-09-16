@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -68,45 +67,36 @@ func (moments *Moments) Retain(retain float64) {
 /*
 Summarize refreshes the post-policy sample moments without rewriting the prior.
 */
-func (reading *MomentReading) Summarize(moments Moments) {
-	reading.Moments = moments
-	reading.VarianceDefined = moments.Count > 1
-	reading.Variance = moments.M2 / (moments.Count - 1)
-	reading.Dispersion = math.Sqrt(reading.Variance)
+func (momentReading *MomentReading) Summarize(moments Moments) {
+	momentReading.Moments = moments
+	momentReading.VarianceDefined = moments.Count > 1
+	momentReading.Variance = moments.M2 / (moments.Count - 1)
+	momentReading.Dispersion = math.Sqrt(momentReading.Variance)
 }
 
 /*
 Estimator owns online Welford moment accumulation as a Primitive.
 */
 type Estimator struct {
-	err     error
+	*core.PrimitiveError
+
 	moments Moments
 	reading MomentReading
 }
 
-func NewEstimator() core.Primitive {
-	return &Estimator{}
+func NewEstimator() *Estimator {
+	return &Estimator{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Estimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (estimator *Estimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			val := *(*float64)(arriving)
-			op.reading = op.moments.Update(val)
+			estimator.reading = estimator.moments.Update(val)
 
-			if !yield(unsafe.Pointer(&op.reading)) {
+			if !yield(unsafe.Pointer(&estimator.reading)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Estimator) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

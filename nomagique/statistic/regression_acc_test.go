@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func TestNewRegressionAccumulator(t *testing.T) {
@@ -53,7 +53,7 @@ func TestNewRegressionAccumulatorDomain(t *testing.T) {
 		operation := NewRegressionAccumulator(0)
 		yielded := 0
 
-		for range operation.Next(transport.NewValues(RegressionRow{Predictors: []float64{1}, Target: 1}).Next(nil)) {
+		for range operation.Next(sequence.NewValues(RegressionRow{Predictors: []float64{1}, Target: 1}).Next(nil)) {
 			yielded++
 		}
 
@@ -69,7 +69,7 @@ func TestNewRegressionAccumulatorShape(t *testing.T) {
 		operation := NewRegressionAccumulator(2)
 		yielded := 0
 
-		for range operation.Next(transport.NewValues(RegressionRow{Predictors: []float64{1}, Target: 1}).Next(nil)) {
+		for range operation.Next(sequence.NewValues(RegressionRow{Predictors: []float64{1}, Target: 1}).Next(nil)) {
 			yielded++
 		}
 

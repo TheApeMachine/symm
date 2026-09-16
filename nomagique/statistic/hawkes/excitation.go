@@ -14,22 +14,22 @@ type excitationState struct {
 /*
 decayTo advances excitation sums to eventTimeSec under exponential decay.
 */
-func (state *excitationState) decayTo(eventTimeSec float64, beta float64) {
-	if !state.haveLast || eventTimeSec <= state.lastTimeSec {
+func (excitationState *excitationState) decayTo(eventTimeSec float64, beta float64) {
+	if !excitationState.haveLast || eventTimeSec <= excitationState.lastTimeSec {
 		return
 	}
 
-	decayFactor := expNeg(beta, eventTimeSec-state.lastTimeSec)
-	state.buySupport *= decayFactor
-	state.sellSupport *= decayFactor
-	state.lastTimeSec = eventTimeSec
+	decayFactor := expNeg(beta, eventTimeSec-excitationState.lastTimeSec)
+	excitationState.buySupport *= decayFactor
+	excitationState.sellSupport *= decayFactor
+	excitationState.lastTimeSec = eventTimeSec
 }
 
 /*
 logLikelihoodSum accumulates log intensities across marked events strictly
 after origin and at or before horizon.
 */
-func (state *excitationState) logLikelihoodSum(
+func (excitationState *excitationState) logLikelihoodSum(
 	marked []markedEvent,
 	originSec, horizonSec float64,
 	muBuy, muSell, alphaBB, alphaBS, alphaSB, alphaSS, beta float64,
@@ -38,8 +38,8 @@ func (state *excitationState) logLikelihoodSum(
 		return 0, false
 	}
 
-	state.lastTimeSec = marked[0].atSec
-	state.haveLast = true
+	excitationState.lastTimeSec = marked[0].atSec
+	excitationState.haveLast = true
 	logSum := 0.0
 
 	for index := 0; index < len(marked); {
@@ -49,7 +49,7 @@ func (state *excitationState) logLikelihoodSum(
 			break
 		}
 
-		state.decayTo(eventTime, beta)
+		excitationState.decayTo(eventTime, beta)
 
 		end := index
 
@@ -61,7 +61,7 @@ func (state *excitationState) logLikelihoodSum(
 			for _, event := range marked[index:end] {
 				switch event.side {
 				case sideBuy:
-					lambda := muBuy + alphaBB*state.buySupport + alphaBS*state.sellSupport
+					lambda := muBuy + alphaBB*excitationState.buySupport + alphaBS*excitationState.sellSupport
 
 					if lambda <= 0 {
 						return 0, false
@@ -69,7 +69,7 @@ func (state *excitationState) logLikelihoodSum(
 
 					logSum += logPositive(lambda)
 				case sideSell:
-					lambda := muSell + alphaSB*state.buySupport + alphaSS*state.sellSupport
+					lambda := muSell + alphaSB*excitationState.buySupport + alphaSS*excitationState.sellSupport
 
 					if lambda <= 0 {
 						return 0, false
@@ -83,9 +83,9 @@ func (state *excitationState) logLikelihoodSum(
 		for _, event := range marked[index:end] {
 			switch event.side {
 			case sideBuy:
-				state.buySupport += 1
+				excitationState.buySupport += 1
 			case sideSell:
-				state.sellSupport += 1
+				excitationState.sellSupport += 1
 			}
 		}
 

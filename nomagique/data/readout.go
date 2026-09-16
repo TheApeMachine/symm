@@ -1,13 +1,12 @@
 package data
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -37,20 +36,20 @@ type Readout struct {
 ReadoutOp composes credibility, corroboration and the usable raw value.
 */
 type ReadoutOp struct {
-	err       error
+	*core.PrimitiveError
+
 	authority core.Primitive
 	bound     core.Primitive
 	out       Readout
 }
 
-func NewReadout() core.Primitive {
-	return &ReadoutOp{
-		authority: NewAuthority(),
-		bound:     calculus.NewBound(),
+func NewReadout() *ReadoutOp {
+	return &ReadoutOp{PrimitiveError: core.NewPrimitiveError(), authority: NewAuthority(),
+		bound: calculus.NewBound(),
 	}
 }
 
-func (op *ReadoutOp) Next(
+func (readoutOp *ReadoutOp) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -58,12 +57,12 @@ func (op *ReadoutOp) Next(
 			input := (*ReadoutInput)(arriving)
 
 			var base float64
-			for out := range op.authority.Next(transport.NewValues(input.QualityReading).Next(nil)) {
+			for out := range readoutOp.authority.Next(sequence.NewValues(input.QualityReading).Next(nil)) {
 				base = *(*float64)(out)
 			}
 
-			if err := op.authority.Error(); err != nil {
-				op.Error(err)
+			if err := readoutOp.authority.Error(); err != nil {
+				readoutOp.Error(err)
 				return
 			}
 
@@ -73,12 +72,12 @@ func (op *ReadoutOp) Next(
 				Upper: 1,
 			}
 			var credibility float64
-			for out := range op.bound.Next(transport.NewValues(credRecord).Next(nil)) {
+			for out := range readoutOp.bound.Next(sequence.NewValues(credRecord).Next(nil)) {
 				credibility = *(*float64)(out)
 			}
 
-			if err := op.bound.Error(); err != nil {
-				op.Error(err)
+			if err := readoutOp.bound.Error(); err != nil {
+				readoutOp.Error(err)
 				return
 			}
 
@@ -101,12 +100,12 @@ func (op *ReadoutOp) Next(
 					Lower: 0,
 					Upper: 1,
 				}
-				for out := range op.bound.Next(transport.NewValues(boundRec).Next(nil)) {
+				for out := range readoutOp.bound.Next(sequence.NewValues(boundRec).Next(nil)) {
 					authority = *(*float64)(out)
 				}
 
-				if err := op.bound.Error(); err != nil {
-					op.Error(err)
+				if err := readoutOp.bound.Error(); err != nil {
+					readoutOp.Error(err)
 					return
 				}
 			}
@@ -117,24 +116,14 @@ func (op *ReadoutOp) Next(
 				value = input.Raw
 			}
 
-			op.out = Readout{
+			readoutOp.out = Readout{
 				Authority: authority,
 				Value:     value,
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&readoutOp.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *ReadoutOp) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

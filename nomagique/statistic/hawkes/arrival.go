@@ -78,34 +78,34 @@ func sortedCopy(times []float64) []float64 {
 	return sorted
 }
 
-func (stream arrivalStream) merge() []markedEvent {
-	return stream.mergeInto(make([]markedEvent, 0, len(stream.buy)+len(stream.sell)))
+func (arrivalStream arrivalStream) merge() []markedEvent {
+	return arrivalStream.mergeInto(make([]markedEvent, 0, len(arrivalStream.buy)+len(arrivalStream.sell)))
 }
 
 /*
 mergeInto chronologically merges buy/sell timestamps into caller-owned
 storage, avoiding an allocation when workspace reuse is available.
 */
-func (stream arrivalStream) mergeInto(marked []markedEvent) []markedEvent {
+func (arrivalStream arrivalStream) mergeInto(marked []markedEvent) []markedEvent {
 	buyIndex, sellIndex := 0, 0
 
-	for buyIndex < len(stream.buy) && sellIndex < len(stream.sell) {
-		if stream.buy[buyIndex] <= stream.sell[sellIndex] {
-			marked = append(marked, markedEvent{atSec: stream.buy[buyIndex], side: sideBuy})
+	for buyIndex < len(arrivalStream.buy) && sellIndex < len(arrivalStream.sell) {
+		if arrivalStream.buy[buyIndex] <= arrivalStream.sell[sellIndex] {
+			marked = append(marked, markedEvent{atSec: arrivalStream.buy[buyIndex], side: sideBuy})
 			buyIndex++
 			continue
 		}
 
-		marked = append(marked, markedEvent{atSec: stream.sell[sellIndex], side: sideSell})
+		marked = append(marked, markedEvent{atSec: arrivalStream.sell[sellIndex], side: sideSell})
 		sellIndex++
 	}
 
-	for ; buyIndex < len(stream.buy); buyIndex++ {
-		marked = append(marked, markedEvent{atSec: stream.buy[buyIndex], side: sideBuy})
+	for ; buyIndex < len(arrivalStream.buy); buyIndex++ {
+		marked = append(marked, markedEvent{atSec: arrivalStream.buy[buyIndex], side: sideBuy})
 	}
 
-	for ; sellIndex < len(stream.sell); sellIndex++ {
-		marked = append(marked, markedEvent{atSec: stream.sell[sellIndex], side: sideSell})
+	for ; sellIndex < len(arrivalStream.sell); sellIndex++ {
+		marked = append(marked, markedEvent{atSec: arrivalStream.sell[sellIndex], side: sideSell})
 	}
 
 	return marked
@@ -132,20 +132,20 @@ func gapsFromMarked(marked []markedEvent) []float64 {
 /*
 span returns exposure seconds on the common interval (origin, horizon].
 */
-func (stream arrivalStream) span(horizonSec float64) float64 {
-	if horizonSec <= stream.originSec {
+func (arrivalStream arrivalStream) span(horizonSec float64) float64 {
+	if horizonSec <= arrivalStream.originSec {
 		return 0
 	}
 
-	return horizonSec - stream.originSec
+	return horizonSec - arrivalStream.originSec
 }
 
 /*
 observationCounts returns side counts on the common interval (origin, horizon].
 */
-func (stream arrivalStream) observationCounts(horizonSec float64) (buy, sell int) {
-	return observationCount(stream.buy, stream.originSec, horizonSec),
-		observationCount(stream.sell, stream.originSec, horizonSec)
+func (arrivalStream arrivalStream) observationCounts(horizonSec float64) (buy, sell int) {
+	return observationCount(arrivalStream.buy, arrivalStream.originSec, horizonSec),
+		observationCount(arrivalStream.sell, arrivalStream.originSec, horizonSec)
 }
 
 func observationCount(times []float64, originSec, horizonSec float64) int {
@@ -170,11 +170,11 @@ func observationCount(times []float64, originSec, horizonSec float64) int {
 observationMarked returns marked events strictly after origin and at or
 before horizon, in chronological order.
 */
-func (stream arrivalStream) observationMarked(horizonSec float64) []markedEvent {
-	marked := make([]markedEvent, 0, len(stream.marked))
+func (arrivalStream arrivalStream) observationMarked(horizonSec float64) []markedEvent {
+	marked := make([]markedEvent, 0, len(arrivalStream.marked))
 
-	for _, event := range stream.marked {
-		if event.atSec <= stream.originSec {
+	for _, event := range arrivalStream.marked {
+		if event.atSec <= arrivalStream.originSec {
 			continue
 		}
 
@@ -191,27 +191,27 @@ func (stream arrivalStream) observationMarked(horizonSec float64) []markedEvent 
 /*
 buyIntensityAt evaluates the fitted buy-side conditional intensity at horizon.
 */
-func (stream arrivalStream) buyIntensityAt(
+func (arrivalStream arrivalStream) buyIntensityAt(
 	horizonSec float64, muBuy, alphaBB, alphaBS, beta float64,
 ) float64 {
-	return intensityAt(stream.buy, stream.sell, horizonSec, muBuy, alphaBB, alphaBS, beta)
+	return intensityAt(arrivalStream.buy, arrivalStream.sell, horizonSec, muBuy, alphaBB, alphaBS, beta)
 }
 
 /*
 sellIntensityAt evaluates the fitted sell-side conditional intensity at
 horizon.
 */
-func (stream arrivalStream) sellIntensityAt(
+func (arrivalStream arrivalStream) sellIntensityAt(
 	horizonSec float64, muSell, alphaSB, alphaSS, beta float64,
 ) float64 {
-	return intensityAt(stream.buy, stream.sell, horizonSec, muSell, alphaSB, alphaSS, beta)
+	return intensityAt(arrivalStream.buy, arrivalStream.sell, horizonSec, muSell, alphaSB, alphaSS, beta)
 }
 
 /*
 kernelIntegralSupport returns the per-side closed-form kernel integral used
 by the compensator.
 */
-func (stream arrivalStream) kernelIntegralSupport(horizonSec, beta float64) (buy, sell float64) {
-	return observationKernelIntegralSupport(stream.buy, stream.originSec, horizonSec, beta),
-		observationKernelIntegralSupport(stream.sell, stream.originSec, horizonSec, beta)
+func (arrivalStream arrivalStream) kernelIntegralSupport(horizonSec, beta float64) (buy, sell float64) {
+	return observationKernelIntegralSupport(arrivalStream.buy, arrivalStream.originSec, horizonSec, beta),
+		observationKernelIntegralSupport(arrivalStream.sell, arrivalStream.originSec, horizonSec, beta)
 }

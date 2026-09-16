@@ -11,24 +11,25 @@ import (
 EvidenceShare selects one member after normalization.
 */
 type EvidenceShare struct {
-	err   error
+	*core.PrimitiveError
+
 	index int
 	out   float64
 }
 
-func NewEvidenceShare(index int) core.Primitive {
-	return &EvidenceShare{index: index}
+func NewEvidenceShare(index int) *EvidenceShare {
+	return &EvidenceShare{PrimitiveError: core.NewPrimitiveError(), index: index}
 }
 
-func (op *EvidenceShare) Next(
+func (evidenceShare *EvidenceShare) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			values := *(*[]float64)(arriving)
 
-			if op.index < 0 || op.index >= len(values) {
-				op.err = core.ErrShape
+			if evidenceShare.index < 0 || evidenceShare.index >= len(values) {
+				evidenceShare.Error(core.ErrShape)
 				return
 			}
 
@@ -39,26 +40,15 @@ func (op *EvidenceShare) Next(
 			}
 
 			if sum == 0 {
-				op.err = core.ErrDomain
+				evidenceShare.Error(core.ErrDomain)
 				return
 			}
 
-			op.out = values[op.index] / sum
+			evidenceShare.out = values[evidenceShare.index] / sum
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&evidenceShare.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *EvidenceShare) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

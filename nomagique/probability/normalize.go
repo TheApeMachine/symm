@@ -1,7 +1,6 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,15 +11,16 @@ import (
 Normalize divides each arrival by the run's total.
 */
 type Normalize struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewNormalize() core.Primitive {
-	return &Normalize{}
+func NewNormalize() *Normalize {
+	return &Normalize{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (normalize *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		var values []float64
 		var total float64
@@ -32,26 +32,16 @@ func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 		}
 
 		if total == 0 {
-			op.err = errors.Join(op.err, core.ErrShape)
+			normalize.Error(core.ErrShape)
 			return
 		}
 
 		for _, val := range values {
-			op.out = val / total
+			normalize.out = val / total
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&normalize.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Normalize) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

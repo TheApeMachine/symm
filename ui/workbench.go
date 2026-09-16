@@ -9,7 +9,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/catalog"
+	nmcatalog "github.com/theapemachine/symm/nomagique/runtime/catalog"
 )
 
 /*
@@ -35,7 +35,7 @@ func (hub *Hub) registerWorkbench() {
 		library actually has.
 	*/
 	hub.app.Get("/workbench/primitives", func(c fiber.Ctx) error {
-		primitives, err := catalog.Primitives()
+		primitives, err := nmcatalog.Primitives()
 
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())

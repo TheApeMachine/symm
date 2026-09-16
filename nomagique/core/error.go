@@ -14,16 +14,16 @@ type PrimitiveError struct {
 	err error
 }
 
-func NewPrimitiveError() *PrimitiveError {
-	return &PrimitiveError{}
+func NewPrimitiveError(errs ...error) *PrimitiveError {
+	return &PrimitiveError{err: errors.Join(errs...)}
 }
 
-func (pe *PrimitiveError) Error(errs ...error) error {
+func (primitiveError *PrimitiveError) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {
-			pe.err = errors.Join(pe.err, err)
+			primitiveError.err = errors.Join(primitiveError.err, err)
 		}
 	}
 
-	return pe.err
+	return primitiveError.err
 }

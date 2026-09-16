@@ -59,15 +59,16 @@ type RLSPosterior struct {
 RLSPrediction forecasts from the supplied posterior before any model update.
 */
 type RLSPrediction struct {
-	err error
+	*core.PrimitiveError
+
 	out RLSForecast
 }
 
-func NewRLSPrediction() core.Primitive {
-	return &RLSPrediction{}
+func NewRLSPrediction() *RLSPrediction {
+	return &RLSPrediction{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *RLSPrediction) Next(
+func (rlsPrediction *RLSPrediction) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -75,7 +76,7 @@ func (op *RLSPrediction) Next(
 			state := (*RLSState)(arriving)
 
 			if len(state.Beta) != len(state.Design) || len(state.Root) != len(state.Design) {
-				op.err = fmt.Errorf("%w: RLS prediction coefficient, root and design dimensions differ", core.ErrShape)
+				rlsPrediction.Error(fmt.Errorf("%w: RLS prediction coefficient, root and design dimensions differ", core.ErrShape))
 				return
 			}
 
@@ -84,7 +85,7 @@ func (op *RLSPrediction) Next(
 
 			for row, feature := range state.Design {
 				if len(state.Root[row]) != len(state.Design) {
-					op.err = fmt.Errorf("%w: RLS root must be square", core.ErrShape)
+					rlsPrediction.Error(fmt.Errorf("%w: RLS root must be square", core.ErrShape))
 					return
 				}
 
@@ -111,7 +112,7 @@ func (op *RLSPrediction) Next(
 				variance := (state.NoiseScale / state.NoiseShape) * (state.Observations + energy)
 
 				if !(variance > 0) {
-					op.err = fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance)
+					rlsPrediction.Error(fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance))
 					return
 				}
 
@@ -121,39 +122,29 @@ func (op *RLSPrediction) Next(
 				forecast.Ready = true
 			}
 
-			op.out = forecast
+			rlsPrediction.out = forecast
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&rlsPrediction.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (op *RLSPrediction) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
-}
-
 /*
 RLSUpdate owns symmetric square-root rank-one update delivery.
 */
 type RLSUpdate struct {
-	err error
+	*core.PrimitiveError
+
 	out RLSPosterior
 }
 
-func NewRLSUpdate() core.Primitive {
-	return &RLSUpdate{}
+func NewRLSUpdate() *RLSUpdate {
+	return &RLSUpdate{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *RLSUpdate) Next(
+func (rlsUpdate *RLSUpdate) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -166,7 +157,7 @@ func (op *RLSUpdate) Next(
 			innovation := obs.Target - obs.Prediction
 
 			if len(root) != len(beta) || len(factor) != len(beta) {
-				op.err = fmt.Errorf("%w: RLS update dimensions differ", core.ErrShape)
+				rlsUpdate.Error(fmt.Errorf("%w: RLS update dimensions differ", core.ErrShape))
 				return
 			}
 
@@ -179,7 +170,7 @@ func (op *RLSUpdate) Next(
 			alpha := lambda + energy
 
 			if !(alpha > 0) {
-				op.err = fmt.Errorf("%w: invalid RLS information", core.ErrDomain)
+				rlsUpdate.Error(fmt.Errorf("%w: invalid RLS information", core.ErrDomain))
 				return
 			}
 
@@ -192,7 +183,7 @@ func (op *RLSUpdate) Next(
 
 			for row := range root {
 				if len(root[row]) != len(beta) {
-					op.err = fmt.Errorf("%w: RLS root must be square", core.ErrShape)
+					rlsUpdate.Error(fmt.Errorf("%w: RLS root must be square", core.ErrShape))
 					return
 				}
 
@@ -216,7 +207,7 @@ func (op *RLSUpdate) Next(
 			result.NoiseShape = lambda*obs.NoiseShape + 0.5
 			result.NoiseScale = noise
 
-			op.out = RLSPosterior{
+			rlsUpdate.out = RLSPosterior{
 				RLSForecast:      result,
 				Alpha:            alpha,
 				Innovation:       innovation,
@@ -225,20 +216,9 @@ func (op *RLSUpdate) Next(
 				Gain:             gain,
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&rlsUpdate.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *RLSUpdate) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

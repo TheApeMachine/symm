@@ -1,14 +1,13 @@
 package learning
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -28,7 +27,8 @@ RLS supplies an affine intercept and the zero-mean diagonal coefficient prior.
 Prediction is prior to the optional target's update, as owned by SquareRootRLS.
 */
 type RLS struct {
-	err       error
+	*core.PrimitiveError
+
 	dimension int
 	lambda    float64
 	learner   core.Primitive
@@ -39,26 +39,25 @@ type RLS struct {
 NewRLS creates an RLS primitive over the given feature dimension, coefficient
 prior variance, and forgetting factor.
 */
-func NewRLS(dimension int, variance, lambda float64) core.Primitive {
-	return &RLS{
-		dimension: dimension,
-		lambda:    lambda,
-		learner:   algo.NewSquareRootRLS(variance),
+func NewRLS(dimension int, variance, lambda float64) *RLS {
+	return &RLS{PrimitiveError: core.NewPrimitiveError(), dimension: dimension,
+		lambda:  lambda,
+		learner: algo.NewSquareRootRLS(variance),
 	}
 }
 
-func (op *RLS) Next(
+func (rls *RLS) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			sample := (*Sample)(arriving)
 
-			if op.dimension <= 0 || len(sample.Features) != op.dimension {
-				op.Error(fmt.Errorf(
+			if rls.dimension <= 0 || len(sample.Features) != rls.dimension {
+				rls.Error(fmt.Errorf(
 					"%w: RLS expected %d features, received %d",
 					core.ErrShape,
-					op.dimension,
+					rls.dimension,
 					len(sample.Features),
 				))
 				return
@@ -72,31 +71,21 @@ func (op *RLS) Next(
 				Design:   design,
 				Target:   sample.Target,
 				Observed: sample.Observed,
-				Lambda:   op.lambda,
+				Lambda:   rls.lambda,
 			}
 
-			for out := range op.learner.Next(transport.NewValues(query).Next(nil)) {
-				op.out = *(*algo.Reading)(out)
+			for out := range rls.learner.Next(sequence.NewValues(query).Next(nil)) {
+				rls.out = *(*algo.Reading)(out)
 			}
 
-			if err := op.learner.Error(); err != nil {
-				op.Error(err)
+			if err := rls.learner.Error(); err != nil {
+				rls.Error(err)
 				return
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&rls.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *RLS) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

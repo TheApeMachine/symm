@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"strings"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 )
 
 func TestExperimentCommandRun(t *testing.T) {

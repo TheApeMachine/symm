@@ -1,7 +1,6 @@
 package temporal
 
 import (
-	"errors"
 	"iter"
 	"time"
 	"unsafe"
@@ -42,26 +41,27 @@ non-advancing time have zero rate with explicit definedness. The latest point
 is always retained, including when its clock does not advance.
 */
 type Velocity struct {
-	err     error
+	*core.PrimitiveError
+
 	reading VelocityReading
 }
 
-func NewVelocity() core.Primitive {
-	return &Velocity{}
+func NewVelocity() *Velocity {
+	return &Velocity{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (velocity *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			point := (*Observation)(arriving)
 			reading := VelocityReading{
 				Through:  VelocityPoint{Value: point.Value, At: point.At},
-				HasPrior: op.reading.observed,
+				HasPrior: velocity.reading.observed,
 				observed: true,
 			}
 
 			if reading.HasPrior {
-				reading.From = op.reading.Through
+				reading.From = velocity.reading.Through
 				reading.Elapsed = float64(point.At-reading.From.At) / float64(time.Second)
 				reading.Difference = point.Value - reading.From.Value
 				reading.Defined = reading.Elapsed > 0
@@ -71,21 +71,11 @@ func (op *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				reading.Rate = reading.Difference / reading.Elapsed
 			}
 
-			op.reading = reading
+			velocity.reading = reading
 
-			if !yield(unsafe.Pointer(&op.reading)) {
+			if !yield(unsafe.Pointer(&velocity.reading)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Velocity) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

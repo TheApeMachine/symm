@@ -24,15 +24,16 @@ SamplingVariance applies specificity debt, with one observation as the sampling
 floor.
 */
 type SamplingVariance struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewSamplingVariance() core.Primitive {
-	return &SamplingVariance{}
+func NewSamplingVariance() *SamplingVariance {
+	return &SamplingVariance{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *SamplingVariance) Next(
+func (samplingVariance *SamplingVariance) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -40,7 +41,7 @@ func (op *SamplingVariance) Next(
 			input := (*SamplingVarianceInput)(arriving)
 
 			if input.Depth > input.ContextLength {
-				op.err = fmt.Errorf("%w: matched depth exceeds context length", core.ErrDomain)
+				samplingVariance.Error(fmt.Errorf("%w: matched depth exceeds context length", core.ErrDomain))
 				return
 			}
 
@@ -50,22 +51,11 @@ func (op *SamplingVariance) Next(
 				floor = 1.0
 			}
 
-			op.out = input.Variance / floor
+			samplingVariance.out = input.Variance / floor
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&samplingVariance.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *SamplingVariance) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

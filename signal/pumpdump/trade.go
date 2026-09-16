@@ -3,18 +3,19 @@ package pumpdump
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/errnie"
 	"iter"
 	"strconv"
 	"time"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tradeEntityInput struct {
@@ -110,7 +111,7 @@ func (op *tradeEntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				hasRates = true
 				op.completedBars++
 
-				for rPtr := range op.notionalBaseline.Next(transport.NewOne(unsafe.Pointer(&notionalRate)).Next(nil)) {
+				for rPtr := range op.notionalBaseline.Next(sequence.NewOne(unsafe.Pointer(&notionalRate)).Next(nil)) {
 					reading = *(*adaptive.BaselineReading)(rPtr)
 				}
 
@@ -236,7 +237,7 @@ func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64
 		At:    input.At,
 	}
 
-	for out := range trade.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+	for out := range trade.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*tradeEntityResult)(out)
 
 		m.Metrics["trade_price"] = m.Metrics["trade_price"].Write(res.TradePrice)

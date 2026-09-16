@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -112,7 +112,8 @@ only once the outcome arrives, so the head is never trained against a target
 it was allowed to see.
 */
 type PredictiveCoder struct {
-	err      error
+	*core.PrimitiveError
+
 	manifold core.Primitive
 	target   core.Primitive
 	pace     core.Primitive
@@ -140,9 +141,8 @@ Primitive pace graph, which derives it from how badly the manifold is
 reconstructing its own input. A config supplying none gets a default
 controller rather than a fabricated constant.
 */
-func NewPredictiveCoder(config PredictiveCoderConfig) core.Primitive {
-	coder := &PredictiveCoder{
-		target:  config.Target,
+func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
+	coder := &PredictiveCoder{PrimitiveError: core.NewPrimitiveError(), target: config.Target,
 		pace:    config.Pace,
 		alpha:   config.InitialAlpha,
 		learn:   config.Learn,
@@ -187,49 +187,36 @@ resolves whatever predictions the new outcome has made scorable, issues a
 fresh forecast, and yields a *PredictiveOutput per arrival. An invalid
 observation ends the stream with the error recorded.
 */
-func (coder *PredictiveCoder) Next(
+func (predictiveCoder *PredictiveCoder) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*PredictiveInput)(arriving)
-			output, err := coder.step(*input)
+			output, err := predictiveCoder.step(*input)
 
 			if err != nil {
-				coder.Error(err)
+				predictiveCoder.Error(err)
 				return
 			}
 
-			coder.out = output
+			predictiveCoder.out = output
 
-			if !yield(unsafe.Pointer(&coder.out)) {
+			if !yield(unsafe.Pointer(&predictiveCoder.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (coder *PredictiveCoder) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			coder.err = errors.Join(coder.err, err)
-		}
-	}
-
-	return coder.err
 }
 
 /*
 step settles the manifold over one observation, resolves whatever predictions
 the new outcome has made scorable, and issues a fresh forecast.
 */
-func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, error) {
+func (predictiveCoder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, error) {
 	// The manifold refuses an architecture it cannot build, so a nil here is a
 	// rejected configuration surfacing at its first use rather than a panic.
-	if coder.manifold == nil {
+	if predictiveCoder.manifold == nil {
 		return PredictiveOutput{}, errors.New(
 			"learning: predictive coder has no manifold: the architecture was rejected",
 		)
@@ -241,11 +228,11 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 		)
 	}
 
-	settled, err := coder.manifoldExecute(ManifoldCommand{
+	settled, err := predictiveCoder.manifoldExecute(ManifoldCommand{
 		Batch: &BatchIntent{
 			Input:           input.Features,
-			Learn:           coder.learn,
-			AdvanceTemporal: !coder.learn,
+			Learn:           predictiveCoder.learn,
+			AdvanceTemporal: !predictiveCoder.learn,
 		},
 	})
 
@@ -256,11 +243,11 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 	// The pace controller reads how badly the manifold is reconstructing its
 	// own input and sets the learning rate from it, so the rate is derived
 	// rather than configured.
-	if coder.pace != nil {
-		readingEval := transport.NewEvaluate(coder.pace)
+	if predictiveCoder.pace != nil {
+		readingEval := predictiveCoder.pace
 		var reading PaceReading
 
-		for out := range readingEval.Next(transport.NewValues(settled.ReconstructionError).Next(nil)) {
+		for out := range readingEval.Next(sequence.NewValues(settled.ReconstructionError).Next(nil)) {
 			reading = *(*PaceReading)(out)
 		}
 
@@ -268,10 +255,10 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 		if err != nil {
 			return PredictiveOutput{}, err
 		}
-		coder.alpha = reading.Alpha
+		predictiveCoder.alpha = reading.Alpha
 
-		settled, err = coder.manifoldExecute(ManifoldCommand{
-			Alpha: &AlphaIntent{Alpha: coder.alpha},
+		settled, err = predictiveCoder.manifoldExecute(ManifoldCommand{
+			Alpha: &AlphaIntent{Alpha: predictiveCoder.alpha},
 		})
 
 		if err != nil {
@@ -280,8 +267,8 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 	}
 
 	if input.HasReference && input.Reference > 0 {
-		if coder.learn {
-			ledgerReading, err := coder.ledgerExecute(LedgerCommand{
+		if predictiveCoder.learn {
+			ledgerReading, err := predictiveCoder.ledgerExecute(LedgerCommand{
 				Resolve: &ResolveIntent{
 					Step:      input.Step,
 					Reference: input.Reference,
@@ -292,11 +279,11 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 				return PredictiveOutput{}, err
 			}
 
-			coder.pending = ledgerReading.Pending
-			coder.resolved = ledgerReading.Total
+			predictiveCoder.pending = ledgerReading.Pending
+			predictiveCoder.resolved = ledgerReading.Total
 
 			if ledgerReading.Outcome != nil {
-				coder.last = &Resolution{
+				predictiveCoder.last = &Resolution{
 					Prediction: ledgerReading.Outcome.Prediction,
 					Target:     ledgerReading.Outcome.Target,
 					Error:      ledgerReading.Outcome.Error,
@@ -306,7 +293,7 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 			}
 		}
 
-		settled, err = coder.manifoldExecute(ManifoldCommand{
+		settled, err = predictiveCoder.manifoldExecute(ManifoldCommand{
 			Reading: &ReadingIntent{},
 		})
 
@@ -315,13 +302,13 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 		}
 
 		if len(settled.TaskPrediction) > 0 && len(settled.Readout) > 0 {
-			ledgerReading, err := coder.ledgerExecute(LedgerCommand{
+			ledgerReading, err := predictiveCoder.ledgerExecute(LedgerCommand{
 				Issue: &IssueIntent{
 					Step:        input.Step,
 					Reference:   input.Reference,
 					Features:    settled.Readout,
 					Predictions: settled.TaskPrediction,
-					Horizon:     coder.horizon,
+					Horizon:     predictiveCoder.horizon,
 				},
 			})
 
@@ -329,11 +316,11 @@ func (coder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, err
 				return PredictiveOutput{}, err
 			}
 
-			coder.pending = ledgerReading.Pending
+			predictiveCoder.pending = ledgerReading.Pending
 		}
 	}
 
-	return coder.read(settled), nil
+	return predictiveCoder.read(settled), nil
 }
 
 /*
@@ -341,22 +328,22 @@ read assembles the coder's reading from the manifold's settled snapshot: the
 forward forecast curve, how far ahead it is actually supported, and the
 manifold's own dynamics.
 */
-func (coder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
+func (predictiveCoder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
 	output := PredictiveOutput{
 		Reading:        &settled,
 		Readout:        settled.Readout,
-		LastResolution: coder.last,
+		LastResolution: predictiveCoder.last,
 	}
 
-	output.ResolvedSteps = coder.resolved
-	output.Pending = coder.pending
+	output.ResolvedSteps = predictiveCoder.resolved
+	output.Pending = predictiveCoder.pending
 
 	// The supported horizon is the CONTIGUOUS run of rows whose skill is
 	// established, counted from the nearest. A gap ends it: a distant row that
 	// happens to have seen data is not reachable evidence if the rows before it
 	// have not, and reporting it would let a consumer trust a curve across a
 	// stretch the head has never actually learned.
-	for horizon := 1; horizon <= coder.horizon; horizon++ {
+	for horizon := 1; horizon <= predictiveCoder.horizon; horizon++ {
 		if horizon > len(settled.SkillReady) || !settled.SkillReady[horizon-1] {
 			break
 		}
@@ -377,7 +364,7 @@ func (coder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
 	// read downstream as a genuine flat forecast rather than as absent evidence.
 	horizon := max(output.SupportedHorizon, 1)
 
-	forecast, err := coder.manifoldExecute(ManifoldCommand{
+	forecast, err := predictiveCoder.manifoldExecute(ManifoldCommand{
 		Forecast: &ForecastIntent{Steps: horizon},
 	})
 
@@ -394,7 +381,7 @@ func (coder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
 			output.ForwardCurve[index] = forecast.Value
 		}
 
-		retention, err := coder.manifoldExecute(ManifoldCommand{
+		retention, err := predictiveCoder.manifoldExecute(ManifoldCommand{
 			Retention: &RetentionIntent{Steps: output.SupportedHorizon},
 		})
 
@@ -411,8 +398,8 @@ func (coder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
 		HasTemporalError:    settled.HasTemporalError,
 	}
 
-	if coder.pace != nil {
-		output.Dynamics.Alpha = coder.alpha
+	if predictiveCoder.pace != nil {
+		output.Dynamics.Alpha = predictiveCoder.alpha
 	}
 
 	return output
@@ -421,13 +408,13 @@ func (coder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
 /*
 manifoldExecute drives one manifold command and returns its reading.
 */
-func (coder *PredictiveCoder) manifoldExecute(
+func (predictiveCoder *PredictiveCoder) manifoldExecute(
 	command ManifoldCommand,
 ) (ManifoldReading, error) {
-	evaluation := transport.NewEvaluate(coder.manifold)
+	evaluation := predictiveCoder.manifold
 	var reading ManifoldReading
 
-	for out := range evaluation.Next(transport.NewValues(command).Next(nil)) {
+	for out := range evaluation.Next(sequence.NewValues(command).Next(nil)) {
 		reading = *(*ManifoldReading)(out)
 	}
 
@@ -437,13 +424,13 @@ func (coder *PredictiveCoder) manifoldExecute(
 /*
 ledgerExecute drives one ledger command and returns its reading.
 */
-func (coder *PredictiveCoder) ledgerExecute(
+func (predictiveCoder *PredictiveCoder) ledgerExecute(
 	command LedgerCommand,
 ) (LedgerReading, error) {
-	evaluation := transport.NewEvaluate(coder.ledger)
+	evaluation := predictiveCoder.ledger
 	var reading LedgerReading
 
-	for out := range evaluation.Next(transport.NewValues(command).Next(nil)) {
+	for out := range evaluation.Next(sequence.NewValues(command).Next(nil)) {
 		reading = *(*LedgerReading)(out)
 	}
 

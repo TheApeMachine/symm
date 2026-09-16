@@ -17,7 +17,7 @@ export const SkillPanel = () => (
 					0.0 bp
 				</Typography.Mono>
 				<Typography.Mono size="s" tone="f4">
-					Forward testing outcomes evaluated against the live book. Positive edge indicates readiness for paper trading.
+					Predictions are scored against later bid/ask quotes with fees. These returns do not model depth or order fills.
 				</Typography.Mono>
 			</Flex.Column>
 			<Flex.Column className="gap-px border-(--line) border-b p-3">

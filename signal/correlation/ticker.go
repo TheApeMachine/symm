@@ -9,10 +9,10 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
+	correlation "github.com/theapemachine/symm/nomagique/statistic/correlation"
 )
 
 /*
@@ -29,15 +29,14 @@ type Ticker struct {
 
 func NewTicker(ctx context.Context) *Ticker {
 	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(
-			nmcorrelation.NewGate(),
-			nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
-			nmcorrelation.NewFold(),
-			nmcorrelation.NewHistory(),
-			nmcorrelation.NewRelative(),
-			nmcorrelation.NewCorrelationVelocity(),
-			nmcorrelation.NewEnergyVelocity(),
-			data.NewFinalizer[float64](),
+		pipeline: nomagique.NewNumber(correlation.
+			NewGate(), correlation.
+			NewPairs(algo.NewHayashiYoshida()), correlation.
+			NewFold(), correlation.
+			NewHistory(), correlation.
+			NewRelative(), correlation.
+			NewCorrelationVelocity(), correlation.
+			NewEnergyVelocity(), data.NewFinalizer[float64](),
 		),
 	}
 
@@ -76,8 +75,8 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		measurement.Metrics["last_price"] = measurement.Metrics["last_price"].Write(quotedPrice(peer))
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.
+		NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

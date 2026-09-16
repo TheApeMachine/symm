@@ -2,14 +2,15 @@ package liquidity
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -76,8 +77,8 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.
+		NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

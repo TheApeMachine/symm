@@ -2,12 +2,13 @@ package ui
 
 import (
 	"context"
-	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/signal/hawkes"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/signal/hawkes"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -181,7 +182,7 @@ func TestWebRTCTeeNext(t *testing.T) {
 			sequence := int64(index)
 			sourceConsumer.Handle(sequence, sequence)
 			signalConsumer.Handle(sequence, sequence)
-			measured := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*store.NewQuery(signalConsumer, data.ActionRead))))
+			measured := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*store.NewQuery(signalConsumer, data.ActionRead))))
 			counts[symbol]++
 			So(measured.Err, ShouldBeNil)
 			So(measured.Label, ShouldEqual, symbol)

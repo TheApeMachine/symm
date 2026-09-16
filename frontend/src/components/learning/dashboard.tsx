@@ -105,15 +105,6 @@ export const LearningDashboard = () => {
 							case "integer":
 								el.innerText = Math.floor(raw).toLocaleString();
 								break;
-							case "bits":
-								el.innerText = `${raw.toFixed(2)} bits`;
-								break;
-							case "spread":
-								el.innerText = `Spread ${raw.toFixed(3)}`;
-								break;
-							case "surprisal":
-								el.innerText = `Surprisal ${raw.toFixed(2)} nat`;
-								break;
 							case "action":
 								if (raw === 1) {
 									el.innerText = "ENTER";
@@ -134,21 +125,25 @@ export const LearningDashboard = () => {
 					}
 				}
 
+				for (const element of root.querySelectorAll<HTMLElement>(
+					"[data-metric]",
+				)) {
+					const name = element.dataset.metric;
+					if (name && !(name in metricMap)) element.innerText = "—";
+				}
 				const steps = metricMap.steps ?? 0;
 				const decisions = metricMap.decisions ?? 0;
 				const resolved = metricMap.resolved ?? 0;
-				const confidence = metricMap.confidence ?? 0;
-				const contrast = metricMap.contrast ?? 0;
-				const edge = metricMap.edge ?? 0;
+
+				const edge = metricMap.edge;
 				const evaluated = metricMap.evaluated ?? 0;
-				const isTrading = false;
 
 				if (metaEl) {
 					metaEl.innerText = `${Math.floor(steps).toLocaleString()} frames · ${Math.floor(decisions).toLocaleString()} learned situations · ${Math.floor(resolved).toLocaleString()} resolved`;
 				}
 
 				if (statusMetaEl) {
-					statusMetaEl.innerText = `conf: ${(confidence * 100).toFixed(1)}% · contrast: ${contrast.toFixed(2)} bits · edge: ${(edge * 10000).toFixed(1)} bp`;
+					statusMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} evaluations · edge: ${edge === undefined ? "—" : basis(edge)}`;
 				}
 
 				if (gateCountEl) {
@@ -164,31 +159,33 @@ export const LearningDashboard = () => {
 				}
 
 				if (recogStatusEl) {
-					recogStatusEl.innerText = isTrading
-						? "Execution active · Model meets confidence and contrast criteria"
-						: "Training precursor associations · Quoted returns, no orders";
+					recogStatusEl.innerText =
+						"Training precursor associations · Quoted returns, no orders";
 				}
 
 				if (skillMetaEl) {
-					skillMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} forward evaluations · ${isTrading ? "trading" : "learning"}`;
+					skillMetaEl.innerText = `${Math.floor(evaluated).toLocaleString()} forward evaluations · learning`;
 				}
 
 				if (activityListEl && !seen.has(measurement)) {
 					seen.add(measurement);
 
-					const actionVal = metricMap["action"] ?? 0;
-					const edgeVal = metricMap["edge"] ?? 0;
+					const actionVal = metricMap["action"];
+					const edgeVal = metricMap["edge"];
 					const atNs = measurement.at ?? 0n;
 					const timeStr =
 						atNs > 0n
 							? clock(new Date(Number(atNs / 1_000_000n)).toISOString())
 							: clock("");
-					const actStr = action(
-						actionVal === 1 ? "enter" : actionVal === 2 ? "exit" : "wait",
-						1,
-						false,
-					);
-					const edgeStr = basis(edgeVal);
+					const actStr =
+						actionVal === undefined
+							? "UNSEEN"
+							: action(
+									actionVal === 1 ? "enter" : actionVal === 2 ? "exit" : "wait",
+									1,
+									false,
+								);
+					const edgeStr = edgeVal === undefined ? "—" : basis(edgeVal);
 
 					const rowDiv = document.createElement("div");
 					rowDiv.className =

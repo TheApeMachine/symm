@@ -13,15 +13,16 @@ LogMomentView reads a log-space Welford record against prior moments. It does
 not log the input again.
 */
 type LogMomentView struct {
-	err error
+	*core.PrimitiveError
+
 	out CausalResidualResult
 }
 
-func NewLogMomentView() core.Primitive {
-	return &LogMomentView{}
+func NewLogMomentView() *LogMomentView {
+	return &LogMomentView{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *LogMomentView) Next(
+func (logMomentView *LogMomentView) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -40,22 +41,11 @@ func (op *LogMomentView) Next(
 				result.ZScore = result.Residual / result.ScoreScale
 			}
 
-			op.out = result
+			logMomentView.out = result
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&logMomentView.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *LogMomentView) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

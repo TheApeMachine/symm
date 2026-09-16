@@ -14,10 +14,10 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/equation"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -448,7 +448,7 @@ func categoryStrength(items []evidenceItem) (float64, error) {
 	strengthFold := nomagique_probability.NewGeomean()
 	var strength float64
 
-	for out := range strengthFold.Next(transport.NewValues(affinities...).Next(nil)) {
+	for out := range strengthFold.Next(sequence.NewValues(affinities...).Next(nil)) {
 		strength = *(*float64)(out)
 	}
 
@@ -521,7 +521,7 @@ func (solver *Solver) buildBatch(
 	uncertaintyFold := nomagique_probability.NewShannonAmbiguity()
 	var uncertainty float64
 
-	for out := range uncertaintyFold.Next(transport.NewValues(evidence...).Next(nil)) {
+	for out := range uncertaintyFold.Next(sequence.NewValues(evidence...).Next(nil)) {
 		uncertainty = *(*float64)(out)
 	}
 
@@ -532,10 +532,10 @@ func (solver *Solver) buildBatch(
 	}
 
 	for index := range solver.categories {
-		selection := transport.NewEvaluate(equation.NewEvidenceShare(index))
+		selection := equation.NewEvidenceShare(index)
 		share := 0.0
 
-		for out := range selection.Next(transport.NewOne(unsafe.Pointer(&evidence)).Next(nil)) {
+		for out := range selection.Next(sequence.NewOne(unsafe.Pointer(&evidence)).Next(nil)) {
 			share = *(*float64)(out)
 		}
 

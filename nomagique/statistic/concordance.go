@@ -29,8 +29,8 @@ absolute mean sign agreement minus its standard error, plus relative magnitude
 agreement supported by that sign agreement. Thus uncertain or contradictory
 alignment can repel; no selected correlation cutoff is used.
 */
-func (statistic *Concordance) Update(left, right, weight float64) ConcordanceReading {
-	prior := statistic.Aligned
+func (concordance *Concordance) Update(left, right, weight float64) ConcordanceReading {
+	prior := concordance.Aligned
 	alignment := 0.0
 	active := left != 0 || right != 0
 
@@ -44,17 +44,17 @@ func (statistic *Concordance) Update(left, right, weight float64) ConcordanceRea
 			alignment = math.Copysign(1, left) * math.Copysign(1, right)
 		}
 
-		statistic.Support += weight
-		statistic.Aligned += weight * alignment
-		statistic.WeightSquared += weight * weight
-		delta := alignment - statistic.Mean
-		statistic.Mean += weight * delta / statistic.Support
-		statistic.M2 += weight * delta * (alignment - statistic.Mean)
+		concordance.Support += weight
+		concordance.Aligned += weight * alignment
+		concordance.WeightSquared += weight * weight
+		delta := alignment - concordance.Mean
+		concordance.Mean += weight * delta / concordance.Support
+		concordance.M2 += weight * delta * (alignment - concordance.Mean)
 		denominator := math.Abs(left) + math.Abs(right)
-		statistic.Magnitude += weight * (1 - math.Abs(math.Abs(left)-math.Abs(right))/denominator)
+		concordance.Magnitude += weight * (1 - math.Abs(math.Abs(left)-math.Abs(right))/denominator)
 	}
 
-	reading := statistic.Reading()
+	reading := concordance.Reading()
 
 	if weight != 0 && active && prior != 0 && alignment != math.Copysign(1, prior) {
 		reading.Strength = -math.Abs(reading.Strength)
@@ -63,20 +63,20 @@ func (statistic *Concordance) Update(left, right, weight float64) ConcordanceRea
 	return reading
 }
 
-func (statistic *Concordance) Reading() ConcordanceReading {
-	reading := ConcordanceReading{Support: statistic.Support}
+func (concordance *Concordance) Reading() ConcordanceReading {
+	reading := ConcordanceReading{Support: concordance.Support}
 
-	if statistic.Support == 0 {
+	if concordance.Support == 0 {
 		return reading
 	}
 
-	mean := statistic.Aligned / statistic.Support
+	mean := concordance.Aligned / concordance.Support
 	reading.Orientation = math.Copysign(1, mean)
 	consistency := math.Abs(mean)
 	// E[(sign-mean)^2] includes unilateral movement as disagreement.
-	effective := statistic.Support * statistic.Support / statistic.WeightSquared
-	variance := statistic.M2 / statistic.Support
+	effective := concordance.Support * concordance.Support / concordance.WeightSquared
+	variance := concordance.M2 / concordance.Support
 	uncertainty := math.Sqrt(variance / effective)
-	reading.Strength = consistency - uncertainty + consistency*statistic.Magnitude/statistic.Support
+	reading.Strength = consistency - uncertainty + consistency*concordance.Magnitude/concordance.Support
 	return reading
 }

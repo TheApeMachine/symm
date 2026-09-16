@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 func observe[Value any](
@@ -15,10 +15,10 @@ func observe[Value any](
 ) SeriesReading[Value] {
 	t.Helper()
 
-	readingEval := transport.NewEvaluate(node)
+	readingEval := node
 	var reading SeriesReading[Value]
 
-	for out := range readingEval.Next(transport.NewValues(input).Next(nil)) {
+	for out := range readingEval.Next(sequence.NewValues(input).Next(nil)) {
 		reading = *(*SeriesReading[Value])(out)
 	}
 
@@ -138,7 +138,7 @@ func BenchmarkSeriesNext(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		for range node.Next(transport.NewValues(SeriesInput[[2]float64]{
+		for range node.Next(sequence.NewValues(SeriesInput[[2]float64]{
 			Key: "one", Sec: base, Value: [2]float64{100, 101},
 		}, SeriesInput[[2]float64]{Key: "one", Sec: base, Query: true}).Next(nil)) {
 		}

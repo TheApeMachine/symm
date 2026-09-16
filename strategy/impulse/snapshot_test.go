@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/tests/market"
 )
 
@@ -14,7 +13,7 @@ func TestMarketSnapshot(t *testing.T) {
 		frames := market.ImpulseTape("BTC/USD", 4)
 		So(impulseMap.Step(frames[0]), ShouldBeNil)
 		held := impulseMap.Markets["BTC/USD"]
-		snapshot := held.Snapshot().(*grid.Snapshot)
+		snapshot := held.Snapshot()
 		original := snapshot.Cells[0]
 
 		for _, frame := range frames[1:] {
@@ -39,9 +38,8 @@ func BenchmarkMarketSnapshot(b *testing.B) {
 
 	held := impulseMap.Markets["BTC/USD"]
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for index := 0; index < b.N; index++ {
+	for b.Loop() {
 		held.Snapshot()
 	}
 }

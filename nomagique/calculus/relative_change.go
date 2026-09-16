@@ -24,40 +24,30 @@ RelativeChange owns one stateless transformation:
 A zero previous value is undefined.
 */
 type RelativeChange struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewRelativeChange() core.Primitive {
-	return &RelativeChange{}
+func NewRelativeChange() *RelativeChange {
+	return &RelativeChange{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *RelativeChange) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (relativeChange *RelativeChange) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := *(*RelativeChangeInput)(arriving)
 
 			if input.Previous == 0 {
-				op.err = fmt.Errorf("%w: relative change of a zero prior is undefined", core.ErrDomain)
+				relativeChange.Error(fmt.Errorf("%w: relative change of a zero prior is undefined", core.ErrDomain))
 				return
 			}
 
-			op.out = (input.Current - input.Previous) / input.Previous
+			relativeChange.out = (input.Current - input.Previous) / input.Previous
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&relativeChange.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *RelativeChange) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

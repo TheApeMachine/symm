@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPaceNext(t *testing.T) {
@@ -17,10 +17,10 @@ func TestPaceNext(t *testing.T) {
 		rng := rand.New(rand.NewSource(86))
 
 		for index := 0; index < 200; index++ {
-			gotEval := transport.NewEvaluate(node)
+			gotEval := node
 			var got learning.PaceReading
 
-			for out := range gotEval.Next(transport.NewValues(rng.Float64() + float64(index/50)).Next(nil)) {
+			for out := range gotEval.Next(sequence.NewValues(rng.Float64() + float64(index/50)).Next(nil)) {
 				got = *(*learning.PaceReading)(out)
 			}
 

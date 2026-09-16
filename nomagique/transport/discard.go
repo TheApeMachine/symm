@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,26 +11,16 @@ import (
 Discard consumes a run without handing anything over.
 */
 type Discard struct {
-	err error
+	*core.PrimitiveError
 }
 
-func NewDiscard() core.Primitive {
-	return &Discard{}
+func NewDiscard() *Discard {
+	return &Discard{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Discard) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (discard *Discard) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(func(unsafe.Pointer) bool) {
 		for range in {
 		}
 	}
-}
-
-func (op *Discard) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

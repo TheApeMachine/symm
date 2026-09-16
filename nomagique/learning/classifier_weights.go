@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -42,7 +41,8 @@ ClassifierWeights holds dynamically derived coefficients for configured outputs
 and scores feature maps against them.
 */
 type ClassifierWeights struct {
-	err         error
+	*core.PrimitiveError
+
 	threshold   float64
 	scales      map[string]float64
 	outputs     []string
@@ -60,11 +60,11 @@ func NewClassifierWeights(
 	config ClassifierWeightsConfig,
 	threshold float64,
 	scales map[string]float64,
-) core.Primitive {
+) *ClassifierWeights {
 	weights, err := buildClassifierWeights(config, threshold, scales)
 
 	if err != nil {
-		return &ClassifierWeights{err: err}
+		return &ClassifierWeights{PrimitiveError: core.NewPrimitiveError(err)}
 	}
 
 	return weights
@@ -74,10 +74,12 @@ func NewClassifierWeights(
 Next receives feature maps and yields a *ClassifierReading per arrival with
 one logit per configured output and the first output's strength.
 */
-func (op *ClassifierWeights) Next(
+func (classifierWeights *ClassifierWeights) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
+	if classifierWeights.
+		Error() !=
+		nil {
 		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
@@ -85,31 +87,18 @@ func (op *ClassifierWeights) Next(
 		for arriving := range in {
 			features := (*map[string]float64)(arriving)
 
-			op.out = ClassifierReading{
-				Scores:    op.scores(*features),
-				Threshold: op.threshold,
-				Scales:    cloneScales(op.scales),
+			classifierWeights.out = ClassifierReading{
+				Scores:    classifierWeights.scores(*features),
+				Threshold: classifierWeights.threshold,
+				Scales:    cloneScales(classifierWeights.scales),
 			}
-			op.out.Strength = op.out.Scores[0]
+			classifierWeights.out.Strength = classifierWeights.out.Scores[0]
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&classifierWeights.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *ClassifierWeights) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 func buildClassifierWeights(
@@ -156,8 +145,7 @@ func buildClassifierWeights(
 		termWeights[outputKey] = weights
 	}
 
-	return &ClassifierWeights{
-		threshold:   threshold,
+	return &ClassifierWeights{PrimitiveError: core.NewPrimitiveError(), threshold: threshold,
 		scales:      cloneScales(scales),
 		outputs:     append([]string(nil), config.Outputs...),
 		specs:       specs,
@@ -215,31 +203,31 @@ func positiveScale(scale float64, name string) (float64, error) {
 /*
 scores returns one logit per configured output.
 */
-func (op *ClassifierWeights) scores(features map[string]float64) []float64 {
-	scores := make([]float64, len(op.outputs))
+func (classifierWeights *ClassifierWeights) scores(features map[string]float64) []float64 {
+	scores := make([]float64, len(classifierWeights.outputs))
 
-	for index, outputKey := range op.outputs {
-		scores[index] = op.outputScore(outputKey, features)
+	for index, outputKey := range classifierWeights.outputs {
+		scores[index] = classifierWeights.outputScore(outputKey, features)
 	}
 
 	return scores
 }
 
-func (op *ClassifierWeights) outputScore(
+func (classifierWeights *ClassifierWeights) outputScore(
 	outputKey string,
 	features map[string]float64,
 ) float64 {
-	spec, ok := op.specs[outputKey]
+	spec, ok := classifierWeights.specs[outputKey]
 
 	if !ok {
 		return 0
 	}
 
-	termWeights := op.termWeights[outputKey]
+	termWeights := classifierWeights.termWeights[outputKey]
 	score := 0.0
 
 	for _, featureKey := range spec.Terms {
-		normalized := normalizeFeature(features[featureKey], op.scales[featureKey])
+		normalized := normalizeFeature(features[featureKey], classifierWeights.scales[featureKey])
 
 		if spec.Inverts[featureKey] {
 			normalized = 1.0 - normalized

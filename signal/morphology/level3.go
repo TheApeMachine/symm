@@ -2,18 +2,19 @@ package morphology
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"iter"
 	"math"
 	"strconv"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type morphologyInput struct {
@@ -71,7 +72,7 @@ func (op *morphologyPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 				op.out.HasPrev = true
 				op.out.Change = change
 
-				for rPtr := range op.baseline.Next(transport.NewOne(unsafe.Pointer(&change)).Next(nil)) {
+				for rPtr := range op.baseline.Next(sequence.NewOne(unsafe.Pointer(&change)).Next(nil)) {
 					op.out.Reading = *(*adaptive.BaselineReading)(rPtr)
 				}
 			}
@@ -193,7 +194,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		EntAsk:   entAsk,
 	}
 
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+	for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*morphologyResult)(out)
 
 		m.Metrics["book_shape_distance"] = m.Metrics["book_shape_distance"].Write(res.Distance)

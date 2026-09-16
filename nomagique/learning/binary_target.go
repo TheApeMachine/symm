@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -13,15 +12,16 @@ import (
 BinaryTarget classifies an increase without inventing a new numeric rule.
 */
 type BinaryTarget struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewBinaryTarget() core.Primitive {
-	return &BinaryTarget{}
+func NewBinaryTarget() *BinaryTarget {
+	return &BinaryTarget{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *BinaryTarget) Next(
+func (binaryTarget *BinaryTarget) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -30,29 +30,19 @@ func (op *BinaryTarget) Next(
 
 			if math.IsNaN(sample.Current) || math.IsNaN(sample.Past) ||
 				math.IsInf(sample.Current, 0) || math.IsInf(sample.Past, 0) {
-				op.Error(core.ErrDomain)
+				binaryTarget.Error(core.ErrDomain)
 				return
 			}
 
-			op.out = 0.0
+			binaryTarget.out = 0.0
 
 			if sample.Current > sample.Past {
-				op.out = 1.0
+				binaryTarget.out = 1.0
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&binaryTarget.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *BinaryTarget) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

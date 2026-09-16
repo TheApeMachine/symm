@@ -89,44 +89,44 @@ func newWorkspaceGrid(gx, gy, gz int) workspaceGrid {
 	}
 }
 
-func (grid workspaceGrid) GridSpacing() float64 {
-	return 1 / float64(max(grid.GridX, grid.GridY, grid.GridZ))
+func (workspaceGrid workspaceGrid) GridSpacing() float64 {
+	return 1 / float64(max(workspaceGrid.GridX, workspaceGrid.GridY, workspaceGrid.GridZ))
 }
 
-func (grid workspaceGrid) CellCount() int {
-	return grid.GridX * grid.GridY * grid.GridZ
+func (workspaceGrid workspaceGrid) CellCount() int {
+	return workspaceGrid.GridX * workspaceGrid.GridY * workspaceGrid.GridZ
 }
 
-func (grid workspaceGrid) binWidth() float64 {
-	if grid.MaxModes < 2 {
-		return grid.OmegaMax - grid.OmegaMin // one quadrature cell spans the declared interval
+func (workspaceGrid workspaceGrid) binWidth() float64 {
+	if workspaceGrid.MaxModes < 2 {
+		return workspaceGrid.OmegaMax - workspaceGrid.OmegaMin // one quadrature cell spans the declared interval
 	}
 
-	return (grid.OmegaMax - grid.OmegaMin) / float64(grid.MaxModes-1)
+	return (workspaceGrid.OmegaMax - workspaceGrid.OmegaMin) / float64(workspaceGrid.MaxModes-1)
 }
 
-func (grid workspaceGrid) linewidthMin() float64 {
-	domega := grid.binWidth()
+func (workspaceGrid workspaceGrid) linewidthMin() float64 {
+	domega := workspaceGrid.binWidth()
 
 	if domega > 0 {
 		return 0.25 * domega
 	}
 
-	return grid.OmegaMin
+	return workspaceGrid.OmegaMin
 }
 
-func (grid workspaceGrid) linewidthMax() float64 {
-	domega := grid.binWidth()
+func (workspaceGrid workspaceGrid) linewidthMax() float64 {
+	domega := workspaceGrid.binWidth()
 
 	if domega > 0 {
 		return 4 * domega
 	}
 
-	return grid.OmegaMax
+	return workspaceGrid.OmegaMax
 }
 
-func (grid workspaceGrid) invDomega2() float64 {
-	domega := grid.binWidth()
+func (workspaceGrid workspaceGrid) invDomega2() float64 {
+	domega := workspaceGrid.binWidth()
 
 	if domega == 0 {
 		return 0
@@ -230,161 +230,161 @@ func newWorkspace(gx, gy, gz int) (*workspace, error) {
 	return fluid, nil
 }
 
-func (fluid *workspace) Close() {
-	if fluid == nil {
+func (workspace *workspace) Close() {
+	if workspace == nil {
 		return
 	}
 
-	for _, buffer := range fluid.allBuffers() {
+	for _, buffer := range workspace.allBuffers() {
 		if buffer != nil {
 			buffer.Close()
 		}
 	}
 
-	if fluid.engine != nil {
-		fluid.engine.Close()
-		fluid.engine = nil
+	if workspace.engine != nil {
+		workspace.engine.Close()
+		workspace.engine = nil
 	}
 }
 
-func (fluid *workspace) gpu(bytes uint64) *Buffer {
-	buffer := fluid.engine.NewBuffer(bytes, nil)
+func (workspace *workspace) gpu(bytes uint64) *Buffer {
+	buffer := workspace.engine.NewBuffer(bytes, nil)
 	buffer.Adopt()
 	return buffer
 }
 
-func (fluid *workspace) allocateGrid() {
-	cells := uint64(fluid.domain.CellCount())
-	modes := uint64(fluid.domain.MaxModes)
-	fluid.rho = fluid.gpu(cells * 4)
-	fluid.mom = fluid.gpu(cells * 3 * 4)
-	fluid.energy = fluid.gpu(cells * 4)
-	fluid.rho1 = fluid.gpu(cells * 4)
-	fluid.mom1 = fluid.gpu(cells * 3 * 4)
-	fluid.energy1 = fluid.gpu(cells * 4)
-	fluid.rho2 = fluid.gpu(cells * 4)
-	fluid.mom2 = fluid.gpu(cells * 3 * 4)
-	fluid.energy2 = fluid.gpu(cells * 4)
-	fluid.k1Rho = fluid.gpu(cells * 4)
-	fluid.k1Mom = fluid.gpu(cells * 3 * 4)
-	fluid.k1Energy = fluid.gpu(cells * 4)
-	fluid.gravity = fluid.gpu(cells * 4)
-	fluid.hydro = fluid.gpu(cells * 24)
-	fluid.hydroOut = fluid.gpu(cells * 24)
-	fluid.hydroWork1 = fluid.gpu(cells * 24)
-	fluid.hydroWork2 = fluid.gpu(cells * 24)
-	fluid.hydroStatus = fluid.gpu(cells * 4)
-	fluid.hydroDiagnostics = fluid.gpu(cells * 32)
-	fluid.acceleration = fluid.gpu(cells * 12)
-	fluid.poissonState = fluid.gpu(cells * 8)
+func (workspace *workspace) allocateGrid() {
+	cells := uint64(workspace.domain.CellCount())
+	modes := uint64(workspace.domain.MaxModes)
+	workspace.rho = workspace.gpu(cells * 4)
+	workspace.mom = workspace.gpu(cells * 3 * 4)
+	workspace.energy = workspace.gpu(cells * 4)
+	workspace.rho1 = workspace.gpu(cells * 4)
+	workspace.mom1 = workspace.gpu(cells * 3 * 4)
+	workspace.energy1 = workspace.gpu(cells * 4)
+	workspace.rho2 = workspace.gpu(cells * 4)
+	workspace.mom2 = workspace.gpu(cells * 3 * 4)
+	workspace.energy2 = workspace.gpu(cells * 4)
+	workspace.k1Rho = workspace.gpu(cells * 4)
+	workspace.k1Mom = workspace.gpu(cells * 3 * 4)
+	workspace.k1Energy = workspace.gpu(cells * 4)
+	workspace.gravity = workspace.gpu(cells * 4)
+	workspace.hydro = workspace.gpu(cells * 24)
+	workspace.hydroOut = workspace.gpu(cells * 24)
+	workspace.hydroWork1 = workspace.gpu(cells * 24)
+	workspace.hydroWork2 = workspace.gpu(cells * 24)
+	workspace.hydroStatus = workspace.gpu(cells * 4)
+	workspace.hydroDiagnostics = workspace.gpu(cells * 32)
+	workspace.acceleration = workspace.gpu(cells * 12)
+	workspace.poissonState = workspace.gpu(cells * 8)
 	// Per-line Bluestein scratch is provisioned by the native Poisson host.
-	fluid.waveLedger = fluid.gpu(modes * 6 * 4)
-	fluid.reciprocalOldRe = fluid.gpu(modes * 4)
-	fluid.reciprocalOldIm = fluid.gpu(modes * 4)
-	fluid.reciprocalPotential = fluid.gpu(modes * 4)
-	fluid.remapReport = fluid.gpu(48)
-	fluid.gravityFluxBase = fluid.gpu(cells * 24)
-	fluid.gravityPrior = fluid.gpu(cells * 4)
-	fluid.gravityKickWork = fluid.gpu(cells * 4)
-	fluid.previousPotential = make([]float32, int(modes)*spectralHeads)
-	fluid.cellCounts = fluid.gpu(cells * 4)
-	fluid.cellStarts = fluid.gpu((cells + 1) * 4)
-	fluid.cellOffsets = fluid.gpu(cells * 4)
-	fluid.psiStartRe = fluid.gpu(cells * 4)
-	fluid.psiStartIm = fluid.gpu(cells * 4)
-	fluid.psiRe = fluid.gpu(cells * 4)
-	fluid.psiIm = fluid.gpu(cells * 4)
-	fluid.dbgHead = fluid.gpu(4)
-	fluid.dbgWords = fluid.gpu(dbgCapacity * dbgWordsPerEvent * 4)
-	fluid.omegaLattice = fluid.gpu(modes * 4)
-	fluid.gateWidth = fluid.gpu(modes * 4)
-	fluid.accums = fluid.gpu(modes * 8 * 4)
-	fluid.numCarriers = fluid.gpu(4)
-	fluid.anchorIdx = fluid.gpu(modes * uint64(modeAnchors) * 4)
-	fluid.anchorWeight = fluid.gpu(modes * uint64(modeAnchors) * 4)
-	fluid.binStarts = fluid.gpu((modes + 1) * 4)
-	fluid.binnedIdx = fluid.gpu(modes * 4)
-	fluid.binParams = fluid.gpu(2 * 4)
-	fluid.psiRealHeads = make([]*Buffer, spectralHeads)
-	fluid.psiImagHeads = make([]*Buffer, spectralHeads)
+	workspace.waveLedger = workspace.gpu(modes * 6 * 4)
+	workspace.reciprocalOldRe = workspace.gpu(modes * 4)
+	workspace.reciprocalOldIm = workspace.gpu(modes * 4)
+	workspace.reciprocalPotential = workspace.gpu(modes * 4)
+	workspace.remapReport = workspace.gpu(48)
+	workspace.gravityFluxBase = workspace.gpu(cells * 24)
+	workspace.gravityPrior = workspace.gpu(cells * 4)
+	workspace.gravityKickWork = workspace.gpu(cells * 4)
+	workspace.previousPotential = make([]float32, int(modes)*spectralHeads)
+	workspace.cellCounts = workspace.gpu(cells * 4)
+	workspace.cellStarts = workspace.gpu((cells + 1) * 4)
+	workspace.cellOffsets = workspace.gpu(cells * 4)
+	workspace.psiStartRe = workspace.gpu(cells * 4)
+	workspace.psiStartIm = workspace.gpu(cells * 4)
+	workspace.psiRe = workspace.gpu(cells * 4)
+	workspace.psiIm = workspace.gpu(cells * 4)
+	workspace.dbgHead = workspace.gpu(4)
+	workspace.dbgWords = workspace.gpu(dbgCapacity * dbgWordsPerEvent * 4)
+	workspace.omegaLattice = workspace.gpu(modes * 4)
+	workspace.gateWidth = workspace.gpu(modes * 4)
+	workspace.accums = workspace.gpu(modes * 8 * 4)
+	workspace.numCarriers = workspace.gpu(4)
+	workspace.anchorIdx = workspace.gpu(modes * uint64(modeAnchors) * 4)
+	workspace.anchorWeight = workspace.gpu(modes * uint64(modeAnchors) * 4)
+	workspace.binStarts = workspace.gpu((modes + 1) * 4)
+	workspace.binnedIdx = workspace.gpu(modes * 4)
+	workspace.binParams = workspace.gpu(2 * 4)
+	workspace.psiRealHeads = make([]*Buffer, spectralHeads)
+	workspace.psiImagHeads = make([]*Buffer, spectralHeads)
 
 	for head := 0; head < spectralHeads; head++ {
-		fluid.psiRealHeads[head] = fluid.gpu(modes * 4)
-		fluid.psiImagHeads[head] = fluid.gpu(modes * 4)
+		workspace.psiRealHeads[head] = workspace.gpu(modes * 4)
+		workspace.psiImagHeads[head] = workspace.gpu(modes * 4)
 	}
 
-	fluid.psiModeReal = fluid.gpu(modes * 4)
-	fluid.psiModeImag = fluid.gpu(modes * 4)
-	fluid.kineticReal = fluid.gpu(modes * 4)
-	fluid.kineticImag = fluid.gpu(modes * 4)
+	workspace.psiModeReal = workspace.gpu(modes * 4)
+	workspace.psiModeImag = workspace.gpu(modes * 4)
+	workspace.kineticReal = workspace.gpu(modes * 4)
+	workspace.kineticImag = workspace.gpu(modes * 4)
 
-	for _, buffer := range fluid.allBuffers() {
+	for _, buffer := range workspace.allBuffers() {
 		if buffer != nil {
 			buffer.Zero()
 		}
 	}
 
-	fillInt32(fluid.anchorIdx.Int32Slice(), -1)
+	fillInt32(workspace.anchorIdx.Int32Slice(), -1)
 }
 
-func (fluid *workspace) seedLattice() {
-	modes := int(fluid.domain.MaxModes)
-	omega := fluid.omegaLattice.Float32Slice()
-	width := fluid.gateWidth.Float32Slice()
-	starts := fluid.binStarts.Int32Slice()
-	index := fluid.binnedIdx.Int32Slice()
-	params := fluid.binParams.Float32Slice()
-	domega := float32(fluid.domain.binWidth())
+func (workspace *workspace) seedLattice() {
+	modes := int(workspace.domain.MaxModes)
+	omega := workspace.omegaLattice.Float32Slice()
+	width := workspace.gateWidth.Float32Slice()
+	starts := workspace.binStarts.Int32Slice()
+	index := workspace.binnedIdx.Int32Slice()
+	params := workspace.binParams.Float32Slice()
+	domega := float32(workspace.domain.binWidth())
 
 	for mode := 0; mode < modes; mode++ {
-		omega[mode] = float32(fluid.domain.OmegaMin) + float32(mode)*domega
+		omega[mode] = float32(workspace.domain.OmegaMin) + float32(mode)*domega
 		width[mode] = domega
 		index[mode] = int32(mode)
 		starts[mode] = int32(mode)
 	}
 
 	starts[modes] = int32(modes)
-	params[0] = float32(fluid.domain.OmegaMin)
+	params[0] = float32(workspace.domain.OmegaMin)
 
 	if domega != 0 {
 		params[1] = 1 / domega
 	}
 
-	fluid.numCarriers.Int32Slice()[0] = int32(modes)
+	workspace.numCarriers.Int32Slice()[0] = int32(modes)
 }
 
-func (fluid *workspace) loadState(state *State) {
+func (workspace *workspace) loadState(state *State) {
 	if state == nil || state.N == 0 {
-		fluid.allocateParticles(0)
-		fluid.particles = 0
-		fluid.contentIDs = nil
-		fluid.waveProjectionReady = false
+		workspace.allocateParticles(0)
+		workspace.particles = 0
+		workspace.contentIDs = nil
+		workspace.waveProjectionReady = false
 		return
 	}
 
-	if fluid.particles != state.N || !slices.Equal(fluid.contentIDs, state.ContentIDs) {
-		fluid.waveProjectionReady = false
+	if workspace.particles != state.N || !slices.Equal(workspace.contentIDs, state.ContentIDs) {
+		workspace.waveProjectionReady = false
 	}
 
-	fluid.contentIDs = append(fluid.contentIDs[:0], state.ContentIDs...)
-	fluid.allocateParticles(state.N)
-	fluid.particles = state.N
-	copy(fluid.pos.Float32Slice(), state.Pos)
-	copy(fluid.vel.Float32Slice(), state.Vel)
+	workspace.contentIDs = append(workspace.contentIDs[:0], state.ContentIDs...)
+	workspace.allocateParticles(state.N)
+	workspace.particles = state.N
+	copy(workspace.pos.Float32Slice(), state.Pos)
+	copy(workspace.vel.Float32Slice(), state.Vel)
 	state.ensureCoherencePosition()
-	copy(fluid.coherencePosition.Float32Slice(), state.CoherencePosition)
-	fluid.pilotPrevious.Zero()
-	copy(fluid.pilotPrevious.Float32Slice(), state.PilotVel)
-	fluid.phasePrior.Zero()
-	copy(fluid.phasePrior.Float32Slice(), state.PhasePotential)
-	copy(fluid.mass.Float32Slice(), state.Mass)
-	copy(fluid.heat.Float32Slice(), state.Heat)
+	copy(workspace.coherencePosition.Float32Slice(), state.CoherencePosition)
+	workspace.pilotPrevious.Zero()
+	copy(workspace.pilotPrevious.Float32Slice(), state.PilotVel)
+	workspace.phasePrior.Zero()
+	copy(workspace.phasePrior.Float32Slice(), state.PhasePotential)
+	copy(workspace.mass.Float32Slice(), state.Mass)
+	copy(workspace.heat.Float32Slice(), state.Heat)
 	state.ensureMaterialEnergy()
-	copy(fluid.materialEnergy.Float32Slice(), state.MaterialEnergy)
-	copy(fluid.oscEnergy.Float32Slice(), state.Energy)
-	copy(fluid.phase.Float32Slice(), state.Phase)
-	copy(fluid.omega.Float32Slice(), state.Omega)
-	amp := fluid.amp.Float32Slice()
+	copy(workspace.materialEnergy.Float32Slice(), state.MaterialEnergy)
+	copy(workspace.oscEnergy.Float32Slice(), state.Energy)
+	copy(workspace.phase.Float32Slice(), state.Phase)
+	copy(workspace.omega.Float32Slice(), state.Omega)
+	amp := workspace.amp.Float32Slice()
 
 	for index := 0; index < state.N; index++ {
 		energy := state.Energy[index]
@@ -394,13 +394,13 @@ func (fluid *workspace) loadState(state *State) {
 	}
 }
 
-func (fluid *workspace) storeState(state *State) {
-	if state == nil || fluid.particles == 0 {
+func (workspace *workspace) storeState(state *State) {
+	if state == nil || workspace.particles == 0 {
 		return
 	}
 
-	if state.N != fluid.particles {
-		resized := newState(fluid.particles)
+	if state.N != workspace.particles {
+		resized := newState(workspace.particles)
 		copy(resized.Bytes, state.Bytes)
 		copy(resized.Seqs, state.Seqs)
 		copy(resized.TokenIDs, state.TokenIDs)
@@ -410,39 +410,39 @@ func (fluid *workspace) storeState(state *State) {
 		*state = *resized
 	}
 
-	fluid.engine.Synchronize()
-	copy(state.Pos, fluid.pos.Float32Slice())
-	copy(state.Vel, fluid.vel.Float32Slice())
+	workspace.engine.Synchronize()
+	copy(state.Pos, workspace.pos.Float32Slice())
+	copy(state.Vel, workspace.vel.Float32Slice())
 	state.ensureCoherencePosition()
-	copy(state.CoherencePosition, fluid.coherencePosition.Float32Slice())
+	copy(state.CoherencePosition, workspace.coherencePosition.Float32Slice())
 	if len(state.PilotVel) != state.N*3 {
 		state.PilotVel = make([]float32, state.N*3)
 	}
-	copy(state.PilotVel, fluid.pilotPrevious.Float32Slice())
+	copy(state.PilotVel, workspace.pilotPrevious.Float32Slice())
 	if len(state.PhasePotential) != state.N {
 		state.PhasePotential = make([]float32, state.N)
 	}
-	copy(state.PhasePotential, fluid.phasePrior.Float32Slice())
-	copy(state.Mass, fluid.mass.Float32Slice())
-	copy(state.Heat, fluid.heat.Float32Slice())
+	copy(state.PhasePotential, workspace.phasePrior.Float32Slice())
+	copy(state.Mass, workspace.mass.Float32Slice())
+	copy(state.Heat, workspace.heat.Float32Slice())
 	if len(state.MaterialEnergy) != state.N {
 		state.MaterialEnergy = make([]float32, state.N)
 	}
-	copy(state.MaterialEnergy, fluid.materialEnergy.Float32Slice())
-	copy(state.Energy, fluid.oscEnergy.Float32Slice())
-	copy(state.Phase, fluid.phase.Float32Slice())
-	copy(state.Omega, fluid.omega.Float32Slice())
-	copy(state.Amp, fluid.amp.Float32Slice())
+	copy(state.MaterialEnergy, workspace.materialEnergy.Float32Slice())
+	copy(state.Energy, workspace.oscEnergy.Float32Slice())
+	copy(state.Phase, workspace.phase.Float32Slice())
+	copy(state.Omega, workspace.omega.Float32Slice())
+	copy(state.Amp, workspace.amp.Float32Slice())
 }
 
-func (fluid *workspace) packFields(momRho, energy, waveReal, waveImag []float32) fieldScale {
-	fluid.engine.Synchronize()
-	cells := fluid.domain.CellCount()
-	rho := fluid.rho.Float32Slice()
-	mom := fluid.mom.Float32Slice()
-	internal := fluid.energy.Float32Slice()
-	psiRe := fluid.psiRe.Float32Slice()
-	psiIm := fluid.psiIm.Float32Slice()
+func (workspace *workspace) packFields(momRho, energy, waveReal, waveImag []float32) fieldScale {
+	workspace.engine.Synchronize()
+	cells := workspace.domain.CellCount()
+	rho := workspace.rho.Float32Slice()
+	mom := workspace.mom.Float32Slice()
+	internal := workspace.energy.Float32Slice()
+	psiRe := workspace.psiRe.Float32Slice()
+	psiIm := workspace.psiIm.Float32Slice()
 	var scale fieldScale
 
 	for cell := range cells {
@@ -466,17 +466,17 @@ func (fluid *workspace) packFields(momRho, energy, waveReal, waveImag []float32)
 	return scale
 }
 
-func (fluid *workspace) allocateParticles(count int) {
-	if count <= fluid.particleCapacity && fluid.pos != nil {
-		fluid.particles = count
+func (workspace *workspace) allocateParticles(count int) {
+	if count <= workspace.particleCapacity && workspace.pos != nil {
+		workspace.particles = count
 		return
 	}
 
-	fluid.closeParticles()
+	workspace.closeParticles()
 
 	if count == 0 {
-		fluid.particles = 0
-		fluid.particleCapacity = 0
+		workspace.particles = 0
+		workspace.particleCapacity = 0
 		return
 	}
 
@@ -486,127 +486,127 @@ func (fluid *workspace) allocateParticles(count int) {
 		capacity = 1024
 	}
 
-	fluid.particles = count
-	fluid.particleCapacity = capacity
+	workspace.particles = count
+	workspace.particleCapacity = capacity
 
 	particleCount := uint64(capacity)
-	fluid.coherencePosition = fluid.gpu(particleCount * 12)
-	fluid.reciprocalForce = fluid.gpu(particleCount * 12)
-	fluid.reciprocalAmplitude = fluid.gpu(particleCount * 4)
-	fluid.reciprocalStatus = fluid.gpu(uint64(max(capacity, fluid.domain.MaxModes)) * 4)
-	fluid.pos = fluid.gpu(particleCount * 3 * 4)
-	fluid.vel = fluid.gpu(particleCount * 3 * 4)
-	fluid.mass = fluid.gpu(particleCount * 4)
-	fluid.heat = fluid.gpu(particleCount * 4)
-	fluid.materialEnergy = fluid.gpu(particleCount * 4)
-	fluid.materialEnergyOut = fluid.gpu(particleCount * 4)
-	fluid.oscEnergy = fluid.gpu(particleCount * 4)
-	fluid.phase = fluid.gpu(particleCount * 4)
-	fluid.omega = fluid.gpu(particleCount * 4)
-	fluid.amp = fluid.gpu(particleCount * 4)
-	fluid.posOut = fluid.gpu(particleCount * 3 * 4)
-	fluid.velOut = fluid.gpu(particleCount * 3 * 4)
-	fluid.heatOut = fluid.gpu(particleCount * 4)
-	fluid.cellIdx = fluid.gpu(particleCount * 4)
-	fluid.originalIdx = fluid.gpu(particleCount * 4)
-	fluid.sortedPos = fluid.gpu(particleCount * 3 * 4)
-	fluid.sortedVel = fluid.gpu(particleCount * 3 * 4)
-	fluid.sortedMass = fluid.gpu(particleCount * 4)
-	fluid.sortedHeat = fluid.gpu(particleCount * 4)
-	fluid.sortedEnergy = fluid.gpu(particleCount * 4)
-	fluid.headPhase = fluid.gpu(particleCount * 4)
-	fluid.headHeat = fluid.gpu(particleCount * 4)
-	fluid.couplingAmp = fluid.gpu(particleCount * 4)
-	fluid.pilotPrevious = fluid.gpu(particleCount * 3 * 4)
-	fluid.pilotReport = fluid.gpu(particleCount * 4 * 4)
-	fluid.contactReport = fluid.gpu(particleCount * 7 * 4)
-	fluid.phasePrior = fluid.gpu(particleCount * 4)
-	fluid.phaseLedger = fluid.gpu(particleCount * 6 * 4)
-	fluid.particleStatus = fluid.gpu(particleCount * 4)
+	workspace.coherencePosition = workspace.gpu(particleCount * 12)
+	workspace.reciprocalForce = workspace.gpu(particleCount * 12)
+	workspace.reciprocalAmplitude = workspace.gpu(particleCount * 4)
+	workspace.reciprocalStatus = workspace.gpu(uint64(max(capacity, workspace.domain.MaxModes)) * 4)
+	workspace.pos = workspace.gpu(particleCount * 3 * 4)
+	workspace.vel = workspace.gpu(particleCount * 3 * 4)
+	workspace.mass = workspace.gpu(particleCount * 4)
+	workspace.heat = workspace.gpu(particleCount * 4)
+	workspace.materialEnergy = workspace.gpu(particleCount * 4)
+	workspace.materialEnergyOut = workspace.gpu(particleCount * 4)
+	workspace.oscEnergy = workspace.gpu(particleCount * 4)
+	workspace.phase = workspace.gpu(particleCount * 4)
+	workspace.omega = workspace.gpu(particleCount * 4)
+	workspace.amp = workspace.gpu(particleCount * 4)
+	workspace.posOut = workspace.gpu(particleCount * 3 * 4)
+	workspace.velOut = workspace.gpu(particleCount * 3 * 4)
+	workspace.heatOut = workspace.gpu(particleCount * 4)
+	workspace.cellIdx = workspace.gpu(particleCount * 4)
+	workspace.originalIdx = workspace.gpu(particleCount * 4)
+	workspace.sortedPos = workspace.gpu(particleCount * 3 * 4)
+	workspace.sortedVel = workspace.gpu(particleCount * 3 * 4)
+	workspace.sortedMass = workspace.gpu(particleCount * 4)
+	workspace.sortedHeat = workspace.gpu(particleCount * 4)
+	workspace.sortedEnergy = workspace.gpu(particleCount * 4)
+	workspace.headPhase = workspace.gpu(particleCount * 4)
+	workspace.headHeat = workspace.gpu(particleCount * 4)
+	workspace.couplingAmp = workspace.gpu(particleCount * 4)
+	workspace.pilotPrevious = workspace.gpu(particleCount * 3 * 4)
+	workspace.pilotReport = workspace.gpu(particleCount * 4 * 4)
+	workspace.contactReport = workspace.gpu(particleCount * 7 * 4)
+	workspace.phasePrior = workspace.gpu(particleCount * 4)
+	workspace.phaseLedger = workspace.gpu(particleCount * 6 * 4)
+	workspace.particleStatus = workspace.gpu(particleCount * 4)
 }
 
-func (fluid *workspace) closeParticles() {
-	fluid.particleCapacity = 0
+func (workspace *workspace) closeParticles() {
+	workspace.particleCapacity = 0
 
 	for _, buffer := range []*Buffer{
-		fluid.coherencePosition, fluid.reciprocalForce, fluid.reciprocalAmplitude, fluid.reciprocalStatus,
-		fluid.headPhase, fluid.headHeat, fluid.couplingAmp, fluid.pilotPrevious, fluid.pilotReport, fluid.contactReport, fluid.particleStatus, fluid.phasePrior, fluid.phaseLedger,
-		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy, fluid.materialEnergy, fluid.materialEnergyOut,
-		fluid.phase, fluid.omega, fluid.amp,
-		fluid.posOut, fluid.velOut, fluid.heatOut,
-		fluid.cellIdx, fluid.originalIdx,
-		fluid.sortedPos, fluid.sortedVel,
-		fluid.sortedMass, fluid.sortedHeat, fluid.sortedEnergy,
+		workspace.coherencePosition, workspace.reciprocalForce, workspace.reciprocalAmplitude, workspace.reciprocalStatus,
+		workspace.headPhase, workspace.headHeat, workspace.couplingAmp, workspace.pilotPrevious, workspace.pilotReport, workspace.contactReport, workspace.particleStatus, workspace.phasePrior, workspace.phaseLedger,
+		workspace.pos, workspace.vel, workspace.mass, workspace.heat, workspace.oscEnergy, workspace.materialEnergy, workspace.materialEnergyOut,
+		workspace.phase, workspace.omega, workspace.amp,
+		workspace.posOut, workspace.velOut, workspace.heatOut,
+		workspace.cellIdx, workspace.originalIdx,
+		workspace.sortedPos, workspace.sortedVel,
+		workspace.sortedMass, workspace.sortedHeat, workspace.sortedEnergy,
 	} {
 		if buffer != nil {
 			buffer.Close()
 		}
 	}
 
-	fluid.coherencePosition = nil
-	fluid.reciprocalForce = nil
-	fluid.reciprocalAmplitude = nil
-	fluid.reciprocalStatus = nil
-	fluid.headPhase = nil
-	fluid.headHeat = nil
-	fluid.couplingAmp = nil
-	fluid.pilotPrevious = nil
-	fluid.pilotReport = nil
-	fluid.contactReport = nil
-	fluid.phasePrior = nil
-	fluid.phaseLedger = nil
-	fluid.particleStatus = nil
-	fluid.pos = nil
-	fluid.vel = nil
-	fluid.mass = nil
-	fluid.heat = nil
-	fluid.materialEnergy = nil
-	fluid.materialEnergyOut = nil
-	fluid.oscEnergy = nil
-	fluid.phase = nil
-	fluid.omega = nil
-	fluid.amp = nil
-	fluid.posOut = nil
-	fluid.velOut = nil
-	fluid.heatOut = nil
-	fluid.cellIdx = nil
-	fluid.originalIdx = nil
-	fluid.sortedPos = nil
-	fluid.sortedVel = nil
-	fluid.sortedMass = nil
-	fluid.sortedHeat = nil
-	fluid.sortedEnergy = nil
+	workspace.coherencePosition = nil
+	workspace.reciprocalForce = nil
+	workspace.reciprocalAmplitude = nil
+	workspace.reciprocalStatus = nil
+	workspace.headPhase = nil
+	workspace.headHeat = nil
+	workspace.couplingAmp = nil
+	workspace.pilotPrevious = nil
+	workspace.pilotReport = nil
+	workspace.contactReport = nil
+	workspace.phasePrior = nil
+	workspace.phaseLedger = nil
+	workspace.particleStatus = nil
+	workspace.pos = nil
+	workspace.vel = nil
+	workspace.mass = nil
+	workspace.heat = nil
+	workspace.materialEnergy = nil
+	workspace.materialEnergyOut = nil
+	workspace.oscEnergy = nil
+	workspace.phase = nil
+	workspace.omega = nil
+	workspace.amp = nil
+	workspace.posOut = nil
+	workspace.velOut = nil
+	workspace.heatOut = nil
+	workspace.cellIdx = nil
+	workspace.originalIdx = nil
+	workspace.sortedPos = nil
+	workspace.sortedVel = nil
+	workspace.sortedMass = nil
+	workspace.sortedHeat = nil
+	workspace.sortedEnergy = nil
 }
 
-func (fluid *workspace) allBuffers() []*Buffer {
+func (workspace *workspace) allBuffers() []*Buffer {
 	buffers := []*Buffer{
-		fluid.spectralPotential, fluid.spectralMetric,
-		fluid.reciprocalOldRe, fluid.reciprocalOldIm, fluid.reciprocalPotential,
-		fluid.rho, fluid.mom, fluid.energy,
-		fluid.rho1, fluid.mom1, fluid.energy1,
-		fluid.rho2, fluid.mom2, fluid.energy2,
-		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
-		fluid.gravity, fluid.hydro, fluid.hydroOut, fluid.hydroWork1, fluid.hydroWork2, fluid.hydroStatus, fluid.hydroDiagnostics, fluid.acceleration, fluid.poissonState, fluid.poissonScratch, fluid.waveLedger, fluid.remapReport, fluid.gravityFluxBase, fluid.gravityPrior, fluid.gravityKickWork,
-		fluid.cellCounts, fluid.cellStarts, fluid.cellOffsets,
-		fluid.psiRe, fluid.psiIm, fluid.psiStartRe, fluid.psiStartIm,
-		fluid.dbgHead, fluid.dbgWords,
-		fluid.omegaLattice, fluid.gateWidth,
-		fluid.accums, fluid.numCarriers,
-		fluid.anchorIdx, fluid.anchorWeight,
-		fluid.psiModeReal, fluid.psiModeImag,
-		fluid.kineticReal, fluid.kineticImag,
-		fluid.binStarts, fluid.binnedIdx, fluid.binParams,
-		fluid.coherencePosition, fluid.reciprocalForce, fluid.reciprocalAmplitude, fluid.reciprocalStatus,
-		fluid.headPhase, fluid.headHeat, fluid.couplingAmp, fluid.pilotPrevious, fluid.pilotReport, fluid.contactReport, fluid.particleStatus, fluid.phasePrior, fluid.phaseLedger,
-		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy, fluid.materialEnergy, fluid.materialEnergyOut,
-		fluid.phase, fluid.omega, fluid.amp,
-		fluid.posOut, fluid.velOut, fluid.heatOut,
-		fluid.cellIdx, fluid.originalIdx,
-		fluid.sortedPos, fluid.sortedVel,
-		fluid.sortedMass, fluid.sortedHeat, fluid.sortedEnergy,
+		workspace.spectralPotential, workspace.spectralMetric,
+		workspace.reciprocalOldRe, workspace.reciprocalOldIm, workspace.reciprocalPotential,
+		workspace.rho, workspace.mom, workspace.energy,
+		workspace.rho1, workspace.mom1, workspace.energy1,
+		workspace.rho2, workspace.mom2, workspace.energy2,
+		workspace.k1Rho, workspace.k1Mom, workspace.k1Energy,
+		workspace.gravity, workspace.hydro, workspace.hydroOut, workspace.hydroWork1, workspace.hydroWork2, workspace.hydroStatus, workspace.hydroDiagnostics, workspace.acceleration, workspace.poissonState, workspace.poissonScratch, workspace.waveLedger, workspace.remapReport, workspace.gravityFluxBase, workspace.gravityPrior, workspace.gravityKickWork,
+		workspace.cellCounts, workspace.cellStarts, workspace.cellOffsets,
+		workspace.psiRe, workspace.psiIm, workspace.psiStartRe, workspace.psiStartIm,
+		workspace.dbgHead, workspace.dbgWords,
+		workspace.omegaLattice, workspace.gateWidth,
+		workspace.accums, workspace.numCarriers,
+		workspace.anchorIdx, workspace.anchorWeight,
+		workspace.psiModeReal, workspace.psiModeImag,
+		workspace.kineticReal, workspace.kineticImag,
+		workspace.binStarts, workspace.binnedIdx, workspace.binParams,
+		workspace.coherencePosition, workspace.reciprocalForce, workspace.reciprocalAmplitude, workspace.reciprocalStatus,
+		workspace.headPhase, workspace.headHeat, workspace.couplingAmp, workspace.pilotPrevious, workspace.pilotReport, workspace.contactReport, workspace.particleStatus, workspace.phasePrior, workspace.phaseLedger,
+		workspace.pos, workspace.vel, workspace.mass, workspace.heat, workspace.oscEnergy, workspace.materialEnergy, workspace.materialEnergyOut,
+		workspace.phase, workspace.omega, workspace.amp,
+		workspace.posOut, workspace.velOut, workspace.heatOut,
+		workspace.cellIdx, workspace.originalIdx,
+		workspace.sortedPos, workspace.sortedVel,
+		workspace.sortedMass, workspace.sortedHeat, workspace.sortedEnergy,
 	}
-	buffers = append(buffers, fluid.psiRealHeads...)
-	buffers = append(buffers, fluid.psiImagHeads...)
+	buffers = append(buffers, workspace.psiRealHeads...)
+	buffers = append(buffers, workspace.psiImagHeads...)
 	return buffers
 }
 
@@ -629,10 +629,10 @@ func maxAbs32(peak float32, values ...float32) float32 {
 }
 
 /* spectralPeaks scans synchronized modes without copying the lattice arrays. */
-func (fluid *workspace) spectralPeaks() []SpectralPeak {
-	omega := fluid.omegaLattice.Float32Slice()[:fluid.domain.MaxModes]
-	real := fluid.psiModeReal.Float32Slice()
-	imag := fluid.psiModeImag.Float32Slice()
+func (workspace *workspace) spectralPeaks() []SpectralPeak {
+	omega := workspace.omegaLattice.Float32Slice()[:workspace.domain.MaxModes]
+	real := workspace.psiModeReal.Float32Slice()
+	imag := workspace.psiModeImag.Float32Slice()
 	var peaks []SpectralPeak
 
 	for index := 1; index+1 < len(omega); index++ {

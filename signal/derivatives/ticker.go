@@ -2,15 +2,16 @@ package derivatives
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	nmderivatives "github.com/theapemachine/symm/nomagique/derivatives"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
+	derivatives "github.com/theapemachine/symm/nomagique/statistic/derivatives"
 )
 
 /*
@@ -28,10 +29,9 @@ type Ticker struct {
 
 func NewTicker(ctx context.Context) *Ticker {
 	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(
-			nmderivatives.NewGate(),
-			nmderivatives.NewBasis(),
-			data.NewFinalizer[float64](),
+		pipeline: nomagique.NewNumber(derivatives.
+			NewGate(), derivatives.
+			NewBasis(), data.NewFinalizer[float64](),
 		),
 	}
 
@@ -73,8 +73,8 @@ func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measure
 		measurement.Pull(peer, "last", "index_price", "mark_price", "open_interest")
 	}
 
-	res := data.Read[*data.Measurement[float64]](ticker.pipeline.Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.
+		NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

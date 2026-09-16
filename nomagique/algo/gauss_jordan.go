@@ -1,7 +1,6 @@
 package algo
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -33,51 +32,42 @@ GaussJordan owns partial-pivot elimination. Tolerance is the absolute pivot
 floor of this solver.
 */
 type GaussJordan struct {
-	err       error
+	*core.PrimitiveError
+
 	tolerance float64
 	out       Solution
 }
 
-func NewGaussJordan(tolerance float64) core.Primitive {
-	return &GaussJordan{tolerance: tolerance}
+func NewGaussJordan(tolerance float64) *GaussJordan {
+	return &GaussJordan{PrimitiveError: core.NewPrimitiveError(), tolerance: tolerance}
 }
 
-func (op *GaussJordan) Next(
+func (gaussJordan *GaussJordan) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			system := (*System)(arriving)
-			sol, err := op.solve(*system)
+			sol, err := gaussJordan.solve(*system)
 
 			if err != nil {
-				op.err = errors.Join(op.err, err)
+				gaussJordan.Error(err)
 				return
 			}
 
-			op.out = sol
+			gaussJordan.out = sol
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&gaussJordan.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *GaussJordan) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
 solve performs row reduction with partial pivoting.
 */
-func (op *GaussJordan) solve(system System) (Solution, error) {
+func (gaussJordan *GaussJordan) solve(system System) (Solution, error) {
 	rows := len(system.Left)
 
 	if rows == 0 {
@@ -132,7 +122,7 @@ func (op *GaussJordan) solve(system System) (Solution, error) {
 			}
 		}
 
-		if maxVal <= op.tolerance {
+		if maxVal <= gaussJordan.tolerance {
 			return Solution{Solution: [][]float64{}, Rank: rank, Defined: false}, nil
 		}
 

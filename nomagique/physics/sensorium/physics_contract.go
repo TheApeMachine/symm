@@ -27,15 +27,15 @@ type PhysicsControls struct {
 func defaultPhysicsControls() PhysicsControls {
 	return PhysicsControls{Units: ModelUnits{hbarEff, 1}, CFL: .4, ParticleCells: .4, PhaseRadians: .5, EtaPressure: 1e-3, EtaSync: .1, MaxStep: dtMax, MaxSubsteps: 4096, MaxRetries: 16, RemapWidthCells: 1, RemapTolerance: 2e-5, RemapIterations: 4096, PilotTolerance: 2e-5}
 }
-func (p PhysicsControls) validate() error {
-	if err := p.Contacts.validate(); err != nil {
+func (physicsControls PhysicsControls) validate() error {
+	if err := physicsControls.Contacts.validate(); err != nil {
 		return err
 	}
-	if !isPositiveFinite(p.Units.Hbar) || !isPositiveFinite(p.Units.Boltzmann) ||
-		!isPositiveFinite(p.CFL) || p.CFL > .5 || !isPositiveFinite(p.ParticleCells) || p.ParticleCells > .5 ||
-		!isPositiveFinite(p.PhaseRadians) || p.PhaseRadians > 1 || !isPositiveFinite(p.EtaSync) || !isPositiveFinite(p.EtaPressure) || p.EtaPressure >= 1 || p.EtaSync < p.EtaPressure || p.EtaSync >= 1 ||
-		!isPositiveFinite(p.MaxStep) || p.MaxSubsteps < 1 || p.MaxRetries < 0 || !finite(p.GravityG) || p.GravityG < 0 || !isPositiveFinite(p.RemapWidthCells) || !finite(p.RemapTolerance) || p.RemapTolerance < 8*math.Ldexp(1, -23) || p.RemapTolerance > 1e-3 || p.RemapIterations < 1 || !finite(p.PilotTolerance) || p.PilotTolerance < 8*math.Ldexp(1, -23) || p.PilotTolerance > .01 {
-		return fmt.Errorf("sensorium: invalid physics controls: %+v", p)
+	if !isPositiveFinite(physicsControls.Units.Hbar) || !isPositiveFinite(physicsControls.Units.Boltzmann) ||
+		!isPositiveFinite(physicsControls.CFL) || physicsControls.CFL > .5 || !isPositiveFinite(physicsControls.ParticleCells) || physicsControls.ParticleCells > .5 ||
+		!isPositiveFinite(physicsControls.PhaseRadians) || physicsControls.PhaseRadians > 1 || !isPositiveFinite(physicsControls.EtaSync) || !isPositiveFinite(physicsControls.EtaPressure) || physicsControls.EtaPressure >= 1 || physicsControls.EtaSync < physicsControls.EtaPressure || physicsControls.EtaSync >= 1 ||
+		!isPositiveFinite(physicsControls.MaxStep) || physicsControls.MaxSubsteps < 1 || physicsControls.MaxRetries < 0 || !finite(physicsControls.GravityG) || physicsControls.GravityG < 0 || !isPositiveFinite(physicsControls.RemapWidthCells) || !finite(physicsControls.RemapTolerance) || physicsControls.RemapTolerance < 8*math.Ldexp(1, -23) || physicsControls.RemapTolerance > 1e-3 || physicsControls.RemapIterations < 1 || !finite(physicsControls.PilotTolerance) || physicsControls.PilotTolerance < 8*math.Ldexp(1, -23) || physicsControls.PilotTolerance > .01 {
+		return fmt.Errorf("sensorium: invalid physics controls: %+v", physicsControls)
 	}
 	return nil
 }
@@ -118,8 +118,8 @@ type CoupledStepError struct {
 	Detail   string
 }
 
-func (e *CoupledStepError) Error() string {
-	return fmt.Sprintf("sensorium %s[%d]: %s", e.Operator, e.Index, e.Detail)
+func (coupledStepError *CoupledStepError) Error() string {
+	return fmt.Sprintf("sensorium %s[%d]: %s", coupledStepError.Operator, coupledStepError.Index, coupledStepError.Detail)
 }
 
 // advanceCoupled owns the entire macro interval. Every successful callback uses

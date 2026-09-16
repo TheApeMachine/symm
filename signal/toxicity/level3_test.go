@@ -1,13 +1,15 @@
 package toxicity
 
 import (
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/runtime"
+
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/tests/market"
 )
 
 func toxicityTouch(symbol string, at time.Time, bidPrice, bidQty, askPrice, askQty float64) *data.Measurement[float64] {
@@ -73,6 +75,41 @@ func TestLevel3Step(t *testing.T) {
 			So(measurement.Metrics["net_withdrawn_quantity:bid"].Raw, ShouldEqual, 6.0)
 			So(measurement.Metrics["net_withdrawal_fraction:bid"].Raw, ShouldAlmostEqual, 0.6, 1e-12)
 		})
+	})
+
+	Convey("A rejected peer retains its own identity between valid market legs", t, func() {
+		entity := NewLevel3(t.Context())
+		entity.Transition(runtime.READY)
+		measurement := entity.Register()
+		tape := market.NewOpportunityTape("BTC/USD", time.Unix(1_700_000_000, 0), 2)
+
+		for index, step := range tape.Steps {
+			// One dollar spread and fixed quantities define this quote fixture.
+			quote := toxicityTouch(tape.Symbol, step.EventTime, step.ExecutableBid, 10, step.ExecutableBid+1, 12)
+			quote.SeqIdx = int64(index*2 + 1)
+			quote.Timestamp = quote.At.UnixNano()
+			quote.Provenance["channel"] = "level3"
+			measurement.Err = nil // Consumer clears the prior observation's error.
+			measurement.Peers = []*data.Measurement[float64]{quote}
+			So(entity.Step(measurement), ShouldEqual, measurement)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Label, ShouldEqual, tape.Symbol)
+
+			// This locked futures quote is the recorded failing input.
+			rejected := toxicityTouch("FARTCOIN/USD", step.EventTime.Add(time.Nanosecond), 0.1351, 10, 0.1351, 12)
+			rejected.SeqIdx = quote.SeqIdx + 1
+			rejected.Timestamp = rejected.At.UnixNano()
+			rejected.Provenance["channel"] = "futures.ticker"
+			measurement.Peers[0] = rejected
+			So(entity.Step(measurement), ShouldEqual, measurement)
+			So(measurement.Err, ShouldNotBeNil)
+			So(measurement.Label, ShouldEqual, rejected.Label)
+			So(measurement.At, ShouldEqual, rejected.At)
+			So(measurement.From, ShouldEqual, rejected.From)
+			So(measurement.Timestamp, ShouldEqual, rejected.Timestamp)
+			So(measurement.SeqIdx, ShouldEqual, rejected.SeqIdx)
+			So(measurement.Provenance["channel"], ShouldEqual, "futures.ticker")
+		}
 	})
 
 	Convey("Given a crossed touch", t, func() {
@@ -170,6 +207,34 @@ func BenchmarkLevel3StepUnrelatedPeer(b *testing.B) {
 	for index := 0; index < b.N; index++ {
 		if entity.Step(measurement) != nil {
 			b.Fatal("unrelated peer published a signal")
+		}
+	}
+}
+
+func BenchmarkLevel3Step(b *testing.B) {
+	entity := NewLevel3(b.Context())
+	entity.Transition(runtime.READY)
+	measurement := entity.Register()
+	tape := market.NewOpportunityTape("BTC/USD", time.Unix(1_700_000_000, 0), 2)
+	quotes := make([]*data.Measurement[float64], len(tape.Steps))
+
+	for index, step := range tape.Steps {
+		quotes[index] = toxicityTouch(tape.Symbol, step.EventTime, step.ExecutableBid, 10, step.ExecutableBid+1, 12)
+		quotes[index].Provenance["channel"] = "level3"
+	}
+
+	measurement.Peers = make([]*data.Measurement[float64], 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		quote := quotes[index%len(quotes)]
+		quote.SeqIdx = int64(index + 1)
+		quote.At = tape.Steps[0].EventTime.Add(time.Duration(index) * time.Millisecond)
+		measurement.Peers[0] = quote
+
+		if result := entity.Step(measurement); result == nil || result.Err != nil {
+			b.Fatal("valid quote rejected", measurement.Err)
 		}
 	}
 }

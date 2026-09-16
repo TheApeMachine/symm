@@ -1,12 +1,13 @@
 package adaptive_test
 
 import (
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"testing"
 	"unsafe"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 func TestWeightedWindowNext(t *testing.T) {
@@ -20,11 +21,11 @@ func TestWeightedWindowNext(t *testing.T) {
 			}
 			item := statistic.Weighted{Value: value, Weight: float64(index%3 + 1)}
 			var reading, other adaptive.WindowReading
-			for output := range window.Next(transport.NewOne(unsafe.Pointer(&item)).Next(nil)) {
+			for output := range window.Next(sequence.NewOne(unsafe.Pointer(&item)).Next(nil)) {
 				reading = *(*adaptive.WindowReading)(output)
 			}
 			item.Weight *= 1000 // Changing the volume unit cannot change the regime boundary.
-			for output := range scaled.Next(transport.NewOne(unsafe.Pointer(&item)).Next(nil)) {
+			for output := range scaled.Next(sequence.NewOne(unsafe.Pointer(&item)).Next(nil)) {
 				other = *(*adaptive.WindowReading)(output)
 			}
 			So(reading.ShedRatio, ShouldAlmostEqual, other.ShedRatio)
@@ -48,7 +49,7 @@ func BenchmarkWeightedWindowNext(b *testing.B) {
 	b.ReportAllocs()
 	for index := 0; index < b.N; index++ {
 		item := statistic.Weighted{Value: float64(index / 100 % 2), Weight: float64(index%3 + 1)}
-		for range window.Next(transport.NewOne(unsafe.Pointer(&item)).Next(nil)) {
+		for range window.Next(sequence.NewOne(unsafe.Pointer(&item)).Next(nil)) {
 		}
 	}
 }

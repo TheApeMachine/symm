@@ -2,7 +2,6 @@ package cognition
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -36,23 +35,25 @@ Weight unpacks the engine's packed weight records. It is the one public owner
 of the record layout outside the engine itself.
 */
 type Weight struct {
-	err error
+	*core.PrimitiveError
+
 	out PackedWeight
 }
 
 /*
 NewWeight instantiates the packed weight unpacking Primitive.
 */
-func NewWeight() core.Primitive {
-	return &Weight{}
+func NewWeight() *Weight {
+	return &Weight{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next unpacks each arriving record and yields the weight it holds. A record
 shorter than the wire layout is recorded as a shape failure and ends the run.
 */
-func (op *Weight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
+func (weight *Weight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	if weight.Error() !=
+		nil {
 		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
@@ -61,7 +62,7 @@ func (op *Weight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			record := (*WeightRecord)(arriving)
 
 			if len(*record) < WeightSize {
-				op.Error(fmt.Errorf(
+				weight.Error(fmt.Errorf(
 					"%w: cognition: packed weight is %d bytes, want %d",
 					core.ErrShape,
 					len(*record),
@@ -70,26 +71,13 @@ func (op *Weight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			op.out = decodeWeight(*record)
+			weight.out = decodeWeight(*record)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&weight.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Weight) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -116,15 +104,15 @@ func decodeWeight(src []byte) PackedWeight {
 effective returns the decay-adjusted weight at the current step:
 w_eff = w * decay^(currentStep - writeStep).
 */
-func (weight PackedWeight) effective(currentStep uint64, decayFactor float64) PackedWeight {
-	if weight.WriteStep >= currentStep || decayFactor <= 0 || decayFactor >= 1 {
-		return weight
+func (packedWeight PackedWeight) effective(currentStep uint64, decayFactor float64) PackedWeight {
+	if packedWeight.WriteStep >= currentStep || decayFactor <= 0 || decayFactor >= 1 {
+		return packedWeight
 	}
 
-	multiplier := math.Pow(decayFactor, float64(currentStep-weight.WriteStep))
-	weight.Probability *= multiplier
+	multiplier := math.Pow(decayFactor, float64(currentStep-packedWeight.WriteStep))
+	packedWeight.Probability *= multiplier
 
-	return weight
+	return packedWeight
 }
 
 /*

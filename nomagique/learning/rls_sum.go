@@ -1,14 +1,13 @@
 package learning
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -25,16 +24,17 @@ type SumQuery struct {
 Sum owns that query.
 */
 type Sum struct {
-	err        error
+	*core.PrimitiveError
+
 	prediction core.Primitive
 	out        algo.RLSForecast
 }
 
-func NewRLSSum() core.Primitive {
-	return &Sum{prediction: algo.NewRLSPrediction()}
+func NewRLSSum() *Sum {
+	return &Sum{PrimitiveError: core.NewPrimitiveError(), prediction: algo.NewRLSPrediction()}
 }
 
-func (op *Sum) Next(
+func (sum *Sum) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -42,7 +42,7 @@ func (op *Sum) Next(
 			query := (*SumQuery)(arriving)
 
 			if len(query.Rows) == 0 {
-				op.Error(fmt.Errorf("%w: RLS sum requires at least one row", core.ErrShape))
+				sum.Error(fmt.Errorf("%w: RLS sum requires at least one row", core.ErrShape))
 				return
 			}
 
@@ -64,7 +64,7 @@ func (op *Sum) Next(
 			}
 
 			if ragged {
-				op.Error(fmt.Errorf("%w: RLS sum rows are ragged", core.ErrShape))
+				sum.Error(fmt.Errorf("%w: RLS sum rows are ragged", core.ErrShape))
 				return
 			}
 
@@ -72,28 +72,18 @@ func (op *Sum) Next(
 			state.Design = design
 			state.Observations = float64(len(query.Rows))
 
-			for out := range op.prediction.Next(transport.NewValues(state).Next(nil)) {
-				op.out = *(*algo.RLSForecast)(out)
+			for out := range sum.prediction.Next(sequence.NewValues(state).Next(nil)) {
+				sum.out = *(*algo.RLSForecast)(out)
 			}
 
-			if err := op.prediction.Error(); err != nil {
-				op.Error(err)
+			if err := sum.prediction.Error(); err != nil {
+				sum.Error(err)
 				return
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&sum.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Sum) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -30,11 +30,11 @@ func newBivariateEstimator(prior bivariateFit) *bivariateEstimator {
 /*
 fit estimates parameters via multi-start L-BFGS on the exact log-likelihood.
 */
-func (estimator *bivariateEstimator) fit(
+func (bivariateEstimator *bivariateEstimator) fit(
 	stream arrivalStream,
 	horizonSec float64,
 ) bivariateFit {
-	return estimator.fitRestricted(stream, horizonSec, fitUnrestricted)
+	return bivariateEstimator.fitRestricted(stream, horizonSec, fitUnrestricted)
 }
 
 /*
@@ -43,14 +43,14 @@ constraining both cross-excitation terms to zero. It provides the correct
 restricted likelihood reference for testing whether cross excitation adds
 explanatory power.
 */
-func (estimator *bivariateEstimator) fitSelfOnly(
+func (bivariateEstimator *bivariateEstimator) fitSelfOnly(
 	stream arrivalStream,
 	horizonSec float64,
 ) bivariateFit {
-	return estimator.fitRestricted(stream, horizonSec, fitSelfOnly)
+	return bivariateEstimator.fitRestricted(stream, horizonSec, fitSelfOnly)
 }
 
-func (estimator *bivariateEstimator) fitRestricted(
+func (bivariateEstimator *bivariateEstimator) fitRestricted(
 	stream arrivalStream,
 	horizonSec float64,
 	restriction fitRestriction,
@@ -74,8 +74,8 @@ func (estimator *bivariateEstimator) fitRestricted(
 		}
 	}
 
-	for _, seed := range estimator.multiStartSeeds(context) {
-		candidate := estimator.maximizeLikelihoodRestricted(
+	for _, seed := range bivariateEstimator.multiStartSeeds(context) {
+		candidate := bivariateEstimator.maximizeLikelihoodRestricted(
 			stream, horizonSec, context, seed, restriction,
 		)
 
@@ -84,13 +84,13 @@ func (estimator *bivariateEstimator) fitRestricted(
 		}
 
 		if restriction == fitUnrestricted &&
-			!estimator.crossLikelihoodValid(stream, horizonSec, candidate) {
+			!bivariateEstimator.crossLikelihoodValid(stream, horizonSec, candidate) {
 			candidate = candidate.withCrossZeroed().withIntensitiesAt(stream, horizonSec)
 		}
 
 		logLikelihood, candidateOK := candidate.logLikelihood(stream, horizonSec)
 
-		if !candidateOK || !estimator.preferCandidate(best, candidate, bestLL, logLikelihood) {
+		if !candidateOK || !bivariateEstimator.preferCandidate(best, candidate, bestLL, logLikelihood) {
 			continue
 		}
 
@@ -101,7 +101,7 @@ func (estimator *bivariateEstimator) fitRestricted(
 	return best
 }
 
-func (estimator *bivariateEstimator) crossLikelihoodValid(
+func (bivariateEstimator *bivariateEstimator) crossLikelihoodValid(
 	stream arrivalStream,
 	horizonSec float64,
 	fit bivariateFit,
@@ -128,7 +128,7 @@ func (estimator *bivariateEstimator) crossLikelihoodValid(
 	return fitLL+logLikelihoodTolerance(fitLL, restrictedLL) >= restrictedLL
 }
 
-func (estimator *bivariateEstimator) preferCandidate(
+func (bivariateEstimator *bivariateEstimator) preferCandidate(
 	current, candidate bivariateFit,
 	currentLL, candidateLL float64,
 ) bool {
@@ -177,7 +177,7 @@ func logLikelihoodTolerance(values ...float64) float64 {
 	return math.Sqrt(math.Max(0, radicand)) * scale
 }
 
-func (estimator *bivariateEstimator) maximizeLikelihoodRestricted(
+func (bivariateEstimator *bivariateEstimator) maximizeLikelihoodRestricted(
 	stream arrivalStream,
 	horizonSec float64,
 	context fitContext,
@@ -193,7 +193,7 @@ func (estimator *bivariateEstimator) maximizeLikelihoodRestricted(
 	freeStart := bounds.encode(start)
 	problem := optimize.Problem{
 		Func: func(free []float64) float64 {
-			value, _, ok := estimator.negLogLikelihoodRestricted(
+			value, _, ok := bivariateEstimator.negLogLikelihoodRestricted(
 				free, bounds, stream, horizonSec, context, restriction,
 			)
 
@@ -204,7 +204,7 @@ func (estimator *bivariateEstimator) maximizeLikelihoodRestricted(
 			return value
 		},
 		Grad: func(grad, free []float64) {
-			_, naturalGrad, ok := estimator.negLogLikelihoodGradRestricted(
+			_, naturalGrad, ok := bivariateEstimator.negLogLikelihoodGradRestricted(
 				free, bounds, stream, horizonSec, context, restriction,
 			)
 
@@ -246,7 +246,7 @@ func (estimator *bivariateEstimator) maximizeLikelihoodRestricted(
 	return fit.withIntensitiesAt(stream, horizonSec)
 }
 
-func (estimator *bivariateEstimator) negLogLikelihoodRestricted(
+func (bivariateEstimator *bivariateEstimator) negLogLikelihoodRestricted(
 	free []float64,
 	bounds logParamBounds,
 	stream arrivalStream,
@@ -269,7 +269,7 @@ func (estimator *bivariateEstimator) negLogLikelihoodRestricted(
 	return -logLikelihood, fit, true
 }
 
-func (estimator *bivariateEstimator) negLogLikelihoodGradRestricted(
+func (bivariateEstimator *bivariateEstimator) negLogLikelihoodGradRestricted(
 	free []float64,
 	bounds logParamBounds,
 	stream arrivalStream,
@@ -299,7 +299,7 @@ func (estimator *bivariateEstimator) negLogLikelihoodGradRestricted(
 	return -logLikelihood, negGrad, true
 }
 
-func (estimator *bivariateEstimator) multiStartSeeds(
+func (bivariateEstimator *bivariateEstimator) multiStartSeeds(
 	context fitContext,
 ) [][bivariateParamCount]float64 {
 	muXStart := context.muXStart()
@@ -323,8 +323,8 @@ func (estimator *bivariateEstimator) multiStartSeeds(
 	}
 	seeds := make([][bivariateParamCount]float64, 0, len(context.localScales)+2)
 
-	if estimator.prior.valid() {
-		if priorSeed, ok := logParamsFromFit(estimator.prior); ok {
+	if bivariateEstimator.prior.valid() {
+		if priorSeed, ok := logParamsFromFit(bivariateEstimator.prior); ok {
 			seeds = append(seeds, priorSeed)
 		}
 	}

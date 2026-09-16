@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -17,9 +17,9 @@ evaluateOLS drives one design through the OLS primitive.
 func evaluateOLS(node core.Primitive, design algo.Design) (algo.Fit, error) {
 	var fit algo.Fit
 
-	evaluation := transport.NewEvaluate(node)
+	evaluation := node
 
-	for out := range evaluation.Next(transport.NewValues(design).Next(nil)) {
+	for out := range evaluation.Next(sequence.NewValues(design).Next(nil)) {
 		fit = *(*algo.Fit)(out)
 	}
 

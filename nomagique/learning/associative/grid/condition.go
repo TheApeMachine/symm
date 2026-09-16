@@ -1,7 +1,6 @@
 package grid
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
@@ -56,60 +55,49 @@ type TokenResult struct {
 Token is the condition-token Primitive: one owner for the token bit layout.
 */
 type Token struct {
-	err error
+	*core.PrimitiveError
+
 	out TokenResult
 }
 
 /* NewToken instantiates the condition-token Primitive. */
-func NewToken() core.Primitive {
-	return &Token{}
+func NewToken() *Token {
+	return &Token{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next executes each arriving token command and yields its result. An invalid
 command is recorded in Error and ends the stream.
 */
-func (op *Token) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
+func (token *Token) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	if token.Error() !=
+		nil {
 		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			command := (*TokenCommand)(arriving)
-			result, err := op.execute(command)
+			result, err := token.execute(command)
 
 			if err != nil {
-				op.Error(err)
+				token.Error(err)
 				return
 			}
 
-			op.out = result
+			token.out = result
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&token.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Token) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
 execute dispatches one token command to its intent and returns its result.
 */
-func (op *Token) execute(command *TokenCommand) (TokenResult, error) {
+func (token *Token) execute(command *TokenCommand) (TokenResult, error) {
 	intents := 0
 
 	if command.Condition != nil {
@@ -132,23 +120,23 @@ func (op *Token) execute(command *TokenCommand) (TokenResult, error) {
 	}
 
 	if command.Condition != nil {
-		token, err := Condition(command.Condition.Quantity, command.Condition.Level, command.Condition.Change)
+		currentToken, err := Condition(command.Condition.Quantity, command.Condition.Level, command.Condition.Change)
 
 		if err != nil {
 			return TokenResult{}, err
 		}
 
-		return TokenResult{Token: token}, nil
+		return TokenResult{Token: currentToken}, nil
 	}
 
 	if command.Remap != nil {
-		token, err := remapCondition(command.Remap.Token, command.Remap.Quantity)
+		currentToken, err := remapCondition(command.Remap.Token, command.Remap.Quantity)
 
 		if err != nil {
 			return TokenResult{}, err
 		}
 
-		return TokenResult{Token: token}, nil
+		return TokenResult{Token: currentToken}, nil
 	}
 
 	return TokenResult{Quantity: conditionQuantity(command.Quantity.Token)}, nil

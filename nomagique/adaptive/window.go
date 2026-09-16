@@ -1,7 +1,6 @@
 package adaptive
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -23,72 +22,63 @@ type WindowReading struct {
 Window owns the all/recent moment approximation of the existing mean-shift policy.
 */
 type Window struct {
-	err                    error
+	*core.PrimitiveError
+
 	all, recent            statistic.Moments
 	observations, capacity float64
 	out                    WindowReading
 }
 
-func NewWindow() core.Primitive {
-	return &Window{capacity: 0}
+func NewWindow() *Window {
+	return &Window{PrimitiveError: core.NewPrimitiveError(), capacity: 0}
 }
 
-func (op *Window) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (window *Window) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			val := *(*float64)(arriving)
-			op.observations++
-			op.capacity++
+			window.observations++
+			window.capacity++
 			reading := WindowReading{
-				All: op.all.Update(val), Recent: op.recent.Update(val),
-				Value: val, Observations: op.observations, ShedRatio: 1,
+				All: window.all.Update(val), Recent: window.recent.Update(val),
+				Value: val, Observations: window.observations, ShedRatio: 1,
 			}
 
-			if op.observations > 3 && op.recent.Count > op.capacity*0.5 {
-				op.recent.Shed(0.5)
-				reading.Recent.Summarize(op.recent)
+			if window.observations > 3 && window.recent.Count > window.capacity*0.5 {
+				window.recent.Shed(0.5)
+				reading.Recent.Summarize(window.recent)
 			}
 
 			reading.Variance = reading.All.Variance
-			reading.RecentCount = op.recent.Count
-			reading.PriorCount = op.capacity - reading.RecentCount
+			reading.RecentCount = window.recent.Count
+			reading.PriorCount = window.capacity - reading.RecentCount
 
-			if op.observations > 3 && reading.RecentCount > 1 && reading.PriorCount > 1 && reading.Variance > 0 {
+			if window.observations > 3 && reading.RecentCount > 1 && reading.PriorCount > 1 && reading.Variance > 0 {
 				shift := MeanShift{
 					Variance:     reading.Variance,
-					Observations: op.observations,
+					Observations: window.observations,
 					RecentCount:  reading.RecentCount,
 					PriorCount:   reading.PriorCount,
 				}
 				bound := shift.Bound()
 
-				if math.Abs(op.recent.Mean-op.all.Mean) > bound {
-					capacity := math.Max(1, math.Floor(op.capacity*0.5))
-					reading.ShedRatio = capacity / op.capacity
-					op.capacity = capacity
-					op.all.Shed(reading.ShedRatio)
-					reading.All.Summarize(op.all)
-					op.recent = statistic.Moments{}
+				if math.Abs(window.recent.Mean-window.all.Mean) > bound {
+					capacity := math.Max(1, math.Floor(window.capacity*0.5))
+					reading.ShedRatio = capacity / window.capacity
+					window.capacity = capacity
+					window.all.Shed(reading.ShedRatio)
+					reading.All.Summarize(window.all)
+					window.recent = statistic.Moments{}
 					reading.Recent = statistic.MomentReading{}
 				}
 			}
 
-			reading.Capacity = op.capacity
-			op.out = reading
+			reading.Capacity = window.capacity
+			window.out = reading
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&window.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Window) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -20,33 +20,33 @@ type logParamBounds struct {
 	upper [bivariateParamCount]float64
 }
 
-func (context fitContext) logParamBounds() (logParamBounds, error) {
-	betaMin := context.betaCandidates[0]
-	betaMax := context.betaCandidates[len(context.betaCandidates)-1]
-	selfMax := context.branchCeiling * selfBranchShareFromContext(context)
-	crossMax := context.branchCeiling
-	crossMin, err := crossBranchFloorFromContext(context)
+func (fitContext fitContext) logParamBounds() (logParamBounds, error) {
+	betaMin := fitContext.betaCandidates[0]
+	betaMax := fitContext.betaCandidates[len(fitContext.betaCandidates)-1]
+	selfMax := fitContext.branchCeiling * selfBranchShareFromContext(fitContext)
+	crossMax := fitContext.branchCeiling
+	crossMin, err := crossBranchFloorFromContext(fitContext)
 
 	if err != nil {
 		return logParamBounds{}, err
 	}
 
-	if !(context.spanSec > 0) {
+	if !(fitContext.spanSec > 0) {
 		return logParamBounds{}, fmt.Errorf("hawkes: log param bounds require positive span")
 	}
 
-	minRate := 1 / context.spanSec
-	maxRate := float64(context.totalEvents) / context.spanSec
+	minRate := 1 / fitContext.spanSec
+	maxRate := float64(fitContext.totalEvents) / fitContext.spanSec
 
 	return logParamBounds{
 		lower: [bivariateParamCount]float64{
 			logPositive(minRate),
 			logPositive(minRate),
 			math.Log(betaMin),
-			logPositive(context.branchFloor),
+			logPositive(fitContext.branchFloor),
 			logPositive(crossMin),
 			logPositive(crossMin),
-			logPositive(context.branchFloor),
+			logPositive(fitContext.branchFloor),
 		},
 		upper: [bivariateParamCount]float64{
 			logPositive(maxRate),
@@ -60,35 +60,35 @@ func (context fitContext) logParamBounds() (logParamBounds, error) {
 	}, nil
 }
 
-func (bounds logParamBounds) decode(free []float64) [bivariateParamCount]float64 {
+func (logParamBounds logParamBounds) decode(free []float64) [bivariateParamCount]float64 {
 	params := [bivariateParamCount]float64{}
 
 	for index := range free {
-		span := bounds.upper[index] - bounds.lower[index]
+		span := logParamBounds.upper[index] - logParamBounds.lower[index]
 
 		if span <= 0 {
-			params[index] = bounds.lower[index]
+			params[index] = logParamBounds.lower[index]
 			continue
 		}
 
 		lift := softplus(free[index])
-		params[index] = bounds.lower[index] + span*lift/(1+lift)
+		params[index] = logParamBounds.lower[index] + span*lift/(1+lift)
 	}
 
 	return params
 }
 
-func (bounds logParamBounds) encode(params [bivariateParamCount]float64) []float64 {
+func (logParamBounds logParamBounds) encode(params [bivariateParamCount]float64) []float64 {
 	free := make([]float64, bivariateParamCount)
 
 	for index := range params {
-		span := bounds.upper[index] - bounds.lower[index]
+		span := logParamBounds.upper[index] - logParamBounds.lower[index]
 
 		if span <= 0 {
 			continue
 		}
 
-		ratio := (params[index] - bounds.lower[index]) / span
+		ratio := (params[index] - logParamBounds.lower[index]) / span
 		ratio = math.Max(paramRatioFloor, math.Min(1-paramRatioFloor, ratio))
 		free[index] = inverseSoftplus(ratio / (1 - ratio))
 	}
@@ -96,11 +96,11 @@ func (bounds logParamBounds) encode(params [bivariateParamCount]float64) []float
 	return free
 }
 
-func (bounds logParamBounds) softplusJacobian(free []float64) [bivariateParamCount]float64 {
+func (logParamBounds logParamBounds) softplusJacobian(free []float64) [bivariateParamCount]float64 {
 	jacobian := [bivariateParamCount]float64{}
 
 	for index := range free {
-		span := bounds.upper[index] - bounds.lower[index]
+		span := logParamBounds.upper[index] - logParamBounds.lower[index]
 
 		if span <= 0 {
 			continue

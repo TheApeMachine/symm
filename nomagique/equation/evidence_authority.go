@@ -24,15 +24,16 @@ EvidenceAuthority owns the supplied measurement's maturity/SNR weighting,
 bounded to [0, 1].
 */
 type EvidenceAuthority struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewEvidenceAuthority() core.Primitive {
-	return &EvidenceAuthority{}
+func NewEvidenceAuthority() *EvidenceAuthority {
+	return &EvidenceAuthority{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *EvidenceAuthority) Next(
+func (evidenceAuthority *EvidenceAuthority) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -72,22 +73,11 @@ func (op *EvidenceAuthority) Next(
 				value = 1
 			}
 
-			op.out = value
+			evidenceAuthority.out = value
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&evidenceAuthority.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *EvidenceAuthority) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

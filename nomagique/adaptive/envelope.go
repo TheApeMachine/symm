@@ -1,13 +1,12 @@
 package adaptive
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -15,7 +14,8 @@ Envelope replaces a value with the inclusive moment interval when the
 estimator has dispersion.
 */
 type Envelope struct {
-	err         error
+	*core.PrimitiveError
+
 	moments     core.Primitive
 	coefficient core.Primitive
 	out         float64
@@ -24,31 +24,44 @@ type Envelope struct {
 func NewEnvelope(
 	moments core.Primitive,
 	coefficient core.Primitive,
-) core.Primitive {
-	return &Envelope{
-		moments:     moments,
+) *Envelope {
+	return &Envelope{PrimitiveError: core.NewPrimitiveError(), moments: moments,
 		coefficient: coefficient,
 	}
 }
 
-func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (envelope *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for readingPtr := range op.moments.Next(in) {
+		defer func() {
+
+			if envelope.moments != nil {
+				if err := envelope.moments.Error(); err != nil {
+					envelope.Error(err)
+				}
+			}
+
+			if envelope.coefficient != nil {
+				if err := envelope.coefficient.Error(); err != nil {
+					envelope.Error(err)
+				}
+			}
+		}()
+		for readingPtr := range envelope.moments.Next(in) {
 			current := *(*statistic.MomentReading)(readingPtr)
 			value := current.Value
 
 			if current.Count > 1 && current.Dispersion > 0 {
-				coeffValEval := transport.NewEvaluate(op.coefficient)
+				coeffValEval := envelope.coefficient
 				var coeffVal float64
 
-				for out := range coeffValEval.Next(transport.NewValues(current.Count).Next(nil)) {
+				for out := range coeffValEval.Next(sequence.NewValues(current.Count).Next(nil)) {
 					coeffVal = *(*float64)(out)
 				}
 
 				err := coeffValEval.Error()
 
 				if err != nil {
-					op.err = errors.Join(op.err, err)
+					envelope.Error(err)
 					return
 				}
 
@@ -63,33 +76,11 @@ func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 			}
 
-			op.out = value
+			envelope.out = value
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&envelope.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Envelope) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.moments != nil {
-		if err := op.moments.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.coefficient != nil {
-		if err := op.coefficient.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

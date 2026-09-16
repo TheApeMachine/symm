@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -14,14 +13,14 @@ Sign owns one field operation. What it hands over is the unit sign of each
 arrival, operating in-place on the wire pointer. Zero keeps its own value.
 */
 type Sign struct {
-	err error
+	*core.PrimitiveError
 }
 
-func NewSign() core.Primitive {
-	return &Sign{}
+func NewSign() *Sign {
+	return &Sign{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (sign *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			in := (*float64)(arriving)
@@ -34,14 +33,4 @@ func (op *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Sign) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

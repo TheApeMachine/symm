@@ -6,6 +6,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/tests"
 )
@@ -64,4 +66,49 @@ func TestNewNumber(t *testing.T) {
 			So(hetero.Error(), ShouldBeNil)
 		})
 	})
+}
+
+func TestNumberNext(t *testing.T) {
+	Convey("Nested composition preserves lazy execution and error causes", t, func() {
+		gather := sequence.NewGather[float64]([]int{1})
+		inner := NewNumber(gather)
+		outer := NewNumber(inner)
+		input := sequence.NewValue([]float64{2, 5}, []float64{3})
+		output := outer.Next(input)
+
+		Convey("Constructing an iterator does not execute it", func() {
+			So(outer.Error(), ShouldBeNil)
+			So(gather.Error(), ShouldBeNil)
+		})
+
+		Convey("A later malformed input propagates through both compositions", func() {
+			values := tests.CollectSeq[[]float64](output)
+			So(values, ShouldResemble, [][]float64{{5}})
+			So(errors.Is(inner.Error(), core.ErrShape), ShouldBeTrue)
+			So(errors.Is(outer.Error(), core.ErrShape), ShouldBeTrue)
+		})
+
+		Convey("Stopping before the malformed input does not process it", func() {
+			for value := range output {
+				So(*(*[]float64)(value), ShouldResemble, []float64{5})
+				break
+			}
+			So(outer.Error(), ShouldBeNil)
+		})
+	})
+}
+
+func BenchmarkNumberNext(b *testing.B) {
+	pipeline := NewNumber(calculus.NewSquare(), calculus.NewNegate())
+	input := sequence.NewValue(1.0, 2.0, 3.0, 4.0)
+	b.ReportAllocs()
+	for b.Loop() {
+		count := 0
+		for range pipeline.Next(input) {
+			count++
+		}
+		if count != 4 {
+			b.Fatal(count)
+		}
+	}
 }

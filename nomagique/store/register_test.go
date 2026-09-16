@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
@@ -31,8 +32,8 @@ func TestRegister(t *testing.T) {
 		subject := &slot{}
 
 		Convey("identify appends the payload and stamps the subject with its slot", func() {
-			query := store.NewQuery(subject, data.ActionIdentify, data.NewValue(7))
-			value := data.Read[int](register.Next(data.NewValue(*query)))
+			query := store.NewQuery(subject, data.ActionIdentify, sequence.NewValue(7))
+			value := sequence.Read[int](register.Next(sequence.NewValue(*query)))
 
 			So(subject.Identity(), ShouldEqual, 0)
 			So(value, ShouldEqual, 7)
@@ -41,7 +42,8 @@ func TestRegister(t *testing.T) {
 
 		Convey("a read outside the register is a shape failure", func() {
 			query := store.NewQuery(subject, data.ActionRead, nil)
-			data.Read[int](register.Next(data.NewValue(*query)))
+			sequence.
+				Read[int](register.Next(sequence.NewValue(*query)))
 
 			So(register.Error(), ShouldNotBeNil)
 		})
@@ -51,22 +53,24 @@ func TestRegister(t *testing.T) {
 		register := store.NewRegister[int]()
 		subject := &slot{}
 
-		identify := store.NewQuery(subject, data.ActionIdentify, data.NewValue(7))
-		data.Read[int](register.Next(data.NewValue(*identify)))
+		identify := store.NewQuery(subject, data.ActionIdentify, sequence.NewValue(7))
+		sequence.
+			Read[int](register.Next(sequence.NewValue(*identify)))
 
 		Convey("a read returns the stored value", func() {
 			query := store.NewQuery(subject, data.ActionRead, nil)
-			value := data.Read[int](register.Next(data.NewValue(*query)))
+			value := sequence.Read[int](register.Next(sequence.NewValue(*query)))
 
 			So(value, ShouldEqual, 7)
 		})
 
 		Convey("a write into the identified slot replaces the value", func() {
-			write := store.NewQuery(subject, data.ActionWrite, data.NewValue(9))
-			data.Read[int](register.Next(data.NewValue(*write)))
+			write := store.NewQuery(subject, data.ActionWrite, sequence.NewValue(9))
+			sequence.
+				Read[int](register.Next(sequence.NewValue(*write)))
 
 			query := store.NewQuery(subject, data.ActionRead, nil)
-			value := data.Read[int](register.Next(data.NewValue(*query)))
+			value := sequence.Read[int](register.Next(sequence.NewValue(*query)))
 
 			So(value, ShouldEqual, 9)
 			So(register.Error(), ShouldBeNil)
@@ -74,8 +78,9 @@ func TestRegister(t *testing.T) {
 
 		Convey("a write from an unidentified subject is a shape failure", func() {
 			stranger := &slot{id: 3}
-			write := store.NewQuery(stranger, data.ActionWrite, data.NewValue(9))
-			data.Read[int](register.Next(data.NewValue(*write)))
+			write := store.NewQuery(stranger, data.ActionWrite, sequence.NewValue(9))
+			sequence.
+				Read[int](register.Next(sequence.NewValue(*write)))
 
 			So(register.Error(), ShouldNotBeNil)
 		})
@@ -107,13 +112,14 @@ func TestRegisterPeers(t *testing.T) {
 			meas.Label = "BTC/USD"
 			meas.Metadata["peer-interest"] = "*"
 
-			identify := store.NewQuery(slots[index], data.ActionIdentify, data.NewValue(meas))
-			data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*identify)))
+			identify := store.NewQuery(slots[index], data.ActionIdentify, sequence.NewValue(meas))
+			sequence.
+				Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*identify)))
 		}
 
 		Convey("a read populates peers from matching slots", func() {
 			query := store.NewQuery(slots[0], data.ActionRead, nil)
-			val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query)))
+			val := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*query)))
 
 			So(val, ShouldNotBeNil)
 			So(len(val.Peers), ShouldEqual, 3)
@@ -125,7 +131,7 @@ func TestRegisterPeers(t *testing.T) {
 		Convey("peer limit restricts the scan range", func() {
 			query := store.NewQuery(slots[2], data.ActionRead, nil)
 			query.SetPeerLimit(2)
-			val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*query)))
+			val := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*query)))
 
 			So(val, ShouldNotBeNil)
 			So(len(val.Peers), ShouldEqual, 2)
@@ -135,7 +141,7 @@ func TestRegisterPeers(t *testing.T) {
 
 		Convey("a later write to a cloned working copy does not mutate a live peer snapshot", func() {
 			readPeer := store.NewQuery(slots[0], data.ActionRead, nil)
-			holder := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*readPeer)))
+			holder := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*readPeer)))
 			So(holder, ShouldNotBeNil)
 			So(len(holder.Peers), ShouldEqual, 3)
 
@@ -144,26 +150,27 @@ func TestRegisterPeers(t *testing.T) {
 			So(snapshot.Metrics["price"].Center, ShouldEqual, 101)
 
 			workingQuery := store.NewQuery(slots[1], data.ActionRead, nil)
-			working := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*workingQuery)))
+			working := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*workingQuery)))
 			So(working, ShouldNotBeNil)
 			working.Metrics["price"] = data.NewMetric[float64](
 				"price", data.UnitDimensionless, data.TimescaleInstantaneous, 999, 999,
 			)
 
-			write := store.NewQuery(slots[1], data.ActionWrite, data.NewValue(working))
-			data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*write)))
+			write := store.NewQuery(slots[1], data.ActionWrite, sequence.NewValue(working))
+			sequence.
+				Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*write)))
 
 			So(snapshot.Metrics["price"].Center, ShouldEqual, 101)
 
 			reread := store.NewQuery(slots[0], data.ActionRead, nil)
-			updated := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*reread)))
+			updated := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*reread)))
 			So(updated.Peers[0].Metrics["price"].Center, ShouldEqual, 999)
 		})
 
 		Convey("sequential read-write cycles update the slot value", func() {
 			for iterCount := 0; iterCount < 10; iterCount++ {
 				readQuery := store.NewQuery(slots[0], data.ActionRead, nil)
-				val := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*readQuery)))
+				val := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*readQuery)))
 				So(val, ShouldNotBeNil)
 
 				val.Metrics["price"] = data.NewMetric[float64](
@@ -171,12 +178,13 @@ func TestRegisterPeers(t *testing.T) {
 					float64(200+iterCount), float64(200+iterCount),
 				)
 
-				writeQuery := store.NewQuery(slots[0], data.ActionWrite, data.NewValue(val))
-				data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*writeQuery)))
+				writeQuery := store.NewQuery(slots[0], data.ActionWrite, sequence.NewValue(val))
+				sequence.
+					Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*writeQuery)))
 			}
 
 			finalQuery := store.NewQuery(slots[0], data.ActionRead, nil)
-			final := data.Read[*data.Measurement[float64]](register.Next(data.NewValue(*finalQuery)))
+			final := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*finalQuery)))
 			So(final, ShouldNotBeNil)
 			So(final.Metrics["price"].Center, ShouldEqual, 209)
 			So(register.Error(), ShouldBeNil)

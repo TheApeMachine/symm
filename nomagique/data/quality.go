@@ -1,7 +1,6 @@
 package data
 
 import (
-	"errors"
 	"iter"
 	"strconv"
 	"unsafe"
@@ -42,15 +41,16 @@ Quality owns that derivation. Support>1 is required before Mahalanobis
 overrides scalar SNR.
 */
 type Quality struct {
-	err error
+	*core.PrimitiveError
+
 	out QualityReading
 }
 
-func NewQuality() core.Primitive {
-	return &Quality{}
+func NewQuality() *Quality {
+	return &Quality{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Quality) Next(
+func (quality *Quality) Next(
 	in iter.Seq[unsafe.Pointer],
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -83,23 +83,13 @@ func (op *Quality) Next(
 				reading.Maturity = facts.Maturity
 			}
 
-			op.out = reading
+			quality.out = reading
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&quality.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Quality) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 func factsFromMetadata(metadata map[string]string) QualityFacts {

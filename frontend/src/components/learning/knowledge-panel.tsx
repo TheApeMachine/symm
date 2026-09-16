@@ -9,7 +9,18 @@ export const KnowledgePanel = () => (
 		/>
 		<Section.Body className="p-3">
 			<Typography.Mono>
-				Confidence: <span data-metric="confidence" data-format="percent">0.0%</span> · Contrast: <span data-metric="contrast" data-format="bits">0.00 bits</span> · Support: <span data-metric="support" data-format="integer">0</span> observations
+				Learned:{" "}
+				<span data-metric="decisions" data-format="integer">
+					0
+				</span>{" "}
+				· Evaluated:{" "}
+				<span data-metric="evaluated" data-format="integer">
+					0
+				</span>{" "}
+				· Accuracy:{" "}
+				<span data-metric="accuracy" data-format="percent">
+					—
+				</span>
 			</Typography.Mono>
 		</Section.Body>
 	</Section>

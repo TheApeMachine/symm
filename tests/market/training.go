@@ -7,13 +7,17 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/tests/venue"
 )
 
 // TrainingPrice supplies the fixture's explicit 0.1 percent fee, not a policy default.
 func TrainingPrice(ctx context.Context) *broker.Price {
-	price := broker.NewPrice(ctx, nil, nil)
+	conn := &venue.Conn{}
+	api := websocket.NewAPI(ctx, conn, conn, &websocket.FuturesLive{})
+	price := broker.NewPrice(ctx, api, &broker.Instrument{})
 	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.1)})
 	return price
 }

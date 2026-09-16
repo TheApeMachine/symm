@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -33,26 +34,26 @@ func NewRing[T any](n int, randomize bool) *Ring[T] {
 	}
 }
 
-func (op *Ring[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (ring *Ring[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := data.Read[Query[T]](in)
+		query := sequence.Read[Query[T]](in)
 
 		switch query.Action() {
 		case data.ActionWrite:
-			op.store = op.store.Next()
-			op.store.Value = query.payload
+			ring.store = ring.store.Next()
+			ring.store.Value = query.payload
 
-			if !yield(unsafe.Pointer(&op.store.Value)) {
+			if !yield(unsafe.Pointer(&ring.store.Value)) {
 				return
 			}
 		case data.ActionRead:
-			op.store = op.store.Next()
+			ring.store = ring.store.Next()
 
-			if !yield(unsafe.Pointer(&op.store.Value)) {
+			if !yield(unsafe.Pointer(&ring.store.Value)) {
 				return
 			}
 		default:
-			op.Error(core.ErrShape)
+			ring.Error(core.ErrShape)
 			return
 		}
 	}

@@ -3,17 +3,18 @@ package toxicity
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/errnie"
 	"iter"
 	"math"
 	"time"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type level3Input struct {
@@ -236,6 +237,8 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		input = peer
 	}
 
+	m.Pull(input)
+
 	bidPrice := input.Metrics["best_price:bid"].Raw
 	if bidPrice == 0 {
 		bidPrice = input.Metrics["best_bid"].Raw
@@ -267,7 +270,11 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 	}
 
 	if bidPrice >= askPrice {
-		m.Err = fmt.Errorf("toxicity: crossed touch (%f >= %f)", bidPrice, askPrice)
+		m.Err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("toxicity: crossed touch (%f >= %f)", bidPrice, askPrice),
+			nil,
+		))
 		return m
 	}
 
@@ -283,7 +290,7 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		At:       input.At,
 	}
 
-	for out := range level3.pipeline.Next(transport.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+	for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
 		res := (*level3Result)(out)
 
 		m.Metrics["best_price:bid"] = m.Metrics["best_price:bid"].Write(res.BidPrice)
@@ -321,8 +328,6 @@ func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float
 		m.Metrics["retreat_rate:ask"] = m.Metrics["retreat_rate:ask"].Write(res.RetreatAskRate)
 	}
 
-	m.Label = input.Label
-	m.At = input.At
 	m.Finalize()
 	return m
 }

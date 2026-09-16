@@ -1,9 +1,10 @@
 package market
 
 import (
+	"time"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
-	"time"
 )
 
 /*

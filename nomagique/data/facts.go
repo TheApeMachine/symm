@@ -28,24 +28,25 @@ this arrival's fact, never the prior one's. A failed classification sets the
 measurement's error and still yields.
 */
 type MetricGate struct {
-	err    error
+	*core.PrimitiveError
+
 	label  string
 	finite core.Primitive
 }
 
-func NewMetricGate(label string) core.Primitive {
-	return &MetricGate{label: label, finite: logic.NewFinite()}
+func NewMetricGate(label string) *MetricGate {
+	return &MetricGate{PrimitiveError: core.NewPrimitiveError(), label: label, finite: logic.NewFinite()}
 }
 
-func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (metricGate *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			m := *(**Measurement[float64])(arriving)
 
-			metric, holds := m.Metrics[op.label]
+			metric, holds := m.Metrics[metricGate.label]
 
 			if !holds {
-				m.Err = fmt.Errorf("%w: metric gate requires %s", core.ErrDomain, op.label)
+				m.Err = fmt.Errorf("%w: metric gate requires %s", core.ErrDomain, metricGate.label)
 
 				if !yield(arriving) {
 					return
@@ -62,9 +63,9 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			m.Metadata[MetadataSupport] = "0"
 
-			finite := drive[float64, bool](op.finite, &value)
+			finite := drive[float64, bool](metricGate.finite, &value)
 
-			if err := op.finite.Error(); err != nil {
+			if err := metricGate.finite.Error(); err != nil {
 				m.Err = err
 
 				if !yield(arriving) {
@@ -77,7 +78,7 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			if !finite || value < 0 {
 				m.Err = fmt.Errorf(
 					"%w: metric gate requires a finite non-negative %s",
-					core.ErrDomain, op.label,
+					core.ErrDomain, metricGate.label,
 				)
 
 				if !yield(arriving) {
@@ -87,21 +88,11 @@ func (op *MetricGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				continue
 			}
 
-			m.Metrics[op.label] = metric.Write(value)
+			m.Metrics[metricGate.label] = metric.Write(value)
 
 			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *MetricGate) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = fmt.Errorf("%w: %s", err, op.label)
-		}
-	}
-
-	return op.err
 }

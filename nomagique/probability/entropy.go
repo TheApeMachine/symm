@@ -1,7 +1,6 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -14,16 +13,17 @@ Entropy owns -sum(p log p). Zero mass contributes its limiting value zero;
 negative inputs retain the logarithm's undefined-domain result.
 */
 type Entropy struct {
-	err error
+	*core.PrimitiveError
+
 	acc float64
 	out float64
 }
 
-func NewEntropy() core.Primitive {
-	return &Entropy{}
+func NewEntropy() *Entropy {
+	return &Entropy{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Entropy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (entropy *Entropy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			mass := *(*float64)(arriving)
@@ -33,22 +33,12 @@ func (op *Entropy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				contribution = -mass * math.Log(mass)
 			}
 
-			op.acc += contribution
-			op.out = op.acc
+			entropy.acc += contribution
+			entropy.out = entropy.acc
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&entropy.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Entropy) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

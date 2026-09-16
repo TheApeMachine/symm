@@ -33,47 +33,47 @@ func NewWeightedWindow() *WeightedWindow {
 	return &WeightedWindow{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (window *WeightedWindow) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (weightedWindow *WeightedWindow) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for pointer := range input {
 			item := (*statistic.Weighted)(pointer)
-			window.buckets[window.length] = volumeBucket{count: 1}
-			window.buckets[window.length].Update(item.Value, item.Weight)
-			window.length++
-			window.compress()
-			before := window.total(0)
+			weightedWindow.buckets[weightedWindow.length] = volumeBucket{count: 1}
+			weightedWindow.buckets[weightedWindow.length].Update(item.Value, item.Weight)
+			weightedWindow.length++
+			weightedWindow.compress()
+			before := weightedWindow.total(0)
 
-			for window.cut() {
+			for weightedWindow.cut() {
 			}
 
-			after := window.total(0)
-			window.out = WindowReading{Value: item.Value, Capacity: after.Mass,
+			after := weightedWindow.total(0)
+			weightedWindow.out = WindowReading{Value: item.Value, Capacity: after.Mass,
 				Observations: after.Support(), ShedRatio: after.Mass / before.Mass}
 
-			if !yield(unsafe.Pointer(&window.out)) {
+			if !yield(unsafe.Pointer(&weightedWindow.out)) {
 				return
 			}
 		}
 	}
 }
 
-func (window *WeightedWindow) total(start int) statistic.WeightedMoments {
+func (weightedWindow *WeightedWindow) total(start int) statistic.WeightedMoments {
 	var total statistic.WeightedMoments
 
-	for index := start; index < window.length; index++ {
-		total.Merge(window.buckets[index].WeightedMoments)
+	for index := start; index < weightedWindow.length; index++ {
+		total.Merge(weightedWindow.buckets[index].WeightedMoments)
 	}
 
 	return total
 }
 
-func (window *WeightedWindow) cut() bool {
+func (weightedWindow *WeightedWindow) cut() bool {
 	var prefix statistic.WeightedMoments
-	all := window.total(0)
+	all := weightedWindow.total(0)
 
-	for index := 0; index < window.length-1; index++ {
-		prefix.Merge(window.buckets[index].WeightedMoments)
-		suffix := window.total(index + 1)
+	for index := 0; index < weightedWindow.length-1; index++ {
+		prefix.Merge(weightedWindow.buckets[index].WeightedMoments)
+		suffix := weightedWindow.total(index + 1)
 
 		// Each side needs two independent observations to define variance.
 		if prefix.Support() <= 1 || suffix.Support() <= 1 {
@@ -88,22 +88,22 @@ func (window *WeightedWindow) cut() bool {
 			continue
 		}
 
-		window.length = copy(window.buckets[:], window.buckets[index+1:window.length])
+		weightedWindow.length = copy(weightedWindow.buckets[:], weightedWindow.buckets[index+1:weightedWindow.length])
 		return true
 	}
 
 	return false
 }
 
-func (window *WeightedWindow) compress() {
-	for index := window.length - 1; index >= 2; index-- {
-		if window.buckets[index].count != window.buckets[index-2].count {
+func (weightedWindow *WeightedWindow) compress() {
+	for index := weightedWindow.length - 1; index >= 2; index-- {
+		if weightedWindow.buckets[index].count != weightedWindow.buckets[index-2].count {
 			continue
 		}
 
-		window.buckets[index-2].Merge(window.buckets[index-1].WeightedMoments)
-		window.buckets[index-2].count += window.buckets[index-1].count
-		copy(window.buckets[index-1:], window.buckets[index:window.length])
-		window.length--
+		weightedWindow.buckets[index-2].Merge(weightedWindow.buckets[index-1].WeightedMoments)
+		weightedWindow.buckets[index-2].count += weightedWindow.buckets[index-1].count
+		copy(weightedWindow.buckets[index-1:], weightedWindow.buckets[index:weightedWindow.length])
+		weightedWindow.length--
 	}
 }

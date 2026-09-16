@@ -2,15 +2,16 @@ package hawkes
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 	"unsafe"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -96,8 +97,8 @@ func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measureme
 		return measurement
 	}
 
-	res := data.Read[*data.Measurement[float64]](trade.pipeline.Next(
-		transport.NewOne(unsafe.Pointer(&measurement)).Next(nil),
+	res := sequence.Read[*data.Measurement[float64]](trade.pipeline.Next(sequence.
+		NewOne(unsafe.Pointer(&measurement)).Next(nil),
 	))
 
 	if res == nil {

@@ -142,102 +142,102 @@ func newObservationContext(stream arrivalStream, horizonSec float64) (fitContext
 	}, true
 }
 
-func (context fitContext) withSearchGrid() (fitContext, bool) {
+func (fitContext fitContext) withSearchGrid() (fitContext, bool) {
 	tune := arrivalTune{
-		totalEvents: context.totalEvents,
-		eventsX:     context.eventsX,
-		eventsY:     context.eventsY,
+		totalEvents: fitContext.totalEvents,
+		eventsX:     fitContext.eventsX,
+		eventsY:     fitContext.eventsY,
 	}
-	localMin, localMax := tune.localScaleRange(context.gapCV)
+	localMin, localMax := tune.localScaleRange(fitContext.gapCV)
 	var err error
 
-	context.betaCandidates, err = logspace(
-		1/context.gapUpperSec, 1/context.gapLowerSec, context.scanSteps,
+	fitContext.betaCandidates, err = logspace(
+		1/fitContext.gapUpperSec, 1/fitContext.gapLowerSec, fitContext.scanSteps,
 	)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	context.branchSelfCandidates, err = linspace(
-		context.branchFloor,
-		context.branchCeiling*tune.selfBranchShare(),
-		context.branchScanSteps,
+	fitContext.branchSelfCandidates, err = linspace(
+		fitContext.branchFloor,
+		fitContext.branchCeiling*tune.selfBranchShare(),
+		fitContext.branchScanSteps,
 	)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	context.branchCrossCandidates, err = linspace(
-		0, context.branchCeiling, context.branchScanSteps,
+	fitContext.branchCrossCandidates, err = linspace(
+		0, fitContext.branchCeiling, fitContext.branchScanSteps,
 	)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	context.localScales, err = linspace(localMin, localMax, context.scanSteps)
+	fitContext.localScales, err = linspace(localMin, localMax, fitContext.scanSteps)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	context.muXFactors, err = tune.muUncertaintyFactors(context.eventsX)
+	fitContext.muXFactors, err = tune.muUncertaintyFactors(fitContext.eventsX)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	context.muYFactors, err = tune.muUncertaintyFactors(context.eventsY)
+	fitContext.muYFactors, err = tune.muUncertaintyFactors(fitContext.eventsY)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	return context, true
+	return fitContext, true
 }
 
 /*
 enoughEvents reports whether the stream satisfies context minima at horizon.
 */
-func (context fitContext) enoughEvents(stream arrivalStream) bool {
-	buyCount, sellCount := stream.observationCounts(context.throughSec)
+func (fitContext fitContext) enoughEvents(stream arrivalStream) bool {
+	buyCount, sellCount := stream.observationCounts(fitContext.throughSec)
 	total := buyCount + sellCount
 
-	if total < context.minFitEvents {
+	if total < fitContext.minFitEvents {
 		return false
 	}
 
-	if buyCount < context.minPerSide {
+	if buyCount < fitContext.minPerSide {
 		return false
 	}
 
-	return sellCount >= context.minPerSide
+	return sellCount >= fitContext.minPerSide
 }
 
 /*
 muXStart returns the event-rate seed for stream x.
 */
-func (context fitContext) muXStart() float64 {
-	return float64(context.eventsX) / context.spanSec
+func (fitContext fitContext) muXStart() float64 {
+	return float64(fitContext.eventsX) / fitContext.spanSec
 }
 
 /*
 muYStart returns the event-rate seed for stream y.
 */
-func (context fitContext) muYStart() float64 {
-	return float64(context.eventsY) / context.spanSec
+func (fitContext fitContext) muYStart() float64 {
+	return float64(fitContext.eventsY) / fitContext.spanSec
 }
 
 /*
 poissonFit returns the no-excitation bivariate baseline for this stream.
 */
-func (context fitContext) poissonFit() bivariateFit {
+func (fitContext fitContext) poissonFit() bivariateFit {
 	fit := bivariateFit{
-		muX:  context.muXStart(),
-		muY:  context.muYStart(),
-		beta: 1 / context.medianGapSec,
+		muX:  fitContext.muXStart(),
+		muY:  fitContext.muYStart(),
+		beta: 1 / fitContext.medianGapSec,
 	}
 	fit.intensityX = fit.muX
 	fit.intensityY = fit.muY
@@ -248,8 +248,8 @@ func (context fitContext) poissonFit() bivariateFit {
 /*
 crossBranchCap returns the cross-excitation ceiling given a diagonal branch.
 */
-func (context fitContext) crossBranchCap(diagonalBranch float64) float64 {
-	headroom := context.branchCeiling - diagonalBranch
+func (fitContext fitContext) crossBranchCap(diagonalBranch float64) float64 {
+	headroom := fitContext.branchCeiling - diagonalBranch
 
 	if headroom <= 0 {
 		return 0
@@ -258,33 +258,33 @@ func (context fitContext) crossBranchCap(diagonalBranch float64) float64 {
 	return headroom
 }
 
-func (tune arrivalTune) minFitEvents() int {
-	if tune.totalEvents <= 0 {
+func (arrivalTune arrivalTune) minFitEvents() int {
+	if arrivalTune.totalEvents <= 0 {
 		return bivariateParamCount * 2
 	}
 
 	identifiability := bivariateParamCount * 2
 	rateScaled := int(math.Ceil(
-		math.Sqrt(float64(tune.totalEvents)) * math.Log(float64(tune.totalEvents)+math.E),
+		math.Sqrt(float64(arrivalTune.totalEvents)) * math.Log(float64(arrivalTune.totalEvents)+math.E),
 	))
 
 	if rateScaled < identifiability {
 		return identifiability
 	}
 
-	if rateScaled > tune.totalEvents {
-		return tune.totalEvents
+	if rateScaled > arrivalTune.totalEvents {
+		return arrivalTune.totalEvents
 	}
 
 	return rateScaled
 }
 
-func (tune arrivalTune) minEventsPerSide() int {
-	if tune.totalEvents <= 0 {
+func (arrivalTune arrivalTune) minEventsPerSide() int {
+	if arrivalTune.totalEvents <= 0 {
 		return 2
 	}
 
-	perSide := int(math.Ceil(float64(tune.totalEvents) / 4))
+	perSide := int(math.Ceil(float64(arrivalTune.totalEvents) / 4))
 
 	if perSide < 2 {
 		return 2
@@ -293,12 +293,12 @@ func (tune arrivalTune) minEventsPerSide() int {
 	return perSide
 }
 
-func (tune arrivalTune) scanSteps() int {
-	if tune.totalEvents <= 1 {
+func (arrivalTune arrivalTune) scanSteps() int {
+	if arrivalTune.totalEvents <= 1 {
 		return 3
 	}
 
-	steps := int(math.Ceil(math.Log2(float64(tune.totalEvents))))
+	steps := int(math.Ceil(math.Log2(float64(arrivalTune.totalEvents))))
 
 	if steps < 3 {
 		return 3
@@ -307,20 +307,20 @@ func (tune arrivalTune) scanSteps() int {
 	return steps
 }
 
-func (tune arrivalTune) branchFloor() float64 {
-	if tune.totalEvents <= 0 {
+func (arrivalTune arrivalTune) branchFloor() float64 {
+	if arrivalTune.totalEvents <= 0 {
 		return 0
 	}
 
-	return 1 / math.Sqrt(float64(tune.totalEvents))
+	return 1 / math.Sqrt(float64(arrivalTune.totalEvents))
 }
 
-func (tune arrivalTune) branchCeiling() float64 {
-	if tune.totalEvents <= 0 {
+func (arrivalTune arrivalTune) branchCeiling() float64 {
+	if arrivalTune.totalEvents <= 0 {
 		panic("hawkes: branchCeiling requires positive event mass")
 	}
 
-	margin := 1 / math.Sqrt(float64(tune.totalEvents))
+	margin := 1 / math.Sqrt(float64(arrivalTune.totalEvents))
 
 	if margin >= criticalBranch {
 		return criticalBranch / 2
@@ -329,9 +329,9 @@ func (tune arrivalTune) branchCeiling() float64 {
 	return criticalBranch - margin
 }
 
-func (tune arrivalTune) branchScanSteps() int {
-	base := tune.scanSteps()
-	ratio := float64(tune.totalEvents) / float64(bivariateParamCount)
+func (arrivalTune arrivalTune) branchScanSteps() int {
+	base := arrivalTune.scanSteps()
+	ratio := float64(arrivalTune.totalEvents) / float64(bivariateParamCount)
 
 	if ratio <= float64(base) {
 		return base
@@ -346,23 +346,23 @@ func (tune arrivalTune) branchScanSteps() int {
 	return steps
 }
 
-func (tune arrivalTune) selfBranchShare() float64 {
-	if tune.totalEvents <= 0 {
+func (arrivalTune arrivalTune) selfBranchShare() float64 {
+	if arrivalTune.totalEvents <= 0 {
 		return 0
 	}
 
-	minorSide := float64(tune.eventsX)
+	minorSide := float64(arrivalTune.eventsX)
 
-	if tune.eventsY < tune.eventsX {
-		minorSide = float64(tune.eventsY)
+	if arrivalTune.eventsY < arrivalTune.eventsX {
+		minorSide = float64(arrivalTune.eventsY)
 	}
 
-	balance := minorSide / float64(tune.totalEvents)
+	balance := minorSide / float64(arrivalTune.totalEvents)
 
-	return balance + (1-balance)/math.Sqrt(float64(tune.totalEvents))
+	return balance + (1-balance)/math.Sqrt(float64(arrivalTune.totalEvents))
 }
 
-func (tune arrivalTune) localScaleRange(gapCV float64) (minScale, maxScale float64) {
+func (arrivalTune arrivalTune) localScaleRange(gapCV float64) (minScale, maxScale float64) {
 	if gapCV <= 0 {
 		return 1 - 1/math.Sqrt(8), 1 + 1/math.Sqrt(8)
 	}
@@ -383,7 +383,7 @@ tradeWindowDuration is the retention horizon the fit's own event-rate memory
 implies: enough median gaps, scaled by the observed count's own log-memory
 factor, to gather minFitEvents worth of history.
 */
-func (tune arrivalTune) tradeWindowDuration(
+func (arrivalTune arrivalTune) tradeWindowDuration(
 	medianGapSec float64,
 	minFitEvents int,
 ) time.Duration {
@@ -391,7 +391,7 @@ func (tune arrivalTune) tradeWindowDuration(
 		return 0
 	}
 
-	memoryFactor := math.Log(float64(tune.totalEvents) + math.E)
+	memoryFactor := math.Log(float64(arrivalTune.totalEvents) + math.E)
 
 	return time.Duration(
 		medianGapSec * memoryFactor * float64(minFitEvents) * float64(time.Second),
@@ -403,12 +403,12 @@ muUncertaintyFactors returns multiplicative perturbations around a baseline
 rate, scaled by that side's own sampling uncertainty (1/sqrt(count)), for
 multi-start seeding.
 */
-func (tune arrivalTune) muUncertaintyFactors(count int) ([]float64, error) {
+func (arrivalTune arrivalTune) muUncertaintyFactors(count int) ([]float64, error) {
 	if count <= 0 {
 		return []float64{1}, nil
 	}
 
 	spread := 2 / math.Sqrt(float64(count))
 
-	return linspace(1-spread, 1+spread, tune.scanSteps())
+	return linspace(1-spread, 1+spread, arrivalTune.scanSteps())
 }

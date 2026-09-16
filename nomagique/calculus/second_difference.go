@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -21,33 +20,24 @@ type SecondDifferenceInput struct {
 SecondDifference owns 2*center - left - right.
 */
 type SecondDifference struct {
-	err error
+	*core.PrimitiveError
+
 	out float64
 }
 
-func NewSecondDifference() core.Primitive {
-	return &SecondDifference{}
+func NewSecondDifference() *SecondDifference {
+	return &SecondDifference{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *SecondDifference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (secondDifference *SecondDifference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := *(*SecondDifferenceInput)(arriving)
-			op.out = input.Center + input.Center - input.Left - input.Right
+			secondDifference.out = input.Center + input.Center - input.Left - input.Right
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&secondDifference.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *SecondDifference) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

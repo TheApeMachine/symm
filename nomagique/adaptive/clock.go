@@ -1,14 +1,13 @@
 package adaptive
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -16,7 +15,8 @@ Clock normalizes |value| by the estimator's inclusive mean and applies its
 configured pace. A non-positive mean leaves the pace unscaled.
 */
 type Clock struct {
-	err     error
+	*core.PrimitiveError
+
 	moments core.Primitive
 	pace    core.Primitive
 	out     float64
@@ -25,25 +25,39 @@ type Clock struct {
 func NewClock(
 	moments core.Primitive,
 	pace core.Primitive,
-) core.Primitive {
-	return &Clock{moments: moments, pace: pace}
+) *Clock {
+	return &Clock{PrimitiveError: core.NewPrimitiveError(), moments: moments, pace: pace}
 }
 
-func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (clock *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for readingPtr := range op.moments.Next(in) {
+		defer func() {
+
+			if clock.moments != nil {
+				if err := clock.moments.Error(); err != nil {
+					clock.Error(err)
+				}
+			}
+
+			if clock.pace != nil {
+				if err := clock.pace.Error(); err != nil {
+					clock.Error(err)
+				}
+			}
+		}()
+		for readingPtr := range clock.moments.Next(in) {
 			current := *(*statistic.MomentReading)(readingPtr)
-			paceValEval := transport.NewEvaluate(op.pace)
+			paceValEval := clock.pace
 			var paceVal float64
 
-			for out := range paceValEval.Next(transport.NewValues(current.Value).Next(nil)) {
+			for out := range paceValEval.Next(sequence.NewValues(current.Value).Next(nil)) {
 				paceVal = *(*float64)(out)
 			}
 
 			err := paceValEval.Error()
 
 			if err != nil {
-				op.err = errors.Join(op.err, err)
+				clock.Error(err)
 				return
 			}
 
@@ -53,33 +67,11 @@ func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				ratio = math.Abs(current.Value) / current.Mean
 			}
 
-			op.out = ratio * paceVal
+			clock.out = ratio * paceVal
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&clock.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Clock) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.moments != nil {
-		if err := op.moments.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.pace != nil {
-		if err := op.pace.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -39,12 +39,12 @@ rejected planner feature, say — with nothing left to say which contract broke.
 Draining the buffer each step is what turns that into the cell index and the
 conserved quantities the kernel actually refused.
 */
-func (fluid *workspace) drainDebug() error {
-	if fluid.dbgHead == nil || fluid.dbgWords == nil {
+func (workspace *workspace) drainDebug() error {
+	if workspace.dbgHead == nil || workspace.dbgWords == nil {
 		return nil
 	}
 
-	head := fluid.dbgHead.UInt32Slice()
+	head := workspace.dbgHead.UInt32Slice()
 
 	if len(head) == 0 || head[0] == 0 {
 		return nil
@@ -52,7 +52,7 @@ func (fluid *workspace) drainDebug() error {
 
 	recorded := head[0]
 	head[0] = 0
-	words := fluid.dbgWords.UInt32Slice()
+	words := workspace.dbgWords.UInt32Slice()
 	stored := min(recorded, uint32(dbgCapacity))
 	rejected := 0
 	firstRejection := ""

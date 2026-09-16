@@ -2,16 +2,19 @@ package strategy
 
 import (
 	"context"
-	"github.com/theapemachine/errnie"
 
-	"unsafe"
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/strategy/impulse"
 )
 
@@ -32,9 +35,9 @@ func LegalActions(holding bool) []Action {
 }
 
 /*
-Training composes the live owner-addressed impulse map with precursor encoding
-and one shared radix trie. Complete historical tapes train the trie through
-an independent map; the live path only evaluates current regions.
+Training reads the impulse map and addresses one shared radix trie. The inference
+pipeline compares the two observed action counts. Ties select wait;
+unseen contexts produce no action. The cold learner owns trie writes.
 Training does not submit orders: quoted outcome evidence is not execution proof.
 */
 type Training struct {
@@ -42,19 +45,45 @@ type Training struct {
 	measurement *data.Measurement[float64]
 	precursor   *Precursor
 	pipeline    *nomagique.Number
-	engine      *cognition.Engine
+	model       *store.Radix[float64]
+	keys        [2][]byte
 	Rehearsal   *Rehearsal
-	space       *impulse.Map
+	Grid        *impulse.Map
 	sequence    int64
 }
 
 func NewTraining(ctx context.Context, epoch int64, price *broker.Price) *Training {
 	training := &Training{
-		precursor: NewPrecursor(), space: impulse.NewMap(),
-		engine: cognition.NewEngine(cognition.Config{MemoryScale: 1}),
+		precursor: NewPrecursor(), Grid: impulse.NewMap(),
+		model: store.NewRadix[float64](),
 	}
-	training.Rehearsal = NewRehearsal(ctx, epoch, price, training.engine)
-	training.pipeline = nomagique.NewNumber(training.space, training.precursor, training.engine)
+
+	training.Rehearsal = NewRehearsal(ctx, epoch, price, training.model)
+
+	training.pipeline = nomagique.NewNumber(
+		store.NewKeyQuery[float64](
+			&training.keys[1],
+			data.ActionRead,
+		),
+		training.model, sequence.
+			NewZip2[float64](nomagique.NewNumber(
+			store.NewKeyQuery[float64](
+				&training.keys[0],
+				data.ActionRead,
+			),
+			training.model,
+		).Next(nil)), logic.NewGate(
+			nomagique.NewNumber(
+				arithmetic.NewAdd(), sequence.
+					NewZip2[float64](sequence.
+					NewValues(0.0).Next(nil),
+				), logic.NewGreater(),
+			),
+			logic.NewGreater(),
+			transport.NewDiscard(),
+		),
+	)
+
 	training.Register()
 	training.System = runtime.NewSystem(ctx, "training")
 	return training
@@ -79,17 +108,6 @@ func (training *Training) Register() *data.Measurement[float64] {
 		"steps":           data.NewMetric[float64]("steps", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"decisions":       data.NewMetric[float64]("decisions", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
 		"resolved":        data.NewMetric[float64]("resolved", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-		"confidence":      data.NewMetric[float64]("confidence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"contrast":        data.NewMetric[float64]("contrast", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"surprisal":       data.NewMetric[float64]("surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1),
-		"ambiguity":       data.NewMetric[float64]("ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"action":          data.NewMetric[float64]("action", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-		"win_rate":        data.NewMetric[float64]("win_rate", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
-		"edge":            data.NewMetric[float64]("edge", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"progress":        data.NewMetric[float64]("progress", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
-		"accuracy":        data.NewMetric[float64]("accuracy", data.UnitPercent, data.TimescaleInstantaneous, 0, 1),
-		"support":         data.NewMetric[float64]("support", data.UnitCount, data.TimescaleInstantaneous, 0, 1),
-		"quality":         data.NewMetric[float64]("quality", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
 	})
 
 	training.measurement.Label = "learner"
@@ -121,43 +139,48 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		current.Metrics["unsupported"] = current.Metrics["unsupported"].Write(float64(reading.Unsupported))
 		current.Metrics["evaluated"] = current.Metrics["evaluated"].Write(float64(reading.Predicted))
 		if reading.Entered > 0 {
-			current.Metrics["edge"] = current.Metrics["edge"].Write(reading.Return / float64(reading.Entered))
-			current.Metrics["win_rate"] = current.Metrics["win_rate"].Write(float64(reading.Profitable) / float64(reading.Entered))
+			current.Metrics["edge"] = data.Metric[float64]{Label: "edge"}.Write(reading.Return / float64(reading.Entered))
+			current.Metrics["win_rate"] = data.Metric[float64]{Label: "win_rate"}.Write(float64(reading.Profitable) / float64(reading.Entered))
 		}
 		if reading.Predicted > 0 {
-			current.Metrics["accuracy"] = current.Metrics["accuracy"].Write(float64(reading.Correct) / float64(reading.Predicted))
+			current.Metrics["accuracy"] = data.Metric[float64]{Label: "accuracy"}.Write(float64(reading.Correct) / float64(reading.Predicted))
 		}
 	}
 
 	current.Metrics["previous_input"] = current.Metrics["previous_input"].Write(float64(training.sequence))
 	current.Metrics["input_count"] = current.Metrics["input_count"].Write(float64(len(measurement.Peers)))
-	input := func(yield func(unsafe.Pointer) bool) { yield(unsafe.Pointer(measurement)) }
+	if err := training.Grid.Step(measurement); err != nil {
+		current.Err = err
+		training.Error(err)
+		training.Transition(runtime.ERROR)
+		return current
+	}
 
-	for output := range training.pipeline.Next(input) {
-		evaluation := *(*cognition.Evaluation)(output)
-		current.Label = training.space.Current.Symbol
-		current.Result = training.space.Current
-		current.SeqIdx = measurement.SeqIdx
-		current.At = training.space.Current.At
+	delete(current.Metrics, "action")
+
+	for _, market := range training.Grid.Active {
+		if market.Sequence != measurement.SeqIdx {
+			continue
+		}
+		current.Label = market.Symbol
+		current.SeqIdx, current.At = measurement.SeqIdx, market.At
 		current.Metrics["steps"] = current.Metrics["steps"].Write(current.Metrics["steps"].Raw + 1)
-		current.Metrics["support"] = current.Metrics["support"].Write(float64(evaluation.Support))
-		current.Metrics["confidence"] = current.Metrics["confidence"].Write(evaluation.Confidence)
-		current.Metrics["contrast"] = current.Metrics["contrast"].Write(evaluation.Contrast)
-		current.Metrics["surprisal"] = current.Metrics["surprisal"].Write(evaluation.Surprisal)
-		current.Metrics["ambiguity"] = current.Metrics["ambiguity"].Write(evaluation.Ambiguity)
-		action := Action(evaluation.WinnerClass)
-		actionValue := 0.0
-
-		if action == ActionEnter {
-			actionValue = 1
+		delete(current.Metrics, "action")
+		key := training.precursor.Encode(&market.Impulse)
+		if len(key) == 0 {
+			continue
 		}
-
-		if action == ActionExit {
-			actionValue = 2
+		training.keys[0] = append(training.keys[0][:0], key...)
+		training.keys[0] = append(training.keys[0], 0)
+		training.keys[1] = append(training.keys[1][:0], key...)
+		training.keys[1] = append(training.keys[1], 1)
+		for output := range training.pipeline.Next(nil) {
+			action := 0.0
+			if *(*bool)(output) {
+				action = 1
+			}
+			current.Metrics["action"] = data.Metric[float64]{Label: "action", Raw: action}
 		}
-
-		current.Metrics["action"] = current.Metrics["action"].Write(actionValue)
-
 	}
 
 	if err := training.pipeline.Error(); err != nil {
@@ -166,7 +189,7 @@ func (training *Training) Step(measurement *data.Measurement[float64]) *data.Mea
 		training.Transition(runtime.ERROR)
 	}
 
-	current.Metrics["invalid_inputs"] = current.Metrics["invalid_inputs"].Write(float64(training.space.Invalid))
+	current.Metrics["invalid_inputs"] = current.Metrics["invalid_inputs"].Write(float64(training.Grid.Invalid))
 	training.sequence = measurement.SeqIdx
 	training.measurement = current
 	return current

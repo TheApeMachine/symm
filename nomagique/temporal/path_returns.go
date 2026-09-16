@@ -1,12 +1,11 @@
 package temporal
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -29,35 +28,35 @@ PathReturns owns decoding one arriving price path into its returns and energy
 by composing LogReturns over the path's arrivals.
 */
 type PathReturns struct {
-	err error
+	*core.PrimitiveError
 }
 
 /*
 NewPathReturns creates a new PathReturns primitive.
 */
-func NewPathReturns() core.Primitive {
-	return &PathReturns{}
+func NewPathReturns() *PathReturns {
+	return &PathReturns{PrimitiveError: core.NewPrimitiveError()}
 }
 
 /*
 Next decodes each arriving price path with a fresh LogReturns run and yields
 the collected returns with their summed squared values.
 */
-func (op *PathReturns) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (pathReturns *PathReturns) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			path := (*PricePath)(arriving)
 			decoder := NewLogReturns()
 			out := ReturnPath{}
 
-			for returnPtr := range decoder.Next(transport.NewValues(path.Prices...).Next(nil)) {
+			for returnPtr := range decoder.Next(sequence.NewValues(path.Prices...).Next(nil)) {
 				value := *(*LogReturn)(returnPtr)
 				out.Returns = append(out.Returns, value)
 				out.Energy += value.Value * value.Value
 			}
 
 			if err := decoder.Error(); err != nil {
-				op.err = errors.Join(op.err, err)
+				pathReturns.Error(err)
 				return
 			}
 
@@ -66,17 +65,4 @@ func (op *PathReturns) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			}
 		}
 	}
-}
-
-/*
-Error joins every error it observes.
-*/
-func (op *PathReturns) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

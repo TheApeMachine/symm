@@ -7,7 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -16,7 +16,7 @@ drive evaluates one scalar payload through one primitive.
 func drive[From, To any](op core.Primitive, payload *From) To {
 	var answer To
 
-	for out := range op.Next(transport.NewOne(unsafe.Pointer(payload)).Next(nil)) {
+	for out := range op.Next(sequence.NewOne(unsafe.Pointer(payload)).Next(nil)) {
 		answer = *(*To)(out)
 	}
 

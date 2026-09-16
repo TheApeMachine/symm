@@ -1,7 +1,6 @@
 package temporal
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,40 +11,31 @@ import (
 Spacings owns consecutive timestamp differences within one delivery run.
 */
 type Spacings struct {
-	err      error
+	*core.PrimitiveError
+
 	previous int64
 	seen     bool
 	out      float64
 }
 
-func NewSpacings() core.Primitive {
-	return &Spacings{}
+func NewSpacings() *Spacings {
+	return &Spacings{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Spacings) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (spacings *Spacings) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			at := *(*int64)(arriving)
 
-			if op.seen {
-				op.out = float64(at - op.previous)
+			if spacings.seen {
+				spacings.out = float64(at - spacings.previous)
 
-				if !yield(unsafe.Pointer(&op.out)) {
+				if !yield(unsafe.Pointer(&spacings.out)) {
 					return
 				}
 			}
 
-			op.previous, op.seen = at, true
+			spacings.previous, spacings.seen = at, true
 		}
 	}
-}
-
-func (op *Spacings) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

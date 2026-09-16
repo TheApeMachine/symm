@@ -1,7 +1,6 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -14,14 +13,14 @@ Erfc owns one field operation. What it hands over is the complementary error
 function of each arrival, operating in-place on the wire pointer.
 */
 type Erfc struct {
-	err error
+	*core.PrimitiveError
 }
 
-func NewErfc() core.Primitive {
-	return &Erfc{}
+func NewErfc() *Erfc {
+	return &Erfc{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *Erfc) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (erfc *Erfc) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			in := (*float64)(arriving)
@@ -32,14 +31,4 @@ func (op *Erfc) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Erfc) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
