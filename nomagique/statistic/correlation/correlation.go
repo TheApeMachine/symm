@@ -18,13 +18,10 @@ type CorrelationInput struct {
 }
 
 /*
-Correlation owns covariance / sqrt(left energy * right energy). Empty or
-zero-energy normalization is undefined.
+Correlation normalizes covariance by sqrt(left energy * right energy).
 */
 type Correlation struct {
 	*core.PrimitiveError
-
-	out float64
 }
 
 func NewCorrelation() *Correlation {
@@ -36,11 +33,13 @@ func (correlation *Correlation) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*CorrelationInput)(arriving)
-			scale := math.Sqrt(input.LeftEnergy * input.RightEnergy)
-			correlation.out = input.Covariance / scale
+			estimate := (*LagEstimate)(arriving)
+			scale := math.Sqrt(estimate.LeftEnergy * estimate.RightEnergy)
 
-			if !yield(unsafe.Pointer(&correlation.out)) {
+			out := *estimate
+			out.Correlation = estimate.Covariance / scale
+
+			if !yield(unsafe.Pointer(&out)) {
 				return
 			}
 		}

@@ -3,7 +3,7 @@
 > **nomagique.Number**  
 > *no, magic, number*
 
-`nomagique` is a pure streaming composable algebra for high-throughput, real-time market calculation and machine learning.
+`nomagique` is a pure streaming composable algebra for high-throughput, real-time calculation, computation and machine learning.
 
 Every component in `nomagique` conforms to a single universal transformation contract. There are no arbitrary thresholds, no hardcoded polling intervals, no magic multipliers, and no procedural glue code. Every value is derived; every transformation is an atomic primitive; every system is a composition.
 
@@ -11,11 +11,12 @@ Every component in `nomagique` conforms to a single universal transformation con
 
 ## 1. What nomagique Is
 
-At its core, `nomagique` is built on three foundational pillars:
+At its core, `nomagique` is built on some foundational pillars:
 
 1. **A Composable Streaming Algebra**: Everything operates on Go 1.23+ push iterators (`iter.Seq[unsafe.Pointer]`). Primitives connect end-to-end like mathematical operators. The output of one primitive directly feeds the input of the next without intermediate memory allocations or copying.
-2. **No Magic Numbers**: Market belief, statistical baselines, horizons, confidence intervals, and regime shifts must be derived from honest market data and measured uncertainty—never hardcoded constants, heuristic thresholds, or fake fallback defaults.
+2. **No Magic Numbers**: Belief, statistical baselines, horizons, confidence intervals, and regime shifts must be derived from honest data and measured uncertainty—never hardcoded constants, heuristic thresholds, or fake fallback defaults.
 3. **Radical Minimalism**: Every primitive performs exactly **one** mathematical, structural, or transport transformation, and does it completely.
+4. **No Domain Leakage**: This package will be extracted into a stand-alone package to be used in many projects, it is not specific to markets, finance, or crypto. Domain specific language must not leak into nomagique. It is about computation, logic, data, etc. All generically conceptualized.
 
 ### The Universal Contract
 
@@ -179,6 +180,18 @@ When working in `nomagique`, follow these rules to the letter:
 - No single-character variable names except `t *testing.T` and `b *testing.B`.
 - Returned errors pass through `errnie.Error`.
 - No NaN or Inf checks, no fallback defaults, no synthetic baseline fudging.
+
+### Rule 5: Algo and Equations are Pre-Composed Primitive Pipelines
+- Composition **only** and never any implementation code.
+- Equations are expressed as a pipeline of existing primitives.
+- Algo is like Equation, with the added restriction that it may only contain well-known, named algorithms
+
+## Rule 6: "Pre-Existing" Does Not Negate the Rules
+- Anything that breaks the rules must be cleaned up, according to the rules.
+- Rule-breaking, pre-existing code is "technical debt" and must be refactored.
+- It is **not** an invitation to: start breaking the rules, use the rule-breaking pieces, ignore the rule-breaking pieces.
+- Observing a rule-breaking piece of code equates to ownership, and the responsibility to resolve the technical debt.
+- Resolution may **never ever under any circumstance** diminish the functionality.
 
 ---
 

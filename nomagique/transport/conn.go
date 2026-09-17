@@ -2,7 +2,6 @@ package transport
 
 import (
 	"iter"
-	"reflect"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
@@ -20,17 +19,8 @@ type Conn[T interface {
 	comparable
 }, U any] struct {
 	*core.PrimitiveError
-	once *Once
-}
-
-func isNil(primitive core.Primitive) bool {
-	if primitive == nil {
-		return true
-	}
-
-	val := reflect.ValueOf(primitive)
-
-	return val.Kind() == reflect.Pointer && val.IsNil()
+	once    *Once
+	address *Address[T]
 }
 
 func NewConn[T interface {
@@ -40,23 +30,18 @@ func NewConn[T interface {
 	host core.Primitive,
 	interests ...U,
 ) *Conn[T, U] {
-	if isNil(host) {
-		return &Conn[T, U]{
-			PrimitiveError: core.NewPrimitiveError(),
-			once:           NewOnce(sequence.NewValues[U]()),
-		}
-	}
-
 	stages := make([]core.Primitive, 0, 3)
 
 	if len(interests) > 0 {
 		stages = append(stages, sequence.NewValues(interests...))
 	}
 
+	address := NewAddress[T]()
+
 	stages = append(
 		stages,
 		core.NewQuery[T, U](
-			NewAddress[T](),
+			address,
 			core.Identify,
 		),
 		host,
@@ -65,9 +50,22 @@ func NewConn[T interface {
 	return &Conn[T, U]{
 		PrimitiveError: core.NewPrimitiveError(),
 		once:           NewOnce(nomagique.NewNumber(stages...)),
+		address:        address,
 	}
 }
 
 func (conn *Conn[T, U]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return conn.once.Next(in)
+}
+
+func (conn *Conn[T, U]) Identity() T {
+	return conn.address.Identity()
+}
+
+func (conn *Conn[T, U]) Identify(identity T) core.Identifiable[T] {
+	return conn.address.Identify(identity)
+}
+
+func (conn *Conn[T, U]) Connect(primitive core.Primitive) {
+	conn.address.Connect(primitive)
 }

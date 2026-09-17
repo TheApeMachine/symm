@@ -11,19 +11,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/logic"
 )
 
-/*
-drive pushes one payload pointer through one primitive and returns the
-answer the primitive yielded.
-*/
-func drive[From, To any](op core.Primitive, payload *From) To {
-	var answer To
-
-	for out := range op.Next(sequence.NewOne(unsafe.Pointer(payload)).Next(nil)) {
-		answer = *(*To)(out)
-	}
-
-	return answer
-}
 
 /*
 Gate classifies the arrival: it reads the last price the feed wrote, consumes
@@ -67,7 +54,12 @@ func (gate *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			m.Metadata[data.MetadataSupport] = "0"
 
-			if holds := drive[float64, bool](gate.finite, &last); !holds || last < 0 {
+			var holds bool
+			for out := range gate.finite.Next(sequence.NewOne(unsafe.Pointer(&last)).Next(nil)) {
+				holds = *(*bool)(out)
+			}
+
+			if !holds || last < 0 {
 				m.Err = fmt.Errorf("%w: correlation: finite non-negative last price required", core.ErrDomain)
 
 				if !yield(arriving) {

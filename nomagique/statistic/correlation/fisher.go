@@ -5,7 +5,11 @@ import (
 	"math"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
@@ -36,11 +40,26 @@ Fisher owns that approximation.
 type Fisher struct {
 	*core.PrimitiveError
 
-	out FisherReading
+	support   core.Primitive
+	threshold core.Primitive
 }
 
-func NewFisher() *Fisher {
-	return &Fisher{PrimitiveError: core.NewPrimitiveError()}
+func NewFisher(primitives ...core.Primitive) *Fisher {
+	fisher := &Fisher{
+		PrimitiveError: core.NewPrimitiveError(),
+		support:        adaptive.NewBaseline(adaptive.NewWindow()),
+		threshold:      adaptive.NewThreshold(statistic.NewEstimator(), calculus.NewSqrt()),
+	}
+
+	if len(primitives) > 0 && primitives[0] != nil {
+		fisher.support = primitives[0]
+	}
+
+	if len(primitives) > 1 && primitives[1] != nil {
+		fisher.threshold = primitives[1]
+	}
+
+	return fisher
 }
 
 func (fisher *Fisher) Next(
@@ -50,37 +69,49 @@ func (fisher *Fisher) Next(
 		for arriving := range in {
 			sample := (*FisherSample)(arriving)
 			reading := FisherReading{
-				PValue:               math.NaN(),
-				Z:                    math.NaN(),
-				StandardError:        math.NaN(),
-				SearchAdjustedPValue: math.NaN(),
-				HasSearch:            sample.SearchCount >= 1,
+				HasSearch: sample.SearchCount >= core.Unit,
 			}
 
-			if sample.Support > 3 && math.Abs(sample.Correlation) <= 1 {
-				degrees := math.Sqrt(sample.Support - 3)
+			supportVal := sample.Support
+			thresholdVal := core.Unit
+
+			if sample.Support > 0 && fisher.support != nil {
+				for out := range fisher.support.Next(sequence.NewOne(unsafe.Pointer(&sample.Support)).Next(nil)) {
+					supportReading := (*adaptive.BaselineReading)(out)
+					supportVal = supportReading.Baseline
+				}
+			}
+
+			if sample.Support > 0 && fisher.threshold != nil {
+				for out := range fisher.threshold.Next(sequence.NewOne(unsafe.Pointer(&sample.Support)).Next(nil)) {
+					thresholdVal = *(*float64)(out)
+				}
+			}
+
+			effectiveSupport := supportVal - thresholdVal
+
+			if sample.Support > thresholdVal && effectiveSupport > 0 && math.Abs(sample.Correlation) <= core.Unit {
+				degrees := math.Sqrt(effectiveSupport)
 				z := math.Atanh(sample.Correlation) * degrees
 				p := math.Erfc(math.Abs(z) / math.Sqrt2)
 
 				reading.Defined = true
 				reading.PValue = p
 				reading.Z = z
-				reading.StandardError = 1.0 / degrees
+				reading.StandardError = core.Unit / degrees
 
 				if reading.HasSearch {
 					adj := p * sample.SearchCount
 
-					if adj > 1.0 {
-						adj = 1.0
+					if adj > core.Unit {
+						adj = core.Unit
 					}
 
 					reading.SearchAdjustedPValue = adj
 				}
 			}
 
-			fisher.out = reading
-
-			if !yield(unsafe.Pointer(&fisher.out)) {
+			if !yield(unsafe.Pointer(&reading)) {
 				return
 			}
 		}

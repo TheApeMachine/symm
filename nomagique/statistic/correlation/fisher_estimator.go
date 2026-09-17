@@ -35,7 +35,6 @@ type FisherEstimator struct {
 	*core.PrimitiveError
 
 	moments statistic.Moments
-	out     FisherView
 }
 
 func NewFisherEstimator() *FisherEstimator {
@@ -50,7 +49,7 @@ func (fisherEstimator *FisherEstimator) Next(
 			value := *(*float64)(arriving)
 			view := FisherView{Correlation: value}
 
-			if value > -1.0 && value < 1.0 {
+			if value > -core.Unit && value < core.Unit {
 				z := math.Atanh(value)
 				priorMean := fisherEstimator.moments.Mean
 				priorCount := fisherEstimator.moments.Count
@@ -75,8 +74,8 @@ func (fisherEstimator *FisherEstimator) Next(
 					res.Residual = z - priorMean
 				}
 
-				if priorCount > 1 {
-					res.PriorVariance = priorM2 / (priorCount - 1)
+				if priorCount > core.Unit {
+					res.PriorVariance = priorM2 / (priorCount - core.Unit)
 				}
 
 				res.ScoreScale = math.Abs(res.Residual)
@@ -84,7 +83,7 @@ func (fisherEstimator *FisherEstimator) Next(
 				if res.PriorVariance > 0 {
 					disp := math.Sqrt(res.PriorVariance)
 
-					if disp > 2.220446049250313e-16 {
+					if disp > core.Epsilon {
 						res.ScoreScale = disp
 					}
 				}
@@ -104,9 +103,7 @@ func (fisherEstimator *FisherEstimator) Next(
 				view.HasPrior = res.HasPrior
 			}
 
-			fisherEstimator.out = view
-
-			if !yield(unsafe.Pointer(&fisherEstimator.out)) {
+			if !yield(unsafe.Pointer(&view)) {
 				return
 			}
 		}

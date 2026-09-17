@@ -3,11 +3,13 @@ package correlation
 import (
 	"iter"
 	"math"
-	"slices"
 	"time"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
@@ -34,14 +36,19 @@ type Dependence struct {
 
 	estimator   core.Primitive
 	pathReturns core.Primitive
-	out         DependenceReading
+	rate        core.Primitive
 }
 
 /*
 NewDependence creates a new Dependence primitive over the supplied estimator.
 */
 func NewDependence(estimator core.Primitive) *Dependence {
-	return &Dependence{PrimitiveError: core.NewPrimitiveError(), estimator: estimator, pathReturns: temporal.NewPathReturns()}
+	return &Dependence{
+		PrimitiveError: core.NewPrimitiveError(),
+		estimator:      estimator,
+		pathReturns:    temporal.NewPathReturns(),
+		rate:           nomagique.NewNumber(temporal.NewEnergyRates(), statistic.NewMedian()),
+	}
 }
 
 func (dependence *Dependence) Next(
@@ -49,32 +56,50 @@ func (dependence *Dependence) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		defer func() {
-
 			if dependence.pathReturns != nil {
 				if err := dependence.pathReturns.Error(); err != nil {
 					dependence.Error(err)
 				}
 			}
 		}()
+
 		for arriving := range in {
 			input := (*LagProfileInput)(arriving)
-			left, err := decodePath(dependence.pathReturns, input.Left)
+			var left temporal.ReturnPath
 
-			if err != nil {
+			for out := range dependence.pathReturns.Next(sequence.NewValues(temporal.PricePath{Prices: input.Left}).Next(nil)) {
+				left = *(*temporal.ReturnPath)(out)
+			}
+
+			if err := dependence.pathReturns.Error(); err != nil {
 				dependence.Error(err)
 				return
 			}
 
-			right, err := decodePath(dependence.pathReturns, input.Right)
+			var right temporal.ReturnPath
 
-			if err != nil {
+			for out := range dependence.pathReturns.Next(sequence.NewValues(temporal.PricePath{Prices: input.Right}).Next(nil)) {
+				right = *(*temporal.ReturnPath)(out)
+			}
+
+			if err := dependence.pathReturns.Error(); err != nil {
 				dependence.Error(err)
 				return
 			}
 
-			estimate, err := estimateAt(dependence.estimator, left, right, 0)
+			var estimate LagEstimate
 
-			if err != nil {
+			for out := range dependence.estimator.Next(sequence.NewValues(EstimateInput{
+				Left:        left.Returns,
+				Right:       right.Returns,
+				LeftEnergy:  left.Energy,
+				RightEnergy: right.Energy,
+				Lag:         0,
+			}).Next(nil)) {
+				estimate = *(*LagEstimate)(out)
+			}
+
+			if err := dependence.estimator.Error(); err != nil {
 				dependence.Error(err)
 				return
 			}
@@ -99,10 +124,43 @@ func (dependence *Dependence) Next(
 				density = estimate.Support / shared
 			}
 
-			leftRate := medianRate(left.Returns)
-			rightRate := medianRate(right.Returns)
+			leftRate := math.NaN()
 
-			dependence.out = DependenceReading{
+			if len(left.Returns) > 0 {
+				inputs := make([]temporal.EnergyRateInput, len(left.Returns))
+
+				for index, r := range left.Returns {
+					inputs[index] = temporal.EnergyRateInput{
+						Value: r.Value,
+						From:  r.From,
+						To:    r.To,
+					}
+				}
+
+				for out := range dependence.rate.Next(sequence.NewValues(inputs...).Next(nil)) {
+					leftRate = *(*float64)(out)
+				}
+			}
+
+			rightRate := math.NaN()
+
+			if len(right.Returns) > 0 {
+				inputs := make([]temporal.EnergyRateInput, len(right.Returns))
+
+				for index, r := range right.Returns {
+					inputs[index] = temporal.EnergyRateInput{
+						Value: r.Value,
+						From:  r.From,
+						To:    r.To,
+					}
+				}
+
+				for out := range dependence.rate.Next(sequence.NewValues(inputs...).Next(nil)) {
+					rightRate = *(*float64)(out)
+				}
+			}
+
+			out := DependenceReading{
 				LagEstimate:     estimate,
 				LeftReturns:     float64(len(left.Returns)),
 				RightReturns:    float64(len(right.Returns)),
@@ -113,26 +171,9 @@ func (dependence *Dependence) Next(
 				OverlapDensity:  density,
 			}
 
-			if !yield(unsafe.Pointer(&dependence.out)) {
+			if !yield(unsafe.Pointer(&out)) {
 				return
 			}
 		}
 	}
-}
-
-func medianRate(intervals []temporal.LogReturn) float64 {
-	if len(intervals) == 0 {
-		return math.NaN()
-	}
-
-	rates := make([]float64, len(intervals))
-
-	for i, r := range intervals {
-		elapsed := float64(r.To-r.From) / float64(time.Second)
-		rates[i] = (r.Value * r.Value) / elapsed
-	}
-
-	slices.Sort(rates)
-	count := len(rates)
-	return (rates[(count-1)/2] + rates[count/2]) * 0.5
 }

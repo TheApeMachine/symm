@@ -22,8 +22,6 @@ SearchScale owns sqrt(2 log(candidates) / observations).
 */
 type SearchScale struct {
 	*core.PrimitiveError
-
-	out float64
 }
 
 func NewSearchScale() *SearchScale {
@@ -36,9 +34,9 @@ func (searchScale *SearchScale) Next(
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*SearchScaleInput)(arriving)
-			searchScale.out = math.Sqrt(2.0 * math.Log(input.Candidates) / input.Observations)
+			out := math.Sqrt((core.Unit + core.Unit) * math.Log(input.Candidates) / input.Observations)
 
-			if !yield(unsafe.Pointer(&searchScale.out)) {
+			if !yield(unsafe.Pointer(&out)) {
 				return
 			}
 		}

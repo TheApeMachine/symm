@@ -9,6 +9,12 @@ and its presence, plus reasoning and value must be well documented.
 */
 const (
 	// Unit is the identity element for multiplication, as well as
-	// the physical unit (in which case we think of it as 1 simulation step)
+	// the physical unit (in which case we think of it as 1 simulation step).
 	Unit = 1.0
+
+	// Epsilon is the machine epsilon for IEEE 754 double precision (64-bit)
+	// floating point numbers (2^-52). It represents the upper bound on the
+	// relative approximation error due to rounding, defining the physical
+	// representation boundary below which differences are non-distinguishable.
+	Epsilon = 2.220446049250313e-16
 )

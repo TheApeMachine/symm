@@ -7,18 +7,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data/sequence"
-	"github.com/theapemachine/symm/nomagique/runtime"
-
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-tick builds the measurement the workload's data management would hand the
-signal: the register's declared schema with the feed's last price written.
-Zero is an unobserved market; a negative price is an invalid one.
-*/
 var schema = new(Ticker).Register().Metrics
 
 func tick(symbol string, price float64, at time.Time) *data.Measurement[float64] {
@@ -47,7 +45,8 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 
 func TestTickerNext(t *testing.T) {
 	Convey("Given a correlation ticker-path instrument", t, func() {
-		entity := NewTicker(t.Context(), nil)
+		grid := store.NewGrid[*geometry.Coordinate]()
+		entity := NewTicker(t.Context(), grid)
 
 		Convey("the first tick yields one measurement with no warmup", func() {
 			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue(tick("BTC/USD", 100.0, timestamp(1)))))
@@ -60,6 +59,34 @@ func TestTickerNext(t *testing.T) {
 
 			So(measurement.Maturity, ShouldEqual, 0.0)
 			So(measurement.SNR, ShouldEqual, 0.0)
+		})
+
+		Convey("every metric pipeline registers as an addressable cell in the grid", func() {
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue(tick("BTC/USD", 100.0, timestamp(1)))))
+
+			for index := range 31 {
+				readAddress := transport.NewAddress[*geometry.Coordinate]()
+				readAddress.Identify(geometry.NewCoordinate(index, 0))
+				readQuery := core.NewQuery[*geometry.Coordinate, core.Primitive](readAddress, core.Read)
+				cell := sequence.Read[core.Primitive](grid.Next(readQuery.Next(nil)))
+				So(cell, ShouldNotBeNil)
+			}
+		})
+
+		Convey("individual metric pipelines compute their expected outputs in isolation", func() {
+			lastPricePipeline := entity.Metrics()["last_price"]
+			So(lastPricePipeline, ShouldNotBeNil)
+
+			out := sequence.Read[*data.Measurement[float64]](lastPricePipeline.Next(sequence.NewValue(tick("BTC/USD", 150.0, timestamp(1)))))
+			So(out, ShouldNotBeNil)
+			So(out.Metrics["last_price"].Raw, ShouldEqual, 150.0)
+
+			obsPipeline := entity.Metrics()["observation_count"]
+			So(obsPipeline, ShouldNotBeNil)
+
+			outObs := sequence.Read[*data.Measurement[float64]](obsPipeline.Next(sequence.NewValue(tick("ETH/USD", 200.0, timestamp(1)))))
+			So(outObs, ShouldNotBeNil)
+			So(outObs.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
 		})
 
 		Convey("a quoted market with no recent trade does not enter the price path", func() {
@@ -131,9 +158,6 @@ func TestTickerNext(t *testing.T) {
 		})
 
 		Convey("a settled correlation estimator yields a defined SNR", func() {
-			// The signed correlation has to actually move from cut to cut before
-			// its Fisher-space estimator has a noise model to report, so the two
-			// paths drift in and out of step rather than tracking each other.
 			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111})
 			measurements := drive(entity, "ETH/USD", []float64{200, 202, 201, 205, 203, 208, 204, 211, 206, 214, 208, 217})
 
@@ -171,19 +195,10 @@ func TestTickerNext(t *testing.T) {
 	})
 }
 
-/*
-BenchmarkTickerCrossSectionStep isolates the intrinsic cost of one correlation
-Step on a focal symbol whose peers all hold full (64-sample) committed paths. It
-exercises the CrossSection peer fan-out (one Hayashi pair evaluation per peer)
-plus the per-tick cohort reduce/finalize. Sustained single-digit-millisecond
-cost here means a ~1s avg on the live diagnostics is contention, not intrinsic
-compute.
-*/
 func BenchmarkTickerCrossSectionNext(b *testing.B) {
-	entity := NewTicker(context.Background(), nil)
+	grid := store.NewGrid[*geometry.Coordinate]()
+	entity := NewTicker(context.Background(), grid)
 
-	// Prime every symbol's path to steady-state capacity (64 samples) so the
-	// cross-section cost reflects a fully-warmed universe, not cold-start.
 	for s := 0; s < benchmarkSymbols; s++ {
 		symbol := benchmarkSymbol(s)
 		for i := 0; i < benchmarkWarmup; i++ {
@@ -195,8 +210,6 @@ func BenchmarkTickerCrossSectionNext(b *testing.B) {
 		}
 	}
 
-	// The register measurement flows through every tick in production, so the
-	// benchmark reuses one instead of reallocating per iteration.
 	focal := benchmarkSymbol(0)
 	measurement := tick(focal, 0, timestamp(benchmarkWarmup))
 	i := 0

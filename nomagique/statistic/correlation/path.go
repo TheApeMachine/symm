@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
@@ -35,7 +36,6 @@ type Path struct {
 
 	retention    core.Primitive
 	observations []temporal.Price
-	out          PathReading
 }
 
 func NewPath(retention ...core.Primitive) *Path {
@@ -78,7 +78,11 @@ func (path *Path) Next(
 
 				if path.retention != nil {
 					value := sample.Value
-					reading := drive[float64, adaptive.WindowReading](path.retention, &value)
+					var reading adaptive.WindowReading
+
+					for out := range path.retention.Next(sequence.NewOne(unsafe.Pointer(&value)).Next(nil)) {
+						reading = *(*adaptive.WindowReading)(out)
+					}
 
 					if err := path.retention.Error(); err != nil {
 						path.Error(err)
@@ -101,7 +105,7 @@ func (path *Path) Next(
 				through = path.observations[len(path.observations)-1].At
 			}
 
-			path.out = PathReading{
+			out := PathReading{
 				Price:        sample,
 				Observations: path.observations[:len(path.observations):len(path.observations)],
 				PriorCount:   float64(priorCount),
@@ -113,7 +117,7 @@ func (path *Path) Next(
 				To:           through,
 			}
 
-			if !yield(unsafe.Pointer(&path.out)) {
+			if !yield(unsafe.Pointer(&out)) {
 				return
 			}
 		}

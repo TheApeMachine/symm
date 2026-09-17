@@ -39,8 +39,6 @@ Cohort summarizes one peer run. Support below two is excluded.
 */
 type Cohort struct {
 	*core.PrimitiveError
-
-	out CohortSummary
 }
 
 func NewCohort() *Cohort {
@@ -58,9 +56,7 @@ func (cohort *Cohort) Next(
 			seen++
 			peer := *(*Peer)(arriving)
 
-			if !math.IsNaN(peer.Correlation) && !math.IsInf(peer.Correlation, 0) &&
-				!math.IsNaN(peer.Support) && !math.IsInf(peer.Support, 0) &&
-				peer.Support >= 2 {
+			if peer.Support >= 2 && peer.Correlation >= -1 && peer.Correlation <= 1 {
 				admitted = append(admitted, peer)
 			}
 		}
@@ -77,9 +73,7 @@ func (cohort *Cohort) Next(
 		}
 
 		if len(admitted) == 0 {
-			cohort.out = summary
-
-			if !yield(unsafe.Pointer(&cohort.out)) {
+			if !yield(unsafe.Pointer(&summary)) {
 				return
 			}
 
@@ -114,7 +108,7 @@ func (cohort *Cohort) Next(
 		zMean := sumZ / totalWeight
 		weightedVariance := (sumZ2 / totalWeight) - (zMean * zMean)
 		dispersion := math.Sqrt(weightedVariance)
-		fisherDefined := !math.IsNaN(dispersion) && !math.IsInf(dispersion, 0)
+		fisherDefined := weightedVariance >= 0
 
 		summary.TotalSupport = totalWeight
 		summary.EffectivePeers = kish
@@ -125,9 +119,7 @@ func (cohort *Cohort) Next(
 		summary.Defined = totalWeight > 0
 		summary.FisherDefined = fisherDefined
 
-		cohort.out = summary
-
-		if !yield(unsafe.Pointer(&cohort.out)) {
+		if !yield(unsafe.Pointer(&summary)) {
 			return
 		}
 	}

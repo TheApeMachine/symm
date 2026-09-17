@@ -39,7 +39,7 @@ func BenchmarkConcordanceUpdate(b *testing.B) {
 	var statistic Concordance
 	b.ReportAllocs()
 
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		statistic.Update(float64(index%5), -float64(index%5), 1)
 	}
 }

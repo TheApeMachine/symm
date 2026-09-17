@@ -63,7 +63,7 @@ func (causalResidual *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq
 			if result.PriorVariance > 0 {
 				dispersion := math.Sqrt(result.PriorVariance)
 
-				if dispersion > 2.220446049250313e-16 {
+				if dispersion > core.Epsilon {
 					result.ScoreScale = dispersion
 				}
 			}

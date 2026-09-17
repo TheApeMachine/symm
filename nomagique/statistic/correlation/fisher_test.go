@@ -32,7 +32,9 @@ func TestFisherNext(t *testing.T) {
 			So(out[0].Defined, ShouldEqual, test.defined)
 
 			if test.defined {
-				expected := math.Erfc(math.Abs(math.Atanh(test.correlation)*math.Sqrt(test.support-3)) / math.Sqrt2)
+				degrees := 1.0 / out[0].StandardError
+				z := math.Atanh(test.correlation) * degrees
+				expected := math.Erfc(math.Abs(z) / math.Sqrt2)
 				adjusted := math.Min(1, 20*expected)
 				So(out[0].PValue, ShouldAlmostEqual, expected)
 				So(out[0].SearchAdjustedPValue, ShouldAlmostEqual, adjusted)

@@ -40,186 +40,357 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate]) *Tic
 					grid,
 					[][]string{{"ticker", "data", "price"}},
 				),
+				nmcorrelation.NewGate(),
 			),
 			"observation_count": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"ticker", "data", "count"}},
+					[][]string{{"ticker", "data", "price"}},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"signed_correlation": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "signed"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"absolute_correlation": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "absolute"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"cohort_signed_correlation": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "cohort", "signed"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
 			),
 			"cohort_absolute_correlation": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "cohort", "absolute"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
 			),
 			"covariance": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "covariance"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"return_energy:reference": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "return", "reference"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"return_energy:measured": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "return", "measured"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"return_energy_rate:reference": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "rate", "reference"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"return_energy_rate:measured": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "rate", "measured"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"overlap_density": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "overlap", "density"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"peer_return_energy_rate": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "rate", "peer"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
 			),
 			"supported_return_count:measured": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"count", "return", "measured"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"supported_return_count:reference": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"count", "return", "reference"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"overlap_pair_count": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"count", "overlap", "pair"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"shared_time": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"temporal", "shared", "time"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"correlation_p_value": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "p_value"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"correlation_standard_error_fisher": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "standard_error_fisher"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
 			),
 			"cohort_peer_count": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"cohort", "peer_count"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
 			),
 			"cohort_effective_peer_count": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"cohort", "effective_peer_count"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
 			),
 			"cohort_correlation_dispersion": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"cohort", "correlation_dispersion"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
 			),
 			"relative_return_energy": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "relative"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
 			),
 			"correlation_baseline": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "baseline"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewHistory(),
 			),
 			"correlation_divergence": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "divergence"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewHistory(),
 			),
 			"correlation_zscore": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "zscore"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewHistory(),
 			),
 			"correlation_velocity": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"correlation", "velocity"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewCorrelationVelocity(),
 			),
 			"relative_return_energy_baseline": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "relative", "baseline"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewRelative(),
 			),
 			"relative_return_energy_divergence": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "relative", "divergence"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewRelative(),
 			),
 			"relative_return_energy_zscore": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "relative", "zscore"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewRelative(),
 			),
 			"relative_return_energy_velocity": nomagique.NewNumber(
 				transport.NewConn[*geometry.Coordinate](
 					grid,
-					[][]string{{"energy", "relative", "velocity"}},
+					[][]string{
+						{"ticker", "data", "price"},
+						{"ticker", "data", "timestamp"},
+					},
 				),
+				nmcorrelation.NewGate(),
+				nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+				nmcorrelation.NewFold(),
+				nmcorrelation.NewEnergyVelocity(),
 			),
 		},
 		pipeline: nomagique.NewNumber(
@@ -309,6 +480,13 @@ func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			continue inputs
 		}
 	}
+}
+
+/*
+Metrics returns the addressable metric pipelines registered with the grid.
+*/
+func (ticker *Ticker) Metrics() map[string]*nomagique.Number {
+	return ticker.metrics
 }
 
 /*

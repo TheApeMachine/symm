@@ -3,9 +3,12 @@ package correlation
 import (
 	"iter"
 	"math"
+	"time"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -34,11 +37,14 @@ LagShape owns neighbour projection around the selected candidate.
 type LagShape struct {
 	*core.PrimitiveError
 
-	out LagShapeResult
+	diff core.Primitive
 }
 
 func NewLagShape() *LagShape {
-	return &LagShape{PrimitiveError: core.NewPrimitiveError()}
+	return &LagShape{
+		PrimitiveError: core.NewPrimitiveError(),
+		diff:           calculus.NewSecondDifference(),
+	}
 }
 
 func (lagShape *LagShape) Next(
@@ -48,9 +54,9 @@ func (lagShape *LagShape) Next(
 		for arriving := range in {
 			input := (*LagShapeInput)(arriving)
 			index := int(input.Index)
-			lagShape.out = LagShapeResult{}
+			result := LagShapeResult{}
 
-			if input.Index > 0 && input.Index < input.Span*2 && index > 0 && index < len(input.Profile)-1 {
+			if input.Index > 0 && input.Index < input.Span+input.Span && index > 0 && index < len(input.Profile)-1 {
 				lower := input.Profile[index-1]
 				upper := input.Profile[index+1]
 
@@ -58,18 +64,29 @@ func (lagShape *LagShape) Next(
 					leftVal := math.Abs(lower.Y)
 					centerVal := math.Abs(input.Profile[index].Y)
 					rightVal := math.Abs(upper.Y)
-					diff := 2.0*centerVal - leftVal - rightVal
-					seconds := input.Spacing * 1e-9
 
-					lagShape.out = LagShapeResult{
+					diffRecord := calculus.SecondDifferenceInput{
+						Left:   leftVal,
+						Center: centerVal,
+						Right:  rightVal,
+					}
+					var diff float64
+
+					for out := range lagShape.diff.Next(sequence.NewOne(unsafe.Pointer(&diffRecord)).Next(nil)) {
+						diff = *(*float64)(out)
+					}
+
+					seconds := input.Spacing / float64(time.Second)
+
+					result = LagShapeResult{
 						ShapeDefined: true,
-						Prominence:   diff / 2.0,
+						Prominence:   diff / (core.Unit + core.Unit),
 						Curvature:    diff / (seconds * seconds),
 					}
 				}
 			}
 
-			if !yield(unsafe.Pointer(&lagShape.out)) {
+			if !yield(unsafe.Pointer(&result)) {
 				return
 			}
 		}

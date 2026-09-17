@@ -63,7 +63,7 @@ func (adaptiveZScore *AdaptiveZScore) Next(
 			if res.PriorVariance > 0 {
 				disp := math.Sqrt(res.PriorVariance)
 
-				if disp > 2.220446049250313e-16 {
+				if disp > core.Epsilon {
 					res.ScoreScale = disp
 				}
 			}
