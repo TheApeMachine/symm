@@ -30,7 +30,7 @@ func TestOnceNext(t *testing.T) {
 			for _, values := range [][]int{{1, 2, 3}, {}, {4, 5}} {
 				for index, output := range tests.CollectSeq[int](once.Next(sequence.NewValue(values...))) {
 					So(output, ShouldEqual, values[index])
-					So(sequence.Read[statistic.MomentReading](reading.Next(nil)).Count, ShouldEqual, 1)
+					So(sequence.Read[statistic.MomentReading](reading.Next(nil)).Count, ShouldEqual, 3)
 				}
 			}
 			So(once.Error(), ShouldBeNil)
@@ -41,7 +41,7 @@ func TestOnceNext(t *testing.T) {
 				break
 			}
 			So(tests.CollectSeq[int](once.Next(sequence.NewValue(4))), ShouldResemble, []int{4})
-			So(sequence.Read[statistic.MomentReading](reading.Next(nil)).Count, ShouldEqual, 1)
+			So(sequence.Read[statistic.MomentReading](reading.Next(nil)).Count, ShouldEqual, 3)
 		})
 	})
 
@@ -62,8 +62,8 @@ func BenchmarkOnceNext(b *testing.B) {
 	for range once.Next(sequence.NewValue(1)) {
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
+	
+	for index := 0; b.Loop(); index++ {
 		for range once.Next(sequence.NewValue(index)) {
 		}
 	}

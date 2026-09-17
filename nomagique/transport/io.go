@@ -40,9 +40,25 @@ to the output Primitive.
 */
 func (io *IO[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		defer func() { io.Error(io.i.Error(), io.o.Error()) }()
+		if io.i != nil {
+			defer func() { io.Error(io.i.Error()) }()
+		}
 
-		for i := range io.o.Next(io.i.Next(in)) {
+		if io.o != nil {
+			defer func() { io.Error(io.o.Error()) }()
+		}
+
+		stream := in
+
+		if io.i != nil {
+			stream = io.i.Next(in)
+		}
+
+		if io.o != nil {
+			stream = io.o.Next(stream)
+		}
+
+		for i := range stream {
 			if !yield(i) {
 				return
 			}

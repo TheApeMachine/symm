@@ -26,12 +26,18 @@ Region segmentation is purely composed from atomic transformations:
   - geometry.Peak: climbs spanning forest to local density peaks
   - geometry.Border: saddle-point border detection where distinct basins meet
 */
-type Grid[T core.Ordered[T]] struct {
+type Grid[T interface {
+	core.Ordered[T]
+	comparable
+}] struct {
 	*core.PrimitiveError
 	pipeline *nomagique.Number
 }
 
-func NewGrid[T core.Ordered[T]](members ...map[string]core.Identifiable[T]) *Grid[T] {
+func NewGrid[T interface {
+	core.Ordered[T]
+	comparable
+}](members ...core.Connectable[T]) *Grid[T] {
 	return &Grid[T]{
 		PrimitiveError: core.NewPrimitiveError(),
 		pipeline: nomagique.NewNumber(

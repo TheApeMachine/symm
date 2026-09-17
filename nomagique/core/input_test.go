@@ -12,7 +12,7 @@ import (
 func TestInputNext(t *testing.T) {
 	Convey("Input borrows payloads without accumulating or copying them", t, func() {
 		value := 4.0
-		input := core.NewInput[string](nil, core.NewAction(core.ActionWrite), "price", &value)
+		input := core.NewInput[string](nil, core.Write, "price", &value)
 
 		Convey("A configured request preserves its key and exact payload address", func() {
 			count := 0
@@ -50,7 +50,7 @@ func TestInputNext(t *testing.T) {
 		})
 
 		Convey("A read has an explicit absence of a write payload", func() {
-			read := core.NewInput[string, string, float64](nil, core.NewAction(core.ActionRead), "price", nil)
+			read := core.NewInput[string, string, float64](nil, core.Read, "price", nil)
 			for output := range read.Next(nil) {
 				So((*core.Input[string, string, float64])(output).Value, ShouldBeNil)
 			}
@@ -60,7 +60,7 @@ func TestInputNext(t *testing.T) {
 
 func BenchmarkInputNext(b *testing.B) {
 	value := 1.0
-	input := core.NewInput[string](nil, core.NewAction(core.ActionWrite), "price", &value)
+	input := core.NewInput[string](nil, core.Write, "price", &value)
 	b.ReportAllocs()
 	for b.Loop() {
 		for output := range input.Next(nil) {

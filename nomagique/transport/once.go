@@ -5,6 +5,7 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -33,7 +34,7 @@ func (once *Once) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 
 			if !once.completed {
-				for range once.prerequisite.Next(nil) {
+				for range sequence.ReadSeq[unsafe.Pointer](once.prerequisite.Next(nil)) {
 				}
 
 				if err := once.prerequisite.Error(); err != nil {

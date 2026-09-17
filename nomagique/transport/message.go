@@ -20,12 +20,13 @@ type Message[T comparable] struct {
 }
 
 /*
-NewMessage ...
+NewMessage creates a new message.
+Address is the peer the message is sent to.
+Action is the action to take, if you want this message to act as an event.
+The actual message payload is injected into the `in` parameter of the `Next` method.
 */
 func NewMessage[T comparable](
-	address core.Identifiable[T],
-	action core.Action,
-	data core.Primitive,
+	address core.Identifiable[T], action core.Action,
 ) *Message[T] {
 	return &Message[T]{
 		PrimitiveError: core.NewPrimitiveError(),
@@ -35,7 +36,7 @@ func NewMessage[T comparable](
 }
 
 /*
-Next ...
+Next sends the message. The actual message payload goes into the `in` parameter.
 */
 func (message *Message[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {

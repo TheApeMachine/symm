@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
@@ -37,6 +36,8 @@ func (cell *testCell) Identify(addr *geometry.Coordinate) core.Identifiable[*geo
 	return cell
 }
 
+func (cell *testCell) Connect(core.Primitive) {}
+
 func (cell *testCell) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		yield(unsafe.Pointer(cell.obs))
@@ -52,9 +53,9 @@ func TestTrainingPipeline(t *testing.T) {
 		training := strategy.NewTraining(
 			t.Context(),
 			nil,
-			map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": cellA},
-			map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": cellMid},
-			map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": cellB},
+			cellA,
+			cellMid,
+			cellB,
 		)
 
 		So(training, ShouldNotBeNil)
@@ -81,9 +82,7 @@ func TestTrainingPipeline(t *testing.T) {
 		// Execute cell queries through the pipeline
 		var evals []cognition.Evaluation
 		for _, cell := range []*testCell{cellA, cellMid, cellB} {
-			query := store.NewQuery[*geometry.Coordinate, any](nil, data.ActionExecute)
-			query.Entity = "BTC/USD"
-			query.Address = cell.Identity()
+			query := store.NewQuery[*geometry.Coordinate, any](cell, core.Execute)
 
 			for out := range training.Next(query.Next(nil)) {
 				evals = append(evals, *(*cognition.Evaluation)(out))

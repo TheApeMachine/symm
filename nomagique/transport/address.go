@@ -12,17 +12,16 @@ Address is a connection with an addressable identity.
 */
 type Address[T comparable] struct {
 	*core.PrimitiveError
-	peer core.Identifiable[T]
+	peer T
 	conn core.Primitive
 }
 
 /*
 NewAddress ...
 */
-func NewAddress[T comparable](peer core.Identifiable[T]) *Address[T] {
+func NewAddress[T comparable]() *Address[T] {
 	return &Address[T]{
 		PrimitiveError: core.NewPrimitiveError(),
-		peer:           peer,
 	}
 }
 
@@ -31,14 +30,27 @@ Next ...
 */
 func (address *Address[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		concrete := any(in).(core.Identifiable[T])
+		if address.conn == nil {
+			return
+		}
 
-		if concrete.Identity() == address.peer.Identity() {
-			for i := range address.conn.Next(in) {
-				if !yield(i) {
-					return
-				}
+		for i := range address.conn.Next(in) {
+			if !yield(i) {
+				return
 			}
 		}
 	}
+}
+
+func (address *Address[T]) Connect(primitive core.Primitive) {
+	address.conn = primitive
+}
+
+func (address *Address[T]) Identity() T {
+	return address.peer
+}
+
+func (address *Address[T]) Identify(identity T) core.Identifiable[T] {
+	address.peer = identity
+	return address
 }

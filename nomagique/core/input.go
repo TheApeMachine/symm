@@ -15,14 +15,14 @@ The request and its payload are borrowed until the downstream yield returns.
 type Input[Origin, Key, Value any] struct {
 	*PrimitiveError
 	Origin Identifiable[Origin]
-	Action *Action
+	Action Action
 	Key    Key
 	Value  *Value
 }
 
 // NewInput binds a key and optional borrowed payload to the requested actions.
 func NewInput[Origin, Key, Value any](
-	origin Identifiable[Origin], action *Action, key Key, value *Value,
+	origin Identifiable[Origin], action Action, key Key, value *Value,
 ) *Input[Origin, Key, Value] {
 	return &Input[Origin, Key, Value]{
 		PrimitiveError: NewPrimitiveError(),

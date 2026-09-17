@@ -19,6 +19,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/store"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
@@ -190,9 +191,11 @@ var (
 			hub := ui.NewHub(ctx, nil, catalog, uiTee)
 			hub.Run()
 
+			grid := store.NewGrid[*geometry.Coordinate]()
+
 			manifoldSolver := manifold.NewSolver(ctx, api)
 
-			correlationTicker := correlation.NewTicker(ctx)
+			correlationTicker := correlation.NewTicker(ctx, grid)
 			leadlagTicker := leadlag.NewTicker(ctx)
 			liquidityTicker := liquidity.NewTicker(ctx)
 			sentimentTicker := sentiment.NewTicker(ctx)

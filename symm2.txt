@@ -1,19 +1,4 @@
-in a sub-package that generally represents
-the Primitive's most canonical domain or discipline.
-To avoid import cycles, a composition can always be promoted to an equation.
-The equation sub-package may only contain composition, no implementation code.
-The algo package has the same rules as equation, with one additional constraint,
-algo Primitives may only be well-known, named algorithms.
-
-2. Does what I need exist if I make an existing Primitive more flexible?
-
-This can be done by expanding the constructor, or potentially also by wrapping
-things in another Primitive to basically act as a decorator, altering behavior.
-
-3. Does what I need exist if I compose multiple existing Primitives?
-
-This is really always the goal, and the idea behind it is that we can validate
-the code once, and then always confidently use it, while also keeping an eye
+once, and then always confidently use it, while also keeping an eye
 on the other principle: never using magic numbers, or otherwise non-derived
 values.
 
@@ -4375,6 +4360,7 @@ import (
 	"fmt"
 	"iter"
 	"sort"
+	"strings"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -4383,8 +4369,9 @@ import (
 )
 
 /*
-Region extracts the dominant attractor basin token from the segmented associative
-grid edges using Argmax over accumulated basin authorities.
+Region extracts the dominant attractor basin signature from the segmented associative
+grid edges using Argmax over accumulated basin authorities. The signature is derived
+from the member node topology of the winning basin, ensuring stability across reconstructions.
 */
 type Region struct {
 	*core.PrimitiveError
@@ -4404,6 +4391,7 @@ func (region *Region) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 		}
 
 		basinAuthority := make(map[int]float64)
+		basinMembers := make(map[int]map[string]struct{})
 
 		for arriving := range in {
 			if arriving == nil {
@@ -4413,6 +4401,40 @@ func (region *Region) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			edge := (*geometry.Edge)(arriving)
 			basinAuthority[edge.Basin[0]] += edge.Authority[0]
 			basinAuthority[edge.Basin[1]] += edge.Authority[1]
+
+			if _, exists := basinMembers[edge.Basin[0]]; !exists {
+				basinMembers[edge.Basin[0]] = make(map[string]struct{})
+			}
+
+			if edge.Left != nil {
+				var coordinates []int
+				for coordPtr := range edge.Left.Next(nil) {
+					if coordPtr != nil {
+						coordinates = append(coordinates, *(*int)(coordPtr))
+					}
+				}
+
+				if len(coordinates) == 2 {
+					basinMembers[edge.Basin[0]][fmt.Sprintf("%d,%d", coordinates[0], coordinates[1])] = struct{}{}
+				}
+			}
+
+			if _, exists := basinMembers[edge.Basin[1]]; !exists {
+				basinMembers[edge.Basin[1]] = make(map[string]struct{})
+			}
+
+			if edge.Right != nil {
+				var coordinates []int
+				for coordPtr := range edge.Right.Next(nil) {
+					if coordPtr != nil {
+						coordinates = append(coordinates, *(*int)(coordPtr))
+					}
+				}
+
+				if len(coordinates) == 2 {
+					basinMembers[edge.Basin[1]][fmt.Sprintf("%d,%d", coordinates[0], coordinates[1])] = struct{}{}
+				}
+			}
 		}
 
 		if len(basinAuthority) == 0 {
@@ -4420,15 +4442,15 @@ func (region *Region) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 		}
 
 		basinIDs := make([]int, 0, len(basinAuthority))
-		for b := range basinAuthority {
-			basinIDs = append(basinIDs, b)
+		for basinID := range basinAuthority {
+			basinIDs = append(basinIDs, basinID)
 		}
 		sort.Ints(basinIDs)
 
 		argmax := probability.NewArgmax()
 		argmaxIn := func(yieldVal func(unsafe.Pointer) bool) {
-			for _, b := range basinIDs {
-				val := basinAuthority[b]
+			for _, basinID := range basinIDs {
+				val := basinAuthority[basinID]
 				if !yieldVal(unsafe.Pointer(&val)) {
 					return
 				}
@@ -4441,7 +4463,20 @@ func (region *Region) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			winningBasin = basinIDs[res.Index]
 		}
 
-		region.out = fmt.Appendf(nil, "r%d", winningBasin)
+		members := make([]string, 0, len(basinMembers[winningBasin]))
+		for memberName := range basinMembers[winningBasin] {
+			members = append(members, memberName)
+		}
+		sort.Strings(members)
+
+		if len(members) > 0 {
+			region.out = []byte(strings.Join(members, ";"))
+		}
+
+		if len(members) == 0 {
+			region.out = fmt.Appendf(nil, "b%d", winningBasin)
+		}
+
 		yield(unsafe.Pointer(&region.out))
 	}
 }
@@ -50248,6 +50283,70 @@ func (timestamp *Timestamp) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 ---
 
 ---
+File: /nomagique/temporal/transition.go
+---
+
+package temporal
+
+import (
+	"bytes"
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Transition emits sequential transitions across consecutive signatures.
+On the initial observation, it retains previous without emitting.
+On each subsequent observation, it emits (previous, current) encoded as "previous->current".
+*/
+type Transition struct {
+	*core.PrimitiveError
+	previous []byte
+	out      []byte
+}
+
+func NewTransition() *Transition {
+	return &Transition{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
+}
+
+func (transition *Transition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if transition.Error() != nil {
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			current := *(*[]byte)(arriving)
+			if len(current) == 0 {
+				continue
+			}
+
+			if len(transition.previous) == 0 {
+				transition.previous = bytes.Clone(current)
+				continue
+			}
+
+			transition.out = bytes.Join([][]byte{transition.previous, current}, []byte("->"))
+			transition.previous = bytes.Clone(current)
+
+			if !yield(unsafe.Pointer(&transition.out)) {
+				return
+			}
+		}
+	}
+}
+
+---
+
+---
 File: /nomagique/temporal/velocity.go
 ---
 
@@ -55416,6 +55515,88 @@ func (trade *Trade) Register() *data.Measurement[float64] {
 ---
 
 ---
+File: /strategy/decision.go
+---
+
+package strategy
+
+import (
+	"slices"
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Decision gates cognition evaluations through decisive winner checks and environment legality.
+Unseen contexts and ambiguous ties yield abstention (no action emitted).
+Actions illegal under the current position state are rejected downstream.
+*/
+type Decision struct {
+	*core.PrimitiveError
+	holding func() bool
+	out     Action
+}
+
+func NewDecision(holding ...func() bool) *Decision {
+	decision := &Decision{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
+
+	if len(holding) > 0 && holding[0] != nil {
+		decision.holding = holding[0]
+	}
+
+	return decision
+}
+
+func (decision *Decision) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if decision.Error() != nil {
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			eval := (*cognition.Evaluation)(arriving)
+			if eval.Support == 0 || len(eval.Candidates) == 0 || eval.Confidence <= 0 || eval.WinnerClass == "" {
+				continue
+			}
+
+			if eval.IsTie || (eval.RunnerUp != "" && eval.Contrast == 0.0) {
+				continue
+			}
+
+			isHolding := false
+			if decision.holding != nil {
+				isHolding = decision.holding()
+			}
+
+			legal := LegalActions(isHolding)
+			candidate := Action(eval.WinnerClass)
+
+			candidateLegal := slices.Contains(legal, candidate)
+
+			if !candidateLegal {
+				continue
+			}
+
+			decision.out = candidate
+			if !yield(unsafe.Pointer(&decision.out)) {
+				return
+			}
+		}
+	}
+}
+
+---
+
+---
 File: /strategy/trader.go
 ---
 
@@ -55489,6 +55670,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
 type Action string
@@ -55508,10 +55690,10 @@ func LegalActions(holding bool) []Action {
 }
 
 /*
-Training reads the impulse map and addresses one shared radix trie. The inference
-pipeline compares the observed action counts. Ties select wait;
-unseen contexts produce no action. The cold learner owns trie writes.
-Training does not submit orders: quoted outcome evidence is not execution proof.
+Training reads the impulse map, discovers spatial attractor basins, streams temporal
+transitions, reinforces empirical associations into the radix trie, and evaluates
+prospective trajectories. Environment legality and tie abstention belong downstream
+in Decision.
 */
 type Training[T core.Ordered[T]] struct {
 	*runtime.System
@@ -55534,6 +55716,10 @@ func NewTraining[T core.Ordered[T]](
 	training.pipeline = nomagique.NewNumber(
 		associative.NewGrid(members...),
 		associative.NewRegion(),
+		temporal.NewTransition(),
+		cognition.NewAssociate(),
+		training.Reinforce,
+		cognition.NewCurrent(),
 		cognition.NewEvaluator(&training.root, &training.stepCounter),
 	)
 

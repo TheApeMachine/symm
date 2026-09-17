@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -36,6 +35,8 @@ func (cell *testCell) Identify(addr *geometry.Coordinate) core.Identifiable[*geo
 	return cell
 }
 
+func (cell *testCell) Connect(core.Primitive) {}
+
 func (cell *testCell) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		yield(unsafe.Pointer(cell.obs))
@@ -51,17 +52,7 @@ func TestAssociativeGridPipeline(t *testing.T) {
 		cellMid := newTestCell(1, 0, 0.5, 0.25)
 		cellB := newTestCell(2, 0, 0.5, 1.0)
 
-		grid := associative.NewGrid(
-			map[string]core.Identifiable[*geometry.Coordinate]{
-				"BTC/USD": cellA,
-			},
-			map[string]core.Identifiable[*geometry.Coordinate]{
-				"BTC/USD": cellMid,
-			},
-			map[string]core.Identifiable[*geometry.Coordinate]{
-				"BTC/USD": cellB,
-			},
-		)
+		grid := associative.NewGrid(cellA, cellMid, cellB)
 
 		So(grid.Error(), ShouldBeNil)
 
@@ -69,9 +60,7 @@ func TestAssociativeGridPipeline(t *testing.T) {
 
 		// Execute each cell sequentially through the grid pipeline
 		for _, cell := range []*testCell{cellA, cellMid, cellB} {
-			query := store.NewQuery[*geometry.Coordinate, any](nil, data.ActionExecute)
-			query.Entity = "BTC/USD"
-			query.Address = cell.Identity()
+			query := store.NewQuery[*geometry.Coordinate, any](cell, core.Execute)
 
 			latestEdges = nil
 			for result := range grid.Next(query.Next(nil)) {

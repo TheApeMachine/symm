@@ -5,19 +5,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
 )
 
-func TestActionNext(t *testing.T) {
-	Convey("Action emits its configured operations in order on every run", t, func() {
-		action := core.NewAction(core.ActionWrite, core.ActionRead)
-		expected := []core.ActionType{core.ActionWrite, core.ActionRead}
-		So(tests.CollectSeq[core.ActionType](action.Next(nil)), ShouldResemble, expected)
-		for range action.Next(nil) {
-			break
-		}
-		So(tests.CollectSeq[core.ActionType](action.Next(nil)), ShouldResemble, expected)
-		So(tests.CollectSeq[core.ActionType](core.NewAction().Next(nil)), ShouldBeEmpty)
-		So(action.Error(), ShouldBeNil)
+func TestAction(t *testing.T) {
+	Convey("Action constants represent canonical operations", t, func() {
+		So(core.None, ShouldEqual, core.Action(0))
+		So(core.Identify, ShouldEqual, core.Action(1))
+		So(core.Read, ShouldEqual, core.Action(2))
+		So(core.Write, ShouldEqual, core.Action(3))
+		So(core.Execute, ShouldEqual, core.Action(4))
 	})
 }

@@ -38,7 +38,10 @@ transitions, reinforces empirical associations into the radix trie, and evaluate
 prospective trajectories. Environment legality and tie abstention belong downstream
 in Decision.
 */
-type Training[T core.Ordered[T]] struct {
+type Training[T interface {
+	core.Ordered[T]
+	comparable
+}] struct {
 	*runtime.System
 	root        atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter atomic.Uint64
@@ -46,10 +49,13 @@ type Training[T core.Ordered[T]] struct {
 	Reinforce   *cognition.Reinforce
 }
 
-func NewTraining[T core.Ordered[T]](
+func NewTraining[T interface {
+	core.Ordered[T]
+	comparable
+}](
 	ctx context.Context,
 	price *broker.Price,
-	members ...map[string]core.Identifiable[T],
+	members ...core.Connectable[T],
 ) *Training[T] {
 	training := &Training[T]{}
 	training.root.Store(iradix.New[[]byte]())

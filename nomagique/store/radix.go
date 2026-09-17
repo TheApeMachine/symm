@@ -8,7 +8,6 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -31,50 +30,65 @@ func NewRadix[T any]() *Radix[T] {
 
 func (radix *Radix[T]) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var query *Query[*[]byte, T]
+		var found bool
+		var value T
+
 		for arriving := range input {
-			query := (*Query[*[]byte, T])(arriving)
-			address := query.Identity()
-			if address == nil || len(*address) == 0 {
-				radix.Error(core.ErrShape)
-				return
-			}
-			root := radix.root.Load()
-			value, found := root.Get(*address)
-			if query.Action() == data.ActionRead {
-				if found && !yield(unsafe.Pointer(&value)) {
-					return
-				}
-				continue
-			}
-			if query.Action() != data.ActionWrite && query.Action() != data.ActionIdentify {
-				radix.Error(core.ErrShape)
-				return
-			}
-			if query.Action() == data.ActionIdentify && found {
-				if !yield(unsafe.Pointer(&value)) {
-					return
-				}
-				continue
-			}
-			received := false
-			for payload := range query.payload {
-				if received {
+			if query == nil {
+				query = (*Query[*[]byte, T])(arriving)
+				address := query.Identity()
+
+				if address == nil || len(*address) == 0 {
 					radix.Error(core.ErrShape)
 					return
 				}
-				value, received = *(*T)(payload), true
+
+				root := radix.root.Load()
+				value, found = root.Get(*address)
+
+				if query.Action == core.Read {
+					if found && !yield(unsafe.Pointer(&value)) {
+						return
+					}
+
+					query = nil
+					continue
+				}
+
+				if query.Action != core.Write && query.Action != core.Identify {
+					radix.Error(core.ErrShape)
+					return
+				}
+
+				if query.Action == core.Identify && found {
+					if !yield(unsafe.Pointer(&value)) {
+						return
+					}
+
+					continue
+				}
+
+				continue
 			}
-			if !received {
-				radix.Error(core.ErrNotHeld)
-				return
+
+			if query.Action == core.Identify && found {
+				query = nil
+				continue
 			}
-			// The query's payload may itself read this store; publish afterwards.
-			root = radix.root.Load()
+
+			value = *(*T)(arriving)
+			address := query.Identity()
+
+			root := radix.root.Load()
 			updated, _, _ := root.Insert(bytes.Clone(*address), value)
 			radix.root.Store(updated)
+
 			if !yield(unsafe.Pointer(&value)) {
 				return
 			}
+
+			query = nil
 		}
 	}
 }

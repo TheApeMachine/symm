@@ -84,7 +84,7 @@ func splitMeasurement(
 			At:            measurement.At,
 			Maturity:      measurement.Maturity,
 			SNR:           snr,
-			MeasurementID: measurement.ID,
+			MeasurementID: int(measurement.ID),
 		})
 	}
 

@@ -55,7 +55,7 @@ func TestStoreTee_Push(t *testing.T) {
 		for producer := 0; producer < producers; producer++ {
 			workers.Go(func() {
 				for sequence := 1; sequence <= observations; sequence++ {
-					tee.Push(&data.Measurement[float64]{ID: producer, SeqIdx: int64(sequence)})
+					tee.Push(&data.Measurement[float64]{ID: float64(producer), SeqIdx: int64(sequence)})
 				}
 			})
 		}
@@ -66,8 +66,8 @@ func TestStoreTee_Push(t *testing.T) {
 		for received := 0; received < producers*observations; received++ {
 			measurement := (*data.Measurement[float64])(tee.Next())
 			So(measurement, ShouldNotBeNil)
-			sequences[measurement.ID]++
-			So(measurement.SeqIdx, ShouldEqual, sequences[measurement.ID])
+			sequences[int(measurement.ID)]++
+			So(measurement.SeqIdx, ShouldEqual, sequences[int(measurement.ID)])
 		}
 
 		So(tee.Pending(), ShouldEqual, 0)
@@ -116,9 +116,9 @@ func BenchmarkStoreTee_Next(b *testing.B) {
 	tee := NewStoreTee(b.Context(), "store-benchmark", 4)
 	tee.Transition(runtime.READY)
 	measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 1}
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		tee.Push(measurement)
 
 		if (*data.Measurement[float64])(tee.Next()).SeqIdx != measurement.SeqIdx {

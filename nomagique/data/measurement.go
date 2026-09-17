@@ -33,7 +33,7 @@ primitive from the measurement's own estimator facts, these values represent
 the amount of trust to put in the overal Measurement, and the Metrics it contains.
 */
 type Measurement[T any] struct {
-	ID         int                  `json:"id"`
+	ID         T                    `json:"id"`
 	Label      string               `json:"label"`
 	Source     string               `json:"source"`
 	SeqIdx     int64                `json:"seqIdx"`
@@ -67,7 +67,6 @@ func NewMeasurement[T any](
 	}
 
 	return &Measurement[T]{
-		ID:         -1,
 		Source:     source,
 		Metrics:    metrics,
 		Metadata:   make(map[string]string),
@@ -78,16 +77,16 @@ func NewMeasurement[T any](
 /*
 Identity names the register slot this measurement's consumer node owns.
 */
-func (measurement *Measurement[T]) Identity() int {
+func (measurement *Measurement[T]) Identity() T {
 	return measurement.ID
 }
 
 /*
 Identify names the register slot this measurement's consumer node owns.
 */
-func (measurement *Measurement[T]) Identify(id int) Identifiable[T] {
+func (measurement *Measurement[T]) Identify(id T) T {
 	measurement.ID = id
-	return measurement
+	return measurement.ID
 }
 
 /*

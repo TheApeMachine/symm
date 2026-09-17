@@ -6,6 +6,7 @@ import "github.com/theapemachine/symm/nomagique/core"
 type Member[T any] struct {
 	core.Primitive
 	Address T
+	Conn    core.Primitive
 }
 
 func (member *Member[T]) Identify(address T) core.Identifiable[T] {
@@ -14,3 +15,7 @@ func (member *Member[T]) Identify(address T) core.Identifiable[T] {
 }
 
 func (member *Member[T]) Identity() T { return member.Address }
+
+func (member *Member[T]) Connect(conn core.Primitive) {
+	member.Conn = conn
+}

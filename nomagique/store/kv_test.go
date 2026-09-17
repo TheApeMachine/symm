@@ -19,8 +19,8 @@ func TestKVNext(t *testing.T) {
 		backing := lf.NewOrderedMap[string, float64](func(left, right string) bool { return left < right })
 		kv := store.NewKV[string](backing)
 		payload := 7.0
-		write := core.NewInput[string](nil, core.NewAction(core.ActionWrite), "price", &payload)
-		read := core.NewInput[string, string, float64](nil, core.NewAction(core.ActionRead), "price", nil)
+		write := core.NewInput[string](nil, core.Write, "price", &payload)
+		read := core.NewInput[string, string, float64](nil, core.Read, "price", nil)
 
 		Convey("Writes are visible both through reads and through the original store", func() {
 			for _, value := range []float64{7, 12, -3, 0} {
@@ -45,22 +45,6 @@ func TestKVNext(t *testing.T) {
 			So(kv.Error(), ShouldBeNil)
 		})
 
-		Convey("Write then read executes the declared action order", func() {
-			write.Action = core.NewAction(core.ActionWrite, core.ActionRead)
-			So(tests.CollectSeq[float64](kv.Next(write.Next(nil))), ShouldResemble, []float64{7, 7})
-		})
-
-		Convey("Stopping after the first action does not execute the next one", func() {
-			backing.Set("price", 3)
-			write.Action = core.NewAction(core.ActionRead, core.ActionWrite)
-			for output := range kv.Next(write.Next(nil)) {
-				So(*(*float64)(output), ShouldEqual, 3)
-				break
-			}
-			stored, _ := backing.Get("price")
-			So(stored, ShouldEqual, 3)
-		})
-
 		Convey("Missing keys produce an error and no invented zero", func() {
 			So(tests.CollectSeq[float64](kv.Next(read.Next(nil))), ShouldBeEmpty)
 			So(errors.Is(kv.Error(), core.ErrNotHeld), ShouldBeTrue)
@@ -74,8 +58,8 @@ func TestKVNext(t *testing.T) {
 			So(found, ShouldBeFalse)
 		})
 
-		Convey("Missing, empty, and unsupported action requests are explicit failures", func() {
-			for _, action := range []*core.Action{nil, core.NewAction(), core.NewAction(core.ActionExecute)} {
+		Convey("Missing and unsupported action requests are explicit failures", func() {
+			for _, action := range []core.Action{core.None, core.Execute} {
 				current := store.NewKV[string](backing)
 				write.Action = action
 				So(tests.CollectSeq[float64](current.Next(write.Next(nil))), ShouldBeEmpty)
@@ -97,20 +81,15 @@ func BenchmarkKVNext(b *testing.B) {
 	backing.Set("price", 0)
 	kv := store.NewKV[string](backing)
 	value := 0.0
-	request := core.NewInput[string](nil, core.NewAction(core.ActionWrite, core.ActionRead), "price", &value)
+	request := core.NewInput[string](nil, core.Write, "price", &value)
 	input := request.Next(nil)
 	b.ReportAllocs()
 	for b.Loop() {
 		value++
-		count := 0
 		for output := range kv.Next(input) {
 			if *(*float64)(output) != value {
 				b.Fatal("read differs from write")
 			}
-			count++
-		}
-		if count != 2 {
-			b.Fatal(count)
 		}
 	}
 }

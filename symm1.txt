@@ -424,8 +424,10 @@ Directory Structure:
     │   │   ├── square.go
     │   │   └── tanh.go
     │   ├── cognition
+    │   │   ├── associate.go
     │   │   ├── attractor.go
     │   │   ├── classification.go
+    │   │   ├── current.go
     │   │   ├── evaluation.go
     │   │   ├── key.go
     │   │   ├── lookahead.go
@@ -768,6 +770,7 @@ Directory Structure:
     │   │   ├── renewal_rate.go
     │   │   ├── spacings.go
     │   │   ├── timestamp.go
+    │   │   ├── transition.go
     │   │   └── velocity.go
     │   ├── transport
     │   │   ├── address.go
@@ -811,6 +814,7 @@ Directory Structure:
     │       ├── level3.go
     │       └── trade.go
     ├── strategy
+    │   ├── decision.go
     │   ├── trader.go
     │   └── training.go
     ├── system
@@ -72559,6 +72563,82 @@ func (tanh *Tanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 ---
 
 ---
+File: /nomagique/cognition/associate.go
+---
+
+package cognition
+
+import (
+	"bytes"
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Associate transforms sequential transitions into empirical associations.
+When the first transition arrives, it yields an association with no class to observe sensory context.
+When subsequent transitions arrive, it yields Association{Context: precursor, Class: current}.
+*/
+type Associate struct {
+	*core.PrimitiveError
+	precursor []byte
+	out       Association
+}
+
+func NewAssociate() *Associate {
+	return &Associate{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
+}
+
+func (associate *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if associate.Error() != nil {
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			current := *(*[]byte)(arriving)
+			if len(current) == 0 {
+				continue
+			}
+
+			if len(associate.precursor) == 0 {
+				associate.precursor = bytes.Clone(current)
+				associate.out = Association{
+					Context: bytes.Clone(current),
+					Class:   nil,
+				}
+
+				if !yield(unsafe.Pointer(&associate.out)) {
+					return
+				}
+
+				continue
+			}
+
+			associate.out = Association{
+				Context: bytes.Clone(associate.precursor),
+				Class:   bytes.Clone(current),
+			}
+			associate.precursor = bytes.Clone(current)
+
+			if !yield(unsafe.Pointer(&associate.out)) {
+				return
+			}
+		}
+	}
+}
+
+---
+
+---
 File: /nomagique/cognition/attractor.go
 ---
 
@@ -72684,6 +72764,7 @@ type ClassificationResult struct {
 	Confidence  float64
 	Contrast    float64
 	Support     uint64
+	IsTie       bool
 	Candidates  []ClassCandidate
 }
 
@@ -72761,16 +72842,79 @@ func (classification *Classification) Next(in iter.Seq[unsafe.Pointer]) iter.Seq
 			contrast = math.Log2(winner.Probability / highestOther)
 		}
 
+		isTie := len(candidates) > 1 && (winner.Probability == highestOther || contrast == 0.0)
+
 		classification.out = ClassificationResult{
 			WinnerClass: winner.Name,
 			RunnerUp:    runnerUp,
 			Confidence:  winner.Probability,
 			Contrast:    contrast,
 			Support:     winner.Support,
+			IsTie:       isTie,
 			Candidates:  candidates,
 		}
 
 		yield(unsafe.Pointer(&classification.out))
+	}
+}
+
+---
+
+---
+File: /nomagique/cognition/current.go
+---
+
+package cognition
+
+import (
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+)
+
+/*
+Current extracts the active evaluation context from an Association.
+If a class is present, it yields the class (the most recent transition).
+Otherwise, it yields the context (the initial sensory transition).
+*/
+type Current struct {
+	*core.PrimitiveError
+	out []byte
+}
+
+func NewCurrent() *Current {
+	return &Current{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
+}
+
+func (current *Current) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if current.Error() != nil {
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			assoc := (*Association)(arriving)
+			if len(assoc.Class) > 0 {
+				current.out = assoc.Class
+			}
+
+			if len(assoc.Class) == 0 {
+				current.out = assoc.Context
+			}
+
+			if len(current.out) > 0 {
+				if !yield(unsafe.Pointer(&current.out)) {
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -72822,6 +72966,7 @@ type Evaluation struct {
 	RunnerUp    string
 	Confidence  float64
 	Contrast    float64
+	IsTie       bool
 	Candidates  []ClassCandidate
 	Surprisal   float64
 	Ambiguity   float64
@@ -72936,6 +73081,7 @@ func (evaluator *Evaluator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				RunnerUp:    classResult.RunnerUp,
 				Confidence:  classResult.Confidence,
 				Contrast:    classResult.Contrast,
+				IsTie:       classResult.IsTie,
 				Candidates:  classResult.Candidates,
 				Surprisal:   surprisal,
 				Ambiguity:   ambiguity,
@@ -73278,9 +73424,6 @@ type Reinforce struct {
 	*core.PrimitiveError
 	root        *atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter *atomic.Uint64
-	weight      *Weight
-	pack        *Pack
-	out         Association
 }
 
 func NewReinforce(
@@ -73291,8 +73434,6 @@ func NewReinforce(
 		PrimitiveError: core.NewPrimitiveError(),
 		root:           root,
 		stepCounter:    stepCounter,
-		weight:         NewWeight(),
-		pack:           NewPack(),
 	}
 }
 
@@ -73301,6 +73442,10 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 		if reinforcePrim.Error() != nil || reinforcePrim.root == nil {
 			return
 		}
+
+		weightDecoder := NewWeight()
+		packEncoder := NewPack()
+		var out Association
 
 		for arriving := range in {
 			if arriving == nil {
@@ -73319,7 +73464,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 				oldRoot := reinforcePrim.root.Load()
 				var step uint64
 				if reinforcePrim.stepCounter != nil {
-					step = reinforcePrim.stepCounter.Add(1)
+					step = reinforcePrim.stepCounter.Load() + 1
 				}
 
 				txn := oldRoot.Txn()
@@ -73339,16 +73484,19 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 						inW := func(yieldW func(unsafe.Pointer) bool) {
 							yieldW(unsafe.Pointer(&existing))
 						}
-						for outW := range reinforcePrim.weight.Next(inW) {
+						for outW := range weightDecoder.Next(inW) {
 							pw = *(*PackedWeight)(outW)
 						}
 
 						pw.Count++
 						if assoc.Graded {
-							pw.Mass += math.Max(assoc.Feedback, 0)
-						} else {
+							pw.Mass = math.Max(pw.Mass+assoc.Feedback, 0)
+						}
+
+						if !assoc.Graded {
 							pw.Mass += core.Unit
 						}
+
 						pw.WriteStep = step
 					}
 
@@ -73356,7 +73504,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 					inPack := func(yieldP func(unsafe.Pointer) bool) {
 						yieldP(unsafe.Pointer(&pw))
 					}
-					for outP := range reinforcePrim.pack.Next(inPack) {
+					for outP := range packEncoder.Next(inPack) {
 						packed = *(*[WeightSize]byte)(outP)
 					}
 					txn.Insert(basinKey, bytes.Clone(packed[:]))
@@ -73372,7 +73520,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 					inW := func(yieldW func(unsafe.Pointer) bool) {
 						yieldW(unsafe.Pointer(&existing))
 					}
-					for outW := range reinforcePrim.weight.Next(inW) {
+					for outW := range weightDecoder.Next(inW) {
 						sPW = *(*PackedWeight)(outW)
 					}
 
@@ -73385,19 +73533,22 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 				inPack := func(yieldP func(unsafe.Pointer) bool) {
 					yieldP(unsafe.Pointer(&sPW))
 				}
-				for outP := range reinforcePrim.pack.Next(inPack) {
+				for outP := range packEncoder.Next(inPack) {
 					sPacked = *(*[WeightSize]byte)(outP)
 				}
 				txn.Insert(sensoryKey, bytes.Clone(sPacked[:]))
 
 				newRoot := txn.Commit()
 				if reinforcePrim.root.CompareAndSwap(oldRoot, newRoot) {
+					if reinforcePrim.stepCounter != nil {
+						reinforcePrim.stepCounter.Add(1)
+					}
 					break
 				}
 			}
 
-			reinforcePrim.out = assoc
-			if !yield(unsafe.Pointer(&reinforcePrim.out)) {
+			out = assoc
+			if !yield(unsafe.Pointer(&out)) {
 				return
 			}
 		}
@@ -73886,4 +74037,19 @@ Before creating a new Primitive always first consider:
 
 1. Does what I need already exist as a Primitive?
 
-Primitive types should be placed 
+Primitive types should be placed in a sub-package that generally represents
+the Primitive's most canonical domain or discipline.
+To avoid import cycles, a composition can always be promoted to an equation.
+The equation sub-package may only contain composition, no implementation code.
+The algo package has the same rules as equation, with one additional constraint,
+algo Primitives may only be well-known, named algorithms.
+
+2. Does what I need exist if I make an existing Primitive more flexible?
+
+This can be done by expanding the constructor, or potentially also by wrapping
+things in another Primitive to basically act as a decorator, altering behavior.
+
+3. Does what I need exist if I compose multiple existing Primitives?
+
+This is really always the goal, and the idea behind it is that we can validate
+the code 

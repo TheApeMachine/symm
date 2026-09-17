@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
@@ -50,11 +49,23 @@ slot outside the register is a shape failure that ends the stream.
 */
 func (register *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := sequence.Read[Query[int, T]](in)
+		next, stop := iter.Pull(in)
+		defer stop()
 
-		switch query.Action() {
-		case data.ActionIdentify:
-			for ptr := range query.payload {
+		arriving, ok := next()
+		if !ok {
+			return
+		}
+
+		query := (*Query[int, T])(arriving)
+
+		switch query.Action {
+		case core.Identify:
+			for {
+				ptr, ok := next()
+				if !ok {
+					break
+				}
 				register.slots = append(register.slots, *(*T)(ptr))
 				register.frames = append(register.frames, make([]T, register.capacity))
 			}
@@ -64,7 +75,7 @@ func (register *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 
 			if slotID >= 0 {
 				if meas, ok := any(register.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
-					meas.ID = slotID
+					meas.ID = float64(slotID)
 				}
 			}
 
@@ -73,31 +84,29 @@ func (register *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 			if !yield(unsafe.Pointer(&slotVal)) {
 				return
 			}
-		case data.ActionWrite:
+		case core.Write:
 			if query.Identity() < 0 || query.Identity() >= len(register.slots) {
 				register.Error(core.ErrShape)
 				return
 			}
 
-			var value T
-
-			if query.payload != nil {
-				value = sequence.Read[T](query.payload)
-				register.slots[query.Identity()] = value
+			ptr, ok := next()
+			if !ok {
+				register.Error(core.ErrShape)
+				return
 			}
 
-			if query.sequence >= 0 {
-				register.frames[query.Identity()][query.sequence%int64(register.capacity)] = value
-			}
+			value := *(*T)(ptr)
+			register.slots[query.Identity()] = value
 
 			if !yield(unsafe.Pointer(&value)) {
 				return
 			}
 
-		case data.ActionRead:
+		case core.Read:
 			if query.Identity() < 0 {
 				for index := range register.slots {
-					value := register.published(index, query.sequence)
+					value := register.published(index, -1)
 
 					if !yield(unsafe.Pointer(&value)) {
 						return
@@ -132,16 +141,12 @@ func (register *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 
 					limit := len(register.slots)
 
-					if query.PeerLimit() >= 0 && query.PeerLimit() < limit {
-						limit = query.PeerLimit()
-					}
-
 					for idx := 0; idx < limit; idx++ {
 						if idx == query.Identity() {
 							continue
 						}
 
-						value := register.published(idx, query.sequence)
+						value := register.published(idx, -1)
 
 						peer, peerOk := any(value).(*data.Measurement[float64])
 

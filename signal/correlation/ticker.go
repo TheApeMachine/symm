@@ -12,42 +12,237 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	correlation "github.com/theapemachine/symm/nomagique/statistic/correlation"
+	nmcorrelation "github.com/theapemachine/symm/nomagique/statistic/correlation"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 Ticker is the asynchronous price-path correlation instrument. It holds no
-state and no logic of its own: its entire behavior is one nomagique pipeline
-over the measurement itself — every stage writes its facts into the
-measurement where it computes them, and the workload's register owns the
-measurement's lifetime.
+state and no logic of its own: its entire behavior is distributed across
+nomagique metric pipelines registered as cells with the coordinate grid.
+Each metric defines its interests in raw market data, receives its coordinate
+and bi-directional communication pipe from the grid, and publishes observations.
 */
 type Ticker struct {
 	*runtime.System
+	metrics  map[string]*nomagique.Number
 	pipeline core.Primitive
 }
 
-func NewTicker(ctx context.Context) *Ticker {
+func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate]) *Ticker {
 	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(correlation.
-			NewGate(), correlation.
-			NewPairs(algo.NewHayashiYoshida()), correlation.
-			NewFold(), correlation.
-			NewHistory(), correlation.
-			NewRelative(), correlation.
-			NewCorrelationVelocity(), correlation.
-			NewEnergyVelocity(), data.NewFinalizer[float64](),
+		metrics: map[string]*nomagique.Number{
+			"last_price": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"ticker", "data", "price"}},
+				),
+			),
+			"observation_count": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"ticker", "data", "count"}},
+				),
+			),
+			"signed_correlation": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "signed"}},
+				),
+			),
+			"absolute_correlation": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "absolute"}},
+				),
+			),
+			"cohort_signed_correlation": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "cohort", "signed"}},
+				),
+			),
+			"cohort_absolute_correlation": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "cohort", "absolute"}},
+				),
+			),
+			"covariance": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "covariance"}},
+				),
+			),
+			"return_energy:reference": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "return", "reference"}},
+				),
+			),
+			"return_energy:measured": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "return", "measured"}},
+				),
+			),
+			"return_energy_rate:reference": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "rate", "reference"}},
+				),
+			),
+			"return_energy_rate:measured": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "rate", "measured"}},
+				),
+			),
+			"overlap_density": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "overlap", "density"}},
+				),
+			),
+			"peer_return_energy_rate": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "rate", "peer"}},
+				),
+			),
+			"supported_return_count:measured": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"count", "return", "measured"}},
+				),
+			),
+			"supported_return_count:reference": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"count", "return", "reference"}},
+				),
+			),
+			"overlap_pair_count": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"count", "overlap", "pair"}},
+				),
+			),
+			"shared_time": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"temporal", "shared", "time"}},
+				),
+			),
+			"correlation_p_value": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "p_value"}},
+				),
+			),
+			"correlation_standard_error_fisher": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "standard_error_fisher"}},
+				),
+			),
+			"cohort_peer_count": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"cohort", "peer_count"}},
+				),
+			),
+			"cohort_effective_peer_count": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"cohort", "effective_peer_count"}},
+				),
+			),
+			"cohort_correlation_dispersion": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"cohort", "correlation_dispersion"}},
+				),
+			),
+			"relative_return_energy": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "relative"}},
+				),
+			),
+			"correlation_baseline": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "baseline"}},
+				),
+			),
+			"correlation_divergence": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "divergence"}},
+				),
+			),
+			"correlation_zscore": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "zscore"}},
+				),
+			),
+			"correlation_velocity": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"correlation", "velocity"}},
+				),
+			),
+			"relative_return_energy_baseline": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "relative", "baseline"}},
+				),
+			),
+			"relative_return_energy_divergence": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "relative", "divergence"}},
+				),
+			),
+			"relative_return_energy_zscore": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "relative", "zscore"}},
+				),
+			),
+			"relative_return_energy_velocity": nomagique.NewNumber(
+				transport.NewConn[*geometry.Coordinate](
+					grid,
+					[][]string{{"energy", "relative", "velocity"}},
+				),
+			),
+		},
+		pipeline: nomagique.NewNumber(
+			nmcorrelation.NewGate(),
+			nmcorrelation.NewPairs(algo.NewHayashiYoshida()),
+			nmcorrelation.NewFold(),
+			nmcorrelation.NewHistory(),
+			nmcorrelation.NewRelative(),
+			nmcorrelation.NewCorrelationVelocity(),
+			nmcorrelation.NewEnergyVelocity(),
+			data.NewFinalizer[float64](),
 		),
 	}
 
 	ticker.System = runtime.NewSystem(ctx, "correlation:ticker", ticker)
+	ticker.Transition(runtime.READY)
 	return ticker
 }
 
 /*
-Next supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
+Next supplies arriving market data to the correlation pipeline.
+Computed metric observations are published across their assigned
+bi-directional communication pipes to the grid.
 */
 func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -57,9 +252,11 @@ func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			if ticker.Status() != runtime.READY {
 				errnie.Warn(ticker.Name() + ": Next called before READY; dropping event")
+
 				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
 					return
 				}
+
 				continue inputs
 			}
 
@@ -67,6 +264,7 @@ func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
 					return
 				}
+
 				continue inputs
 			}
 
@@ -76,7 +274,9 @@ func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 						return false
 					}
 
-					return quotedPrice(candidate) > 0
+					metric, ok := candidate.Metrics["last_price"]
+
+					return ok && metric.Raw > 0
 				})
 
 				if peer == nil {
@@ -84,7 +284,7 @@ func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				}
 
 				measurement.Pull(peer)
-				measurement.Metrics["last_price"] = measurement.Metrics["last_price"].Write(quotedPrice(peer))
+				measurement.Metrics["last_price"] = measurement.Metrics["last_price"].Write(peer.Metrics["last_price"].Raw)
 			}
 
 			res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
@@ -93,26 +293,22 @@ func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
 					return
 				}
+
 				continue inputs
 			}
 
-			if res != nil && !yield(unsafe.Pointer(&res)) {
+			for _, metric := range ticker.metrics {
+				for range metric.Next(sequence.NewOne(unsafe.Pointer(&res)).Next(nil)) {
+				}
+			}
+
+			if !yield(unsafe.Pointer(&res)) {
 				return
 			}
+
 			continue inputs
-
 		}
 	}
-}
-
-func quotedPrice(measurement *data.Measurement[float64]) float64 {
-	for _, key := range []string{"last_price", "last", "price"} {
-		if metric, ok := measurement.Metrics[key]; ok && metric.Raw > 0 {
-			return metric.Raw
-		}
-	}
-
-	return 0
 }
 
 /*
@@ -215,6 +411,7 @@ func (ticker *Ticker) Register() *data.Measurement[float64] {
 			"relative_return_energy_velocity", data.UnitPerSecond, data.TimescaleInstantaneous, 0, 1,
 		),
 	})
+	m.ID = -1
 	m.Metadata["peer-interest"] = "*"
 	return m
 }

@@ -6,8 +6,9 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"golang.design/x/lockfree"
 	"golang.design/x/lockfree/lf"
 )
@@ -17,34 +18,40 @@ Grid is a coordinate-addressed store of distributed primitives. It owns their
 addresses, not their values. Queries have one consumer; read outputs are
 borrowed until the next query. Registered coordinates must not be mutated.
 */
-type Grid[T core.Ordered[T]] struct {
+type Grid[T interface {
+	core.Ordered[T]
+	comparable
+}] struct {
 	*core.PrimitiveError
-	cells   lockfree.Map[string, lockfree.Map[T, core.Primitive]]
-	current core.Primitive
+	cells     lockfree.Map[T, core.Primitive]
+	interests lockfree.Map[T, [][]string]
+	count     int
+	current   core.Primitive
 }
 
 /*
 NewGrid registers each member at its existing identity within its entity.
 */
-func NewGrid[T core.Ordered[T]](members ...map[string]core.Identifiable[T]) *Grid[T] {
+func NewGrid[T interface {
+	core.Ordered[T]
+	comparable
+}](members ...core.Connectable[T]) *Grid[T] {
 	grid := &Grid[T]{
 		PrimitiveError: core.NewPrimitiveError(),
-		cells: lf.NewSkipList[string, lockfree.Map[T, core.Primitive]](
-			func(left, right string) bool { return left < right },
+		cells: lf.NewSkipList[T, core.Primitive](
+			func(left, right T) bool { return left.Less(right) },
+		),
+		interests: lf.NewSkipList[T, [][]string](
+			func(left, right T) bool { return left.Less(right) },
 		),
 	}
 
-	for _, member := range members {
-		for entity, primitive := range member {
-			query := NewQuery[T, core.Identifiable[T]](
-				primitive, data.ActionIdentify, sequence.NewValue(primitive),
-			)
-
-			query.Entity = entity
-
-			for range grid.Next(query.Next(nil)) {
-			}
-		}
+	for _, primitive := range members {
+		sequence.Read[*core.Query[T, core.Connectable[T]]](grid.Next(
+			core.NewQuery[T, core.Connectable[T]](
+				primitive, core.Identify,
+			).Next(nil),
+		))
 	}
 
 	return grid
@@ -52,97 +59,100 @@ func NewGrid[T core.Ordered[T]](members ...map[string]core.Identifiable[T]) *Gri
 
 /*
 Next answers Query[T, core.Identifiable[T]]. Identify registers a single member and
-uses its existing identity; Read yields the member; Execute passes the borrowed
-payload through it. Missing cells, occupied addresses and writes are errors.
+uses its existing identity or allocates one when unassigned; Read yields the member;
+Execute passes the borrowed payload through it. Missing cells, occupied addresses and
+writes are errors.
 */
 func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var query *core.Query[T, core.Connectable[T]]
+
 		for arriving := range in {
-			if grid.Error() != nil {
-				return
-			}
+			if query == nil {
+				query = (*core.Query[T, core.Connectable[T]])(arriving)
 
-			query := (*Query[T, core.Identifiable[T]])(arriving)
-			address := query.Identity()
-
-			if query.Entity == "" {
-				grid.Error(fmt.Errorf(
-					"%w: grid query needs an entity", core.ErrShape,
-				))
-
-				return
-			}
-
-			entity, exists := grid.cells.Get(query.Entity)
-
-			if query.Action() == data.ActionIdentify {
-				member := query.First()
-
-				if member == nil {
-					grid.Error(fmt.Errorf(
-						"%w: grid registration requires a member", core.ErrWrongType,
-					))
-
+				if query == nil || grid.Error() != nil {
 					return
 				}
 
-				if !exists {
-					entity = lf.NewSkipList[T, core.Primitive](T.Less)
+				switch query.Action {
+				case core.Identify:
+					address := query.Identity()
+					var zero T
 
-					grid.cells.Set(query.Entity, entity)
+					if any(address) == nil || any(address) == any(zero) {
+						coord := any(geometry.NewCoordinate(grid.count, 0)).(T)
+						grid.count++
+						query.Identify(coord)
+						address = coord
+					}
+
+					if _, occupied := grid.cells.Get(address); occupied {
+						grid.Error(fmt.Errorf("%w: occupied address", core.ErrShape))
+						return
+					}
+
+					pipe := transport.NewIO[any](query.Connectable, grid)
+					query.Connect(pipe)
+
+					grid.cells.Set(address, query.Connectable)
+
+					if !yield(unsafe.Pointer(&query)) {
+						return
+					}
+
+					continue
+
+				case core.Read:
+					cell, found := grid.cells.Get(query.Identity())
+
+					if !found {
+						grid.Error(fmt.Errorf("%w: missing cell", core.ErrShape))
+						return
+					}
+
+					if !yield(unsafe.Pointer(&cell)) {
+						return
+					}
+
+					query = nil
+					continue
+
+				case core.Write:
+					grid.Error(fmt.Errorf("%w: grid writes are not allowed", core.ErrShape))
+					return
+
+				case core.Execute:
+					continue
+				}
+			}
+
+			if query.Action == core.Identify {
+				interests := *(*[][]string)(arriving)
+
+				if len(interests) > 0 {
+					grid.interests.Set(query.Identity(), interests)
 				}
 
-				if _, occupied := entity.Get(address); occupied || address.Less(member.Identity()) || member.Identity().Less(address) {
-					grid.Error(fmt.Errorf(
-						"%w: grid address is occupied or differs from the member identity", core.ErrShape,
-					))
+				query = nil
+				continue
+			}
 
+			if query.Action == core.Execute {
+				cell, found := grid.cells.Get(query.Identity())
+
+				if !found {
+					grid.Error(fmt.Errorf("%w: missing cell", core.ErrShape))
 					return
 				}
 
-				grid.current = member
-				entity.Set(address, grid.current)
-			}
+				single := func(y func(unsafe.Pointer) bool) { y(arriving) }
 
-			if !exists && query.Action() != data.ActionIdentify {
-				grid.Error(fmt.Errorf(
-					"%w: grid entity %q", core.ErrNotHeld, query.Entity,
-				))
-
-				return
-			}
-
-			grid.current, exists = entity.Get(address)
-
-			if !exists {
-				grid.Error(fmt.Errorf(
-					"%w: grid address %v", core.ErrNotHeld, address,
-				))
-
-				return
-			}
-
-			switch query.Action() {
-			case data.ActionIdentify, data.ActionRead:
-				if !yield(unsafe.Pointer(&grid.current)) {
-					return
-				}
-			case data.ActionExecute:
-				member := grid.current
-
-				for output := range member.Next(query.payload) {
-					if !yield(output) {
-						grid.Error(member.Error())
+				for out := range cell.Next(single) {
+					if !yield(out) {
 						return
 					}
 				}
-				grid.Error(member.Error())
-			default:
-				grid.Error(fmt.Errorf(
-					"%w: grid writes belong to registered members", core.ErrDomain,
-				))
-
-				return
 			}
 		}
 	}

@@ -34,47 +34,40 @@ func (kv *KV[Origin, Key, Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[uns
 		for arriving := range in {
 			input := (*core.Input[Origin, Key, Value])(arriving)
 
-			if input.Action == nil {
+			if input.Action == core.None {
 				kv.Error(fmt.Errorf("%w: KV request has no action", core.ErrDomain))
 				return
 			}
 
-			performed := false
-			for operation := range input.Action.Next(nil) {
-				performed = true
-				switch *(*core.ActionType)(operation) {
-				case core.ActionRead:
-					value, found := kv.current.Get(input.Key)
+			switch input.Action {
+			case core.Read:
+				value, found := kv.current.Get(input.Key)
 
-					if !found {
-						kv.Error(fmt.Errorf("%w: KV key %v", core.ErrNotHeld, input.Key))
-						return
-					}
-
-					kv.out = value
-
-					if !yield(unsafe.Pointer(&kv.out)) {
-						return
-					}
-				case core.ActionWrite:
-					if input.Value == nil {
-						kv.Error(fmt.Errorf("%w: KV write for key %v has no value", core.ErrShape, input.Key))
-						return
-					}
-
-					kv.current.Set(input.Key, *input.Value)
-
-					if !yield(unsafe.Pointer(input.Value)) {
-						return
-					}
-				default:
-					kv.Error(fmt.Errorf("%w: KV does not support action %d", core.ErrDomain, *(*core.ActionType)(operation)))
+				if !found {
+					kv.Error(fmt.Errorf("%w: KV key %v", core.ErrNotHeld, input.Key))
 					return
 				}
-			}
 
-			if !performed {
-				kv.Error(fmt.Errorf("%w: KV request has an empty action sequence", core.ErrDomain))
+				kv.out = value
+
+				if !yield(unsafe.Pointer(&kv.out)) {
+					return
+				}
+
+			case core.Write:
+				if input.Value == nil {
+					kv.Error(fmt.Errorf("%w: KV write for key %v has no value", core.ErrShape, input.Key))
+					return
+				}
+
+				kv.current.Set(input.Key, *input.Value)
+
+				if !yield(unsafe.Pointer(input.Value)) {
+					return
+				}
+
+			default:
+				kv.Error(fmt.Errorf("%w: KV does not support action %d", core.ErrDomain, input.Action))
 				return
 			}
 		}
