@@ -22,6 +22,10 @@ func NewForest() *Forest {
 
 func (forest *Forest) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		var edges []*Edge
 
 		for arriving := range in {

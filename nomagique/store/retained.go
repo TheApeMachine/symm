@@ -2,6 +2,7 @@ package store
 
 import (
 	"iter"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -15,8 +16,7 @@ A value is yielded only after one has been written.
 type Retained[T any] struct {
 	*core.PrimitiveError
 
-	held    T
-	written bool
+	held atomic.Pointer[T]
 }
 
 func NewRetained[T any](current ...T) *Retained[T] {
@@ -26,19 +26,21 @@ func NewRetained[T any](current ...T) *Retained[T] {
 		return retained
 	}
 
-	retained.held = current[0]
-	retained.written = true
+	value := current[0]
+	retained.held.Store(&value)
 	return retained
 }
 
 func (retained *Retained[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		if in == nil {
-			if !retained.written {
+			pointer := retained.held.Load()
+
+			if pointer == nil {
 				return
 			}
 
-			if !yield(unsafe.Pointer(&retained.held)) {
+			if !yield(unsafe.Pointer(pointer)) {
 				return
 			}
 
@@ -48,11 +50,12 @@ func (retained *Retained[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 		wrote := false
 
 		for arriving := range in {
-			retained.held = *(*T)(arriving)
-			retained.written = true
+			value := new(T)
+			*value = *(*T)(arriving)
+			retained.held.Store(value)
 			wrote = true
 
-			if !yield(unsafe.Pointer(&retained.held)) {
+			if !yield(unsafe.Pointer(value)) {
 				return
 			}
 		}
@@ -61,10 +64,13 @@ func (retained *Retained[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 			return
 		}
 
-		if !retained.written {
+		pointer := retained.held.Load()
+
+		if pointer == nil {
 			return
 		}
 
-		yield(unsafe.Pointer(&retained.held))
+		yield(unsafe.Pointer(pointer))
 	}
 }
+

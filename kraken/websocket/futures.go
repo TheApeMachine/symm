@@ -17,13 +17,9 @@ import (
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
-	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/signal/quote"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/utils"
 	"golang.design/x/lockfree/lf"
@@ -75,7 +71,6 @@ type FuturesLive struct {
 	// stage downstream keys on the spot symbol, so the frame is attributed
 	// here. The instrument registry owns the mapping and installs it.
 	resolve atomic.Pointer[func(string) (string, bool)]
-	grid    *store.Grid[*geometry.Coordinate]
 }
 
 /*
@@ -156,9 +151,8 @@ constructor, mirroring New.
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
-	grid *store.Grid[*geometry.Coordinate],
 ) *FuturesLive {
-	return NewFuturesWithClient(ctx, endpoint, nil, grid)
+	return NewFuturesWithClient(ctx, endpoint, nil)
 }
 
 /*
@@ -169,7 +163,6 @@ func NewFuturesWithClient(
 	ctx context.Context,
 	endpoint string,
 	client *derivatives.WebSocket,
-	grid *store.Grid[*geometry.Coordinate],
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = system.Cfg.WebSocket.Endpoints.Futures
@@ -190,7 +183,6 @@ func NewFuturesWithClient(
 		callbacks:     &sync.Map{},
 		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
-		grid:          grid,
 	}
 	futures.client.Store(client)
 
@@ -278,6 +270,16 @@ func NewFuturesWithClient(
 	}
 
 	return futures
+}
+
+func (futures *FuturesLive) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	value, ok := futures.queue.Dequeue()
+
+	if !ok {
+		return nil
+	}
+
+	return sequence.NewValue(value)
 }
 
 /*
@@ -377,22 +379,6 @@ func (futures *FuturesLive) restoreSubscriptions() error {
 	}
 
 	return nil
-}
-
-/*
-futuresKey maps a futures feed onto the ingress workload that carries it.
-The venue emits a snapshot feed and an incremental feed for the same stream, and
-both belong on the same workload.
-*/
-func futuresKey(feed string) string {
-	switch feed {
-	case "ticker", "ticker_lite":
-		return "ticker"
-	case "trade", "trade_snapshot":
-		return "trade"
-	default:
-		return feed
-	}
 }
 
 func futuresFrameIdentity(raw []byte) string {
@@ -498,13 +484,19 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		if futures.grid != nil {
-			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				nil, core.Execute,
-			)
-			for range futures.grid.Next(query.Next(quote.NewFutures().Next(sequence.NewValue(ticker.Data)))) {
-			}
+		mapped, err := event.Data.Map()
+
+		if err != nil {
+			futures.Error(errnie.Err(
+				errnie.Validation,
+				"futures: failed to map ticker",
+				err,
+			))
+			return
 		}
+
+		futures.queue.Enqueue(mapped)
+		return
 
 	case "trade", "trade_snapshot":
 		if futures.Status() != runtime.READY {
@@ -522,25 +514,20 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		if futures.grid != nil {
-			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				nil, core.Execute,
-			)
-			tradeQuote := quote.NewFuturesTrade()
-			for _, item := range trades.Data {
-				for range futures.grid.Next(query.Next(tradeQuote.Next(sequence.NewValue(item)))) {
-				}
-			}
-		}
-	}
-}
+		mapped, err := event.Data.Map()
 
-/*
-Next implements the runtime.Node interface: one dequeued futures record becomes
-one measurement.
-*/
-func (futures *FuturesLive) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return in
+		if err != nil {
+			futures.Error(errnie.Err(
+				errnie.Validation,
+				"futures: failed to map ticker",
+				err,
+			))
+			return
+		}
+
+		futures.queue.Enqueue(mapped)
+		return
+	}
 }
 
 /*

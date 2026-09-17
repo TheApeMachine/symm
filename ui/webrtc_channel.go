@@ -47,13 +47,7 @@ func newFluidPeer(
 	}
 }
 
-func (peer *fluidPeer) idle(label string) bool {
-	peer.mutex.RLock()
-	channel := peer.channels[label]
-	peer.mutex.RUnlock()
 
-	return channel != nil && channel.idle()
-}
 
 func (peer *fluidPeer) ready(label string) bool {
 	peer.mutex.RLock()

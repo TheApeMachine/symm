@@ -77,7 +77,7 @@ func NewEvaluator(trie *Trie) *Evaluator {
 
 func (evaluator *Evaluator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if evaluator.Error() != nil {
+		if evaluator.Error() != nil || in == nil {
 			return
 		}
 

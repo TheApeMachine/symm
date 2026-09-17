@@ -419,23 +419,12 @@
       "kernelOnly": false
     },
     {
-      "id": "training/action",
-      "source": "training",
-      "metric": "action",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 84,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
       "id": "training/ambiguity",
       "source": "training",
       "metric": "ambiguity",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 81,
+      "package": "github.com/theapemachine/symm/hindsight/tables",
+      "file": "hindsight/tables/drain.go",
+      "line": 112,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -444,9 +433,9 @@
       "id": "training/confidence",
       "source": "training",
       "metric": "confidence",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 78,
+      "package": "github.com/theapemachine/symm/hindsight/tables",
+      "file": "hindsight/tables/drain.go",
+      "line": 113,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -455,31 +444,9 @@
       "id": "training/contrast",
       "source": "training",
       "metric": "contrast",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 79,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "training/edge",
-      "source": "training",
-      "metric": "edge",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 85,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "training/steps",
-      "source": "training",
-      "metric": "steps",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 83,
+      "package": "github.com/theapemachine/symm/hindsight/tables",
+      "file": "hindsight/tables/drain.go",
+      "line": 114,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -488,9 +455,9 @@
       "id": "training/support",
       "source": "training",
       "metric": "support",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 82,
+      "package": "github.com/theapemachine/symm/hindsight/tables",
+      "file": "hindsight/tables/drain.go",
+      "line": 115,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -499,9 +466,9 @@
       "id": "training/surprisal",
       "source": "training",
       "metric": "surprisal",
-      "package": "github.com/theapemachine/symm/ui",
-      "file": "ui/training.go",
-      "line": 80,
+      "package": "github.com/theapemachine/symm/hindsight/tables",
+      "file": "hindsight/tables/drain.go",
+      "line": 111,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1219,23 +1186,10 @@
       ]
     }
   ],
-  "unresolved": [
-    {
-      "package": "github.com/theapemachine/symm/logic/cognition",
-      "file": "logic/cognition/solver.go",
-      "line": 991,
-      "reason": "Labelled node wraps a reporter whose readings are not statically known"
-    },
-    {
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/cognition_wire.go",
-      "line": 84,
-      "reason": "Labelled node wraps a reporter whose readings are not statically known"
-    }
-  ],
+  "unresolved": null,
   "summary": {
-    "totalProducers": 46,
-    "deadProducers": 46,
+    "totalProducers": 43,
+    "deadProducers": 43,
     "referencedProducers": 0,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,
@@ -1243,6 +1197,6 @@
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
-    "unresolved": 2
+    "unresolved": 0
   }
 }

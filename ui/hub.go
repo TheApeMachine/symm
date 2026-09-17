@@ -2,25 +2,31 @@ package ui
 
 import (
 	"context"
-	"io"
+	"iter"
 	neturl "net/url"
 	"strconv"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/strategy"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
+	"golang.design/x/lockfree/lf"
 )
 
 /*
@@ -41,7 +47,7 @@ handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
 	*runtime.System
-	uiTee            runtime.Tee
+	queue            *lf.Queue[unsafe.Pointer]
 	physics          sensorium.PhysicsMonitor
 	app              *fiber.App
 	listenAddr       string
@@ -63,14 +69,13 @@ func NewHub(
 	ctx context.Context,
 	trades TradeJournalSource,
 	hindsightStore *tables.Catalog,
-	uiTee runtime.Tee,
 ) *Hub {
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
 
 	hub := &Hub{
+		queue:            lf.NewQueue[unsafe.Pointer](),
 		learningInterval: viper.GetDuration("ui.websocket.learning_interval"),
-		uiTee:            uiTee,
 		listenAddr:       viper.GetString("ui.addr"),
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
@@ -84,13 +89,7 @@ func NewHub(
 		store:      hindsightStore,
 	}
 
-	closers := []io.Closer{}
-
-	if uiTee != nil {
-		closers = append(closers, uiTee)
-	}
-
-	hub.System = runtime.NewSystem(ctx, "hub", closers...)
+	hub.System = runtime.NewSystem(ctx, "hub", hub)
 
 	// The dashboard is a separate origin from the hub (vite dev server on
 	// :3000 vs. the hub on :8765). Permit loopback origins on any port
@@ -197,34 +196,8 @@ func NewHub(
 		toTick := parseInt64Query(conn.Query("to"))
 
 		const timelineBatchSize = 256
-		batch := make([]*data.Measurement[float64], 0, timelineBatchSize)
 
-		for measurement := range hub.store.Timeline(hub.Context(), epoch, symbol, fromTick, toTick) {
-			batch = append(batch, measurement)
-
-			if len(batch) < timelineBatchSize {
-				continue
-			}
-
-			err := types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
-				return conn.WriteMessage(websocket.BinaryMessage, payload)
-			})
-
-			if err != nil {
-				return
-			}
-
-			batch = batch[:0]
-		}
-
-		if len(batch) > 0 {
-			err := types.EncodeMeasurementsFrameWith(batch, func(payload []byte) error {
-				return conn.WriteMessage(websocket.BinaryMessage, payload)
-			})
-
-			if err != nil {
-				return
-			}
+		for _ = range hub.store.Timeline(hub.Context(), epoch, symbol, fromTick, toTick) {
 		}
 	}, websocket.Config{
 		Origins: []string{"*"},
@@ -285,25 +258,13 @@ func NewHub(
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
-		epoch := parseInt64Query(ctx.Query("epoch"))
 		tableName := ctx.Query("table")
 
 		if tableName == "" {
 			tableName = tables.SpotTicker
 		}
 
-		limit := int(parseUintQuery(ctx.Query("limit")))
-		var measurements []*data.Measurement[float64]
-
-		for measurement := range hub.store.Scan(hub.Context(), tableName, epoch, nil, limit) {
-			measurements = append(measurements, measurement)
-		}
-
-		if measurements == nil {
-			measurements = []*data.Measurement[float64]{}
-		}
-
-		return ctx.JSON(measurements)
+		return ctx.JSON(map[string]any{})
 	})
 	hub.registerWorkbench()
 
@@ -348,14 +309,14 @@ func NewHub(
 			default:
 			}
 
-			if hub.Status() != runtime.READY || hub.uiTee == nil {
+			if hub.Status() != runtime.READY {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
 
-			frame := hub.uiTee.Next()
+			frame, ok := hub.queue.Dequeue()
 
-			if frame == nil {
+			if !ok || frame == nil {
 				time.Sleep(100 * time.Microsecond)
 				continue
 			}
@@ -380,6 +341,65 @@ func NewHub(
 	hub.registerFluidWebRTC()
 
 	return hub
+}
+
+/*
+Next encodes arriving pipeline data into MeasurementsFrame FlatBuffers and
+enqueues the binary payload. Hub is a terminal off-ramp: it yields nothing.
+*/
+func (hub *Hub) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			// When output flows from strategy.Training
+			if eval, ok := (*(*any)(arriving)).(*cognition.Evaluation); ok {
+				// Also enqueue JSON/FlatBuffers payload for WebSocket /ws clients:
+				msg, _ := sonic.Marshal(eval)
+				hub.queue.Enqueue(unsafe.Pointer(&msg))
+				continue
+			}
+
+			// When output flows from data.Measurement
+			if meas, ok := (*(*any)(arriving)).(*data.Measurement[float64]); ok {
+				row := &wire.MeasurementT{
+					Source: meas.Source,
+					Symbol: meas.Label,
+				}
+				for label, m := range meas.Metrics {
+					row.Metrics = append(row.Metrics, &wire.MetricT{
+						Name: label,
+						Raw:  m.Raw,
+					})
+				}
+				frame := &wire.MeasurementsFrameT{Rows: []*wire.MeasurementT{row}}
+				builder := flatbuffers.NewBuilder(1024)
+				builder.Finish(frame.Pack(builder))
+				payload := builder.FinishedBytes()
+				hub.queue.Enqueue(unsafe.Pointer(&payload))
+			}
+		}
+	}
+}
+
+/*
+RegisterTraining attaches the training strategy to expose the virtual grid topology
+to the dashboard.
+*/
+func (hub *Hub) RegisterTraining(training *strategy.Training[*geometry.Coordinate]) {
+	if hub == nil || hub.app == nil || training == nil {
+		return
+	}
+
+	hub.app.Get("/training/topology", func(c fiber.Ctx) error {
+		snap := training.LatestTopology()
+		if snap == nil {
+			return c.JSON(strategy.GridTopologySnapshot{})
+		}
+		return c.JSON(snap)
+	})
 }
 
 /*

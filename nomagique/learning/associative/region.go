@@ -30,7 +30,7 @@ func NewRegion() *Region {
 
 func (region *Region) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if region.Error() != nil {
+		if region.Error() != nil || in == nil {
 			return
 		}
 

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pion/webrtc/v4"
@@ -13,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
+	"golang.design/x/lockfree/lf"
 )
 
 const (
@@ -79,7 +81,7 @@ means a slow viewer receives a fresher replaceable state and, on a feed
 failure, the transport fails explicitly rather than silently losing frames.
 Durable historical truth lives in Hindsight/raw capture, never in this path.
 */
-func (fluidTransport *FluidRTC) Run(tee *WebRTCTee) error {
+func (fluidTransport *FluidRTC) Run(queue *lf.Queue[unsafe.Pointer]) error {
 	// This is the dashboard publication cadence, not a market sampling window.
 	interval := viper.GetDuration("ui.websocket.learning_interval")
 
@@ -95,20 +97,22 @@ func (fluidTransport *FluidRTC) Run(tee *WebRTCTee) error {
 		case <-fluidTransport.Context().Done():
 			return fluidTransport.Error()
 		case <-ticker.C:
-			if tee.Status() != runtime.READY {
-				continue
-			}
-
-			if err := fluidTransport.drain(tee); err != nil {
+			if err := fluidTransport.drain(queue); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-// drain consumes producer artifacts only through the tee boundary.
-func (fluidTransport *FluidRTC) drain(tee *WebRTCTee) error {
-	for pointer := tee.Next(); pointer != nil; pointer = tee.Next() {
+// drain consumes producer artifacts from the lock-free queue.
+func (fluidTransport *FluidRTC) drain(queue *lf.Queue[unsafe.Pointer]) error {
+	for {
+		pointer, ok := queue.Dequeue()
+
+		if !ok || pointer == nil {
+			return nil
+		}
+
 		var err error
 		switch artifact := (*(*any)(pointer)).(type) {
 		case *types.ManifoldState:
@@ -123,7 +127,6 @@ func (fluidTransport *FluidRTC) drain(tee *WebRTCTee) error {
 			return err
 		}
 	}
-	return nil
 }
 
 /*

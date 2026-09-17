@@ -27,7 +27,7 @@ func NewTransition() *Transition {
 
 func (transition *Transition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if transition.Error() != nil {
+		if transition.Error() != nil || in == nil {
 			return
 		}
 

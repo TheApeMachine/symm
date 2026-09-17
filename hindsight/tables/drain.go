@@ -2,94 +2,125 @@ package tables
 
 import (
 	"context"
+	"iter"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"golang.design/x/lockfree/lf"
 )
 
-// Drain persists owned observations. Complete training publications feed the
-// cold learner; its resolved outcomes are persisted through the same writer.
-func (catalog *Catalog) Drain(
+/*
+Drain is a core.Primitive off-ramp that persists observations to the catalog.
+Next enqueues each arriving pointer. An internal goroutine dequeues on a timer
+and commits batches to the catalog writer.
+
+TODO: storage schema for map[string]any / grid snapshots.
+*/
+type Drain struct {
+	*core.PrimitiveError
+	queue   *lf.Queue[unsafe.Pointer]
+	pending atomic.Int64
+}
+
+/*
+NewDrain constructs a Drain primitive and starts the internal persistence loop.
+*/
+func NewDrain(
 	ctx context.Context,
+	catalog *Catalog,
 	epoch int64,
-	tee *hindsight.StoreTee,
-	learn ...func(*data.Measurement[float64]) ([]ExcursionRecord, error),
-) error {
-	if catalog == nil || tee == nil {
-		return nil
+) *Drain {
+	drain := &Drain{
+		PrimitiveError: core.NewPrimitiveError(),
+		queue:          lf.NewQueue[unsafe.Pointer](),
 	}
 
-	writer := NewWriter(catalog, epoch)
+	if catalog == nil {
+		return drain
+	}
 
-	// These are storage batching cadences, not market observation horizons.
-	flushTicker := time.NewTicker(50 * time.Millisecond)
-	defer flushTicker.Stop()
-	commitTicker := time.NewTicker(30 * time.Second)
-	defer commitTicker.Stop()
+	go drain.run(ctx, catalog, epoch)
 
-	drain := func() error {
-		// Bound each batch by the observations already waiting, so continuous
-		// ingress cannot postpone commits indefinitely.
-		for remaining := tee.Pending(); remaining > 0; remaining-- {
-			measurement := (*data.Measurement[float64])(tee.Next())
+	return drain
+}
 
-			if measurement == nil {
-				return nil
+/*
+Next enqueues each arriving stream item into the lock-free queue for the
+internal drain loop. Drain is a terminal off-ramp: it yields nothing.
+*/
+func (drain *Drain) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil {
+				continue
 			}
 
-			if measurement.SeqIdx <= 0 {
-				return errnie.Error(errnie.Err(errnie.Validation, "catalog: observation has no workspace sequence", nil))
-			}
-
-			if measurement.Source == "training" && len(learn) > 0 {
-				records, err := learn[0](measurement)
-				if err != nil {
-					return err
-				}
-				for _, record := range records {
-					writer.AddExcursion(record)
-				}
-			}
-
-			writer.Add(deriveChannel(measurement), measurement)
+			drain.pending.Add(1)
+			drain.queue.Enqueue(arriving)
 		}
-
-		return nil
 	}
+}
+
+func (drain *Drain) run(
+	ctx context.Context,
+	catalog *Catalog,
+	epoch int64,
+) {
+	writer := NewWriter(catalog, epoch)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			if err := drain(); err != nil {
-				return err
-			}
+			// Flush pending items
+			drain.flushQueue(writer)
+			_ = writer.CommitReady(context.Background(), true)
+			return
 
-			return writer.CommitReady(context.WithoutCancel(ctx), true)
-		case <-flushTicker.C:
-			if err := drain(); err != nil {
-				return err
-			}
-
-			if err := writer.CommitReady(ctx, false); err != nil {
-				return err
-			}
-		case <-commitTicker.C:
-			if err := writer.CommitReady(ctx, true); err != nil {
-				return err
+		case <-ticker.C:
+			drain.flushQueue(writer)
+			if writer.Pending() > 0 {
+				_ = writer.CommitReady(ctx, false)
 			}
 		}
 	}
 }
 
-func deriveChannel(measurement *data.Measurement[float64]) string {
-	if measurement.Metadata["venue"] == "true" {
-		switch channel := measurement.Provenance["channel"]; channel {
-		case "ticker", "trade", "level3":
-			return channel
+func (drain *Drain) flushQueue(writer *Writer) {
+	for {
+		item, ok := drain.queue.Dequeue()
+		if !ok || item == nil {
+			break
+		}
+		drain.pending.Add(-1)
+
+		// 1. Direct Measurement
+		if meas, ok := (*(*any)(item)).(*data.Measurement[float64]); ok {
+			writer.Add(meas.Source, meas)
+			continue
+		}
+
+		// 2. Evaluation from Training System
+		if eval, ok := (*(*any)(item)).(*cognition.Evaluation); ok {
+			meas := data.NewMeasurement("training", map[string]data.Metric[float64]{
+				"surprisal":  data.NewMetric[float64]("surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1).Write(eval.Surprisal),
+				"ambiguity":  data.NewMetric[float64]("ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1).Write(eval.Ambiguity),
+				"confidence": data.NewMetric[float64]("confidence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1).Write(eval.Confidence),
+				"contrast":   data.NewMetric[float64]("contrast", data.UnitNat, data.TimescaleInstantaneous, 0, 1).Write(eval.Contrast),
+				"support":    data.NewMetric[float64]("support", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(float64(eval.Support)),
+			})
+
+			meas.SeqIdx = int64(eval.Step)
+			meas.At = time.Now().UTC()
+			meas.Metadata["winner"] = eval.WinnerClass
+			meas.Metadata["context"] = string(eval.Context)
+
+			writer.Add(Measurements, meas)
 		}
 	}
-
-	return "measurements"
 }

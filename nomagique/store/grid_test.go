@@ -216,4 +216,71 @@ func TestGridConcurrentReadsAndWrites(t *testing.T) {
 			So(received[expected], ShouldBeTrue)
 		}
 	})
+
+	Convey("Multiple goroutines concurrently writing to grid do not race or collide", t, func() {
+		grid := store.NewGrid[*geometry.Coordinate]()
+		const cellCount = 5
+		for index := 0; index < cellCount; index++ {
+			retained := store.NewRetained[float64]()
+			key := fmt.Sprintf("hammer_%d", index)
+			conn := transport.NewConn[*geometry.Coordinate](
+				nomagique.NewNumber(&take{PrimitiveError: core.NewPrimitiveError()}, retained),
+			)
+
+			sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
+				store.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+					conn, core.Identify,
+				).Next(sequence.NewValue([][]string{{"hammer", "data", key}})),
+			))
+		}
+
+		origin := transport.NewAddress[string]()
+		origin.Identify("HAMMER/USD")
+
+		const workerCount = 8
+		const iterationsPerWorker = 25
+		done := make(chan struct{}, workerCount)
+
+		for worker := 0; worker < workerCount; worker++ {
+			workerID := worker
+			go func() {
+				defer func() { done <- struct{}{} }()
+
+				for iterIdx := 0; iterIdx < iterationsPerWorker; iterIdx++ {
+					targetCell := iterIdx % cellCount
+					key := fmt.Sprintf("hammer_%d", targetCell)
+					val := any(float64(workerID*1000 + iterIdx))
+					input := core.NewInput[string, []string, any](
+						origin, core.Write, []string{"hammer", "data", key}, &val,
+					)
+
+					query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+						nil, core.Write,
+					)
+
+					for range grid.Next(query.Next(sequence.NewValue(*input))) {
+					}
+				}
+			}()
+		}
+
+		for worker := 0; worker < workerCount; worker++ {
+			<-done
+		}
+
+		readQuery := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+			nil, core.Read,
+		)
+		readCount := 0
+
+		for reading := range grid.Next(readQuery.Next(nil)) {
+			input := (*core.Input[*geometry.Coordinate, string, float64])(reading)
+			if input != nil && input.Value != nil {
+				readCount++
+			}
+		}
+
+		So(readCount, ShouldEqual, cellCount)
+	})
 }
+

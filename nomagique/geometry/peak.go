@@ -21,6 +21,10 @@ func NewPeak() *Peak {
 
 func (peak *Peak) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		var edges []*Edge
 		nodeIndex := make(map[core.Primitive]int)
 		authorities := make(map[core.Primitive]float64)

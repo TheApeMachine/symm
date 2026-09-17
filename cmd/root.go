@@ -13,16 +13,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
@@ -95,9 +95,6 @@ var (
 			// thus no need to call a deferred Close method for anything.
 			epoch := processStartedAt.UnixNano()
 
-			uiTee := ui.NewUITee(ctx, "uiTee", 131072)
-			storeTee := hindsight.NewStoreTee(ctx, "storeTee", 131072)
-
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
 			// them; everything a reader queries lives in the catalog.
@@ -115,14 +112,11 @@ var (
 				))
 			}
 
-			grid := store.NewGrid[*geometry.Coordinate]()
-
 			public := websocket.New(
 				ctx,
 				websocket.NewSimulator(),
 				false,
 				system.Cfg.WebSocket.Endpoints.Public,
-				grid,
 			)
 
 			private := websocket.New(
@@ -130,13 +124,11 @@ var (
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
-				grid,
 			)
 
 			futures := websocket.NewFutures(
 				ctx,
 				system.Cfg.WebSocket.Endpoints.Futures,
-				grid,
 			)
 
 			api := websocket.NewAPI(
@@ -179,10 +171,7 @@ var (
 				))
 			}
 
-			training := strategy.NewTraining[*geometry.Coordinate](
-				ctx, grid, ui.NewTrainingPublisher(uiTee, storeTee, "BTC/USD"),
-			)
-			grid.OnWrite(training.Wake)
+			grid := store.NewGrid[*geometry.Coordinate]()
 
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
@@ -194,70 +183,42 @@ var (
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
-			hub := ui.NewHub(ctx, nil, catalog, uiTee)
+			hub := ui.NewHub(ctx, nil, catalog)
 			hub.Run()
+
+			drain := tables.NewDrain(ctx, catalog, epoch)
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
 
-			correlationTicker := correlation.NewTicker(ctx, grid, "", "")
-			leadlagTicker := leadlag.NewTicker(ctx, grid, "", "")
-			liquidityTicker := liquidity.NewTicker(ctx, grid, "")
-			sentimentTicker := sentiment.NewTicker(ctx, grid, "")
-			pumpdumpTicker := pumpdump.NewTicker(ctx, grid, "")
-			cvdTrade := cvd.NewTrade(ctx, grid, "")
-			hawkesTrade := hawkes.NewTrade(ctx, grid, "")
-			toxicityTrade := toxicity.NewTrade(ctx, grid, "")
-			pumpdumpTrade := pumpdump.NewTrade(ctx, grid, "")
-			depthflowLevel3 := depthflow.NewLevel3(ctx, grid, "")
-			morphologyLevel3 := morphology.NewLevel3(ctx, grid, "")
-			toxicityLevel3 := toxicity.NewLevel3(ctx, grid, "")
-			pumpdumpLevel3 := pumpdump.NewLevel3(ctx, grid, "")
-			derivativesTicker := derivatives.NewTicker(ctx, grid, "")
-			derivativesTrade := derivatives.NewTrade(ctx, grid, "")
+			correlation.NewTicker(ctx, grid, "", "")
+			leadlag.NewTicker(ctx, grid, "", "")
+			liquidity.NewTicker(ctx, grid, "")
+			sentiment.NewTicker(ctx, grid, "")
+			pumpdump.NewTicker(ctx, grid, "")
+			cvd.NewTrade(ctx, grid, "")
+			hawkes.NewTrade(ctx, grid, "")
+			toxicity.NewTrade(ctx, grid, "")
+			pumpdump.NewTrade(ctx, grid, "")
+			depthflow.NewLevel3(ctx, grid, "")
+			morphology.NewLevel3(ctx, grid, "")
+			toxicity.NewLevel3(ctx, grid, "")
+			pumpdump.NewLevel3(ctx, grid, "")
+			derivatives.NewTicker(ctx, grid, "")
+			derivatives.NewTrade(ctx, grid, "")
 
-			categorySolver := category.NewSolver(ctx)
-			resonanceSolver := resonance.NewSolver(
+			category.NewSolver(ctx)
+			resonance.NewSolver(
 				ctx, system.Cfg.Resonance.LearningRate,
 			)
-			cognitionSolver := cognition.NewSolver(ctx)
-			webrtcTee := ui.NewWebRTCTee(ctx, "webrtcTee", 131072)
+			cognition.NewSolver(ctx)
 
-			workspace := nmruntime.NewWorkspace(
-				ctx, "workspace", [][]core.Primitive{
-					{
-						public,
-						private,
-						futures,
-					},
-					{
-						correlationTicker,
-						leadlagTicker,
-						liquidityTicker,
-						sentimentTicker,
-						pumpdumpTicker,
-						cvdTrade,
-						hawkesTrade,
-						toxicityTrade,
-						pumpdumpTrade,
-						depthflowLevel3,
-						morphologyLevel3,
-						toxicityLevel3,
-						pumpdumpLevel3,
-						derivativesTicker,
-						derivativesTrade,
-					},
-					{
-						categorySolver,
-						resonanceSolver,
-						manifoldSolver,
-					},
-					{
-						cognitionSolver,
-					},
-					{
-						training,
-					},
-				},
+			pipeline := nomagique.NewNumber(
+				transport.NewParallel(
+					public, private, futures,
+				),
+				grid,
+				strategy.NewTraining[*geometry.Coordinate](ctx),
+				transport.NewParallel(hub, drain),
 			)
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
@@ -278,47 +239,7 @@ var (
 				))
 			}
 
-			// Start consumers before opening market ingress. All construction,
-			// subscriptions and seeding have completed at this point.
-			for _, runsys := range []nmruntime.RuntimeSystem{
-				uiTee,
-				storeTee,
-				webrtcTee,
-				hub,
-				training,
-				manifoldSolver,
-				categorySolver,
-				resonanceSolver,
-				cognitionSolver,
-				correlationTicker,
-				leadlagTicker,
-				liquidityTicker,
-				sentimentTicker,
-				pumpdumpTicker,
-				cvdTrade,
-				hawkesTrade,
-				toxicityTrade,
-				pumpdumpTrade,
-				depthflowLevel3,
-				morphologyLevel3,
-				toxicityLevel3,
-				pumpdumpLevel3,
-				derivativesTicker,
-				derivativesTrade,
-				workspace,
-				api,
-			} {
-				runsys.Transition(nmruntime.READY)
-			}
-
-			drainErrors := make(chan error, 1)
-
-			go func() {
-				drainErrors <- catalog.Drain(ctx, epoch, storeTee)
-			}()
-
 			manifoldSolver.Start()
-			training.Start()
 
 			// Every processing and off-ramp owner is ready before ingress opens.
 			for _, connection := range private.Connections() {
@@ -329,7 +250,13 @@ var (
 				transport.Transition(nmruntime.READY)
 			}
 
-			return hub.Fluid.Run(webrtcTee)
+			for ctx.Err() == nil {
+				for range pipeline.Next(nil) {
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			return nil
 		},
 	}
 )

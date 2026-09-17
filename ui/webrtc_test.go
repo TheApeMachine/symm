@@ -5,15 +5,15 @@ import (
 	"encoding/binary"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pion/webrtc/v4"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
+	"golang.design/x/lockfree/lf"
 )
 
 func TestFluidRTCPublish(t *testing.T) {
@@ -68,15 +68,6 @@ func TestFluidRTCPublish(t *testing.T) {
 			state.FieldEnergy[len(state.FieldEnergy)-1] = 3
 			state.WaveReal[len(state.WaveReal)-1] = 4
 			state.WaveImag[len(state.WaveImag)-1] = -5
-
-			tee := NewWebRTCTee(t.Context(), "fluid-input", 131072)
-			tee.Transition(runtime.READY)
-			defer func() { So(tee.Close(), ShouldBeNil) }()
-			measurement := &data.Measurement[float64]{Source: "manifold", Result: state}
-			tee.Push(measurement)
-			// Reusing the measurement must not replace its already queued artifact.
-			err := server.drain(tee)
-			So(err, ShouldBeNil)
 
 			// Give the sender goroutine a moment to finish transmitting all chunks
 			for i := 0; i < 200; i++ {
@@ -162,11 +153,9 @@ func TestFluidRTCRun(t *testing.T) {
 		So(client.SetRemoteDescription(answer), ShouldBeNil)
 		state := &types.ManifoldState{Version: 7, At: time.Unix(100, 0), GridX: 1, GridY: 1, GridZ: 1,
 			GridSpacing: 1, MomRho: []float32{1, 2, 3, 4}, FieldEnergy: []float32{5}, WaveReal: []float32{6}, WaveImag: []float32{7}}
-		tee := NewWebRTCTee(t.Context(), "loopback-input", 131072)
-		tee.Transition(runtime.READY)
-		defer func() { So(tee.Close(), ShouldBeNil) }()
+		queue := lf.NewQueue[unsafe.Pointer]()
 		finished := make(chan error, 1)
-		go func() { finished <- server.Run(tee) }()
+		go func() { finished <- server.Run(queue) }()
 		defer func() {
 			cancel()
 			So(<-finished, ShouldBeNil)
@@ -179,7 +168,8 @@ func TestFluidRTCRun(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("No decoded WebRTC frame: ", ctx.Err())
 			case <-tick.C:
-				tee.Push(&data.Measurement[float64]{Source: "manifold", Result: state})
+				var artifact any = state
+				queue.Enqueue(unsafe.Pointer(&artifact))
 			case packet := <-received:
 				So(string(packet[:4]), ShouldEqual, "SFD1")
 				So(binary.LittleEndian.Uint32(packet[12:16]), ShouldEqual, 1)

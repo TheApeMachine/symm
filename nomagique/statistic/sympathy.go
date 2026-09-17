@@ -65,6 +65,10 @@ func NewSympathy[T core.Ordered[T]]() *Sympathy[T] {
 
 func (sympathy *Sympathy[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			if sympathy.Error() != nil {
 				return

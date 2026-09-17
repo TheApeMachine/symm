@@ -17,11 +17,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type cellOutput[T core.Ordered[T]] struct {
-	coord    T
-	readings []*core.Input[T, string, float64]
-}
-
 /*
 Grid is a coordinate-addressed store of distributed primitives. Coordinates
 are keys to cells. Queries have one consumer; read outputs are
@@ -32,12 +27,12 @@ type Grid[T interface {
 	comparable
 }] struct {
 	*core.PrimitiveError
-	ctx       context.Context
-	cells     *lf.SkipList[T, core.Primitive]
-	interests *lf.SkipList[T, [][]string]
-	count     atomic.Int64
-	current   core.Primitive
-	onWrite   atomic.Pointer[func()]
+	cells      *lf.SkipList[T, core.Primitive]
+	interests  *lf.SkipList[T, [][]string]
+	count      atomic.Int64
+	current    core.Primitive
+	writeQueue *lf.Queue[[]unsafe.Pointer]
+	writing    atomic.Int32
 }
 
 /*
@@ -49,13 +44,13 @@ func NewGrid[T interface {
 }](members ...core.Connectable[T]) *Grid[T] {
 	grid := &Grid[T]{
 		PrimitiveError: core.NewPrimitiveError(),
-		ctx:            context.Background(),
 		cells: lf.NewSkipList[T, core.Primitive](
 			func(left, right T) bool { return left.Less(right) },
 		),
 		interests: lf.NewSkipList[T, [][]string](
 			func(left, right T) bool { return left.Less(right) },
 		),
+		writeQueue: lf.NewQueue[[]unsafe.Pointer](),
 	}
 
 	for _, primitive := range members {
@@ -67,34 +62,6 @@ func NewGrid[T interface {
 	}
 
 	return grid
-}
-
-func (grid *Grid[T]) WithContext(ctx context.Context) *Grid[T] {
-	grid.ctx = ctx
-	return grid
-}
-
-func (grid *Grid[T]) context() context.Context {
-	if grid.ctx != nil {
-		return grid.ctx
-	}
-
-	return context.Background()
-}
-
-func (grid *Grid[T]) OnWrite(handler func()) {
-	if handler == nil {
-		grid.onWrite.Store(nil)
-		return
-	}
-
-	grid.onWrite.Store(&handler)
-}
-
-func (grid *Grid[T]) all(op func(coord T, cell core.Primitive)) {
-	from := any(geometry.NewCoordinate(math.MinInt, math.MinInt)).(T)
-	to := any(geometry.NewCoordinate(math.MaxInt, math.MaxInt)).(T)
-	grid.cells.Range(from, to, op)
 }
 
 /*
@@ -147,34 +114,31 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					coord := query.Identity()
 
 					if any(coord) == nil || any(coord) == any(zero) {
-						ctx, cancel := context.WithCancel(grid.context())
-						defer cancel()
+						group, groupCtx := errgroup.WithContext(context.Background())
+						readingsChan := make(chan *core.Input[T, string, float64], grid.cells.Len()+1)
 
-						group, groupCtx := errgroup.WithContext(ctx)
-						outputs := make(chan cellOutput[T], grid.cells.Len()+1)
+						from := any(geometry.NewCoordinate(math.MinInt, math.MinInt)).(T)
+						to := any(geometry.NewCoordinate(math.MaxInt, math.MaxInt)).(T)
 
-						grid.all(func(targetCoord T, cell core.Primitive) {
+						grid.cells.Range(from, to, func(targetCoord T, cell core.Primitive) {
 							targetCell := cell
-							key := targetCoord
 
 							group.Go(func() error {
 								if groupCtx.Err() != nil {
 									return groupCtx.Err()
 								}
 
-								var cellReadings []*core.Input[T, string, float64]
-
 								for out := range targetCell.Next(nil) {
 									val := new(float64)
 									*val = *(*float64)(out)
 									origin, _ := targetCell.(core.Connectable[T])
-									cellReadings = append(cellReadings, core.NewInput(origin, core.Read, "", val))
-								}
+									reading := core.NewInput(origin, core.Read, "", val)
 
-								select {
-								case outputs <- cellOutput[T]{coord: key, readings: cellReadings}:
-								case <-groupCtx.Done():
-									return groupCtx.Err()
+									select {
+									case readingsChan <- reading:
+									case <-groupCtx.Done():
+										return groupCtx.Err()
+									}
 								}
 
 								return nil
@@ -183,33 +147,30 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 
 						go func() {
 							_ = group.Wait()
-							close(outputs)
+							close(readingsChan)
 						}()
 
-						var collected []cellOutput[T]
+						var collected []*core.Input[T, string, float64]
 
-						for item := range outputs {
-							collected = append(collected, item)
+						for reading := range readingsChan {
+							collected = append(collected, reading)
 						}
 
-						slices.SortFunc(collected, func(left, right cellOutput[T]) int {
-							if left.coord.Less(right.coord) {
+						slices.SortFunc(collected, func(left, right *core.Input[T, string, float64]) int {
+							if left.Origin.Identity().Less(right.Origin.Identity()) {
 								return -1
 							}
 
-							if right.coord.Less(left.coord) {
+							if right.Origin.Identity().Less(left.Origin.Identity()) {
 								return 1
 							}
 
 							return 0
 						})
 
-						for _, item := range collected {
-							for _, reading := range item.readings {
-								if !yield(unsafe.Pointer(reading)) {
-									cancel()
-									return
-								}
+						for _, reading := range collected {
+							if !yield(unsafe.Pointer(reading)) {
+								return
 							}
 						}
 
@@ -330,80 +291,108 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			return
 		}
 
-		group, groupCtx := errgroup.WithContext(grid.context())
+		grid.writeQueue.Enqueue(event)
 
-		grid.all(func(targetCoord T, cell core.Primitive) {
-			wanted, haveInterests := grid.interests.Get(targetCoord)
+		if !grid.writing.CompareAndSwap(0, 1) {
+			return
+		}
 
-			if !haveInterests || len(wanted) == 0 {
+		for {
+			batch, ok := grid.writeQueue.Dequeue()
+
+			if !ok {
+				grid.writing.Store(0)
+
+				if grid.writeQueue.Length() > 0 && grid.writing.CompareAndSwap(0, 1) {
+					continue
+				}
+
 				return
 			}
 
-			targetCell := cell
-			cellInterests := wanted
+			for {
+				nextBatch, hasNext := grid.writeQueue.Dequeue()
 
-			group.Go(func() error {
-				if groupCtx.Err() != nil {
-					return groupCtx.Err()
+				if !hasNext {
+					break
 				}
 
-				var matched []unsafe.Pointer
+				batch = append(batch, nextBatch...)
+			}
 
-				for _, payload := range event {
-					input := (*core.Input[string, []string, any])(payload)
+			group, groupCtx := errgroup.WithContext(context.Background())
+			from := any(geometry.NewCoordinate(math.MinInt, math.MinInt)).(T)
+			to := any(geometry.NewCoordinate(math.MaxInt, math.MaxInt)).(T)
 
-					if input == nil {
-						continue
+			grid.cells.Range(from, to, func(targetCoord T, cell core.Primitive) {
+				wanted, haveInterests := grid.interests.Get(targetCoord)
+
+				if !haveInterests || len(wanted) == 0 {
+					return
+				}
+
+				targetCell := cell
+				cellInterests := wanted
+
+				group.Go(func() error {
+					if groupCtx.Err() != nil {
+						return groupCtx.Err()
 					}
 
-					for _, interest := range cellInterests {
-						if len(interest) != len(input.Key) {
+					var matched []unsafe.Pointer
+
+					for _, payload := range batch {
+						input := (*core.Input[string, []string, any])(payload)
+
+						if input == nil {
 							continue
 						}
 
-						same := true
+						for _, interest := range cellInterests {
+							if len(interest) != len(input.Key) {
+								continue
+							}
 
-						for index := range interest {
-							if interest[index] != input.Key[index] {
-								same = false
-								break
+							same := true
+
+							for index := range interest {
+								if interest[index] != input.Key[index] {
+									same = false
+									break
+								}
+							}
+
+							if !same {
+								continue
+							}
+
+							matched = append(matched, payload)
+							break
+						}
+					}
+
+					if len(matched) == 0 {
+						return nil
+					}
+
+					run := func(yieldRun func(unsafe.Pointer) bool) {
+						for _, payload := range matched {
+							if !yieldRun(payload) {
+								return
 							}
 						}
-
-						if !same {
-							continue
-						}
-
-						matched = append(matched, payload)
-						break
 					}
-				}
 
-				if len(matched) == 0 {
+					for range targetCell.Next(run) {
+					}
+
 					return nil
-				}
-
-				run := func(yieldRun func(unsafe.Pointer) bool) {
-					for _, payload := range matched {
-						if !yieldRun(payload) {
-							return
-						}
-					}
-				}
-
-				for range targetCell.Next(run) {
-				}
-
-				return nil
+				})
 			})
-		})
 
-		if err := group.Wait(); err != nil {
-			grid.Error(err)
-		}
-
-		if notify := grid.onWrite.Load(); notify != nil {
-			(*notify)()
+			if err := group.Wait(); err != nil {
+				grid.Error(err)
+			}
 		}
 	}
 }

@@ -37,7 +37,7 @@ func NewMapping[T core.Ordered[T]](stages ...core.Primitive) *Mapping[T] {
 
 func (mapping *Mapping[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if mapping.Error() != nil {
+		if in == nil || mapping.Error() != nil {
 			return
 		}
 

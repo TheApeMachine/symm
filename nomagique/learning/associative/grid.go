@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
@@ -37,11 +36,10 @@ type Grid[T interface {
 func NewGrid[T interface {
 	core.Ordered[T]
 	comparable
-}](grid *store.Grid[T]) *Grid[T] {
+}]() *Grid[T] {
 	return &Grid[T]{
 		PrimitiveError: core.NewPrimitiveError(),
 		pipeline: nomagique.NewNumber(
-			grid,
 			statistic.NewSympathy[T](),
 			geometry.NewMapping[T](
 				geometry.NewInversion(),
@@ -55,5 +53,9 @@ func NewGrid[T interface {
 }
 
 func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	if in == nil {
+		return nil
+	}
+
 	return grid.pipeline.Next(in)
 }

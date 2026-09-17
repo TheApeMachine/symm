@@ -22,6 +22,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
+	"golang.design/x/lockfree/lf"
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
@@ -61,6 +62,7 @@ subscriptions; protocol and ingestion failures remain terminal.
 */
 type Live struct {
 	*runtime.System
+	queue        *lf.Queue[map[string]any]
 	funding      FundingLedger
 	schema       map[string]data.Metric[float64]
 	client       atomic.Pointer[spot.WebSocket]
@@ -91,10 +93,9 @@ func New(
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
-	grid *store.Grid[*geometry.Coordinate],
 ) *Live {
 	return NewWithClient(
-		ctx, simulator, auth, endpoint, nil, grid,
+		ctx, simulator, auth, endpoint, nil,
 	)
 }
 
@@ -109,7 +110,6 @@ func NewWithClient(
 	auth bool,
 	endpoint string,
 	client *spot.WebSocket,
-	grid *store.Grid[*geometry.Coordinate],
 ) *Live {
 	if client == nil {
 		client = spot.NewWebSocket()
@@ -134,6 +134,7 @@ func NewWithClient(
 	}
 
 	live := &Live{
+		queue:      lf.NewQueue[map[string]any](),
 		simulator:  simulator,
 		endpoint:   endpoint,
 		normalizer: spot.NewNormalizer(),
@@ -142,7 +143,6 @@ func NewWithClient(
 		paper:      NewPaper(ctx, simulator),
 		model:      system.Cfg.Market.Model,
 		quote:      system.Cfg.Market.QuoteCurrency,
-		grid:       grid,
 	}
 
 	live.client.Store(client)
@@ -256,6 +256,16 @@ func NewWithClient(
 	return live
 }
 
+func (live *Live) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	value, ok := live.queue.Dequeue()
+
+	if !ok {
+		return nil
+	}
+
+	return sequence.NewValue(value)
+}
+
 func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 	raw := event.Data.Bytes()
 	channel := utils.GetString(raw, "channel")
@@ -288,18 +298,18 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 			return
 		}
 
-		if live.grid != nil {
-			tickerQuote := quote.NewTicker()
-			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				nil, core.Execute,
-			)
+		mapped, err := event.Data.Map()
 
-			for _, item := range ticker.Data {
-				for range live.grid.Next(query.Next(tickerQuote.Next(sequence.NewValue(item)))) {
-				}
-			}
+		if err != nil {
+			live.Error(errnie.Err(
+				errnie.Validation,
+				"futures: failed to map ticker",
+				err,
+			))
+			return
 		}
 
+		live.queue.Enqueue(mapped)
 		return
 
 	case "trade":
@@ -313,18 +323,18 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 			return
 		}
 
-		if live.grid != nil {
-			tradeQuote := quote.NewTrade()
-			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				nil, core.Execute,
-			)
+		mapped, err := event.Data.Map()
 
-			for _, item := range trade.Data {
-				for range live.grid.Next(query.Next(tradeQuote.Next(sequence.NewValue(item)))) {
-				}
-			}
+		if err != nil {
+			live.Error(errnie.Err(
+				errnie.Validation,
+				"futures: failed to map ticker",
+				err,
+			))
+			return
 		}
 
+		live.queue.Enqueue(mapped)
 		return
 	}
 
@@ -383,6 +393,18 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 			}
 		}
 
+		mapped, err := event.Data.Map()
+
+		if err != nil {
+			live.Error(errnie.Err(
+				errnie.Validation,
+				"futures: failed to map ticker",
+				err,
+			))
+			return
+		}
+
+		live.queue.Enqueue(mapped)
 		return
 	}
 
@@ -400,16 +422,6 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 
 		return
 	}
-}
-
-/*
-Next implements the runtime.Node interface: one dequeued venue row becomes one
-measurement. The queue's rows carry the venue's numbers as json.Number, so each
-metric keeps the exact decimal the venue printed in Exact while Raw carries the
-float64 the mathematics runs on.
-*/
-func (live *Live) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return in
 }
 
 func (live *Live) authenticate() (err error) {
@@ -683,7 +695,6 @@ func (live *Live) SubL3(symbols []string) {
 			live.auth,
 			system.Cfg.WebSocket.Endpoints.Level3,
 			live.level3ClientFor(),
-			live.grid,
 		)
 
 		if conn.Error() != nil {

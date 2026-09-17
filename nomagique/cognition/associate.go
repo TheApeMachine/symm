@@ -27,7 +27,7 @@ func NewAssociate() *Associate {
 
 func (associate *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if associate.Error() != nil {
+		if associate.Error() != nil || in == nil {
 			return
 		}
 

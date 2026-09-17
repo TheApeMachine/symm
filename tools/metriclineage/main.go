@@ -287,37 +287,66 @@ func scanLearnedConsumers(pkg *packages.Package, file *ast.File, relFile string)
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
 
-		if !ok || function.Name.Name != "observeMeasurement" || function.Body == nil {
+		if !ok || function.Body == nil {
 			continue
 		}
 
-		rangesMetrics := false
-		readsRaw := false
-		ast.Inspect(function.Body, func(node ast.Node) bool {
-			switch expression := node.(type) {
-			case *ast.RangeStmt:
-				selector, valid := expression.X.(*ast.SelectorExpr)
+		isLearned := false
+		consumerLabel := ""
 
-				if valid && selector.Sel.Name == "Metrics" {
-					rangesMetrics = true
+		if function.Name.Name == "observeMeasurement" {
+			rangesMetrics := false
+			readsRaw := false
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				switch expression := node.(type) {
+				case *ast.RangeStmt:
+					selector, valid := expression.X.(*ast.SelectorExpr)
+
+					if valid && selector.Sel.Name == "Metrics" {
+						rangesMetrics = true
+					}
+				case *ast.SelectorExpr:
+					if expression.Sel.Name == "Raw" {
+						readsRaw = true
+					}
 				}
-			case *ast.SelectorExpr:
-				if expression.Sel.Name == "Raw" {
-					readsRaw = true
-				}
+
+				return true
+			})
+
+			if rangesMetrics && readsRaw {
+				isLearned = true
+				consumerLabel = "strategy.directionalPredictor semantic metric routing"
 			}
+		}
 
-			return true
-		})
+		if function.Name.Name == "Step" {
+			readsGrid := false
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				if sel, valid := node.(*ast.SelectorExpr); valid {
+					if sel.Sel.Name == "Read" {
+						readsGrid = true
+						return false
+					}
+				}
 
-		if !rangesMetrics || !readsRaw {
+				return true
+			})
+
+			if readsGrid {
+				isLearned = true
+				consumerLabel = "strategy.Training associative metric learning"
+			}
+		}
+
+		if !isLearned {
 			continue
 		}
 
 		position := pkg.Fset.Position(function.Pos())
 		out = append(out, consumerEdge{
 			Kind:     "learned",
-			Consumer: "strategy.directionalPredictor semantic metric routing",
+			Consumer: consumerLabel,
 			Package:  pkg.PkgPath,
 			File:     relFile,
 			Line:     position.Line,
@@ -411,7 +440,7 @@ func scanProducers(pkg *packages.Package, file *ast.File, relFile string) ([]pro
 
 			// A Labelled node republishes the readings beneath it; resolving
 			// it needs the whole subtree, so it is handled as a unit.
-			if _, isLabelled := fields["Prefix"]; isLabelled {
+			if _, isLabelled := fields["Prefix"]; isLabelled && isReportingNode(pkg, typed) {
 				labels, ok := labelledReadings(pkg, typed)
 
 				if !ok {
@@ -432,7 +461,7 @@ func scanProducers(pkg *packages.Package, file *ast.File, relFile string) ([]pro
 				return false
 			}
 
-			if _, isNames := fields["Names"]; isNames {
+			if _, isNames := fields["Names"]; isNames && isReportingNode(pkg, typed) {
 				// A Names map with no Prefix above it renames in place.
 				for _, label := range namesValues(fields["Names"]) {
 					emitted = append(emitted, newProducer(label, "", relFile, lineOf(typed)))

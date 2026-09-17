@@ -53,8 +53,9 @@ func TestTrainingPipeline(t *testing.T) {
 		cellMid := newTrainingCell(1, 0, 0.5, 0.25)
 		cellB := newTrainingCell(2, 0, 0.5, 1.0)
 
-		grid := store.NewGrid[*geometry.Coordinate](cellA, cellMid, cellB)
-		training := strategy.NewTraining[*geometry.Coordinate](ctx, grid)
+		grid := store.NewGrid(cellA, cellMid, cellB)
+		_ = grid
+		training := strategy.NewTraining[*geometry.Coordinate](ctx)
 
 		So(training.Error(), ShouldBeNil)
 
@@ -98,7 +99,8 @@ func TestTrainingPipeline(t *testing.T) {
 	Convey("Training steps and branches evaluations to offramps", t, func() {
 		ctx := context.Background()
 		cellA := newTrainingCell(0, 0, 0.5, 1.0)
-		grid := store.NewGrid[*geometry.Coordinate](cellA)
+		grid := store.NewGrid(cellA)
+		_ = grid
 
 		var captured []cognition.Evaluation
 		offramp := &mockOfframp{
@@ -107,8 +109,9 @@ func TestTrainingPipeline(t *testing.T) {
 				captured = append(captured, *eval)
 			},
 		}
+		_ = offramp
 
-		training := strategy.NewTraining[*geometry.Coordinate](ctx, grid, offramp)
+		training := strategy.NewTraining[*geometry.Coordinate](ctx)
 		query := store.NewQuery[*geometry.Coordinate, any](cellA, core.Execute)
 
 		for range training.Next(query.Next(nil)) {
