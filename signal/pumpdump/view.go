@@ -5,13 +5,12 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 type pickTouch struct {
 	*core.PrimitiveError
 	selectField func(*TouchReading) (float64, bool)
-	out         store.Slot[float64]
+	out         float64
 }
 
 func (pick *pickTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -24,7 +23,7 @@ func (pick *pickTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				continue
 			}
 
-			pick.out = store.Slot[float64]{Key: reading.Symbol, Value: value}
+			pick.out = value
 
 			if !yield(unsafe.Pointer(&pick.out)) {
 				return
@@ -84,7 +83,7 @@ func NewSpreadZScore() core.Primitive {
 type pickClock struct {
 	*core.PrimitiveError
 	selectField func(*ClockReading) (float64, bool)
-	out         store.Slot[float64]
+	out         float64
 }
 
 func (pick *pickClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -97,7 +96,7 @@ func (pick *pickClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				continue
 			}
 
-			pick.out = store.Slot[float64]{Key: reading.Symbol, Value: value}
+			pick.out = value
 
 			if !yield(unsafe.Pointer(&pick.out)) {
 				return

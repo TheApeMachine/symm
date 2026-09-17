@@ -17,7 +17,7 @@ import (
 
 type take struct {
 	*core.PrimitiveError
-	out store.Slot[float64]
+	out float64
 }
 
 func (take *take) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -35,13 +35,7 @@ func (take *take) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			key := ""
-
-			if input.Origin != nil {
-				key = input.Origin.Identity()
-			}
-
-			take.out = store.Slot[float64]{Key: key, Value: value}
+			take.out = value
 
 			if !yield(unsafe.Pointer(&take.out)) {
 				return
@@ -55,13 +49,7 @@ func TestGridDynamicAssignment(t *testing.T) {
 		grid := store.NewGrid[*geometry.Coordinate]()
 
 		firstInterests := [][]string{{"ticker", "data", "price"}}
-		firstHeld := store.NewKeyed[float64]()
-		firstSeed := store.Slot[float64]{Value: 1.0}
-
-		for range firstHeld.Next(sequence.NewOne(unsafe.Pointer(&firstSeed)).Next(nil)) {
-		}
-
-		firstMember := &tests.Member[*geometry.Coordinate]{Primitive: firstHeld}
+		firstMember := &tests.Member[*geometry.Coordinate]{Primitive: store.NewRetained(1.0)}
 		firstQuery := store.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
 			firstMember, core.Identify,
 		)
@@ -77,13 +65,7 @@ func TestGridDynamicAssignment(t *testing.T) {
 		So(firstMember.Conn, ShouldNotBeNil)
 
 		secondInterests := [][]string{{"ticker", "data", "qty"}}
-		secondHeld := store.NewKeyed[float64]()
-		secondSeed := store.Slot[float64]{Value: 2.0}
-
-		for range secondHeld.Next(sequence.NewOne(unsafe.Pointer(&secondSeed)).Next(nil)) {
-		}
-
-		secondMember := &tests.Member[*geometry.Coordinate]{Primitive: secondHeld}
+		secondMember := &tests.Member[*geometry.Coordinate]{Primitive: store.NewRetained(2.0)}
 		secondQuery := store.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
 			secondMember, core.Identify,
 		)
@@ -112,8 +94,8 @@ func TestGridDynamicAssignment(t *testing.T) {
 func TestGridNext(t *testing.T) {
 	Convey("Grid routes keyed market inputs only to matching interests", t, func() {
 		grid := store.NewGrid[*geometry.Coordinate]()
-		last := store.NewKeyed[float64]()
-		bid := store.NewKeyed[float64]()
+		last := store.NewRetained[float64]()
+		bid := store.NewRetained[float64]()
 		lastConn := transport.NewConn[*geometry.Coordinate](
 			nomagique.NewNumber(&take{PrimitiveError: core.NewPrimitiveError()}, last),
 		)
@@ -172,49 +154,5 @@ func TestGridNext(t *testing.T) {
 			).Next(nil),
 		))
 		So(*again.Value, ShouldEqual, 150.0)
-	})
-
-	Convey("Grid retains one value per symbol on the same metric", t, func() {
-		grid := store.NewGrid[*geometry.Coordinate]()
-		held := store.NewKeyed[float64]()
-		conn := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(&take{PrimitiveError: core.NewPrimitiveError()}, held),
-		)
-		sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
-			store.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				conn, core.Identify,
-			).Next(sequence.NewValue([][]string{{"ticker", "data", "last"}})),
-		))
-
-		eth := transport.NewAddress[string]()
-		eth.Identify("ETH/USD")
-		btc := transport.NewAddress[string]()
-		btc.Identify("BTC/USD")
-		ethLast := any(100.0)
-		btcLast := any(200.0)
-		query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-			nil, core.Execute,
-		)
-
-		for range grid.Next(query.Next(sequence.NewValue(
-			*core.NewInput[string, []string, any](eth, core.Write, []string{"ticker", "data", "last"}, &ethLast),
-			*core.NewInput[string, []string, any](btc, core.Write, []string{"ticker", "data", "last"}, &btcLast),
-		))) {
-		}
-
-		readings := tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
-			store.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				transport.NewAddress[*geometry.Coordinate](), core.Read,
-			).Next(nil),
-		))
-		So(len(readings), ShouldEqual, 2)
-		bySymbol := map[string]float64{}
-
-		for _, reading := range readings {
-			bySymbol[reading.Key] = *reading.Value
-		}
-
-		So(bySymbol["ETH/USD"], ShouldEqual, 100.0)
-		So(bySymbol["BTC/USD"], ShouldEqual, 200.0)
 	})
 }

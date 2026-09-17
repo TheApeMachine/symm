@@ -16,12 +16,7 @@ import (
 func TestConn(t *testing.T) {
 	Convey("Conn wraps a member pipeline as an addressable connectable endpoint", t, func() {
 		grid := store.NewGrid[*geometry.Coordinate]()
-		member := store.NewKeyed[float64]()
-		seed := store.Slot[float64]{Value: 42.0}
-
-		for range member.Next(sequence.NewOne(unsafe.Pointer(&seed)).Next(nil)) {
-		}
-
+		member := store.NewRetained(42.0)
 		conn := transport.NewConn[*geometry.Coordinate](member)
 
 		So(conn, ShouldNotBeNil)
@@ -53,13 +48,13 @@ func TestConn(t *testing.T) {
 		So(*reading.Value, ShouldEqual, 42.0)
 		So(reading.Origin.Identity(), ShouldEqual, conn.Identity())
 
-		value := store.Slot[float64]{Value: 7.0}
-		var received store.Slot[float64]
+		value := 7.0
+		var received float64
 		for out := range conn.Next(sequence.NewOne(unsafe.Pointer(&value)).Next(nil)) {
-			received = *(*store.Slot[float64])(out)
+			received = *(*float64)(out)
 		}
 
-		So(received.Value, ShouldEqual, 7.0)
+		So(received, ShouldEqual, 7.0)
 
 		reread := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
 			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](

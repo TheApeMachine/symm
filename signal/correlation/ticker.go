@@ -58,18 +58,14 @@ func NewTicker(
 		)
 	}
 
-	lastHold := store.NewKeyed[float64]()
-	lastPrice := store.NewStamp(
-		nmcorrelation.NewLastPrice(),
-		func(observation *nmcorrelation.PriceObservation) string { return observation.Symbol },
-	)
-	lastStages := []core.Primitive{nmcorrelation.NewTick(), lastPrice, lastHold}
+	lastHold := store.NewRetained[float64]()
+	lastStages := []core.Primitive{nmcorrelation.NewTick(), nmcorrelation.NewLastPrice(), lastHold}
 
 	if measured != "" {
 		lastStages = []core.Primitive{
 			nmcorrelation.NewTick(),
 			nmcorrelation.NewMatch(measured),
-			lastPrice,
+			nmcorrelation.NewLastPrice(),
 			lastHold,
 		}
 	}
@@ -78,128 +74,127 @@ func NewTicker(
 	register(lastPrice, symbolLast)
 
 	if measured != "" && reference != "" {
-		countHold := store.NewKeyed[float64]()
-		signedHold := store.NewKeyed[float64]()
-		absoluteHold := store.NewKeyed[float64]()
-		covarianceHold := store.NewKeyed[float64]()
-		refEnergyHold := store.NewKeyed[float64]()
-		measEnergyHold := store.NewKeyed[float64]()
-		refRateHold := store.NewKeyed[float64]()
-		measRateHold := store.NewKeyed[float64]()
-		densityHold := store.NewKeyed[float64]()
-		measReturnsHold := store.NewKeyed[float64]()
-		refReturnsHold := store.NewKeyed[float64]()
-		overlapHold := store.NewKeyed[float64]()
-		sharedHold := store.NewKeyed[float64]()
-		pValueHold := store.NewKeyed[float64]()
-		errorHold := store.NewKeyed[float64]()
-		relativeHold := store.NewKeyed[float64]()
-		baselineHold := store.NewKeyed[float64]()
-		divergenceHold := store.NewKeyed[float64]()
-		zscoreHold := store.NewKeyed[float64]()
-		velocityHold := store.NewKeyed[float64]()
-		energyBaseHold := store.NewKeyed[float64]()
-		energyDivHold := store.NewKeyed[float64]()
-		energyZHold := store.NewKeyed[float64]()
-		energyVelHold := store.NewKeyed[float64]()
-		fixed := store.NewFixed(measured)
+		countHold := store.NewRetained[float64]()
+		signedHold := store.NewRetained[float64]()
+		absoluteHold := store.NewRetained[float64]()
+		covarianceHold := store.NewRetained[float64]()
+		refEnergyHold := store.NewRetained[float64]()
+		measEnergyHold := store.NewRetained[float64]()
+		refRateHold := store.NewRetained[float64]()
+		measRateHold := store.NewRetained[float64]()
+		densityHold := store.NewRetained[float64]()
+		measReturnsHold := store.NewRetained[float64]()
+		refReturnsHold := store.NewRetained[float64]()
+		overlapHold := store.NewRetained[float64]()
+		sharedHold := store.NewRetained[float64]()
+		pValueHold := store.NewRetained[float64]()
+		errorHold := store.NewRetained[float64]()
+		relativeHold := store.NewRetained[float64]()
+		baselineHold := store.NewRetained[float64]()
+		divergenceHold := store.NewRetained[float64]()
+		zscoreHold := store.NewRetained[float64]()
+		velocityHold := store.NewRetained[float64]()
+		energyBaseHold := store.NewRetained[float64]()
+		energyDivHold := store.NewRetained[float64]()
+		energyZHold := store.NewRetained[float64]()
+		energyVelHold := store.NewRetained[float64]()
 
 		count := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewObservationCount(measured), fixed, fixed, countHold),
+			nomagique.NewNumber(nmcorrelation.NewObservationCount(measured), countHold),
 		)
 		absolute := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewAbsoluteCorrelation(), fixed, absoluteHold),
+			nomagique.NewNumber(nmcorrelation.NewAbsoluteCorrelation(), absoluteHold),
 		)
 		covariance := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewPairCovariance(), fixed, covarianceHold),
+			nomagique.NewNumber(nmcorrelation.NewPairCovariance(), covarianceHold),
 		)
 		refEnergy := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewReferenceEnergy(), fixed, refEnergyHold),
+			nomagique.NewNumber(nmcorrelation.NewReferenceEnergy(), refEnergyHold),
 		)
 		measEnergy := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergy(), fixed, measEnergyHold),
+			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergy(), measEnergyHold),
 		)
 		refRate := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewReferenceEnergyRate(), fixed, refRateHold),
+			nomagique.NewNumber(nmcorrelation.NewReferenceEnergyRate(), refRateHold),
 		)
 		measRate := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergyRate(), fixed, measRateHold),
+			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergyRate(), measRateHold),
 		)
 		density := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewOverlapDensity(), fixed, densityHold),
+			nomagique.NewNumber(nmcorrelation.NewOverlapDensity(), densityHold),
 		)
 		measReturns := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewMeasuredReturns(), fixed, measReturnsHold),
+			nomagique.NewNumber(nmcorrelation.NewMeasuredReturns(), measReturnsHold),
 		)
 		refReturns := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewReferenceReturns(), fixed, refReturnsHold),
+			nomagique.NewNumber(nmcorrelation.NewReferenceReturns(), refReturnsHold),
 		)
 		overlap := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewOverlapCount(), fixed, overlapHold),
+			nomagique.NewNumber(nmcorrelation.NewOverlapCount(), overlapHold),
 		)
 		shared := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewSharedTime(), fixed, sharedHold),
+			nomagique.NewNumber(nmcorrelation.NewSharedTime(), sharedHold),
 		)
 		pValue := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewPValue(), fixed, pValueHold),
+			nomagique.NewNumber(nmcorrelation.NewPValue(), pValueHold),
 		)
 		stdError := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewStandardError(), fixed, errorHold),
+			nomagique.NewNumber(nmcorrelation.NewStandardError(), errorHold),
 		)
 		relative := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewEnergyPair(), arithmetic.NewDivide(), fixed, relativeHold),
+			nomagique.NewNumber(nmcorrelation.NewEnergyPair(), arithmetic.NewDivide(), relativeHold),
 		)
 		baseline := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewFisherBaseline(), fixed, baselineHold),
+			nomagique.NewNumber(nmcorrelation.NewFisherBaseline(), baselineHold),
 		)
 		divergence := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewFisherDivergence(), fixed, divergenceHold),
+			nomagique.NewNumber(nmcorrelation.NewFisherDivergence(), divergenceHold),
 		)
 		zscore := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewFisherZScore(), fixed, zscoreHold),
+			nomagique.NewNumber(nmcorrelation.NewFisherZScore(), zscoreHold),
 		)
 		velocity := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewFisherPoint(), temporal.NewVelocity(), temporal.NewRate(), fixed, velocityHold),
+			nomagique.NewNumber(nmcorrelation.NewFisherPoint(), temporal.NewVelocity(), temporal.NewRate(), velocityHold),
 		)
 		energyBase := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(statistic.NewResidualBaseline(), fixed, energyBaseHold),
+			nomagique.NewNumber(statistic.NewResidualBaseline(), energyBaseHold),
 		)
 		energyDiv := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(statistic.NewResidualDivergence(), fixed, energyDivHold),
+			nomagique.NewNumber(statistic.NewResidualDivergence(), energyDivHold),
 		)
 		energyZ := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(statistic.NewResidualZScore(), fixed, energyZHold),
+			nomagique.NewNumber(statistic.NewResidualZScore(), energyZHold),
 		)
 		energyVel := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewEnergyPoint(), temporal.NewVelocity(), temporal.NewRate(), fixed, energyVelHold),
+			nomagique.NewNumber(nmcorrelation.NewEnergyPoint(), temporal.NewVelocity(), temporal.NewRate(), energyVelHold),
 		)
 
 		pairBranches := []core.Primitive{
 			transport.NewIO[any](nil, nil),
-			nomagique.NewNumber(nmcorrelation.NewObservationCount(measured), fixed, countHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewAbsoluteCorrelation(), fixed, absoluteHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewPairCovariance(), fixed, covarianceHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewReferenceEnergy(), fixed, refEnergyHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergy(), fixed, measEnergyHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewReferenceEnergyRate(), fixed, refRateHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergyRate(), fixed, measRateHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewOverlapDensity(), fixed, densityHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewMeasuredReturns(), fixed, measReturnsHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewReferenceReturns(), fixed, refReturnsHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewOverlapCount(), fixed, overlapHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewSharedTime(), fixed, sharedHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewPValue(), fixed, pValueHold, transport.NewDiscard()),
-			nomagique.NewNumber(nmcorrelation.NewStandardError(), fixed, errorHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewObservationCount(measured), countHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewAbsoluteCorrelation(), absoluteHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewPairCovariance(), covarianceHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewReferenceEnergy(), refEnergyHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergy(), measEnergyHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewReferenceEnergyRate(), refRateHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewMeasuredEnergyRate(), measRateHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewOverlapDensity(), densityHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewMeasuredReturns(), measReturnsHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewReferenceReturns(), refReturnsHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewOverlapCount(), overlapHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewSharedTime(), sharedHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewPValue(), pValueHold, transport.NewDiscard()),
+			nomagique.NewNumber(nmcorrelation.NewStandardError(), errorHold, transport.NewDiscard()),
 			nomagique.NewNumber(
 				nmcorrelation.NewEnergyPair(),
 				arithmetic.NewDivide(),
-				fixed, relativeHold,
+				relativeHold,
 				nomagique.NewNumber(
 					equation.NewAdaptiveZScore(),
 					transport.NewFan(
-						nomagique.NewNumber(statistic.NewResidualBaseline(), fixed, energyBaseHold, transport.NewDiscard()),
-						nomagique.NewNumber(statistic.NewResidualDivergence(), fixed, energyDivHold, transport.NewDiscard()),
-						nomagique.NewNumber(statistic.NewResidualZScore(), fixed, energyZHold, transport.NewDiscard()),
+						nomagique.NewNumber(statistic.NewResidualBaseline(), energyBaseHold, transport.NewDiscard()),
+						nomagique.NewNumber(statistic.NewResidualDivergence(), energyDivHold, transport.NewDiscard()),
+						nomagique.NewNumber(statistic.NewResidualZScore(), energyZHold, transport.NewDiscard()),
 					),
 					transport.NewDiscard(),
 				),
@@ -209,55 +204,55 @@ func NewTicker(
 				nmcorrelation.NewFisherPoint(),
 				temporal.NewVelocity(),
 				temporal.NewRate(),
-				fixed, velocityHold,
+				velocityHold,
 				transport.NewDiscard(),
 			),
 			nomagique.NewNumber(
 				nmcorrelation.NewEnergyPoint(),
 				temporal.NewVelocity(),
 				temporal.NewRate(),
-				fixed, energyVelHold,
+				energyVelHold,
 				transport.NewDiscard(),
 			),
 		}
 
 		if len(cohort) > 0 {
-			peerHold := store.NewKeyed[float64]()
-			cohortSignedHold := store.NewKeyed[float64]()
-			cohortAbsHold := store.NewKeyed[float64]()
-			peerCountHold := store.NewKeyed[float64]()
-			effectiveHold := store.NewKeyed[float64]()
-			dispersionHold := store.NewKeyed[float64]()
+			peerHold := store.NewRetained[float64]()
+			cohortSignedHold := store.NewRetained[float64]()
+			cohortAbsHold := store.NewRetained[float64]()
+			peerCountHold := store.NewRetained[float64]()
+			effectiveHold := store.NewRetained[float64]()
+			dispersionHold := store.NewRetained[float64]()
 
 			peerEnergy := transport.NewConn[*geometry.Coordinate](
-				nomagique.NewNumber(nmcorrelation.NewPeerEnergy(), fixed, peerHold),
+				nomagique.NewNumber(nmcorrelation.NewPeerEnergy(), peerHold),
 			)
 			cohortSigned := transport.NewConn[*geometry.Coordinate](
-				nomagique.NewNumber(nmcorrelation.NewCohortSigned(), fixed, cohortSignedHold),
+				nomagique.NewNumber(nmcorrelation.NewCohortSigned(), cohortSignedHold),
 			)
 			cohortAbs := transport.NewConn[*geometry.Coordinate](
-				nomagique.NewNumber(nmcorrelation.NewCohortAbsolute(), fixed, cohortAbsHold),
+				nomagique.NewNumber(nmcorrelation.NewCohortAbsolute(), cohortAbsHold),
 			)
 			peerCount := transport.NewConn[*geometry.Coordinate](
-				nomagique.NewNumber(nmcorrelation.NewPeerCount(), fixed, peerCountHold),
+				nomagique.NewNumber(nmcorrelation.NewPeerCount(), peerCountHold),
 			)
 			effective := transport.NewConn[*geometry.Coordinate](
-				nomagique.NewNumber(nmcorrelation.NewEffectivePeers(), fixed, effectiveHold),
+				nomagique.NewNumber(nmcorrelation.NewEffectivePeers(), effectiveHold),
 			)
 			dispersion := transport.NewConn[*geometry.Coordinate](
-				nomagique.NewNumber(nmcorrelation.NewDispersion(), fixed, dispersionHold),
+				nomagique.NewNumber(nmcorrelation.NewDispersion(), dispersionHold),
 			)
 
 			pairBranches = append(pairBranches, nomagique.NewNumber(
 				nmcorrelation.NewAdmitted(),
 				nmcorrelation.NewCohort(),
 				transport.NewFan(
-					nomagique.NewNumber(nmcorrelation.NewPeerEnergy(), fixed, peerHold, transport.NewDiscard()),
-					nomagique.NewNumber(nmcorrelation.NewCohortSigned(), fixed, cohortSignedHold, transport.NewDiscard()),
-					nomagique.NewNumber(nmcorrelation.NewCohortAbsolute(), fixed, cohortAbsHold, transport.NewDiscard()),
-					nomagique.NewNumber(nmcorrelation.NewPeerCount(), fixed, peerCountHold, transport.NewDiscard()),
-					nomagique.NewNumber(nmcorrelation.NewEffectivePeers(), fixed, effectiveHold, transport.NewDiscard()),
-					nomagique.NewNumber(nmcorrelation.NewDispersion(), fixed, dispersionHold, transport.NewDiscard()),
+					nomagique.NewNumber(nmcorrelation.NewPeerEnergy(), peerHold, transport.NewDiscard()),
+					nomagique.NewNumber(nmcorrelation.NewCohortSigned(), cohortSignedHold, transport.NewDiscard()),
+					nomagique.NewNumber(nmcorrelation.NewCohortAbsolute(), cohortAbsHold, transport.NewDiscard()),
+					nomagique.NewNumber(nmcorrelation.NewPeerCount(), peerCountHold, transport.NewDiscard()),
+					nomagique.NewNumber(nmcorrelation.NewEffectivePeers(), effectiveHold, transport.NewDiscard()),
+					nomagique.NewNumber(nmcorrelation.NewDispersion(), dispersionHold, transport.NewDiscard()),
 				),
 				transport.NewDiscard(),
 			))
@@ -280,15 +275,15 @@ func NewTicker(
 					nomagique.NewNumber(
 						nmcorrelation.NewFisherEstimator(),
 						transport.NewFan(
-							nomagique.NewNumber(nmcorrelation.NewFisherBaseline(), fixed, baselineHold, transport.NewDiscard()),
-							nomagique.NewNumber(nmcorrelation.NewFisherDivergence(), fixed, divergenceHold, transport.NewDiscard()),
-							nomagique.NewNumber(nmcorrelation.NewFisherZScore(), fixed, zscoreHold, transport.NewDiscard()),
+							nomagique.NewNumber(nmcorrelation.NewFisherBaseline(), baselineHold, transport.NewDiscard()),
+							nomagique.NewNumber(nmcorrelation.NewFisherDivergence(), divergenceHold, transport.NewDiscard()),
+							nomagique.NewNumber(nmcorrelation.NewFisherZScore(), zscoreHold, transport.NewDiscard()),
 						),
 						transport.NewDiscard(),
 					),
 					transport.NewIO[any](nil, nil),
 				),
-				fixed, signedHold,
+				signedHold,
 			),
 		)
 

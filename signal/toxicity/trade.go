@@ -47,7 +47,7 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 	}
 
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
-		retained := store.NewKeyed[float64]()
+		retained := store.NewRetained[float64]()
 		conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
 		return conn, nomagique.NewNumber(extractor, retained, transport.NewDiscard())
 	}
@@ -78,7 +78,7 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 			fillBidFBranch, fillAskFBranch,
 		),
 		NewTradeQty(),
-		store.NewKeyed[float64](),
+		store.NewRetained[float64](),
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))

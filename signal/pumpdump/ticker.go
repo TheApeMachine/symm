@@ -41,7 +41,7 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symb
 	}
 
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
-		retained := store.NewKeyed[float64]()
+		retained := store.NewRetained[float64]()
 		conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
 		return conn, nomagique.NewNumber(extractor, retained, transport.NewDiscard())
 	}
@@ -71,7 +71,7 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symb
 			baseBranch, ratioBranch, divBranch, zBranch,
 		),
 		NewBid(),
-		store.NewKeyed[float64](),
+		store.NewRetained[float64](),
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))

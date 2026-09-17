@@ -5,13 +5,12 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 type pick struct {
 	*core.PrimitiveError
 	selectField func(*Reading) (float64, bool)
-	out         store.Slot[float64]
+	out         float64
 }
 
 func (pick *pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -24,7 +23,7 @@ func (pick *pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			pick.out = store.Slot[float64]{Key: reading.Symbol, Value: value}
+			pick.out = value
 
 			if !yield(unsafe.Pointer(&pick.out)) {
 				return

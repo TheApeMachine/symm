@@ -8,72 +8,62 @@ import (
 )
 
 /*
-Reading is the running executed-flow observation for one symbol.
+Reading is the running executed-flow observation.
 */
 type Reading struct {
-	Symbol                                                  string
-	TradeCount, BuyCount, SellCount                         float64
-	BuyQty, SellQty, GrossQty, NetQty                       float64
-	BuyNotional, SellNotional, GrossNotional, NetNotional   float64
-	MeanNotional, CVD, CND, Epoch                           float64
-	SignedCount, SignedNet                                  float64
+	TradeCount, BuyCount, SellCount                       float64
+	BuyQty, SellQty, GrossQty, NetQty                     float64
+	BuyNotional, SellNotional, GrossNotional, NetNotional float64
+	MeanNotional, CVD, CND, Epoch                         float64
+	SignedCount, SignedNet                                float64
 }
 
 /*
-Flow accumulates aggressive executions into per-symbol flow totals.
+Flow accumulates aggressive executions into running flow totals.
 */
 type Flow struct {
 	*core.PrimitiveError
 
-	paths map[string]*Reading
-	out   Reading
+	out Reading
 }
 
 func NewFlow() *Flow {
-	return &Flow{PrimitiveError: core.NewPrimitiveError(), paths: make(map[string]*Reading)}
+	return &Flow{PrimitiveError: core.NewPrimitiveError()}
 }
 
 func (flow *Flow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			fill := *(*Fill)(arriving)
-			state := flow.paths[fill.Symbol]
-
-			if state == nil {
-				state = &Reading{Symbol: fill.Symbol}
-				flow.paths[fill.Symbol] = state
-			}
-
 			notional := fill.Price * fill.Qty
-			state.TradeCount++
-			state.GrossQty += fill.Qty
-			state.GrossNotional += notional
+			flow.out.TradeCount++
+			flow.out.GrossQty += fill.Qty
+			flow.out.GrossNotional += notional
 
 			if fill.Side == "buy" {
-				state.BuyCount++
-				state.BuyQty += fill.Qty
-				state.BuyNotional += notional
-				state.NetQty += fill.Qty
-				state.NetNotional += notional
-				state.CVD += fill.Qty
-				state.CND += notional
+				flow.out.BuyCount++
+				flow.out.BuyQty += fill.Qty
+				flow.out.BuyNotional += notional
+				flow.out.NetQty += fill.Qty
+				flow.out.NetNotional += notional
+				flow.out.CVD += fill.Qty
+				flow.out.CND += notional
 			}
 
 			if fill.Side != "buy" {
-				state.SellCount++
-				state.SellQty += fill.Qty
-				state.SellNotional += notional
-				state.NetQty -= fill.Qty
-				state.NetNotional -= notional
-				state.CVD -= fill.Qty
-				state.CND -= notional
+				flow.out.SellCount++
+				flow.out.SellQty += fill.Qty
+				flow.out.SellNotional += notional
+				flow.out.NetQty -= fill.Qty
+				flow.out.NetNotional -= notional
+				flow.out.CVD -= fill.Qty
+				flow.out.CND -= notional
 			}
 
-			state.MeanNotional = state.GrossNotional / state.TradeCount
-			state.SignedCount = (state.BuyCount - state.SellCount) / state.TradeCount
-			state.SignedNet = state.NetNotional / state.GrossNotional
-			state.Epoch = float64(fill.At) / 1e9
-			flow.out = *state
+			flow.out.MeanNotional = flow.out.GrossNotional / flow.out.TradeCount
+			flow.out.SignedCount = (flow.out.BuyCount - flow.out.SellCount) / flow.out.TradeCount
+			flow.out.SignedNet = flow.out.NetNotional / flow.out.GrossNotional
+			flow.out.Epoch = float64(fill.At) / 1e9
 
 			if !yield(unsafe.Pointer(&flow.out)) {
 				return

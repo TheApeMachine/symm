@@ -47,7 +47,7 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], meas
 		)
 	}
 
-	lastHold := store.NewKeyed[float64]()
+	lastHold := store.NewRetained[float64]()
 	lastStages := []core.Primitive{nmcorrelation.NewTick(), nmcorrelation.NewLastPrice(), lastHold}
 
 	if measured != "" {
@@ -64,7 +64,7 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], meas
 
 	if measured != "" && reference != "" {
 		hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
-			retained := store.NewKeyed[float64]()
+			retained := store.NewRetained[float64]()
 			conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
 			return conn, nomagique.NewNumber(extractor, retained, transport.NewDiscard())
 		}
@@ -88,7 +88,7 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], meas
 					fractionBranch, searchBranch, prominenceBranch, curvatureBranch,
 				),
 				NewBestLagCorrelation(),
-				store.NewKeyed[float64](),
+				store.NewRetained[float64](),
 			),
 		)
 		register(ingress, symbolLastTime)

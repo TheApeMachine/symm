@@ -122,7 +122,14 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							}
 
 							for out := range cell.Next(nil) {
-								if !grid.yieldSlot(cell, out, yield) {
+								held := new(float64)
+								*held = *(*float64)(out)
+								origin, _ := cell.(core.Connectable[T])
+								grid.reading = *core.NewInput(
+									origin, core.Read, "", held,
+								)
+
+								if !yield(unsafe.Pointer(&grid.reading)) {
 									return
 								}
 							}
@@ -140,7 +147,14 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					}
 
 					for out := range cell.Next(nil) {
-						if !grid.yieldSlot(cell, out, yield) {
+						held := new(float64)
+						*held = *(*float64)(out)
+						origin, _ := cell.(core.Connectable[T])
+						grid.reading = *core.NewInput(
+							origin, core.Read, "", held,
+						)
+
+						if !yield(unsafe.Pointer(&grid.reading)) {
 							return
 						}
 					}
@@ -291,18 +305,4 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-func (grid *Grid[T]) yieldSlot(
-	cell core.Primitive, out unsafe.Pointer, yield func(unsafe.Pointer) bool,
-) bool {
-	slot := *(*Slot[float64])(out)
-	held := new(float64)
-	*held = slot.Value
-	origin, _ := cell.(core.Connectable[T])
-	grid.reading = *core.NewInput(
-		origin, core.Read, slot.Key, held,
-	)
-
-	return yield(unsafe.Pointer(&grid.reading))
 }
