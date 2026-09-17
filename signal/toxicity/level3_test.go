@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -24,13 +26,13 @@ func toxicityTouch(symbol string, at time.Time, bidPrice, bidQty, askPrice, askQ
 	return m
 }
 
-func TestLevel3Step(t *testing.T) {
+func TestLevel3Next(t *testing.T) {
 	Convey("Given a sequence of touch observations", t, func() {
 		entity := NewLevel3(t.Context())
 		entity.Transition(runtime.READY)
 
 		Convey("the first observation anchors the previous touch", func() {
-			measurement := entity.Step(toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -50,8 +52,8 @@ func TestLevel3Step(t *testing.T) {
 			first := time.Unix(1_700_000_000, 0)
 			second := time.Unix(1_700_000_001, 0)
 
-			entity.Step(toxicityTouch("BTC/USD", first, 99, 10, 101, 12))
-			measurement := entity.Step(toxicityTouch("BTC/USD", second, 98, 5, 101, 12))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](toxicityTouch("BTC/USD", first, 99, 10, 101, 12))))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](toxicityTouch("BTC/USD", second, 98, 5, 101, 12))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -67,8 +69,8 @@ func TestLevel3Step(t *testing.T) {
 		})
 
 		Convey("a later observation attributes an unchanged-touch withdrawal", func() {
-			entity.Step(toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))
-			measurement := entity.Step(toxicityTouch("BTC/USD", time.Unix(1_700_000_001, 0), 99, 4, 101, 12))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](toxicityTouch("BTC/USD", time.Unix(1_700_000_001, 0), 99, 4, 101, 12))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -91,7 +93,7 @@ func TestLevel3Step(t *testing.T) {
 			quote.Provenance["channel"] = "level3"
 			measurement.Err = nil // Consumer clears the prior observation's error.
 			measurement.Peers = []*data.Measurement[float64]{quote}
-			So(entity.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Label, ShouldEqual, tape.Symbol)
 
@@ -101,7 +103,7 @@ func TestLevel3Step(t *testing.T) {
 			rejected.Timestamp = rejected.At.UnixNano()
 			rejected.Provenance["channel"] = "futures.ticker"
 			measurement.Peers[0] = rejected
-			So(entity.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(measurement.Err, ShouldNotBeNil)
 			So(measurement.Label, ShouldEqual, rejected.Label)
 			So(measurement.At, ShouldEqual, rejected.At)
@@ -117,7 +119,7 @@ func TestLevel3Step(t *testing.T) {
 		entity.Transition(runtime.READY)
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 101, 10, 99, 12))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](toxicityTouch("BTC/USD", time.Unix(1_700_000_000, 0), 101, 10, 99, 12))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -175,7 +177,7 @@ func TestLevel3StepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -190,7 +192,7 @@ func TestLevel3StepUnrelatedPeer(t *testing.T) {
 		peer := data.NewMeasurement[float64]("unrelated", nil)
 		peer.Label = "BTC/USD"
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(entity.Step(measurement), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 	})
 }
 
@@ -205,13 +207,13 @@ func BenchmarkLevel3StepUnrelatedPeer(b *testing.B) {
 	b.ResetTimer()
 
 	for index := 0; index < b.N; index++ {
-		if entity.Step(measurement) != nil {
+		if sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))) != nil {
 			b.Fatal("unrelated peer published a signal")
 		}
 	}
 }
 
-func BenchmarkLevel3Step(b *testing.B) {
+func BenchmarkLevel3Next(b *testing.B) {
 	entity := NewLevel3(b.Context())
 	entity.Transition(runtime.READY)
 	measurement := entity.Register()
@@ -233,7 +235,7 @@ func BenchmarkLevel3Step(b *testing.B) {
 		quote.At = tape.Steps[0].EventTime.Add(time.Duration(index) * time.Millisecond)
 		measurement.Peers[0] = quote
 
-		if result := entity.Step(measurement); result == nil || result.Err != nil {
+		if result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))); result == nil || result.Err != nil {
 			b.Fatal("valid quote rejected", measurement.Err)
 		}
 	}

@@ -75,14 +75,14 @@ func TestRehearsalResolve(t *testing.T) {
 	})
 }
 
-func TestRehearsalStep(t *testing.T) {
+func TestRehearsalNext(t *testing.T) {
 	Convey("Complete Tee boundaries resolve outcomes and train the same trie used by live inference", t, func() {
 		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
 		training.Transition(runtime.READY)
 		frames := market.TrainingTape(6)
 		var records []tables.ExcursionRecord
 		for _, frame := range frames {
-			current := training.Step(frame)
+			current := sequence.Read[*data.Measurement[float64]](training.Next(sequence.NewValue[*data.Measurement[float64]](frame)))
 			So(current.Err, ShouldBeNil)
 			closed, err := training.Rehearsal.Step(current)
 			So(err, ShouldBeNil)
@@ -118,7 +118,7 @@ func TestRehearsalStep(t *testing.T) {
 			}
 		})
 		for _, frame := range live {
-			So(training.Step(frame).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](training.Next(sequence.NewValue[*data.Measurement[float64]](frame))).Err, ShouldBeNil)
 		}
 		workers.Wait()
 		So(training.Rehearsal.reading.Learned, ShouldBeGreaterThan, 0)
@@ -168,7 +168,7 @@ func TestRehearsalReplay(t *testing.T) {
 	})
 }
 
-func BenchmarkRehearsalStep(b *testing.B) {
+func BenchmarkRehearsalNext(b *testing.B) {
 	training := NewTraining(b.Context(), 1, market.TrainingPrice(b.Context()))
 	frames := market.TrainingTape(6)
 	b.ReportAllocs()

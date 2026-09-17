@@ -134,133 +134,153 @@ func NewSolver(
 }
 
 /*
-Step advances the symbol's predictive coder over the canonical microstructure
+Next advances the symbol's predictive coder over the canonical microstructure
 sensory features carried in Peers and writes the resulting resonance metrics
 onto the measurement.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if solver.Status() != runtime.READY {
-		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (solver *Solver) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if solver.Error() != nil {
-		return measurement
-	}
-
-	if measurement == nil {
-		return nil
-	}
-
-	for _, peer := range measurement.Peers {
-		if peer != nil && peer.Label != "" {
-			measurement.Pull(peer)
-			break
-		}
-	}
-
-	symbol := measurement.Label
-
-	if symbol == "" {
-		return measurement
-	}
-
-	at := measurement.At
-
-	if at.IsZero() {
-		for _, peer := range measurement.Peers {
-			if peer != nil && !peer.At.IsZero() {
-				at = peer.At
-				break
-			}
-		}
-	}
-
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	midpoint := 0.0
-
-	if measurement.Label == symbol && measurement.Metrics != nil {
-		if metric, found := measurement.Metrics["midpoint"]; found && metric.Raw > 0 {
-			midpoint = metric.Raw
-		}
-
-		if midpoint == 0.0 {
-			if metric, found := measurement.Metrics["last_price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-			}
-		}
-
-		if midpoint == 0.0 {
-			if metric, found := measurement.Metrics["price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-			}
-		}
-	}
-
-	if midpoint == 0.0 {
-		for _, peer := range measurement.Peers {
-			if peer == nil || peer.Label != symbol || peer.Metrics == nil {
-				continue
+			if solver.Status() != runtime.READY {
+				errnie.Warn(solver.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
 			}
 
-			if metric, found := peer.Metrics["midpoint"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-				break
+			if solver.Error() != nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
 			}
 
-			if metric, found := peer.Metrics["last_price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-				break
+			if measurement == nil {
+				continue inputs
 			}
 
-			if metric, found := peer.Metrics["price"]; found && metric.Raw > 0 {
-				midpoint = metric.Raw
-				break
+			for _, peer := range measurement.Peers {
+				if peer != nil && peer.Label != "" {
+					measurement.Pull(peer)
+					break
+				}
 			}
+
+			symbol := measurement.Label
+
+			if symbol == "" {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			at := measurement.At
+
+			if at.IsZero() {
+				for _, peer := range measurement.Peers {
+					if peer != nil && !peer.At.IsZero() {
+						at = peer.At
+						break
+					}
+				}
+			}
+
+			if at.IsZero() {
+				at = time.Now()
+			}
+
+			midpoint := 0.0
+
+			if measurement.Label == symbol && measurement.Metrics != nil {
+				if metric, found := measurement.Metrics["midpoint"]; found && metric.Raw > 0 {
+					midpoint = metric.Raw
+				}
+
+				if midpoint == 0.0 {
+					if metric, found := measurement.Metrics["last_price"]; found && metric.Raw > 0 {
+						midpoint = metric.Raw
+					}
+				}
+
+				if midpoint == 0.0 {
+					if metric, found := measurement.Metrics["price"]; found && metric.Raw > 0 {
+						midpoint = metric.Raw
+					}
+				}
+			}
+
+			if midpoint == 0.0 {
+				for _, peer := range measurement.Peers {
+					if peer == nil || peer.Label != symbol || peer.Metrics == nil {
+						continue
+					}
+
+					if metric, found := peer.Metrics["midpoint"]; found && metric.Raw > 0 {
+						midpoint = metric.Raw
+						break
+					}
+
+					if metric, found := peer.Metrics["last_price"]; found && metric.Raw > 0 {
+						midpoint = metric.Raw
+						break
+					}
+
+					if metric, found := peer.Metrics["price"]; found && metric.Raw > 0 {
+						midpoint = metric.Raw
+						break
+					}
+				}
+			}
+
+			var signals [11]*data.Measurement[float64]
+
+			if measurement.Label == symbol {
+				if idx := signalIndex(measurement.Source); idx >= 0 {
+					signals[idx] = measurement
+				}
+			}
+
+			for _, peer := range measurement.Peers {
+				if peer == nil || peer.Label != symbol {
+					continue
+				}
+
+				if idx := signalIndex(peer.Source); idx >= 0 {
+					signals[idx] = peer
+				}
+			}
+
+			scorer := solver.scorer(symbol)
+			features := scorer.Step(signals)
+
+			resonance := solver.Update(symbol, at, features, midpoint)
+			measurement.Result = resonance
+
+			if resonance != nil && resonance.Snapshot != nil {
+				if energyMetric, ok := measurement.Metrics["energy"]; ok {
+					measurement.Metrics["energy"] = energyMetric.Write(resonance.Snapshot.Energy)
+				}
+
+				if surpriseMetric, ok := measurement.Metrics["surprise"]; ok {
+					measurement.Metrics["surprise"] = surpriseMetric.Write(resonance.Snapshot.Surprise)
+				}
+			}
+
+			measurement.Label = symbol
+			measurement.At = at
+
+			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+				return
+			}
+			continue inputs
+
 		}
 	}
-
-	var signals [11]*data.Measurement[float64]
-
-	if measurement.Label == symbol {
-		if idx := signalIndex(measurement.Source); idx >= 0 {
-			signals[idx] = measurement
-		}
-	}
-
-	for _, peer := range measurement.Peers {
-		if peer == nil || peer.Label != symbol {
-			continue
-		}
-
-		if idx := signalIndex(peer.Source); idx >= 0 {
-			signals[idx] = peer
-		}
-	}
-
-	scorer := solver.scorer(symbol)
-	features := scorer.Step(signals)
-
-	resonance := solver.Update(symbol, at, features, midpoint)
-	measurement.Result = resonance
-
-	if resonance != nil && resonance.Snapshot != nil {
-		if energyMetric, ok := measurement.Metrics["energy"]; ok {
-			measurement.Metrics["energy"] = energyMetric.Write(resonance.Snapshot.Energy)
-		}
-
-		if surpriseMetric, ok := measurement.Metrics["surprise"]; ok {
-			measurement.Metrics["surprise"] = surpriseMetric.Write(resonance.Snapshot.Surprise)
-		}
-	}
-
-	measurement.Label = symbol
-	measurement.At = at
-
-	return measurement
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {

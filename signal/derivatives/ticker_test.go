@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -46,13 +48,13 @@ func syntheticRow(symbol string, last, index, mark, openInterest float64, at tim
 	return m
 }
 
-func TestTickerStep(t *testing.T) {
+func TestTickerNext(t *testing.T) {
 	Convey("Given a valid derivative ticker snapshot", t, func() {
 		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the first data point yields point and geometry metrics with no warmup", func() {
-			measurement := entity.Step(row("PF_XBTUSD", 101, 100, 100.5, 1000, at))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 101, 100, 100.5, 1000, at))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -95,8 +97,8 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("a multi-leg sequence derives the differences, returns, and baselines", func() {
-			entity.Step(row("PF_XBTUSD", 101, 100, 100.5, 1000, at))
-			measurement := entity.Step(row("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(10*time.Second)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 101, 100, 100.5, 1000, at))))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(10*time.Second)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -124,7 +126,7 @@ func TestTickerStep(t *testing.T) {
 		entity := NewTicker(t.Context())
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(row("PF_XBTUSD", 101, 0, 100.5, 1000, time.Unix(1_700_000_000, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 101, 0, 100.5, 1000, time.Unix(1_700_000_000, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -144,10 +146,10 @@ func TestTickerStep_ZeroOpenInterest(t *testing.T) {
 		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(row("PF_THIN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_THIN", 101, 100, 100.5, 0, at)))).Err, ShouldBeNil)
 
 		Convey("A second observation still publishes its price metrics", func() {
-			measurement := entity.Step(row("PF_THIN", 102, 100, 100.5, 0, at.Add(time.Second)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_THIN", 102, 100, 100.5, 0, at.Add(time.Second)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -165,10 +167,10 @@ func TestTickerStep_ZeroOpenInterest(t *testing.T) {
 		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(row("PF_OPEN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_OPEN", 101, 100, 100.5, 0, at)))).Err, ShouldBeNil)
 
 		Convey("The log change stays absent while the previous endpoint is zero", func() {
-			measurement := entity.Step(row("PF_OPEN", 101, 100, 100.5, 500, at.Add(time.Second)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_OPEN", 101, 100, 100.5, 500, at.Add(time.Second)))))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 500.0)
@@ -192,7 +194,7 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("The first observation still publishes its arithmetic metrics", func() {
-			measurement := entity.Step(row("PF_UNTRADED", 0, 100, 100.5, 1000, at))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_UNTRADED", 0, 100, 100.5, 1000, at))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -208,9 +210,9 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 		})
 
 		Convey("A second zero-priced observation still reports without error", func() {
-			So(entity.Step(row("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_UNTRADED", 0, 100, 100.5, 1000, at)))).Err, ShouldBeNil)
 
-			measurement := entity.Step(row("PF_UNTRADED", 0, 101, 100.5, 1000, at.Add(time.Second)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_UNTRADED", 0, 101, 100.5, 1000, at.Add(time.Second)))))
 
 			So(measurement.Err, ShouldBeNil)
 
@@ -226,9 +228,9 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 		})
 
 		Convey("A price recovering from zero reports without error", func() {
-			So(entity.Step(row("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_UNTRADED", 0, 100, 100.5, 1000, at)))).Err, ShouldBeNil)
 
-			measurement := entity.Step(row("PF_UNTRADED", 102, 101, 100.5, 1000, at.Add(time.Second)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_UNTRADED", 102, 101, 100.5, 1000, at.Add(time.Second)))))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 102.0)
@@ -246,10 +248,10 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 		entity := NewTicker(t.Context())
 		at := time.Unix(1_700_000_000, 0)
 
-		So(entity.Step(row("PF_XBTUSD", 100, 99, 99.5, 1000, at)).Err, ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 100, 99, 99.5, 1000, at)))).Err, ShouldBeNil)
 
 		Convey("The full log-space geometry is still published", func() {
-			measurement := entity.Step(row("PF_XBTUSD", 102, 100, 100.5, 1100, at.Add(time.Second)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 102, 100, 100.5, 1100, at.Add(time.Second)))))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["log_basis"].Raw, ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
@@ -268,15 +270,15 @@ func TestTickerStep_RegressingTimestamp(t *testing.T) {
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the observer's causal clock must not regress across the out-of-order event", func() {
-			So(entity.Step(row("PF_XBTUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
-			So(entity.Step(row("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(time.Second))).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 101, 100, 100.5, 1000, at)))).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(time.Second))))).Err, ShouldBeNil)
 
 			// A snapshot carrying a REAL timestamp older than the last seen is
 			// a late event, not a broken one. Its instantaneous price geometry
 			// is true whenever the snapshot was taken, so it publishes; but it
 			// is not a valid newest observation, so nothing derived from the
 			// event clock does.
-			measurement := entity.Step(row("PF_XBTUSD", 103, 102, 102.5, 1200, at.Add(500*time.Millisecond)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_XBTUSD", 103, 102, 102.5, 1200, at.Add(500*time.Millisecond)))))
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 103.0)
@@ -288,20 +290,20 @@ func TestTickerStep_RegressingTimestamp(t *testing.T) {
 		})
 
 		Convey("a fabricated timestamp is folded forward, not read as late", func() {
-			So(entity.Step(row("PF_SYNUSD", 101, 100, 100.5, 1000, at.Add(time.Hour))).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_SYNUSD", 101, 100, 100.5, 1000, at.Add(time.Hour))))).Err, ShouldBeNil)
 
 			// No server timestamp: the wall-clock substitute reads as older,
 			// but it holds no truth, so it is pinned to the timeline head and
 			// the snapshot counts as the newest observation.
-			measurement := entity.Step(syntheticRow("PF_SYNUSD", 102, 101, 101.5, 1100, at))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](syntheticRow("PF_SYNUSD", 102, 101, 101.5, 1100, at))))
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 100.0)
 		})
 
 		Convey("identical timestamps are accepted and hold the timeline at the same instant", func() {
-			So(entity.Step(row("PF_RAREUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_RAREUSD", 101, 100, 100.5, 1000, at)))).Err, ShouldBeNil)
 
-			measurement := entity.Step(row("PF_RAREUSD", 102, 101, 101.5, 1100, at))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("PF_RAREUSD", 102, 101, 101.5, 1100, at))))
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 100.0)
 		})
@@ -337,7 +339,7 @@ func TestTickerStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

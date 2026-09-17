@@ -18,7 +18,7 @@ func TestOnceNext(t *testing.T) {
 	Convey("A prerequisite completes once before input is passed downstream", t, func() {
 		reading := store.NewRetained(statistic.MomentReading{})
 		once := transport.NewOnce(nomagique.NewNumber(
-			core.NewInput[float64](nil, nil, 1.0, 2.0, 3.0), statistic.NewEstimator(), reading,
+			sequence.NewValues(1.0, 2.0, 3.0), statistic.NewEstimator(), reading,
 		))
 
 		Convey("Construction and empty input leave the prerequisite idle", func() {
@@ -47,7 +47,7 @@ func TestOnceNext(t *testing.T) {
 
 	Convey("A failing prerequisite prevents input delivery", t, func() {
 		prerequisite := nomagique.NewNumber(
-			core.NewInput[map[string]float64](nil, nil, map[string]float64{"one": 1.0, "two": 2.0, "three": 3.0}),
+			sequence.NewValues(map[string]float64{"one": 1.0, "two": 2.0, "three": 3.0}),
 			store.NewGet[string, float64]("missing"),
 		)
 		once := transport.NewOnce(prerequisite)
@@ -58,7 +58,7 @@ func TestOnceNext(t *testing.T) {
 }
 
 func BenchmarkOnceNext(b *testing.B) {
-	once := transport.NewOnce(core.NewInput[int](nil, nil, 1))
+	once := transport.NewOnce(sequence.NewValues(1))
 	for range once.Next(sequence.NewValue(1)) {
 	}
 	b.ReportAllocs()

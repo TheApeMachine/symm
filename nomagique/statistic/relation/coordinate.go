@@ -21,7 +21,7 @@ are plain data structs with exported fields only. RingView is the one
 resource payload: a read-locked window over one resident ring that the
 estimation path holds for the duration of its walk and then closes.
 
-The normative contract is nomagique/relation/README.md. Where this code and
+The normative contract is nomagique/statistic/relation/README.md. Where this code and
 the README disagree, the README wins.
 */
 package relation

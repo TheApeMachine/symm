@@ -2,11 +2,11 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 type RuntimeSystem interface {
@@ -20,10 +20,10 @@ type RuntimeSystem interface {
 }
 
 type System struct {
+	*core.PrimitiveError
 	ctx     context.Context
 	cancel  context.CancelFunc
 	name    string
-	err     error
 	status  *Status
 	closers []io.Closer
 }
@@ -47,11 +47,12 @@ func NewSystem(
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &System{
-		ctx:     ctx,
-		cancel:  cancel,
-		name:    name,
-		status:  NewStatus(),
-		closers: closers,
+		PrimitiveError: core.NewPrimitiveError(),
+		ctx:            ctx,
+		cancel:         cancel,
+		name:           name,
+		status:         NewStatus(),
+		closers:        closers,
 	}
 }
 
@@ -70,38 +71,21 @@ func (system *System) Transition(stage Stage) {
 func (system *System) Status() Stage { return system.status.Current() }
 
 func (system *System) Error(errs ...error) error {
-	var added bool
-
-	for _, err := range errs {
-		if err == nil {
+	err := system.PrimitiveError.Error(errs...)
+	for _, added := range errs {
+		if added == nil {
 			continue
 		}
-
-		added = true
-
-		if system.err == nil {
-			system.err = err
-			continue
-		}
-
-		system.err = errors.Join(system.err, err)
-	}
-
-	if added && system.err != nil {
 		if system.status.Current() != FATAL {
 			system.Transition(ERROR)
 		}
-
-		errnie.Error(system.err)
-
-		errnieErr, ok := errnie.AsErrnie(system.err)
-
-		if ok && errnie.IsInternal(errnieErr) {
-			system.Close()
+		errnie.Error(added)
+		categorized, ok := errnie.AsErrnie(added)
+		if ok && errnie.IsInternal(categorized) {
+			return system.Close()
 		}
 	}
-
-	return system.err
+	return err
 }
 
 func (system *System) AddCloser(closer io.Closer) {
@@ -112,7 +96,7 @@ func (system *System) System() *System { return system }
 
 func (system *System) Close() error {
 	if system.cancel == nil {
-		return system.err
+		return system.PrimitiveError.Error()
 	}
 
 	system.cancel()
@@ -129,8 +113,8 @@ func (system *System) Close() error {
 			continue
 		}
 
-		system.err = errors.Join(system.err, closer.Close())
+		system.PrimitiveError.Error(closer.Close())
 	}
 
-	return system.err
+	return system.PrimitiveError.Error()
 }

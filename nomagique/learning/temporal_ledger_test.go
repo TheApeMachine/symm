@@ -13,11 +13,11 @@ func TestTemporalLedgerNestedHorizonResolution(t *testing.T) {
 				4,
 				manifold,
 				NewDirectionalTarget(0.01),
-			).(*TemporalLedger)
+			)
 		}
 
 		head := func() *ResonanceManifold {
-			return NewResonanceManifold([]int{2, 4, 2}, 1, 4, 0.05, ReadoutAll).(*ResonanceManifold)
+			return NewResonanceManifold([]int{2, 4, 2}, 1, 4, 0.05, ReadoutAll)
 		}
 
 		observe := func(

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	nmsequence "github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -15,7 +17,7 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func TestSolverStep(t *testing.T) {
+func TestSolverNext(t *testing.T) {
 	Convey("Registered category batches preserve strength, symbols and timestamps", t, func() {
 		solver := NewSolver(t.Context())
 		solver.Transition(runtime.READY)
@@ -29,7 +31,7 @@ func TestSolverStep(t *testing.T) {
 		}
 		measurement := solver.Register()
 		measurement.Peers = []*data.Measurement[float64]{category}
-		result := solver.Step(measurement)
+		result := nmsequence.Read[*data.Measurement[float64]](solver.Next(nmsequence.NewValue[*data.Measurement[float64]](measurement)))
 		readings, ok := result.Result.([]types.Cognition)
 		So(ok, ShouldBeTrue)
 		So(len(readings), ShouldEqual, 2)
@@ -77,7 +79,7 @@ func TestSolverStep(t *testing.T) {
 						}}}
 						m.Peers = []*data.Measurement[float64]{cat}
 
-						_ = solver.Step(m)
+						_ = nmsequence.Read[*data.Measurement[float64]](solver.Next(nmsequence.NewValue[*data.Measurement[float64]](m)))
 					}
 				}(symbol)
 			}
@@ -174,14 +176,14 @@ func TestSolverStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(nmsequence.Read[*data.Measurement[float64]](node.Next(nmsequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
 }
 
-func BenchmarkSolverStep(b *testing.B) {
+func BenchmarkSolverNext(b *testing.B) {
 	solver := NewSolver(b.Context())
 	solver.Transition(runtime.READY)
 	measurement := solver.Register()
@@ -198,7 +200,7 @@ func BenchmarkSolverStep(b *testing.B) {
 		sequence++
 		categories[0][0].At = time.Unix(sequence, 0)
 		categories[0][0].Type = []types.CategoryType{types.OrganicTrend, types.Turbulent}[sequence%2]
-		solver.Step(measurement)
+		nmsequence.Read[*data.Measurement[float64]](solver.Next(nmsequence.NewValue[*data.Measurement[float64]](measurement)))
 
 		if err := solver.Error(); err != nil {
 			b.Fatal(err)
@@ -214,7 +216,7 @@ func TestSolverStepEmptyBatch(t *testing.T) {
 		category.Result = [][]types.Category{}
 		measurement := solver.Register()
 		measurement.Peers = []*data.Measurement[float64]{category}
-		So(solver.Step(measurement), ShouldBeNil)
+		So(nmsequence.Read[*data.Measurement[float64]](solver.Next(nmsequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 		So(solver.Error(), ShouldBeNil)
 	})
 }

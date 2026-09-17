@@ -189,147 +189,170 @@ func NewLevel3(ctx context.Context) *Level3 {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	if level3.Status() != runtime.READY {
-		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return m
-	}
+func (level3 *Level3) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			m := *(**data.Measurement[float64])(arriving)
 
-	if m == nil {
-		return nil
-	}
+			if level3.Status() != runtime.READY {
+				errnie.Warn(level3.Name() + ": Next called before READY; dropping event")
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
 
-	if m.Err != nil {
-		return m
-	}
+			if m == nil {
+				continue inputs
+			}
 
-	input := m
+			if m.Err != nil {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
 
-	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" {
-				return false
-			}
-			b := p.Metrics["best_price:bid"].Raw
-			if b == 0 {
-				b = p.Metrics["best_bid"].Raw
-			}
-			if b == 0 {
-				b = p.Metrics["bid"].Raw
-			}
-			a := p.Metrics["best_price:ask"].Raw
-			if a == 0 {
-				a = p.Metrics["best_ask"].Raw
-			}
-			if a == 0 {
-				a = p.Metrics["ask"].Raw
-			}
-			return b > 0 && a > 0
-		})
+			input := m
 
-		if peer == nil {
-			return nil
+			if len(m.Peers) > 0 {
+				peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+					if p.Label == "" {
+						return false
+					}
+					b := p.Metrics["best_price:bid"].Raw
+					if b == 0 {
+						b = p.Metrics["best_bid"].Raw
+					}
+					if b == 0 {
+						b = p.Metrics["bid"].Raw
+					}
+					a := p.Metrics["best_price:ask"].Raw
+					if a == 0 {
+						a = p.Metrics["best_ask"].Raw
+					}
+					if a == 0 {
+						a = p.Metrics["ask"].Raw
+					}
+					return b > 0 && a > 0
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				input = peer
+			}
+
+			m.Pull(input)
+
+			bidPrice := input.Metrics["best_price:bid"].Raw
+			if bidPrice == 0 {
+				bidPrice = input.Metrics["best_bid"].Raw
+			}
+			if bidPrice == 0 {
+				bidPrice = input.Metrics["bid"].Raw
+			}
+
+			askPrice := input.Metrics["best_price:ask"].Raw
+			if askPrice == 0 {
+				askPrice = input.Metrics["best_ask"].Raw
+			}
+			if askPrice == 0 {
+				askPrice = input.Metrics["ask"].Raw
+			}
+
+			bidQty := input.Metrics["touch_quantity:bid"].Raw
+			if bidQty == 0 {
+				bidQty = input.Metrics["bid_qty"].Raw
+			}
+
+			askQty := input.Metrics["touch_quantity:ask"].Raw
+			if askQty == 0 {
+				askQty = input.Metrics["ask_qty"].Raw
+			}
+
+			if bidPrice <= 0 || askPrice <= 0 {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
+
+			if bidPrice >= askPrice {
+				m.Err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf("toxicity: crossed touch (%f >= %f)", bidPrice, askPrice),
+					nil,
+				))
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
+
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			pipeInput := level3Input{
+				BidPrice: bidPrice,
+				AskPrice: askPrice,
+				BidQty:   bidQty,
+				AskQty:   askQty,
+				At:       input.At,
+			}
+
+			for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+				res := (*level3Result)(out)
+
+				m.Metrics["best_price:bid"] = m.Metrics["best_price:bid"].Write(res.BidPrice)
+				m.Metrics["best_price:ask"] = m.Metrics["best_price:ask"].Write(res.AskPrice)
+				m.Metrics["touch_quantity:bid"] = m.Metrics["touch_quantity:bid"].Write(res.BidQty)
+				m.Metrics["touch_quantity:ask"] = m.Metrics["touch_quantity:ask"].Write(res.AskQty)
+				m.Metrics["unfilled_residual_quantity:bid"] = m.Metrics["unfilled_residual_quantity:bid"].Write(res.BidQty)
+				m.Metrics["unfilled_residual_quantity:ask"] = m.Metrics["unfilled_residual_quantity:ask"].Write(res.AskQty)
+
+				if res.HasPrev {
+					m.Metrics["previous_best_price:bid"] = m.Metrics["previous_best_price:bid"].Write(res.PrevBid)
+					m.Metrics["previous_best_price:ask"] = m.Metrics["previous_best_price:ask"].Write(res.PrevAsk)
+				}
+
+				if res.HasBidLogChange {
+					m.Metrics["touch_price_log_change:bid"] = m.Metrics["touch_price_log_change:bid"].Write(res.BidLogChange)
+				}
+
+				if res.HasAskLogChange {
+					m.Metrics["touch_price_log_change:ask"] = m.Metrics["touch_price_log_change:ask"].Write(res.AskLogChange)
+				}
+
+				m.Metrics["retreated_quantity:bid"] = m.Metrics["retreated_quantity:bid"].Write(res.RetreatedBidQty)
+				m.Metrics["net_withdrawn_quantity:bid"] = m.Metrics["net_withdrawn_quantity:bid"].Write(res.NetWithdrawnBidQty)
+				m.Metrics["net_replenished_quantity:bid"] = m.Metrics["net_replenished_quantity:bid"].Write(res.NetReplenishedBidQty)
+				m.Metrics["retreat_fraction:bid"] = m.Metrics["retreat_fraction:bid"].Write(res.RetreatBidFraction)
+				m.Metrics["net_withdrawal_fraction:bid"] = m.Metrics["net_withdrawal_fraction:bid"].Write(res.NetWithdrawBidFrac)
+				m.Metrics["retreat_rate:bid"] = m.Metrics["retreat_rate:bid"].Write(res.RetreatBidRate)
+
+				m.Metrics["retreated_quantity:ask"] = m.Metrics["retreated_quantity:ask"].Write(res.RetreatedAskQty)
+				m.Metrics["net_withdrawn_quantity:ask"] = m.Metrics["net_withdrawn_quantity:ask"].Write(res.NetWithdrawnAskQty)
+				m.Metrics["net_replenished_quantity:ask"] = m.Metrics["net_replenished_quantity:ask"].Write(res.NetReplenishedAskQty)
+				m.Metrics["retreat_fraction:ask"] = m.Metrics["retreat_fraction:ask"].Write(res.RetreatAskFraction)
+				m.Metrics["net_withdrawal_fraction:ask"] = m.Metrics["net_withdrawal_fraction:ask"].Write(res.NetWithdrawAskFrac)
+				m.Metrics["retreat_rate:ask"] = m.Metrics["retreat_rate:ask"].Write(res.RetreatAskRate)
+			}
+
+			m.Finalize()
+			if m != nil && !yield(unsafe.Pointer(&m)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		input = peer
 	}
-
-	m.Pull(input)
-
-	bidPrice := input.Metrics["best_price:bid"].Raw
-	if bidPrice == 0 {
-		bidPrice = input.Metrics["best_bid"].Raw
-	}
-	if bidPrice == 0 {
-		bidPrice = input.Metrics["bid"].Raw
-	}
-
-	askPrice := input.Metrics["best_price:ask"].Raw
-	if askPrice == 0 {
-		askPrice = input.Metrics["best_ask"].Raw
-	}
-	if askPrice == 0 {
-		askPrice = input.Metrics["ask"].Raw
-	}
-
-	bidQty := input.Metrics["touch_quantity:bid"].Raw
-	if bidQty == 0 {
-		bidQty = input.Metrics["bid_qty"].Raw
-	}
-
-	askQty := input.Metrics["touch_quantity:ask"].Raw
-	if askQty == 0 {
-		askQty = input.Metrics["ask_qty"].Raw
-	}
-
-	if bidPrice <= 0 || askPrice <= 0 {
-		return m
-	}
-
-	if bidPrice >= askPrice {
-		m.Err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("toxicity: crossed touch (%f >= %f)", bidPrice, askPrice),
-			nil,
-		))
-		return m
-	}
-
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
-
-	pipeInput := level3Input{
-		BidPrice: bidPrice,
-		AskPrice: askPrice,
-		BidQty:   bidQty,
-		AskQty:   askQty,
-		At:       input.At,
-	}
-
-	for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-		res := (*level3Result)(out)
-
-		m.Metrics["best_price:bid"] = m.Metrics["best_price:bid"].Write(res.BidPrice)
-		m.Metrics["best_price:ask"] = m.Metrics["best_price:ask"].Write(res.AskPrice)
-		m.Metrics["touch_quantity:bid"] = m.Metrics["touch_quantity:bid"].Write(res.BidQty)
-		m.Metrics["touch_quantity:ask"] = m.Metrics["touch_quantity:ask"].Write(res.AskQty)
-		m.Metrics["unfilled_residual_quantity:bid"] = m.Metrics["unfilled_residual_quantity:bid"].Write(res.BidQty)
-		m.Metrics["unfilled_residual_quantity:ask"] = m.Metrics["unfilled_residual_quantity:ask"].Write(res.AskQty)
-
-		if res.HasPrev {
-			m.Metrics["previous_best_price:bid"] = m.Metrics["previous_best_price:bid"].Write(res.PrevBid)
-			m.Metrics["previous_best_price:ask"] = m.Metrics["previous_best_price:ask"].Write(res.PrevAsk)
-		}
-
-		if res.HasBidLogChange {
-			m.Metrics["touch_price_log_change:bid"] = m.Metrics["touch_price_log_change:bid"].Write(res.BidLogChange)
-		}
-
-		if res.HasAskLogChange {
-			m.Metrics["touch_price_log_change:ask"] = m.Metrics["touch_price_log_change:ask"].Write(res.AskLogChange)
-		}
-
-		m.Metrics["retreated_quantity:bid"] = m.Metrics["retreated_quantity:bid"].Write(res.RetreatedBidQty)
-		m.Metrics["net_withdrawn_quantity:bid"] = m.Metrics["net_withdrawn_quantity:bid"].Write(res.NetWithdrawnBidQty)
-		m.Metrics["net_replenished_quantity:bid"] = m.Metrics["net_replenished_quantity:bid"].Write(res.NetReplenishedBidQty)
-		m.Metrics["retreat_fraction:bid"] = m.Metrics["retreat_fraction:bid"].Write(res.RetreatBidFraction)
-		m.Metrics["net_withdrawal_fraction:bid"] = m.Metrics["net_withdrawal_fraction:bid"].Write(res.NetWithdrawBidFrac)
-		m.Metrics["retreat_rate:bid"] = m.Metrics["retreat_rate:bid"].Write(res.RetreatBidRate)
-
-		m.Metrics["retreated_quantity:ask"] = m.Metrics["retreated_quantity:ask"].Write(res.RetreatedAskQty)
-		m.Metrics["net_withdrawn_quantity:ask"] = m.Metrics["net_withdrawn_quantity:ask"].Write(res.NetWithdrawnAskQty)
-		m.Metrics["net_replenished_quantity:ask"] = m.Metrics["net_replenished_quantity:ask"].Write(res.NetReplenishedAskQty)
-		m.Metrics["retreat_fraction:ask"] = m.Metrics["retreat_fraction:ask"].Write(res.RetreatAskFraction)
-		m.Metrics["net_withdrawal_fraction:ask"] = m.Metrics["net_withdrawal_fraction:ask"].Write(res.NetWithdrawAskFrac)
-		m.Metrics["retreat_rate:ask"] = m.Metrics["retreat_rate:ask"].Write(res.RetreatAskRate)
-	}
-
-	m.Finalize()
-	return m
 }
 
 /*

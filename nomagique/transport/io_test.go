@@ -21,7 +21,7 @@ func TestIONext(t *testing.T) {
 
 		Convey("Reversing the endpoints reverses the operation order", func() {
 			reverse := transport.NewIO[float64](calculus.NewNegate(), calculus.NewSquare())
-			So(tests.CollectSeq[float64](reverse.Next(input)), ShouldResemble, []float64{4, 9})
+			So(tests.CollectSeq[float64](reverse.Next(sequence.NewValue(2.0, -3.0))), ShouldResemble, []float64{4, 9})
 		})
 
 		Convey("An upstream failure remains visible at the connection", func() {
@@ -40,9 +40,11 @@ func TestIONext(t *testing.T) {
 
 func BenchmarkIONext(b *testing.B) {
 	pipe := transport.NewIO[float64](calculus.NewSquare(), calculus.NewNegate())
-	input := sequence.NewValue(1.0, 2.0, 3.0, 4.0)
+	values := []float64{1, 2, 3, 4}
+	input := sequence.NewValue(values...)
 	b.ReportAllocs()
 	for b.Loop() {
+		values[0], values[1], values[2], values[3] = 1, 2, 3, 4
 		count := 0
 		for range pipe.Next(input) {
 			count++

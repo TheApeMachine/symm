@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -27,14 +29,14 @@ func pumpdumpTouch(symbol string, bid float64, ask float64, at time.Time) *data.
 	return m
 }
 
-func TestLevel3Step(t *testing.T) {
+func TestLevel3Next(t *testing.T) {
 	Convey("Given a message with an executable touch", t, func() {
 		entity := NewLevel3(t.Context())
 		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("Step derives the touch from the message's own orders", func() {
-			measurement := entity.Step(pumpdumpTouch("BTC/USD", 99, 101, at))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("BTC/USD", 99, 101, at))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -55,11 +57,11 @@ func TestLevel3Step(t *testing.T) {
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("Step yields no measurement rather than an error", func() {
-			So(entity.Step(pumpdumpTouch("MISSING", 0, 0, at)), ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("MISSING", 0, 0, at)))), ShouldBeNil)
 		})
 
 		Convey("A one-sided message alone still yields no measurement", func() {
-			So(entity.Step(pumpdumpTouch("ONESIDED", 99, 0, at)), ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("ONESIDED", 99, 0, at)))), ShouldBeNil)
 		})
 	})
 
@@ -69,10 +71,10 @@ func TestLevel3Step(t *testing.T) {
 		at := time.Unix(1_700_000_000, 0)
 
 		// First observation carries bid only
-		So(entity.Step(pumpdumpTouch("BTC/USD", 99, 0, at)), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("BTC/USD", 99, 0, at)))), ShouldBeNil)
 
 		Convey("A later one-sided update borrows the retained opposite side", func() {
-			measurement := entity.Step(pumpdumpTouch("BTC/USD", 0, 101, at.Add(time.Second)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("BTC/USD", 0, 101, at.Add(time.Second)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -117,7 +119,7 @@ func TestLevel3StepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -132,12 +134,12 @@ func TestLevel3StepUnrelatedPeer(t *testing.T) {
 		peer := data.NewMeasurement[float64]("unrelated", nil)
 		peer.Label = "BTC/USD"
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(entity.Step(measurement), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 		So(measurement.Label, ShouldBeEmpty)
 	})
 }
 
-func BenchmarkLevel3Step(b *testing.B) {
+func BenchmarkLevel3Next(b *testing.B) {
 	entity := NewLevel3(b.Context())
 	entity.Transition(runtime.READY)
 	peer := pumpdumpTouch("BTC/USD", 99, 101, time.Unix(1, 0))
@@ -148,7 +150,7 @@ func BenchmarkLevel3Step(b *testing.B) {
 
 	for index := 0; index < b.N; index++ {
 		peer.At = peer.At.Add(time.Second)
-		result := entity.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 
 		if result == nil || result.Err != nil {
 			b.Fatal("valid peer was not processed")

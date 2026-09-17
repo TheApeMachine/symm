@@ -72,15 +72,13 @@ func NewRehearsal(ctx context.Context, epoch int64, price *broker.Price, model *
 				transport.NewDiscard(),
 			),
 			nomagique.NewNumber(
-				store.NewKeyQuery[float64](&rehearsal.target, data.ActionRead), model, sequence.
-					NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
+				store.NewKeyQuery[float64](&rehearsal.target, data.ActionRead), model, sequence.NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
 				store.NewKeyQuery[float64](&rehearsal.target, data.ActionWrite), model,
 			),
 		),
 	)
 	rehearsal.infer = nomagique.NewNumber(
-		store.NewKeyQuery[float64](&rehearsal.keys[1], data.ActionRead), model, sequence.
-			NewZip2[float64](nomagique.NewNumber(
+		store.NewKeyQuery[float64](&rehearsal.keys[1], data.ActionRead), model, sequence.NewZip2[float64](nomagique.NewNumber(
 			store.NewKeyQuery[float64](&rehearsal.keys[0], data.ActionRead), model,
 		).Next(nil)), logic.NewGate(nomagique.NewNumber(
 			arithmetic.NewAdd(), sequence.NewZip2[float64](sequence.NewValues(0.0).Next(nil)), logic.NewGreater(),

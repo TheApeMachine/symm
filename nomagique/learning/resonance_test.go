@@ -10,7 +10,7 @@ import (
 
 func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
 	Convey("Given an overcomplete multi-timescale architecture [2, 8, 3]", t, func() {
-		manifold := NewResonanceManifold([]int{2, 8, 3}, 1, 1, 0.03, ReadoutAll).(*ResonanceManifold)
+		manifold := NewResonanceManifold([]int{2, 8, 3}, 1, 1, 0.03, ReadoutAll)
 
 		Convey("The overcomplete layer should have higher sparsity penalty", func() {
 			So(manifold.cfg.Sparsity[0], ShouldBeGreaterThan, manifold.cfg.Sparsity[1])
@@ -46,7 +46,7 @@ func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
 
 func TestPerHorizonTaskHead(t *testing.T) {
 	Convey("Given a per-horizon task head over architecture [2, 8, 3]", t, func() {
-		manifold := NewResonanceManifold([]int{2, 8, 3}, 1, 4, 0.03, ReadoutAll).(*ResonanceManifold)
+		manifold := NewResonanceManifold([]int{2, 8, 3}, 1, 4, 0.03, ReadoutAll)
 
 		Convey("The task head holds one row per horizon", func() {
 			So(manifold.taskRows, ShouldEqual, 4)

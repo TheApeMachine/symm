@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -32,13 +34,13 @@ func row(
 	return m
 }
 
-func TestLevel3Step(t *testing.T) {
+func TestLevel3Next(t *testing.T) {
 	Convey("Given a book morphology measuring instrument", t, func() {
 		level3 := NewLevel3(t.Context())
 		level3.Transition(runtime.READY)
 
 		Convey("the first observation yields point metrics with no prior change", func() {
-			measurement := level3.Step(row("BTC/USD", 0.05, 0.02, 0.4, 0.4, 1.2, 1.2, baseTime))
+			measurement := sequence.Read[*data.Measurement[float64]](level3.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", 0.05, 0.02, 0.4, 0.4, 1.2, 1.2, baseTime))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -58,7 +60,7 @@ func TestLevel3Step(t *testing.T) {
 			for step := range 12 {
 				at := baseTime.Add(time.Duration(step) * time.Second)
 				dist := 0.05 + float64(step*step)*0.005
-				measurement = level3.Step(row("BTC/USD", dist, 0.02, 0.4, 0.4, 1.2, 1.2, at))
+				measurement = sequence.Read[*data.Measurement[float64]](level3.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", dist, 0.02, 0.4, 0.4, 1.2, 1.2, at))))
 			}
 
 			So(measurement, ShouldNotBeNil)
@@ -111,7 +113,7 @@ func TestLevel3StepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -126,7 +128,7 @@ func TestLevel3StepUnrelatedPeer(t *testing.T) {
 		peer := data.NewMeasurement[float64]("unrelated", nil)
 		peer.Label = "BTC/USD"
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(entity.Step(measurement), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 	})
 }
 
@@ -141,7 +143,7 @@ func BenchmarkLevel3StepUnrelatedPeer(b *testing.B) {
 	b.ResetTimer()
 
 	for index := 0; index < b.N; index++ {
-		if entity.Step(measurement) != nil {
+		if sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))) != nil {
 			b.Fatal("unrelated peer published a signal")
 		}
 	}

@@ -6,53 +6,48 @@ import (
 )
 
 /*
-Input ...
-The data value is consumed by the iterator.
-Both origin and action are optional, depending on the Primtive
-that will be receiving the Input.
+Input supplies a keyed request. Origin identifies the sender independently of
+Key and Value. A nil Value means no write payload was supplied; a pointer to a
+zero value is a valid payload. Action names the operations for the recipient.
+The request and its payload are borrowed until the downstream yield returns.
 */
-type Input[T, U any] struct {
+type Input[Origin, Key, Value any] struct {
 	*PrimitiveError
-	origin Identifiable[T]
-	action *Action
-	data   []U
+	Origin Identifiable[Origin]
+	Action *Action
+	Key    Key
+	Value  *Value
 }
 
-/*
-NewInput ...
-*/
-func NewInput[T, U any](
-	origin Identifiable[T],
-	action *Action,
-	data ...U,
-) *Input[T, U] {
-	return &Input[T, U]{
+// NewInput binds a key and optional borrowed payload to the requested actions.
+func NewInput[Origin, Key, Value any](
+	origin Identifiable[Origin], action *Action, key Key, value *Value,
+) *Input[Origin, Key, Value] {
+	return &Input[Origin, Key, Value]{
 		PrimitiveError: NewPrimitiveError(),
-		origin:         origin,
-		action:         action,
-		data:           data,
+		Origin:         origin,
+		Action:         action,
+		Key:            key,
+		Value:          value,
 	}
 }
 
 /*
-Next ...
-By supplying more input the data value can be replenished.
+Next binds each incoming Value address to this request without copying or
+accumulating payloads. With nil input it yields the configured request once.
+An empty, non-nil input yields no requests.
 */
-func (input *Input[T, U]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (input *Input[Origin, Key, Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if in != nil {
-			for i := range in {
-				concrete := any(i).(U)
-				input.data = append(input.data, concrete)
-			}
+		if in == nil {
+			yield(unsafe.Pointer(input))
+			return
 		}
 
-		var out U
+		for arriving := range in {
+			input.Value = (*Value)(arriving)
 
-		for range len(input.data) {
-			out, input.data = input.data[0], input.data[1:]
-
-			if !yield(unsafe.Pointer(&out)) {
+			if !yield(unsafe.Pointer(input)) {
 				return
 			}
 		}

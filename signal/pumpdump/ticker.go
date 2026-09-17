@@ -115,110 +115,133 @@ func NewTicker(ctx context.Context) *Ticker {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (ticker *Ticker) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
-		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
-		return m
-	}
+func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			m := *(**data.Measurement[float64])(arriving)
 
-	if m == nil {
-		return nil
-	}
-
-	if m.Err != nil {
-		return m
-	}
-
-	source := m
-
-	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			if candidate.Label == "" {
-				return false
+			if ticker.Status() != runtime.READY {
+				errnie.Warn(ticker.Name() + ": Next called before READY; dropping event")
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
 			}
 
-			bid := candidate.Metrics["best_bid"].Raw
+			if m == nil {
+				continue inputs
+			}
+
+			if m.Err != nil {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
+
+			source := m
+
+			if len(m.Peers) > 0 {
+				peer := m.FindPeer(func(candidate *data.Measurement[float64]) bool {
+					if candidate.Label == "" {
+						return false
+					}
+
+					bid := candidate.Metrics["best_bid"].Raw
+
+					if bid == 0 {
+						bid = candidate.Metrics["bid"].Raw
+					}
+
+					ask := candidate.Metrics["best_ask"].Raw
+
+					if ask == 0 {
+						ask = candidate.Metrics["ask"].Raw
+					}
+
+					return bid > 0 && ask > 0
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				source = peer
+			}
+
+			m.Pull(source)
+
+			bid := source.Metrics["best_bid"].Raw
 
 			if bid == 0 {
-				bid = candidate.Metrics["bid"].Raw
+				bid = source.Metrics["bid"].Raw
 			}
 
-			ask := candidate.Metrics["best_ask"].Raw
+			ask := source.Metrics["best_ask"].Raw
 
 			if ask == 0 {
-				ask = candidate.Metrics["ask"].Raw
+				ask = source.Metrics["ask"].Raw
 			}
 
-			return bid > 0 && ask > 0
-		})
-
-		if peer == nil {
-			return nil
-		}
-
-		source = peer
-	}
-
-	m.Pull(source)
-
-	bid := source.Metrics["best_bid"].Raw
-
-	if bid == 0 {
-		bid = source.Metrics["bid"].Raw
-	}
-
-	ask := source.Metrics["best_ask"].Raw
-
-	if ask == 0 {
-		ask = source.Metrics["ask"].Raw
-	}
-
-	if bid <= 0 || ask <= 0 {
-		return m
-	}
-
-	if bid >= ask {
-		m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
-		return m
-	}
-
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
-
-	pipeInput := tickerInput{Bid: bid, Ask: ask}
-
-	for out := range ticker.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-		res := (*tickerResult)(out)
-
-		m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)
-		m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(res.Ask)
-		m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(res.Midpoint)
-		m.Metrics["spread"] = m.Metrics["spread"].Write(res.Spread)
-		m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(res.RelativeSpread)
-		m.Metrics["relative_spread_baseline"] = m.Metrics["relative_spread_baseline"].Write(res.Reading.Baseline)
-		m.Metrics["spread_ratio"] = m.Metrics["spread_ratio"].Write(res.SpreadRatio)
-
-		m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.Reading.Count, 'f', -1, 64)
-
-		if res.Reading.HasPrior {
-			m.Metrics["spread_divergence"] = m.Metrics["spread_divergence"].Write(res.Divergence)
-			m.Metrics["spread_zscore"] = m.Metrics["spread_zscore"].Write(res.Reading.ZScore)
-			m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.Divergence, 'f', -1, 64)
-
-			if res.Reading.VarianceDefined {
-				m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.Reading.Variance, 'f', -1, 64)
+			if bid <= 0 || ask <= 0 {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
 			}
+
+			if bid >= ask {
+				m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
+
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			pipeInput := tickerInput{Bid: bid, Ask: ask}
+
+			for out := range ticker.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+				res := (*tickerResult)(out)
+
+				m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)
+				m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(res.Ask)
+				m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(res.Midpoint)
+				m.Metrics["spread"] = m.Metrics["spread"].Write(res.Spread)
+				m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(res.RelativeSpread)
+				m.Metrics["relative_spread_baseline"] = m.Metrics["relative_spread_baseline"].Write(res.Reading.Baseline)
+				m.Metrics["spread_ratio"] = m.Metrics["spread_ratio"].Write(res.SpreadRatio)
+
+				m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.Reading.Count, 'f', -1, 64)
+
+				if res.Reading.HasPrior {
+					m.Metrics["spread_divergence"] = m.Metrics["spread_divergence"].Write(res.Divergence)
+					m.Metrics["spread_zscore"] = m.Metrics["spread_zscore"].Write(res.Reading.ZScore)
+					m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.Divergence, 'f', -1, 64)
+
+					if res.Reading.VarianceDefined {
+						m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.Reading.Variance, 'f', -1, 64)
+					}
+				}
+			}
+
+			m.Label = source.Label
+			m.At = source.At
+			m.Finalize()
+			if m != nil && !yield(unsafe.Pointer(&m)) {
+				return
+			}
+			continue inputs
+
 		}
 	}
-
-	m.Label = source.Label
-	m.At = source.At
-	m.Finalize()
-	return m
 }
 
 /*

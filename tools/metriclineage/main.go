@@ -969,7 +969,7 @@ func declaredSelector(
 	selectorType, ok := pkg.TypesInfo.TypeOf(literal.Type).(*types.Named)
 
 	if !ok || selectorType.Obj().Pkg() == nil ||
-		selectorType.Obj().Pkg().Path() != "github.com/theapemachine/symm/nomagique/relation" ||
+		selectorType.Obj().Pkg().Path() != "github.com/theapemachine/symm/nomagique/statistic/relation" ||
 		selectorType.Obj().Name() != "Selector" {
 		return consumerEdge{}, false
 	}

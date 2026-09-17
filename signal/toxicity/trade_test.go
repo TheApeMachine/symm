@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -30,14 +32,14 @@ func tradeRow(
 	return m
 }
 
-func TestTradeStep(t *testing.T) {
+func TestTradeNext(t *testing.T) {
 	Convey("Given a touch of 100/102", t, func() {
 		entity := NewTrade(t.Context())
 		entity.Transition(runtime.READY)
 		const bidPrice, askPrice, bidQty, askQty = 100.0, 102.0, 10.0, 20.0
 
 		Convey("a sell at the bid touch attributes a fill", func() {
-			measurement := entity.Step(tradeRow("BTC/USD", "sell", 100, 3, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tradeRow("BTC/USD", "sell", 100, 3, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -53,9 +55,9 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("a later matching trade accumulates the bracket and rate", func() {
-			entity.Step(tradeRow("BTC/USD", "sell", 100, 3, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tradeRow("BTC/USD", "sell", 100, 3, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))))
 
-			measurement := entity.Step(tradeRow("BTC/USD", "sell", 100, 2, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_002, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tradeRow("BTC/USD", "sell", 100, 2, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_002, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -69,7 +71,7 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("the first trade reports no SNR, its estimator having no baseline yet", func() {
-			measurement := entity.Step(tradeRow("BTC/USD", "sell", 100, 3, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tradeRow("BTC/USD", "sell", 100, 3, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.SNRDefined, ShouldBeFalse)
@@ -82,7 +84,7 @@ func TestTradeStep(t *testing.T) {
 				at := time.Unix(1_700_000_001+int64(step), 0)
 				quantity := 2.0 + float64(step%3)
 
-				measurement = entity.Step(tradeRow("BTC/USD", "sell", 100, quantity, bidPrice, askPrice, bidQty, askQty, at))
+				measurement = sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tradeRow("BTC/USD", "sell", 100, quantity, bidPrice, askPrice, bidQty, askQty, at))))
 			}
 
 			So(measurement, ShouldNotBeNil)
@@ -92,7 +94,7 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("a buy away from the ask touch does not match", func() {
-			measurement := entity.Step(tradeRow("BTC/USD", "buy", 101, 4, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tradeRow("BTC/USD", "buy", 101, 4, bidPrice, askPrice, bidQty, askQty, time.Unix(1_700_000_001, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -145,7 +147,7 @@ func TestTradeStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -160,7 +162,7 @@ func TestTradeStepUnrelatedPeer(t *testing.T) {
 		peer := data.NewMeasurement[float64]("unrelated", nil)
 		peer.Label = "BTC/USD"
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(entity.Step(measurement), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 	})
 }
 
@@ -175,7 +177,7 @@ func BenchmarkTradeStepUnrelatedPeer(b *testing.B) {
 	b.ResetTimer()
 
 	for index := 0; index < b.N; index++ {
-		if entity.Step(measurement) != nil {
+		if sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))) != nil {
 			b.Fatal("unrelated peer published a signal")
 		}
 	}

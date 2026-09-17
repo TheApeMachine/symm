@@ -2,6 +2,7 @@ package derivatives
 
 import (
 	"context"
+	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -40,48 +41,66 @@ func NewTicker(ctx context.Context) *Ticker {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
-		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if measurement == nil {
-		return measurement
-	}
-
-	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			if candidate.Label == "" {
-				return false
+			if ticker.Status() != runtime.READY {
+				errnie.Warn(ticker.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
 			}
 
-			_, hasLast := candidate.Metrics["last"]
-			_, hasIndex := candidate.Metrics["index_price"]
-			_, hasMark := candidate.Metrics["mark_price"]
-			_, hasOI := candidate.Metrics["open_interest"]
-			return hasLast && hasIndex && hasMark && hasOI
-		})
+			if measurement == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-		if peer == nil {
-			return nil
+			if len(measurement.Peers) > 0 {
+				peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
+					if candidate.Label == "" {
+						return false
+					}
+
+					_, hasLast := candidate.Metrics["last"]
+					_, hasIndex := candidate.Metrics["index_price"]
+					_, hasMark := candidate.Metrics["mark_price"]
+					_, hasOI := candidate.Metrics["open_interest"]
+					return hasLast && hasIndex && hasMark && hasOI
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				measurement.Pull(peer, "last", "index_price", "mark_price", "open_interest")
+			}
+
+			res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+
+			if res == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if res != nil && !yield(unsafe.Pointer(&res)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		measurement.Pull(peer, "last", "index_price", "mark_price", "open_interest")
 	}
-
-	res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.
-		NewOne(unsafe.Pointer(&measurement)).Next(nil),
-	))
-
-	if res == nil {
-		return measurement
-	}
-
-	return res
 }
 
 /*

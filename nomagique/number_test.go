@@ -100,9 +100,11 @@ func TestNumberNext(t *testing.T) {
 
 func BenchmarkNumberNext(b *testing.B) {
 	pipeline := NewNumber(calculus.NewSquare(), calculus.NewNegate())
-	input := sequence.NewValue(1.0, 2.0, 3.0, 4.0)
+	values := []float64{1, 2, 3, 4}
+	input := sequence.NewValue(values...)
 	b.ReportAllocs()
 	for b.Loop() {
+		values[0], values[1], values[2], values[3] = 1, 2, 3, 4
 		count := 0
 		for range pipeline.Next(input) {
 			count++

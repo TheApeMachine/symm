@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -46,9 +48,9 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 	measurements := make([]*data.Measurement[float64], 0, len(prices))
 
 	for index, price := range prices {
-		measurements = append(measurements, entity.Step(tick(
+		measurements = append(measurements, sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick(
 			symbol, price, timestamp(int64(index)+1),
-		)))
+		)))))
 	}
 
 	return measurements
@@ -64,14 +66,14 @@ func tapeTicks() []*data.Measurement[float64] {
 	return measurements
 }
 
-func TestTickerStep(t *testing.T) {
+func TestTickerNext(t *testing.T) {
 	Convey("Given the captured CRV/DOT tape that stalled the spot workload", t, func() {
 		entity := NewTicker(context.Background())
 		var measurement *data.Measurement[float64]
 
 		Convey("Every asynchronous observation completes, including the boundary lag", func() {
 			for _, arrival := range tapeTicks() {
-				measurement = entity.Step(arrival)
+				measurement = sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](arrival)))
 				So(measurement, ShouldNotBeNil)
 				So(measurement.Err, ShouldBeNil)
 			}
@@ -85,7 +87,7 @@ func TestTickerStep(t *testing.T) {
 		entity := NewTicker(context.Background())
 
 		Convey("the first tick yields one measurement with no warmup", func() {
-			measurement := entity.Step(tick("BTC/USD", 100.0, timestamp(1)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100.0, timestamp(1)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -102,7 +104,7 @@ func TestTickerStep(t *testing.T) {
 			untraded.Metrics["bid"] = untraded.Metrics["bid"].Write(0.02015)
 			untraded.Metrics["ask"] = untraded.Metrics["ask"].Write(0.04414)
 
-			measurement := entity.Step(untraded)
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](untraded)))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["last_price"].Raw, ShouldEqual, 0.0)
@@ -110,9 +112,9 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Maturity, ShouldEqual, 0.0)
 			So(measurement.Provenance["last_trade_price_state"], ShouldEqual, "unobserved")
 
-			observed := entity.Step(tick("CORN/USD", 0.03, timestamp(2)))
-			unobservedAgain := entity.Step(tick("CORN/USD", 0, timestamp(3)))
-			observedAgain := entity.Step(tick("CORN/USD", 0.033, timestamp(4)))
+			observed := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("CORN/USD", 0.03, timestamp(2)))))
+			unobservedAgain := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("CORN/USD", 0, timestamp(3)))))
+			observedAgain := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("CORN/USD", 0.033, timestamp(4)))))
 
 			So(observed.Err, ShouldBeNil)
 			So(observed.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
@@ -124,7 +126,7 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("a negative last price remains invalid", func() {
-			measurement := entity.Step(tick("BTC/USD", -1, timestamp(1)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", -1, timestamp(1)))))
 
 			So(measurement.Err, ShouldNotBeNil)
 		})
@@ -188,9 +190,9 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("time regression surfaces as zero support without error", func() {
-			entity.Step(tick("BTC/USD", 100.0, timestamp(2)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100.0, timestamp(2)))))
 
-			measurement := entity.Step(tick("BTC/USD", 101.0, timestamp(1)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 101.0, timestamp(1)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -213,7 +215,7 @@ func TestTickerStep(t *testing.T) {
 	})
 }
 
-func BenchmarkTickerStep(b *testing.B) {
+func BenchmarkTickerNext(b *testing.B) {
 	arrivals := tapeTicks()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -222,7 +224,7 @@ func BenchmarkTickerStep(b *testing.B) {
 		entity := NewTicker(context.Background())
 
 		for _, arrival := range arrivals {
-			measurement := entity.Step(arrival)
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](arrival)))
 
 			if measurement.Err != nil {
 				b.Fatal(measurement.Err)
@@ -247,7 +249,7 @@ the pair fan-out (one lag-surface scan per peer) plus the per-tick pair
 history/finalize. Sustained single-digit-millisecond cost here means a ~1s avg
 on the live diagnostics is contention, not intrinsic compute.
 */
-func BenchmarkTickerCrossLagStep(b *testing.B) {
+func BenchmarkTickerCrossLagNext(b *testing.B) {
 	entity := NewTicker(context.Background())
 
 	// Prime every symbol's path to steady-state capacity (64 samples) so the
@@ -256,7 +258,7 @@ func BenchmarkTickerCrossLagStep(b *testing.B) {
 		symbol := benchmarkSymbol(s)
 
 		for i := 0; i < benchmarkWarmup; i++ {
-			entity.Step(tick(symbol, 100.0+float64(i), timestamp(int64(i)+1)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick(symbol, 100.0+float64(i), timestamp(int64(i)+1)))))
 		}
 	}
 
@@ -266,7 +268,7 @@ func BenchmarkTickerCrossLagStep(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		entity.Step(tick(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))))
 		i++
 	}
 }
@@ -277,7 +279,7 @@ func TestTickerStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

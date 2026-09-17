@@ -18,8 +18,7 @@ func TestRadixNext(t *testing.T) {
 		radix := store.NewRadix[float64]()
 		key := []byte("BTC/USD:enter")
 		pipeline := nomagique.NewNumber(
-			store.NewKeyQuery[float64](&key, data.ActionIdentify, sequence.NewValues(0.0).Next(nil)), radix, sequence.
-				NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
+			store.NewKeyQuery[float64](&key, data.ActionIdentify, sequence.NewValues(0.0).Next(nil)), radix, sequence.NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
 			store.NewKeyQuery[float64](&key, data.ActionWrite), radix,
 		)
 		for _, expected := range []float64{1, 2, 3} {
@@ -47,9 +46,7 @@ func TestRadixNext(t *testing.T) {
 		})
 		Convey("Changing the caller's write value does not mutate stored evidence", func() {
 			value := 7.0
-			write := nomagique.NewNumber(sequence.
-				NewOne(unsafe.Pointer(&value)), store.NewKeyQuery[float64](&key, data.ActionWrite), radix,
-			)
+			write := nomagique.NewNumber(sequence.NewOne(unsafe.Pointer(&value)), store.NewKeyQuery[float64](&key, data.ActionWrite), radix)
 			So(tests.CollectSeq[float64](write.Next(nil)), ShouldResemble, []float64{7})
 			value = 99
 			read := nomagique.NewNumber(store.NewKeyQuery[float64](&key, data.ActionRead), radix)
@@ -62,8 +59,7 @@ func BenchmarkRadixNext(b *testing.B) {
 	radix := store.NewRadix[float64]()
 	key := []byte("BTC/USD:enter")
 	pipeline := nomagique.NewNumber(
-		store.NewKeyQuery[float64](&key, data.ActionIdentify, sequence.NewValues(0.0).Next(nil)), radix, sequence.
-			NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
+		store.NewKeyQuery[float64](&key, data.ActionIdentify, sequence.NewValues(0.0).Next(nil)), radix, sequence.NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
 		store.NewKeyQuery[float64](&key, data.ActionWrite), radix,
 	)
 	b.ReportAllocs()

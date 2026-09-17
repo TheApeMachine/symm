@@ -50,7 +50,7 @@ slot outside the register is a shape failure that ends the stream.
 */
 func (register *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := sequence.Read[Query[T]](in)
+		query := sequence.Read[Query[int, T]](in)
 
 		switch query.Action() {
 		case data.ActionIdentify:

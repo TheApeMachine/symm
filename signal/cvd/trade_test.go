@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -38,12 +40,12 @@ func timestamp(second int64) time.Time {
 	return time.Unix(1_000+second, 0)
 }
 
-func TestTradeStep(t *testing.T) {
+func TestTradeNext(t *testing.T) {
 	Convey("Given an executed-flow entity", t, func() {
 		entity := NewTrade(t.Context())
 
 		Convey("the first buy trade yields a measurement with no warmup gating", func() {
-			measurement := entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "buy", 100, 2, timestamp(0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -84,7 +86,7 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("the first trade reports no SNR, its estimator having no baseline yet", func() {
-			measurement := entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "buy", 100, 2, timestamp(0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.SNRDefined, ShouldBeFalse)
@@ -100,10 +102,10 @@ func TestTradeStep(t *testing.T) {
 					side = "sell"
 				}
 
-				entity.Step(row("BTC/USD", side, 100, 2, timestamp(int64(step))))
+				sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", side, 100, 2, timestamp(int64(step))))))
 			}
 
-			measurement := entity.Step(row("BTC/USD", "buy", 100, 5, timestamp(12)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "buy", 100, 5, timestamp(12)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -112,8 +114,8 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("a second sell trade advances accounting, rates, and baselines", func() {
-			entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
-			measurement := entity.Step(row("BTC/USD", "sell", 100, 1, timestamp(1)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "buy", 100, 2, timestamp(0)))))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "sell", 100, 1, timestamp(1)))))
 
 			So(measurement.Err, ShouldBeNil)
 
@@ -143,10 +145,10 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("a third buy trade advances baselines, velocities, and response", func() {
-			entity.Step(row("BTC/USD", "buy", 100, 2, timestamp(0)))
-			entity.Step(row("BTC/USD", "sell", 100, 1, timestamp(1)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "buy", 100, 2, timestamp(0)))))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "sell", 100, 1, timestamp(1)))))
 
-			measurement := entity.Step(row("BTC/USD", "buy", 100, 1, timestamp(3)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "buy", 100, 1, timestamp(3)))))
 
 			So(measurement.Err, ShouldBeNil)
 
@@ -171,14 +173,14 @@ func TestTradeStep(t *testing.T) {
 
 		Convey("multiple symbols maintain independent pipelines and epochs", func() {
 			btc := row("BTC/USD", "buy", 100, 2, timestamp(10))
-			resBTC := entity.Step(btc)
+			resBTC := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](btc)))
 			So(resBTC.Err, ShouldBeNil)
 			So(resBTC.From, ShouldEqual, timestamp(10))
 			So(resBTC.At, ShouldEqual, timestamp(10))
 			So(resBTC.Metrics["cumulative_volume_delta"].Raw, ShouldEqual, 2.0)
 
 			etc := row("ETC/USD", "buy", 10, 5, timestamp(0))
-			resETC := entity.Step(etc)
+			resETC := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](etc)))
 			So(resETC.Err, ShouldBeNil)
 			So(resETC.From, ShouldEqual, timestamp(0))
 			So(resETC.At, ShouldEqual, timestamp(0))
@@ -191,7 +193,7 @@ func TestTradeStep(t *testing.T) {
 		entity := NewTrade(t.Context())
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(row("BTC/USD", "buy", 0, 1, timestamp(0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "buy", 0, 1, timestamp(0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -202,7 +204,7 @@ func TestTradeStep(t *testing.T) {
 		entity := NewTrade(t.Context())
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(row("BTC/USD", "both", 100, 1, timestamp(0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](row("BTC/USD", "both", 100, 1, timestamp(0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -240,7 +242,7 @@ func TestTradeRegister(t *testing.T) {
 				row("BTC/USD", "buy", 100, 2, timestamp(0)),
 			}
 
-			stepped := entity.Step(meas)
+			stepped := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](meas)))
 			So(stepped, ShouldNotBeNil)
 			So(stepped.Label, ShouldEqual, "BTC/USD")
 			So(stepped.Source, ShouldEqual, "cvd")
@@ -256,7 +258,7 @@ func TestTradeStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

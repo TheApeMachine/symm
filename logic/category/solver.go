@@ -3,6 +3,7 @@ package category
 import (
 	"context"
 	"fmt"
+	"iter"
 	"maps"
 	"math"
 	"slices"
@@ -99,70 +100,90 @@ func NewSolver(ctx context.Context) *Solver {
 }
 
 /*
-Step folds every signal measurement populated in Peers into its
+Next folds every signal measurement populated in Peers into its
 symbol's evidence snapshot and returns the updated category measurement.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if solver.Status() != runtime.READY {
-		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (solver *Solver) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if solver.Error() != nil {
-		return measurement
-	}
+			if solver.Status() != runtime.READY {
+				errnie.Warn(solver.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-	if measurement == nil {
-		return nil
-	}
+			if solver.Error() != nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-	if len(measurement.Peers) == 0 {
-		return measurement
-	}
+			if measurement == nil {
+				continue inputs
+			}
 
-	bySymbol := make(map[string][]*data.Measurement[float64])
+			if len(measurement.Peers) == 0 {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-	for _, peer := range measurement.Peers {
-		if peer != nil && peer.Label != "" && peer.Err == nil {
-			bySymbol[peer.Label] = append(bySymbol[peer.Label], peer)
-		}
-	}
+			bySymbol := make(map[string][]*data.Measurement[float64])
 
-	results := make([][]types.Category, 0, len(bySymbol))
-
-	for _, symbol := range slices.Sorted(maps.Keys(bySymbol)) {
-		categories := solver.stepMeasurements(bySymbol[symbol])
-
-		if solver.Error() != nil {
-			return nil
-		}
-
-		if len(categories) == 0 {
-			continue
-		}
-
-		results = append(results, categories)
-		measurement.Label = symbol
-		measurement.At = categories[0].At
-
-		for _, cat := range categories {
-			if cat.Type != "" {
-				name := string(cat.Type)
-
-				if m, ok := measurement.Metrics[name]; ok {
-					measurement.Metrics[name] = m.Write(cat.Confidence)
+			for _, peer := range measurement.Peers {
+				if peer != nil && peer.Label != "" && peer.Err == nil {
+					bySymbol[peer.Label] = append(bySymbol[peer.Label], peer)
 				}
 			}
+
+			results := make([][]types.Category, 0, len(bySymbol))
+
+			for _, symbol := range slices.Sorted(maps.Keys(bySymbol)) {
+				categories := solver.stepMeasurements(bySymbol[symbol])
+
+				if solver.Error() != nil {
+					continue inputs
+				}
+
+				if len(categories) == 0 {
+					continue
+				}
+
+				results = append(results, categories)
+				measurement.Label = symbol
+				measurement.At = categories[0].At
+
+				for _, cat := range categories {
+					if cat.Type != "" {
+						name := string(cat.Type)
+
+						if m, ok := measurement.Metrics[name]; ok {
+							measurement.Metrics[name] = m.Write(cat.Confidence)
+						}
+					}
+				}
+			}
+
+			if len(results) == 0 {
+				continue inputs
+			}
+
+			measurement.Result = results
+
+			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+				return
+			}
+			continue inputs
+
 		}
 	}
-
-	if len(results) == 0 {
-		return nil
-	}
-
-	measurement.Result = results
-
-	return measurement
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {

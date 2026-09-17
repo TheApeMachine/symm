@@ -102,8 +102,8 @@ func (basis *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	mark := m.Metrics["mark_price"].Raw
 	oi := m.Metrics["open_interest"].Raw
 
-	basis := (last - index) / index
-	basisReading := drive[float64, adaptive.BaselineReading](state.basis, &basis)
+	currentBasis := (last - index) / index
+	basisReading := drive[float64, adaptive.BaselineReading](state.basis, &currentBasis)
 
 	m.From = stamped
 
@@ -111,7 +111,7 @@ func (basis *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	m.Metrics["reference_price"] = m.Metrics["reference_price"].Write(index)
 	m.Metrics["spot_price"] = m.Metrics["spot_price"].Write(mark)
 	m.Metrics["open_interest"] = m.Metrics["open_interest"].Write(oi)
-	m.Metrics["basis"] = m.Metrics["basis"].Write(basis)
+	m.Metrics["basis"] = m.Metrics["basis"].Write(currentBasis)
 	m.Metrics["basis_baseline"] = m.Metrics["basis_baseline"].Write(basisReading.Baseline)
 
 	if basisReading.HasPrior {
@@ -130,7 +130,7 @@ func (basis *Basis) observe(m *data.Measurement[float64], state *basisState) {
 	}
 
 	if advanced && state.hasPrev {
-		basis.differences(m, state, stamped, last, index, oi, basis)
+		basis.differences(m, state, stamped, last, index, oi, currentBasis)
 	}
 
 	if advanced {
@@ -138,7 +138,7 @@ func (basis *Basis) observe(m *data.Measurement[float64], state *basisState) {
 		state.prevLast = last
 		state.prevIndex = index
 		state.prevOI = oi
-		state.prevBasis = basis
+		state.prevBasis = currentBasis
 		state.hasPrev = true
 	}
 
@@ -188,7 +188,7 @@ func (basis *Basis) differences(
 	}
 
 	if dt > 0 {
-		basisChange := basis - state.prevBasis
+		basisChange := currentBasis - state.prevBasis
 		basisRate := basisChange / dt
 		m.Metrics["basis_change"] = m.Metrics["basis_change"].Write(basisChange)
 		m.Metrics["basis_rate"] = m.Metrics["basis_rate"].Write(basisRate)

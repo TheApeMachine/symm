@@ -177,108 +177,131 @@ func NewTrade(ctx context.Context) *Trade {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (trade *Trade) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	if trade.Status() != runtime.READY {
-		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return m
-	}
+func (trade *Trade) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			m := *(**data.Measurement[float64])(arriving)
 
-	if m == nil {
-		return nil
-	}
+			if trade.Status() != runtime.READY {
+				errnie.Warn(trade.Name() + ": Next called before READY; dropping event")
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
 
-	if m.Err != nil {
-		return m
-	}
+			if m == nil {
+				continue inputs
+			}
 
-	input := m
+			if m.Err != nil {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
 
-	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			_, hasP := p.Metrics["price"]
-			_, hasQ := p.Metrics["qty"]
-			return hasP && hasQ && p.Label != ""
-		})
+			input := m
 
-		if peer == nil {
-			return nil
-		}
+			if len(m.Peers) > 0 {
+				peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+					_, hasP := p.Metrics["price"]
+					_, hasQ := p.Metrics["qty"]
+					return hasP && hasQ && p.Label != ""
+				})
 
-		input = peer
-	}
+				if peer == nil {
+					continue inputs
+				}
 
-	m.Pull(input)
+				input = peer
+			}
 
-	priceMetric, hasPrice := input.Metrics["price"]
-	qtyMetric, hasQty := input.Metrics["qty"]
+			m.Pull(input)
 
-	if !hasPrice || !hasQty {
-		return m
-	}
+			priceMetric, hasPrice := input.Metrics["price"]
+			qtyMetric, hasQty := input.Metrics["qty"]
 
-	price := priceMetric.Raw
-	qty := qtyMetric.Raw
+			if !hasPrice || !hasQty {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
 
-	if price <= 0 || qty <= 0 {
-		m.Err = fmt.Errorf("pumpdump: non-positive price or quantity")
-		return m
-	}
+			price := priceMetric.Raw
+			qty := qtyMetric.Raw
 
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
+			if price <= 0 || qty <= 0 {
+				m.Err = fmt.Errorf("pumpdump: non-positive price or quantity")
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
 
-	pipeInput := tradeEntityInput{
-		Price: price,
-		Qty:   qty,
-		At:    input.At,
-	}
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
 
-	for out := range trade.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-		res := (*tradeEntityResult)(out)
+			pipeInput := tradeEntityInput{
+				Price: price,
+				Qty:   qty,
+				At:    input.At,
+			}
 
-		m.Metrics["trade_price"] = m.Metrics["trade_price"].Write(res.TradePrice)
-		m.Metrics["trade_quantity"] = m.Metrics["trade_quantity"].Write(res.TradeQty)
-		m.Metrics["trade_notional"] = m.Metrics["trade_notional"].Write(res.TradeNotional)
-		m.Metrics["volume_bar_target_quantity"] = m.Metrics["volume_bar_target_quantity"].Write(res.TargetQty)
-		m.Metrics["volume_bar_quantity"] = m.Metrics["volume_bar_quantity"].Write(res.BarQty)
-		m.Metrics["volume_bar_notional"] = m.Metrics["volume_bar_notional"].Write(res.BarNotional)
-		m.Metrics["volume_bar_trade_count"] = m.Metrics["volume_bar_trade_count"].Write(res.BarTradeCount)
-		m.Metrics["volume_bar_duration"] = m.Metrics["volume_bar_duration"].Write(res.BarDuration)
+			for out := range trade.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+				res := (*tradeEntityResult)(out)
 
-		if res.HasInterval {
-			m.Metrics["trade_interval_seconds"] = m.Metrics["trade_interval_seconds"].Write(res.Interval)
-		}
+				m.Metrics["trade_price"] = m.Metrics["trade_price"].Write(res.TradePrice)
+				m.Metrics["trade_quantity"] = m.Metrics["trade_quantity"].Write(res.TradeQty)
+				m.Metrics["trade_notional"] = m.Metrics["trade_notional"].Write(res.TradeNotional)
+				m.Metrics["volume_bar_target_quantity"] = m.Metrics["volume_bar_target_quantity"].Write(res.TargetQty)
+				m.Metrics["volume_bar_quantity"] = m.Metrics["volume_bar_quantity"].Write(res.BarQty)
+				m.Metrics["volume_bar_notional"] = m.Metrics["volume_bar_notional"].Write(res.BarNotional)
+				m.Metrics["volume_bar_trade_count"] = m.Metrics["volume_bar_trade_count"].Write(res.BarTradeCount)
+				m.Metrics["volume_bar_duration"] = m.Metrics["volume_bar_duration"].Write(res.BarDuration)
 
-		if res.HasRates {
-			m.Metrics["volume_rate"] = m.Metrics["volume_rate"].Write(res.VolumeRate)
-			m.Metrics["notional_rate"] = m.Metrics["notional_rate"].Write(res.NotionalRate)
-			m.Metrics["trade_rate"] = m.Metrics["trade_rate"].Write(res.TradeRate)
-			m.Metrics["completed_volume_bar_ordinal"] = m.Metrics["completed_volume_bar_ordinal"].Write(res.CompletedBars)
-			m.Metrics["notional_rate_baseline"] = m.Metrics["notional_rate_baseline"].Write(res.NotionalReading.Baseline)
-			m.Metrics["notional_rate_ratio"] = m.Metrics["notional_rate_ratio"].Write(res.NotionalRateRatio)
+				if res.HasInterval {
+					m.Metrics["trade_interval_seconds"] = m.Metrics["trade_interval_seconds"].Write(res.Interval)
+				}
 
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.NotionalReading.Count, 'f', -1, 64)
+				if res.HasRates {
+					m.Metrics["volume_rate"] = m.Metrics["volume_rate"].Write(res.VolumeRate)
+					m.Metrics["notional_rate"] = m.Metrics["notional_rate"].Write(res.NotionalRate)
+					m.Metrics["trade_rate"] = m.Metrics["trade_rate"].Write(res.TradeRate)
+					m.Metrics["completed_volume_bar_ordinal"] = m.Metrics["completed_volume_bar_ordinal"].Write(res.CompletedBars)
+					m.Metrics["notional_rate_baseline"] = m.Metrics["notional_rate_baseline"].Write(res.NotionalReading.Baseline)
+					m.Metrics["notional_rate_ratio"] = m.Metrics["notional_rate_ratio"].Write(res.NotionalRateRatio)
 
-			if res.NotionalReading.HasPrior {
-				m.Metrics["notional_rate_divergence"] = m.Metrics["notional_rate_divergence"].Write(res.NotionalReading.Residual)
-				m.Metrics["notional_rate_zscore"] = m.Metrics["notional_rate_zscore"].Write(res.NotionalReading.ZScore)
-				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.NotionalReading.Residual, 'f', -1, 64)
+					m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.NotionalReading.Count, 'f', -1, 64)
 
-				if res.NotionalReading.VarianceDefined {
-					m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.NotionalReading.Variance, 'f', -1, 64)
+					if res.NotionalReading.HasPrior {
+						m.Metrics["notional_rate_divergence"] = m.Metrics["notional_rate_divergence"].Write(res.NotionalReading.Residual)
+						m.Metrics["notional_rate_zscore"] = m.Metrics["notional_rate_zscore"].Write(res.NotionalReading.ZScore)
+						m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.NotionalReading.Residual, 'f', -1, 64)
+
+						if res.NotionalReading.VarianceDefined {
+							m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.NotionalReading.Variance, 'f', -1, 64)
+						}
+					}
 				}
 			}
+
+			m.Label = input.Label
+			m.At = input.At
+			m.Finalize()
+			if m != nil && !yield(unsafe.Pointer(&m)) {
+				return
+			}
+			continue inputs
+
 		}
 	}
-
-	m.Label = input.Label
-	m.At = input.At
-	m.Finalize()
-	return m
 }
 
 /*

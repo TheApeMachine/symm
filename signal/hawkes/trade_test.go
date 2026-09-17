@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -47,7 +49,7 @@ func trade(symbol string, side string, at time.Time) *data.Measurement[float64] 
 step delivers one trade measurement through the pipeline.
 */
 func step(entity *Trade, symbol string, side string, at time.Time) *data.Measurement[float64] {
-	return entity.Step(trade(symbol, side, at))
+	return sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](trade(symbol, side, at))))
 }
 
 /*
@@ -89,7 +91,7 @@ func seedClusteredTrades(entity *Trade, symbol string, count int, offsetSeconds 
 	}
 }
 
-func TestTradeStep(t *testing.T) {
+func TestTradeNext(t *testing.T) {
 	Convey("Only public spot trades enter the Hawkes arrival process", t, func() {
 		entity := readyTrade()
 		measurement := entity.Register()
@@ -99,11 +101,11 @@ func TestTradeStep(t *testing.T) {
 			peer := trade("BTC/USD", "buy", at)
 			peer.Provenance["channel"] = channel
 			measurement.Peers = []*data.Measurement[float64]{peer}
-			So(entity.Step(measurement), ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 		}
 
 		measurement.Peers = []*data.Measurement[float64]{trade("BTC/USD", "sell", at)}
-		result := entity.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 		So(result.Err, ShouldBeNil)
 		So(result.Metrics["event_count"].Raw, ShouldEqual, 1)
 		So(result.Metrics["event_count:sell"].Raw, ShouldEqual, 1)
@@ -111,7 +113,7 @@ func TestTradeStep(t *testing.T) {
 		book := trade("BTC/USD", "buy", at.Add(time.Second))
 		book.Provenance["channel"] = "level3"
 		measurement.Peers = []*data.Measurement[float64]{book, trade("BTC/USD", "buy", at.Add(time.Second))}
-		result = entity.Step(measurement)
+		result = sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 		So(result.Err, ShouldBeNil)
 		So(result.Metrics["event_count"].Raw, ShouldEqual, 2)
 	})
@@ -125,7 +127,7 @@ func TestTradeStep(t *testing.T) {
 
 		peer := trade("ETH/USD", "sell", time.Unix(1061, 0))
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		result := entity.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 		So(result.Err, ShouldBeNil)
 		So(result.Label, ShouldEqual, "ETH/USD")
 		So(result.Metrics["event_count"].Raw, ShouldEqual, 1)
@@ -134,7 +136,7 @@ func TestTradeStep(t *testing.T) {
 		So(result.SNRDefined, ShouldBeFalse)
 
 		measurement.Peers = []*data.Measurement[float64]{trade("BTC/USD", "sell", time.Unix(1062, 0))}
-		result = entity.Step(measurement)
+		result = sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 		So(result.Err, ShouldBeNil)
 		So(result.Label, ShouldEqual, "BTC/USD")
 		So(result.Metrics["conditional_intensity"].Standardized, ShouldNotBeNil)
@@ -761,7 +763,7 @@ func TestSimultaneousArrivalsProduceNoNaNOrInf(t *testing.T) {
 	})
 }
 
-func BenchmarkTradeStep(b *testing.B) {
+func BenchmarkTradeNext(b *testing.B) {
 	entity := readyTrade()
 	at := time.Date(2026, time.September, 1, 22, 53, 2, 957_587_000, time.UTC)
 	peer := trade("SOL/USD", "buy", at)
@@ -773,7 +775,7 @@ func BenchmarkTradeStep(b *testing.B) {
 	for i := 0; b.Loop(); i++ {
 		peer.At = at.Add(time.Duration(i) * time.Millisecond)
 		peer.Metrics["trade_id"] = peer.Metrics["trade_id"].Write(float64(i))
-		result := entity.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 
 		if result.Err != nil {
 			b.Fatal(result.Err)
@@ -787,7 +789,7 @@ func TestTradeStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

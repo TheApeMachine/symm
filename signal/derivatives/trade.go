@@ -2,6 +2,7 @@ package derivatives
 
 import (
 	"context"
+	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -40,46 +41,64 @@ func NewTrade(ctx context.Context) *Trade {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if trade.Status() != runtime.READY {
-		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (trade *Trade) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if measurement == nil {
-		return measurement
-	}
-
-	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			if candidate.Label == "" {
-				return false
+			if trade.Status() != runtime.READY {
+				errnie.Warn(trade.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
 			}
 
-			_, hasPrice := candidate.Metrics["price"]
-			_, hasQty := candidate.Metrics["qty"]
-			return hasPrice && hasQty
-		})
+			if measurement == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-		if peer == nil {
-			return nil
+			if len(measurement.Peers) > 0 {
+				peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
+					if candidate.Label == "" {
+						return false
+					}
+
+					_, hasPrice := candidate.Metrics["price"]
+					_, hasQty := candidate.Metrics["qty"]
+					return hasPrice && hasQty
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				measurement.Pull(peer, "price", "qty")
+			}
+
+			res := sequence.Read[*data.Measurement[float64]](trade.pipeline.Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+
+			if res == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if res != nil && !yield(unsafe.Pointer(&res)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		measurement.Pull(peer, "price", "qty")
 	}
-
-	res := sequence.Read[*data.Measurement[float64]](trade.pipeline.Next(sequence.
-		NewOne(unsafe.Pointer(&measurement)).Next(nil),
-	))
-
-	if res == nil {
-		return measurement
-	}
-
-	return res
 }
 
 /*

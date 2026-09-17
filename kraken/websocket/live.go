@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"maps"
 	"os"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -483,106 +485,126 @@ func (live *Live) enqueueLevel3Orders(
 }
 
 /*
-Step implements the runtime.Node interface: one dequeued venue row becomes one
+Next implements the runtime.Node interface: one dequeued venue row becomes one
 measurement. The queue's rows carry the venue's numbers as json.Number, so each
 metric keeps the exact decimal the venue printed in Exact while Raw carries the
 float64 the mathematics runs on.
 */
-func (live *Live) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if live.Status() != runtime.READY {
-		errnie.Warn(live.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (live *Live) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	row, ok := live.queue.Dequeue()
+			if live.Status() != runtime.READY {
+				errnie.Warn(live.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-	if !ok {
-		return nil
-	}
+			row, ok := live.queue.Dequeue()
 
-	if measurement == nil {
-		measurement = live.Register()
-	}
+			if !ok {
+				continue inputs
+			}
 
-	measurement.Provenance = make(map[string]string, 4)
-	measurement.Metadata["venue"] = "true"
-	measurement.Metadata["volume-unit"] = "base"
-	measurement.Maturity = 1
-	measurement.Metrics = make(map[string]data.Metric[float64], len(row))
-	measurement.Err = nil
-	measurement.At = time.Time{}
-	measurement.From = time.Time{}
+			if measurement == nil {
+				measurement = live.Register()
+			}
 
-	if live.Name() != "" && (measurement.Source == "" || measurement.Source == "websocket") {
-		measurement.Source = live.Name()
-	}
+			measurement.Provenance = make(map[string]string, 4)
+			measurement.Metadata["venue"] = "true"
+			measurement.Metadata["volume-unit"] = "base"
+			measurement.Maturity = 1
+			measurement.Metrics = make(map[string]data.Metric[float64], len(row))
+			measurement.Err = nil
+			measurement.At = time.Time{}
+			measurement.From = time.Time{}
 
-	if symbol, ok := row["symbol"].(string); ok {
-		measurement.Label = live.normalizer.Name(symbol)
-	}
+			if live.Name() != "" && (measurement.Source == "" || measurement.Source == "websocket") {
+				measurement.Source = live.Name()
+			}
 
-	if channel, ok := row["channel"].(string); ok {
-		measurement.Provenance["channel"] = channel
-	}
+			if symbol, ok := row["symbol"].(string); ok {
+				measurement.Label = live.normalizer.Name(symbol)
+			}
 
-	if side, ok := row["side"].(string); ok {
-		measurement.Provenance["side"] = side
-	}
+			if channel, ok := row["channel"].(string); ok {
+				measurement.Provenance["channel"] = channel
+			}
 
-	if ordType, ok := row["ord_type"].(string); ok {
-		measurement.Provenance["ord_type"] = ordType
-	}
+			if side, ok := row["side"].(string); ok {
+				measurement.Provenance["side"] = side
+			}
 
-	if event, ok := row["event"].(string); ok {
-		measurement.Provenance["event"] = event
-	}
+			if ordType, ok := row["ord_type"].(string); ok {
+				measurement.Provenance["ord_type"] = ordType
+			}
 
-	if orderID, ok := row["order_id"].(string); ok {
-		measurement.Provenance["order_id"] = orderID
-	}
+			if event, ok := row["event"].(string); ok {
+				measurement.Provenance["event"] = event
+			}
 
-	if stamped, ok := row["timestamp"].(string); ok {
-		at, err := time.Parse(time.RFC3339Nano, stamped)
+			if orderID, ok := row["order_id"].(string); ok {
+				measurement.Provenance["order_id"] = orderID
+			}
 
-		if err != nil {
-			measurement.Err = errnie.Err(errnie.Validation, "websocket: invalid row timestamp", err)
-			return measurement
+			if stamped, ok := row["timestamp"].(string); ok {
+				at, err := time.Parse(time.RFC3339Nano, stamped)
+
+				if err != nil {
+					measurement.Err = errnie.Err(errnie.Validation, "websocket: invalid row timestamp", err)
+					if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+						return
+					}
+					continue inputs
+				}
+
+				measurement.At = at
+			}
+
+			if measurement.At.IsZero() {
+				measurement.At = time.Now().UTC()
+			}
+
+			for key, value := range row {
+				number, ok := value.(json.Number)
+
+				if !ok {
+					continue
+				}
+
+				exact, err := sdkdecimal.NewFromString(number.String())
+
+				if err != nil {
+					measurement.Err = errnie.Err(
+						errnie.Validation,
+						"websocket: invalid row number "+key,
+						err,
+					)
+
+					if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+						return
+					}
+					continue inputs
+				}
+
+				metric := measurement.Metrics[key]
+				metric.Label = key
+				metric.Raw = exact.Float64()
+				metric.Exact = exact
+				measurement.Metrics[key] = metric
+			}
+
+			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		measurement.At = at
 	}
-
-	if measurement.At.IsZero() {
-		measurement.At = time.Now().UTC()
-	}
-
-	for key, value := range row {
-		number, ok := value.(json.Number)
-
-		if !ok {
-			continue
-		}
-
-		exact, err := sdkdecimal.NewFromString(number.String())
-
-		if err != nil {
-			measurement.Err = errnie.Err(
-				errnie.Validation,
-				"websocket: invalid row number "+key,
-				err,
-			)
-
-			return measurement
-		}
-
-		metric := measurement.Metrics[key]
-		metric.Label = key
-		metric.Raw = exact.Float64()
-		metric.Exact = exact
-		measurement.Metrics[key] = metric
-	}
-
-	return measurement
 }
 
 /*

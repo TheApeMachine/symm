@@ -3,12 +3,14 @@ package manifold
 import (
 	"context"
 	"fmt"
+	"iter"
 	"math"
 	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
@@ -225,128 +227,148 @@ func (solver *Solver) run() {
 }
 
 /*
-Step dispatches on the envelope kind:
+Next dispatches on the envelope kind:
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if solver.Status() != runtime.READY {
-		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (solver *Solver) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if measurement == nil {
-		solver.Error(errnie.Err(
-			errnie.NotFound,
-			"[manifold] Step must be invoked with a non-nil Measurement",
-			nil,
-		))
+			if solver.Status() != runtime.READY {
+				errnie.Warn(solver.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-		return nil
-	}
+			if measurement == nil {
+				solver.Error(errnie.Err(
+					errnie.NotFound,
+					"[manifold] Next must be invoked with a non-nil Measurement",
+					nil,
+				))
 
-	symbol := measurement.Label
+				continue inputs
+			}
 
-	if measurement.Source == "hawkes" {
-		solver.recordForcing(symbol, measurement)
-		return measurement
-	}
+			symbol := measurement.Label
 
-	for _, peer := range measurement.Peers {
-		if peer == nil {
-			continue
+			if measurement.Source == "hawkes" {
+				solver.recordForcing(symbol, measurement)
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			for _, peer := range measurement.Peers {
+				if peer == nil {
+					continue
+				}
+
+				if peer.Source == "hawkes" {
+					solver.recordForcing(peer.Label, peer)
+				}
+
+				if peer.Label == "" {
+					continue
+				}
+
+				solver.markDirty(peer.Label)
+
+				if symbol == "" {
+					symbol = peer.Label
+				}
+			}
+
+			if symbol != "" {
+				measurement.Label = symbol
+			}
+
+			select {
+			case solver.wake <- struct{}{}:
+			default:
+			}
+
+			reading := solver.Reading()
+			measurement.Result = reading
+
+			if reading == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if m, ok := measurement.Metrics["divergence"]; ok {
+				measurement.Metrics["divergence"] = m.Write(reading.Reading.Divergence)
+			}
+
+			if m, ok := measurement.Metrics["guidance_speed"]; ok {
+				measurement.Metrics["guidance_speed"] = m.Write(reading.Reading.GuidanceSpeed)
+			}
+
+			if m, ok := measurement.Metrics["coherence_mag2"]; ok {
+				measurement.Metrics["coherence_mag2"] = m.Write(reading.Reading.CoherenceMag2)
+			}
+
+			if m, ok := measurement.Metrics["pressure_grad_norm"]; ok {
+				measurement.Metrics["pressure_grad_norm"] = m.Write(reading.Reading.PressureGradNorm)
+			}
+
+			if m, ok := measurement.Metrics["viscosity_proxy"]; ok {
+				measurement.Metrics["viscosity_proxy"] = m.Write(reading.Reading.ViscosityProxy)
+			}
+
+			if m, ok := measurement.Metrics["kuramoto_r"]; ok {
+				measurement.Metrics["kuramoto_r"] = m.Write(reading.Reading.KuramotoR)
+			}
+
+			if m, ok := measurement.Metrics["gas_kinetic"]; ok {
+				measurement.Metrics["gas_kinetic"] = m.Write(reading.Reading.Health.Gas.Kinetic)
+			}
+
+			if m, ok := measurement.Metrics["gas_internal"]; ok {
+				measurement.Metrics["gas_internal"] = m.Write(reading.Reading.Health.Gas.Internal)
+			}
+
+			if m, ok := measurement.Metrics["wave_norm"]; ok {
+				measurement.Metrics["wave_norm"] = m.Write(reading.Reading.Health.Wave.Norm)
+			}
+
+			if m, ok := measurement.Metrics["vorticity_rms"]; ok {
+				measurement.Metrics["vorticity_rms"] = m.Write(reading.Reading.Health.Gas.VorticityRMS)
+			}
+
+			if m, ok := measurement.Metrics["strain_rms"]; ok {
+				measurement.Metrics["strain_rms"] = m.Write(reading.Reading.Health.Gas.StrainRMS)
+			}
+
+			if m, ok := measurement.Metrics["max_mach"]; ok {
+				measurement.Metrics["max_mach"] = m.Write(reading.Reading.Health.Gas.MaxMach)
+			}
+
+			if m, ok := measurement.Metrics["particle_count"]; ok && reading.State != nil {
+				measurement.Metrics["particle_count"] = m.Write(float64(reading.State.N))
+			}
+
+			if m, ok := measurement.Metrics["particle_thermal"]; ok {
+				measurement.Metrics["particle_thermal"] = m.Write(reading.Reading.Health.ParticleThermal)
+			}
+
+			if m, ok := measurement.Metrics["particle_kinetic"]; ok {
+				measurement.Metrics["particle_kinetic"] = m.Write(reading.Reading.Health.ParticleKinetic)
+			}
+
+			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		if peer.Source == "hawkes" {
-			solver.recordForcing(peer.Label, peer)
-		}
-
-		if peer.Label == "" {
-			continue
-		}
-
-		solver.markDirty(peer.Label)
-
-		if symbol == "" {
-			symbol = peer.Label
-		}
 	}
-
-	if symbol != "" {
-		measurement.Label = symbol
-	}
-
-	select {
-	case solver.wake <- struct{}{}:
-	default:
-	}
-
-	reading := solver.Reading()
-	measurement.Result = reading
-
-	if reading == nil {
-		return measurement
-	}
-
-	if m, ok := measurement.Metrics["divergence"]; ok {
-		measurement.Metrics["divergence"] = m.Write(reading.Reading.Divergence)
-	}
-
-	if m, ok := measurement.Metrics["guidance_speed"]; ok {
-		measurement.Metrics["guidance_speed"] = m.Write(reading.Reading.GuidanceSpeed)
-	}
-
-	if m, ok := measurement.Metrics["coherence_mag2"]; ok {
-		measurement.Metrics["coherence_mag2"] = m.Write(reading.Reading.CoherenceMag2)
-	}
-
-	if m, ok := measurement.Metrics["pressure_grad_norm"]; ok {
-		measurement.Metrics["pressure_grad_norm"] = m.Write(reading.Reading.PressureGradNorm)
-	}
-
-	if m, ok := measurement.Metrics["viscosity_proxy"]; ok {
-		measurement.Metrics["viscosity_proxy"] = m.Write(reading.Reading.ViscosityProxy)
-	}
-
-	if m, ok := measurement.Metrics["kuramoto_r"]; ok {
-		measurement.Metrics["kuramoto_r"] = m.Write(reading.Reading.KuramotoR)
-	}
-
-	if m, ok := measurement.Metrics["gas_kinetic"]; ok {
-		measurement.Metrics["gas_kinetic"] = m.Write(reading.Reading.Health.Gas.Kinetic)
-	}
-
-	if m, ok := measurement.Metrics["gas_internal"]; ok {
-		measurement.Metrics["gas_internal"] = m.Write(reading.Reading.Health.Gas.Internal)
-	}
-
-	if m, ok := measurement.Metrics["wave_norm"]; ok {
-		measurement.Metrics["wave_norm"] = m.Write(reading.Reading.Health.Wave.Norm)
-	}
-
-	if m, ok := measurement.Metrics["vorticity_rms"]; ok {
-		measurement.Metrics["vorticity_rms"] = m.Write(reading.Reading.Health.Gas.VorticityRMS)
-	}
-
-	if m, ok := measurement.Metrics["strain_rms"]; ok {
-		measurement.Metrics["strain_rms"] = m.Write(reading.Reading.Health.Gas.StrainRMS)
-	}
-
-	if m, ok := measurement.Metrics["max_mach"]; ok {
-		measurement.Metrics["max_mach"] = m.Write(reading.Reading.Health.Gas.MaxMach)
-	}
-
-	if m, ok := measurement.Metrics["particle_count"]; ok && reading.State != nil {
-		measurement.Metrics["particle_count"] = m.Write(float64(reading.State.N))
-	}
-
-	if m, ok := measurement.Metrics["particle_thermal"]; ok {
-		measurement.Metrics["particle_thermal"] = m.Write(reading.Reading.Health.ParticleThermal)
-	}
-
-	if m, ok := measurement.Metrics["particle_kinetic"]; ok {
-		measurement.Metrics["particle_kinetic"] = m.Write(reading.Reading.Health.ParticleKinetic)
-	}
-
-	return measurement
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {

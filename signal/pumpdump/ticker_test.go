@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -21,14 +23,14 @@ func spotTicker(symbol string, bid float64, ask float64, at time.Time) *data.Mea
 	return m
 }
 
-func TestTickerStep(t *testing.T) {
+func TestTickerNext(t *testing.T) {
 	Convey("Given a valid executable touch", t, func() {
 		entity := NewTicker(t.Context())
 		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the first data point yields the touch and its own baseline", func() {
-			measurement := entity.Step(spotTicker("BTC/USD", 99, 101, at))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTicker("BTC/USD", 99, 101, at))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -55,8 +57,8 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("a narrower follow-up touch is measured below its baseline", func() {
-			entity.Step(spotTicker("BTC/USD", 99, 101, at))
-			measurement := entity.Step(spotTicker("BTC/USD", 99.5, 100.5, at.Add(10*time.Second)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTicker("BTC/USD", 99, 101, at))))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTicker("BTC/USD", 99.5, 100.5, at.Add(10*time.Second)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -73,7 +75,7 @@ func TestTickerStep(t *testing.T) {
 		entity.Transition(runtime.READY)
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(spotTicker("BTC/USD", 101, 99, time.Unix(1_700_000_000, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTicker("BTC/USD", 101, 99, time.Unix(1_700_000_000, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -118,7 +120,7 @@ func TestTickerStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -133,12 +135,12 @@ func TestTickerStepUnrelatedPeer(t *testing.T) {
 		peer := data.NewMeasurement[float64]("unrelated", nil)
 		peer.Label = "BTC/USD"
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(entity.Step(measurement), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 		So(measurement.Label, ShouldBeEmpty)
 	})
 }
 
-func BenchmarkTickerStep(b *testing.B) {
+func BenchmarkTickerNext(b *testing.B) {
 	entity := NewTicker(b.Context())
 	entity.Transition(runtime.READY)
 	peer := spotTicker("BTC/USD", 99, 101, time.Unix(1, 0))
@@ -149,7 +151,7 @@ func BenchmarkTickerStep(b *testing.B) {
 
 	for index := 0; index < b.N; index++ {
 		peer.At = peer.At.Add(time.Second)
-		result := entity.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 
 		if result == nil || result.Err != nil {
 			b.Fatal("valid peer was not processed")

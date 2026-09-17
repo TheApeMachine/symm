@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/signal/hawkes"
 
@@ -179,15 +180,17 @@ func TestWebRTCTeeNext(t *testing.T) {
 			observation.Metrics["price"] = data.Metric[float64]{Label: "price", Raw: 100 + float64(index)}
 			observation.Metrics["qty"] = data.Metric[float64]{Label: "qty", Raw: 1}
 			source.current = observation
-			sequence := int64(index)
-			sourceConsumer.Handle(sequence, sequence)
-			signalConsumer.Handle(sequence, sequence)
-			measured := sequence.Read[*data.Measurement[float64]](register.Next(sequence.NewValue(*store.NewQuery(signalConsumer, data.ActionRead))))
+			seq := int64(index)
+			sourceConsumer.Handle(seq, seq)
+			signalConsumer.Handle(seq, seq)
+			read := store.NewQuery[int, *data.Measurement[float64]](nil, data.ActionRead)
+			read.Address = signalConsumer.Identity()
+			measured := sequence.Read[*data.Measurement[float64]](register.Next(read.Next(nil)))
 			counts[symbol]++
 			So(measured.Err, ShouldBeNil)
 			So(measured.Label, ShouldEqual, symbol)
 			So(measured.Metrics["event_count"].Raw, ShouldEqual, counts[symbol])
-			solverConsumer.Handle(sequence, sequence)
+			solverConsumer.Handle(seq, seq)
 
 			pointer := tee.Next()
 			So(pointer == nil, ShouldBeFalse)

@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -28,12 +30,12 @@ func timestamp(second int64) time.Time {
 	return time.Unix(1_700_000_000+second, 0)
 }
 
-func TestTickerStep(t *testing.T) {
+func TestTickerNext(t *testing.T) {
 	Convey("Given a cross-sectional change-breadth instrument", t, func() {
 		entity := NewTicker(t.Context())
 
 		Convey("the first tick declares the gate fact with no cohort yet", func() {
-			measurement := entity.Step(tick("BTC/USD", 100.0, timestamp(1)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100.0, timestamp(1)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -43,7 +45,7 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("a quoted market with no trade writes no cohort facts", func() {
-			measurement := entity.Step(tick("BTC/USD", 0.0, timestamp(1)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 0.0, timestamp(1)))))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["valid_member_count"].Raw, ShouldEqual, 0.0)
@@ -52,22 +54,22 @@ func TestTickerStep(t *testing.T) {
 
 		Convey("a measurement without a price fails the gate", func() {
 			measurement := tick("BTC/USD", -1.0, timestamp(1))
-			measurement = entity.Step(measurement)
+			measurement = sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 
 			So(measurement.Err, ShouldNotBeNil)
 		})
 
 		Convey("cohort breadth facts appear once two symbols have changes", func() {
-			entity.Step(tick("BTC/USD", 100.0, timestamp(1)))
-			entity.Step(tick("ETH/USD", 200.0, timestamp(1)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100.0, timestamp(1)))))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("ETH/USD", 200.0, timestamp(1)))))
 
-			up := entity.Step(tick("BTC/USD", 110.0, timestamp(2)))
+			up := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 110.0, timestamp(2)))))
 
 			So(up.Metrics["valid_member_count"].Raw, ShouldEqual, 1.0)
 			So(up.Metrics["positive_count"].Raw, ShouldEqual, 1.0)
 			So(up.Metadata[data.MetadataSupport], ShouldEqual, "1")
 
-			down := entity.Step(tick("ETH/USD", 150.0, timestamp(2)))
+			down := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("ETH/USD", 150.0, timestamp(2)))))
 
 			So(down.Metrics["valid_member_count"].Raw, ShouldEqual, 2.0)
 			So(down.Metrics["positive_count"].Raw, ShouldEqual, 1.0)
@@ -85,10 +87,10 @@ func TestTickerStep(t *testing.T) {
 
 			for second := 3; second < 11; second++ {
 				prices["BTC/USD"] += 5.0
-				entity.Step(tick("BTC/USD", prices["BTC/USD"], timestamp(int64(second))))
+				sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", prices["BTC/USD"], timestamp(int64(second))))))
 
 				prices["ETH/USD"] -= 5.0
-				settled := entity.Step(tick("ETH/USD", prices["ETH/USD"], timestamp(int64(second))))
+				settled := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("ETH/USD", prices["ETH/USD"], timestamp(int64(second))))))
 
 				if second > 8 {
 					So(settled.Metrics["signed_fraction_zscore"].Raw, ShouldNotBeZeroValue)
@@ -118,7 +120,7 @@ func TestTickerStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

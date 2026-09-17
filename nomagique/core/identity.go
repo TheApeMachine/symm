@@ -6,6 +6,7 @@ This can be used to earmark output to a certain external resource,
 for example.
 */
 type Identifiable[T any] interface {
+	Primitive
 	Identify(T) Identifiable[T]
 	Identity() T
 }

@@ -3,9 +3,9 @@ package runtime
 import (
 	"context"
 
-	"github.com/smarty/go-disruptor"
+	"github.com/theapemachine/symm/nomagique/runtime/disruptor"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -21,19 +21,16 @@ pushes it to the Tees.
 */
 type Workspace[T any] struct {
 	*System
-	channel  disruptor.Disruptor
-	register *store.Register[T]
+	channel disruptor.Disruptor
 }
 
 func NewWorkspace[T any](
 	ctx context.Context,
 	label string,
-	stages [][]Node[T],
+	stages [][]core.Identifiable[T],
 	tees ...Tee,
 ) *Workspace[T] {
-	workload := &Workspace[T]{
-		register: store.NewRegister[T](int(system.Cfg.Runtime.Workspace.Buffer)),
-	}
+	workload := &Workspace[T]{}
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(
@@ -41,16 +38,11 @@ func NewWorkspace[T any](
 		),
 	)
 
-	peerLimit := 0
-
 	for _, stage := range stages {
 		group := make([]disruptor.Handler, len(stage))
-		stageLimit := peerLimit
 
-		for index, node := range stage {
-			consumer := NewConsumer(node, workload.register, tees...)
-			group[index] = consumer.SetPeerLimit(stageLimit)
-			peerLimit = consumer.Identity() + 1
+		for _, node := range stage {
+			group = append(group, NewConsumer(node))
 		}
 
 		if len(group) > 0 {

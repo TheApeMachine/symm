@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -20,14 +22,14 @@ func spotTrade(symbol string, price float64, qty float64, at time.Time) *data.Me
 	return m
 }
 
-func TestTradeStep(t *testing.T) {
+func TestTradeNext(t *testing.T) {
 	Convey("Given a multi-leg volume-clock sequence", t, func() {
 		entity := NewTrade(t.Context())
 		entity.Transition(runtime.READY)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the opening trade seeds an open bar", func() {
-			measurement := entity.Step(spotTrade("BTC/USD", 100, 2, at))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 100, 2, at))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -53,8 +55,8 @@ func TestTradeStep(t *testing.T) {
 		})
 
 		Convey("the closing trade reports the completed bar and its throughput", func() {
-			entity.Step(spotTrade("BTC/USD", 100, 2, at))
-			measurement := entity.Step(spotTrade("BTC/USD", 110, 1, at.Add(5*time.Second)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 100, 2, at))))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 110, 1, at.Add(5*time.Second)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -81,7 +83,7 @@ func TestTradeStep(t *testing.T) {
 		entity.Transition(runtime.READY)
 
 		Convey("measurement carries the error", func() {
-			measurement := entity.Step(spotTrade("BTC/USD", 0, 1, time.Unix(1_700_000_000, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 0, 1, time.Unix(1_700_000_000, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
@@ -134,7 +136,7 @@ func TestTradeStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -149,12 +151,12 @@ func TestTradeStepUnrelatedPeer(t *testing.T) {
 		peer := data.NewMeasurement[float64]("unrelated", nil)
 		peer.Label = "BTC/USD"
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(entity.Step(measurement), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 		So(measurement.Label, ShouldBeEmpty)
 	})
 }
 
-func BenchmarkTradeStep(b *testing.B) {
+func BenchmarkTradeNext(b *testing.B) {
 	entity := NewTrade(b.Context())
 	entity.Transition(runtime.READY)
 	peer := spotTrade("BTC/USD", 100, 2, time.Unix(1, 0))
@@ -165,7 +167,7 @@ func BenchmarkTradeStep(b *testing.B) {
 
 	for index := 0; index < b.N; index++ {
 		peer.At = peer.At.Add(time.Second)
-		result := entity.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 
 		if result == nil || result.Err != nil {
 			b.Fatal("valid peer was not processed")

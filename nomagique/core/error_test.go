@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -24,6 +25,18 @@ func TestPrimitiveErrorError(t *testing.T) {
 			So(errors.Is(primitiveError.Error(), execution), ShouldBeTrue)
 			recorded := primitiveError.Error()
 			So(primitiveError.Error(nil), ShouldEqual, recorded)
+		})
+
+		Convey("Concurrent writers preserve every cause", func() {
+			failures := []error{errors.New("first"), errors.New("second"), errors.New("third"), errors.New("fourth")}
+			var writers sync.WaitGroup
+			for _, failure := range failures {
+				writers.Go(func() { primitiveError.Error(failure) })
+			}
+			writers.Wait()
+			for _, failure := range failures {
+				So(errors.Is(primitiveError.Error(), failure), ShouldBeTrue)
+			}
 		})
 
 		Convey("An empty owner starts without an error", func() {

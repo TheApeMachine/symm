@@ -131,144 +131,164 @@ func NewLevel3(ctx context.Context) *Level3 {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	if level3.Status() != runtime.READY {
-		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return m
-	}
+func (level3 *Level3) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			m := *(**data.Measurement[float64])(arriving)
 
-	if m == nil {
-		return nil
-	}
-
-	if m.Err != nil {
-		return m
-	}
-
-	input := m
-
-	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" {
-				return false
+			if level3.Status() != runtime.READY {
+				errnie.Warn(level3.Name() + ": Next called before READY; dropping event")
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
 			}
-			_, hasObsBid := p.Metrics["observed_notional:bid"]
-			_, hasObsAsk := p.Metrics["observed_notional:ask"]
-			if hasObsBid || hasObsAsk {
-				return true
+
+			if m == nil {
+				continue inputs
 			}
-			b := p.Metrics["best_bid"].Raw
-			if b == 0 {
-				b = p.Metrics["bid"].Raw
+
+			if m.Err != nil {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
 			}
-			a := p.Metrics["best_ask"].Raw
-			if a == 0 {
-				a = p.Metrics["ask"].Raw
+
+			input := m
+
+			if len(m.Peers) > 0 {
+				peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+					if p.Label == "" {
+						return false
+					}
+					_, hasObsBid := p.Metrics["observed_notional:bid"]
+					_, hasObsAsk := p.Metrics["observed_notional:ask"]
+					if hasObsBid || hasObsAsk {
+						return true
+					}
+					b := p.Metrics["best_bid"].Raw
+					if b == 0 {
+						b = p.Metrics["bid"].Raw
+					}
+					a := p.Metrics["best_ask"].Raw
+					if a == 0 {
+						a = p.Metrics["ask"].Raw
+					}
+					return b > 0 && a > 0
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				input = peer
 			}
-			return b > 0 && a > 0
-		})
 
-		if peer == nil {
-			return nil
-		}
+			obsBid := input.Metrics["observed_notional:bid"].Raw
+			obsAsk := input.Metrics["observed_notional:ask"].Raw
+			mutBid := input.Metrics["mutation_count:bid"].Raw
+			mutAsk := input.Metrics["mutation_count:ask"].Raw
 
-		input = peer
-	}
-
-	obsBid := input.Metrics["observed_notional:bid"].Raw
-	obsAsk := input.Metrics["observed_notional:ask"].Raw
-	mutBid := input.Metrics["mutation_count:bid"].Raw
-	mutAsk := input.Metrics["mutation_count:ask"].Raw
-
-	if obsBid == 0 && obsAsk == 0 {
-		bidPrice := input.Metrics["best_bid"].Raw
-		if bidPrice == 0 {
-			bidPrice = input.Metrics["bid"].Raw
-		}
-		askPrice := input.Metrics["best_ask"].Raw
-		if askPrice == 0 {
-			askPrice = input.Metrics["ask"].Raw
-		}
-		bidQty := input.Metrics["touch_quantity:bid"].Raw
-		if bidQty == 0 {
-			bidQty = input.Metrics["bid_qty"].Raw
-		}
-		askQty := input.Metrics["touch_quantity:ask"].Raw
-		if askQty == 0 {
-			askQty = input.Metrics["ask_qty"].Raw
-		}
-		if bidPrice > 0 && bidQty > 0 {
-			obsBid = bidPrice * bidQty
-			mutBid = 1
-		}
-		if askPrice > 0 && askQty > 0 {
-			obsAsk = askPrice * askQty
-			mutAsk = 1
-		}
-	}
-
-	if obsBid <= 0 && obsAsk <= 0 {
-		return m
-	}
-
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
-
-	pipeInput := depthInput{
-		ObservedBid: obsBid,
-		ObservedAsk: obsAsk,
-		MutationBid: mutBid,
-		MutationAsk: mutAsk,
-		At:          input.At,
-	}
-
-	for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-		res := (*depthResult)(out)
-
-		m.Metrics["observed_notional"] = m.Metrics["observed_notional"].Write(res.Observed)
-		m.Metrics["observed_notional_diff"] = m.Metrics["observed_notional_diff"].Write(res.ObservedDiff)
-		m.Metrics["mutation_count"] = m.Metrics["mutation_count"].Write(res.MutationCount)
-		m.Metrics["mutation_count_diff"] = m.Metrics["mutation_count_diff"].Write(res.MutationCountDiff)
-
-		if res.Observed > 0 {
-			m.Metrics["observed_notional_imbalance"] = m.Metrics["observed_notional_imbalance"].Write(res.ObservedImbalance)
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.ImbalanceReading.Count, 'f', -1, 64)
-
-			if res.ImbalanceReading.HasPrior {
-				m.Metrics["observed_notional_imbalance_baseline"] = m.Metrics["observed_notional_imbalance_baseline"].Write(res.ImbalanceReading.Baseline)
-				m.Metrics["observed_notional_imbalance_divergence"] = m.Metrics["observed_notional_imbalance_divergence"].Write(res.ImbalanceReading.Residual)
-				m.Metrics["observed_notional_imbalance_zscore"] = m.Metrics["observed_notional_imbalance_zscore"].Write(res.ImbalanceReading.ZScore)
-				m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.ImbalanceReading.Residual, 'f', -1, 64)
-
-				if res.ImbalanceReading.VarianceDefined {
-					m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.ImbalanceReading.Variance, 'f', -1, 64)
+			if obsBid == 0 && obsAsk == 0 {
+				bidPrice := input.Metrics["best_bid"].Raw
+				if bidPrice == 0 {
+					bidPrice = input.Metrics["bid"].Raw
+				}
+				askPrice := input.Metrics["best_ask"].Raw
+				if askPrice == 0 {
+					askPrice = input.Metrics["ask"].Raw
+				}
+				bidQty := input.Metrics["touch_quantity:bid"].Raw
+				if bidQty == 0 {
+					bidQty = input.Metrics["bid_qty"].Raw
+				}
+				askQty := input.Metrics["touch_quantity:ask"].Raw
+				if askQty == 0 {
+					askQty = input.Metrics["ask_qty"].Raw
+				}
+				if bidPrice > 0 && bidQty > 0 {
+					obsBid = bidPrice * bidQty
+					mutBid = 1
+				}
+				if askPrice > 0 && askQty > 0 {
+					obsAsk = askPrice * askQty
+					mutAsk = 1
 				}
 			}
-		}
 
-		if res.MutationCount > 0 {
-			m.Metrics["mutation_activity_imbalance"] = m.Metrics["mutation_activity_imbalance"].Write(res.MutationActivityImbalance)
-		}
-
-		if res.HasRate {
-			m.Metrics["observed_notional_rate"] = m.Metrics["observed_notional_rate"].Write(res.Rate)
-
-			if res.RateReading.HasPrior {
-				m.Metrics["observed_notional_rate_baseline"] = m.Metrics["observed_notional_rate_baseline"].Write(res.RateReading.Baseline)
-				m.Metrics["observed_notional_rate_divergence"] = m.Metrics["observed_notional_rate_divergence"].Write(res.RateReading.Residual)
-				m.Metrics["observed_notional_rate_zscore"] = m.Metrics["observed_notional_rate_zscore"].Write(res.RateReading.ZScore)
+			if obsBid <= 0 && obsAsk <= 0 {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
 			}
+
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			pipeInput := depthInput{
+				ObservedBid: obsBid,
+				ObservedAsk: obsAsk,
+				MutationBid: mutBid,
+				MutationAsk: mutAsk,
+				At:          input.At,
+			}
+
+			for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+				res := (*depthResult)(out)
+
+				m.Metrics["observed_notional"] = m.Metrics["observed_notional"].Write(res.Observed)
+				m.Metrics["observed_notional_diff"] = m.Metrics["observed_notional_diff"].Write(res.ObservedDiff)
+				m.Metrics["mutation_count"] = m.Metrics["mutation_count"].Write(res.MutationCount)
+				m.Metrics["mutation_count_diff"] = m.Metrics["mutation_count_diff"].Write(res.MutationCountDiff)
+
+				if res.Observed > 0 {
+					m.Metrics["observed_notional_imbalance"] = m.Metrics["observed_notional_imbalance"].Write(res.ObservedImbalance)
+					m.Metadata[data.MetadataSupport] = strconv.FormatFloat(res.ImbalanceReading.Count, 'f', -1, 64)
+
+					if res.ImbalanceReading.HasPrior {
+						m.Metrics["observed_notional_imbalance_baseline"] = m.Metrics["observed_notional_imbalance_baseline"].Write(res.ImbalanceReading.Baseline)
+						m.Metrics["observed_notional_imbalance_divergence"] = m.Metrics["observed_notional_imbalance_divergence"].Write(res.ImbalanceReading.Residual)
+						m.Metrics["observed_notional_imbalance_zscore"] = m.Metrics["observed_notional_imbalance_zscore"].Write(res.ImbalanceReading.ZScore)
+						m.Metadata[data.MetadataDivergence] = strconv.FormatFloat(res.ImbalanceReading.Residual, 'f', -1, 64)
+
+						if res.ImbalanceReading.VarianceDefined {
+							m.Metadata[data.MetadataNoiseVariance] = strconv.FormatFloat(res.ImbalanceReading.Variance, 'f', -1, 64)
+						}
+					}
+				}
+
+				if res.MutationCount > 0 {
+					m.Metrics["mutation_activity_imbalance"] = m.Metrics["mutation_activity_imbalance"].Write(res.MutationActivityImbalance)
+				}
+
+				if res.HasRate {
+					m.Metrics["observed_notional_rate"] = m.Metrics["observed_notional_rate"].Write(res.Rate)
+
+					if res.RateReading.HasPrior {
+						m.Metrics["observed_notional_rate_baseline"] = m.Metrics["observed_notional_rate_baseline"].Write(res.RateReading.Baseline)
+						m.Metrics["observed_notional_rate_divergence"] = m.Metrics["observed_notional_rate_divergence"].Write(res.RateReading.Residual)
+						m.Metrics["observed_notional_rate_zscore"] = m.Metrics["observed_notional_rate_zscore"].Write(res.RateReading.ZScore)
+					}
+				}
+			}
+
+			m.Label = input.Label
+			m.At = input.At
+			m.Finalize()
+			if m != nil && !yield(unsafe.Pointer(&m)) {
+				return
+			}
+			continue inputs
+
 		}
 	}
-
-	m.Label = input.Label
-	m.At = input.At
-	m.Finalize()
-	return m
 }
 
 /*

@@ -6,13 +6,25 @@ import (
 )
 
 /*
-Primitive is the interface that all nomagique types must implement.
-Consider nomagique a streaming, composable algebra. Each type must
-constrain itself to the absolute most minimal implementation of one
-transformation. This can essentially manifest in two ways:
+Primitive is the interface that all nomagique types must implement. Consider nomagique
+a streaming, composable algebra. Each type must constrain itself to the absolute most
+minimal implementation of one transformation. This can essentially manifest in two ways:
 
 1. Implementation of a new transformation.
 2. Composition of existing Primitive types.
+
+THE RULES:
+
+(Please note that due to A.I. agent misunderstanding, the rules are often still broken
+in the current package, this does not mean you are allowed to break them!)
+
+- A Primitive is a constructor, a Next method, and *PrimitiveError composed onto the type.
+- A Primitive does one thing and does it well. It is a transformation.
+- A Primitive is forbidden to contain any helper methods, that is a severe anti-pattern.
+- A Primitive is allowed to implement interfaces from the core package.
+- The core package may not be arbitrarily extended.
+- When you run into some issue or missing functionality, the answer is always: another Primitive.
+- You may not escape the composable algebra, but you may extend it.
 
 Before creating a new Primitive always first consider:
 
@@ -36,6 +48,9 @@ This is really always the goal, and the idea behind it is that we can validate
 the code once, and then always confidently use it, while also keeping an eye
 on the other principle: never using magic numbers, or otherwise non-derived
 values.
+
+You are not implementing the end goal in nomagique, you are just implementing the
+Primitives you need to build your pipelines somewhere else.
 */
 type Primitive interface {
 	Next(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]

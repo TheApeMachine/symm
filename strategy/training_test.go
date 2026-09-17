@@ -4,6 +4,8 @@ import (
 	"iter"
 	"testing"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -30,13 +32,13 @@ func TestTrainingRegister(t *testing.T) {
 	})
 }
 
-func TestTrainingStep(t *testing.T) {
+func TestTrainingNext(t *testing.T) {
 	Convey("Untrained live inference remains inert and publishes the actual map", t, func() {
 		training := NewTraining(t.Context(), 1, market.TrainingPrice(t.Context()))
 		training.Transition(runtime.READY)
 
 		for _, frame := range market.ImpulseTape("BTC/USD", 4) {
-			output := training.Step(frame)
+			output := sequence.Read[*data.Measurement[float64]](training.Next(sequence.NewValue[*data.Measurement[float64]](frame)))
 			So(output.Err, ShouldBeNil)
 			_, selected := output.Metrics["action"]
 			So(selected, ShouldBeFalse)
@@ -52,13 +54,13 @@ func TestTrainingStep(t *testing.T) {
 
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue(measurement))), ShouldEqual, measurement)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
 }
 
-func BenchmarkTrainingStep(b *testing.B) {
+func BenchmarkTrainingNext(b *testing.B) {
 	training := NewTraining(b.Context(), 1, market.TrainingPrice(b.Context()))
 	training.Transition(runtime.READY)
 	frames := market.ImpulseTape("BTC/USD", 6)
@@ -72,7 +74,7 @@ func BenchmarkTrainingStep(b *testing.B) {
 			observation.SeqIdx = frame.SeqIdx
 		}
 
-		if output := training.Step(frame); output.Err != nil {
+		if output := sequence.Read[*data.Measurement[float64]](training.Next(sequence.NewValue[*data.Measurement[float64]](frame))); output.Err != nil {
 			b.Fatal(output.Err)
 		}
 	}

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
@@ -84,7 +86,7 @@ func TestFuturesLive(t *testing.T) {
 					"mark_price":  data.NewMetric[float64]("mark_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 				})
 
-				stepped := futures.Step(inputMeasurement)
+				stepped := sequence.Read[*data.Measurement[float64]](futures.Next(sequence.NewValue[*data.Measurement[float64]](inputMeasurement)))
 				So(stepped.Label, ShouldEqual, "BTC/USD")
 				So(stepped.Metrics["last"].Raw, ShouldEqual, 50000.5)
 				So(stepped.Metrics["last_price"].Raw, ShouldEqual, 50000.5)
@@ -101,7 +103,7 @@ func TestFuturesLive(t *testing.T) {
 					"qty":   data.NewMetric[float64]("qty", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
 				})
 
-				stepped := futures.Step(inputMeasurement)
+				stepped := sequence.Read[*data.Measurement[float64]](futures.Next(sequence.NewValue[*data.Measurement[float64]](inputMeasurement)))
 				So(stepped.Label, ShouldEqual, "BTC/USD")
 				So(stepped.Metrics["price"].Raw, ShouldEqual, 50000.5)
 				So(stepped.Metrics["qty"].Raw, ShouldEqual, 2.5)
@@ -124,7 +126,7 @@ func TestFuturesLiveStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

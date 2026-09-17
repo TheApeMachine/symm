@@ -84,7 +84,7 @@ func TestTargetInvalidInput(t *testing.T) {
 
 func TestTargetConfiguredConnection(t *testing.T) {
 	Convey("A live deadband is configuration of the same target", t, func() {
-		node := learning.NewDirectionalTarget(0.5).(*learning.DirectionalTarget)
+		node := learning.NewDirectionalTarget(0.5)
 		gotEval := node
 		var got float64
 

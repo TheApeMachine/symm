@@ -113,94 +113,114 @@ func NewLevel3(ctx context.Context) *Level3 {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (level3 *Level3) Step(m *data.Measurement[float64]) *data.Measurement[float64] {
-	if level3.Status() != runtime.READY {
-		errnie.Warn(level3.Name() + ": Step called before READY; dropping event")
-		return m
-	}
+func (level3 *Level3) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			m := *(**data.Measurement[float64])(arriving)
 
-	if m == nil {
-		return nil
-	}
-
-	if m.Err != nil {
-		return m
-	}
-
-	input := m
-
-	if len(m.Peers) > 0 {
-		peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-			if p.Label == "" {
-				return false
+			if level3.Status() != runtime.READY {
+				errnie.Warn(level3.Name() + ": Next called before READY; dropping event")
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
 			}
-			b := p.Metrics["best_bid"].Raw
-			if b == 0 {
-				b = p.Metrics["bid"].Raw
-			}
-			a := p.Metrics["best_ask"].Raw
-			if a == 0 {
-				a = p.Metrics["ask"].Raw
-			}
-			return b > 0 && a > 0
-		})
 
-		if peer == nil {
-			return nil
+			if m == nil {
+				continue inputs
+			}
+
+			if m.Err != nil {
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
+
+			input := m
+
+			if len(m.Peers) > 0 {
+				peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
+					if p.Label == "" {
+						return false
+					}
+					b := p.Metrics["best_bid"].Raw
+					if b == 0 {
+						b = p.Metrics["bid"].Raw
+					}
+					a := p.Metrics["best_ask"].Raw
+					if a == 0 {
+						a = p.Metrics["ask"].Raw
+					}
+					return b > 0 && a > 0
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				input = peer
+			}
+
+			m.Pull(input)
+
+			bid := input.Metrics["best_bid"].Raw
+			if bid == 0 {
+				bid = input.Metrics["bid"].Raw
+			}
+			ask := input.Metrics["best_ask"].Raw
+			if ask == 0 {
+				ask = input.Metrics["ask"].Raw
+			}
+
+			if bid > 0 && ask > 0 && bid >= ask {
+				m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
+				if m != nil && !yield(unsafe.Pointer(&m)) {
+					return
+				}
+				continue inputs
+			}
+
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
+			}
+
+			pipeInput := level3EntityInput{Bid: bid, Ask: ask}
+
+			var valid bool
+			for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
+				res := (*level3EntityResult)(out)
+				if !res.Valid {
+					continue inputs
+				}
+
+				valid = true
+				m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)
+				m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(res.Ask)
+				m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(res.Midpoint)
+				m.Metrics["spread"] = m.Metrics["spread"].Write(res.Spread)
+				m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(res.RelativeSpread)
+				m.Maturity = 1.0
+			}
+
+			if !valid {
+				continue inputs
+			}
+
+			m.Label = input.Label
+			m.At = input.At
+			m.Finalize()
+			if m != nil && !yield(unsafe.Pointer(&m)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		input = peer
 	}
-
-	m.Pull(input)
-
-	bid := input.Metrics["best_bid"].Raw
-	if bid == 0 {
-		bid = input.Metrics["bid"].Raw
-	}
-	ask := input.Metrics["best_ask"].Raw
-	if ask == 0 {
-		ask = input.Metrics["ask"].Raw
-	}
-
-	if bid > 0 && ask > 0 && bid >= ask {
-		m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
-		return m
-	}
-
-	if m.Metadata == nil {
-		m.Metadata = make(map[string]string)
-	}
-
-	pipeInput := level3EntityInput{Bid: bid, Ask: ask}
-
-	var valid bool
-	for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-		res := (*level3EntityResult)(out)
-		if !res.Valid {
-			return nil
-		}
-
-		valid = true
-		m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)
-		m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(res.Ask)
-		m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(res.Midpoint)
-		m.Metrics["spread"] = m.Metrics["spread"].Write(res.Spread)
-		m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(res.RelativeSpread)
-		m.Maturity = 1.0
-	}
-
-	if !valid {
-		return nil
-	}
-
-	m.Label = input.Label
-	m.At = input.At
-	m.Finalize()
-	return m
 }
 
 /*

@@ -32,13 +32,14 @@ func NewRadix[T any]() *Radix[T] {
 func (radix *Radix[T]) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range input {
-			query := (*Query[T])(arriving)
-			if query.key == nil || len(*query.key) == 0 {
+			query := (*Query[*[]byte, T])(arriving)
+			address := query.Identity()
+			if address == nil || len(*address) == 0 {
 				radix.Error(core.ErrShape)
 				return
 			}
 			root := radix.root.Load()
-			value, found := root.Get(*query.key)
+			value, found := root.Get(*address)
 			if query.Action() == data.ActionRead {
 				if found && !yield(unsafe.Pointer(&value)) {
 					return
@@ -69,7 +70,7 @@ func (radix *Radix[T]) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 			// The query's payload may itself read this store; publish afterwards.
 			root = radix.root.Load()
-			updated, _, _ := root.Insert(bytes.Clone(*query.key), value)
+			updated, _, _ := root.Insert(bytes.Clone(*address), value)
 			radix.root.Store(updated)
 			if !yield(unsafe.Pointer(&value)) {
 				return

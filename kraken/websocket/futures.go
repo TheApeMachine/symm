@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -557,90 +559,104 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 }
 
 /*
-Step implements the runtime.Node interface: one dequeued futures record becomes
+Next implements the runtime.Node interface: one dequeued futures record becomes
 one measurement.
 */
-func (futures *FuturesLive) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if futures.Status() != runtime.READY {
-		errnie.Warn(futures.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (futures *FuturesLive) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	row, ok := futures.queue.Dequeue()
-
-	if !ok {
-		return nil
-	}
-
-	if measurement == nil {
-		measurement = futures.Register()
-	}
-
-	measurement.Provenance = make(map[string]string, 4)
-	measurement.Metadata["venue"] = "true"
-	measurement.Maturity = 1
-	measurement.Metrics = make(map[string]data.Metric[float64], len(row))
-	measurement.Err = nil
-	measurement.At = time.Time{}
-	measurement.From = time.Time{}
-
-	if symbol, ok := row["symbol"].(string); ok {
-		measurement.Label = symbol
-	}
-
-	if channel, ok := row["channel"].(string); ok {
-		measurement.Provenance["channel"] = channel
-	}
-
-	if side, ok := row["side"].(string); ok {
-		measurement.Provenance["side"] = side
-	}
-
-	if tradeType, ok := row["type"].(string); ok {
-		measurement.Provenance["type"] = tradeType
-	}
-
-	if synthetic, ok := row["synthetic_timestamp"].(bool); ok && synthetic {
-		measurement.Provenance["synthetic_timestamp"] = "true"
-	}
-
-	if at, ok := row["timestamp"].(time.Time); ok {
-		measurement.At = at
-	}
-
-	if measurement.At.IsZero() {
-		measurement.At = time.Now().UTC()
-	}
-
-	for key, value := range row {
-		switch val := value.(type) {
-		case *decimal.Decimal:
-			if val != nil {
-				metric := measurement.Metrics[key]
-				metric.Label = key
-				metric.Raw = val.Float64()
-				metric.Exact = val
-				measurement.Metrics[key] = metric
+			if futures.Status() != runtime.READY {
+				errnie.Warn(futures.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
 			}
 
-		case decimal.Decimal:
-			dec := val
-			metric := measurement.Metrics[key]
-			metric.Label = key
-			metric.Raw = dec.Float64()
-			metric.Exact = &dec
-			measurement.Metrics[key] = metric
+			row, ok := futures.queue.Dequeue()
 
-		case float64:
-			metric := measurement.Metrics[key]
-			metric.Label = key
-			metric.Raw = val
-			metric.Exact = decimal.NewFromFloat64(val)
-			measurement.Metrics[key] = metric
+			if !ok {
+				continue inputs
+			}
+
+			if measurement == nil {
+				measurement = futures.Register()
+			}
+
+			measurement.Provenance = make(map[string]string, 4)
+			measurement.Metadata["venue"] = "true"
+			measurement.Maturity = 1
+			measurement.Metrics = make(map[string]data.Metric[float64], len(row))
+			measurement.Err = nil
+			measurement.At = time.Time{}
+			measurement.From = time.Time{}
+
+			if symbol, ok := row["symbol"].(string); ok {
+				measurement.Label = symbol
+			}
+
+			if channel, ok := row["channel"].(string); ok {
+				measurement.Provenance["channel"] = channel
+			}
+
+			if side, ok := row["side"].(string); ok {
+				measurement.Provenance["side"] = side
+			}
+
+			if tradeType, ok := row["type"].(string); ok {
+				measurement.Provenance["type"] = tradeType
+			}
+
+			if synthetic, ok := row["synthetic_timestamp"].(bool); ok && synthetic {
+				measurement.Provenance["synthetic_timestamp"] = "true"
+			}
+
+			if at, ok := row["timestamp"].(time.Time); ok {
+				measurement.At = at
+			}
+
+			if measurement.At.IsZero() {
+				measurement.At = time.Now().UTC()
+			}
+
+			for key, value := range row {
+				switch val := value.(type) {
+				case *decimal.Decimal:
+					if val != nil {
+						metric := measurement.Metrics[key]
+						metric.Label = key
+						metric.Raw = val.Float64()
+						metric.Exact = val
+						measurement.Metrics[key] = metric
+					}
+
+				case decimal.Decimal:
+					dec := val
+					metric := measurement.Metrics[key]
+					metric.Label = key
+					metric.Raw = dec.Float64()
+					metric.Exact = &dec
+					measurement.Metrics[key] = metric
+
+				case float64:
+					metric := measurement.Metrics[key]
+					metric.Label = key
+					metric.Raw = val
+					metric.Exact = decimal.NewFromFloat64(val)
+					measurement.Metrics[key] = metric
+				}
+			}
+
+			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+				return
+			}
+			continue inputs
+
 		}
 	}
-
-	return measurement
 }
 
 /*

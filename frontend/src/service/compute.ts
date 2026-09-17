@@ -4,7 +4,7 @@ import { hubBaseUrl } from "#/lib/hub";
 /*
 The pipeline editor's palette is nomagique's own primitives, described by the
 hub from the library's declarations rather than from a list kept here. These
-types mirror `nomagique/catalog`.Schema exactly; anything the editor wants to
+types mirror `nomagique/runtime/catalog`.Schema exactly; anything the editor wants to
 know that the catalog does not carry is a change to the generator, not a
 default invented on this side.
 */

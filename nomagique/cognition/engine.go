@@ -129,7 +129,6 @@ observes publish through compare-and-swap; evaluations read immutable roots.
 type Engine struct {
 	*core.PrimitiveError
 
-	err         atomic.Pointer[engineError]
 	cfg         Config
 	root        atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter atomic.Uint64
@@ -137,8 +136,6 @@ type Engine struct {
 	classCounts sync.Map
 	remReplays  atomic.Uint64
 }
-
-type engineError struct{ err error }
 
 /*
 NewEngine instantiates the cognitive engine Primitive. Unset bounds in the
@@ -157,13 +154,6 @@ func NewEngine(cfg Config) *Engine {
 /* Next executes typed Command pointers and yields the command result. */
 func (engine *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		defer func() {
-
-			if recorded := engine.Error().
-				Load(); recorded != nil {
-				return recorded.err
-			}
-		}()
 		for arriving := range in {
 			command := (*Command)(arriving)
 			result, err := engine.execute(command)

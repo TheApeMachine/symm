@@ -17,7 +17,7 @@ func coderFixture(horizon int) *PredictiveCoder {
 		MaxHorizon: horizon,
 		Target:     NewDirectionalTarget(0),
 		Learn:      true,
-	}).(*PredictiveCoder)
+	})
 }
 
 /*
@@ -190,7 +190,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 
 	Convey("Given a misconfigured coder", t, func() {
 		Convey("an absent architecture is refused rather than panicking", func() {
-			coder := NewPredictiveCoder(PredictiveCoderConfig{MaxHorizon: 4}).(*PredictiveCoder)
+			coder := NewPredictiveCoder(PredictiveCoderConfig{MaxHorizon: 4})
 
 			_, err := coder.step(PredictiveInput{Features: []float64{1}})
 
@@ -284,7 +284,7 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 				Target:     NewDirectionalTarget(0),
 				Learn:      true,
 				Readout:    mode,
-			}).(*PredictiveCoder)
+			})
 		}
 
 		Convey("every mode settles and forecasts without a dimension mismatch", func() {
@@ -317,7 +317,7 @@ func TestPredictiveCoderReadoutModes(t *testing.T) {
 				MaxHorizon: 4,
 				Target:     NewDirectionalTarget(0),
 				Learn:      true,
-			}).(*PredictiveCoder)
+			})
 
 			So(drive(explicit, 5).Reading.ReadoutDimension, ShouldEqual,
 				drive(defaulted, 5).Reading.ReadoutDimension)

@@ -15,7 +15,7 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func TestStep(t *testing.T) {
+func TestNext(t *testing.T) {
 	Convey("Given a resonance solver", t, func() {
 		solver := NewSolver(context.Background(), 0)
 		defer solver.Close()
@@ -24,7 +24,7 @@ func TestStep(t *testing.T) {
 		m.Label = "TEST/USD"
 		m.At = time.Unix(1, 0)
 
-		result := solver.Step(m)
+		result := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m)))
 
 		Convey("the step populates energy and surprise metrics", func() {
 			So(result, ShouldNotBeNil)
@@ -65,7 +65,7 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			createMetric("derivatives", "basis", 0.001),
 		}
 
-		result := solver.Step(m)
+		result := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m)))
 
 		Convey("the predictive coder ingests all 11 features and produces resonance dynamics", func() {
 			So(result, ShouldNotBeNil)
@@ -113,12 +113,12 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		}
 
 		for step := int64(1); step <= 10; step++ {
-			res := solver.Step(createMeasurement(step, 0.2, 0.1))
+			res := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](createMeasurement(step, 0.2, 0.1))))
 			So(res, ShouldNotBeNil)
 		}
 
 		Convey("when an unexpected break in common flow occurs, the solver processes the surprise", func() {
-			disrupted := solver.Step(createMeasurement(11, 0.95, 0.85))
+			disrupted := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](createMeasurement(11, 0.95, 0.85))))
 			So(disrupted, ShouldNotBeNil)
 			So(disrupted.Metrics["surprise"].Raw, ShouldBeGreaterThanOrEqualTo, 0)
 		})
@@ -147,7 +147,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		m1.Peers = []*data.Measurement[float64]{
 			createMetric("cvd", "signed_net_fraction", 0.1, 1),
 		}
-		res1 := solver.Step(m1)
+		res1 := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m1)))
 		So(res1, ShouldNotBeNil)
 
 		// 500 measurements arrive where CVD is absent (only DepthFlow is present)
@@ -158,7 +158,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 			mL3.Peers = []*data.Measurement[float64]{
 				createMetric("depthflow", "observed_notional_imbalance", 0.2, float64(step)),
 			}
-			resL3 := solver.Step(mL3)
+			resL3 := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](mL3)))
 			So(resL3, ShouldNotBeNil)
 		}
 
@@ -169,7 +169,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		m2.Peers = []*data.Measurement[float64]{
 			createMetric("cvd", "signed_net_fraction", 0.8, 2),
 		}
-		res2 := solver.Step(m2)
+		res2 := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m2)))
 
 		Convey("CVD standardizer does not collapse variance and surprise remains realistic", func() {
 			So(res2, ShouldNotBeNil)
@@ -225,7 +225,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			priceMetric := data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
 			m.Metrics["midpoint"] = priceMetric.Write(50000.0 + float64(step)*10.0)
 
-			res := solver.Step(m)
+			res := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m)))
 			lastArtifact, _ = res.Result.(*types.ResonanceArtifact)
 			So(res, ShouldNotBeNil)
 		}
@@ -269,7 +269,7 @@ func TestSolverStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}

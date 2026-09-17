@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -39,53 +40,77 @@ func NewTicker(ctx context.Context) *Ticker {
 }
 
 /*
-Step supplies the arriving measurement to the pipeline and returns it: the
+Next supplies the arriving measurement to the pipeline and returns it: the
 measurement is the pipeline's state, enriched in place.
 */
-func (ticker *Ticker) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if ticker.Status() != runtime.READY {
-		errnie.Warn(ticker.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if measurement == nil {
-		return measurement
-	}
+			if ticker.Status() != runtime.READY {
+				errnie.Warn(ticker.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-	if len(measurement.Peers) > 0 {
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			_, hasBid := candidate.Metrics["bid"]
-			_, hasAsk := candidate.Metrics["ask"]
-			_, hasBidQuantity := candidate.Metrics["bid_qty"]
-			_, hasAskQuantity := candidate.Metrics["ask_qty"]
+			if measurement == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-			return hasBid && hasAsk && hasBidQuantity && hasAskQuantity && candidate.Label != ""
-		})
+			if len(measurement.Peers) > 0 {
+				peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
+					_, hasBid := candidate.Metrics["bid"]
+					_, hasAsk := candidate.Metrics["ask"]
+					_, hasBidQuantity := candidate.Metrics["bid_qty"]
+					_, hasAskQuantity := candidate.Metrics["ask_qty"]
 
-		if peer == nil {
-			return nil
+					return hasBid && hasAsk && hasBidQuantity && hasAskQuantity && candidate.Label != ""
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				measurement.Pull(peer, "bid", "ask", "bid_qty", "ask_qty")
+			}
+
+			if _, hasBid := measurement.Metrics["bid"]; !hasBid {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if _, hasAsk := measurement.Metrics["ask"]; !hasAsk {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+
+			if res == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if res != nil && !yield(unsafe.Pointer(&res)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		measurement.Pull(peer, "bid", "ask", "bid_qty", "ask_qty")
 	}
-
-	if _, hasBid := measurement.Metrics["bid"]; !hasBid {
-		return measurement
-	}
-
-	if _, hasAsk := measurement.Metrics["ask"]; !hasAsk {
-		return measurement
-	}
-
-	res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.
-		NewOne(unsafe.Pointer(&measurement)).Next(nil),
-	))
-
-	if res == nil {
-		return measurement
-	}
-
-	return res
 }
 
 /*

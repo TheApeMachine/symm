@@ -142,102 +142,102 @@ func newObservationContext(stream arrivalStream, horizonSec float64) (fitContext
 	}, true
 }
 
-func (fitContext fitContext) withSearchGrid() (fitContext, bool) {
+func (context fitContext) withSearchGrid() (fitContext, bool) {
 	tune := arrivalTune{
-		totalEvents: fitContext.totalEvents,
-		eventsX:     fitContext.eventsX,
-		eventsY:     fitContext.eventsY,
+		totalEvents: context.totalEvents,
+		eventsX:     context.eventsX,
+		eventsY:     context.eventsY,
 	}
-	localMin, localMax := tune.localScaleRange(fitContext.gapCV)
+	localMin, localMax := tune.localScaleRange(context.gapCV)
 	var err error
 
-	fitContext.betaCandidates, err = logspace(
-		1/fitContext.gapUpperSec, 1/fitContext.gapLowerSec, fitContext.scanSteps,
+	context.betaCandidates, err = logspace(
+		1/context.gapUpperSec, 1/context.gapLowerSec, context.scanSteps,
 	)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	fitContext.branchSelfCandidates, err = linspace(
-		fitContext.branchFloor,
-		fitContext.branchCeiling*tune.selfBranchShare(),
-		fitContext.branchScanSteps,
+	context.branchSelfCandidates, err = linspace(
+		context.branchFloor,
+		context.branchCeiling*tune.selfBranchShare(),
+		context.branchScanSteps,
 	)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	fitContext.branchCrossCandidates, err = linspace(
-		0, fitContext.branchCeiling, fitContext.branchScanSteps,
+	context.branchCrossCandidates, err = linspace(
+		0, context.branchCeiling, context.branchScanSteps,
 	)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	fitContext.localScales, err = linspace(localMin, localMax, fitContext.scanSteps)
+	context.localScales, err = linspace(localMin, localMax, context.scanSteps)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	fitContext.muXFactors, err = tune.muUncertaintyFactors(fitContext.eventsX)
+	context.muXFactors, err = tune.muUncertaintyFactors(context.eventsX)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	fitContext.muYFactors, err = tune.muUncertaintyFactors(fitContext.eventsY)
+	context.muYFactors, err = tune.muUncertaintyFactors(context.eventsY)
 
 	if err != nil {
 		return fitContext{}, false
 	}
 
-	return fitContext, true
+	return context, true
 }
 
 /*
 enoughEvents reports whether the stream satisfies context minima at horizon.
 */
-func (fitContext fitContext) enoughEvents(stream arrivalStream) bool {
-	buyCount, sellCount := stream.observationCounts(fitContext.throughSec)
+func (context fitContext) enoughEvents(stream arrivalStream) bool {
+	buyCount, sellCount := stream.observationCounts(context.throughSec)
 	total := buyCount + sellCount
 
-	if total < fitContext.minFitEvents {
+	if total < context.minFitEvents {
 		return false
 	}
 
-	if buyCount < fitContext.minPerSide {
+	if buyCount < context.minPerSide {
 		return false
 	}
 
-	return sellCount >= fitContext.minPerSide
+	return sellCount >= context.minPerSide
 }
 
 /*
 muXStart returns the event-rate seed for stream x.
 */
-func (fitContext fitContext) muXStart() float64 {
-	return float64(fitContext.eventsX) / fitContext.spanSec
+func (context fitContext) muXStart() float64 {
+	return float64(context.eventsX) / context.spanSec
 }
 
 /*
 muYStart returns the event-rate seed for stream y.
 */
-func (fitContext fitContext) muYStart() float64 {
-	return float64(fitContext.eventsY) / fitContext.spanSec
+func (context fitContext) muYStart() float64 {
+	return float64(context.eventsY) / context.spanSec
 }
 
 /*
 poissonFit returns the no-excitation bivariate baseline for this stream.
 */
-func (fitContext fitContext) poissonFit() bivariateFit {
+func (context fitContext) poissonFit() bivariateFit {
 	fit := bivariateFit{
-		muX:  fitContext.muXStart(),
-		muY:  fitContext.muYStart(),
-		beta: 1 / fitContext.medianGapSec,
+		muX:  context.muXStart(),
+		muY:  context.muYStart(),
+		beta: 1 / context.medianGapSec,
 	}
 	fit.intensityX = fit.muX
 	fit.intensityY = fit.muY
@@ -248,8 +248,8 @@ func (fitContext fitContext) poissonFit() bivariateFit {
 /*
 crossBranchCap returns the cross-excitation ceiling given a diagonal branch.
 */
-func (fitContext fitContext) crossBranchCap(diagonalBranch float64) float64 {
-	headroom := fitContext.branchCeiling - diagonalBranch
+func (context fitContext) crossBranchCap(diagonalBranch float64) float64 {
+	headroom := context.branchCeiling - diagonalBranch
 
 	if headroom <= 0 {
 		return 0

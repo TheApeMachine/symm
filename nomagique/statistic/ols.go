@@ -103,7 +103,7 @@ func fitOLS(x []float64, y []float64, p int) OLSFit {
 	xty := make([]float64, p)
 	yty := 0.0
 
-	for row := 0; row < n; row++ {
+	for row := range n {
 		rowOffset := row * p
 		yVal := y[row]
 		yty += yVal * yVal
@@ -117,7 +117,7 @@ func fitOLS(x []float64, y []float64, p int) OLSFit {
 		}
 	}
 
-	for column := 0; column < p; column++ {
+	for column := range p {
 		for k := 0; k < column; k++ {
 			xtx[k*p+column] = xtx[column*p+k]
 		}
@@ -138,7 +138,7 @@ func fitOLS(x []float64, y []float64, p int) OLSFit {
 
 	sse := yty
 
-	for column := 0; column < p; column++ {
+	for column := range p {
 		sse -= coefficients[column] * xty[column]
 	}
 
@@ -155,7 +155,7 @@ func fitOLS(x []float64, y []float64, p int) OLSFit {
 	if invertLU(xtx, invScratch, p, luScratch, pvtScratch, colScratch) {
 		variance = make([]float64, p)
 
-		for index := 0; index < p; index++ {
+		for index := range p {
 			variance[index] = residualVariance * invScratch[index*p+index]
 		}
 	}
@@ -217,7 +217,7 @@ func (coefficientSNR *CoefficientSNR) Next(in iter.Seq[unsafe.Pointer]) iter.Seq
 }
 
 /*
-coefficientSNR returns Coefficient² / Variance, undefined (NaN) when the
+coefficientSignalToNoise returns Coefficient² / Variance, undefined (NaN) when the
 coefficient variance is unavailable or zero.
 */
 func coefficientSignalToNoise(coefficient float64, variance float64) float64 {

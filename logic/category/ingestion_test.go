@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -71,7 +73,7 @@ func TestStepIngestsStrandedFamilies(t *testing.T) {
 				m.At = at
 				m.Peers = []*data.Measurement[float64]{testCase.peer}
 
-				out := solver.Step(m)
+				out := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m)))
 
 				So(out, ShouldNotBeNil)
 				So(out.Metrics[string(testCase.expected)], ShouldNotBeNil)

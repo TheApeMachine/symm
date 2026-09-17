@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -85,7 +87,7 @@ func TestSolverPublishReading(t *testing.T) {
 			})
 			measurement.Label = "BTC/USD"
 
-			steppedMeasurement := solver.Step(measurement)
+			steppedMeasurement := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 			So(steppedMeasurement, ShouldNotBeNil)
 			So(steppedMeasurement.Metrics["coherence_mag2"].Raw, ShouldEqual, reading.Reading.CoherenceMag2)
 			So(steppedMeasurement.Metrics["particle_count"].Raw, ShouldEqual, float64(reading.State.N))
@@ -112,7 +114,7 @@ func TestSolverStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -131,7 +133,7 @@ func TestSolverStepArtifact(t *testing.T) {
 		reading := solver.publishReading(physics.State())
 		measurement := solver.Register()
 
-		result := solver.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 		So(result, ShouldEqual, measurement)
 		So(result.Result, ShouldEqual, reading)
 		So(reading.GridX, ShouldEqual, 8)

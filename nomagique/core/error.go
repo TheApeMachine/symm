@@ -1,6 +1,9 @@
 package core
 
-import "errors"
+import (
+	"errors"
+	"sync/atomic"
+)
 
 var (
 	ErrNotHeld    = errors.New("primitive held no value")
@@ -11,19 +14,41 @@ var (
 )
 
 type PrimitiveError struct {
-	err error
+	err atomic.Pointer[error]
 }
 
 func NewPrimitiveError(errs ...error) *PrimitiveError {
-	return &PrimitiveError{err: errors.Join(errs...)}
+	primitiveError := &PrimitiveError{}
+	primitiveError.Error(errs...)
+	return primitiveError
 }
 
+// Error retains all failures with atomic publication; reads do not allocate.
 func (primitiveError *PrimitiveError) Error(errs ...error) error {
 	for _, err := range errs {
-		if err != nil {
-			primitiveError.err = errors.Join(primitiveError.err, err)
+		if err == nil {
+			continue
+		}
+
+		for {
+			previous := primitiveError.err.Load()
+			var recorded error
+
+			if previous != nil {
+				recorded = *previous
+			}
+
+			joined := errors.Join(recorded, err)
+
+			if primitiveError.err.CompareAndSwap(previous, &joined) {
+				break
+			}
 		}
 	}
 
-	return primitiveError.err
+	if recorded := primitiveError.err.Load(); recorded != nil {
+		return *recorded
+	}
+
+	return nil
 }

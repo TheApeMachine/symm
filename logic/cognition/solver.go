@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"iter"
 	"math"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -119,85 +121,105 @@ func NewSolver(
 }
 
 /*
-Step folds the category observations in Peers into the symbol's cognition
+Next folds the category observations in Peers into the symbol's cognition
 state machine and writes the freshest reading back onto the measurement.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if solver.Status() != runtime.READY {
-		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (solver *Solver) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if solver.Error() != nil {
-		return measurement
-	}
-
-	if measurement == nil {
-		return nil
-	}
-
-	// Registration binds cognition's sole dependency to the category slot.
-	if len(measurement.Peers) != 1 || measurement.Peers[0] == nil {
-		solver.Error(errnie.Err(
-			errnie.Validation, "cognition: one bound category measurement is required", nil,
-		))
-		return measurement
-	}
-
-	peer := measurement.Peers[0]
-	batches, ok := peer.Result.([][]types.Category)
-
-	if !ok {
-		solver.Error(errnie.Err(
-			errnie.Validation, "cognition: completed category batches are required", nil,
-		))
-		return nil
-	}
-
-	results := make([]types.Cognition, 0, len(batches))
-
-	for _, categories := range batches {
-		reading := solver.StepCategories(categories)
-
-		if solver.Error() != nil {
-			return nil
-		}
-
-		if reading == nil {
-			continue
-		}
-
-		results = append(results, reading.Clone())
-		measurement.Label = reading.Symbol
-		measurement.At = reading.At
-
-		if m, ok := measurement.Metrics["surprisal"]; ok {
-			measurement.Metrics["surprisal"] = m.Write(reading.InterpolatedSurprisal)
-		}
-
-		if m, ok := measurement.Metrics["stability"]; ok {
-			measurement.Metrics["stability"] = m.Write(reading.Confidence)
-		}
-
-		if m, ok := measurement.Metrics["ambiguity"]; ok {
-			ambiguityVal := 0.0
-			if reading.Ambiguous {
-				ambiguityVal = 1.0
+			if solver.Status() != runtime.READY {
+				errnie.Warn(solver.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
 			}
-			if reading.EntropyBits != nil {
-				ambiguityVal = *reading.EntropyBits
+
+			if solver.Error() != nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
 			}
-			measurement.Metrics["ambiguity"] = m.Write(ambiguityVal)
+
+			if measurement == nil {
+				continue inputs
+			}
+
+			// Registration binds cognition's sole dependency to the category slot.
+			if len(measurement.Peers) != 1 || measurement.Peers[0] == nil {
+				solver.Error(errnie.Err(
+					errnie.Validation, "cognition: one bound category measurement is required", nil,
+				))
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			peer := measurement.Peers[0]
+			batches, ok := peer.Result.([][]types.Category)
+
+			if !ok {
+				solver.Error(errnie.Err(
+					errnie.Validation, "cognition: completed category batches are required", nil,
+				))
+				continue inputs
+			}
+
+			results := make([]types.Cognition, 0, len(batches))
+
+			for _, categories := range batches {
+				reading := solver.StepCategories(categories)
+
+				if solver.Error() != nil {
+					continue inputs
+				}
+
+				if reading == nil {
+					continue
+				}
+
+				results = append(results, reading.Clone())
+				measurement.Label = reading.Symbol
+				measurement.At = reading.At
+
+				if m, ok := measurement.Metrics["surprisal"]; ok {
+					measurement.Metrics["surprisal"] = m.Write(reading.InterpolatedSurprisal)
+				}
+
+				if m, ok := measurement.Metrics["stability"]; ok {
+					measurement.Metrics["stability"] = m.Write(reading.Confidence)
+				}
+
+				if m, ok := measurement.Metrics["ambiguity"]; ok {
+					ambiguityVal := 0.0
+					if reading.Ambiguous {
+						ambiguityVal = 1.0
+					}
+					if reading.EntropyBits != nil {
+						ambiguityVal = *reading.EntropyBits
+					}
+					measurement.Metrics["ambiguity"] = m.Write(ambiguityVal)
+				}
+			}
+
+			if len(results) == 0 {
+				continue inputs
+			}
+
+			measurement.Result = results
+
+			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+				return
+			}
+			continue inputs
+
 		}
 	}
-
-	if len(results) == 0 {
-		return nil
-	}
-
-	measurement.Result = results
-
-	return measurement
 }
 
 func (solver *Solver) Register() *data.Measurement[float64] {

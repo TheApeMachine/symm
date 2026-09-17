@@ -2,7 +2,7 @@
 
 ## Status
 
-Normative specification for the `nomagique/relation` layer.
+Normative specification for the `nomagique/statistic/relation` layer.
 
 ## 1. Purpose
 

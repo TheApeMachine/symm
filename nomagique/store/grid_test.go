@@ -3,184 +3,222 @@ package store_test
 import (
 	"errors"
 	"testing"
-	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/transport"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/tests/market"
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
+func TestNewGrid(t *testing.T) {
+	Convey("Construction registers independent primitives within each entity", t, func() {
+		first := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(0, 0), Primitive: store.NewRetained(1.0)}
+		second := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(1, 1), Primitive: store.NewRetained(2.0)}
+		other := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(0, 0), Primitive: store.NewRetained(3.0)}
+		grid := store.NewGrid(
+			map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": first, "ETH/USD": other},
+			map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": second},
+		)
+		So(grid.Error(), ShouldBeNil)
+		So(first.Identity().X, ShouldEqual, 0)
+		So(second.Identity().X, ShouldEqual, 1)
+		So(other.Identity().X, ShouldEqual, 0)
+		Convey("A query follows its typed subject's current identity", func() {
+			subject := store.NewQuery[*geometry.Coordinate, int](nil, data.ActionNone)
+			subject.Address = first.Identity()
+			query := store.NewQuery[*geometry.Coordinate, float64](subject, data.ActionRead)
+			query.Entity = "BTC/USD"
+			So(sequence.Read[core.Primitive](grid.Next(query.Next(nil))), ShouldEqual, first)
+			subject.Identify(second.Identity())
+			So(sequence.Read[core.Primitive](grid.Next(query.Next(nil))), ShouldEqual, second)
+		})
+		for _, fixture := range []struct {
+			entity string
+			member *tests.Member[*geometry.Coordinate]
+		}{
+			{"BTC/USD", first}, {"BTC/USD", second}, {"ETH/USD", other},
+		} {
+			query := store.NewQuery[*geometry.Coordinate, float64](nil, data.ActionRead)
+			query.Entity = fixture.entity
+			// A distinct pointer at the same geometric position must resolve the cell.
+			query.Address = geometry.NewCoordinate(fixture.member.Identity().X, fixture.member.Identity().Y)
+			So(sequence.Read[core.Primitive](grid.Next(query.Next(nil))), ShouldEqual, fixture.member)
+		}
+	})
+}
+
 func TestGridNext(t *testing.T) {
-	Convey("A Grid routes raw input to the sole writer of resident metrics", t, func() {
-		priceKey := [2]string{"trade", "price"}
-		quantityKey := [2]string{"trade", "quantity"}
-		owner := nomagique.NewNumber(store.NewGet[[2]string, float64](priceKey), statistic.NewEstimator())
-		// This observation establishes the real estimator's resident reading.
-		var reading *statistic.MomentReading
-		for output := range owner.Next(sequence.NewValue(map[[2]string]float64{priceKey: 100})) {
-			reading = (*statistic.MomentReading)(output)
-		}
-		metrics := map[string]*float64{"price": &reading.Value, "support": &reading.Count}
-		grid := store.NewGrid[float64]()
-		registration := store.NewQuery[float64](nil, data.ActionIdentify, sequence.NewValue(&store.Registration[float64]{Owner: "signal", Operation: owner, Interests: [][2]string{priceKey, quantityKey}, Metrics: metrics}))
-		for output := range grid.Next(registration.Next(nil)) {
-			So((*store.Grid[float64])(output), ShouldEqual, grid)
-		}
-		pipeline := nomagique.NewNumber(store.NewQuery[float64](nil, data.ActionExecute), grid)
+	Convey("Grid handles addressed operations without owning the member's value", t, func() {
+		resident := store.NewRetained(0.0)
+		member := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(0, 0), Primitive: resident}
+		grid := store.NewGrid(map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": member})
+		query := store.NewQuery[*geometry.Coordinate, float64](nil, data.ActionRead)
+		query.Entity, query.Address = "BTC/USD", member.Identity()
 
-		Convey("Registration only binds references and canonical coordinates", func() {
-			So(reading.Count, ShouldEqual, 1)
-			So(grid.Values[[2]string{"signal", "price"}], ShouldEqual, &reading.Value)
-			So(*grid.Coordinates[[2]string{"signal", "price"}], ShouldResemble, [2]float64{0, 0})
-			So(*grid.Coordinates[[2]string{"signal", "support"}], ShouldResemble, [2]float64{1, 0})
+		Convey("Read returns the same member without executing it", func() {
+			So(sequence.Read[core.Primitive](grid.Next(query.Next(nil))), ShouldEqual, member)
+			So(sequence.Read[float64](resident.Next(nil)), ShouldEqual, 0)
 		})
-
-		Convey("Multi-leg raw inputs execute the owner once, even when both interests match", func() {
-			tape := market.ImpulseTape("BTC/USD", 2)
-			position := grid.Coordinates[[2]string{"signal", "price"}]
-			*position = [2]float64{5, -3} // A coordinate move, not a value relocation.
-			for index, frame := range tape {
-				price := frame.Peers[0].Metrics["value"].Raw
-				raw := map[[2]string]float64{priceKey: price, quantityKey: 1}
-				outputs := 0
-				for output := range pipeline.Next(sequence.NewValue(raw)) {
-					outputs++
-					So((*store.Grid[float64])(output), ShouldEqual, grid)
-				}
-				So(outputs, ShouldEqual, 1)
-				So(reading.Count, ShouldEqual, index+2)
-				So(*grid.Values[[2]string{"signal", "price"}], ShouldEqual, price)
-				So(grid.Values[[2]string{"signal", "price"}], ShouldEqual, &reading.Value)
-				So(grid.Coordinates[[2]string{"signal", "price"}], ShouldEqual, position)
-				So(*position, ShouldResemble, [2]float64{5, -3})
-				So(raw, ShouldResemble, map[[2]string]float64{priceKey: price, quantityKey: 1})
+		Convey("Execute preserves payload order and state across repeated runs", func() {
+			query.Actionable = data.ActionExecute
+			for _, values := range [][]float64{{1, 4, -2}, {0, 8}} {
+				So(tests.CollectSeq[float64](grid.Next(query.Next(sequence.NewValue(values...)))), ShouldResemble, values)
+				So(sequence.Read[float64](resident.Next(nil)), ShouldEqual, values[len(values)-1])
 			}
-			So(pipeline.Error(), ShouldBeNil)
+			So(grid.Error(), ShouldBeNil)
 		})
-
-		Convey("Entity and key must both match; unrelated input does not invoke the owner", func() {
-			for range pipeline.Next(sequence.NewValue(map[[2]string]float64{{"ticker", "price"}: 200, {"trade", "price_extra"}: 300})) {
-			}
-			So(reading.Count, ShouldEqual, 1)
-			So(pipeline.Error(), ShouldBeNil)
-		})
-
-		Convey("Reading the index does not run or mutate the owner", func() {
-			for output := range grid.Next(store.NewQuery[float64](nil, data.ActionRead).Next(nil)) {
-				So((*store.Grid[float64])(output), ShouldEqual, grid)
-			}
-			So(reading.Count, ShouldEqual, 1)
-		})
-
-		Convey("A second owner cannot claim an existing metric's storage", func() {
-			other := store.NewQuery[float64](nil, data.ActionIdentify, sequence.NewValue(&store.Registration[float64]{Owner: "other", Operation: owner, Interests: [][2]string{priceKey}, Metrics: metrics}))
-			for range grid.Next(other.Next(nil)) {
-				t.Fatal("invalid registration produced an answer")
-			}
-			So(errors.Is(grid.Error(), core.ErrShape), ShouldBeTrue)
-			So(len(grid.Values), ShouldEqual, 2)
-		})
-
-		Convey("An owner cannot alias two metric identities onto the same storage", func() {
-			independent := store.NewGrid[float64]()
-			aliased := store.NewQuery[float64](nil, data.ActionIdentify, sequence.NewValue(&store.Registration[float64]{Owner: "alias", Operation: owner, Interests: [][2]string{priceKey}, Metrics: map[string]*float64{"first": &reading.Value, "second": &reading.Value}}))
-			for range independent.Next(aliased.Next(nil)) {
-				t.Fatal("aliased registration produced an answer")
-			}
-			So(errors.Is(independent.Error(), core.ErrShape), ShouldBeTrue)
-			So(len(independent.Values), ShouldEqual, 0)
-		})
-
-		Convey("An owner error prevents publication of a completed boundary", func() {
-			// Quantity selects this owner, but its required price is absent.
-			for range pipeline.Next(sequence.NewValue(map[[2]string]float64{quantityKey: 1})) {
-				t.Fatal("failed boundary was published")
-			}
-			So(errors.Is(grid.Error(), core.ErrNotHeld), ShouldBeTrue)
-			So(reading.Count, ShouldEqual, 1)
-		})
-
-		Convey("Stopping consumption stops before the next raw observation", func() {
-			for range pipeline.Next(sequence.NewValue(map[[2]string]float64{priceKey: 101}, map[[2]string]float64{priceKey: 102})) {
+		Convey("Early stop does not execute later arrivals", func() {
+			query.Actionable = data.ActionExecute
+			for range grid.Next(query.Next(sequence.NewValue(5.0, 9.0))) {
 				break
 			}
-			So(reading.Count, ShouldEqual, 2)
-			So(reading.Value, ShouldEqual, 101)
-			So(pipeline.Error(), ShouldBeNil)
+			So(sequence.Read[float64](resident.Next(nil)), ShouldEqual, 5)
 		})
-
-		Convey("The store rejects direct writes to owner-held metrics", func() {
-			for range grid.Next(store.NewQuery[float64](nil, data.ActionWrite, sequence.NewValue(42.0)).Next(nil)) {
-				t.Fatal("direct metric write was accepted")
-			}
+		Convey("An identify query registers a new entity", func() {
+			incoming := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(0, 0), Primitive: store.NewRetained(3.0)}
+			identify := store.NewQuery[*geometry.Coordinate, core.Identifiable[*geometry.Coordinate]](nil, data.ActionIdentify, sequence.NewValue[core.Identifiable[*geometry.Coordinate]](incoming))
+			incoming.Identify(geometry.NewCoordinate(4, -2))
+			identify.Entity, identify.Address = "ETH/USD", incoming.Identity()
+			So(sequence.Read[core.Primitive](grid.Next(identify.Next(nil))), ShouldEqual, incoming)
+			So(incoming.Identity(), ShouldEqual, identify.Address)
+		})
+		Convey("Registration cannot overwrite an occupied address", func() {
+			incoming := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(0, 0), Primitive: store.NewRetained(3.0)}
+			identify := store.NewQuery[*geometry.Coordinate, core.Identifiable[*geometry.Coordinate]](nil, data.ActionIdentify, sequence.NewValue[core.Identifiable[*geometry.Coordinate]](incoming))
+			identify.Entity, identify.Address = query.Entity, query.Address
+			So(tests.CollectSeq[core.Primitive](grid.Next(identify.Next(nil))), ShouldBeEmpty)
 			So(errors.Is(grid.Error(), core.ErrShape), ShouldBeTrue)
-			So(reading.Value, ShouldEqual, 100)
+			So(incoming.Identity().X, ShouldEqual, 0)
+		})
+		Convey("A member cannot acquire a second address", func() {
+			identify := store.NewQuery[*geometry.Coordinate, core.Identifiable[*geometry.Coordinate]](nil, data.ActionIdentify, sequence.NewValue[core.Identifiable[*geometry.Coordinate]](member))
+			identify.Entity, identify.Address = query.Entity, geometry.NewCoordinate(8, 8)
+			So(tests.CollectSeq[core.Primitive](grid.Next(identify.Next(nil))), ShouldBeEmpty)
+			So(errors.Is(grid.Error(), core.ErrShape), ShouldBeTrue)
+			So(member.Identity(), ShouldEqual, query.Address)
+		})
+		Convey("Both coordinate dimensions participate in lookup", func() {
+			query.Address = geometry.NewCoordinate(0, 1)
+			So(tests.CollectSeq[core.Primitive](grid.Next(query.Next(nil))), ShouldBeEmpty)
+			So(errors.Is(grid.Error(), core.ErrNotHeld), ShouldBeTrue)
+		})
+		Convey("Unknown entities are explicit failures", func() {
+			query.Entity = "missing"
+			So(tests.CollectSeq[core.Primitive](grid.Next(query.Next(nil))), ShouldBeEmpty)
+			So(errors.Is(grid.Error(), core.ErrNotHeld), ShouldBeTrue)
+		})
+		Convey("Incomplete addresses fail before access", func() {
+			query.Entity = ""
+			So(tests.CollectSeq[core.Primitive](grid.Next(query.Next(nil))), ShouldBeEmpty)
+			So(errors.Is(grid.Error(), core.ErrShape), ShouldBeTrue)
+		})
+		Convey("Writes cannot replace a member's value", func() {
+			query.Actionable = data.ActionWrite
+			So(tests.CollectSeq[core.Primitive](grid.Next(query.Next(nil))), ShouldBeEmpty)
+			So(errors.Is(grid.Error(), core.ErrDomain), ShouldBeTrue)
+			So(sequence.Read[float64](resident.Next(nil)), ShouldEqual, 0)
 		})
 	})
-	Convey("Registration order cannot change owner execution or coordinate identity", t, func() {
-		firstKey, secondKey := [2]string{"trade", "first"}, [2]string{"trade", "second"}
-		first := store.NewGet[[2]string, float64](firstKey)
-		var firstMetric, secondMetric *float64
-		for output := range first.Next(sequence.NewValue(map[[2]string]float64{firstKey: 100})) {
-			firstMetric = (*float64)(output)
+	Convey("A member's execution failure reaches the Grid", t, func() {
+		member := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(0, 0), Primitive: store.NewGet[string, float64]("missing")}
+		grid := store.NewGrid(map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": member})
+		query := store.NewQuery[*geometry.Coordinate, map[string]float64](nil, data.ActionExecute)
+		query.Entity, query.Address = "BTC/USD", member.Identity()
+		for range grid.Next(query.Next(sequence.NewValue(map[string]float64{"present": 1}))) {
+			t.Fatal("failed member produced output")
 		}
-		second := nomagique.NewNumber(
-			store.NewGet[[2]string, float64](secondKey), sequence.
-				NewZip2[float64](sequence.NewOne(unsafe.Pointer(firstMetric)).Next(nil)), arithmetic.NewAdd(),
-		)
-		for output := range second.Next(sequence.NewValue(map[[2]string]float64{secondKey: 20})) {
-			secondMetric = (*float64)(output)
-		}
-		registrations := []*store.Query[float64]{store.NewQuery[float64](nil, data.ActionIdentify, sequence.NewValue(&store.Registration[float64]{Owner: "a", Operation: first, Interests: [][2]string{firstKey}, Metrics: map[string]*float64{"value": firstMetric}})), store.NewQuery[float64](nil, data.ActionIdentify, sequence.NewValue(&store.Registration[float64]{Owner: "b", Operation: second, Interests: [][2]string{secondKey}, Metrics: map[string]*float64{"value": secondMetric}}))}
-		for _, order := range [][2]int{{0, 1}, {1, 0}} {
-			grid := store.NewGrid[float64]()
-			for _, index := range order {
-				for range grid.Next(registrations[index].Next(nil)) {
-				}
-			}
-			pipeline := nomagique.NewNumber(store.NewQuery[float64](nil, data.ActionExecute), grid)
-			for range pipeline.Next(sequence.NewValue(map[[2]string]float64{firstKey: 10, secondKey: 3})) {
-			}
-			So(*firstMetric, ShouldEqual, 10)
-			So(*secondMetric, ShouldEqual, 13)
-			So(*grid.Coordinates[[2]string{"a", "value"}], ShouldResemble, [2]float64{0, 0})
-			So(*grid.Coordinates[[2]string{"b", "value"}], ShouldResemble, [2]float64{1, 0})
-			So(pipeline.Error(), ShouldBeNil)
-			// The owner restores its prior value before the reverse ordering.
-			for range first.Next(sequence.NewValue(map[[2]string]float64{firstKey: 100})) {
-			}
-		}
+		So(errors.Is(grid.Error(), core.ErrNotHeld), ShouldBeTrue)
 	})
-
 }
 
 func BenchmarkGridNext(b *testing.B) {
-	key := [2]string{"trade", "price"}
-	owner := store.NewGet[[2]string, float64](key)
-	raw := map[[2]string]float64{key: 100}
-	var metric *float64
-	for output := range owner.Next(sequence.NewValue(raw)) {
-		metric = (*float64)(output)
-	}
-	grid := store.NewGrid[float64]()
-	for range grid.Next(store.NewQuery[float64](nil, data.ActionIdentify, sequence.NewValue(&store.Registration[float64]{Owner: "signal", Operation: owner, Interests: [][2]string{key}, Metrics: map[string]*float64{"price": metric}})).Next(nil)) {
-	}
-	pipeline := nomagique.NewNumber(store.NewQuery[float64](nil, data.ActionExecute), grid)
-	tape := market.ImpulseTape("BTC/USD", 2)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
-		raw[key] = tape[index%len(tape)].Peers[0].Metrics["value"].Raw
-		for range pipeline.Next(sequence.NewValue(raw)) {
+	member := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(0, 0), Primitive: store.NewRetained(0.0)}
+	grid := store.NewGrid(map[string]core.Identifiable[*geometry.Coordinate]{"BTC/USD": member})
+	b.Run("Read", func(b *testing.B) {
+		query := store.NewQuery[*geometry.Coordinate, float64](nil, data.ActionRead)
+		query.Entity, query.Address = "BTC/USD", member.Identity()
+		run := grid.Next(query.Next(nil))
+		b.ReportAllocs()
+		for b.Loop() {
+			for range run {
+			}
 		}
-	}
-	if err := pipeline.Error(); err != nil {
+	})
+	b.Run("Execute", func(b *testing.B) {
+		query := store.NewQuery[*geometry.Coordinate, float64](nil, data.ActionExecute, sequence.NewValue(1.0, 4.0, -2.0, 0.0))
+		query.Entity, query.Address = "BTC/USD", member.Identity()
+		run := grid.Next(query.Next(nil))
+		b.ReportAllocs()
+		for b.Loop() {
+			for range run {
+			}
+		}
+	})
+	if err := grid.Error(); err != nil {
 		b.Fatal(err)
 	}
+}
+
+/*
+orderedIndex exercises Grid with a non-geometric value identity, including zero.
+*/
+type orderedIndex int
+
+func (index orderedIndex) Less(other orderedIndex) bool { return index < other }
+
+func TestGridNextIdentities(t *testing.T) {
+	Convey("Grid accepts non-geometric identities without special zero handling", t, func() {
+		member := &tests.Member[orderedIndex]{Primitive: store.NewRetained(9.0), Address: 0}
+		grid := store.NewGrid(map[string]core.Identifiable[orderedIndex]{"example": member})
+		query := store.NewQuery[orderedIndex, float64](nil, data.ActionRead)
+		query.Entity, query.Address = "example", 0
+		So(sequence.Read[core.Primitive](grid.Next(query.Next(nil))), ShouldEqual, member)
+		query.Actionable = data.ActionExecute
+		So(tests.CollectSeq[float64](grid.Next(query.Next(sequence.NewValue(4.0, 7.0)))), ShouldResemble, []float64{4, 7})
+		So(grid.Error(), ShouldBeNil)
+	})
+	Convey("A Coordinate can itself be a resident primitive", t, func() {
+		coordinate := geometry.NewCoordinate(-2, 5)
+		grid := store.NewGrid(map[string]core.Identifiable[*geometry.Coordinate]{"space": coordinate})
+		query := store.NewQuery[*geometry.Coordinate, int](nil, data.ActionRead)
+		query.Entity, query.Address = "space", geometry.NewCoordinate(-2, 5)
+		So(sequence.Read[core.Primitive](grid.Next(query.Next(nil))), ShouldEqual, coordinate)
+		query.Actionable = data.ActionExecute
+		So(tests.CollectSeq[int](grid.Next(query.Next(nil))), ShouldResemble, []int{-2, 5})
+		So(grid.Error(), ShouldBeNil)
+	})
+}
+
+func TestGridNextNested(t *testing.T) {
+	Convey("An owner's nested grid lookup cannot hide that owner's execution failure", t, func() {
+		resident := store.NewGrid[*geometry.Coordinate]()
+		peer := &tests.Member[*geometry.Coordinate]{Address: geometry.NewCoordinate(1, 0), Primitive: store.NewRetained(2.0)}
+		read := store.NewQuery[*geometry.Coordinate, core.Primitive](peer, data.ActionRead)
+		read.Entity = "BTC/USD"
+		owner := &tests.Member[*geometry.Coordinate]{
+			Address: geometry.NewCoordinate(0, 0),
+			Primitive: nomagique.NewNumber(
+				transport.NewOnce(nomagique.NewNumber(read, resident)),
+				store.NewGet[string, float64]("missing"),
+			),
+		}
+		for _, member := range []core.Identifiable[*geometry.Coordinate]{owner, peer} {
+			identify := store.NewQuery[*geometry.Coordinate, core.Identifiable[*geometry.Coordinate]](member, data.ActionIdentify, sequence.NewValue(member))
+			identify.Entity = "BTC/USD"
+			for range resident.Next(identify.Next(nil)) {
+			}
+		}
+		execute := store.NewQuery[*geometry.Coordinate, map[string]float64](owner, data.ActionExecute)
+		execute.Entity = "BTC/USD"
+		So(tests.CollectSeq[float64](resident.Next(execute.Next(sequence.NewValue(map[string]float64{"present": 1})))), ShouldBeEmpty)
+		So(errors.Is(owner.Error(), core.ErrNotHeld), ShouldBeTrue)
+		So(peer.Error(), ShouldBeNil)
+		So(errors.Is(resident.Error(), core.ErrNotHeld), ShouldBeTrue)
+	})
 }

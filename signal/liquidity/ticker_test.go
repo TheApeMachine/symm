@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -57,8 +59,8 @@ func TestTickerStepPreObservationBaseline(t *testing.T) {
 		entity := readyTicker(t.Context())
 		base := time.Unix(1_700_000_000, 0)
 
-		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
-		second := entity.Step(tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.0, 1.0, base))))
+		second := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))))
 
 		Convey("baseline, ratio and divergence reference the same pre-observation baseline", func() {
 			So(second.Err, ShouldBeNil)
@@ -77,8 +79,8 @@ func TestTickerStepPreObservationBaseline(t *testing.T) {
 
 		// Ask notional stays 102 across both steps (askQty constant), so the
 		// ask divergence is 0 and the baseline is the prior ask notional.
-		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
-		second := entity.Step(tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.0, 1.0, base))))
+		second := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))))
 
 		Convey("ask baseline is the prior ask notional with zero divergence", func() {
 			So(second.Metrics["touch_notional_baseline:ask"].Raw, ShouldAlmostEqual, 102.0, 1e-9)
@@ -95,7 +97,7 @@ degenerate.
 func TestTickerStepDegenerateNoise(t *testing.T) {
 	Convey("Given no prior observation", t, func() {
 		entity := readyTicker(t.Context())
-		first := entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, time.Unix(1, 0)))
+		first := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.0, 1.0, time.Unix(1, 0)))))
 
 		Convey("no baseline produces no z-score", func() {
 			So(first.Metrics["depth_zscore:bid"].Raw, ShouldEqual, 0.0)
@@ -106,8 +108,8 @@ func TestTickerStepDegenerateNoise(t *testing.T) {
 	Convey("Given a single prior observation (degenerate residual scale)", t, func() {
 		entity := readyTicker(t.Context())
 		base := time.Unix(1, 0)
-		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
-		second := entity.Step(tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.0, 1.0, base))))
+		second := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))))
 
 		Convey("the z-score is unwritten, the divergence is defined", func() {
 			So(second.Metrics["depth_zscore:bid"].Raw, ShouldEqual, 0.0)
@@ -127,10 +129,10 @@ func TestTickerStepZScorePresent(t *testing.T) {
 
 		// Vary the bid depth so the residual dispersion is non-zero, then
 		// observe the latest point's z-score.
-		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
-		entity.Step(tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
-		entity.Step(tick("BTC/USD", 100, 102, 1.5, 1.0, base.Add(2*time.Second)))
-		fourth := entity.Step(tick("BTC/USD", 100, 102, 3.0, 1.0, base.Add(3*time.Second)))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.0, 1.0, base))))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.5, 1.0, base.Add(2*time.Second)))))
+		fourth := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 3.0, 1.0, base.Add(3*time.Second)))))
 
 		Convey("the z-score is present and equals divergence / noise", func() {
 			zscore := fourth.Metrics["depth_zscore:bid"].Raw
@@ -152,8 +154,8 @@ func TestTickerMaturityUsesNEff(t *testing.T) {
 		entity := readyTicker(t.Context())
 		base := time.Unix(1, 0)
 
-		first := entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
-		second := entity.Step(tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
+		first := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.0, 1.0, base))))
+		second := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))))
 
 		Convey("maturity is 0 with no effective support, 1 - 1/N_eff with support", func() {
 			// First observation: no prior baseline, N_eff <= 1 -> maturity 0.
@@ -190,7 +192,7 @@ func TestTickerIrregularTimeRegression(t *testing.T) {
 		var fourth *data.Measurement[float64]
 
 		for index := range depths {
-			fourth = entity.Step(tick("BTC/USD", 100, 102, depths[index], 1.0, base.Add(offsets[index])))
+			fourth = sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, depths[index], 1.0, base.Add(offsets[index])))))
 		}
 
 		Convey("the velocity is a fitted regression slope, not a message-count delta", func() {
@@ -217,8 +219,8 @@ func TestTickerVelocityUndefinedAbsent(t *testing.T) {
 		entity := readyTicker(t.Context())
 		base := time.Unix(1, 0)
 
-		entity.Step(tick("BTC/USD", 100, 102, 1.0, 1.0, base))
-		second := entity.Step(tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
+		sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1.0, 1.0, base))))
+		second := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))))
 
 		Convey("the divergence velocity is absent, not zero", func() {
 			So(second.Metrics["divergence_velocity:bid"].Raw, ShouldEqual, 0.0)
@@ -241,7 +243,7 @@ func TestTickerVelocitySNRPresent(t *testing.T) {
 		var last *data.Measurement[float64]
 
 		for index := range depths {
-			last = entity.Step(tick("BTC/USD", 100, 102, depths[index], 1.0, base.Add(offsets[index])))
+			last = sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, depths[index], 1.0, base.Add(offsets[index])))))
 		}
 
 		Convey("the velocity SNR metric is present and finite", func() {
@@ -273,7 +275,7 @@ func TestTickerStepPeerIsolation(t *testing.T) {
 		owned := tick("ETH/USD", 0, 0, 0, 0, time.Unix(1, 0))
 		owned.Peers = []*data.Measurement[float64]{peer}
 
-		result := entity.Step(owned)
+		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](owned)))
 
 		Convey("the instrument writes onto its own measurement", func() {
 			So(result.Err, ShouldBeNil)
@@ -319,7 +321,7 @@ func TestTickerStepConcurrentPeers(t *testing.T) {
 				owned.Peers = []*data.Measurement[float64]{peer}
 
 				for range 50 {
-					entity.Step(owned)
+					sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](owned)))
 				}
 			}()
 		}
@@ -333,12 +335,12 @@ func TestTickerStepConcurrentPeers(t *testing.T) {
 	})
 }
 
-func TestTickerStep(t *testing.T) {
+func TestTickerNext(t *testing.T) {
 	Convey("Given a liquidity ticker-path instrument", t, func() {
 		entity := readyTicker(t.Context())
 
 		Convey("the first tick yields one measurement with the touch written", func() {
-			measurement := entity.Step(tick("BTC/USD", 100, 102, 1, 1, time.Unix(1, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1, 1, time.Unix(1, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -348,7 +350,7 @@ func TestTickerStep(t *testing.T) {
 		})
 
 		Convey("a crossed quote fails the gate", func() {
-			measurement := entity.Step(tick("BTC/USD", 103, 102, 1, 1, time.Unix(1, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 103, 102, 1, 1, time.Unix(1, 0)))))
 
 			So(measurement.Err, ShouldNotBeNil)
 		})
@@ -356,15 +358,15 @@ func TestTickerStep(t *testing.T) {
 		Convey("a measurement without a quote fails the gate", func() {
 			m := tick("BTC/USD", 0, 0, 1, 1, time.Unix(1, 0))
 
-			measurement := entity.Step(m)
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](m)))
 
 			So(measurement.Err, ShouldNotBeNil)
 		})
 
 		Convey("time regression surfaces without error and without advancing", func() {
-			entity.Step(tick("BTC/USD", 100, 102, 1, 1, time.Unix(2, 0)))
+			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 1, 1, time.Unix(2, 0)))))
 
-			measurement := entity.Step(tick("BTC/USD", 100, 102, 2, 1, time.Unix(1, 0)))
+			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](tick("BTC/USD", 100, 102, 2, 1, time.Unix(1, 0)))))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -392,7 +394,7 @@ func TestTickerStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
@@ -410,13 +412,13 @@ func TestTickerStepQuoteSelection(t *testing.T) {
 		owned.Peers = []*data.Measurement[float64]{incomplete}
 
 		Convey("an incomplete quote does not become zero displayed liquidity", func() {
-			So(ticker.Step(owned), ShouldBeNil)
+			So(sequence.Read[*data.Measurement[float64]](ticker.Next(sequence.NewValue[*data.Measurement[float64]](owned))), ShouldBeNil)
 		})
 
 		Convey("a complete quote after it supplies the observation", func() {
 			complete := tick("BTC/USD", 100, 102, 2, 3, time.Unix(1, 0))
 			owned.Peers = append(owned.Peers, complete)
-			result := ticker.Step(owned)
+			result := sequence.Read[*data.Measurement[float64]](ticker.Next(sequence.NewValue[*data.Measurement[float64]](owned)))
 			So(result.Err, ShouldBeNil)
 			So(result.Metrics["touch_notional:bid"].Raw, ShouldEqual, 200)
 			So(result.Metrics["touch_notional:ask"].Raw, ShouldEqual, 306)
@@ -424,7 +426,7 @@ func TestTickerStepQuoteSelection(t *testing.T) {
 	})
 }
 
-func BenchmarkTickerStep(b *testing.B) {
+func BenchmarkTickerNext(b *testing.B) {
 	ticker := readyTicker(b.Context())
 	peer := tick("BTC/USD", 100, 102, 2, 3, time.Unix(1, 0))
 	owned := ticker.Register()
@@ -434,6 +436,6 @@ func BenchmarkTickerStep(b *testing.B) {
 
 	for index := 0; index < b.N; index++ {
 		peer.At = peer.At.Add(time.Second)
-		ticker.Step(owned)
+		sequence.Read[*data.Measurement[float64]](ticker.Next(sequence.NewValue[*data.Measurement[float64]](owned)))
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+
 	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -367,7 +369,7 @@ func TestSolverStepMeasurement(t *testing.T) {
 	})
 }
 
-func TestSolverStep(t *testing.T) {
+func TestSolverNext(t *testing.T) {
 	Convey("Complete categories survive a multi-symbol registered observation", t, func() {
 		solver := NewSolver(t.Context())
 		solver.Transition(runtime.READY)
@@ -376,7 +378,7 @@ func TestSolverStep(t *testing.T) {
 			categoryMeasurement("ETH/USD", true, 0.4),
 			categoryMeasurement("BTC/USD", true, 0.8),
 		}
-		result := solver.Step(measurement)
+		result := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 		batches, ok := result.Result.([][]types.Category)
 		So(ok, ShouldBeTrue)
 		So(len(batches), ShouldEqual, 2)
@@ -407,7 +409,7 @@ func TestSolverStep(t *testing.T) {
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
-		result := solver.Step(m)
+		result := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m)))
 
 		Convey("the observation commits one classification revision", func() {
 			So(result, ShouldEqual, m)
@@ -437,7 +439,7 @@ func TestSolverStep(t *testing.T) {
 
 		m.Peers = []*data.Measurement[float64]{cvd, hawkes}
 
-		result := solver.Step(m)
+		result := sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](m)))
 
 		Convey("timestamp skew within tolerance is accepted and negative z-scores are retained", func() {
 			So(solver.Error(), ShouldBeNil)
@@ -505,14 +507,14 @@ func TestSolverStepReadiness(t *testing.T) {
 		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(node.Step(measurement), ShouldEqual, measurement)
+			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
 			So(node.Status(), ShouldEqual, stage)
 			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
 }
 
-func BenchmarkSolverStep(b *testing.B) {
+func BenchmarkSolverNext(b *testing.B) {
 	solver := NewSolver(b.Context())
 	solver.Transition(runtime.READY)
 	measurement := solver.Register()
@@ -523,7 +525,7 @@ func BenchmarkSolverStep(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		solver.Step(measurement)
+		sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
 
 		if err := solver.Error(); err != nil {
 			b.Fatal(err)
@@ -540,7 +542,7 @@ func TestSolverStepUnmeasured(t *testing.T) {
 		peer.Label = "BTC/USD"
 		peer.At = time.Unix(1, 0)
 		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(solver.Step(measurement), ShouldBeNil)
+		So(sequence.Read[*data.Measurement[float64]](solver.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
 		So(solver.Error(), ShouldBeNil)
 	})
 }

@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -53,59 +54,86 @@ func NewTrade(ctx context.Context) *Trade {
 }
 
 /*
-Step supplies public spot trade arrivals to the pipeline. Book mutations and
+Next supplies public spot trade arrivals to the pipeline. Book mutations and
 futures arrivals are different point processes, even when they share a symbol
 and carry price and quantity fields.
 */
-func (trade *Trade) Step(measurement *data.Measurement[float64]) *data.Measurement[float64] {
-	if trade.Status() != runtime.READY {
-		errnie.Warn(trade.Name() + ": Step called before READY; dropping event")
-		return measurement
-	}
+func (trade *Trade) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+	inputs:
+		for arriving := range in {
+			measurement := *(**data.Measurement[float64])(arriving)
 
-	if measurement == nil {
-		return measurement
-	}
+			if trade.Status() != runtime.READY {
+				errnie.Warn(trade.Name() + ": Next called before READY; dropping event")
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-	if len(measurement.Peers) > 0 {
-		measurement.Err = nil
+			if measurement == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
 
-		peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-			_, hasPrice := candidate.Metrics["price"]
-			_, hasQty := candidate.Metrics["qty"]
-			return candidate.Provenance["channel"] == "trade" &&
-				hasPrice && hasQty && candidate.Label != "" && candidate.Err == nil
-		})
+			if len(measurement.Peers) > 0 {
+				measurement.Err = nil
 
-		if peer == nil {
-			return nil
+				peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
+					_, hasPrice := candidate.Metrics["price"]
+					_, hasQty := candidate.Metrics["qty"]
+					return candidate.Provenance["channel"] == "trade" &&
+						hasPrice && hasQty && candidate.Label != "" && candidate.Err == nil
+				})
+
+				if peer == nil {
+					continue inputs
+				}
+
+				measurement.Reset()
+				measurement.Pull(peer, "price", "qty")
+			}
+
+			if measurement.Err != nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if _, hasQty := measurement.Metrics["qty"]; !hasQty {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			res := sequence.Read[*data.Measurement[float64]](trade.pipeline.Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
+
+			if res == nil {
+				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
+					return
+				}
+				continue inputs
+			}
+
+			if res != nil && !yield(unsafe.Pointer(&res)) {
+				return
+			}
+			continue inputs
+
 		}
-
-		measurement.Reset()
-		measurement.Pull(peer, "price", "qty")
 	}
-
-	if measurement.Err != nil {
-		return measurement
-	}
-
-	if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
-		return measurement
-	}
-
-	if _, hasQty := measurement.Metrics["qty"]; !hasQty {
-		return measurement
-	}
-
-	res := sequence.Read[*data.Measurement[float64]](trade.pipeline.Next(sequence.
-		NewOne(unsafe.Pointer(&measurement)).Next(nil),
-	))
-
-	if res == nil {
-		return measurement
-	}
-
-	return res
 }
 
 /*
