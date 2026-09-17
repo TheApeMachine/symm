@@ -49,30 +49,3 @@ func TestAssociate(t *testing.T) {
 		So(string(assocs[2].Class), ShouldEqual, "C->D")
 	})
 }
-
-func TestCurrent(t *testing.T) {
-	Convey("Current extracts the active evaluation context", t, func() {
-		current := cognition.NewCurrent()
-
-		assocSensory := cognition.Association{Context: []byte("A->B"), Class: nil}
-		assocClass := cognition.Association{Context: []byte("A->B"), Class: []byte("B->C")}
-
-		in := func(yield func(unsafe.Pointer) bool) {
-			if !yield(unsafe.Pointer(&assocSensory)) {
-				return
-			}
-
-			yield(unsafe.Pointer(&assocClass))
-		}
-
-		var contexts []string
-		for out := range current.Next(in) {
-			contexts = append(contexts, string(*(*[]byte)(out)))
-		}
-
-		So(current.Error(), ShouldBeNil)
-		So(len(contexts), ShouldEqual, 2)
-		So(contexts[0], ShouldEqual, "A->B")
-		So(contexts[1], ShouldEqual, "B->C")
-	})
-}

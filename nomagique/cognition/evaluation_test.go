@@ -1,22 +1,16 @@
 package cognition_test
 
 import (
-	"sync/atomic"
 	"testing"
 	"unsafe"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/cognition"
 )
 
 func TestEvaluatorNext(t *testing.T) {
 	Convey("Evaluator coordinates the atomic cognition primitives over arriving contexts", t, func() {
-		var root atomic.Pointer[iradix.Tree[[]byte]]
-		root.Store(iradix.New[[]byte]())
-
-		var stepCounter atomic.Uint64
-		reinforcePrim := cognition.NewReinforce(&root, &stepCounter)
+		trie := cognition.NewTrie()
 
 		// Train associations:
 		// ctx -> enter (positive feedback)
@@ -33,10 +27,10 @@ func TestEvaluatorNext(t *testing.T) {
 				yield(unsafe.Pointer(&trainAssocs[i]))
 			}
 		}
-		for range reinforcePrim.Next(inTrain) {
+		for range trie.Next(inTrain) {
 		}
 
-		evaluator := cognition.NewEvaluator(&root, &stepCounter)
+		evaluator := cognition.NewEvaluator(trie)
 
 		ctx := []byte("ctx")
 		inEval := func(yield func(unsafe.Pointer) bool) {

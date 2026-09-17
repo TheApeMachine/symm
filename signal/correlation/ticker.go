@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/equation"
@@ -145,13 +146,13 @@ func NewTicker(
 			nomagique.NewNumber(nmcorrelation.NewEnergyPair(), arithmetic.NewDivide(), relativeHold),
 		)
 		baseline := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewFisherBaseline(), baselineHold),
+			nomagique.NewNumber(statistic.NewResidualBaseline(), calculus.NewTanh(), baselineHold),
 		)
 		divergence := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewFisherDivergence(), divergenceHold),
+			nomagique.NewNumber(statistic.NewResidualDivergence(), divergenceHold),
 		)
 		zscore := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(nmcorrelation.NewFisherZScore(), zscoreHold),
+			nomagique.NewNumber(statistic.NewResidualZScore(), zscoreHold),
 		)
 		velocity := transport.NewConn[*geometry.Coordinate](
 			nomagique.NewNumber(nmcorrelation.NewFisherPoint(), temporal.NewVelocity(), temporal.NewRate(), velocityHold),
@@ -273,11 +274,18 @@ func NewTicker(
 				nmcorrelation.NewSigned(),
 				transport.NewFan(
 					nomagique.NewNumber(
-						nmcorrelation.NewFisherEstimator(),
+						calculus.NewAtanh(),
+						statistic.NewEstimator(),
+						statistic.NewCausalResidual(),
 						transport.NewFan(
-							nomagique.NewNumber(nmcorrelation.NewFisherBaseline(), baselineHold, transport.NewDiscard()),
-							nomagique.NewNumber(nmcorrelation.NewFisherDivergence(), divergenceHold, transport.NewDiscard()),
-							nomagique.NewNumber(nmcorrelation.NewFisherZScore(), zscoreHold, transport.NewDiscard()),
+							nomagique.NewNumber(
+								statistic.NewResidualBaseline(),
+								calculus.NewTanh(),
+								baselineHold,
+								transport.NewDiscard(),
+							),
+							nomagique.NewNumber(statistic.NewResidualDivergence(), divergenceHold, transport.NewDiscard()),
+							nomagique.NewNumber(statistic.NewResidualZScore(), zscoreHold, transport.NewDiscard()),
 						),
 						transport.NewDiscard(),
 					),

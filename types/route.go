@@ -67,7 +67,7 @@ func AllowsRoute(measurement *data.Measurement[float64]) bool {
 
 	switch Route() {
 	case "dashboard":
-		return isSignal(measurement, SignalSourceStrings...) &&
+		return (isSignal(measurement, SignalSourceStrings...) || isStrategy(measurement, "training")) &&
 			Allows(measurement.Label)
 	case "xray":
 		return isSignal(measurement, "hawkes") && Allows(measurement.Label)
@@ -78,7 +78,7 @@ func AllowsRoute(measurement *data.Measurement[float64]) bool {
 	case "journal", "hindsight", "workbench", "pipeline":
 		return false
 	default:
-		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, LogicSourceStrings...)) &&
+		return (isSignal(measurement, SignalSourceStrings...) || isLogic(measurement, LogicSourceStrings...) || isStrategy(measurement, "training")) &&
 			Allows(measurement.Label)
 	}
 }
@@ -121,7 +121,7 @@ func RouteDropReason(measurement *data.Measurement[float64]) string {
 		return "webrtc"
 	}
 
-	if Route() == "dashboard" && !isSignal(measurement, SignalSourceStrings...) {
+	if Route() == "dashboard" && !isSignal(measurement, SignalSourceStrings...) && !isStrategy(measurement, "training") {
 		return "source"
 	}
 

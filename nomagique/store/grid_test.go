@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"iter"
 	"testing"
 	"unsafe"
@@ -126,7 +127,7 @@ func TestGridNext(t *testing.T) {
 		)
 
 		query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-			nil, core.Execute,
+			nil, core.Write,
 		)
 		for range grid.Next(query.Next(sequence.NewValue(*lastInput, *bidInput))) {
 		}
@@ -154,5 +155,65 @@ func TestGridNext(t *testing.T) {
 			).Next(nil),
 		))
 		So(*again.Value, ShouldEqual, 150.0)
+	})
+}
+
+func TestGridConcurrentReadsAndWrites(t *testing.T) {
+	Convey("Grid writes and reads metrics concurrently via errgroup", t, func() {
+		grid := store.NewGrid[*geometry.Coordinate]()
+		const cellCount = 10
+		conns := make([]*transport.Conn[*geometry.Coordinate], cellCount)
+
+		for index := 0; index < cellCount; index++ {
+			retained := store.NewRetained[float64]()
+			key := fmt.Sprintf("metric_%d", index)
+			conn := transport.NewConn[*geometry.Coordinate](
+				nomagique.NewNumber(&take{PrimitiveError: core.NewPrimitiveError()}, retained),
+			)
+			conns[index] = conn
+
+			sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
+				store.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+					conn, core.Identify,
+				).Next(sequence.NewValue([][]string{{"test", "data", key}})),
+			))
+		}
+
+		origin := transport.NewAddress[string]()
+		origin.Identify("TEST/USD")
+		var inputs []core.Input[string, []string, any]
+
+		for index := 0; index < cellCount; index++ {
+			key := fmt.Sprintf("metric_%d", index)
+			val := any(float64(index * 10))
+			inputs = append(inputs, *core.NewInput[string, []string, any](
+				origin, core.Write, []string{"test", "data", key}, &val,
+			))
+		}
+
+		writeQuery := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+			nil, core.Write,
+		)
+		for range grid.Next(writeQuery.Next(sequence.NewValue(inputs...))) {
+		}
+
+		readQuery := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+			nil, core.Read,
+		)
+		received := make(map[float64]bool)
+
+		for reading := range grid.Next(readQuery.Next(nil)) {
+			input := (*core.Input[*geometry.Coordinate, string, float64])(reading)
+			if input != nil && input.Value != nil {
+				received[*input.Value] = true
+			}
+		}
+
+		So(len(received), ShouldEqual, cellCount)
+
+		for index := 0; index < cellCount; index++ {
+			expected := float64(index * 10)
+			So(received[expected], ShouldBeTrue)
+		}
 	})
 }

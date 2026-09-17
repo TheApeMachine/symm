@@ -1,22 +1,16 @@
 package cognition_test
 
 import (
-	"sync/atomic"
 	"testing"
 	"unsafe"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/cognition"
 )
 
-func TestReinforceNext(t *testing.T) {
-	Convey("Reinforce updates basin and sensory records in the radix trie", t, func() {
-		var root atomic.Pointer[iradix.Tree[[]byte]]
-		root.Store(iradix.New[[]byte]())
-
-		var stepCounter atomic.Uint64
-		reinforcePrim := cognition.NewReinforce(&root, &stepCounter)
+func TestTrieNext(t *testing.T) {
+	Convey("Trie reinforces associations into the radix trie and yields active context", t, func() {
+		trie := cognition.NewTrie()
 
 		assoc := cognition.Association{
 			Context:  []byte("r1/r2"),
@@ -29,16 +23,17 @@ func TestReinforceNext(t *testing.T) {
 			yield(unsafe.Pointer(&assoc))
 		}
 
-		var results []cognition.Association
-		for out := range reinforcePrim.Next(in) {
-			results = append(results, *(*cognition.Association)(out))
+		var contexts []string
+		for out := range trie.Next(in) {
+			contexts = append(contexts, string(*(*[]byte)(out)))
 		}
 
-		So(reinforcePrim.Error(), ShouldBeNil)
-		So(len(results), ShouldEqual, 1)
-		So(stepCounter.Load(), ShouldEqual, 1)
+		So(trie.Error(), ShouldBeNil)
+		So(len(contexts), ShouldEqual, 1)
+		So(contexts[0], ShouldEqual, "enter")
+		So(trie.StepCounter.Load(), ShouldEqual, 1)
 
-		tree := root.Load()
+		tree := trie.Root.Load()
 		basinVal, foundBasin := tree.Get([]byte("b/r1/r2/enter"))
 		So(foundBasin, ShouldBeTrue)
 
@@ -67,12 +62,30 @@ func TestReinforceNext(t *testing.T) {
 		So(unpackedSensory.Mass, ShouldEqual, 1.0)
 	})
 
-	Convey("negative feedback inhibits mass so +1 followed by -1 cancels", t, func() {
-		var root atomic.Pointer[iradix.Tree[[]byte]]
-		root.Store(iradix.New[[]byte]())
+	Convey("Trie yields sensory context when class is absent", t, func() {
+		trie := cognition.NewTrie()
 
-		var stepCounter atomic.Uint64
-		reinforcePrim := cognition.NewReinforce(&root, &stepCounter)
+		sensoryAssoc := cognition.Association{
+			Context: []byte("initial_context"),
+			Class:   nil,
+		}
+
+		in := func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(&sensoryAssoc))
+		}
+
+		var contexts []string
+		for out := range trie.Next(in) {
+			contexts = append(contexts, string(*(*[]byte)(out)))
+		}
+
+		So(trie.Error(), ShouldBeNil)
+		So(len(contexts), ShouldEqual, 1)
+		So(contexts[0], ShouldEqual, "initial_context")
+	})
+
+	Convey("negative feedback inhibits mass so +1 followed by -1 cancels", t, func() {
+		trie := cognition.NewTrie()
 
 		posAssoc := cognition.Association{
 			Context:  []byte("ctx1"),
@@ -96,12 +109,12 @@ func TestReinforceNext(t *testing.T) {
 			yield(unsafe.Pointer(&negAssoc))
 		}
 
-		for range reinforcePrim.Next(in) {
+		for range trie.Next(in) {
 		}
 
-		So(stepCounter.Load(), ShouldEqual, 2)
+		So(trie.StepCounter.Load(), ShouldEqual, 2)
 
-		tree := root.Load()
+		tree := trie.Root.Load()
 		basinVal, foundBasin := tree.Get([]byte("b/ctx1/enter"))
 		So(foundBasin, ShouldBeTrue)
 
@@ -120,11 +133,7 @@ func TestReinforceNext(t *testing.T) {
 	})
 
 	Convey("CAS contention advances logical observation count once per commit", t, func() {
-		var root atomic.Pointer[iradix.Tree[[]byte]]
-		root.Store(iradix.New[[]byte]())
-
-		var stepCounter atomic.Uint64
-		reinforcePrim := cognition.NewReinforce(&root, &stepCounter)
+		trie := cognition.NewTrie()
 
 		const concurrentWriters = 8
 		done := make(chan struct{}, concurrentWriters)
@@ -144,7 +153,7 @@ func TestReinforceNext(t *testing.T) {
 					yield(unsafe.Pointer(&writerAssoc))
 				}
 
-				for range reinforcePrim.Next(in) {
+				for range trie.Next(in) {
 				}
 			}(i)
 		}
@@ -153,6 +162,6 @@ func TestReinforceNext(t *testing.T) {
 			<-done
 		}
 
-		So(stepCounter.Load(), ShouldEqual, uint64(concurrentWriters))
+		So(trie.StepCounter.Load(), ShouldEqual, uint64(concurrentWriters))
 	})
 }

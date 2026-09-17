@@ -11,13 +11,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
-	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/store"
 
@@ -109,19 +105,24 @@ var (
 
 			if catalog == nil {
 				return errnie.Error(errnie.Err(
-					errnie.IO, "symm: catalog initialization failed", nil,
+					errnie.IO, "[root] catalog initialization failed", nil,
 				))
 			}
 
 			if err := catalog.Ensure(ctx); err != nil {
-				return err
+				return errnie.Error(errnie.Err(
+					errnie.IO, "[root] catalog initialization failed", err,
+				))
 			}
+
+			grid := store.NewGrid[*geometry.Coordinate]()
 
 			public := websocket.New(
 				ctx,
 				websocket.NewSimulator(),
 				false,
 				system.Cfg.WebSocket.Endpoints.Public,
+				grid,
 			)
 
 			private := websocket.New(
@@ -129,11 +130,13 @@ var (
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
+				grid,
 			)
 
 			futures := websocket.NewFutures(
 				ctx,
 				system.Cfg.WebSocket.Endpoints.Futures,
+				grid,
 			)
 
 			api := websocket.NewAPI(
@@ -176,7 +179,10 @@ var (
 				))
 			}
 
-			training := strategy.NewTraining[*geometry.Coordinate](ctx, price)
+			training := strategy.NewTraining[*geometry.Coordinate](
+				ctx, grid, ui.NewTrainingPublisher(uiTee, storeTee, "BTC/USD"),
+			)
+			grid.OnWrite(training.Wake)
 
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
@@ -190,8 +196,6 @@ var (
 
 			hub := ui.NewHub(ctx, nil, catalog, uiTee)
 			hub.Run()
-
-			grid := store.NewGrid[*geometry.Coordinate]()
 
 			manifoldSolver := manifold.NewSolver(ctx, api)
 
@@ -256,11 +260,6 @@ var (
 				},
 			)
 
-			pipeline := nomagique.NewNumber(workspace)
-
-			var observation int64
-			input := sequence.NewOne(unsafe.Pointer(&observation))
-
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
 			if err := instrument.Subscribe(); err != nil {
@@ -319,12 +318,7 @@ var (
 			}()
 
 			manifoldSolver.Start()
-
-			transportErrors := make(chan error, 1)
-
-			go func() {
-				transportErrors <- hub.Fluid.Run(webrtcTee)
-			}()
+			training.Start()
 
 			// Every processing and off-ramp owner is ready before ingress opens.
 			for _, connection := range private.Connections() {
@@ -335,36 +329,7 @@ var (
 				transport.Transition(nmruntime.READY)
 			}
 
-			var totalSteps atomic.Uint64
-
-			for ctx.Err() == nil {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case err := <-transportErrors:
-					return errnie.Error(errnie.Err(errnie.IO, "symm: WebRTC publisher stopped", err))
-				case err := <-drainErrors:
-					return errnie.Error(errnie.Err(
-						errnie.IO, "symm: catalog drain stopped", err,
-					))
-				default:
-				}
-
-				if public.Pending() > 0 || private.Pending() > 0 || futures.Pending() > 0 {
-					for range pipeline.Next(input.Next(nil)) {
-					}
-					if err := pipeline.Error(); err != nil {
-						return err
-					}
-					observation++
-					totalSteps.Add(1)
-					continue
-				}
-
-				time.Sleep(100 * time.Microsecond)
-			}
-
-			return ctx.Err()
+			return hub.Fluid.Run(webrtcTee)
 		},
 	}
 )

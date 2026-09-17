@@ -10,10 +10,12 @@ import (
 
 /*
 Atanh owns one field operation. What it hands over is the inverse hyperbolic
-tangent of each arrival, operating in-place on the wire pointer.
+tangent of each arrival.
 */
 type Atanh struct {
 	*core.PrimitiveError
+
+	out float64
 }
 
 func NewAtanh() *Atanh {
@@ -23,10 +25,9 @@ func NewAtanh() *Atanh {
 func (atanh *Atanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			in := (*float64)(arriving)
-			*in = math.Atanh(*in)
+			atanh.out = math.Atanh(*(*float64)(arriving))
 
-			if !yield(arriving) {
+			if !yield(unsafe.Pointer(&atanh.out)) {
 				return
 			}
 		}

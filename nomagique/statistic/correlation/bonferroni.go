@@ -34,11 +34,7 @@ func (bonferroni *Bonferroni) Next(
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			input := (*BonferroniInput)(arriving)
-			val := input.P * input.Candidates
-
-			if val > 1.0 {
-				val = 1.0
-			}
+			val := min(core.Unit, input.P*input.Candidates)
 
 			bonferroni.out = val
 

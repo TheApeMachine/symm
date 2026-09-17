@@ -45,7 +45,7 @@ func (causalResidual *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq
 				MomentReading: reading,
 				HasPrior:      reading.Prior.Count > 0,
 				Baseline:      reading.Value,
-				Maturity:      1 - 1/(reading.Prior.Count+1),
+				Maturity:      core.Unit - core.Unit/(reading.Prior.Count+core.Unit),
 				NoiseVariance: reading.Variance,
 			}
 
@@ -53,8 +53,8 @@ func (causalResidual *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq
 				result.Baseline = reading.Prior.Mean
 			}
 
-			if reading.Prior.Count > 1 {
-				result.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
+			if reading.Prior.Count > core.Unit {
+				result.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - core.Unit)
 			}
 
 			result.Residual = reading.Value - result.Baseline

@@ -3,17 +3,16 @@ package strategy
 import (
 	"context"
 	"iter"
-	"sync/atomic"
 	"unsafe"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type Action string
@@ -35,18 +34,16 @@ func LegalActions(holding bool) []Action {
 /*
 Training reads the impulse map, discovers spatial attractor basins, streams temporal
 transitions, reinforces empirical associations into the radix trie, and evaluates
-prospective trajectories. Environment legality and tie abstention belong downstream
-in Decision.
+prospective trajectories.
 */
 type Training[T interface {
 	core.Ordered[T]
 	comparable
 }] struct {
 	*runtime.System
-	root        atomic.Pointer[iradix.Tree[[]byte]]
-	stepCounter atomic.Uint64
-	pipeline    *nomagique.Number
-	Reinforce   *cognition.Reinforce
+	grid     *store.Grid[T]
+	pipeline *nomagique.Number
+	wake     chan struct{}
 }
 
 func NewTraining[T interface {
@@ -54,26 +51,73 @@ func NewTraining[T interface {
 	comparable
 }](
 	ctx context.Context,
-	price *broker.Price,
-	members ...core.Connectable[T],
+	grid *store.Grid[T],
+	offramps ...core.Primitive,
 ) *Training[T] {
-	training := &Training[T]{}
-	training.root.Store(iradix.New[[]byte]())
+	training := &Training[T]{
+		grid: grid,
+		wake: make(chan struct{}, 1),
+	}
+	trie := cognition.NewTrie()
 
-	training.Reinforce = cognition.NewReinforce(&training.root, &training.stepCounter)
-
-	training.pipeline = nomagique.NewNumber(
-		associative.NewGrid(members...),
+	primitives := []core.Primitive{
+		associative.NewGrid[T](grid),
 		associative.NewRegion(),
 		temporal.NewTransition(),
 		cognition.NewAssociate(),
-		training.Reinforce,
-		cognition.NewCurrent(),
-		cognition.NewEvaluator(&training.root, &training.stepCounter),
-	)
+		trie,
+		cognition.NewEvaluator(trie),
+	}
 
+	for _, offramp := range offramps {
+		if offramp != nil {
+			primitives = append(primitives, transport.NewTee(offramp))
+		}
+	}
+
+	training.pipeline = nomagique.NewNumber(primitives...)
 	training.System = runtime.NewSystem(ctx, "training")
 	return training
+}
+
+/*
+Wake triggers one step through the training pipeline.
+*/
+func (training *Training[T]) Wake() {
+	select {
+	case training.wake <- struct{}{}:
+	default:
+	}
+}
+
+/*
+Step reads the current grid state and advances the pipeline by one observation.
+*/
+func (training *Training[T]) Step() {
+	if training.Status() != runtime.READY || training.grid == nil {
+		return
+	}
+
+	query := store.NewQuery[T, any](nil, core.Read)
+
+	for range training.Next(query.Next(nil)) {
+	}
+}
+
+/*
+Start launches the reactive background loop that steps whenever woken.
+*/
+func (training *Training[T]) Start() {
+	go func() {
+		for {
+			select {
+			case <-training.Context().Done():
+				return
+			case <-training.wake:
+				training.Step()
+			}
+		}
+	}()
 }
 
 /*

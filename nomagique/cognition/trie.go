@@ -25,36 +25,36 @@ type Association struct {
 }
 
 /*
-Reinforce updates basin and sensory transition records in the radix trie.
-It advances the monotonic clock and incorporates empirical counts and graded
-feedback via atomic compare-and-swap on the immutable radix tree.
+Trie owns the immutable radix trie for associative cognitive learning and inference.
+Arriving Association inputs reinforce empirical basin (b/<context>/<class>) and
+sensory (s/<context>) weights, advance the monotonic step counter, and yield the
+active evaluation context byte slice directly downstream for evaluation.
 */
-type Reinforce struct {
+type Trie struct {
 	*core.PrimitiveError
-	root        *atomic.Pointer[iradix.Tree[[]byte]]
-	stepCounter *atomic.Uint64
+	Root          atomic.Pointer[iradix.Tree[[]byte]]
+	StepCounter   atomic.Uint64
+	weightDecoder *Weight
+	packEncoder   *Pack
+	out           []byte
 }
 
-func NewReinforce(
-	root *atomic.Pointer[iradix.Tree[[]byte]],
-	stepCounter *atomic.Uint64,
-) *Reinforce {
-	return &Reinforce{
+func NewTrie() *Trie {
+	trie := &Trie{
 		PrimitiveError: core.NewPrimitiveError(),
-		root:           root,
-		stepCounter:    stepCounter,
+		weightDecoder: NewWeight(),
+		packEncoder:   NewPack(),
 	}
+
+	trie.Root.Store(iradix.New[[]byte]())
+	return trie
 }
 
-func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (trie *Trie) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if reinforcePrim.Error() != nil || reinforcePrim.root == nil {
+		if trie.Error() != nil {
 			return
 		}
-
-		weightDecoder := NewWeight()
-		packEncoder := NewPack()
-		var out Association
 
 		for arriving := range in {
 			if arriving == nil {
@@ -70,12 +70,8 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 			sensoryKey := makeSensoryKey(assoc.Context)
 
 			for {
-				oldRoot := reinforcePrim.root.Load()
-				var step uint64
-				if reinforcePrim.stepCounter != nil {
-					step = reinforcePrim.stepCounter.Load() + 1
-				}
-
+				oldRoot := trie.Root.Load()
+				step := trie.StepCounter.Load() + 1
 				txn := oldRoot.Txn()
 
 				if len(assoc.Class) > 0 && (!assoc.Graded || assoc.Feedback != 0) {
@@ -93,7 +89,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 						inW := func(yieldW func(unsafe.Pointer) bool) {
 							yieldW(unsafe.Pointer(&existing))
 						}
-						for outW := range weightDecoder.Next(inW) {
+						for outW := range trie.weightDecoder.Next(inW) {
 							pw = *(*PackedWeight)(outW)
 						}
 
@@ -113,7 +109,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 					inPack := func(yieldP func(unsafe.Pointer) bool) {
 						yieldP(unsafe.Pointer(&pw))
 					}
-					for outP := range packEncoder.Next(inPack) {
+					for outP := range trie.packEncoder.Next(inPack) {
 						packed = *(*[WeightSize]byte)(outP)
 					}
 					txn.Insert(basinKey, bytes.Clone(packed[:]))
@@ -129,7 +125,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 					inW := func(yieldW func(unsafe.Pointer) bool) {
 						yieldW(unsafe.Pointer(&existing))
 					}
-					for outW := range weightDecoder.Next(inW) {
+					for outW := range trie.weightDecoder.Next(inW) {
 						sPW = *(*PackedWeight)(outW)
 					}
 
@@ -142,23 +138,30 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 				inPack := func(yieldP func(unsafe.Pointer) bool) {
 					yieldP(unsafe.Pointer(&sPW))
 				}
-				for outP := range packEncoder.Next(inPack) {
+				for outP := range trie.packEncoder.Next(inPack) {
 					sPacked = *(*[WeightSize]byte)(outP)
 				}
 				txn.Insert(sensoryKey, bytes.Clone(sPacked[:]))
 
 				newRoot := txn.Commit()
-				if reinforcePrim.root.CompareAndSwap(oldRoot, newRoot) {
-					if reinforcePrim.stepCounter != nil {
-						reinforcePrim.stepCounter.Add(1)
-					}
+				if trie.Root.CompareAndSwap(oldRoot, newRoot) {
+					trie.StepCounter.Add(1)
 					break
 				}
 			}
 
-			out = assoc
-			if !yield(unsafe.Pointer(&out)) {
-				return
+			if len(assoc.Class) > 0 {
+				trie.out = bytes.Clone(assoc.Class)
+			}
+
+			if len(assoc.Class) == 0 {
+				trie.out = bytes.Clone(assoc.Context)
+			}
+
+			if len(trie.out) > 0 {
+				if !yield(unsafe.Pointer(&trie.out)) {
+					return
+				}
 			}
 		}
 	}

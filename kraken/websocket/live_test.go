@@ -3,11 +3,24 @@ package websocket
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/callback"
+	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
+
+func makeLiveEvent(raw []byte) *callback.Event[*sdk.WebSocketMessage] {
+	return &callback.Event[*sdk.WebSocketMessage]{
+		Data: sdk.NewWebSocketMessage(raw),
+	}
+}
 
 func TestLiveStepReadiness(t *testing.T) {
 	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
@@ -40,5 +53,37 @@ func TestLiveConnections(t *testing.T) {
 		So(child.Status(), ShouldEqual, runtime.READY)
 		parent.Transition(runtime.WAITING)
 		So(child.Status(), ShouldEqual, runtime.READY)
+	})
+}
+
+func TestLiveWritesTickerToGrid(t *testing.T) {
+	Convey("A public ticker row is written to the grid through Query Write", t, func() {
+		grid := store.NewGrid[*geometry.Coordinate]()
+		held := store.NewRetained[float64]()
+		conn := transport.NewConn[*geometry.Coordinate](
+			nomagique.NewNumber(store.NewField("ticker", "data", "last"), held),
+		)
+		sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
+			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				conn, core.Identify,
+			).Next(sequence.NewValue([][]string{{"ticker", "data", "last"}})),
+		))
+
+		live := &Live{
+			System: runtime.NewSystem(t.Context(), "public"),
+			grid:   grid,
+		}
+		live.Transition(runtime.READY)
+
+		raw := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ETH/USD","last":101.5}]}`)
+		live.onReceived(makeLiveEvent(raw))
+
+		reading := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
+			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				conn, core.Read,
+			).Next(nil),
+		))
+		So(reading.Value, ShouldNotBeNil)
+		So(*reading.Value, ShouldEqual, 101.5)
 	})
 }

@@ -13,13 +13,17 @@ import (
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/derivatives"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/signal/quote"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/utils"
 	"golang.design/x/lockfree/lf"
@@ -71,6 +75,7 @@ type FuturesLive struct {
 	// stage downstream keys on the spot symbol, so the frame is attributed
 	// here. The instrument registry owns the mapping and installs it.
 	resolve atomic.Pointer[func(string) (string, bool)]
+	grid    *store.Grid[*geometry.Coordinate]
 }
 
 /*
@@ -151,8 +156,9 @@ constructor, mirroring New.
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
+	grid *store.Grid[*geometry.Coordinate],
 ) *FuturesLive {
-	return NewFuturesWithClient(ctx, endpoint, nil)
+	return NewFuturesWithClient(ctx, endpoint, nil, grid)
 }
 
 /*
@@ -163,6 +169,7 @@ func NewFuturesWithClient(
 	ctx context.Context,
 	endpoint string,
 	client *derivatives.WebSocket,
+	grid *store.Grid[*geometry.Coordinate],
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = system.Cfg.WebSocket.Endpoints.Futures
@@ -183,6 +190,7 @@ func NewFuturesWithClient(
 		callbacks:     &sync.Map{},
 		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
+		grid:          grid,
 	}
 	futures.client.Store(client)
 
@@ -490,38 +498,13 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		row := map[string]any{
-			"channel":             "futures." + futuresKey(feed),
-			"symbol":              ticker.Data.Symbol,
-			"product_id":          ticker.Data.ProductID,
-			"open_interest":       ticker.Data.OpenInterest,
-			"volume":              ticker.Data.Volume,
-			"timestamp":           ticker.Data.Timestamp,
-			"synthetic_timestamp": ticker.Data.SyntheticTimestamp,
+		if futures.grid != nil {
+			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				nil, core.Execute,
+			)
+			for range futures.grid.Next(query.Next(quote.NewFutures().Next(sequence.NewValue(ticker.Data)))) {
+			}
 		}
-
-		if ticker.Data.Last != nil {
-			row["last"] = ticker.Data.Last
-			row["last_price"] = ticker.Data.Last
-		}
-
-		if ticker.Data.IndexPrice != nil {
-			row["index_price"] = ticker.Data.IndexPrice
-		}
-
-		if ticker.Data.MarkPrice != nil {
-			row["mark_price"] = ticker.Data.MarkPrice
-		}
-
-		if ticker.Data.Bid != nil {
-			row["bid"] = ticker.Data.Bid
-		}
-
-		if ticker.Data.Ask != nil {
-			row["ask"] = ticker.Data.Ask
-		}
-
-		futures.queue.Enqueue(row)
 
 	case "trade", "trade_snapshot":
 		if futures.Status() != runtime.READY {
@@ -539,21 +522,15 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		for _, item := range trades.Data {
-			row := map[string]any{
-				"channel":             "futures." + futuresKey(feed),
-				"symbol":              item.Symbol,
-				"product_id":          item.ProductID,
-				"price":               item.Price,
-				"qty":                 item.Qty,
-				"side":                item.Side,
-				"type":                item.Type,
-				"uid":                 item.UID,
-				"timestamp":           item.Timestamp,
-				"synthetic_timestamp": item.SyntheticTimestamp,
+		if futures.grid != nil {
+			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				nil, core.Execute,
+			)
+			tradeQuote := quote.NewFuturesTrade()
+			for _, item := range trades.Data {
+				for range futures.grid.Next(query.Next(tradeQuote.Next(sequence.NewValue(item)))) {
+				}
 			}
-
-			futures.queue.Enqueue(row)
 		}
 	}
 }
@@ -563,100 +540,7 @@ Next implements the runtime.Node interface: one dequeued futures record becomes
 one measurement.
 */
 func (futures *FuturesLive) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-	inputs:
-		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
-
-			if futures.Status() != runtime.READY {
-				errnie.Warn(futures.Name() + ": Next called before READY; dropping event")
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			row, ok := futures.queue.Dequeue()
-
-			if !ok {
-				continue inputs
-			}
-
-			if measurement == nil {
-				measurement = futures.Register()
-			}
-
-			measurement.Provenance = make(map[string]string, 4)
-			measurement.Metadata["venue"] = "true"
-			measurement.Maturity = 1
-			measurement.Metrics = make(map[string]data.Metric[float64], len(row))
-			measurement.Err = nil
-			measurement.At = time.Time{}
-			measurement.From = time.Time{}
-
-			if symbol, ok := row["symbol"].(string); ok {
-				measurement.Label = symbol
-			}
-
-			if channel, ok := row["channel"].(string); ok {
-				measurement.Provenance["channel"] = channel
-			}
-
-			if side, ok := row["side"].(string); ok {
-				measurement.Provenance["side"] = side
-			}
-
-			if tradeType, ok := row["type"].(string); ok {
-				measurement.Provenance["type"] = tradeType
-			}
-
-			if synthetic, ok := row["synthetic_timestamp"].(bool); ok && synthetic {
-				measurement.Provenance["synthetic_timestamp"] = "true"
-			}
-
-			if at, ok := row["timestamp"].(time.Time); ok {
-				measurement.At = at
-			}
-
-			if measurement.At.IsZero() {
-				measurement.At = time.Now().UTC()
-			}
-
-			for key, value := range row {
-				switch val := value.(type) {
-				case *decimal.Decimal:
-					if val != nil {
-						metric := measurement.Metrics[key]
-						metric.Label = key
-						metric.Raw = val.Float64()
-						metric.Exact = val
-						measurement.Metrics[key] = metric
-					}
-
-				case decimal.Decimal:
-					dec := val
-					metric := measurement.Metrics[key]
-					metric.Label = key
-					metric.Raw = dec.Float64()
-					metric.Exact = &dec
-					measurement.Metrics[key] = metric
-
-				case float64:
-					metric := measurement.Metrics[key]
-					metric.Label = key
-					metric.Raw = val
-					metric.Exact = decimal.NewFromFloat64(val)
-					measurement.Metrics[key] = metric
-				}
-			}
-
-			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-				return
-			}
-			continue inputs
-
-		}
-	}
+	return in
 }
 
 /*

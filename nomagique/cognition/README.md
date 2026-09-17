@@ -4,19 +4,15 @@ An immutable radix trie for associative learning and inference. Basin and sensor
 records use the same pointer-free, 24-byte `PackedWeight` representation.
 
 ```go
-var root atomic.Pointer[iradix.Tree[[]byte]]
-root.Store(iradix.New[[]byte]())
-var stepCounter atomic.Uint64
+trie := cognition.NewTrie()
+evaluator := cognition.NewEvaluator(trie)
 
-reinforce := cognition.NewReinforce(&root, &stepCounter)
-evaluator := cognition.NewEvaluator(&root, &stepCounter)
-
-// Learn an observed association.
+// Learn an observed association into the trie.
 assoc := cognition.Association{
 	Context: precursorSequence,
 	Class:   []byte("action_enter"),
 }
-reinforce.Next(...)
+trie.Next(...)
 
 // Or apply a completed replay grade to that association.
 gradedAssoc := cognition.Association{
@@ -25,7 +21,7 @@ gradedAssoc := cognition.Association{
 	Feedback: grade * authority,
 	Graded:   true,
 }
-reinforce.Next(...)
+trie.Next(...)
 
 // Live inference reads the immutable trie without acquiring a mutex.
 evaluator.Next(...)

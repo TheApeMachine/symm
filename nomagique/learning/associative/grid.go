@@ -37,11 +37,11 @@ type Grid[T interface {
 func NewGrid[T interface {
 	core.Ordered[T]
 	comparable
-}](members ...core.Connectable[T]) *Grid[T] {
+}](grid *store.Grid[T]) *Grid[T] {
 	return &Grid[T]{
 		PrimitiveError: core.NewPrimitiveError(),
 		pipeline: nomagique.NewNumber(
-			store.NewGrid(members...),
+			grid,
 			statistic.NewSympathy[T](),
 			geometry.NewMapping[T](
 				geometry.NewInversion(),

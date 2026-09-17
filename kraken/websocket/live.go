@@ -15,21 +15,24 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
-	"golang.design/x/lockfree/lf"
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
-	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/signal/quote"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -59,7 +62,6 @@ subscriptions; protocol and ingestion failures remain terminal.
 type Live struct {
 	*runtime.System
 	funding      FundingLedger
-	queue        *lf.Queue[map[string]any]
 	schema       map[string]data.Metric[float64]
 	client       atomic.Pointer[spot.WebSocket]
 	endpoint     string
@@ -78,6 +80,7 @@ type Live struct {
 	pinger       *Pinger
 	level3Client func() *spot.WebSocket
 	pingReqID    atomic.Int64
+	grid         *store.Grid[*geometry.Coordinate]
 }
 
 /*
@@ -88,9 +91,10 @@ func New(
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
+	grid *store.Grid[*geometry.Coordinate],
 ) *Live {
 	return NewWithClient(
-		ctx, simulator, auth, endpoint, nil,
+		ctx, simulator, auth, endpoint, nil, grid,
 	)
 }
 
@@ -105,6 +109,7 @@ func NewWithClient(
 	auth bool,
 	endpoint string,
 	client *spot.WebSocket,
+	grid *store.Grid[*geometry.Coordinate],
 ) *Live {
 	if client == nil {
 		client = spot.NewWebSocket()
@@ -134,10 +139,10 @@ func NewWithClient(
 		normalizer: spot.NewNormalizer(),
 		auth:       auth,
 		callbacks:  &sync.Map{},
-		queue:      lf.NewQueue[map[string]any](),
 		paper:      NewPaper(ctx, simulator),
 		model:      system.Cfg.Market.Model,
 		quote:      system.Cfg.Market.QuoteCurrency,
+		grid:       grid,
 	}
 
 	live.client.Store(client)
@@ -211,185 +216,25 @@ func NewWithClient(
 				return
 			}
 
-			for _, touch := range touches {
-				if touch.Bid == nil || touch.Ask == nil {
-					continue
-				}
+			if live.grid != nil {
+				touchQuote := quote.NewTouch()
+				query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+					nil, core.Execute,
+				)
 
-				row := map[string]any{
-					"channel":        "level3",
-					"symbol":         touch.Symbol,
-					"timestamp":      touch.Timestamp.Format(time.RFC3339Nano),
-					"bid":            json.Number(touch.Bid.String()),
-					"best_bid":       json.Number(touch.Bid.String()),
-					"best_price:bid": json.Number(touch.Bid.String()),
-					"ask":            json.Number(touch.Ask.String()),
-					"best_ask":       json.Number(touch.Ask.String()),
-					"best_price:ask": json.Number(touch.Ask.String()),
-				}
+				for _, touch := range touches {
+					if touch.Bid == nil || touch.Ask == nil {
+						continue
+					}
 
-				if touch.BidQty != nil {
-					row["bid_qty"] = json.Number(touch.BidQty.String())
-					row["touch_quantity:bid"] = json.Number(touch.BidQty.String())
+					for range live.grid.Next(query.Next(touchQuote.Next(sequence.NewValue(touch)))) {
+					}
 				}
-
-				if touch.AskQty != nil {
-					row["ask_qty"] = json.Number(touch.AskQty.String())
-					row["touch_quantity:ask"] = json.Number(touch.AskQty.String())
-				}
-
-				live.queue.Enqueue(row)
 			}
 		})
 	}
 
-	client.OnReceived.Recurring(func(event *callback.Event[*sdk.WebSocketMessage]) {
-		raw := event.Data.Bytes()
-		channel := utils.GetString(raw, "channel")
-
-		if channel == "" {
-			if method := utils.GetString(raw, "method"); method != "" {
-				channel = method
-			}
-		}
-
-		// An unsubscribe acknowledgement answers the instrument's paced
-		// recovery of a checksum-diverged symbol; there is nothing to
-		// dispatch for it.
-		if channel == "unsubscribe" {
-			if message := utils.GetString(raw, "error"); message != "" {
-				live.Error(errnie.Err(
-					errnie.IO, "websocket: unsubscribe rejected: "+message, nil,
-				))
-			}
-
-			return
-		}
-
-		switch channel {
-		case "ticker", "trade", "executions":
-			if live.Status() != runtime.READY {
-				return
-			}
-
-			// One queue row per venue record: the callback splits the frame's
-			// data array so Step converts exactly one measurement per dequeue.
-			// The typed entity parse is skipped; the row map is the payload.
-			frame, err := event.Data.Map()
-
-			if err != nil {
-				live.Error(errnie.Err(
-					errnie.Validation,
-					"websocket: failed to map "+channel+" frame",
-					err,
-				))
-
-				return
-			}
-
-			rows, rowsOk := frame["data"].([]any)
-
-			if !rowsOk {
-				return
-			}
-
-			frameTimestamp, _ := frame["timestamp"].(string)
-
-			for _, entry := range rows {
-				row, rowOk := entry.(map[string]any)
-
-				if !rowOk {
-					continue
-				}
-
-				row["channel"] = channel
-
-				if _, hasTimestamp := row["timestamp"]; !hasTimestamp && frameTimestamp != "" {
-					row["timestamp"] = frameTimestamp
-				}
-
-				live.queue.Enqueue(row)
-			}
-
-			return
-		}
-
-		handler, ok := entityMap[channel]
-
-		if !ok {
-			live.Error(errnie.Err(
-				errnie.NotFound,
-				"websocket: unhandled channel "+channel,
-				nil,
-			))
-			return
-		}
-
-		out := handler(raw)
-
-		if channel == "subscribe" {
-			errMessage := utils.GetString(raw, "error")
-
-			if errMessage != "" {
-				live.Error(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("websocket: subscription rejected: %s", errMessage),
-					nil,
-				))
-
-				return
-			}
-		}
-
-		// Dispatch one-shot callbacks (e.g. "instrument" snapshot)
-		if cb, ok := live.callbacks.LoadAndDelete(channel); ok {
-			if msgChan, ok := cb.(chan any); ok {
-				msgChan <- out
-			}
-		}
-
-		if channel == "level3" {
-			level3, ok := out.(*kraken.Level3)
-
-			if !ok {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"websocket: unexpected level3 payload type",
-					nil,
-				))
-
-				return
-			}
-
-			if live.book != nil {
-				if err := live.book.Update(event, level3); err != nil {
-					errnie.Error(err)
-				}
-			}
-
-			if live.Status() == runtime.READY {
-				live.enqueueLevel3(level3)
-			}
-
-			return
-		}
-
-		switch channel {
-		case "pong":
-
-			if errMsg := utils.GetString(raw, "error"); errMsg != "" {
-				live.Error(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("websocket: pong error: %s", errMsg),
-					nil,
-				))
-
-				return
-			}
-
-			return
-		}
-	})
+	client.OnReceived.Recurring(live.onReceived)
 
 	errnie.Info(fmt.Sprintf("websocket: connecting to %s", live.client.Load().URL))
 	live.Transition(runtime.WAITING)
@@ -411,76 +256,149 @@ func NewWithClient(
 	return live
 }
 
-func (live *Live) enqueueLevel3(level3 *kraken.Level3) {
-	if live == nil || live.queue == nil || level3 == nil {
+func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
+	raw := event.Data.Bytes()
+	channel := utils.GetString(raw, "channel")
+
+	if channel == "" {
+		if method := utils.GetString(raw, "method"); method != "" {
+			channel = method
+		}
+	}
+
+	if channel == "unsubscribe" {
+		if message := utils.GetString(raw, "error"); message != "" {
+			live.Error(errnie.Err(
+				errnie.IO, "websocket: unsubscribe rejected: "+message, nil,
+			))
+		}
+
 		return
 	}
 
-	isSnapshot := level3.Type == "snapshot"
+	switch channel {
+	case "ticker":
+		if live.Status() != runtime.READY {
+			return
+		}
 
-	for _, entry := range level3.Data {
-		checksumStr := strconv.FormatUint(uint64(entry.Checksum), 10)
-		entrySnapshot := isSnapshot || entry.Type == "snapshot"
+		ticker := kraken.NewTicker(raw)
 
-		live.enqueueLevel3Orders(entry.Symbol, "bid", entry.Bids, entry.Timestamp, checksumStr, entrySnapshot)
-		live.enqueueLevel3Orders(entry.Symbol, "ask", entry.Asks, entry.Timestamp, checksumStr, entrySnapshot)
-	}
-}
+		if ticker == nil || len(ticker.Data) == 0 {
+			return
+		}
 
-func (live *Live) enqueueLevel3Orders(
-	symbol string,
-	side string,
-	orders []kraken.Level3Order,
-	fallbackAt time.Time,
-	checksumStr string,
-	isSnapshot bool,
-) {
-	for _, order := range orders {
-		eventName := order.Event
+		if live.grid != nil {
+			tickerQuote := quote.NewTicker()
+			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				nil, core.Execute,
+			)
 
-		if eventName == "" {
-			eventName = "add"
-
-			if !isSnapshot {
-				eventName = "modify"
+			for _, item := range ticker.Data {
+				for range live.grid.Next(query.Next(tickerQuote.Next(sequence.NewValue(item)))) {
+				}
 			}
 		}
 
-		at := order.Timestamp
+		return
 
-		if at.IsZero() {
-			at = fallbackAt
+	case "trade":
+		if live.Status() != runtime.READY {
+			return
 		}
 
-		if at.IsZero() {
-			at = time.Now()
+		trade := kraken.NewTrade(raw)
+
+		if trade == nil || len(trade.Data) == 0 {
+			return
 		}
 
-		limitPrice := order.ChecksumLimitPrice()
+		if live.grid != nil {
+			tradeQuote := quote.NewTrade()
+			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				nil, core.Execute,
+			)
 
-		if limitPrice == "" && order.LimitPrice != nil {
-			limitPrice = order.LimitPrice.String()
+			for _, item := range trade.Data {
+				for range live.grid.Next(query.Next(tradeQuote.Next(sequence.NewValue(item)))) {
+				}
+			}
 		}
 
-		orderQty := order.ChecksumOrderQty()
+		return
+	}
 
-		if orderQty == "" && order.OrderQty != nil {
-			orderQty = order.OrderQty.String()
+	handler, ok := entityMap[channel]
+
+	if !ok {
+		live.Error(errnie.Err(
+			errnie.NotFound,
+			"websocket: unhandled channel "+channel,
+			nil,
+		))
+
+		return
+	}
+
+	out := handler(raw)
+
+	if channel == "subscribe" {
+		errMessage := utils.GetString(raw, "error")
+
+		if errMessage != "" {
+			live.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("websocket: subscription rejected: %s", errMessage),
+				nil,
+			))
+
+			return
+		}
+	}
+
+	if live.callbacks != nil {
+		if callbackItem, ok := live.callbacks.LoadAndDelete(channel); ok {
+			if msgChan, ok := callbackItem.(chan any); ok {
+				msgChan <- out
+			}
+		}
+	}
+
+	if channel == "level3" {
+		level3, ok := out.(*kraken.Level3)
+
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"websocket: unexpected level3 payload type",
+				nil,
+			))
+
+			return
 		}
 
-		row := map[string]any{
-			"channel":     "level3",
-			"symbol":      symbol,
-			"side":        side,
-			"event":       eventName,
-			"order_id":    order.OrderID,
-			"timestamp":   at.Format(time.RFC3339Nano),
-			"limit_price": json.Number(limitPrice),
-			"order_qty":   json.Number(orderQty),
-			"checksum":    json.Number(checksumStr),
+		if live.book != nil {
+			if err := live.book.Update(event, level3); err != nil {
+				errnie.Error(err)
+			}
 		}
 
-		live.queue.Enqueue(row)
+		return
+	}
+
+	switch channel {
+	case "pong":
+		if errMsg := utils.GetString(raw, "error"); errMsg != "" {
+			live.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("websocket: pong error: %s", errMsg),
+				nil,
+			))
+
+			return
+		}
+
+		return
 	}
 }
 
@@ -491,139 +409,7 @@ metric keeps the exact decimal the venue printed in Exact while Raw carries the
 float64 the mathematics runs on.
 */
 func (live *Live) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-	inputs:
-		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
-
-			if live.Status() != runtime.READY {
-				errnie.Warn(live.Name() + ": Next called before READY; dropping event")
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			row, ok := live.queue.Dequeue()
-
-			if !ok {
-				continue inputs
-			}
-
-			if measurement == nil {
-				measurement = live.Register()
-			}
-
-			measurement.Provenance = make(map[string]string, 4)
-			measurement.Metadata["venue"] = "true"
-			measurement.Metadata["volume-unit"] = "base"
-			measurement.Maturity = 1
-			measurement.Metrics = make(map[string]data.Metric[float64], len(row))
-			measurement.Err = nil
-			measurement.At = time.Time{}
-			measurement.From = time.Time{}
-
-			if live.Name() != "" && (measurement.Source == "" || measurement.Source == "websocket") {
-				measurement.Source = live.Name()
-			}
-
-			if symbol, ok := row["symbol"].(string); ok {
-				measurement.Label = live.normalizer.Name(symbol)
-			}
-
-			if channel, ok := row["channel"].(string); ok {
-				measurement.Provenance["channel"] = channel
-			}
-
-			if side, ok := row["side"].(string); ok {
-				measurement.Provenance["side"] = side
-			}
-
-			if ordType, ok := row["ord_type"].(string); ok {
-				measurement.Provenance["ord_type"] = ordType
-			}
-
-			if event, ok := row["event"].(string); ok {
-				measurement.Provenance["event"] = event
-			}
-
-			if orderID, ok := row["order_id"].(string); ok {
-				measurement.Provenance["order_id"] = orderID
-			}
-
-			if stamped, ok := row["timestamp"].(string); ok {
-				at, err := time.Parse(time.RFC3339Nano, stamped)
-
-				if err != nil {
-					measurement.Err = errnie.Err(errnie.Validation, "websocket: invalid row timestamp", err)
-					if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-						return
-					}
-					continue inputs
-				}
-
-				measurement.At = at
-			}
-
-			if measurement.At.IsZero() {
-				measurement.At = time.Now().UTC()
-			}
-
-			for key, value := range row {
-				number, ok := value.(json.Number)
-
-				if !ok {
-					continue
-				}
-
-				exact, err := sdkdecimal.NewFromString(number.String())
-
-				if err != nil {
-					measurement.Err = errnie.Err(
-						errnie.Validation,
-						"websocket: invalid row number "+key,
-						err,
-					)
-
-					if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-						return
-					}
-					continue inputs
-				}
-
-				metric := measurement.Metrics[key]
-				metric.Label = key
-				metric.Raw = exact.Float64()
-				metric.Exact = exact
-				measurement.Metrics[key] = metric
-			}
-
-			if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-				return
-			}
-			continue inputs
-
-		}
-	}
-}
-
-/*
-Register implements the runtime.Node interface: it declares every numeric field
-the venue's spot rows can produce, none valued.
-*/
-func (live *Live) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("websocket", map[string]data.Metric[float64]{})
-}
-
-/*
-Pending reports the count of unprocessed rows waiting in the inbound queue.
-*/
-func (live *Live) Pending() uint64 {
-	if live == nil || live.queue == nil {
-		return 0
-	}
-
-	return live.queue.Length()
+	return in
 }
 
 func (live *Live) authenticate() (err error) {
@@ -897,13 +683,13 @@ func (live *Live) SubL3(symbols []string) {
 			live.auth,
 			system.Cfg.WebSocket.Endpoints.Level3,
 			live.level3ClientFor(),
+			live.grid,
 		)
 
 		if conn.Error() != nil {
 			return
 		}
 
-		conn.queue = live.queue
 		conn.symbols = append([]string{}, groups...)
 		live.AttachLevel3(groupKey, conn)
 
@@ -1019,8 +805,6 @@ func (live *Live) AttachLevel3(groupKey string, conn *Live) {
 	if conn == nil || groupKey == "" {
 		return
 	}
-
-	conn.queue = live.queue
 
 	if live.level3 == nil {
 		live.level3 = &sync.Map{}

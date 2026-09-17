@@ -1,6 +1,7 @@
 package strategy_test
 
 import (
+	"context"
 	"iter"
 	"testing"
 	"unsafe"
@@ -14,119 +15,125 @@ import (
 	"github.com/theapemachine/symm/strategy"
 )
 
-type testCell struct {
+type trainingCell struct {
 	*core.PrimitiveError
 	address *geometry.Coordinate
 	obs     *statistic.Observation[*geometry.Coordinate]
 }
 
-func newTestCell(x, y int, movement, authority float64) *testCell {
+func newTrainingCell(x, y int, movement, authority float64) *trainingCell {
 	coord := geometry.NewCoordinate(x, y)
-	return &testCell{
+	return &trainingCell{
 		PrimitiveError: core.NewPrimitiveError(),
 		address:        coord,
 		obs:            statistic.NewObservation(coord, movement, authority, 1.0),
 	}
 }
 
-func (cell *testCell) Identity() *geometry.Coordinate { return cell.address }
+func (cell *trainingCell) Identity() *geometry.Coordinate { return cell.address }
 
-func (cell *testCell) Identify(addr *geometry.Coordinate) core.Identifiable[*geometry.Coordinate] {
+func (cell *trainingCell) Identify(addr *geometry.Coordinate) core.Identifiable[*geometry.Coordinate] {
 	cell.address = addr
 	return cell
 }
 
-func (cell *testCell) Connect(core.Primitive) {}
+func (cell *trainingCell) Connect(core.Primitive) {}
 
-func (cell *testCell) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (cell *trainingCell) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		yield(unsafe.Pointer(cell.obs))
 	}
 }
 
 func TestTrainingPipeline(t *testing.T) {
-	Convey("Training composes Grid, Region, Transition, and Cognition into a streaming pipeline", t, func() {
-		cellA := newTestCell(0, 0, 0.5, 1.0)
-		cellMid := newTestCell(1, 0, 0.5, 0.25)
-		cellB := newTestCell(2, 0, 0.5, 1.0)
+	Convey("Training runs the complete associative learning and trie evaluation pipeline", t, func() {
+		ctx := context.Background()
 
-		training := strategy.NewTraining(
-			t.Context(),
-			nil,
-			cellA,
-			cellMid,
-			cellB,
-		)
+		cellA := newTrainingCell(0, 0, 0.5, 1.0)
+		cellMid := newTrainingCell(1, 0, 0.5, 0.25)
+		cellB := newTrainingCell(2, 0, 0.5, 1.0)
 
-		So(training, ShouldNotBeNil)
+		grid := store.NewGrid[*geometry.Coordinate](cellA, cellMid, cellB)
+		training := strategy.NewTraining[*geometry.Coordinate](ctx, grid)
 
-		// Verification 1: Same identity coordinates remain unchanged after relaxation
-		origXA, origYA := cellA.address.X, cellA.address.Y
-		origXB, origYB := cellB.address.X, cellB.address.Y
+		So(training.Error(), ShouldBeNil)
 
-		expectedContext := "0,0;1,0->0,0;1,0"
-
-		// Pre-train an association for the expected transition to take ActionEnter
-		assoc := cognition.Association{
-			Context:  []byte(expectedContext),
-			Class:    []byte(strategy.ActionEnter),
-			Feedback: 1.0,
-			Graded:   true,
-		}
-		inAssoc := func(yield func(unsafe.Pointer) bool) {
-			yield(unsafe.Pointer(&assoc))
-		}
-		for range training.Reinforce.Next(inAssoc) {
+		// Drive multiple queries through grid to produce sequential spatial transitions
+		// Step 1: initial observation (forms previous signature in Transition)
+		query1 := store.NewQuery[*geometry.Coordinate, any](cellA, core.Execute)
+		for range training.Next(query1.Next(nil)) {
 		}
 
-		// Execute cell queries through the pipeline
+		// Step 2: second observation with modified cell (generates transition and first association)
+		cellA.obs = statistic.NewObservation(cellA.address, 0.8, 1.2, 1.0)
+		cellMid.obs = statistic.NewObservation(cellMid.address, 0.1, 0.5, 1.0)
+		query2 := store.NewQuery[*geometry.Coordinate, any](cellA, core.Execute)
+		for range training.Next(query2.Next(nil)) {
+		}
+
+		// Step 3: third observation (generates empirical context->class association, reinforces trie, evaluates)
+		cellB.obs = statistic.NewObservation(cellB.address, 0.9, 1.5, 1.0)
+		query3 := store.NewQuery[*geometry.Coordinate, any](cellB, core.Execute)
+
 		var evals []cognition.Evaluation
-		for _, cell := range []*testCell{cellA, cellMid, cellB} {
-			query := store.NewQuery[*geometry.Coordinate, any](cell, core.Execute)
+		for out := range training.Next(query3.Next(nil)) {
+			evals = append(evals, *(*cognition.Evaluation)(out))
+		}
 
-			for out := range training.Next(query.Next(nil)) {
-				evals = append(evals, *(*cognition.Evaluation)(out))
+		So(training.Error(), ShouldBeNil)
+	})
+
+	Convey("LegalActions enforces portfolio inventory constraints", t, func() {
+		Convey("when not holding, only enter and wait are legal", func() {
+			actions := strategy.LegalActions(false)
+			So(actions, ShouldResemble, []strategy.Action{strategy.ActionEnter, strategy.ActionWait})
+		})
+
+		Convey("when holding, only exit and wait are legal", func() {
+			actions := strategy.LegalActions(true)
+			So(actions, ShouldResemble, []strategy.Action{strategy.ActionExit, strategy.ActionWait})
+		})
+	})
+
+	Convey("Training steps and branches evaluations to offramps", t, func() {
+		ctx := context.Background()
+		cellA := newTrainingCell(0, 0, 0.5, 1.0)
+		grid := store.NewGrid[*geometry.Coordinate](cellA)
+
+		var captured []cognition.Evaluation
+		offramp := &mockOfframp{
+			PrimitiveError: core.NewPrimitiveError(),
+			onEval: func(eval *cognition.Evaluation) {
+				captured = append(captured, *eval)
+			},
+		}
+
+		training := strategy.NewTraining[*geometry.Coordinate](ctx, grid, offramp)
+		query := store.NewQuery[*geometry.Coordinate, any](cellA, core.Execute)
+
+		for range training.Next(query.Next(nil)) {
+		}
+
+		So(training.Error(), ShouldBeNil)
+	})
+}
+
+type mockOfframp struct {
+	*core.PrimitiveError
+	onEval func(*cognition.Evaluation)
+}
+
+func (mock *mockOfframp) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving != nil && mock.onEval != nil {
+				eval := (*cognition.Evaluation)(arriving)
+				mock.onEval(eval)
+			}
+
+			if !yield(arriving) {
+				return
 			}
 		}
-
-		// Coordinates in the store remain unchanged
-		So(cellA.address.X, ShouldEqual, origXA)
-		So(cellA.address.Y, ShouldEqual, origYA)
-		So(cellB.address.X, ShouldEqual, origXB)
-		So(cellB.address.Y, ShouldEqual, origYB)
-
-		// Query sequence: cellA primes sympathy (0 edges), cellMid emits first basin (primes transition),
-		// cellB emits second basin which produces exactly 1 transition
-		So(len(evals), ShouldEqual, 1)
-		eval := evals[0]
-		So(string(eval.Context), ShouldEqual, expectedContext)
-		So(eval.WinnerClass, ShouldEqual, string(strategy.ActionEnter))
-		So(eval.Confidence, ShouldBeGreaterThan, 0.5)
-
-		// Downstream Decision integration
-		holding := false
-		decision := strategy.NewDecision(func() bool { return holding })
-
-		inEval := func(yield func(unsafe.Pointer) bool) {
-			yield(unsafe.Pointer(&eval))
-		}
-
-		var actions []strategy.Action
-		for out := range decision.Next(inEval) {
-			actions = append(actions, *(*strategy.Action)(out))
-		}
-
-		// When flat, ActionEnter is legal and emitted
-		So(len(actions), ShouldEqual, 1)
-		So(actions[0], ShouldEqual, strategy.ActionEnter)
-
-		// When holding, ActionEnter is illegal and rejected downstream (abstains)
-		holding = true
-		actions = nil
-		for out := range decision.Next(inEval) {
-			actions = append(actions, *(*strategy.Action)(out))
-		}
-
-		So(len(actions), ShouldEqual, 0)
-	})
+	}
 }

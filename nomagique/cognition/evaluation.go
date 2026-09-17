@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -64,18 +63,15 @@ type Evaluator struct {
 	out              Evaluation
 }
 
-func NewEvaluator(
-	root *atomic.Pointer[iradix.Tree[[]byte]],
-	stepCounter *atomic.Uint64,
-) *Evaluator {
+func NewEvaluator(trie *Trie) *Evaluator {
 	return &Evaluator{
 		PrimitiveError: core.NewPrimitiveError(),
-		attractor:      NewAttractor(root),
+		attractor:      NewAttractor(&trie.Root),
 		classification: NewClassification(),
 		ambiguity:      probability.NewAmbiguity(),
-		surprisal:      NewSurprisal(root, stepCounter),
-		lookahead:      NewLookahead(root),
-		stepCounter:    stepCounter,
+		surprisal:      NewSurprisal(&trie.Root, &trie.StepCounter),
+		lookahead:      NewLookahead(&trie.Root),
+		stepCounter:    &trie.StepCounter,
 	}
 }
 

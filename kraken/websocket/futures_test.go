@@ -5,13 +5,17 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/data/sequence"
-
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"golang.design/x/lockfree/lf"
 )
 
@@ -75,40 +79,54 @@ func TestFuturesLive(t *testing.T) {
 				So(futures.Status(), ShouldEqual, runtime.READY)
 			})
 
-			Convey("And a ticker frame is received and stepped", func() {
+			Convey("And a ticker frame is received and routed to grid", func() {
+				grid := store.NewGrid[*geometry.Coordinate]()
+				held := store.NewRetained[float64]()
+				conn := transport.NewConn[*geometry.Coordinate](
+					nomagique.NewNumber(store.NewField("futures", "data", "last"), held),
+				)
+				sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
+					core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+						conn, core.Identify,
+					).Next(sequence.NewValue([][]string{{"futures", "data", "last"}})),
+				))
+
+				futures.grid = grid
 				event := makeFuturesEvent([]byte(`{"feed":"ticker","product_id":"PI_XBTUSD","bid":50000.0,"ask":50001.0,"last":50000.5,"markPrice":50000.2,"index":50000.1,"openInterest":1000.0}`))
 				futures.onReceived(event)
 
-				inputMeasurement := data.NewMeasurement("futures", map[string]data.Metric[float64]{
-					"last":        data.NewMetric[float64]("last", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-					"last_price":  data.NewMetric[float64]("last_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-					"index_price": data.NewMetric[float64]("index_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-					"mark_price":  data.NewMetric[float64]("mark_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-				})
-
-				stepped := sequence.Read[*data.Measurement[float64]](futures.Next(sequence.NewValue[*data.Measurement[float64]](inputMeasurement)))
-				So(stepped.Label, ShouldEqual, "BTC/USD")
-				So(stepped.Metrics["last"].Raw, ShouldEqual, 50000.5)
-				So(stepped.Metrics["last_price"].Raw, ShouldEqual, 50000.5)
-				So(stepped.Metrics["index_price"].Raw, ShouldEqual, 50000.1)
-				So(stepped.Metrics["mark_price"].Raw, ShouldEqual, 50000.2)
+				reading := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
+					core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+						conn, core.Read,
+					).Next(nil),
+				))
+				So(reading.Value, ShouldNotBeNil)
+				So(*reading.Value, ShouldEqual, 50000.5)
 			})
 
-			Convey("And a trade frame is received and stepped", func() {
+			Convey("And a trade frame is received and routed to grid", func() {
+				grid := store.NewGrid[*geometry.Coordinate]()
+				held := store.NewRetained[float64]()
+				conn := transport.NewConn[*geometry.Coordinate](
+					nomagique.NewNumber(store.NewField("futures", "data", "price"), held),
+				)
+				sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
+					core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+						conn, core.Identify,
+					).Next(sequence.NewValue([][]string{{"futures", "data", "price"}})),
+				))
+
+				futures.grid = grid
 				event := makeFuturesEvent([]byte(`{"feed":"trade","product_id":"PI_XBTUSD","side":"buy","type":"fill","price":50000.5,"qty":2.5,"uid":"trade-123"}`))
 				futures.onReceived(event)
 
-				inputMeasurement := data.NewMeasurement("futures", map[string]data.Metric[float64]{
-					"price": data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-					"qty":   data.NewMetric[float64]("qty", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-				})
-
-				stepped := sequence.Read[*data.Measurement[float64]](futures.Next(sequence.NewValue[*data.Measurement[float64]](inputMeasurement)))
-				So(stepped.Label, ShouldEqual, "BTC/USD")
-				So(stepped.Metrics["price"].Raw, ShouldEqual, 50000.5)
-				So(stepped.Metrics["qty"].Raw, ShouldEqual, 2.5)
-				So(stepped.Provenance["side"], ShouldEqual, "buy")
-				So(stepped.Provenance["type"], ShouldEqual, "fill")
+				reading := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
+					core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+						conn, core.Read,
+					).Next(nil),
+				))
+				So(reading.Value, ShouldNotBeNil)
+				So(*reading.Value, ShouldEqual, 50000.5)
 			})
 		})
 

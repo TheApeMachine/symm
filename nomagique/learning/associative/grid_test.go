@@ -52,7 +52,8 @@ func TestAssociativeGridPipeline(t *testing.T) {
 		cellMid := newTestCell(1, 0, 0.5, 0.25)
 		cellB := newTestCell(2, 0, 0.5, 1.0)
 
-		grid := associative.NewGrid(cellA, cellMid, cellB)
+		rawGrid := store.NewGrid(cellA, cellMid, cellB)
+		grid := associative.NewGrid(rawGrid)
 
 		So(grid.Error(), ShouldBeNil)
 
