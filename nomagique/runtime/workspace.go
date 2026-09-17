@@ -2,10 +2,12 @@ package runtime
 
 import (
 	"context"
+	"iter"
+	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/runtime/disruptor"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/runtime/disruptor"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -19,18 +21,17 @@ execute concurrently and query only peers owned by earlier stages. Step admits
 work while READY; each consumer writes its sequence-owned result and immediately
 pushes it to the Tees.
 */
-type Workspace[T any] struct {
+type Workspace struct {
 	*System
 	channel disruptor.Disruptor
 }
 
-func NewWorkspace[T any](
+func NewWorkspace(
 	ctx context.Context,
 	label string,
-	stages [][]core.Identifiable[T],
-	tees ...Tee,
-) *Workspace[T] {
-	workload := &Workspace[T]{}
+	stages [][]core.Primitive,
+) *Workspace {
+	workload := &Workspace{}
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(
@@ -39,7 +40,7 @@ func NewWorkspace[T any](
 	)
 
 	for _, stage := range stages {
-		group := make([]disruptor.Handler, len(stage))
+		group := make([]disruptor.Handler, 0, len(stage))
 
 		for _, node := range stage {
 			group = append(group, NewConsumer(node))
@@ -71,29 +72,15 @@ func NewWorkspace[T any](
 
 // Step commits work without waiting for completion. The Disruptor's capacity
 // barrier prevents reuse until all stages, including each consumer's Tee calls, finish.
-func (workspace *Workspace[T]) Step(payload T) T {
-	if workspace.Status() != READY {
-		errnie.Warn(workspace.Name() + ": Step called before READY; dropping event")
-		return payload
-	}
+func (workspace *Workspace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for item := range in {
+			seq := workspace.channel.Reserve(1)
+			workspace.channel.Commit(seq, seq)
 
-	select {
-	case <-workspace.Context().Done():
-		workspace.Error(workspace.Context().Err())
-		return payload
-	default:
-		if workspace.Error() != nil {
-			workspace.Error(errnie.Err(
-				errnie.Internal,
-				"[workspace] internal error encountered",
-				nil,
-			))
-			return payload
+			if !yield(item) {
+				break
+			}
 		}
 	}
-
-	seq := workspace.channel.Reserve(1)
-	workspace.channel.Commit(seq, seq)
-
-	return payload
 }

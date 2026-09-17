@@ -54,8 +54,8 @@ func BenchmarkStreamingDetectorProcess(b *testing.B) {
 	detector := tables.NewStreamingDetector(1, market.TrainingPrice(b.Context()))
 	frames := market.TrainingTape(6)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
+	
+	for index := 0; b.Loop(); index++ {
 		for _, measurement := range frames[index%len(frames)].Peers {
 			if _, err := detector.Process(measurement); err != nil {
 				b.Fatal(err)

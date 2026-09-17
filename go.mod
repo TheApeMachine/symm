@@ -17,7 +17,6 @@ require (
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/pion/sctp v1.11.1
 	github.com/pion/webrtc/v4 v4.2.18
-	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	gocloud.dev v0.45.0

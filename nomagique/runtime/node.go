@@ -8,16 +8,16 @@ import (
 )
 
 /*
-Consumer delegates its input stream to an identifiable primitive.
+Consumer delegates its input stream to a primitive.
 It does not interpret the input or own routing, storage, or publication.
 */
-type Consumer[T any] struct {
+type Consumer struct {
 	*core.PrimitiveError
-	node core.Identifiable[T]
+	node core.Primitive
 }
 
-func NewConsumer[T any](node core.Identifiable[T]) *Consumer[T] {
-	consumer := &Consumer[T]{
+func NewConsumer(node core.Primitive) *Consumer {
+	consumer := &Consumer{
 		PrimitiveError: core.NewPrimitiveError(),
 		node:           node,
 	}
@@ -28,6 +28,6 @@ func NewConsumer[T any](node core.Identifiable[T]) *Consumer[T] {
 /*
 Next returns the node's iterator unchanged.
 */
-func (consumer *Consumer[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (consumer *Consumer) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return consumer.node.Next(in)
 }

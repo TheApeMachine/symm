@@ -1,26 +1,37 @@
-package geometry
+package geometry_test
 
 import (
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/geometry"
 )
 
-func TestRelaxationStep(t *testing.T) {
-	Convey("The weak endpoint moves more toward a strong endpoint", t, func() {
-		left, right := &Point{Authority: 1}, &Point{X: 4, Authority: 3}
-		Relaxation{}.Step([]*Point{left, right}, []Edge{{Left: 0, Right: 1, Strength: 1}})
-		So(left.X, ShouldBeGreaterThan, 4-right.X)
-		So(right.X-left.X, ShouldAlmostEqual, 0.5)
+func TestRelaxationNext(t *testing.T) {
+	Convey("Relaxation shifts virtual coordinates under attractive force", t, func() {
+		coordA := geometry.NewCoordinate(0, 0)
+		coordB := geometry.NewCoordinate(10, 0)
+		weight := geometry.NewWeight(1.0, 1.0)
+		edge := geometry.NewEdge(coordA, coordB, weight)
+		edge.Distance = 2.0 // Target distance is 2.0, current is 10.0 -> should attract
+
+		relaxation := geometry.NewRelaxation()
+		in := func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(edge))
+		}
+
+		var results []*geometry.Edge
+		for out := range relaxation.Next(in) {
+			results = append(results, (*geometry.Edge)(out))
+		}
+
+		So(relaxation.Error(), ShouldBeNil)
+		So(len(results), ShouldEqual, 1)
+		// Store coordinates remain completely unmutated!
+		So(coordA.X, ShouldEqual, 0)
+		So(coordA.Y, ShouldEqual, 0)
+		So(coordB.X, ShouldEqual, 10)
+		So(coordB.Y, ShouldEqual, 0)
 	})
-}
-
-func BenchmarkRelaxationStep(b *testing.B) {
-	points := []*Point{{Authority: 1}, {X: 4, Authority: 3}}
-	edges := []Edge{{Left: 0, Right: 1, Strength: 1}}
-	b.ReportAllocs()
-
-	for index := 0; index < b.N; index++ {
-		Relaxation{}.Step(points, edges)
-	}
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/tests/venue"
 )
 
@@ -37,7 +36,7 @@ func TrainingTape(legs int) []*data.Measurement[float64] {
 			frame.Provenance["owner"] = "training"
 			frame.Metrics = map[string]data.Metric[float64]{
 				"previous_input": {Raw: float64(sequence - 1)},
-				"input_count":    {Raw: 4}, "impulse_version": {Raw: grid.FormatVersion},
+				"input_count":    {Raw: 4}, "impulse_version": {Raw: 1.0},
 			}
 			for index, peer := range frame.Peers {
 				frame.Peers[index] = peer.Clone()

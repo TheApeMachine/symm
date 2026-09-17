@@ -188,9 +188,9 @@ func BenchmarkCatalog_Ensure(b *testing.B) {
 	b.Cleanup(func() { system.Cfg = savedConfig })
 	catalog := tablestest.New(b)
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		if err := catalog.Ensure(b.Context()); err != nil {
 			b.Fatal(err)
 		}

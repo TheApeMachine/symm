@@ -17,61 +17,53 @@ const WeightSize = 24
 
 /*
 PackedWeight is the unpacked reading of one 24-byte cognitive record. It is
-plain wire payload: no methods.
+plain wire payload: zero methods.
 */
 type PackedWeight struct {
-	Count       uint64
-	Probability float64
-	WriteStep   uint64
+	Count     uint64
+	Mass      float64
+	WriteStep uint64
 }
 
 /*
-WeightRecord is one packed weight exactly as the engine stores it in the trie.
-*/
-type WeightRecord []byte
-
-/*
-Weight unpacks the engine's packed weight records. It is the one public owner
-of the record layout outside the engine itself.
+Weight unpacks 24-byte stored records into PackedWeight.
 */
 type Weight struct {
 	*core.PrimitiveError
-
 	out PackedWeight
 }
 
-/*
-NewWeight instantiates the packed weight unpacking Primitive.
-*/
 func NewWeight() *Weight {
 	return &Weight{PrimitiveError: core.NewPrimitiveError()}
 }
 
-/*
-Next unpacks each arriving record and yields the weight it holds. A record
-shorter than the wire layout is recorded as a shape failure and ends the run.
-*/
 func (weight *Weight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if weight.Error() !=
-		nil {
+	if weight.Error() != nil {
 		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			record := (*WeightRecord)(arriving)
+			if arriving == nil {
+				continue
+			}
 
-			if len(*record) < WeightSize {
+			record := *(*[]byte)(arriving)
+			if len(record) < WeightSize {
 				weight.Error(fmt.Errorf(
 					"%w: cognition: packed weight is %d bytes, want %d",
 					core.ErrShape,
-					len(*record),
+					len(record),
 					WeightSize,
 				))
 				return
 			}
 
-			weight.out = decodeWeight(*record)
+			weight.out = PackedWeight{
+				Count:     binary.LittleEndian.Uint64(record[0:8]),
+				Mass:      math.Float64frombits(binary.LittleEndian.Uint64(record[8:16])),
+				WriteStep: binary.LittleEndian.Uint64(record[16:24]),
+			}
 
 			if !yield(unsafe.Pointer(&weight.out)) {
 				return
@@ -81,58 +73,36 @@ func (weight *Weight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 }
 
 /*
-encodeWeight writes the weight into a 24-byte buffer without heap allocation.
+Pack packs a PackedWeight into its 24-byte wire representation.
 */
-func encodeWeight(dst []byte, weight PackedWeight) {
-	binary.LittleEndian.PutUint64(dst[0:8], weight.Count)
-	binary.LittleEndian.PutUint64(dst[8:16], math.Float64bits(weight.Probability))
-	binary.LittleEndian.PutUint64(dst[16:24], weight.WriteStep)
+type Pack struct {
+	*core.PrimitiveError
+	out [WeightSize]byte
 }
 
-/*
-decodeWeight reads a weight from a full-length record.
-*/
-func decodeWeight(src []byte) PackedWeight {
-	return PackedWeight{
-		Count:       binary.LittleEndian.Uint64(src[0:8]),
-		Probability: math.Float64frombits(binary.LittleEndian.Uint64(src[8:16])),
-		WriteStep:   binary.LittleEndian.Uint64(src[16:24]),
-	}
+func NewPack() *Pack {
+	return &Pack{PrimitiveError: core.NewPrimitiveError()}
 }
 
-/*
-effective returns the decay-adjusted weight at the current step:
-w_eff = w * decay^(currentStep - writeStep).
-*/
-func (packedWeight PackedWeight) effective(currentStep uint64, decayFactor float64) PackedWeight {
-	if packedWeight.WriteStep >= currentStep || decayFactor <= 0 || decayFactor >= 1 {
-		return packedWeight
+func (pack *Pack) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	if pack.Error() != nil {
+		return func(yield func(unsafe.Pointer) bool) {}
 	}
 
-	multiplier := math.Pow(decayFactor, float64(currentStep-packedWeight.WriteStep))
-	packedWeight.Probability *= multiplier
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
 
-	return packedWeight
-}
+			pw := (*PackedWeight)(arriving)
+			binary.LittleEndian.PutUint64(pack.out[0:8], pw.Count)
+			binary.LittleEndian.PutUint64(pack.out[8:16], math.Float64bits(pw.Mass))
+			binary.LittleEndian.PutUint64(pack.out[16:24], pw.WriteStep)
 
-/*
-reinforce updates the association in place. Signed feedback contributes its
-absolute mass to the denominator, and positive mass to the numerator:
-(p + max(feedback, 0)) / (1 + abs(feedback)). One is the current unit of
-association mass. Thus losses inhibit, larger grades adjust more, and zero
-leaves the weight unchanged. An ungraded observation strengthens the
-association by one unit: p += (1 - p) / (count + 1). Probability denotes
-association strength, not a calibrated probability of profit.
-*/
-func reinforce(weight *PackedWeight, feedback float64, graded bool) {
-	if !graded {
-		weight.Probability += (1 - weight.Probability) / (float64(weight.Count) + 1)
-		return
-	}
-
-	weight.Probability /= 1 + math.Abs(feedback)
-
-	if feedback > 0 {
-		weight.Probability += feedback / (1 + feedback)
+			if !yield(unsafe.Pointer(&pack.out)) {
+				return
+			}
+		}
 	}
 }

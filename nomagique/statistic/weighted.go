@@ -8,11 +8,31 @@ import (
 )
 
 /*
-Weighted is one observation with its weight.
+Weighted is one observation with its weight as a Primitive.
+When stepped without input, it yields its weight then its value as scalar pointers.
 */
 type Weighted struct {
+	*core.PrimitiveError
 	Weight float64
 	Value  float64
+}
+
+func NewWeighted(weight, value float64) *Weighted {
+	return &Weighted{
+		PrimitiveError: core.NewPrimitiveError(),
+		Weight:         weight,
+		Value:          value,
+	}
+}
+
+func (weighted *Weighted) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if !yield(unsafe.Pointer(&weighted.Weight)) {
+			return
+		}
+
+		yield(unsafe.Pointer(&weighted.Value))
+	}
 }
 
 /*

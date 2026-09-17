@@ -14,7 +14,6 @@ import (
 	"github.com/apache/iceberg-go"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	_ "modernc.org/sqlite"
 )
 
@@ -144,7 +143,7 @@ func (catalog *Catalog) Replay(ctx context.Context, epoch int64, through ...int6
 					return
 				}
 
-				if measurement.Metrics["impulse_version"].Raw != grid.FormatVersion {
+				if measurement.Metrics["impulse_version"].Raw != 1.0 {
 					yield(nil, errnie.Error(errnie.Err(errnie.Validation, "replay: unsupported impulse format", nil)))
 					return
 				}

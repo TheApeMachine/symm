@@ -4,47 +4,42 @@ An immutable radix trie for associative learning and inference. Basin and sensor
 records use the same pointer-free, 24-byte `PackedWeight` representation.
 
 ```go
-engine := cognition.NewEngine(cognition.Config{})
+var root atomic.Pointer[iradix.Tree[[]byte]]
+root.Store(iradix.New[[]byte]())
+var stepCounter atomic.Uint64
+
+reinforce := cognition.NewReinforce(&root, &stepCounter)
+evaluator := cognition.NewEvaluator(&root, &stepCounter)
 
 // Learn an observed association.
-observe(engine, cognition.Association{
+assoc := cognition.Association{
 	Context: precursorSequence,
 	Class:   []byte("action_enter"),
-})
+}
+reinforce.Next(...)
 
 // Or apply a completed replay grade to that association.
-observe(engine, cognition.Association{
+gradedAssoc := cognition.Association{
 	Context:  precursorSequence,
 	Class:    []byte("action_enter"),
 	Feedback: grade * authority,
 	Graded:   true,
-})
+}
+reinforce.Next(...)
 
 // Live inference reads the immutable trie without acquiring a mutex.
-result, err := ask(engine, &cognition.Command{
-	Evaluate: &cognition.Question{Context: precursorSequence},
-})
+evaluator.Next(...)
 ```
 
 Positive feedback strengthens the action's basin; negative feedback inhibits it.
 Zero feedback records sensory context without reinforcing an action. Weights are
-association strengths, not expected returns or calibrated profit probabilities.
-There is no separate outcome namespace or return estimator in this engine.
+empirical association masses and integer observation counts, not calibrated profit
+probabilities. There is no separate outcome namespace or return estimator in this package.
 
-`Agent.Step` consumes completed grid regions. It retains the precursor sequence,
-uses `IsBreak` to reset that active sequence, matches `WinnerClass` against the
-environment's feasible actions, and issues the selected action. Offline agents
-explore with probability equal to the reported ambiguity; they also explore when
-no feasible winner or no competing class has been observed. Live agents abstain
-when no feasible winner exists or the leading classes tie. Abstention creates no
-wait action and no training sample.
+`Training.Next` consumes completed grid regions. It retains the precursor sequence,
+uses empirical Welford surprisal dispersion to detect sequence breaks (`IsBreak`),
+matches `WinnerClass` against legal actions, and reports confidence and contrast.
+Missing observations leave the learner waiting; unseen contexts produce no action.
 
-Only completed replay grades train the policy. Position accounting and forward
-outcome reporting stay with their existing owners. Missing market or account
-observations leave the agent waiting. The engine's Snapshot and Restore commands persist
-its configuration, clock and packed records directly; retired formats are
-rejected explicitly rather than silently converted.
-
-Inference currently scans the basin records and allocates its readout/lookahead.
-Immutable reads avoid mutexes; they do not imply zero allocations or a proven
-latency bound. Package benchmarks measure those costs.
+Inference traverses exact basin prefixes and empirical continuation branches.
+Immutable reads avoid mutexes; sufficient statistics update atomically via CAS.

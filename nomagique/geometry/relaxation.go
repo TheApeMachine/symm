@@ -1,71 +1,102 @@
 package geometry
 
-import "math"
+import (
+	"iter"
+	"math"
+	"unsafe"
 
-/* Point is an addressable coordinate and its measured resistance to movement. */
-type Point struct {
-	X, Y               float64
-	Authority          float64
-	MoveX, MoveY, Mass float64
-	Parent, Basin      int
-	Distance           float64
-	Visited            bool
-}
-
-/* Edge expresses signed attraction between two point indices. */
-type Edge struct {
-	Left, Right int
-	Strength    float64
-}
+	"github.com/theapemachine/symm/nomagique/core"
+)
 
 /*
-Relaxation performs one simultaneous weighted stress descent. Unit distance is
-the coordinate system's unit, not a market threshold. Positive evidence lowers
-target distance; negative evidence increases it. Endpoint authority determines
-the opposite endpoint's share of displacement. Scratch fields live with points.
+Relaxation performs authority-weighted stress descent over edges connecting virtual coordinates.
+Positive evidence lowers target distance; negative evidence increases it.
+Endpoint authority determines the opposite endpoint's share of displacement.
+Hot spots emerge around cells with high maturity/SNR authority.
 */
-type Relaxation struct{}
+type Relaxation struct {
+	*core.PrimitiveError
+	positions map[core.Primitive][2]float64
+}
 
-func (relaxation Relaxation) Step(points []*Point, edges []Edge) {
-	for _, point := range points {
-		point.MoveX, point.MoveY, point.Mass = 0, 0, 0
+func NewRelaxation() *Relaxation {
+	return &Relaxation{
+		PrimitiveError: core.NewPrimitiveError(),
+		positions:      make(map[core.Primitive][2]float64),
 	}
+}
 
-	for _, edge := range edges {
-		left, right := points[edge.Left], points[edge.Right]
-		mass := left.Authority + right.Authority
+func (relaxation *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if relaxation.Error() != nil {
+				return
+			}
 
-		if mass == 0 || edge.Strength == 0 {
-			continue
-		}
+			if arriving == nil {
+				continue
+			}
 
-		deltaX, deltaY := right.X-left.X, right.Y-left.Y
-		distance := math.Hypot(deltaX, deltaY)
+			edge := (*Edge)(arriving)
+			if edge.Left == nil || edge.Right == nil || edge.Weight == nil {
+				if !yield(arriving) {
+					return
+				}
+				continue
+			}
 
-		if distance == 0 {
-			continue
-		}
+			if _, exists := relaxation.positions[edge.Left]; !exists {
+				initX, initY := 0.0, 0.0
+				if coord, ok := edge.Left.(*Coordinate); ok {
+					initX, initY = float64(coord.X), float64(coord.Y)
+				}
+				relaxation.positions[edge.Left] = [2]float64{initX, initY}
+			}
 
-		target := 1 - edge.Strength
+			if _, exists := relaxation.positions[edge.Right]; !exists {
+				initX, initY := 0.0, 0.0
+				if coord, ok := edge.Right.(*Coordinate); ok {
+					initX, initY = float64(coord.X), float64(coord.Y)
+				}
+				relaxation.positions[edge.Right] = [2]float64{initX, initY}
+			}
 
-		if edge.Strength > 0 {
-			target = 1 / (1 + edge.Strength)
-		}
+			leftPos := relaxation.positions[edge.Left]
+			rightPos := relaxation.positions[edge.Right]
 
-		weight := math.Abs(edge.Strength)
-		force := weight * (distance - target) / distance
-		left.MoveX += force * deltaX * right.Authority / mass
-		left.MoveY += force * deltaY * right.Authority / mass
-		right.MoveX -= force * deltaX * left.Authority / mass
-		right.MoveY -= force * deltaY * left.Authority / mass
-		left.Mass += weight
-		right.Mass += weight
-	}
+			strength := 0.0
+			for ptr := range edge.Weight.Next(nil) {
+				strength = *(*float64)(ptr)
+				break
+			}
 
-	for _, point := range points {
-		if point.Mass > 0 {
-			point.X += point.MoveX / point.Mass
-			point.Y += point.MoveY / point.Mass
+			if edge.Distance == 0 {
+				edge.Distance = 1.0 - strength
+				if strength > 0 {
+					edge.Distance = 1.0 / (1.0 + strength)
+				}
+			}
+
+			deltaX := rightPos[0] - leftPos[0]
+			deltaY := rightPos[1] - leftPos[1]
+			currentDist := math.Hypot(deltaX, deltaY)
+
+			if currentDist > 0 && strength != 0 {
+				weight := math.Abs(strength)
+				force := weight * (currentDist - edge.Distance) / currentDist
+
+				leftPos[0] += force * deltaX * 0.5
+				leftPos[1] += force * deltaY * 0.5
+				rightPos[0] -= force * deltaX * 0.5
+				rightPos[1] -= force * deltaY * 0.5
+
+				relaxation.positions[edge.Left] = leftPos
+				relaxation.positions[edge.Right] = rightPos
+			}
+
+			if !yield(unsafe.Pointer(edge)) {
+				return
+			}
 		}
 	}
 }

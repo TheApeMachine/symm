@@ -18,7 +18,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data/sequence"
-	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/geometry"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
@@ -32,7 +32,6 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -176,16 +175,12 @@ var (
 				))
 			}
 
-			training := strategy.NewTraining(ctx, epoch, price)
-
-			if err := training.Rehearsal.Restore(catalog); err != nil {
-				return err
-			}
+			training := strategy.NewTraining[*geometry.Coordinate](ctx, price)
 
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
-				BuildID:      strategy.TrainingFormat,
+				BuildID:      "training",
 				ConfigDigest: viper.GetString("system.log.level"),
 				Status:       "ACTIVE",
 			}); err != nil {
@@ -220,63 +215,46 @@ var (
 			cognitionSolver := cognition.NewSolver(ctx)
 			webrtcTee := ui.NewWebRTCTee(ctx, "webrtcTee", 131072)
 
-			nodes := [][]nmruntime.Node[*data.Measurement[float64]]{
-				{
-					public,
-					private,
-					futures,
+			workspace := nmruntime.NewWorkspace(
+				ctx, "workspace", [][]core.Primitive{
+					{
+						public,
+						private,
+						futures,
+					},
+					{
+						correlationTicker,
+						leadlagTicker,
+						liquidityTicker,
+						sentimentTicker,
+						pumpdumpTicker,
+						cvdTrade,
+						hawkesTrade,
+						toxicityTrade,
+						pumpdumpTrade,
+						depthflowLevel3,
+						morphologyLevel3,
+						toxicityLevel3,
+						pumpdumpLevel3,
+						derivativesTicker,
+						derivativesTrade,
+					},
+					{
+						categorySolver,
+						resonanceSolver,
+						manifoldSolver,
+					},
+					{
+						cognitionSolver,
+					},
+					{
+						training,
+					},
 				},
-				{
-					correlationTicker,
-					leadlagTicker,
-					liquidityTicker,
-					sentimentTicker,
-					pumpdumpTicker,
-					cvdTrade,
-					hawkesTrade,
-					toxicityTrade,
-					pumpdumpTrade,
-					depthflowLevel3,
-					morphologyLevel3,
-					toxicityLevel3,
-					pumpdumpLevel3,
-					derivativesTicker,
-					derivativesTrade,
-				},
-				{
-					categorySolver,
-					resonanceSolver,
-					manifoldSolver,
-				},
-				{
-					cognitionSolver,
-				},
-				{
-					training,
-				},
-			}
-			register := store.NewRegister[*data.Measurement[float64]](int(system.Cfg.Runtime.Workspace.Buffer))
-			stages := make([][]core.Primitive, 0, len(nodes))
-			peerLimit := 0
-			for _, group := range nodes {
-				primitives := make([]core.Primitive, 0, len(group))
-				nextLimit := peerLimit
-				for _, node := range group {
-					consumer := nmruntime.NewConsumer(node, register, peerLimit, uiTee, storeTee, webrtcTee)
-					if err := consumer.Error(); err != nil {
-						return err
-					}
-					nextLimit = consumer.Read.Identity() + 1
-					primitives = append(primitives, consumer)
-				}
-				peerLimit = nextLimit
-				stages = append(stages, primitives)
-			}
-			workspace := nmruntime.NewWorkspace(ctx, "workspace", stages...)
-			if err := workspace.Error(); err != nil {
-				return err
-			}
+			)
+
 			pipeline := nomagique.NewNumber(workspace)
+
 			var observation int64
 			input := sequence.NewOne(unsafe.Pointer(&observation))
 
@@ -334,7 +312,7 @@ var (
 			drainErrors := make(chan error, 1)
 
 			go func() {
-				drainErrors <- catalog.Drain(ctx, epoch, storeTee, training.Rehearsal.Step)
+				drainErrors <- catalog.Drain(ctx, epoch, storeTee)
 			}()
 
 			manifoldSolver.Start()

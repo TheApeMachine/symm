@@ -73,10 +73,10 @@ func BenchmarkCatalog_Drain(b *testing.B) {
 	})
 	ctx, cancel := context.WithCancel(b.Context())
 	cancel()
-	b.ResetTimer()
-	for batch := 0; batch < b.N; batch++ {
+
+	for batch := 0; b.Loop(); batch++ {
 		for sequence := int64(1); sequence <= 2048; sequence++ {
-			measurement := data.NewMeasurement[float64]("signal", map[string]data.Metric[float64]{"value": {Raw: float64(sequence)}})
+			measurement := data.NewMeasurement("signal", map[string]data.Metric[float64]{"value": {Raw: float64(sequence)}})
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Unix(sequence, 0)
 			measurement.SeqIdx = sequence
