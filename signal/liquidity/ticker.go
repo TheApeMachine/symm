@@ -6,230 +6,174 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
-
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Ticker is the asynchronous touch-liquidity instrument. It holds no state and
-no logic of its own: its entire behavior is one nomagique pipeline over the
-measurement itself — every stage writes its facts into the measurement where
-it computes them, and the workload's register owns the measurement's lifetime.
+Ticker registers liquidity metric Conns on the grid. Next only reads retained observations.
 */
 type Ticker struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	grid *store.Grid[*geometry.Coordinate]
 }
 
-func NewTicker(ctx context.Context) *Ticker {
-	ticker := &Ticker{
-		pipeline: nomagique.NewNumber(
-			NewGate(),
-			NewTouch(),
-			data.NewFinalizer[float64](),
-		),
+func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbol string) *Ticker {
+	interests := [][]string{
+		{"ticker", "data", "symbol"},
+		{"ticker", "data", "bid"},
+		{"ticker", "data", "ask"},
+		{"ticker", "data", "bid_qty"},
+		{"ticker", "data", "ask_qty"},
+		{"ticker", "data", "timestamp"},
 	}
 
+	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
+		sequence.Read[core.Connectable[*geometry.Coordinate]](
+			nomagique.NewNumber(
+				sequence.NewValues(wanted),
+				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+					conn, core.Identify,
+				),
+				grid,
+			).Next(nil),
+		)
+	}
+
+	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], *store.Retained[float64], core.Primitive) {
+		retained := store.NewKeyed[float64]()
+		conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
+		return conn, retained, nomagique.NewNumber(extractor, retained, transport.NewDiscard())
+	}
+
+	bid, bidHold, bidBranch := hold(NewBid())
+	ask, _, askBranch := hold(NewAsk())
+	bidQty, _, bidQtyBranch := hold(NewBidQty())
+	askQty, _, askQtyBranch := hold(NewAskQty())
+	mid, _, midBranch := hold(NewMidpoint())
+	spread, _, spreadBranch := hold(NewSpread())
+	rel, _, relBranch := hold(NewRelativeSpread())
+	bidNotional, _, bidNotionalBranch := hold(NewBidNotional())
+	askNotional, _, askNotionalBranch := hold(NewAskNotional())
+	twoSided, _, twoSidedBranch := hold(NewTwoSided())
+	imbalance, _, imbalanceBranch := hold(NewImbalance())
+	bidBase, _, bidBaseBranch := hold(NewBidBaseline())
+	askBase, _, askBaseBranch := hold(NewAskBaseline())
+	spreadBase, _, spreadBaseBranch := hold(NewSpreadBaseline())
+	bidRatio, _, bidRatioBranch := hold(NewBidRatio())
+	askRatio, _, askRatioBranch := hold(NewAskRatio())
+	spreadRatio, _, spreadRatioBranch := hold(NewSpreadRatio())
+	bidDiv, _, bidDivBranch := hold(NewBidDivergence())
+	askDiv, _, askDivBranch := hold(NewAskDivergence())
+	spreadDiv, _, spreadDivBranch := hold(NewSpreadDivergence())
+	bidNoise, _, bidNoiseBranch := hold(NewBidNoise())
+	askNoise, _, askNoiseBranch := hold(NewAskNoise())
+	spreadNoise, _, spreadNoiseBranch := hold(NewSpreadNoise())
+	bidZ, _, bidZBranch := hold(NewBidZ())
+	askZ, _, askZBranch := hold(NewAskZ())
+	spreadZ, _, spreadZBranch := hold(NewSpreadZ())
+	bidVel, _, bidVelBranch := hold(NewBidVelocity())
+	askVel, _, askVelBranch := hold(NewAskVelocity())
+	spreadVel, _, spreadVelBranch := hold(NewSpreadVelocity())
+	bidSNR, _, bidSNRBranch := hold(NewBidVelSNR())
+	askSNR, _, askSNRBranch := hold(NewAskVelSNR())
+	spreadSNR, _, spreadSNRBranch := hold(NewSpreadVelSNR())
+
+	_ = bidHold
+
+	ingressStages := []core.Primitive{}
+
+	if symbol != "" {
+		ingressStages = append(ingressStages, store.NewOrigin(symbol))
+	}
+
+	ingressStages = append(ingressStages,
+		NewAssemble(),
+		NewTouch(),
+		transport.NewFan(
+			transport.NewIO[any](nil, nil),
+			bidBranch, askBranch, bidQtyBranch, askQtyBranch,
+			midBranch, spreadBranch, relBranch,
+			bidNotionalBranch, askNotionalBranch, twoSidedBranch, imbalanceBranch,
+			bidBaseBranch, askBaseBranch, spreadBaseBranch,
+			bidRatioBranch, askRatioBranch, spreadRatioBranch,
+			bidDivBranch, askDivBranch, spreadDivBranch,
+			bidNoiseBranch, askNoiseBranch, spreadNoiseBranch,
+			bidZBranch, askZBranch, spreadZBranch,
+			bidVelBranch, askVelBranch, spreadVelBranch,
+			bidSNRBranch, askSNRBranch, spreadSNRBranch,
+		),
+		NewBid(),
+		store.NewKeyed[float64](),
+	)
+
+	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
+	register(ingress, interests)
+	register(bid, nil)
+	register(ask, nil)
+	register(bidQty, nil)
+	register(askQty, nil)
+	register(mid, nil)
+	register(spread, nil)
+	register(rel, nil)
+	register(bidNotional, nil)
+	register(askNotional, nil)
+	register(twoSided, nil)
+	register(imbalance, nil)
+	register(bidBase, nil)
+	register(askBase, nil)
+	register(spreadBase, nil)
+	register(bidRatio, nil)
+	register(askRatio, nil)
+	register(spreadRatio, nil)
+	register(bidDiv, nil)
+	register(askDiv, nil)
+	register(spreadDiv, nil)
+	register(bidNoise, nil)
+	register(askNoise, nil)
+	register(spreadNoise, nil)
+	register(bidZ, nil)
+	register(askZ, nil)
+	register(spreadZ, nil)
+	register(bidVel, nil)
+	register(askVel, nil)
+	register(spreadVel, nil)
+	register(bidSNR, nil)
+	register(askSNR, nil)
+	register(spreadSNR, nil)
+
+	ticker := &Ticker{grid: grid}
 	ticker.System = runtime.NewSystem(ctx, "liquidity:ticker", ticker)
+	ticker.Transition(runtime.READY)
 	return ticker
 }
 
-/*
-Next supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
-*/
 func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-	inputs:
-		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
-
-			if ticker.Status() != runtime.READY {
-				errnie.Warn(ticker.Name() + ": Next called before READY; dropping event")
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
+		if in != nil {
+			for range in {
 			}
+		}
 
-			if measurement == nil {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
+		if ticker.Status() != runtime.READY {
+			errnie.Warn(ticker.Name() + ": Next called before READY; dropping event")
+			return
+		}
 
-			if len(measurement.Peers) > 0 {
-				peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-					_, hasBid := candidate.Metrics["bid"]
-					_, hasAsk := candidate.Metrics["ask"]
-					_, hasBidQuantity := candidate.Metrics["bid_qty"]
-					_, hasAskQuantity := candidate.Metrics["ask_qty"]
+		address := transport.NewAddress[*geometry.Coordinate]()
+		query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+			address, core.Read,
+		)
 
-					return hasBid && hasAsk && hasBidQuantity && hasAskQuantity && candidate.Label != ""
-				})
-
-				if peer == nil {
-					continue inputs
-				}
-
-				measurement.Pull(peer, "bid", "ask", "bid_qty", "ask_qty")
-			}
-
-			if _, hasBid := measurement.Metrics["bid"]; !hasBid {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			if _, hasAsk := measurement.Metrics["ask"]; !hasAsk {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			res := sequence.Read[*data.Measurement[float64]](ticker.pipeline.Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
-
-			if res == nil {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			if res != nil && !yield(unsafe.Pointer(&res)) {
+		for out := range ticker.grid.Next(query.Next(nil)) {
+			if !yield(out) {
 				return
 			}
-			continue inputs
-
 		}
 	}
-}
-
-/*
-Register returns the pre-allocated measurement every liquidity tick flows
-through: every metric the instrument can produce is declared, none valued.
-The touch quote and displayed quantities are the feed's facts the stages
-consume; the rest are written where they are computed.
-*/
-func (ticker *Ticker) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("liquidity", map[string]data.Metric[float64]{
-		"bid": data.NewMetric[float64](
-			"bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"ask": data.NewMetric[float64](
-			"ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"bid_qty": data.NewMetric[float64](
-			"bid_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"ask_qty": data.NewMetric[float64](
-			"ask_qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"best_bid_price": data.NewMetric[float64](
-			"best_bid_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"best_ask_price": data.NewMetric[float64](
-			"best_ask_price", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"midpoint": data.NewMetric[float64](
-			"midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"spread": data.NewMetric[float64](
-			"spread", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"touch_quantity:bid": data.NewMetric[float64](
-			"touch_quantity:bid", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"touch_quantity:ask": data.NewMetric[float64](
-			"touch_quantity:ask", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"touch_notional:bid": data.NewMetric[float64](
-			"touch_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"touch_notional:ask": data.NewMetric[float64](
-			"touch_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"two_sided_touch_notional": data.NewMetric[float64](
-			"two_sided_touch_notional", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"relative_spread": data.NewMetric[float64](
-			"relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"touch_notional_imbalance": data.NewMetric[float64](
-			"touch_notional_imbalance", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"touch_notional_baseline:bid": data.NewMetric[float64](
-			"touch_notional_baseline:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_ratio:bid": data.NewMetric[float64](
-			"depth_ratio:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_divergence:bid": data.NewMetric[float64](
-			"depth_divergence:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_noise_scale:bid": data.NewMetric[float64](
-			"depth_noise_scale:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_zscore:bid": data.NewMetric[float64](
-			"depth_zscore:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"divergence_velocity:bid": data.NewMetric[float64](
-			"divergence_velocity:bid", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"divergence_velocity_snr:bid": data.NewMetric[float64](
-			"divergence_velocity_snr:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"touch_notional_baseline:ask": data.NewMetric[float64](
-			"touch_notional_baseline:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_ratio:ask": data.NewMetric[float64](
-			"depth_ratio:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_divergence:ask": data.NewMetric[float64](
-			"depth_divergence:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_noise_scale:ask": data.NewMetric[float64](
-			"depth_noise_scale:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"depth_zscore:ask": data.NewMetric[float64](
-			"depth_zscore:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"divergence_velocity:ask": data.NewMetric[float64](
-			"divergence_velocity:ask", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"divergence_velocity_snr:ask": data.NewMetric[float64](
-			"divergence_velocity_snr:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"relative_spread_baseline": data.NewMetric[float64](
-			"relative_spread_baseline", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"spread_ratio": data.NewMetric[float64](
-			"spread_ratio", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"spread_divergence": data.NewMetric[float64](
-			"spread_divergence", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"spread_noise_scale": data.NewMetric[float64](
-			"spread_noise_scale", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"spread_zscore": data.NewMetric[float64](
-			"spread_zscore", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"spread_divergence_velocity": data.NewMetric[float64](
-			"spread_divergence_velocity", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"spread_divergence_velocity_snr": data.NewMetric[float64](
-			"spread_divergence_velocity_snr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
 }

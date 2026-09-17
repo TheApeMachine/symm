@@ -4,156 +4,76 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data/sequence"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
-
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/signal/quote"
 )
 
-func pumpdumpTouch(symbol string, bid float64, ask float64, at time.Time) *data.Measurement[float64] {
-	metrics := make(map[string]data.Metric[float64])
+func pushTouch(grid *store.Grid[*geometry.Coordinate], data kraken.Level3Touch) {
+	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+		nil, core.Execute,
+	)
 
-	if bid > 0 {
-		metrics["best_bid"] = data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(bid)
+	for range grid.Next(query.Next(quote.NewTouch().Next(sequence.NewValue(data)))) {
 	}
-
-	if ask > 0 {
-		metrics["best_ask"] = data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(ask)
-	}
-
-	m := data.NewMeasurement[float64]("websocket", metrics)
-	m.Label, m.At, m.From = symbol, at, at
-
-	return m
 }
 
 func TestLevel3Next(t *testing.T) {
-	Convey("Given a message with an executable touch", t, func() {
-		entity := NewLevel3(t.Context())
-		entity.Transition(runtime.READY)
-		at := time.Unix(1_700_000_000, 0)
+	Convey("Given a pumpdump level3 instrument on the grid", t, func() {
+		grid := store.NewGrid[*geometry.Coordinate]()
+		entity := NewLevel3(t.Context(), grid, "ETH/USD")
 
-		Convey("Step derives the touch from the message's own orders", func() {
-			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("BTC/USD", 99, 101, at))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-
-			So(measurement.Metrics["best_bid"].Raw, ShouldEqual, 99.0)
-			So(measurement.Metrics["best_ask"].Raw, ShouldEqual, 101.0)
-			So(measurement.Metrics["midpoint"].Raw, ShouldEqual, 100.0)
-			So(measurement.Metrics["spread"].Raw, ShouldEqual, 2.0)
-			So(measurement.Metrics["relative_spread"].Raw, ShouldAlmostEqual, 0.02, 1e-12)
-
-			So(measurement.Maturity, ShouldEqual, 1.0)
-		})
-	})
-
-	Convey("Given a symbol whose book has never shown both sides", t, func() {
-		entity := NewLevel3(t.Context())
-		entity.Transition(runtime.READY)
-		at := time.Unix(1_700_000_000, 0)
-
-		Convey("Step yields no measurement rather than an error", func() {
-			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("MISSING", 0, 0, at)))), ShouldBeNil)
+		Convey("a two-sided touch updates retained bid and spread", func() {
+			pushTouch(grid, kraken.Level3Touch{
+				Symbol:    "ETH/USD",
+				Bid:       decimal.NewFromFloat64(99),
+				Ask:       decimal.NewFromFloat64(101),
+				Timestamp: time.Unix(1, 0),
+			})
+			readings := collect(grid)
+			bid, haveBid := valueAt(readings, 0)
+			So(haveBid, ShouldBeTrue)
+			So(bid, ShouldEqual, 99.0)
+			spread, haveSpread := valueAt(readings, 4)
+			So(haveSpread, ShouldBeTrue)
+			So(spread, ShouldEqual, 2.0)
 		})
 
-		Convey("A one-sided message alone still yields no measurement", func() {
-			So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("ONESIDED", 99, 0, at)))), ShouldBeNil)
+		Convey("Level3.Next does not mutate retained values", func() {
+			pushTouch(grid, kraken.Level3Touch{
+				Symbol:    "ETH/USD",
+				Bid:       decimal.NewFromFloat64(99),
+				Ask:       decimal.NewFromFloat64(101),
+				Timestamp: time.Unix(1, 0),
+			})
+			before, _ := valueAt(collect(grid), 0)
+			entity.Next(sequence.NewValue(kraken.Level3Touch{
+				Symbol: "ETH/USD",
+				Bid:    decimal.NewFromFloat64(1),
+				Ask:    decimal.NewFromFloat64(2),
+			}))
+			after, _ := valueAt(collect(grid), 0)
+			So(after, ShouldEqual, before)
 		})
-	})
-
-	Convey("Given a symbol that has seen both sides across separate messages", t, func() {
-		entity := NewLevel3(t.Context())
-		entity.Transition(runtime.READY)
-		at := time.Unix(1_700_000_000, 0)
-
-		// First observation carries bid only
-		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("BTC/USD", 99, 0, at)))), ShouldBeNil)
-
-		Convey("A later one-sided update borrows the retained opposite side", func() {
-			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](pumpdumpTouch("BTC/USD", 0, 101, at.Add(time.Second)))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-
-			So(measurement.Metrics["best_bid"].Raw, ShouldEqual, 99.0)
-			So(measurement.Metrics["best_ask"].Raw, ShouldEqual, 101.0)
-			So(measurement.Metrics["midpoint"].Raw, ShouldEqual, 100.0)
-		})
-	})
-}
-
-func TestLevel3Register(t *testing.T) {
-	Convey("Given a Level3 entity", t, func() {
-		entity := NewLevel3(t.Context())
-		entity.Transition(runtime.READY)
-		schema := entity.Register()
-
-		So(schema, ShouldNotBeNil)
-		So(schema.Source, ShouldEqual, "pumpdump:level3")
-		So(schema.Metrics, ShouldNotBeEmpty)
-
-		expected := []string{
-			"best_bid",
-			"best_ask",
-			"midpoint",
-			"spread",
-			"relative_spread",
-		}
-
-		for _, name := range expected {
-			metric, ok := schema.Metrics[name]
-			So(ok, ShouldBeTrue)
-			So(metric.Label, ShouldEqual, name)
-			So(metric.Raw, ShouldEqual, 0.0)
-		}
 	})
 }
 
 func TestLevel3StepReadiness(t *testing.T) {
-	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+	Convey("An inactive level3 does not read the grid", t, func() {
 		node := &Level3{System: runtime.NewSystem(t.Context(), "readiness-test")}
-		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
+			out := tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](node.Next(nil))
+			So(len(out), ShouldEqual, 0)
 			So(node.Status(), ShouldEqual, stage)
-			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
-}
-
-func TestLevel3StepUnrelatedPeer(t *testing.T) {
-	Convey("An unrelated peer does not publish registration values as a fresh observation", t, func() {
-		entity := NewLevel3(t.Context())
-		entity.Transition(runtime.READY)
-		measurement := entity.Register()
-		peer := data.NewMeasurement[float64]("unrelated", nil)
-		peer.Label = "BTC/USD"
-		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
-		So(measurement.Label, ShouldBeEmpty)
-	})
-}
-
-func BenchmarkLevel3Next(b *testing.B) {
-	entity := NewLevel3(b.Context())
-	entity.Transition(runtime.READY)
-	peer := pumpdumpTouch("BTC/USD", 99, 101, time.Unix(1, 0))
-	measurement := entity.Register()
-	measurement.Peers = []*data.Measurement[float64]{peer}
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for index := 0; index < b.N; index++ {
-		peer.At = peer.At.Add(time.Second)
-		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
-
-		if result == nil || result.Err != nil {
-			b.Fatal("valid peer was not processed")
-		}
-	}
 }

@@ -2,9 +2,6 @@ package correlation
 
 import (
 	"iter"
-	"math"
-	"slices"
-	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
@@ -22,9 +19,7 @@ type PriceObservation struct {
 }
 
 /*
-PairsReading is the structured fact yielded by the pair stage: focal path
-diagnostics, the selected pair's dependence and Fisher readings, and all
-admitted cohort peers.
+PairsReading is the structured fact yielded by one explicit oriented pair.
 */
 type PairsReading struct {
 	Observation PriceObservation
@@ -33,38 +28,36 @@ type PairsReading struct {
 	Fisher      FisherReading
 	PeerSymbol  string
 	Peers       []Peer
-	Relations   []Relation
 }
 
 /*
-Pairs owns every symbol's price path and measures the arrival's path against
-every retained peer: one dependence estimate and one Fisher significance per
-pair, every measured pair retained, and every defined pair with support
-admitted to Peers. When several peers qualify, the lexicographically last one
-is the selected pair, so selection is deterministic.
+Pairs owns one explicit oriented pair: measured Y against reference X.
+It does not scan undeclared symbols.
 */
 type Pairs struct {
 	*core.PrimitiveError
 
-	paths     map[string]core.Primitive
-	retained  map[string]PathReading
+	measured  string
+	reference string
+	left      core.Primitive
+	right     core.Primitive
+	heldLeft  PathReading
+	heldRight PathReading
+	hasLeft   bool
+	hasRight  bool
 	pairwise  core.Primitive
 	fisher    core.Primitive
-	relations core.Primitive
 }
 
-/*
-NewPairs composes the pair stage over the supplied causal estimator, so the
-algo dependency is injected at composition instead of imported here.
-*/
-func NewPairs(estimator core.Primitive) *Pairs {
+func NewPairs(estimator core.Primitive, measured, reference string) *Pairs {
 	return &Pairs{
 		PrimitiveError: core.NewPrimitiveError(),
-		paths:          make(map[string]core.Primitive),
-		retained:       make(map[string]PathReading),
+		measured:       measured,
+		reference:      reference,
+		left:           NewPath(adaptive.NewWindow()),
+		right:          NewPath(adaptive.NewWindow()),
 		pairwise:       NewDependence(estimator),
 		fisher:         NewFisher(),
-		relations:      NewRelations(),
 	}
 }
 
@@ -74,22 +67,21 @@ func (pairs *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			observation := *(*PriceObservation)(arriving)
 
 			if observation.Value <= 0 {
-				reading := PairsReading{
-					Observation: observation,
-				}
-
-				if !yield(unsafe.Pointer(&reading)) {
-					return
-				}
-
 				continue
 			}
 
-			path := pairs.paths[observation.Symbol]
+			if observation.Symbol != pairs.measured && observation.Symbol != pairs.reference {
+				continue
+			}
 
-			if path == nil {
-				path = NewPath(adaptive.NewWindow())
-				pairs.paths[observation.Symbol] = path
+			path := pairs.left
+			held := &pairs.heldLeft
+			has := &pairs.hasLeft
+
+			if observation.Symbol == pairs.reference {
+				path = pairs.right
+				held = &pairs.heldRight
+				has = &pairs.hasRight
 			}
 
 			price := observation.Price
@@ -107,6 +99,11 @@ func (pairs *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			reading := PairsReading{
 				Observation: observation,
 				Path:        focal,
+				PeerSymbol:  pairs.reference,
+			}
+
+			if observation.Symbol == pairs.reference {
+				reading.PeerSymbol = pairs.measured
 			}
 
 			if !focal.Accepted {
@@ -117,99 +114,55 @@ func (pairs *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			pairs.retained[observation.Symbol] = focal
+			*held = focal
+			*has = true
 
-			peerSymbols := make([]string, 0, len(pairs.retained))
-
-			for candidateSymbol := range pairs.retained {
-				if candidateSymbol != observation.Symbol {
-					peerSymbols = append(peerSymbols, candidateSymbol)
-				}
-			}
-
-			slices.Sort(peerSymbols)
-
-			var (
-				selected     DependenceReading
-				significance FisherReading
-				selection    string
-				admitted     []Peer
-				relations    []Relation
-			)
-
-			for _, symbol := range peerSymbols {
-				peer := pairs.retained[symbol]
-				input := LagProfileInput{Left: focal.Observations, Right: peer.Observations}
-				var dependence DependenceReading
-
-				for out := range pairs.pairwise.Next(sequence.NewOne(unsafe.Pointer(&input)).Next(nil)) {
-					dependence = *(*DependenceReading)(out)
-				}
-
-				if err := pairs.pairwise.Error(); err != nil {
-					pairs.Error(err)
+			if !pairs.hasLeft || !pairs.hasRight {
+				if !yield(unsafe.Pointer(&reading)) {
 					return
 				}
 
-				sample := FisherSample{Correlation: dependence.Correlation, Support: dependence.Support}
-				var significanceOfPair FisherReading
+				continue
+			}
 
-				for out := range pairs.fisher.Next(sequence.NewOne(unsafe.Pointer(&sample)).Next(nil)) {
-					significanceOfPair = *(*FisherReading)(out)
-				}
+			input := LagProfileInput{
+				Left:  pairs.heldLeft.Observations,
+				Right: pairs.heldRight.Observations,
+			}
+			var dependence DependenceReading
 
-				leftSymbol, rightSymbol := observation.Symbol, symbol
+			for out := range pairs.pairwise.Next(sequence.NewOne(unsafe.Pointer(&input)).Next(nil)) {
+				dependence = *(*DependenceReading)(out)
+			}
 
-				if rightSymbol < leftSymbol {
-					leftSymbol, rightSymbol = rightSymbol, leftSymbol
-				}
+			if err := pairs.pairwise.Error(); err != nil {
+				pairs.Error(err)
+				return
+			}
 
-				relation := Relation{
-					Left:          leftSymbol,
-					Right:         rightSymbol,
-					Support:       dependence.Support,
-					Defined:       dependence.Defined,
-					At:            time.Unix(0, min(price.At, peer.To)),
-					FisherDefined: significanceOfPair.Defined,
-				}
+			reading.Selected = dependence
 
-				if relation.Defined {
-					relation.Signed = dependence.Correlation
-					relation.Absolute = math.Abs(relation.Signed)
-				}
-
-				if relation.FisherDefined {
-					relation.PValue = significanceOfPair.PValue
-					relation.StandardError = significanceOfPair.StandardError
-				}
-
-				for range pairs.relations.Next(sequence.NewOne(unsafe.Pointer(&relation)).Next(nil)) {
-				}
-
-				relations = append(relations, relation)
-
-				minSupport := core.Unit + core.Unit
-
-				if !dependence.Defined || dependence.Support < minSupport {
-					continue
-				}
-
-				admitted = append(admitted, Peer{
+			if dependence.Defined {
+				reading.Peers = []Peer{{
 					Correlation: dependence.Correlation,
 					Support:     dependence.Support,
 					PeerEnergy:  dependence.RightEnergyRate,
-				})
-
-				selected = dependence
-				significance = significanceOfPair
-				selection = symbol
+				}}
 			}
 
-			reading.Selected = selected
+			sample := FisherSample{Correlation: dependence.Correlation, Support: dependence.Support}
+			var significance FisherReading
+
+			for out := range pairs.fisher.Next(sequence.NewOne(unsafe.Pointer(&sample)).Next(nil)) {
+				significance = *(*FisherReading)(out)
+			}
+
+			if err := pairs.fisher.Error(); err != nil {
+				pairs.Error(err)
+				return
+			}
+
 			reading.Fisher = significance
-			reading.PeerSymbol = selection
-			reading.Peers = admitted
-			reading.Relations = relations
 
 			if !yield(unsafe.Pointer(&reading)) {
 				return

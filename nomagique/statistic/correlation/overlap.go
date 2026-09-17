@@ -46,6 +46,8 @@ func (overlap *Overlap) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			support := 0.0
 			leftIndex := 0
 			rightIndex := 0
+			leftUsed := make([]bool, len(query.Left))
+			rightUsed := make([]bool, len(query.Right))
 
 			for leftIndex < len(query.Left) && rightIndex < len(query.Right) {
 				leftReturn := query.Left[leftIndex]
@@ -56,6 +58,8 @@ func (overlap *Overlap) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				if leftFrom < rightReturn.To && rightReturn.From < leftTo {
 					covariance += leftReturn.Value * rightReturn.Value
 					support++
+					leftUsed[leftIndex] = true
+					rightUsed[rightIndex] = true
 				}
 
 				if leftTo <= rightReturn.To {
@@ -66,12 +70,32 @@ func (overlap *Overlap) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				rightIndex++
 			}
 
+			leftEnergy := 0.0
+
+			for index, leftReturn := range query.Left {
+				if !leftUsed[index] {
+					continue
+				}
+
+				leftEnergy += leftReturn.Value * leftReturn.Value
+			}
+
+			rightEnergy := 0.0
+
+			for index, rightReturn := range query.Right {
+				if !rightUsed[index] {
+					continue
+				}
+
+				rightEnergy += rightReturn.Value * rightReturn.Value
+			}
+
 			out := LagEstimate{
 				Covariance:  covariance,
 				Support:     support,
-				LeftEnergy:  query.LeftEnergy,
-				RightEnergy: query.RightEnergy,
-				Defined:     support > 0 && query.LeftEnergy > 0 && query.RightEnergy > 0,
+				LeftEnergy:  leftEnergy,
+				RightEnergy: rightEnergy,
+				Defined:     support > 0 && leftEnergy > 0 && rightEnergy > 0,
 			}
 
 			if !yield(unsafe.Pointer(&out)) {

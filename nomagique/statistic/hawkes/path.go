@@ -3,13 +3,6 @@ package hawkes
 import "time"
 
 /*
-MaxArrivalSamples is the retained arrival history's capacity per symbol: past
-it, the oldest arrival is evicted on every new one and the fit sees a rolling
-window.
-*/
-const MaxArrivalSamples = 64
-
-/*
 sample is one retained arrival: its venue timestamp, its seconds position on
 the path's relative epoch, and its side mark.
 */
@@ -64,7 +57,7 @@ func (paths *paths) at(label string) *path {
 		return existing
 	}
 
-	fresh := &path{samples: make([]sample, 0, MaxArrivalSamples)}
+	fresh := &path{samples: make([]sample, 0)}
 	paths.byLabel[label] = fresh
 
 	return fresh
@@ -101,10 +94,6 @@ remember incorporates one accepted arrival into the history, evicting the
 oldest once the retained path is at capacity.
 */
 func (path *path) remember(at time.Time, atSec float64, mark float64) {
-	if len(path.samples) >= MaxArrivalSamples {
-		path.samples = path.samples[1:]
-	}
-
 	path.samples = append(path.samples, sample{at: at, atSec: atSec, mark: mark})
 }
 

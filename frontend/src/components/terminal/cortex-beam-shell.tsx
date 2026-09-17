@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { cognitionStore } from "#/collections/app";
-import { meterTrackVariants } from "#/components/ui/meter";
+import { Flex } from "#/components/ui/flex";
+import { Meter } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
 import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
@@ -57,39 +58,55 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 	}, [symbol]);
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
+		<Flex.Column fullHeight className="min-h-0 flex-1">
 			{predictions.length === 0 ? (
-				<div className="px-3 py-6 text-center font-mono text-[11px] text-(--f4)">
+				<Typography.Paragraph
+					variant="f4"
+					className="px-3 py-6 text-center text-[11px]"
+				>
 					waiting for cognitive beam reading
-				</div>
+				</Typography.Paragraph>
 			) : (
-				<div className="flex min-h-0 flex-1 flex-col gap-1.25 overflow-auto px-2 py-1.5">
+				<Flex.Column
+					gap={1}
+					className="min-h-0 flex-1 overflow-auto px-2 py-1.5"
+				>
 					{predictions.map((pred, index) => (
-						<Panel key={pred.name} size="s" className="flex items-center gap-2">
-							<span className="w-4 shrink-0 font-mono text-[10px] text-(--info)">
+						<Panel
+							key={pred.name}
+							size="s"
+							className="flex items-center gap-2"
+						>
+							<Typography.Mono
+								size="s"
+								className="w-4 shrink-0 text-(--info)"
+							>
 								{index + 1}
-							</span>
-							<Typography.Span className="flex-1 font-mono text-[11px] text-(--f1)">
+							</Typography.Mono>
+							<Typography.Span
+								variant="f1"
+								className="flex-1 text-[11px]"
+							>
 								{pred.name}
 							</Typography.Span>
-							<div
-								className={meterTrackVariants({ variant: "info", size: "xs" })}
-								style={{ width: "70px" }}
+							<Meter
+								layout="bar"
+								variant="info"
+								size="xs"
+								percent={pred.value * 100}
+								className="w-[70px]"
+							/>
+							<Typography.Mono
+								size="xs"
+								tone="f3"
+								className="w-11 shrink-0 text-right"
 							>
-								<div
-									className="h-full bg-(--meter-tone)"
-									style={{
-										width: `${Math.min(100, Math.max(0, pred.value * 100)).toFixed(1)}%`,
-									}}
-								/>
-							</div>
-							<Typography.Span className="w-11 shrink-0 text-right font-mono text-[9.5px] text-(--f3)">
 								{`${(pred.value * 100).toFixed(1)}%`}
-							</Typography.Span>
+							</Typography.Mono>
 						</Panel>
 					))}
-				</div>
+				</Flex.Column>
 			)}
-		</div>
+		</Flex.Column>
 	);
 };

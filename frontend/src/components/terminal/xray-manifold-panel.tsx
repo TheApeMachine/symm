@@ -1,12 +1,14 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
 import { focusStore, resonanceStore } from "#/collections/app";
 import {
 	getRetainedResonance,
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
+import { DataRow } from "#/components/ui/data-row";
 import { Flex } from "#/components/ui/flex";
-import { Typography } from "#/components/ui/typography";
+import { Grid } from "#/components/ui/grid";
+import { usePaintStore } from "#/components/ui/paint";
+import { Panel } from "#/components/ui/panel";
 
 const num = (value: unknown, digits: number): string =>
 	typeof value !== "number" || !Number.isFinite(value)
@@ -122,16 +124,19 @@ const DYNAMICS_FIELDS = [
 
 export const XrayManifoldPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
-	const root = useRef<HTMLDivElement>(null);
 
-	useEffect(() => {
-		const updateFromState = (state: typeof resonanceStore.state) => {
-			if (!root.current) return;
+	const rootRef = usePaintStore(
+		resonanceStore,
+		(state) => {
 			const ring = state[focusSymbol];
 			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
-				const row = (typeof (last as any).unpack === "function" ? (last as any).unpack() : last) as unknown as Record<string, unknown>;
+				const row = (
+					typeof (last as any).unpack === "function"
+						? (last as any).unpack()
+						: last
+				) as unknown as Record<string, unknown>;
 				const sym = typeof row.symbol === "string" ? row.symbol : "";
 
 				if (sym) {
@@ -140,88 +145,86 @@ export const XrayManifoldPanel = () => {
 			}
 
 			const targetRow = getRetainedResonance(focusSymbol);
-
-			const set = (q: string, value: string) => {
-				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-				if (el) el.textContent = value;
-			};
+			const fields: Record<string, string> = {};
 
 			for (const index of ROWS.keys()) {
-				set(`r${index}`, "—");
+				fields[`r${index}`] = "—";
 			}
 
 			for (const index of DYNAMICS_FIELDS.keys()) {
-				set(`d${index}`, "—");
+				fields[`d${index}`] = "—";
 			}
 
 			if (targetRow) {
 				for (const [index, entry] of ROWS.entries()) {
-					set(`r${index}`, entry.read(targetRow));
+					fields[`r${index}`] = entry.read(targetRow);
 				}
 
 				const dyn = targetRow.dynamicsNamed as
 					| Record<string, unknown>
 					| undefined;
 				for (const [index, entry] of DYNAMICS_FIELDS.entries()) {
-					set(`d${index}`, entry.read(dyn));
+					fields[`d${index}`] = entry.read(dyn);
 				}
 			}
-		};
 
-		updateFromState(resonanceStore.state);
-		const subscription = resonanceStore.subscribe((state) => {
-			updateFromState(state);
-		});
-
-		return () => {
-			subscription.unsubscribe();
-		};
-	}, [focusSymbol]);
+			return { fields };
+		},
+		[focusSymbol],
+	);
 
 	return (
 		<Flex.Column
-			ref={root}
+			ref={rootRef}
 			gap={2}
-			className="flex flex-col gap-2 border-(--line) border-t px-3.5 py-3"
+			className="border-(--line) border-t px-3.5 py-3"
 		>
-			<div>
-				<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-					Manifold reading
-				</div>
-				<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-					settled predictive state · strict-prior direction resolution
-				</div>
-			</div>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
+			<Panel.Title className="text-[10px] uppercase tracking-[0.13em] text-(--f3)">
+				Manifold reading
+			</Panel.Title>
+			<Panel.Caption className="mt-0.5 mb-1">
+				settled predictive state · strict-prior direction resolution
+			</Panel.Caption>
+
+			<Grid
+				cols={2}
+				gap={2}
+				responsive={false}
+				className="gap-x-4 font-mono text-[11px]"
+			>
 				{ROWS.map((row, index) => (
-					<Flex.Row key={row.label} justify="between" gap={3}>
-						<span className="text-(--f3)">{row.label}</span>
-						<Typography.Span
-							data-f={`r${index}`}
-							className="text-right text-(--f1)"
-						>
-							—
-						</Typography.Span>
-					</Flex.Row>
+					<DataRow
+						key={row.label}
+						label={row.label}
+						value="—"
+						paintKey={`r${index}`}
+						density="bare"
+						tone="f1"
+					/>
 				))}
-			</div>
+			</Grid>
+
 			<div className="mt-1 border-(--line) border-t pt-2">
-				<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+				<Panel.Title className="mb-2 block text-[10px] uppercase tracking-[0.13em] text-(--f3)">
 					Continuous dynamics
-				</div>
-				<div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
+				</Panel.Title>
+				<Grid
+					cols={2}
+					gap={2}
+					responsive={false}
+					className="gap-x-4 font-mono text-[11px]"
+				>
 					{DYNAMICS_FIELDS.map((field, index) => (
-						<div key={field.label} className="flex justify-between gap-3">
-							<span className="text-(--f3)">{field.label}</span>
-							<Typography.Span
-								data-f={`d${index}`}
-								className="text-right text-(--f1)"
-							>
-								—
-							</Typography.Span>
-						</div>
+						<DataRow
+							key={field.label}
+							label={field.label}
+							value="—"
+							paintKey={`d${index}`}
+							density="bare"
+							tone="f1"
+						/>
 					))}
-				</div>
+				</Grid>
 			</div>
 		</Flex.Column>
 	);

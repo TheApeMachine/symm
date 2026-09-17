@@ -1,5 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { focusStore, resonanceStore } from "#/collections/app";
+import { Typography } from "#/components/ui/typography";
 
 export const LiveResonanceTitle = () => {
 	const symbol = useSelector(focusStore, (state) => state);
@@ -36,12 +37,19 @@ export const LiveResonanceTitle = () => {
 			: "—";
 
 	return (
-		<span>
-			h<span data-res="horizon">{String(horizonVal)}</span>
+		<Typography.Span variant="f3">
+			h
+			<Typography.Span data-res="horizon" variant="f1">
+				{String(horizonVal)}
+			</Typography.Span>
 			{" · r "}
-			<span data-res="reach">{String(reachVal)}</span>
+			<Typography.Span data-res="reach" variant="f1">
+				{String(reachVal)}
+			</Typography.Span>
 			{" · relative precision "}
-			<span data-res="precision">{precision}</span>
-		</span>
+			<Typography.Span data-res="precision" variant="f1">
+				{precision}
+			</Typography.Span>
+		</Typography.Span>
 	);
 };

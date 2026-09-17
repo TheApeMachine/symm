@@ -1,58 +1,17 @@
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
 import { positionStore } from "#/collections/app";
+import { Callout } from "#/components/ui/callout";
+import { DataRow } from "#/components/ui/data-row";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
-import { cn } from "#/lib/utils";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 
 type PositionState = ReturnType<typeof positionStore.get>;
 
 const value = (raw: string | null): string => raw || "—";
-
-const Row = ({
-	label,
-	value,
-	tone = "text-(--f1)",
-}: {
-	label: string;
-	value: string;
-	tone?: string;
-}) => (
-	<Flex.Row align="baseline" justify="between" className="gap-2">
-		<Typography.Label size="xxs" tone="f4" weight="normal">
-			{label}
-		</Typography.Label>
-		<Typography.Mono
-			size="s"
-			className={cn("min-w-0 truncate text-right", tone)}
-		>
-			{value}
-		</Typography.Mono>
-	</Flex.Row>
-);
-
-const Card = ({
-	title,
-	caption,
-	children,
-}: {
-	title: string;
-	caption: string;
-	children: React.ReactNode;
-}) => (
-	<Panel variant="surface" size="bare" className="px-3 py-2.5">
-		<Typography.Label size="lg" tone="f1">
-			{title}
-		</Typography.Label>
-		<p className="mt-0.5 mb-2 text-[9px] text-(--f4) leading-relaxed">
-			{caption}
-		</p>
-		<div className="flex flex-col gap-1">{children}</div>
-	</Panel>
-);
 
 const currentPosition = (state: PositionState, symbol: string) => {
 	const frames =
@@ -102,47 +61,74 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 	);
 
 	return (
-		<div className="flex min-h-0 flex-col gap-2 overflow-auto pr-1">
-			<div className="rounded-[4px] border border-(--line2) bg-(--sunken) px-3 py-2.5">
-				<Typography.Label size="xs" tone="accent">
-					Live now
-				</Typography.Label>
-				<p className="mt-1 text-[9px] text-(--f4) leading-relaxed">
+		<Flex.Column gap={2} className="min-h-0 overflow-auto pr-1">
+			<Callout tone="neutral" size="s">
+				<Callout.Title tone="accent">Live now</Callout.Title>
+				<Callout.Description>
 					These values change with the market. Everything in the larger entry
 					panel is frozen.
-				</p>
-			</div>
+				</Callout.Description>
+			</Callout>
 
-			<Card
-				title="Position now"
-				caption="What the lot is worth if judged at the latest realizable sell price."
-			>
-				<Row label="status" value={position?.status ?? "—"} />
-				<Row label="amount held" value={position?.quantity ?? "—"} />
-				<Row label="bought at" value={position?.entry ?? "—"} />
-				<Row label="sell price now" value={position?.mark ?? "—"} />
-				<Row
-					label="profit / loss"
-					value={`${position?.pnl ?? "—"} USD`}
-					tone="text-(--pnl)"
-				/>
-				<Row
-					label="return since entry"
-					value={position?.returnPct ?? "—"}
-					tone="text-(--pnl)"
-				/>
-			</Card>
+			<Panel variant="surface" size="bare" className="px-3 py-2.5">
+				<Typography.Label size="lg" tone="f1">
+					Position now
+				</Typography.Label>
+				<Typography.Paragraph
+					variant="f4"
+					className="mt-0.5 mb-2 text-[9px] leading-relaxed"
+				>
+					What the lot is worth if judged at the latest realizable sell price.
+				</Typography.Paragraph>
+				<DataRow.Group density="bare" border={false} className="gap-1">
+					<DataRow
+						label="status"
+						value={position?.status ?? "—"}
+						density="bare"
+					/>
+					<DataRow
+						label="amount held"
+						value={position?.quantity ?? "—"}
+						density="bare"
+					/>
+					<DataRow
+						label="bought at"
+						value={position?.entry ?? "—"}
+						density="bare"
+					/>
+					<DataRow
+						label="sell price now"
+						value={position?.mark ?? "—"}
+						density="bare"
+					/>
+					<DataRow
+						label="profit / loss"
+						value={`${position?.pnl ?? "—"} USD`}
+						density="bare"
+						valueClassName="text-(--pnl)"
+					/>
+					<DataRow
+						label="return since entry"
+						value={position?.returnPct ?? "—"}
+						density="bare"
+						valueClassName="text-(--pnl)"
+					/>
+				</DataRow.Group>
+			</Panel>
 
 			<Panel variant="surface" size="bare" className="px-3 py-2.5">
 				<Typography.Label size="s" tone="f2">
 					A useful way to read this
 				</Typography.Label>
-				<p className="mt-1 text-[10px] text-(--f4) leading-relaxed">
+				<Typography.Paragraph
+					variant="f4"
+					className="mt-1 text-[10px] leading-relaxed"
+				>
 					The entry snapshot answers “why did we buy?” This rail answers “what
 					is happening to that buy now?” Keeping them apart prevents
 					today&apos;s price from rewriting yesterday&apos;s reasoning.
-				</p>
+				</Typography.Paragraph>
 			</Panel>
-		</div>
+		</Flex.Column>
 	);
 };

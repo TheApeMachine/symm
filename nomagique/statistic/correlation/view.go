@@ -26,6 +26,11 @@ func (lastPrice *LastPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			observation := *(*PriceObservation)(arriving)
+
+			if observation.Value <= 0 {
+				continue
+			}
+
 			lastPrice.out = observation.Value
 
 			if !yield(unsafe.Pointer(&lastPrice.out)) {
@@ -41,17 +46,29 @@ ObservationCount yields the retained path length of a pair reading.
 type ObservationCount struct {
 	*core.PrimitiveError
 
-	out float64
+	symbol string
+	out    float64
 }
 
-func NewObservationCount() *ObservationCount {
-	return &ObservationCount{PrimitiveError: core.NewPrimitiveError()}
+func NewObservationCount(symbol ...string) *ObservationCount {
+	count := &ObservationCount{PrimitiveError: core.NewPrimitiveError()}
+
+	if len(symbol) > 0 {
+		count.symbol = symbol[0]
+	}
+
+	return count
 }
 
 func (observationCount *ObservationCount) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
+
+			if observationCount.symbol != "" && reading.Observation.Symbol != observationCount.symbol {
+				continue
+			}
+
 			observationCount.out = reading.Path.Count
 
 			if !yield(unsafe.Pointer(&observationCount.out)) {

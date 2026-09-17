@@ -16,7 +16,12 @@ import (
 func TestConn(t *testing.T) {
 	Convey("Conn wraps a member pipeline as an addressable connectable endpoint", t, func() {
 		grid := store.NewGrid[*geometry.Coordinate]()
-		member := transport.NewIO[any](nil, nil)
+		member := store.NewKeyed[float64]()
+		seed := store.Slot[float64]{Value: 42.0}
+
+		for range member.Next(sequence.NewOne(unsafe.Pointer(&seed)).Next(nil)) {
+		}
+
 		conn := transport.NewConn[*geometry.Coordinate](member)
 
 		So(conn, ShouldNotBeNil)
@@ -39,26 +44,28 @@ func TestConn(t *testing.T) {
 
 		readAddress := transport.NewAddress[*geometry.Coordinate]()
 		readAddress.Identify(conn.Identity())
-		cell := sequence.Read[core.Primitive](grid.Next(
-			core.NewQuery[*geometry.Coordinate, core.Primitive](readAddress, core.Read).Next(nil),
+		reading := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
+			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				readAddress, core.Read,
+			).Next(nil),
 		))
-		So(cell, ShouldEqual, conn)
+		So(reading.Value, ShouldNotBeNil)
+		So(*reading.Value, ShouldEqual, 42.0)
+		So(reading.Origin.Identity(), ShouldEqual, conn.Identity())
 
-		value := 42.0
-		var received float64
+		value := store.Slot[float64]{Value: 7.0}
+		var received store.Slot[float64]
 		for out := range conn.Next(sequence.NewOne(unsafe.Pointer(&value)).Next(nil)) {
-			received = *(*float64)(out)
+			received = *(*store.Slot[float64])(out)
 		}
 
-		So(received, ShouldEqual, 42.0)
+		So(received.Value, ShouldEqual, 7.0)
 
-		execAddress := transport.NewAddress[*geometry.Coordinate]()
-		execAddress.Identify(conn.Identity())
-		executed := sequence.Read[float64](grid.Next(
+		reread := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
 			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				execAddress, core.Execute,
-			).Next(sequence.NewOne(unsafe.Pointer(&value)).Next(nil)),
+				readAddress, core.Read,
+			).Next(nil),
 		))
-		So(executed, ShouldEqual, 42.0)
+		So(*reread.Value, ShouldEqual, 7.0)
 	})
 }

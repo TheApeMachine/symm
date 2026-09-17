@@ -2,240 +2,117 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
-
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-type level3EntityInput struct {
-	Bid float64
-	Ask float64
-}
-
-type level3EntityResult struct {
-	Bid            float64
-	Ask            float64
-	Midpoint       float64
-	Spread         float64
-	RelativeSpread float64
-	Valid          bool
-}
-
-type level3EntityPipeline struct {
-	*core.PrimitiveError
-	hasBid  bool
-	hasAsk  bool
-	prevBid float64
-	prevAsk float64
-	out     level3EntityResult
-}
-
-func newLevel3EntityPipeline() core.Primitive {
-	return &level3EntityPipeline{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
-}
-
-func (op *level3EntityPipeline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			input := (*level3EntityInput)(arriving)
-
-			if input.Bid > 0 {
-				op.prevBid = input.Bid
-				op.hasBid = true
-			}
-
-			if input.Ask > 0 {
-				op.prevAsk = input.Ask
-				op.hasAsk = true
-			}
-
-			if !op.hasBid || !op.hasAsk {
-				op.out = level3EntityResult{Valid: false}
-				if !yield(unsafe.Pointer(&op.out)) {
-					return
-				}
-				continue
-			}
-
-			midpoint := (op.prevBid + op.prevAsk) / 2.0
-			spread := op.prevAsk - op.prevBid
-			relativeSpread := 0.0
-
-			if midpoint > 0 {
-				relativeSpread = spread / midpoint
-			}
-
-			op.out = level3EntityResult{
-				Bid:            op.prevBid,
-				Ask:            op.prevAsk,
-				Midpoint:       midpoint,
-				Spread:         spread,
-				RelativeSpread: relativeSpread,
-				Valid:          true,
-			}
-
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
-			}
-		}
-	}
-}
-
-/*
-Level3 is the authoritative executable-touch market entity. It holds no state
-and no logic of its own: its entire behavior is one nomagique pipeline over the
-measurement itself — every stage writes its facts into the measurement where it
-computes them, and the workload's register owns the measurement's lifetime.
-*/
 type Level3 struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	grid *store.Grid[*geometry.Coordinate]
 }
 
-func NewLevel3(ctx context.Context) *Level3 {
-	level3 := &Level3{
-		pipeline: nomagique.NewNumber(newLevel3EntityPipeline()),
+func NewLevel3(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbol string) *Level3 {
+	interests := [][]string{
+		{"level3", "data", "symbol"},
+		{"level3", "data", "bid"},
+		{"level3", "data", "ask"},
+		{"level3", "data", "timestamp"},
 	}
 
+	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
+		sequence.Read[core.Connectable[*geometry.Coordinate]](
+			nomagique.NewNumber(
+				sequence.NewValues(wanted),
+				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+					conn, core.Identify,
+				),
+				grid,
+			).Next(nil),
+		)
+	}
+
+	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
+		retained := store.NewKeyed[float64]()
+		conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
+		return conn, nomagique.NewNumber(extractor, retained, transport.NewDiscard())
+	}
+
+	bid, bidBranch := hold(NewBid())
+	ask, askBranch := hold(NewAsk())
+	mid, midBranch := hold(NewMidpoint())
+	spread, spreadBranch := hold(NewSpread())
+	rel, relBranch := hold(NewRelativeSpread())
+	base, baseBranch := hold(NewSpreadBaseline())
+	ratio, ratioBranch := hold(NewSpreadRatio())
+	div, divBranch := hold(NewSpreadDivergence())
+	zscore, zBranch := hold(NewSpreadZScore())
+
+	ingressStages := []core.Primitive{}
+
+	if symbol != "" {
+		ingressStages = append(ingressStages, store.NewOrigin(symbol))
+	}
+
+	ingressStages = append(ingressStages,
+		NewTouchAssemble(),
+		NewTouch(),
+		transport.NewFan(
+			transport.NewIO[any](nil, nil),
+			bidBranch, askBranch, midBranch, spreadBranch, relBranch,
+			baseBranch, ratioBranch, divBranch, zBranch,
+		),
+		NewBid(),
+		store.NewKeyed[float64](),
+	)
+
+	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
+	register(ingress, interests)
+	register(bid, nil)
+	register(ask, nil)
+	register(mid, nil)
+	register(spread, nil)
+	register(rel, nil)
+	register(base, nil)
+	register(ratio, nil)
+	register(div, nil)
+	register(zscore, nil)
+
+	level3 := &Level3{grid: grid}
 	level3.System = runtime.NewSystem(ctx, "pumpdump:level3", level3)
+	level3.Transition(runtime.READY)
 	return level3
 }
 
-/*
-Next supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
-*/
 func (level3 *Level3) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-	inputs:
-		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
-
-			if level3.Status() != runtime.READY {
-				errnie.Warn(level3.Name() + ": Next called before READY; dropping event")
-				if m != nil && !yield(unsafe.Pointer(&m)) {
-					return
-				}
-				continue inputs
+		if in != nil {
+			for range in {
 			}
+		}
 
-			if m == nil {
-				continue inputs
-			}
+		if level3.Status() != runtime.READY {
+			errnie.Warn(level3.Name() + ": Next called before READY; dropping event")
+			return
+		}
 
-			if m.Err != nil {
-				if m != nil && !yield(unsafe.Pointer(&m)) {
-					return
-				}
-				continue inputs
-			}
+		address := transport.NewAddress[*geometry.Coordinate]()
+		query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+			address, core.Read,
+		)
 
-			input := m
-
-			if len(m.Peers) > 0 {
-				peer := m.FindPeer(func(p *data.Measurement[float64]) bool {
-					if p.Label == "" {
-						return false
-					}
-					b := p.Metrics["best_bid"].Raw
-					if b == 0 {
-						b = p.Metrics["bid"].Raw
-					}
-					a := p.Metrics["best_ask"].Raw
-					if a == 0 {
-						a = p.Metrics["ask"].Raw
-					}
-					return b > 0 && a > 0
-				})
-
-				if peer == nil {
-					continue inputs
-				}
-
-				input = peer
-			}
-
-			m.Pull(input)
-
-			bid := input.Metrics["best_bid"].Raw
-			if bid == 0 {
-				bid = input.Metrics["bid"].Raw
-			}
-			ask := input.Metrics["best_ask"].Raw
-			if ask == 0 {
-				ask = input.Metrics["ask"].Raw
-			}
-
-			if bid > 0 && ask > 0 && bid >= ask {
-				m.Err = fmt.Errorf("pumpdump: crossed touch (%f >= %f)", bid, ask)
-				if m != nil && !yield(unsafe.Pointer(&m)) {
-					return
-				}
-				continue inputs
-			}
-
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
-			}
-
-			pipeInput := level3EntityInput{Bid: bid, Ask: ask}
-
-			var valid bool
-			for out := range level3.pipeline.Next(sequence.NewOne(unsafe.Pointer(&pipeInput)).Next(nil)) {
-				res := (*level3EntityResult)(out)
-				if !res.Valid {
-					continue inputs
-				}
-
-				valid = true
-				m.Metrics["best_bid"] = m.Metrics["best_bid"].Write(res.Bid)
-				m.Metrics["best_ask"] = m.Metrics["best_ask"].Write(res.Ask)
-				m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(res.Midpoint)
-				m.Metrics["spread"] = m.Metrics["spread"].Write(res.Spread)
-				m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(res.RelativeSpread)
-				m.Maturity = 1.0
-			}
-
-			if !valid {
-				continue inputs
-			}
-
-			m.Label = input.Label
-			m.At = input.At
-			m.Finalize()
-			if m != nil && !yield(unsafe.Pointer(&m)) {
+		for out := range level3.grid.Next(query.Next(nil)) {
+			if !yield(out) {
 				return
 			}
-			continue inputs
-
 		}
 	}
-}
-
-/*
-Register returns the measurement declaring this entity's full metric schema.
-Values are empty; the workload uses this at startup to allocate the metric
-schema before feeding streaming records.
-*/
-func (level3 *Level3) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("pumpdump:level3", map[string]data.Metric[float64]{
-		"best_bid":        data.NewMetric[float64]("best_bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"best_ask":        data.NewMetric[float64]("best_ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"midpoint":        data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"spread":          data.NewMetric[float64]("spread", data.UnitRate, data.TimescaleInstantaneous, 0, 1),
-		"relative_spread": data.NewMetric[float64]("relative_spread", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
 }

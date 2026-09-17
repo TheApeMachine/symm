@@ -1,18 +1,34 @@
 package liquidity
 
 import (
-	"errors"
 	"iter"
 	"math"
-	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 )
+
+/*
+Reading is one touch morphology observation.
+*/
+type Reading struct {
+	Symbol                                     string
+	Bid, Ask, BidQty, AskQty                   float64
+	Midpoint, Spread, Relative                 float64
+	BidNotional, AskNotional                   float64
+	TwoSided, Imbalance                        float64
+	BidBaseline, AskBaseline, SpreadBaseline   float64
+	BidRatio, AskRatio, SpreadRatio            float64
+	BidDivergence, AskDivergence, SpreadDiv    float64
+	BidNoise, AskNoise, SpreadNoise            float64
+	BidZ, AskZ, SpreadZ                        float64
+	BidVelocity, AskVelocity, SpreadVelocity   float64
+	BidVelSNR, AskVelSNR, SpreadVelSNR         float64
+	HasBaseline                                bool
+}
 
 type path struct {
 	estimator core.Primitive
@@ -20,47 +36,33 @@ type path struct {
 	at        int64
 }
 
-var (
-	velocityLabels    = []string{"divergence_velocity:bid", "divergence_velocity:ask", "spread_divergence_velocity"}
-	velocitySNRLabels = []string{"divergence_velocity_snr:bid", "divergence_velocity_snr:ask", "spread_divergence_velocity_snr"}
-	baselineLabels    = []string{"touch_notional_baseline:bid", "touch_notional_baseline:ask", "relative_spread_baseline"}
-	ratioLabels       = []string{"depth_ratio:bid", "depth_ratio:ask", "spread_ratio"}
-	divergenceLabels  = []string{"depth_divergence:bid", "depth_divergence:ask", "spread_divergence"}
-	noiseLabels       = []string{"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale"}
-	zscoreLabels      = []string{"depth_zscore:bid", "depth_zscore:ask", "spread_zscore"}
-)
-
 /*
-Touch measures one quoted arrival's touch morphology: notionals, midpoint,
-spread, and the causal baseline, divergence, noise, z-score, and divergence
-velocity of each channel.
+Touch measures one quoted arrival's touch morphology.
 */
 type Touch struct {
 	*core.PrimitiveError
+
 	paths map[string]*path
+	out   Reading
 }
 
-func NewTouch() core.Primitive {
+func NewTouch() *Touch {
 	return &Touch{
 		PrimitiveError: core.NewPrimitiveError(),
 		paths:          make(map[string]*path),
 	}
 }
 
-func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (touch *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			quote := *(*Quote)(arriving)
 
-			if m.Err != nil {
-				if !yield(arriving) {
-					return
-				}
-
+			if quote.Bid <= 0 || quote.Ask <= 0 {
 				continue
 			}
 
-			state := op.paths[m.Label]
+			state := touch.paths[quote.Symbol]
 
 			if state == nil {
 				state = &path{
@@ -71,120 +73,105 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						statistic.NewLocalRegression(),
 					},
 				}
-				op.paths[m.Label] = state
+				touch.paths[quote.Symbol] = state
 			}
 
-			if state.at != 0 && m.At.UnixNano() < state.at {
-				m.Provenance = map[string]string{"event_time_state": "regressed"}
-
-				if !yield(arriving) {
-					return
-				}
-
+			if state.at != 0 && quote.At < state.at {
 				continue
 			}
 
-			bid, ask := m.Metrics["bid"].Raw, m.Metrics["ask"].Raw
-			bidQty, askQty := m.Metrics["bid_qty"].Raw, m.Metrics["ask_qty"].Raw
-			bidNotional, askNotional := bid*bidQty, ask*askQty
-			midpoint := (bid + ask) / 2
-			spread := ask - bid
+			bidNotional := quote.Bid * quote.BidQty
+			askNotional := quote.Ask * quote.AskQty
+			midpoint := (quote.Bid + quote.Ask) / 2
+			spread := quote.Ask - quote.Bid
 			relative := spread / midpoint
+			imbalance := 0.0
 
-			m.Metrics["best_bid_price"] = m.Metrics["best_bid_price"].Write(bid)
-			m.Metrics["best_ask_price"] = m.Metrics["best_ask_price"].Write(ask)
-			m.Metrics["touch_quantity:bid"] = m.Metrics["touch_quantity:bid"].Write(bidQty)
-			m.Metrics["touch_quantity:ask"] = m.Metrics["touch_quantity:ask"].Write(askQty)
-			m.Metrics["touch_notional:bid"] = m.Metrics["touch_notional:bid"].Write(bidNotional)
-			m.Metrics["touch_notional:ask"] = m.Metrics["touch_notional:ask"].Write(askNotional)
-			m.Metrics["midpoint"] = m.Metrics["midpoint"].Write(midpoint)
-			m.Metrics["spread"] = m.Metrics["spread"].Write(spread)
-			m.Metrics["relative_spread"] = m.Metrics["relative_spread"].Write(relative)
-			m.Metrics["two_sided_touch_notional"] = m.Metrics["two_sided_touch_notional"].Write(math.Min(bidNotional, askNotional))
-			m.Metrics["touch_notional_imbalance"] = m.Metrics["touch_notional_imbalance"].Write((bidNotional - askNotional) / (bidNotional + askNotional))
+			if bidNotional+askNotional > 0 {
+				imbalance = (bidNotional - askNotional) / (bidNotional + askNotional)
+			}
+
+			reading := Reading{
+				Symbol:      quote.Symbol,
+				Bid:         quote.Bid,
+				Ask:         quote.Ask,
+				BidQty:      quote.BidQty,
+				AskQty:      quote.AskQty,
+				Midpoint:    midpoint,
+				Spread:      spread,
+				Relative:    relative,
+				BidNotional: bidNotional,
+				AskNotional: askNotional,
+				TwoSided:    math.Min(bidNotional, askNotional),
+				Imbalance:   imbalance,
+			}
 
 			logged := []float64{math.Log(bidNotional), math.Log(askNotional), math.Log(relative)}
 			originals := []float64{bidNotional, askNotional, relative}
-
-			var reading statistic.JointReading
+			var joint statistic.JointReading
 			input := statistic.JointInput{Values: logged}
+
 			for out := range state.estimator.Next(sequence.NewOne(unsafe.Pointer(&input)).Next(nil)) {
-				reading = *(*statistic.JointReading)(out)
+				joint = *(*statistic.JointReading)(out)
 			}
 
 			if err := state.estimator.Error(); err != nil {
-				m.Err = errors.Join(m.Err, err)
-				op.Error(err)
-
-				if !yield(arriving) {
-					return
-				}
-
-				continue
+				touch.Error(err)
+				return
 			}
 
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
+			targets := []*float64{
+				&reading.BidBaseline, &reading.AskBaseline, &reading.SpreadBaseline,
 			}
+			ratios := []*float64{&reading.BidRatio, &reading.AskRatio, &reading.SpreadRatio}
+			divs := []*float64{&reading.BidDivergence, &reading.AskDivergence, &reading.SpreadDiv}
+			noises := []*float64{&reading.BidNoise, &reading.AskNoise, &reading.SpreadNoise}
+			zs := []*float64{&reading.BidZ, &reading.AskZ, &reading.SpreadZ}
+			vels := []*float64{&reading.BidVelocity, &reading.AskVelocity, &reading.SpreadVelocity}
+			snrs := []*float64{&reading.BidVelSNR, &reading.AskVelSNR, &reading.SpreadVelSNR}
 
-			m.Metadata[data.MetadataSupport] = strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64)
-
-			if reading.SNRDefined {
-				m.Metadata[data.MetadataMahalanobisSNR] = strconv.FormatFloat(reading.SNR, 'f', -1, 64)
-			}
-
-			failed := false
-
-			for index := range reading.Channels {
-				channel := reading.Channels[index]
+			for index := range joint.Channels {
+				channel := joint.Channels[index]
 
 				if !channel.HasPrior {
 					continue
 				}
 
-				m.Metrics[baselineLabels[index]] = m.Metrics[baselineLabels[index]].Write(channel.Baseline)
-				m.Metrics[ratioLabels[index]] = m.Metrics[ratioLabels[index]].Write(originals[index] / channel.Baseline)
-				m.Metrics[divergenceLabels[index]] = m.Metrics[divergenceLabels[index]].Write(channel.Residual)
+				reading.HasBaseline = true
+				*targets[index] = channel.Baseline
+				*ratios[index] = originals[index] / channel.Baseline
+				*divs[index] = channel.Residual
 
 				if channel.ScoreScale > 0 {
-					m.Metrics[noiseLabels[index]] = m.Metrics[noiseLabels[index]].Write(channel.ScoreScale)
-					m.Metrics[zscoreLabels[index]] = m.Metrics[zscoreLabels[index]].Write(channel.ZScore)
+					*noises[index] = channel.ScoreScale
+					*zs[index] = channel.ZScore
 				}
 
-				observation := temporal.Price{At: m.At.UnixNano(), Value: channel.Residual}
+				observation := temporal.Price{At: quote.At, Value: channel.Residual}
 				var summary statistic.LocalRegressionReading
+
 				for out := range state.velocity[index].Next(sequence.NewOne(unsafe.Pointer(&observation)).Next(nil)) {
 					summary = *(*statistic.LocalRegressionReading)(out)
 				}
 
 				if err := state.velocity[index].Error(); err != nil {
-					m.Err = errors.Join(m.Err, err)
-					op.Error(err)
-					failed = true
-
-					break
-				}
-
-				if summary.SlopeDefined {
-					m.Metrics[velocityLabels[index]] = m.Metrics[velocityLabels[index]].Write(summary.Slope)
-				}
-
-				if summary.SNRDefined {
-					m.Metrics[velocitySNRLabels[index]] = m.Metrics[velocitySNRLabels[index]].Write(summary.SNR)
-				}
-			}
-
-			if failed {
-				if !yield(arriving) {
+					touch.Error(err)
 					return
 				}
 
-				continue
+				if summary.SlopeDefined {
+					*vels[index] = summary.Slope
+				}
+
+				if summary.SNRDefined {
+					*snrs[index] = summary.SNR
+				}
 			}
 
-			state.at = m.At.UnixNano()
+			state.at = quote.At
+			touch.out = reading
 
-			if !yield(arriving) {
+			if !yield(unsafe.Pointer(&touch.out)) {
 				return
 			}
 		}

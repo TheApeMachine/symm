@@ -1,5 +1,5 @@
 import { heatColor } from "#/components/terminal/canvas";
-import { Meter } from "@/components/ui/meter";
+import { HeatmapRow } from "@/components/ui/heatmap-row";
 import type { Variant } from "@/components/ui/types";
 
 const LAYER_NAMES = ["sensory", "micro", "meso", "macro"];
@@ -95,7 +95,7 @@ export const XrayLayerRows = ({
 }: {
 	layers: Record<string, unknown>[];
 }) => (
-	<div className="flex flex-col gap-2">
+	<HeatmapRow.Group>
 		{layers.map((layer, index) => {
 			const state = Array.isArray(layer.state) ? layer.state : [];
 			const error = typeof layer.error_norm === "number" ? layer.error_norm : 0;
@@ -110,51 +110,25 @@ export const XrayLayerRows = ({
 					`L${layerIndex} · ${semanticLayerName(index, layers.length)}`,
 			);
 			const cells = layerCellsFromState(state);
-			const occurrences = new Map<string, number>();
-			const keyedCells = cells.map((value) => {
-				const valueKey = value.toFixed(6);
-				const count = occurrences.get(valueKey) ?? 0;
-
-				occurrences.set(valueKey, count + 1);
-
-				return {
-					key: `${label}-${valueKey}-${count}`,
-					value,
-				};
-			});
 			const errorWidth = Math.min(100, Math.max(0, error * 100));
 
 			return (
-				<div key={label} className="flex items-center gap-3">
-					<span className="w-[92px] shrink-0 font-mono text-[10px] text-(--f3)">
-						{label}
-					</span>
-					<div className="grid h-16 flex-1 grid-cols-16 gap-0.5">
-						{keyedCells.map((cell) => (
-							<div
-								key={cell.key}
-								className="min-w-0 rounded-[1px]"
-								style={{ background: layerColor(cell.value) }}
-							/>
-						))}
-					</div>
-					<div className="w-20 shrink-0">
-						<div className="flex justify-between font-mono text-[9px] text-(--f4)">
-							<span>ε</span>
-							<span className={layerErrorValueClass(errorVariant)}>
-								{error.toFixed(3)}
-							</span>
-						</div>
-						<Meter
-							layout="bar"
+				<HeatmapRow
+					key={label}
+					label={label}
+					values={cells}
+					colorFn={layerColor}
+					metric={
+						<HeatmapRow.Metric
+							label="ε"
+							value={error.toFixed(3)}
 							percent={errorWidth}
 							variant={errorVariant}
-							size="xs"
-							className="mt-[3px]"
+							valueClassName={layerErrorValueClass(errorVariant)}
 						/>
-					</div>
-				</div>
+					}
+				/>
 			);
 		})}
-	</div>
+	</HeatmapRow.Group>
 );

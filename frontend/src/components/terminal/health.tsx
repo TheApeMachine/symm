@@ -1,10 +1,11 @@
-import { useRef } from "react";
 import { tickCountStore } from "#/collections/app";
 import type { Measurement } from "#/collections/types";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
+import { usePaintStore } from "#/components/ui/paint";
 import { Panel } from "#/components/ui/panel";
+import { Typography } from "#/components/ui/typography";
 
 export type TerminalHealth = {
 	firing: number;
@@ -82,32 +83,40 @@ export const terminalHealthSummary = (
 };
 
 export const HealthPanel = () => {
-	const root = useRef<HTMLDivElement>(null);
-
-	tickCountStore.subscribe((tick) => {
-		if (!root.current) return;
-		const el = root.current.querySelector<HTMLElement>("[data-tick]");
-		if (el) {
-			el.textContent = String(tick);
-		}
-	});
+	const rootRef = usePaintStore(tickCountStore, (tick) => ({
+		fields: {
+			tick: String(tick),
+		},
+	}));
 
 	return (
-		<Panel size="lg" ref={root}>
-			<Flex.Row align="center" justify="between">
-				<Flex className="font-semibold text-(--f1) text-xs">System health</Flex>
-				<Badge
-					label="live"
-					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-				/>
-			</Flex.Row>
+		<Panel size="lg" ref={rootRef}>
+			<Panel.Header
+				title="System health"
+				meta={
+					<Badge
+						label="live"
+						variant="info"
+						size="xs"
+						className="font-mono font-semibold uppercase tracking-wide"
+					/>
+				}
+			/>
 			<Flex.Row className="mt-3 gap-4.5">
-				<div className="font-mono text-(--f1)">
-					<span data-tick className="text-[19px] leading-none font-normal">
+				<Flex.Column className="font-mono text-(--f1)">
+					<Typography.Mono
+						data-tick
+						data-f="tick"
+						size="m"
+						tone="f1"
+						className="text-[19px] leading-none font-normal"
+					>
 						—
-					</span>
-					<span className="mt-1 text-[9px] text-(--f4) font-mono">tick</span>
-				</div>
+					</Typography.Mono>
+					<Typography.Span variant="f4" className="mt-1 font-mono text-[9px]">
+						tick
+					</Typography.Span>
+				</Flex.Column>
 			</Flex.Row>
 		</Panel>
 	);

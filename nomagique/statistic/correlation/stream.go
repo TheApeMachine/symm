@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/logic"
 )
 
-
 /*
 Gate classifies the arrival: it reads the last price the feed wrote, consumes
 that metric, and stamps the measurement's support baseline. Anything invalid

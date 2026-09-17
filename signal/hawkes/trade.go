@@ -6,320 +6,121 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
-
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Trade is the Hawkes arrival-dynamics instrument. It holds no estimation state
-of its own: its entire behavior is one nomagique pipeline over the
-measurement itself — every stage writes its facts into the measurement where
-it computes them, and the workload's register owns the measurement's
-lifetime. The per-symbol arrival paths and fitted models live inside the
-pipeline's shared stage registry.
-*/
 type Trade struct {
 	*runtime.System
-	pipeline core.Primitive
-	ID       int
+	grid *store.Grid[*geometry.Coordinate]
 }
 
-/*
-NewTrade composes the arrival-dynamics pipeline: the gate classifies the
-trade's side, the counts stage admits the arrival into the symbol's
-observation window, the excitation stage measures the arrival against the
-model fitted before it, and the refit stage folds the arrival into the
-history and re-estimates for the next one.
-*/
-func NewTrade(ctx context.Context) *Trade {
-	history := nmhawkes.Paths()
-
-	trade := &Trade{
-		pipeline: nomagique.NewNumber(
-			nmhawkes.NewGate(),
-			nmhawkes.NewCounts(history),
-			nmhawkes.NewExcitation(history),
-			nmhawkes.NewRefit(history),
-			data.NewFinalizer[float64](),
-		),
+func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbol string) *Trade {
+	interests := [][]string{
+		{"trade", "data", "symbol"},
+		{"trade", "data", "side"},
+		{"trade", "data", "timestamp"},
 	}
 
+	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
+		sequence.Read[core.Connectable[*geometry.Coordinate]](
+			nomagique.NewNumber(
+				sequence.NewValues(wanted),
+				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+					conn, core.Identify,
+				),
+				grid,
+			).Next(nil),
+		)
+	}
+
+	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
+		retained := store.NewKeyed[float64]()
+		conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
+		return conn, nomagique.NewNumber(extractor, retained, transport.NewDiscard())
+	}
+
+	count, countBranch := hold(NewEventCount())
+	buyCount, buyCountBranch := hold(NewBuyCount())
+	sellCount, sellCountBranch := hold(NewSellCount())
+	buyFrac, buyFracBranch := hold(NewBuyFraction())
+	sellFrac, sellFracBranch := hold(NewSellFraction())
+	rate, rateBranch := hold(NewArrivalRate())
+	buyRate, buyRateBranch := hold(NewBuyRate())
+	sellRate, sellRateBranch := hold(NewSellRate())
+	lambda, lambdaBranch := hold(NewConditionalIntensity())
+	lambdaBuy, lambdaBuyBranch := hold(NewBuyIntensity())
+	lambdaSell, lambdaSellBranch := hold(NewSellIntensity())
+	radius, radiusBranch := hold(NewSpectralRadius())
+
+	ingressStages := []core.Primitive{}
+
+	if symbol != "" {
+		ingressStages = append(ingressStages, store.NewOrigin(symbol))
+	}
+
+	ingressStages = append(ingressStages,
+		NewAssemble(),
+		nmhawkes.NewProcess(),
+		transport.NewFan(
+			transport.NewIO[any](nil, nil),
+			countBranch, buyCountBranch, sellCountBranch,
+			buyFracBranch, sellFracBranch,
+			rateBranch, buyRateBranch, sellRateBranch,
+			lambdaBranch, lambdaBuyBranch, lambdaSellBranch, radiusBranch,
+		),
+		NewEventCount(),
+		store.NewKeyed[float64](),
+	)
+
+	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
+	register(ingress, interests)
+	register(count, nil)
+	register(buyCount, nil)
+	register(sellCount, nil)
+	register(buyFrac, nil)
+	register(sellFrac, nil)
+	register(rate, nil)
+	register(buyRate, nil)
+	register(sellRate, nil)
+	register(lambda, nil)
+	register(lambdaBuy, nil)
+	register(lambdaSell, nil)
+	register(radius, nil)
+
+	trade := &Trade{grid: grid}
 	trade.System = runtime.NewSystem(ctx, "hawkes:trade", trade)
+	trade.Transition(runtime.READY)
 	return trade
 }
 
-/*
-Next supplies public spot trade arrivals to the pipeline. Book mutations and
-futures arrivals are different point processes, even when they share a symbol
-and carry price and quantity fields.
-*/
 func (trade *Trade) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-	inputs:
-		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
-
-			if trade.Status() != runtime.READY {
-				errnie.Warn(trade.Name() + ": Next called before READY; dropping event")
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
+		if in != nil {
+			for range in {
 			}
+		}
 
-			if measurement == nil {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
+		if trade.Status() != runtime.READY {
+			errnie.Warn(trade.Name() + ": Next called before READY; dropping event")
+			return
+		}
 
-			if len(measurement.Peers) > 0 {
-				measurement.Err = nil
+		address := transport.NewAddress[*geometry.Coordinate]()
+		query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+			address, core.Read,
+		)
 
-				peer := measurement.FindPeer(func(candidate *data.Measurement[float64]) bool {
-					_, hasPrice := candidate.Metrics["price"]
-					_, hasQty := candidate.Metrics["qty"]
-					return candidate.Provenance["channel"] == "trade" &&
-						hasPrice && hasQty && candidate.Label != "" && candidate.Err == nil
-				})
-
-				if peer == nil {
-					continue inputs
-				}
-
-				measurement.Reset()
-				measurement.Pull(peer, "price", "qty")
-			}
-
-			if measurement.Err != nil {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			if _, hasPrice := measurement.Metrics["price"]; !hasPrice {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			if _, hasQty := measurement.Metrics["qty"]; !hasQty {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			res := sequence.Read[*data.Measurement[float64]](trade.pipeline.Next(sequence.NewOne(unsafe.Pointer(&measurement)).Next(nil)))
-
-			if res == nil {
-				if measurement != nil && !yield(unsafe.Pointer(&measurement)) {
-					return
-				}
-				continue inputs
-			}
-
-			if res != nil && !yield(unsafe.Pointer(&res)) {
+		for out := range trade.grid.Next(query.Next(nil)) {
+			if !yield(out) {
 				return
 			}
-			continue inputs
-
 		}
 	}
-}
-
-/*
-Register returns the pre-allocated measurement every trade flows through:
-every metric the instrument can produce is declared, none valued.
-*/
-func (trade *Trade) Register() *data.Measurement[float64] {
-	m := data.NewMeasurement("hawkes", map[string]data.Metric[float64]{
-		"event_count": data.NewMetric[float64](
-			"event_count", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"event_count:buy": data.NewMetric[float64](
-			"event_count:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"event_count:sell": data.NewMetric[float64](
-			"event_count:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"event_fraction:buy": data.NewMetric[float64](
-			"event_fraction:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"event_fraction:sell": data.NewMetric[float64](
-			"event_fraction:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"arrival_rate:buy": data.NewMetric[float64](
-			"arrival_rate:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"arrival_rate:sell": data.NewMetric[float64](
-			"arrival_rate:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"arrival_rate": data.NewMetric[float64](
-			"arrival_rate", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"conditional_intensity:buy": data.NewMetric[float64](
-			"conditional_intensity:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"conditional_intensity:sell": data.NewMetric[float64](
-			"conditional_intensity:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"conditional_intensity": data.NewMetric[float64](
-			"conditional_intensity", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"background_rate:buy": data.NewMetric[float64](
-			"background_rate:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"background_rate:sell": data.NewMetric[float64](
-			"background_rate:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"background_rate": data.NewMetric[float64](
-			"background_rate", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_intensity:buy": data.NewMetric[float64](
-			"excitation_intensity:buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_intensity:sell": data.NewMetric[float64](
-			"excitation_intensity:sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_fraction:buy": data.NewMetric[float64](
-			"excitation_fraction:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_fraction:sell": data.NewMetric[float64](
-			"excitation_fraction:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_amplitude:buy_from_buy": data.NewMetric[float64](
-			"excitation_amplitude:buy_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_amplitude:buy_from_sell": data.NewMetric[float64](
-			"excitation_amplitude:buy_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_amplitude:sell_from_buy": data.NewMetric[float64](
-			"excitation_amplitude:sell_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_amplitude:sell_from_sell": data.NewMetric[float64](
-			"excitation_amplitude:sell_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_decay": data.NewMetric[float64](
-			"excitation_decay", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_decay:buy_from_buy": data.NewMetric[float64](
-			"excitation_decay:buy_from_buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_decay:buy_from_sell": data.NewMetric[float64](
-			"excitation_decay:buy_from_sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_decay:sell_from_buy": data.NewMetric[float64](
-			"excitation_decay:sell_from_buy", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_decay:sell_from_sell": data.NewMetric[float64](
-			"excitation_decay:sell_from_sell", data.UnitPerSecond, data.TimescalePerSecond, 0, 1,
-		),
-		"excitation_timescale": data.NewMetric[float64](
-			"excitation_timescale", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_timescale:buy_from_buy": data.NewMetric[float64](
-			"excitation_timescale:buy_from_buy", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_timescale:buy_from_sell": data.NewMetric[float64](
-			"excitation_timescale:buy_from_sell", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_timescale:sell_from_buy": data.NewMetric[float64](
-			"excitation_timescale:sell_from_buy", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_timescale:sell_from_sell": data.NewMetric[float64](
-			"excitation_timescale:sell_from_sell", data.UnitSecond, data.TimescaleInstantaneous, 0, 1,
-		),
-		"offspring:buy_from_buy": data.NewMetric[float64](
-			"offspring:buy_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"offspring:buy_from_sell": data.NewMetric[float64](
-			"offspring:buy_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"offspring:sell_from_buy": data.NewMetric[float64](
-			"offspring:sell_from_buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"offspring:sell_from_sell": data.NewMetric[float64](
-			"offspring:sell_from_sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"branching_spectral_radius": data.NewMetric[float64](
-			"branching_spectral_radius", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"expected_descendants_from_buy": data.NewMetric[float64](
-			"expected_descendants_from_buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"expected_descendants_from_sell": data.NewMetric[float64](
-			"expected_descendants_from_sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood:hawkes": data.NewMetric[float64](
-			"log_likelihood:hawkes", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood:poisson": data.NewMetric[float64](
-			"log_likelihood:poisson", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood:self_only": data.NewMetric[float64](
-			"log_likelihood:self_only", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood_per_event:hawkes": data.NewMetric[float64](
-			"log_likelihood_per_event:hawkes", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood_gain_vs_poisson": data.NewMetric[float64](
-			"log_likelihood_gain_vs_poisson", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood_gain_per_event_vs_poisson": data.NewMetric[float64](
-			"log_likelihood_gain_per_event_vs_poisson", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood_gain_vs_self_only": data.NewMetric[float64](
-			"log_likelihood_gain_vs_self_only", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"log_likelihood_gain_per_event_vs_self_only": data.NewMetric[float64](
-			"log_likelihood_gain_per_event_vs_self_only", data.UnitNat, data.TimescaleInstantaneous, 0, 1,
-		),
-		"compensator:buy": data.NewMetric[float64](
-			"compensator:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"compensator:sell": data.NewMetric[float64](
-			"compensator:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"count_innovation:buy": data.NewMetric[float64](
-			"count_innovation:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"count_innovation:sell": data.NewMetric[float64](
-			"count_innovation:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"standardized_innovation:buy": data.NewMetric[float64](
-			"standardized_innovation:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"standardized_innovation:sell": data.NewMetric[float64](
-			"standardized_innovation:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_mass:buy": data.NewMetric[float64](
-			"excitation_mass:buy", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_mass:sell": data.NewMetric[float64](
-			"excitation_mass:sell", data.UnitCount, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_share:buy": data.NewMetric[float64](
-			"excitation_share:buy", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_share:sell": data.NewMetric[float64](
-			"excitation_share:sell", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"excitation_share": data.NewMetric[float64](
-			"excitation_share", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-		"snr": data.NewMetric[float64](
-			"snr", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1,
-		),
-	})
-	m.Metadata["peer-interest"] = "*"
-	return m
 }

@@ -11,13 +11,51 @@ class-variance-authority, motion, and tailwind-merge/clsx.
 */
 
 export { Alert, type AlertProps, alertVariants } from "./alert";
-export { Badge, type BadgeProps, badgeVariants, setBadge, type BadgeVariant, type BadgeSize } from "./badge";
+export {
+	Badge,
+	type BadgeProps,
+	badgeVariants,
+	setBadge,
+	type BadgeVariant,
+	type BadgeSize,
+} from "./badge";
 export { Button, type ButtonProps, buttonVariants } from "./button";
-export { Canvas, type CanvasProps } from "./canvas";
+export { Callout, type CalloutProps, calloutVariants } from "./callout";
+export {
+	Canvas,
+	type CanvasProps,
+	CanvasPlot,
+	type CanvasPlotProps,
+	type CanvasPlotDraw,
+} from "./canvas";
+export { Card, CardPanel } from "./card";
+export { Checkbox, type CheckboxProps } from "./checkbox";
 export { Chip, type ChipProps, chipVariants } from "./chip";
+export {
+	Collapsible,
+	CollapsibleTrigger,
+	CollapsiblePanel,
+	type CollapsibleProps,
+} from "./collapsible";
+export {
+	DataRow,
+	type DataRowProps,
+	type DataRowGroupProps,
+	dataRowVariants,
+	dataRowValueVariants,
+} from "./data-row";
 export { Divider, type DividerProps, dividerVariants } from "./divider";
 export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
+export {
+	Frame,
+	FrameHeader,
+	FrameTitle,
+	FrameDescription,
+	FrameFooter,
+	frameVariants,
+	type FrameProps,
+} from "./frame";
 export {
 	type GapType,
 	Grid,
@@ -35,6 +73,15 @@ export {
 	inputVariants,
 	type SearchProps,
 } from "./input";
+export {
+	HeatmapRow,
+	type HeatmapRowProps,
+	HeatmapStrip,
+	type HeatmapStripProps,
+	HeatmapRowMetric,
+	type HeatmapRowMetricProps,
+	heatmapStripVariants,
+} from "./heatmap-row";
 export { Key, type KeyProps, keyVariants, type Modifier } from "./key";
 export {
 	List,
@@ -72,8 +119,30 @@ export {
 	overlayContentVariants,
 	overlayVariants,
 } from "./overlay";
-export type { JSONPrimitive, JSONSerializable, Paint } from "./paint";
+export {
+	type JSONPrimitive,
+	type JSONSerializable,
+	type Paint,
+	type SubscribableStore,
+	type PaintMap,
+	type PaintFieldRecord,
+	type PaintMeterRecord,
+	type PaintMeterValue,
+	type PaintBadgeRecord,
+	type PaintBadgeValue,
+	type PaintVarRecord,
+	applyPaintMap,
+	usePaintStore,
+} from "./paint";
 export { Panel, type PanelProps, panelVariants } from "./panel";
+export { Radar, type RadarProps, type RadarAxis, radarVariants } from "./radar";
+export {
+	Rail,
+	type RailProps,
+	type RailHeaderProps,
+	type RailBodyProps,
+	railVariants,
+} from "./rail";
 export { Readout, type ReadoutProps } from "./readout";
 export { Scanlines, type ScanlinesProps, scanlinesVariants } from "./scanlines";
 export {
@@ -93,6 +162,11 @@ export {
 } from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";
 export { Stat, type StatProps, statVariants } from "./stat";
+export {
+	StepCard,
+	type StepCardProps,
+	stepCardVariants,
+} from "./step-card";
 export {
 	type TabProps,
 	Tabs,

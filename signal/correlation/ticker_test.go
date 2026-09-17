@@ -1,19 +1,20 @@
 package correlation
 
 import (
-	"context"
-	"fmt"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/signal/quote"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmcorrelation "github.com/theapemachine/symm/nomagique/statistic/correlation"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -21,201 +22,197 @@ func timestamp(second int64) time.Time {
 	return time.Unix(1_700_000_000+second, 0)
 }
 
-func observation(symbol string, price float64, at time.Time) nmcorrelation.PriceObservation {
-	return nmcorrelation.PriceObservation{
-		Symbol: symbol,
-		Price: temporal.Price{
-			At:    at.UnixNano(),
-			Value: price,
-		},
+func tickerData(symbol string, last float64, at time.Time) kraken.TickerData {
+	return kraken.TickerData{
+		Symbol:    symbol,
+		Last:      decimal.NewFromFloat64(last),
+		Bid:       decimal.NewFromFloat64(last - 0.5),
+		Ask:       decimal.NewFromFloat64(last + 0.5),
+		BidQty:    3,
+		AskQty:    4,
+		Volume:    1000,
+		Timestamp: at,
 	}
 }
 
-func drive(entity *Ticker, symbol string, prices []float64) []map[string]float64 {
-	snapshots := make([]map[string]float64, 0, len(prices))
+func push(grid *store.Grid[*geometry.Coordinate], data kraken.TickerData) {
+	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+		nil, core.Execute,
+	)
 
-	for index, price := range prices {
-		snapshots = append(snapshots, sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-			symbol, price, timestamp(int64(index)+1),
-		)))))
+	for range grid.Next(query.Next(quote.NewTicker().Next(sequence.NewValue(data)))) {
+	}
+}
+
+func collect(grid *store.Grid[*geometry.Coordinate]) []core.Input[*geometry.Coordinate, string, float64] {
+	address := transport.NewAddress[*geometry.Coordinate]()
+	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+		address, core.Read,
+	)
+	return tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](grid.Next(query.Next(nil)))
+}
+
+func valueAt(readings []core.Input[*geometry.Coordinate, string, float64], x int) (float64, bool) {
+	for _, reading := range readings {
+		if reading.Origin == nil || reading.Value == nil {
+			continue
+		}
+
+		if reading.Origin.Identity().X == x {
+			return *reading.Value, true
+		}
 	}
 
-	return snapshots
+	return 0, false
 }
 
 func TestTickerNext(t *testing.T) {
-	Convey("Given a correlation ticker-path instrument", t, func() {
+	Convey("Given an explicit pair registered on the grid", t, func() {
 		grid := store.NewGrid[*geometry.Coordinate]()
-		entity := NewTicker(t.Context(), grid)
+		entity := NewTicker(t.Context(), grid, "ETH/USD", "BTC/USD")
 
-		Convey("every metric registers as an addressable cell before any observation", func() {
-			So(len(entity.Metrics), ShouldEqual, 31)
+		Convey("each metric registers as a grid cell before any observation", func() {
+			So(len(collect(grid)), ShouldEqual, 0)
 
-			for index := range 31 {
-				readAddress := transport.NewAddress[*geometry.Coordinate]()
-				readAddress.Identify(geometry.NewCoordinate(index, 0))
-				readQuery := core.NewQuery[*geometry.Coordinate, core.Primitive](readAddress, core.Read)
-				cell := sequence.Read[core.Primitive](grid.Next(readQuery.Next(nil)))
-				So(cell, ShouldNotBeNil)
+			for index := range 25 {
+				address := transport.NewAddress[*geometry.Coordinate]()
+				address.Identify(geometry.NewCoordinate(index, 0))
+				query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+					address, core.Read,
+				)
+				for range grid.Next(query.Next(nil)) {
+				}
+				So(grid.Error(), ShouldBeNil)
 			}
-		})
 
-		Convey("the first observation yields last price and count without a pair", func() {
-			snapshot := sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-				"BTC/USD", 100.0, timestamp(1),
-			))))
-
-			So(snapshot["last_price"], ShouldEqual, 100.0)
-			So(snapshot["observation_count"], ShouldEqual, 1.0)
-			_, hasSigned := snapshot["signed_correlation"]
-			So(hasSigned, ShouldBeFalse)
-		})
-
-		Convey("the last-price cell computes in isolation from a price observation", func() {
-			out := sequence.Read[float64](entity.Metrics["last_price"].Next(sequence.NewValue(observation(
-				"BTC/USD", 150.0, timestamp(1),
-			))))
-			So(out, ShouldEqual, 150.0)
-		})
-
-		Convey("an unobserved zero price does not lengthen the path", func() {
-			untraded := sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-				"CORN/USD", 0, timestamp(1),
-			))))
-			So(untraded["last_price"], ShouldEqual, 0.0)
-			So(untraded["observation_count"], ShouldEqual, 0.0)
-
-			observed := sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-				"CORN/USD", 0.03, timestamp(2),
-			))))
-			unobservedAgain := sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-				"CORN/USD", 0, timestamp(3),
-			))))
-			observedAgain := sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-				"CORN/USD", 0.033, timestamp(4),
-			))))
-
-			So(observed["observation_count"], ShouldEqual, 1.0)
-			So(observed["last_price"], ShouldEqual, 0.03)
-			So(unobservedAgain["observation_count"], ShouldEqual, 0.0)
-			So(observedAgain["observation_count"], ShouldEqual, 2.0)
-		})
-
-		Convey("cohort and pair facts appear once two symbols share paths", func() {
-			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104})
-			snapshots := drive(entity, "ETH/USD", []float64{200, 202, 203, 205, 206})
-			last := snapshots[len(snapshots)-1]
-
-			signed := last["signed_correlation"]
-			So(signed, ShouldBeGreaterThan, 0.0)
-			So(signed, ShouldBeLessThan, 1.0)
-			So(last["absolute_correlation"], ShouldEqual, signed)
-			So(last["cohort_peer_count"], ShouldEqual, 1.0)
-			So(last["overlap_pair_count"], ShouldEqual, 4.0)
-			So(last["supported_return_count:measured"], ShouldEqual, 4.0)
-			So(last["supported_return_count:reference"], ShouldEqual, 4.0)
-			So(last["shared_time"], ShouldAlmostEqual, 4.0, 1e-3)
-			So(last["overlap_density"], ShouldBeGreaterThan, 0.0)
-			So(last["covariance"], ShouldBeGreaterThan, 0.0)
-			So(last["return_energy:reference"], ShouldBeGreaterThan, 0.0)
-			So(last["return_energy:measured"], ShouldBeGreaterThan, 0.0)
-			So(last["return_energy_rate:reference"], ShouldBeGreaterThan, 0.0)
-			So(last["return_energy_rate:measured"], ShouldBeGreaterThan, 0.0)
-			So(last["peer_return_energy_rate"], ShouldBeGreaterThan, 0.0)
-			So(last["relative_return_energy"], ShouldBeGreaterThan, 0.0)
-			So(last, ShouldContainKey, "cohort_signed_correlation")
-			So(last, ShouldContainKey, "cohort_absolute_correlation")
-			So(last, ShouldContainKey, "cohort_effective_peer_count")
-			So(last, ShouldContainKey, "cohort_correlation_dispersion")
-			So(last, ShouldContainKey, "correlation_baseline")
-			So(last, ShouldContainKey, "correlation_divergence")
-			So(last, ShouldContainKey, "correlation_zscore")
-			So(last, ShouldContainKey, "correlation_velocity")
-			So(last, ShouldContainKey, "relative_return_energy_baseline")
-		})
-
-		Convey("executing the signed-correlation cell returns the pair correlation", func() {
-			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104})
-			snapshots := drive(entity, "ETH/USD", []float64{200, 202, 203, 205, 206})
-			last := snapshots[len(snapshots)-1]
-
-			address := transport.NewAddress[*geometry.Coordinate]()
-			address.Identify(entity.Metrics["signed_correlation"].Identity())
+			missing := transport.NewAddress[*geometry.Coordinate]()
+			missing.Identify(geometry.NewCoordinate(25, 0))
 			query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				address, core.Execute,
+				missing, core.Read,
 			)
-			reading := nmcorrelation.PairsReading{
-				Selected: nmcorrelation.DependenceReading{
-					LagEstimate: nmcorrelation.LagEstimate{
-						Correlation: last["signed_correlation"],
-						Defined:     true,
-					},
-					Defined: true,
-				},
+			for range grid.Next(query.Next(nil)) {
 			}
-			executed := sequence.Read[float64](grid.Next(query.Next(sequence.NewValue(reading))))
-			So(executed, ShouldEqual, last["signed_correlation"])
+			So(grid.Error(), ShouldNotBeNil)
 		})
 
-		Convey("time regression keeps support at the previously accepted path length", func() {
-			sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-				"BTC/USD", 100.0, timestamp(2),
-			))))
-			snapshot := sequence.Read[map[string]float64](entity.Next(sequence.NewValue(observation(
-				"BTC/USD", 101.0, timestamp(1),
-			))))
-			So(snapshot["observation_count"], ShouldEqual, 1.0)
-			So(snapshot["last_price"], ShouldEqual, 101.0)
+		Convey("raw ticker data updates last price through declared interests", func() {
+			push(grid, tickerData("ETH/USD", 100, timestamp(1)))
+			readings := collect(grid)
+			last, haveLast := valueAt(readings, 0)
+			So(haveLast, ShouldBeTrue)
+			So(last, ShouldEqual, 100.0)
+			_, haveSigned := valueAt(readings, 1)
+			So(haveSigned, ShouldBeFalse)
+		})
+
+		Convey("an undeclared symbol does not share pair state", func() {
+			push(grid, tickerData("ETH/USD", 100, timestamp(1)))
+			push(grid, tickerData("SOL/USD", 50, timestamp(1)))
+			push(grid, tickerData("BTC/USD", 200, timestamp(1)))
+			readings := collect(grid)
+			_, haveSigned := valueAt(readings, 1)
+			So(haveSigned, ShouldBeFalse)
+		})
+
+		Convey("an explicit pair produces Hayashi-Yoshida correlation", func() {
+			for index := range 5 {
+				push(grid, tickerData("BTC/USD", 100+float64(index), timestamp(int64(index)+1)))
+			}
+
+			for index := range 5 {
+				push(grid, tickerData("ETH/USD", 200+float64(index)*2, timestamp(int64(index)+1)))
+			}
+
+			readings := collect(grid)
+			last, haveLast := valueAt(readings, 0)
+			So(haveLast, ShouldBeTrue)
+			So(last, ShouldEqual, 208.0)
+			count, haveCount := valueAt(readings, 2)
+			So(haveCount, ShouldBeTrue)
+			So(count, ShouldEqual, 5.0)
+			signed, haveSigned := valueAt(readings, 1)
+			So(haveSigned, ShouldBeTrue)
+			So(signed > 0 && signed <= 1, ShouldBeTrue)
+			absolute, _ := valueAt(readings, 3)
+			So(absolute, ShouldEqual, signed)
+			overlap, haveOverlap := valueAt(readings, 12)
+			So(haveOverlap, ShouldBeTrue)
+			So(overlap, ShouldEqual, 4.0)
+		})
+
+		Convey("repeated grid reads do not recompute or mutate retained values", func() {
+			for index := range 5 {
+				push(grid, tickerData("BTC/USD", 100+float64(index), timestamp(int64(index)+1)))
+				push(grid, tickerData("ETH/USD", 200+float64(index)*2, timestamp(int64(index)+1)))
+			}
+
+			first := collect(grid)
+			second := collect(grid)
+			signedFirst, _ := valueAt(first, 1)
+			signedSecond, _ := valueAt(second, 1)
+			So(signedSecond, ShouldEqual, signedFirst)
+			So(len(second), ShouldEqual, len(first))
+		})
+
+		Convey("Ticker.Next only exports and does not mutate metric state", func() {
+			push(grid, tickerData("ETH/USD", 100, timestamp(1)))
+			before := collect(grid)
+			exported := tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](
+				entity.Next(sequence.NewValue(tickerData("ETH/USD", 999, timestamp(2)))),
+			)
+			after := collect(grid)
+			lastBefore, _ := valueAt(before, 0)
+			lastAfter, _ := valueAt(after, 0)
+			So(lastAfter, ShouldEqual, lastBefore)
+			So(lastAfter, ShouldEqual, 100.0)
+			So(len(exported), ShouldEqual, len(after))
+		})
+
+		Convey("disjoint timestamps leave correlation undefined", func() {
+			push(grid, tickerData("BTC/USD", 100, timestamp(1)))
+			push(grid, tickerData("BTC/USD", 101, timestamp(2)))
+			push(grid, tickerData("ETH/USD", 200, timestamp(100)))
+			push(grid, tickerData("ETH/USD", 202, timestamp(101)))
+			readings := collect(grid)
+			_, haveSigned := valueAt(readings, 1)
+			So(haveSigned, ShouldBeFalse)
+		})
+
+		Convey("no cohort metrics exist without an explicit cohort", func() {
+			readings := collect(grid)
+			So(len(readings), ShouldEqual, 0)
+			push(grid, tickerData("ETH/USD", 100, timestamp(1)))
+			after := collect(grid)
+			So(len(after), ShouldBeLessThan, 31)
+		})
+
+		Convey("the association pipeline consumes coordinate-labelled observations", func() {
+			push(grid, tickerData("ETH/USD", 100, timestamp(1)))
+			readings := collect(grid)
+			So(len(readings), ShouldBeGreaterThan, 0)
+			So(readings[0].Origin.Identity().X, ShouldEqual, 0)
+
+			sympathy := statistic.NewSympathy[*geometry.Coordinate]()
+			obs := statistic.NewObservation(readings[0].Origin.Identity(), *readings[0].Value, 1.0, 1.0)
+
+			for range sympathy.Next(sequence.NewValue(*obs)) {
+			}
+
+			So(sympathy.Error(), ShouldBeNil)
 		})
 	})
 }
 
-func BenchmarkTickerCrossSectionNext(b *testing.B) {
-	grid := store.NewGrid[*geometry.Coordinate]()
-	entity := NewTicker(context.Background(), grid)
-
-	for symbolIndex := 0; symbolIndex < benchmarkSymbols; symbolIndex++ {
-		symbol := benchmarkSymbol(symbolIndex)
-
-		for index := 0; index < benchmarkWarmup; index++ {
-			sequence.Read[map[string]float64](entity.Next(
-				sequence.NewValue(observation(
-					symbol, 100.0+float64(index), timestamp(int64(index)+1),
-				)),
-			))
-		}
-	}
-
-	focal := observation(benchmarkSymbol(0), 0, timestamp(benchmarkWarmup))
-	index := 0
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		focal.Value = 100.0 + float64(index)
-		focal.At = timestamp(int64(benchmarkWarmup + index + 1)).UnixNano()
-		sequence.Read[map[string]float64](entity.Next(sequence.NewValue(focal)))
-		index++
-	}
-}
-
-func benchmarkSymbol(symbolIndex int) string {
-	return fmt.Sprintf("S%02d/USD", symbolIndex)
-}
-
-const (
-	benchmarkSymbols = 32
-	benchmarkWarmup  = 64
-)
-
 func TestTickerStepReadiness(t *testing.T) {
-	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+	Convey("An inactive ticker does not read the grid", t, func() {
 		node := &Ticker{System: runtime.NewSystem(t.Context(), "readiness-test")}
-		sample := observation("BTC/USD", 100, timestamp(7))
 
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(sequence.Read[nmcorrelation.PriceObservation](node.Next(sequence.NewValue(sample))), ShouldEqual, sample)
+			out := tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](
+				node.Next(sequence.NewValue(tickerData("BTC/USD", 100, timestamp(7)))),
+			)
+			So(len(out), ShouldEqual, 0)
 			So(node.Status(), ShouldEqual, stage)
 		}
 	})

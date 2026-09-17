@@ -4,201 +4,99 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data/sequence"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
-
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/quote"
 )
 
-var baseTime = time.Unix(1_700_000_000, 0)
+func pushTouch(grid *store.Grid[*geometry.Coordinate], data kraken.Level3Touch) {
+	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+		nil, core.Execute,
+	)
 
-func row(
-	symbol string,
-	obsBid, obsAsk float64,
-	addBid, addAsk float64,
-	modBid, modAsk float64,
-	delBid, delAsk float64,
-	mutBid, mutAsk float64,
-	at time.Time,
-) *data.Measurement[float64] {
-	m := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
-		"observed_notional:bid":         data.NewMetric[float64]("observed_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(obsBid),
-		"observed_notional:ask":         data.NewMetric[float64]("observed_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(obsAsk),
-		"add_notional:bid":              data.NewMetric[float64]("add_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(addBid),
-		"add_notional:ask":              data.NewMetric[float64]("add_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(addAsk),
-		"modify_remaining_notional:bid": data.NewMetric[float64]("modify_remaining_notional:bid", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(modBid),
-		"modify_remaining_notional:ask": data.NewMetric[float64]("modify_remaining_notional:ask", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(modAsk),
-		"delete_count:bid":              data.NewMetric[float64]("delete_count:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1).Write(delBid),
-		"delete_count:ask":              data.NewMetric[float64]("delete_count:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1).Write(delAsk),
-		"mutation_count:bid":            data.NewMetric[float64]("mutation_count:bid", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1).Write(mutBid),
-		"mutation_count:ask":            data.NewMetric[float64]("mutation_count:ask", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1).Write(mutAsk),
-	})
-	m.Label, m.At, m.From = symbol, at, at
+	for range grid.Next(query.Next(quote.NewTouch().Next(sequence.NewValue(data)))) {
+	}
+}
 
-	return m
+func collect(grid *store.Grid[*geometry.Coordinate]) []core.Input[*geometry.Coordinate, string, float64] {
+	address := transport.NewAddress[*geometry.Coordinate]()
+	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+		address, core.Read,
+	)
+	return tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](grid.Next(query.Next(nil)))
+}
+
+func valueAt(readings []core.Input[*geometry.Coordinate, string, float64], x int) (float64, bool) {
+	for _, reading := range readings {
+		if reading.Origin == nil || reading.Value == nil {
+			continue
+		}
+
+		if reading.Origin.Identity().X == x {
+			return *reading.Value, true
+		}
+	}
+
+	return 0, false
 }
 
 func TestLevel3Next(t *testing.T) {
-	Convey("Given a streaming depth-flow signal", t, func() {
-		level3 := NewLevel3(t.Context())
-		level3.Transition(runtime.READY)
+	Convey("Given a depthflow instrument on the grid", t, func() {
+		grid := store.NewGrid[*geometry.Coordinate]()
+		entity := NewLevel3(t.Context(), grid, "ETH/USD")
 
-		Convey("a snapshot is reduced to facts carried by that one message", func() {
-			measurement := sequence.Read[*data.Measurement[float64]](level3.Next(sequence.NewValue[*data.Measurement[float64]](row(
-				"BTC/USD",
-				296, 202,
-				296, 202,
-				0, 0,
-				0, 0,
-				2, 1,
-				baseTime,
-			))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics["observed_notional:bid"].Raw, ShouldAlmostEqual, 296)
-			So(measurement.Metrics["observed_notional:ask"].Raw, ShouldAlmostEqual, 202)
-			So(measurement.Metrics["observed_notional_imbalance"].Raw, ShouldAlmostEqual, 94.0/498.0, 1e-9)
-			So(measurement.Metrics["mutation_count:bid"].Raw, ShouldEqual, 2)
-			So(measurement.Metrics["mutation_count:ask"].Raw, ShouldEqual, 1)
+		Convey("a two-sided touch updates retained bid notional", func() {
+			pushTouch(grid, kraken.Level3Touch{
+				Symbol:    "ETH/USD",
+				Bid:       decimal.NewFromFloat64(10),
+				Ask:       decimal.NewFromFloat64(11),
+				BidQty:    decimal.NewFromFloat64(7),
+				AskQty:    decimal.NewFromFloat64(1),
+				Timestamp: time.Unix(1, 0),
+			})
+			notional, have := valueAt(collect(grid), 0)
+			So(have, ShouldBeTrue)
+			So(notional, ShouldEqual, 70.0)
 		})
 
-		Convey("the next message does not inherit untouched orders", func() {
-			sequence.Read[*data.Measurement[float64]](level3.Next(sequence.NewValue[*data.Measurement[float64]](row(
-				"BTC/USD",
-				198, 202,
-				198, 202,
-				0, 0,
-				0, 0,
-				1, 1,
-				baseTime,
-			))))
-
-			measurement := sequence.Read[*data.Measurement[float64]](level3.Next(sequence.NewValue[*data.Measurement[float64]](row(
-				"BTC/USD",
-				100, 0,
-				100, 0,
-				0, 0,
-				0, 0,
-				1, 0,
-				baseTime.Add(time.Second),
-			))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics["observed_notional:bid"].Raw, ShouldEqual, 100)
-			So(measurement.Metrics["observed_notional:ask"].Raw, ShouldEqual, 0)
-			So(measurement.Metrics["observed_notional"].Raw, ShouldEqual, 100)
-			So(measurement.Metrics["add_notional:bid"].Raw, ShouldEqual, 100)
-			So(measurement.Metrics["mutation_activity_imbalance"].Raw, ShouldEqual, 1)
-			So(measurement.Metrics["observed_notional_rate"].Raw, ShouldEqual, 100)
+		Convey("Level3.Next does not mutate retained values", func() {
+			pushTouch(grid, kraken.Level3Touch{
+				Symbol:    "ETH/USD",
+				Bid:       decimal.NewFromFloat64(10),
+				Ask:       decimal.NewFromFloat64(11),
+				BidQty:    decimal.NewFromFloat64(7),
+				AskQty:    decimal.NewFromFloat64(1),
+				Timestamp: time.Unix(1, 0),
+			})
+			before, _ := valueAt(collect(grid), 0)
+			entity.Next(sequence.NewValue(kraken.Level3Touch{
+				Symbol: "ETH/USD",
+				Bid:    decimal.NewFromFloat64(1),
+				Ask:    decimal.NewFromFloat64(2),
+			}))
+			after, _ := valueAt(collect(grid), 0)
+			So(after, ShouldEqual, before)
 		})
-
-		Convey("modify and delete retain only facts the wire actually supplies", func() {
-			measurement := sequence.Read[*data.Measurement[float64]](level3.Next(sequence.NewValue[*data.Measurement[float64]](row(
-				"ETH/USD",
-				150, 0,
-				0, 0,
-				150, 0,
-				1, 1,
-				2, 1,
-				baseTime,
-			))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics["modify_remaining_notional:bid"].Raw, ShouldEqual, 150)
-			So(measurement.Metrics["delete_count:bid"].Raw, ShouldEqual, 1)
-			So(measurement.Metrics["delete_count:ask"].Raw, ShouldEqual, 1)
-		})
-	})
-}
-
-func TestLevel3Register(t *testing.T) {
-	Convey("Given a Level3 entity", t, func() {
-		level3 := NewLevel3(t.Context())
-		level3.Transition(runtime.READY)
-		schema := level3.Register()
-
-		So(schema, ShouldNotBeNil)
-		So(schema.Source, ShouldEqual, "depthflow:level3")
-		So(schema.Metrics, ShouldNotBeEmpty)
-
-		expected := []string{
-			"observed_notional:bid",
-			"observed_notional:ask",
-			"observed_notional",
-			"observed_notional_diff",
-			"add_notional:bid",
-			"add_notional:ask",
-			"modify_remaining_notional:bid",
-			"modify_remaining_notional:ask",
-			"delete_count:bid",
-			"delete_count:ask",
-			"mutation_count:bid",
-			"mutation_count:ask",
-			"mutation_count",
-			"mutation_count_diff",
-			"mutation_activity_imbalance",
-			"observed_notional_imbalance",
-			"observed_notional_rate",
-			"observed_notional_imbalance_baseline",
-			"observed_notional_imbalance_divergence",
-			"observed_notional_imbalance_zscore",
-			"observed_notional_rate_baseline",
-			"observed_notional_rate_divergence",
-			"observed_notional_rate_zscore",
-		}
-
-		for _, name := range expected {
-			metric, ok := schema.Metrics[name]
-			So(ok, ShouldBeTrue)
-			So(metric.Label, ShouldEqual, name)
-			So(metric.Raw, ShouldEqual, 0.0)
-		}
 	})
 }
 
 func TestLevel3StepReadiness(t *testing.T) {
-	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+	Convey("An inactive level3 does not read the grid", t, func() {
 		node := &Level3{System: runtime.NewSystem(t.Context(), "readiness-test")}
-		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
+			out := tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](node.Next(nil))
+			So(len(out), ShouldEqual, 0)
 			So(node.Status(), ShouldEqual, stage)
-			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
-}
-
-func TestLevel3StepUnrelatedPeer(t *testing.T) {
-	Convey("An unrelated peer is not a fresh signal observation", t, func() {
-		entity := NewLevel3(t.Context())
-		entity.Transition(runtime.READY)
-		measurement := entity.Register()
-		peer := data.NewMeasurement[float64]("unrelated", nil)
-		peer.Label = "BTC/USD"
-		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
-	})
-}
-
-func BenchmarkLevel3StepUnrelatedPeer(b *testing.B) {
-	entity := NewLevel3(b.Context())
-	entity.Transition(runtime.READY)
-	measurement := entity.Register()
-	peer := data.NewMeasurement[float64]("unrelated", nil)
-	peer.Label = "BTC/USD"
-	measurement.Peers = []*data.Measurement[float64]{peer}
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for index := 0; index < b.N; index++ {
-		if sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))) != nil {
-			b.Fatal("unrelated peer published a signal")
-		}
-	}
 }

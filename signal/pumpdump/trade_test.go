@@ -4,173 +4,76 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data/sequence"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
-
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
+	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/signal/quote"
 )
 
-func spotTrade(symbol string, price float64, qty float64, at time.Time) *data.Measurement[float64] {
-	m := data.NewMeasurement[float64]("websocket", map[string]data.Metric[float64]{
-		"price": data.NewMetric[float64]("price", data.UnitRate, data.TimescaleInstantaneous, 0, 1).Write(price),
-		"qty":   data.NewMetric[float64]("qty", data.UnitCount, data.TimescaleInstantaneous, 0, 1).Write(qty),
-	})
-	m.Label, m.At, m.From = symbol, at, at
+func pushTrade(grid *store.Grid[*geometry.Coordinate], data kraken.TradeData) {
+	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+		nil, core.Execute,
+	)
 
-	return m
+	for range grid.Next(query.Next(quote.NewTrade().Next(sequence.NewValue(data)))) {
+	}
 }
 
 func TestTradeNext(t *testing.T) {
-	Convey("Given a multi-leg volume-clock sequence", t, func() {
-		entity := NewTrade(t.Context())
-		entity.Transition(runtime.READY)
-		at := time.Unix(1_700_000_000, 0)
+	Convey("Given a pumpdump trade instrument on the grid", t, func() {
+		grid := store.NewGrid[*geometry.Coordinate]()
+		entity := NewTrade(t.Context(), grid, "BTC/USD")
 
-		Convey("the opening trade seeds an open bar", func() {
-			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 100, 2, at))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-
-			So(measurement.Metrics["trade_price"].Raw, ShouldEqual, 100.0)
-			So(measurement.Metrics["trade_quantity"].Raw, ShouldEqual, 2.0)
-			So(measurement.Metrics["trade_notional"].Raw, ShouldEqual, 200.0)
-			So(measurement.Metrics["volume_bar_target_quantity"].Raw, ShouldEqual, 2.0)
-			So(measurement.Metrics["volume_bar_quantity"].Raw, ShouldEqual, 2.0)
-			So(measurement.Metrics["volume_bar_notional"].Raw, ShouldEqual, 200.0)
-			So(measurement.Metrics["volume_bar_trade_count"].Raw, ShouldEqual, 1.0)
-			So(measurement.Metrics["volume_bar_duration"].Raw, ShouldEqual, 0.0)
-
-			// An incomplete bar is not a zero-rate bar: rates are absent.
-			_, hasVolumeRate := measurement.Metrics["volume_rate"]
-			So(hasVolumeRate, ShouldBeFalse)
-			_, hasNotionalRate := measurement.Metrics["notional_rate"]
-			So(hasNotionalRate, ShouldBeFalse)
-
-			// No previous trade exists yet, so the trade interval is absent.
-			_, hasInterval := measurement.Metrics["trade_interval_seconds"]
-			So(hasInterval, ShouldBeFalse)
+		Convey("an execution updates retained price and quantity", func() {
+			pushTrade(grid, kraken.TradeData{
+				Symbol:    "BTC/USD",
+				Price:     *decimal.NewFromFloat64(100),
+				Qty:       2,
+				Timestamp: time.Unix(1, 0),
+			})
+			readings := collect(grid)
+			price, havePrice := valueAt(readings, 0)
+			So(havePrice, ShouldBeTrue)
+			So(price, ShouldEqual, 100.0)
+			qty, haveQty := valueAt(readings, 2)
+			So(haveQty, ShouldBeTrue)
+			So(qty, ShouldEqual, 2.0)
 		})
 
-		Convey("the closing trade reports the completed bar and its throughput", func() {
-			sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 100, 2, at))))
-			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 110, 1, at.Add(5*time.Second)))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-
-			So(measurement.Metrics["volume_bar_target_quantity"].Raw, ShouldAlmostEqual, 1.5, 1e-12)
-			So(measurement.Metrics["volume_bar_quantity"].Raw, ShouldEqual, 3.0)
-			So(measurement.Metrics["volume_bar_notional"].Raw, ShouldEqual, 310.0)
-			So(measurement.Metrics["volume_bar_trade_count"].Raw, ShouldEqual, 2.0)
-			So(measurement.Metrics["volume_bar_duration"].Raw, ShouldEqual, 5.0)
-
-			So(measurement.Metrics["volume_rate"].Raw, ShouldAlmostEqual, 3.0/5.0, 1e-12)
-			So(measurement.Metrics["notional_rate"].Raw, ShouldAlmostEqual, 310.0/5.0, 1e-12)
-			So(measurement.Metrics["trade_rate"].Raw, ShouldAlmostEqual, 2.0/5.0, 1e-12)
-			So(measurement.Metrics["trade_interval_seconds"].Raw, ShouldAlmostEqual, 5.0, 1e-12)
-
-			// The notional-rate baseline of one value is the value itself.
-			So(measurement.Metrics["notional_rate_baseline"].Raw, ShouldAlmostEqual, 310.0/5.0, 1e-9)
-			So(measurement.Metrics["notional_rate_ratio"].Raw, ShouldAlmostEqual, 1.0, 1e-9)
+		Convey("Trade.Next does not mutate retained values", func() {
+			pushTrade(grid, kraken.TradeData{
+				Symbol:    "BTC/USD",
+				Price:     *decimal.NewFromFloat64(100),
+				Qty:       2,
+				Timestamp: time.Unix(1, 0),
+			})
+			before, _ := valueAt(collect(grid), 0)
+			entity.Next(sequence.NewValue(kraken.TradeData{
+				Symbol: "BTC/USD",
+				Price:  *decimal.NewFromFloat64(1),
+				Qty:    9,
+			}))
+			after, _ := valueAt(collect(grid), 0)
+			So(after, ShouldEqual, before)
 		})
-	})
-
-	Convey("Given non-positive price or quantity", t, func() {
-		entity := NewTrade(t.Context())
-		entity.Transition(runtime.READY)
-
-		Convey("measurement carries the error", func() {
-			measurement := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](spotTrade("BTC/USD", 0, 1, time.Unix(1_700_000_000, 0)))))
-
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestTradeRegister(t *testing.T) {
-	Convey("Given a Trade entity", t, func() {
-		entity := NewTrade(t.Context())
-		entity.Transition(runtime.READY)
-		schema := entity.Register()
-
-		So(schema, ShouldNotBeNil)
-		So(schema.Source, ShouldEqual, "pumpdump:trade")
-		So(schema.Metrics, ShouldNotBeEmpty)
-
-		expected := []string{
-			"trade_price",
-			"trade_quantity",
-			"trade_notional",
-			"volume_bar_target_quantity",
-			"volume_bar_quantity",
-			"volume_bar_notional",
-			"volume_bar_trade_count",
-			"volume_bar_duration",
-			"completed_volume_bar_ordinal",
-			"trade_interval_seconds",
-			"volume_rate",
-			"notional_rate",
-			"trade_rate",
-			"notional_rate_baseline",
-			"notional_rate_ratio",
-			"notional_rate_divergence",
-			"notional_rate_zscore",
-		}
-
-		for _, name := range expected {
-			metric, ok := schema.Metrics[name]
-			So(ok, ShouldBeTrue)
-			So(metric.Label, ShouldEqual, name)
-			So(metric.Raw, ShouldEqual, 0.0)
-		}
 	})
 }
 
 func TestTradeStepReadiness(t *testing.T) {
-	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
+	Convey("An inactive trade does not read the grid", t, func() {
 		node := &Trade{System: runtime.NewSystem(t.Context(), "readiness-test")}
-		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldEqual, measurement)
+			out := tests.CollectSeq[core.Input[*geometry.Coordinate, string, float64]](node.Next(nil))
+			So(len(out), ShouldEqual, 0)
 			So(node.Status(), ShouldEqual, stage)
-			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
-}
-
-func TestTradeStepUnrelatedPeer(t *testing.T) {
-	Convey("An unrelated peer does not publish registration values as a fresh observation", t, func() {
-		entity := NewTrade(t.Context())
-		entity.Transition(runtime.READY)
-		measurement := entity.Register()
-		peer := data.NewMeasurement[float64]("unrelated", nil)
-		peer.Label = "BTC/USD"
-		measurement.Peers = []*data.Measurement[float64]{peer}
-		So(sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement))), ShouldBeNil)
-		So(measurement.Label, ShouldBeEmpty)
-	})
-}
-
-func BenchmarkTradeNext(b *testing.B) {
-	entity := NewTrade(b.Context())
-	entity.Transition(runtime.READY)
-	peer := spotTrade("BTC/USD", 100, 2, time.Unix(1, 0))
-	measurement := entity.Register()
-	measurement.Peers = []*data.Measurement[float64]{peer}
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for index := 0; index < b.N; index++ {
-		peer.At = peer.At.Add(time.Second)
-		result := sequence.Read[*data.Measurement[float64]](entity.Next(sequence.NewValue[*data.Measurement[float64]](measurement)))
-
-		if result == nil || result.Err != nil {
-			b.Fatal("valid peer was not processed")
-		}
-	}
 }

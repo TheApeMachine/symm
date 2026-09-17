@@ -34,10 +34,12 @@ func (correlation *Correlation) Next(
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			estimate := (*LagEstimate)(arriving)
+			out := *estimate
 			scale := math.Sqrt(estimate.LeftEnergy * estimate.RightEnergy)
 
-			out := *estimate
-			out.Correlation = estimate.Covariance / scale
+			if scale > 0 {
+				out.Correlation = estimate.Covariance / scale
+			}
 
 			if !yield(unsafe.Pointer(&out)) {
 				return

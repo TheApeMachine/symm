@@ -14,7 +14,7 @@ import (
 
 func TestPairsNext(t *testing.T) {
 	Convey("Pairs evaluates pairwise dependence and Fisher significance across retained symbols", t, func() {
-		pairs := nmcorrelation.NewPairs(algo.NewHayashiYoshida())
+		pairs := nmcorrelation.NewPairs(algo.NewHayashiYoshida(), "ETH/USD", "BTC/USD")
 
 		// First symbol: BTC, 5 observations
 		for index := range 5 {

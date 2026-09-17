@@ -1,7 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
 import { focusStore, getMeasurementStore } from "#/collections/app";
+import { Badge } from "#/components/ui/badge";
+import { Flex } from "#/components/ui/flex";
+import { Grid } from "#/components/ui/grid";
+import { usePaintStore } from "#/components/ui/paint";
+import { Meter } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
+import { Stat } from "#/components/ui/stat";
+import { Typography } from "#/components/ui/typography";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
 
 const metricObj = new Metric();
@@ -13,30 +19,26 @@ const STATS = [
 	{
 		label: "med notional",
 		name: "reported_volume_notional_median",
-		align: "text-left",
 	},
 	{
 		label: "med depth",
 		name: "executable_touch_depth_median",
-		align: "text-center",
 	},
-	{ label: "touch depth", name: "executable_touch_depth", align: "text-right" },
+	{
+		label: "touch depth",
+		name: "executable_touch_depth",
+	},
 ] as const;
 
 export const CrossSectionPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
-	const root = useRef<HTMLDivElement>(null);
+	const store = getMeasurementStore("liquidity", focusSymbol);
 
-	useEffect(() => {
-		const store = getMeasurementStore("liquidity", focusSymbol);
-		const apply = (state: any) => {
-			if (!root.current || !state || typeof state.getLast !== "function") return;
+	const rootRef = usePaintStore(
+		store,
+		(state: any) => {
+			if (!state || typeof state.getLast !== "function") return;
 			const row = state.getLast();
-
-			const set = (q: string, value: string) => {
-				const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
-				if (el) el.textContent = value;
-			};
 
 			const metricsMap: Record<string, { raw: number; normalized: number }> =
 				{};
@@ -63,109 +65,95 @@ export const CrossSectionPanel = () => {
 				}
 			}
 
-			set("scarcity", fmt(metricsMap.scarcity_score?.raw, 3));
-			set("symbol", focusSymbol.length === 0 ? "no focus" : focusSymbol);
-			set("rel", fmt(metricsMap.relative_touch_depth?.raw, 3));
-			set(
-				"at",
-				(() => {
-					const rowAt = typeof row?.at === "function" ? row.at() : row?.at;
-					if (rowAt === undefined || rowAt === 0n) return "—";
-					const parsed = new Date(Number(rowAt / 1000000n));
-					return Number.isNaN(parsed.getTime())
-						? "—"
-						: parsed.toISOString().slice(11, 19);
-				})(),
-			);
-			set("norm", fmt(metricsMap.executable_touch_depth?.normalized, 2));
-
-			for (const stat of STATS) {
-				set(stat.name, fmt(metricsMap[stat.name]?.raw, 0));
-			}
-
-			// depth bar
 			const depth = metricsMap.executable_touch_depth?.raw;
 			const median = metricsMap.executable_touch_depth_median?.raw;
-			const bar = root.current.querySelector<HTMLElement>("[data-depth-bar]");
-			const progressbar = root.current.querySelector<HTMLElement>(
-				'[role="progressbar"]',
-			);
+			const clamped =
+				depth !== undefined && median !== undefined && median > 0
+					? Math.min(100, Math.max(0, (depth / median) * 100))
+					: 0;
 
-			if (bar instanceof HTMLElement) {
-				if (depth !== undefined && median !== undefined && median > 0) {
-					const clamped = Math.min(100, Math.max(0, (depth / median) * 100));
-					bar.style.width = `${clamped.toFixed(3)}%`;
-					progressbar?.setAttribute("aria-valuenow", String(clamped));
-				} else {
-					bar.style.width = "0%";
-					progressbar?.setAttribute("aria-valuenow", "0");
-				}
-			}
-		};
+			const rowAt = typeof row?.at === "function" ? row.at() : row?.at;
+			const atStr = (() => {
+				if (rowAt === undefined || rowAt === 0n) return "—";
+				const parsed = new Date(Number(rowAt / 1000000n));
+				return Number.isNaN(parsed.getTime())
+					? "—"
+					: parsed.toISOString().slice(11, 19);
+			})();
 
-		apply(store.state);
-		const subscription = store.subscribe(apply);
-		return () => subscription.unsubscribe();
-	}, [focusSymbol]);
+			return {
+				fields: {
+					scarcity: fmt(metricsMap.scarcity_score?.raw, 3),
+					symbol: focusSymbol.length === 0 ? "no focus" : focusSymbol,
+					rel: fmt(metricsMap.relative_touch_depth?.raw, 3),
+					at: atStr,
+					norm: fmt(metricsMap.executable_touch_depth?.normalized, 2),
+					[STATS[0].name]: fmt(metricsMap[STATS[0].name]?.raw, 0),
+					[STATS[1].name]: fmt(metricsMap[STATS[1].name]?.raw, 0),
+					[STATS[2].name]: fmt(metricsMap[STATS[2].name]?.raw, 0),
+				},
+				meters: {
+					"depth-bar": clamped,
+				},
+			};
+		},
+		[focusSymbol],
+	);
 
 	return (
-		<Panel ref={root} size="lg">
-			<div className="flex items-center justify-between">
-				<span className="font-semibold text-(--f1) text-xs">Cross-section</span>
-				<span
-					data-f="scarcity"
-					className="rounded-[3px] border border-(--line2) px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-				>
-					—
-				</span>
-			</div>
-			<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-				liquidity axes · <span data-f="symbol" />
-			</div>
-			<div className="flex items-center justify-between">
-				<span className="font-mono text-[11px] text-(--f2)">
-					relative depth <span data-f="rel" className="text-(--acc)" />
-				</span>
-				<span data-f="at" className="font-mono text-[10px] text-(--f4)" />
-			</div>
-			<div className="mt-2.5">
-				<div
-					className="flex items-center gap-2"
-					role="progressbar"
-					aria-valuemin={0}
-					aria-valuemax={100}
-				>
-					<span className="w-13.5 shrink-0 font-mono text-[9px] text-(--f4)">
-						Depth
-					</span>
-					<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line) [--meter-tone:var(--info)]">
-						<div
-							data-depth-bar
-							className="h-full bg-(--meter-tone)"
-							style={{ width: "0%" }}
-						/>
-					</div>
-					<span
-						data-f="norm"
-						className="w-7 shrink-0 text-right font-mono text-[9px] text-(--f2)"
+		<Panel ref={rootRef} size="lg">
+			<Panel.Header
+				title="Cross-section"
+				meta={
+					<Badge
+						data-f="scarcity"
+						label="—"
+						variant="warning"
+						size="xs"
+						className="font-mono font-semibold"
 					/>
-				</div>
-			</div>
-			<div className="mt-3.25 flex justify-between gap-3">
+				}
+			/>
+			<Panel.Caption>
+				liquidity axes · <Typography.Span data-f="symbol" />
+			</Panel.Caption>
+
+			<Flex.Row align="center" justify="between">
+				<Typography.Span variant="f2" className="text-[11px]">
+					relative depth{" "}
+					<Typography.Span data-f="rel" variant="accent" />
+				</Typography.Span>
+				<Typography.Span data-f="at" variant="f4" className="text-[10px]" />
+			</Flex.Row>
+
+			<Flex.Row align="center" gap={2} className="mt-2.5">
+				<Typography.Label tone="f4" className="w-13.5 shrink-0 text-[9px]">
+					Depth
+				</Typography.Label>
+				<Meter
+					data-meter="depth-bar"
+					layout="bar"
+					size="xs"
+					percent={0}
+					className="flex-1"
+				/>
+				<Typography.Span
+					data-f="norm"
+					variant="f2"
+					className="w-7 shrink-0 text-right text-[9px]"
+				/>
+			</Flex.Row>
+
+			<Grid cols={3} gap={3} responsive={false} className="mt-3.25">
 				{STATS.map((stat) => (
-					<div key={stat.name} className={`min-w-0 flex-1 ${stat.align}`}>
-						<div
-							data-f={stat.name}
-							className="truncate font-mono text-lg text-(--f1) leading-none"
-						>
-							—
-						</div>
-						<div className="mt-1 font-mono text-[9px] text-(--f4)">
-							{stat.label}
-						</div>
-					</div>
+					<Stat
+						key={stat.name}
+						layout="metric"
+						label={stat.label}
+						value={<Typography.Span data-f={stat.name}>—</Typography.Span>}
+					/>
 				))}
-			</div>
+			</Grid>
 		</Panel>
 	);
 };

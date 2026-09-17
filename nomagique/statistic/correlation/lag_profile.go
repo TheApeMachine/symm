@@ -73,8 +73,8 @@ func NewLagProfile(estimator core.Primitive, spacing int64, span float64) *LagPr
 		PrimitiveError: core.NewPrimitiveError(),
 		estimator:      estimator,
 		pathReturns:    temporal.NewPathReturns(),
-		spacing:         spacing,
-		span:            span,
+		spacing:        spacing,
+		span:           span,
 	}
 }
 

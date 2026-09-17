@@ -80,3 +80,51 @@ export const Canvas = ({
 		)}
 	</div>
 );
+
+export type CanvasPlotDraw = (
+	context: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+) => void;
+
+export type CanvasPlotProps = ComponentProps<"canvas"> & {
+	draw?: CanvasPlotDraw;
+};
+
+export const CanvasPlot = ({
+	ref,
+	draw,
+	className,
+	...props
+}: CanvasPlotProps) => {
+	return (
+		<canvas
+			ref={(node) => {
+				if (typeof ref === "function") ref(node);
+				else if (ref) (ref as any).current = node;
+
+				if (!node || !draw) return;
+				const width = Math.max(1, node.clientWidth);
+				const height = Math.max(1, node.clientHeight);
+				const ratio = window.devicePixelRatio || 1;
+
+				if (
+					node.width !== Math.floor(width * ratio) ||
+					node.height !== Math.floor(height * ratio)
+				) {
+					node.width = Math.floor(width * ratio);
+					node.height = Math.floor(height * ratio);
+				}
+
+				const context = node.getContext("2d");
+				if (!context) return;
+				context.setTransform(ratio, 0, 0, ratio, 0, 0);
+				draw(context, width, height);
+			}}
+			className={cn("block size-full", className)}
+			{...props}
+		/>
+	);
+};
+
+Canvas.Plot = CanvasPlot;

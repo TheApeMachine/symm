@@ -25,8 +25,10 @@ type Grid[T interface {
 	*core.PrimitiveError
 	cells     lockfree.Map[T, core.Primitive]
 	interests lockfree.Map[T, [][]string]
+	addresses []T
 	count     int
 	current   core.Primitive
+	reading   core.Input[T, string, float64]
 }
 
 /*
@@ -59,13 +61,19 @@ func NewGrid[T interface {
 
 /*
 Next answers Query[T, core.Identifiable[T]]. Identify registers a single member and
-uses its existing identity or allocates one when unassigned; Read yields the member;
-Execute passes the borrowed payload through it. Missing cells, occupied addresses and
-writes are errors.
+uses its existing identity or allocates one when unassigned; Read yields each
+cell's retained observation without recomputing; Execute with an identity passes
+the borrowed payload through that cell; Execute without an identity routes
+keyed market inputs to cells whose registered interests match. Missing cells,
+occupied addresses and writes are errors.
 */
 func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		var query *core.Query[T, core.Connectable[T]]
+		var event []unsafe.Pointer
+		var zero T
+		var endpoint core.Connectable[T]
+		identified := false
 
 		for arriving := range in {
 			if query == nil {
@@ -78,7 +86,6 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				switch query.Action {
 				case core.Identify:
 					address := query.Identity()
-					var zero T
 
 					if any(address) == nil || any(address) == any(zero) {
 						coord := any(geometry.NewCoordinate(grid.count, 0)).(T)
@@ -98,25 +105,44 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					query.Connect(publish)
 
 					grid.cells.Set(address, query.Connectable)
-
-					var endpoint core.Connectable[T] = publish
-
-					if !yield(unsafe.Pointer(&endpoint)) {
-						return
-					}
-
+					grid.addresses = append(grid.addresses, address)
+					endpoint = publish
+					identified = true
 					continue
 
 				case core.Read:
-					cell, found := grid.cells.Get(query.Identity())
+					address := query.Identity()
+
+					if any(address) == nil || any(address) == any(zero) {
+						for _, held := range grid.addresses {
+							cell, found := grid.cells.Get(held)
+
+							if !found {
+								continue
+							}
+
+							for out := range cell.Next(nil) {
+								if !grid.yieldSlot(cell, out, yield) {
+									return
+								}
+							}
+						}
+
+						query = nil
+						continue
+					}
+
+					cell, found := grid.cells.Get(address)
 
 					if !found {
 						grid.Error(fmt.Errorf("%w: missing cell", core.ErrShape))
 						return
 					}
 
-					if !yield(unsafe.Pointer(&cell)) {
-						return
+					for out := range cell.Next(nil) {
+						if !grid.yieldSlot(cell, out, yield) {
+							return
+						}
 					}
 
 					query = nil
@@ -143,7 +169,14 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 
 			if query.Action == core.Execute {
-				cell, found := grid.cells.Get(query.Identity())
+				address := query.Identity()
+
+				if any(address) == nil || any(address) == any(zero) {
+					event = append(event, arriving)
+					continue
+				}
+
+				cell, found := grid.cells.Get(address)
 
 				if !found {
 					grid.Error(fmt.Errorf("%w: missing cell", core.ErrShape))
@@ -159,5 +192,117 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				}
 			}
 		}
+
+		if identified && endpoint != nil {
+			if !yield(unsafe.Pointer(&endpoint)) {
+				return
+			}
+		}
+
+		if query != nil && query.Action == core.Execute {
+			address := query.Identity()
+
+			if any(address) != nil && any(address) != any(zero) && len(event) == 0 {
+				cell, found := grid.cells.Get(address)
+
+				if !found {
+					grid.Error(fmt.Errorf("%w: missing cell", core.ErrShape))
+					return
+				}
+
+				for out := range cell.Next(nil) {
+					if !yield(out) {
+						return
+					}
+				}
+
+				return
+			}
+		}
+
+		if query == nil || query.Action != core.Execute || len(event) == 0 {
+			return
+		}
+
+		address := query.Identity()
+
+		if any(address) != nil && any(address) != any(zero) {
+			return
+		}
+
+		for _, held := range grid.addresses {
+			wanted, haveInterests := grid.interests.Get(held)
+
+			if !haveInterests || len(wanted) == 0 {
+				continue
+			}
+
+			matched := make([]unsafe.Pointer, 0, len(event))
+
+			for _, payload := range event {
+				input := (*core.Input[string, []string, any])(payload)
+
+				if input == nil {
+					continue
+				}
+
+				for _, interest := range wanted {
+					if len(interest) != len(input.Key) {
+						continue
+					}
+
+					same := true
+
+					for index := range interest {
+						if interest[index] != input.Key[index] {
+							same = false
+							break
+						}
+					}
+
+					if !same {
+						continue
+					}
+
+					matched = append(matched, payload)
+					break
+				}
+			}
+
+			if len(matched) == 0 {
+				continue
+			}
+
+			cell, found := grid.cells.Get(held)
+
+			if !found {
+				continue
+			}
+
+			run := func(y func(unsafe.Pointer) bool) {
+				for _, payload := range matched {
+					if !y(payload) {
+						return
+					}
+				}
+			}
+
+			for range cell.Next(run) {
+			}
+		}
 	}
+}
+
+func (grid *Grid[T]) yieldSlot(
+	cell core.Primitive, out unsafe.Pointer, yield func(unsafe.Pointer) bool,
+) bool {
+	slot := *(*Slot[float64])(out)
+	held := new(float64)
+	*held = slot.Value
+	origin, _ := cell.(core.Connectable[T])
+	grid.reading = *core.NewInput(
+		origin, core.Read, slot.Key, held,
+	)
+
+	return yield(unsafe.Pointer(&grid.reading))
 }

@@ -27,7 +27,7 @@ func TestLastPriceNext(t *testing.T) {
 
 func TestSignedNext(t *testing.T) {
 	Convey("Signed yields defined pair correlation and stays silent otherwise", t, func() {
-		pairs := nmcorrelation.NewPairs(algo.NewHayashiYoshida())
+		pairs := nmcorrelation.NewPairs(algo.NewHayashiYoshida(), "ETH/USD", "BTC/USD")
 		signed := nmcorrelation.NewSigned()
 
 		for index := range 5 {

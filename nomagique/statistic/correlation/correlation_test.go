@@ -62,24 +62,41 @@ func TestDependenceNext(t *testing.T) {
 		for _, test := range cases {
 			covariance, support, leftEnergy, rightEnergy := 0.0, 0.0, 0.0, 0.0
 			leftRates, rightRates := []float64{}, []float64{}
+			leftUsed := make([]bool, max(0, len(test.lp)-1))
+			rightUsed := make([]bool, max(0, len(test.rp)-1))
 
 			for index := 1; index < len(test.lp); index++ {
 				increment := math.Log(test.lp[index]) - math.Log(test.lp[index-1])
-				leftEnergy += increment * increment
 				leftRates = append(leftRates, increment*increment/(float64(test.lt[index]-test.lt[index-1])*1e-9))
 
 				for other := 1; other < len(test.rp); other++ {
 					if test.lt[index-1] < test.rt[other] && test.rt[other-1] < test.lt[index] {
 						covariance += increment * (math.Log(test.rp[other]) - math.Log(test.rp[other-1]))
 						support++
+						leftUsed[index-1] = true
+						rightUsed[other-1] = true
 					}
 				}
 			}
 
+			for index := 1; index < len(test.lp); index++ {
+				if !leftUsed[index-1] {
+					continue
+				}
+
+				increment := math.Log(test.lp[index]) - math.Log(test.lp[index-1])
+				leftEnergy += increment * increment
+			}
+
 			for other := 1; other < len(test.rp); other++ {
 				increment := math.Log(test.rp[other]) - math.Log(test.rp[other-1])
-				rightEnergy += increment * increment
 				rightRates = append(rightRates, increment*increment/(float64(test.rt[other]-test.rt[other-1])*1e-9))
+
+				if !rightUsed[other-1] {
+					continue
+				}
+
+				rightEnergy += increment * increment
 			}
 
 			shared := 0.0
@@ -110,7 +127,11 @@ func TestDependenceNext(t *testing.T) {
 			So(got.LeftReturns, ShouldEqual, float64(max(0, len(test.lp)-1)))
 			So(got.RightReturns, ShouldEqual, float64(max(0, len(test.rp)-1)))
 			So(got.Defined, ShouldEqual, support > 0 && leftEnergy > 0 && rightEnergy > 0)
-			sameFloat(got.Correlation, covariance/math.Sqrt(leftEnergy*rightEnergy))
+
+			if got.Defined {
+				sameFloat(got.Correlation, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			}
+
 			sameFloat(got.LeftEnergyRate, medianRate(leftRates))
 			sameFloat(got.RightEnergyRate, medianRate(rightRates))
 		}
