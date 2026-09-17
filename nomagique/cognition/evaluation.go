@@ -40,6 +40,7 @@ type Evaluation struct {
 	RunnerUp    string
 	Confidence  float64
 	Contrast    float64
+	IsTie       bool
 	Candidates  []ClassCandidate
 	Surprisal   float64
 	Ambiguity   float64
@@ -154,6 +155,7 @@ func (evaluator *Evaluator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				RunnerUp:    classResult.RunnerUp,
 				Confidence:  classResult.Confidence,
 				Contrast:    classResult.Contrast,
+				IsTie:       classResult.IsTie,
 				Candidates:  classResult.Candidates,
 				Surprisal:   surprisal,
 				Ambiguity:   ambiguity,

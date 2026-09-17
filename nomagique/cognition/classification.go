@@ -18,6 +18,7 @@ type ClassificationResult struct {
 	Confidence  float64
 	Contrast    float64
 	Support     uint64
+	IsTie       bool
 	Candidates  []ClassCandidate
 }
 
@@ -95,12 +96,15 @@ func (classification *Classification) Next(in iter.Seq[unsafe.Pointer]) iter.Seq
 			contrast = math.Log2(winner.Probability / highestOther)
 		}
 
+		isTie := len(candidates) > 1 && (winner.Probability == highestOther || contrast == 0.0)
+
 		classification.out = ClassificationResult{
 			WinnerClass: winner.Name,
 			RunnerUp:    runnerUp,
 			Confidence:  winner.Probability,
 			Contrast:    contrast,
 			Support:     winner.Support,
+			IsTie:       isTie,
 			Candidates:  candidates,
 		}
 

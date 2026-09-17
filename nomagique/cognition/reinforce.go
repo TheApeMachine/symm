@@ -33,9 +33,6 @@ type Reinforce struct {
 	*core.PrimitiveError
 	root        *atomic.Pointer[iradix.Tree[[]byte]]
 	stepCounter *atomic.Uint64
-	weight      *Weight
-	pack        *Pack
-	out         Association
 }
 
 func NewReinforce(
@@ -46,8 +43,6 @@ func NewReinforce(
 		PrimitiveError: core.NewPrimitiveError(),
 		root:           root,
 		stepCounter:    stepCounter,
-		weight:         NewWeight(),
-		pack:           NewPack(),
 	}
 }
 
@@ -56,6 +51,10 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 		if reinforcePrim.Error() != nil || reinforcePrim.root == nil {
 			return
 		}
+
+		weightDecoder := NewWeight()
+		packEncoder := NewPack()
+		var out Association
 
 		for arriving := range in {
 			if arriving == nil {
@@ -74,7 +73,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 				oldRoot := reinforcePrim.root.Load()
 				var step uint64
 				if reinforcePrim.stepCounter != nil {
-					step = reinforcePrim.stepCounter.Add(1)
+					step = reinforcePrim.stepCounter.Load() + 1
 				}
 
 				txn := oldRoot.Txn()
@@ -94,16 +93,19 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 						inW := func(yieldW func(unsafe.Pointer) bool) {
 							yieldW(unsafe.Pointer(&existing))
 						}
-						for outW := range reinforcePrim.weight.Next(inW) {
+						for outW := range weightDecoder.Next(inW) {
 							pw = *(*PackedWeight)(outW)
 						}
 
 						pw.Count++
 						if assoc.Graded {
-							pw.Mass += math.Max(assoc.Feedback, 0)
-						} else {
+							pw.Mass = math.Max(pw.Mass+assoc.Feedback, 0)
+						}
+
+						if !assoc.Graded {
 							pw.Mass += core.Unit
 						}
+
 						pw.WriteStep = step
 					}
 
@@ -111,7 +113,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 					inPack := func(yieldP func(unsafe.Pointer) bool) {
 						yieldP(unsafe.Pointer(&pw))
 					}
-					for outP := range reinforcePrim.pack.Next(inPack) {
+					for outP := range packEncoder.Next(inPack) {
 						packed = *(*[WeightSize]byte)(outP)
 					}
 					txn.Insert(basinKey, bytes.Clone(packed[:]))
@@ -127,7 +129,7 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 					inW := func(yieldW func(unsafe.Pointer) bool) {
 						yieldW(unsafe.Pointer(&existing))
 					}
-					for outW := range reinforcePrim.weight.Next(inW) {
+					for outW := range weightDecoder.Next(inW) {
 						sPW = *(*PackedWeight)(outW)
 					}
 
@@ -140,19 +142,22 @@ func (reinforcePrim *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsaf
 				inPack := func(yieldP func(unsafe.Pointer) bool) {
 					yieldP(unsafe.Pointer(&sPW))
 				}
-				for outP := range reinforcePrim.pack.Next(inPack) {
+				for outP := range packEncoder.Next(inPack) {
 					sPacked = *(*[WeightSize]byte)(outP)
 				}
 				txn.Insert(sensoryKey, bytes.Clone(sPacked[:]))
 
 				newRoot := txn.Commit()
 				if reinforcePrim.root.CompareAndSwap(oldRoot, newRoot) {
+					if reinforcePrim.stepCounter != nil {
+						reinforcePrim.stepCounter.Add(1)
+					}
 					break
 				}
 			}
 
-			reinforcePrim.out = assoc
-			if !yield(unsafe.Pointer(&reinforcePrim.out)) {
+			out = assoc
+			if !yield(unsafe.Pointer(&out)) {
 				return
 			}
 		}

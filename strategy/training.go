@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
 type Action string
@@ -32,10 +33,10 @@ func LegalActions(holding bool) []Action {
 }
 
 /*
-Training reads the impulse map and addresses one shared radix trie. The inference
-pipeline compares the observed action counts. Ties select wait;
-unseen contexts produce no action. The cold learner owns trie writes.
-Training does not submit orders: quoted outcome evidence is not execution proof.
+Training reads the impulse map, discovers spatial attractor basins, streams temporal
+transitions, reinforces empirical associations into the radix trie, and evaluates
+prospective trajectories. Environment legality and tie abstention belong downstream
+in Decision.
 */
 type Training[T core.Ordered[T]] struct {
 	*runtime.System
@@ -58,6 +59,10 @@ func NewTraining[T core.Ordered[T]](
 	training.pipeline = nomagique.NewNumber(
 		associative.NewGrid(members...),
 		associative.NewRegion(),
+		temporal.NewTransition(),
+		cognition.NewAssociate(),
+		training.Reinforce,
+		cognition.NewCurrent(),
 		cognition.NewEvaluator(&training.root, &training.stepCounter),
 	)
 
@@ -68,8 +73,6 @@ func NewTraining[T core.Ordered[T]](
 /*
 Next evaluates the current owner-held metric publications in sequence order.
 */
-func (training *Training[T]) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (training *Training[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return training.pipeline.Next(in)
 }

@@ -44,7 +44,7 @@ func (cell *testCell) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 }
 
 func TestTrainingPipeline(t *testing.T) {
-	Convey("Training composes Grid, Region, and Cognition into a streaming prediction pipeline", t, func() {
+	Convey("Training composes Grid, Region, Transition, and Cognition into a streaming pipeline", t, func() {
 		cellA := newTestCell(0, 0, 0.5, 1.0)
 		cellMid := newTestCell(1, 0, 0.5, 0.25)
 		cellB := newTestCell(2, 0, 0.5, 1.0)
@@ -59,9 +59,15 @@ func TestTrainingPipeline(t *testing.T) {
 
 		So(training, ShouldNotBeNil)
 
-		// Train an association for region "r0" to take ActionEnter
+		// Verification 1: Same identity coordinates remain unchanged after relaxation
+		origXA, origYA := cellA.address.X, cellA.address.Y
+		origXB, origYB := cellB.address.X, cellB.address.Y
+
+		expectedContext := "0,0;1,0->0,0;1,0"
+
+		// Pre-train an association for the expected transition to take ActionEnter
 		assoc := cognition.Association{
-			Context:  []byte("r0"),
+			Context:  []byte(expectedContext),
 			Class:    []byte(strategy.ActionEnter),
 			Feedback: 1.0,
 			Graded:   true,
@@ -84,13 +90,44 @@ func TestTrainingPipeline(t *testing.T) {
 			}
 		}
 
-		// When the dominant region token matches the trained context, evaluate produces the winner
-		if len(evals) > 0 {
-			eval := evals[len(evals)-1]
-			if string(eval.Context) == "r0" {
-				So(eval.WinnerClass, ShouldEqual, string(strategy.ActionEnter))
-				So(eval.Confidence, ShouldBeGreaterThan, 0.5)
-			}
+		// Coordinates in the store remain unchanged
+		So(cellA.address.X, ShouldEqual, origXA)
+		So(cellA.address.Y, ShouldEqual, origYA)
+		So(cellB.address.X, ShouldEqual, origXB)
+		So(cellB.address.Y, ShouldEqual, origYB)
+
+		// Query sequence: cellA primes sympathy (0 edges), cellMid emits first basin (primes transition),
+		// cellB emits second basin which produces exactly 1 transition
+		So(len(evals), ShouldEqual, 1)
+		eval := evals[0]
+		So(string(eval.Context), ShouldEqual, expectedContext)
+		So(eval.WinnerClass, ShouldEqual, string(strategy.ActionEnter))
+		So(eval.Confidence, ShouldBeGreaterThan, 0.5)
+
+		// Downstream Decision integration
+		holding := false
+		decision := strategy.NewDecision(func() bool { return holding })
+
+		inEval := func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(&eval))
 		}
+
+		var actions []strategy.Action
+		for out := range decision.Next(inEval) {
+			actions = append(actions, *(*strategy.Action)(out))
+		}
+
+		// When flat, ActionEnter is legal and emitted
+		So(len(actions), ShouldEqual, 1)
+		So(actions[0], ShouldEqual, strategy.ActionEnter)
+
+		// When holding, ActionEnter is illegal and rejected downstream (abstains)
+		holding = true
+		actions = nil
+		for out := range decision.Next(inEval) {
+			actions = append(actions, *(*strategy.Action)(out))
+		}
+
+		So(len(actions), ShouldEqual, 0)
 	})
 }
