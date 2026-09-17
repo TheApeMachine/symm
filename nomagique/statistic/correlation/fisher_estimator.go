@@ -109,3 +109,96 @@ func (fisherEstimator *FisherEstimator) Next(
 		}
 	}
 }
+
+/*
+FisherBaseline yields the tanh-mapped causal Fisher-space baseline.
+*/
+type FisherBaseline struct {
+	*core.PrimitiveError
+
+	out float64
+}
+
+func NewFisherBaseline() *FisherBaseline {
+	return &FisherBaseline{PrimitiveError: core.NewPrimitiveError()}
+}
+
+func (fisherBaseline *FisherBaseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			view := (*FisherView)(arriving)
+
+			if !view.Defined {
+				continue
+			}
+
+			fisherBaseline.out = view.Baseline
+
+			if !yield(unsafe.Pointer(&fisherBaseline.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+FisherDivergence yields the Fisher-space residual from the causal baseline.
+*/
+type FisherDivergence struct {
+	*core.PrimitiveError
+
+	out float64
+}
+
+func NewFisherDivergence() *FisherDivergence {
+	return &FisherDivergence{PrimitiveError: core.NewPrimitiveError()}
+}
+
+func (fisherDivergence *FisherDivergence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			view := (*FisherView)(arriving)
+
+			if !view.Defined {
+				continue
+			}
+
+			fisherDivergence.out = view.Divergence
+
+			if !yield(unsafe.Pointer(&fisherDivergence.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+FisherZScore yields the Fisher-space residual in units of prior noise.
+*/
+type FisherZScore struct {
+	*core.PrimitiveError
+
+	out float64
+}
+
+func NewFisherZScore() *FisherZScore {
+	return &FisherZScore{PrimitiveError: core.NewPrimitiveError()}
+}
+
+func (fisherZScore *FisherZScore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			view := (*FisherView)(arriving)
+
+			if !view.Defined {
+				continue
+			}
+
+			fisherZScore.out = view.ZScore
+
+			if !yield(unsafe.Pointer(&fisherZScore.out)) {
+				return
+			}
+		}
+	}
+}

@@ -36,5 +36,8 @@ func TestCohortNext(t *testing.T) {
 		So(node.Error(), ShouldBeNil)
 		So(empty[0].Defined, ShouldBeFalse)
 		So(math.IsNaN(empty[0].SignedCorrelation), ShouldBeTrue)
+
+		count := tests.CollectSeq[float64](nmcorrelation.NewPeerCount().Next(sequence.NewValues(out[0]).Next(nil)))
+		So(count, ShouldResemble, []float64{2})
 	})
 }

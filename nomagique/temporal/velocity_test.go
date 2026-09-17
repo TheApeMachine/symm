@@ -66,3 +66,23 @@ func TestVelocityNext(t *testing.T) {
 		}
 	})
 }
+
+func TestRateNext(t *testing.T) {
+	Convey("Rate yields only defined finite-difference rates", t, func() {
+		velocity := temporal.NewVelocity()
+		rate := temporal.NewRate()
+		origin := time.Unix(1700000000, 0).UnixNano()
+		first := temporal.Observation{Value: 10, At: origin}
+		second := temporal.Observation{Value: 13, At: origin + int64(time.Second)}
+
+		silent := tests.CollectSeq[float64](rate.Next(velocity.Next(func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(&first))
+		})))
+		So(len(silent), ShouldEqual, 0)
+
+		out := tests.CollectSeq[float64](rate.Next(velocity.Next(func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(&second))
+		})))
+		So(out, ShouldResemble, []float64{3})
+	})
+}

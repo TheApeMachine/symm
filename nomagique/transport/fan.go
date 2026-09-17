@@ -30,10 +30,16 @@ func (fan *Fan) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}()
 
-		for _, branch := range fan.branches {
-			for out := range branch.Next(in) {
-				if !yield(out) {
-					return
+		for arriving := range in {
+			for _, branch := range fan.branches {
+				one := func(yieldBranch func(unsafe.Pointer) bool) {
+					yieldBranch(arriving)
+				}
+
+				for out := range branch.Next(one) {
+					if !yield(out) {
+						return
+					}
 				}
 			}
 		}

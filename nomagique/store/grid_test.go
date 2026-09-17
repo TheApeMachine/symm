@@ -22,9 +22,10 @@ func TestGridDynamicAssignment(t *testing.T) {
 			firstMember, core.Identify,
 		)
 
-		sequence.Read[*store.Query[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]]](
+		endpoint := sequence.Read[core.Connectable[*geometry.Coordinate]](
 			grid.Next(firstQuery.Next(sequence.NewValue(firstInterests))),
 		)
+		So(endpoint, ShouldNotBeNil)
 
 		So(firstMember.Identity(), ShouldNotBeNil)
 		So(firstMember.Identity().X, ShouldEqual, 0)
@@ -37,9 +38,10 @@ func TestGridDynamicAssignment(t *testing.T) {
 			secondMember, core.Identify,
 		)
 
-		sequence.Read[*store.Query[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]]](
+		endpoint2 := sequence.Read[core.Connectable[*geometry.Coordinate]](
 			grid.Next(secondQuery.Next(sequence.NewValue(secondInterests))),
 		)
+		So(endpoint2, ShouldNotBeNil)
 
 		So(secondMember.Identity(), ShouldNotBeNil)
 		So(secondMember.Identity().X, ShouldEqual, 1)

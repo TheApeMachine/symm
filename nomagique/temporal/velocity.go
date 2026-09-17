@@ -79,3 +79,34 @@ func (velocity *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 		}
 	}
 }
+
+/*
+Rate yields the defined finite-difference rate of a velocity reading.
+*/
+type Rate struct {
+	*core.PrimitiveError
+
+	out float64
+}
+
+func NewRate() *Rate {
+	return &Rate{PrimitiveError: core.NewPrimitiveError()}
+}
+
+func (rate *Rate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			reading := (*VelocityReading)(arriving)
+
+			if !reading.Defined {
+				continue
+			}
+
+			rate.out = reading.Rate
+
+			if !yield(unsafe.Pointer(&rate.out)) {
+				return
+			}
+		}
+	}
+}

@@ -24,6 +24,11 @@ func TestFisherEstimatorNext(t *testing.T) {
 			if value == .5 {
 				So(out[0].Baseline, ShouldAlmostEqual, math.Tanh((math.Atanh(.2)+math.Atanh(.3))/2))
 				So(out[0].PriorCount, ShouldEqual, 2)
+
+				baseline := tests.CollectSeq[float64](
+					nmcorrelation.NewFisherBaseline().Next(sequence.NewValues(out[0]).Next(nil)),
+				)
+				So(baseline[0], ShouldAlmostEqual, out[0].Baseline)
 			}
 		}
 	})

@@ -92,12 +92,16 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						return
 					}
 
-					pipe := transport.NewIO[any](query.Connectable, grid)
-					query.Connect(pipe)
+					publish := transport.NewAddress[T]()
+					publish.Connect(transport.NewIO[any](nil, nil))
+
+					query.Connect(publish)
 
 					grid.cells.Set(address, query.Connectable)
 
-					if !yield(unsafe.Pointer(&query)) {
+					var endpoint core.Connectable[T] = publish
+
+					if !yield(unsafe.Pointer(&endpoint)) {
 						return
 					}
 

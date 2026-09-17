@@ -100,6 +100,24 @@ export {
 	tabsVariants,
 	tabVariants,
 } from "./tabs";
+export {
+	DistributionCurve,
+	type DistributionCurveProps,
+	computeDistributionPath,
+} from "./distribution-curve";
+export {
+	RatioBar,
+	type RatioBarProps,
+	type RatioBarSegment,
+	ratioBarTrackVariants,
+} from "./ratio-bar";
+export {
+	Slider,
+	type SliderProps,
+	type SliderFieldProps,
+	sliderVariants,
+	sliderFieldVariants,
+} from "./slider";
 export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";
 export {
 	SIZE_ORDER,

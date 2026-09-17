@@ -4,68 +4,65 @@ import (
 	"iter"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data/sequence"
 )
 
 /*
-Conn connects an addressable member to a distributed store grid.
-It completes registration once before the first arrival, yielding
-the established connection downstream.
+Conn makes a primitive pipeline addressable and connectable. Its data path
+streams input through the member pipeline, then forwards that output to the
+connected peer.
 */
-type Conn[T interface {
-	core.Ordered[T]
-	comparable
-}, U any] struct {
+type Conn[T comparable] struct {
 	*core.PrimitiveError
-	once    *Once
-	address *Address[T]
+	identity T
+	member   core.Primitive
+	peer     core.Primitive
 }
 
-func NewConn[T interface {
-	core.Ordered[T]
-	comparable
-}, U any](
-	host core.Primitive,
-	interests ...U,
-) *Conn[T, U] {
-	stages := make([]core.Primitive, 0, 3)
-
-	if len(interests) > 0 {
-		stages = append(stages, sequence.NewValues(interests...))
-	}
-
-	address := NewAddress[T]()
-
-	stages = append(
-		stages,
-		core.NewQuery[T, U](
-			address,
-			core.Identify,
-		),
-		host,
-	)
-
-	return &Conn[T, U]{
+func NewConn[T comparable](member core.Primitive) *Conn[T] {
+	return &Conn[T]{
 		PrimitiveError: core.NewPrimitiveError(),
-		once:           NewOnce(nomagique.NewNumber(stages...)),
-		address:        address,
+		member:         member,
 	}
 }
 
-func (conn *Conn[T, U]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return conn.once.Next(in)
+func (conn *Conn[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if conn.member != nil {
+			defer func() { conn.Error(conn.member.Error()) }()
+		}
+
+		if conn.peer != nil {
+			defer func() { conn.Error(conn.peer.Error()) }()
+		}
+
+		stream := in
+
+		if conn.member != nil {
+			stream = conn.member.Next(in)
+		}
+
+		if conn.peer != nil {
+			stream = conn.peer.Next(stream)
+		}
+
+		for item := range stream {
+			if !yield(item) {
+				return
+			}
+		}
+	}
 }
 
-func (conn *Conn[T, U]) Identity() T {
-	return conn.address.Identity()
+func (conn *Conn[T]) Identity() T {
+	return conn.identity
 }
 
-func (conn *Conn[T, U]) Identify(identity T) core.Identifiable[T] {
-	return conn.address.Identify(identity)
+func (conn *Conn[T]) Identify(identity T) core.Identifiable[T] {
+	conn.identity = identity
+	return conn
 }
 
-func (conn *Conn[T, U]) Connect(primitive core.Primitive) {
-	conn.address.Connect(primitive)
+func (conn *Conn[T]) Connect(primitive core.Primitive) {
+	conn.peer = primitive
 }

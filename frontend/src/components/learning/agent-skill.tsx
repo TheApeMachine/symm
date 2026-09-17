@@ -78,7 +78,7 @@ export const AgentSkill = () => {
 
 	return (
 		<Flex.Row ref={ref} align="center" gap={6}>
-			<Badge label="Agent" variant="info" dot />
+			<Badge label="Model" variant="info" dot />
 			<Flex.Column className="items-end gap-px">
 				<Typography.Label size="s" tone="f4" weight="normal">
 					Win Rate

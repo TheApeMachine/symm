@@ -1,0 +1,150 @@
+import { TrieNodeData } from "../types";
+
+// Generates a mock Radix Trie representing a beam search for trading actions
+export const generateMockTrie = (): TrieNodeData => {
+  return {
+    id: "root",
+    prefix: "ROOT",
+    probability: 1.0,
+    stepProbability: 1.0,
+    state: "EVALUATED",
+    tokens: ["<BOS>"],
+    children: [
+      {
+        id: "wait",
+        prefix: "wait",
+        probability: 0.30,
+        stepProbability: 0.30,
+        state: "EVALUATED",
+        tokens: ["wait"],
+        children: [
+          {
+            id: "wait_100ms",
+            prefix: " 100ms",
+            probability: 0.20,
+            stepProbability: 0.66,
+            state: "EVALUATED",
+            tokens: ["100", "ms"],
+            isEnd: true,
+          },
+          {
+            id: "wait_500ms",
+            prefix: " 500ms",
+            probability: 0.07,
+            stepProbability: 0.23,
+            state: "EVALUATED",
+            tokens: ["500", "ms"],
+            isEnd: true,
+          },
+          {
+            id: "wait_observe",
+            prefix: " (observe)",
+            probability: 0.03,
+            stepProbability: 0.10,
+            state: "ESTIMATED",
+            tokens: ["obs"],
+            children: [
+              { id: "wait_observe_vol", prefix: " vol", probability: 0.02, stepProbability: 0.66, state: "ESTIMATED", tokens: ["vol"], isEnd: true },
+              { id: "wait_observe_liq", prefix: " liq", probability: 0.01, stepProbability: 0.33, state: "ESTIMATED", tokens: ["liq"], isEnd: true },
+            ],
+          },
+        ],
+      },
+      {
+        id: "enter",
+        prefix: "enter",
+        probability: 0.35,
+        stepProbability: 0.35,
+        state: "EVALUATED",
+        tokens: ["enter"],
+        children: [
+          {
+            id: "enter_1_8",
+            prefix: " 1/8",
+            probability: 0.20,
+            stepProbability: 0.57,
+            state: "EVALUATED",
+            tokens: ["1", "/", "8"],
+            children: [
+              { id: "enter_1_8_ask", prefix: " @ask", probability: 0.12, stepProbability: 0.60, state: "POLICY CHOICE", tokens: ["ask"], isEnd: true },
+              { id: "enter_1_8_bid", prefix: " @bid", probability: 0.08, stepProbability: 0.40, state: "EVALUATED", tokens: ["bid"], isEnd: true },
+            ],
+          },
+          {
+            id: "enter_1_4",
+            prefix: " 1/4",
+            probability: 0.10,
+            stepProbability: 0.28,
+            state: "ESTIMATED",
+            tokens: ["1", "/", "4"],
+            children: [
+              { id: "enter_1_4_market", prefix: " mkt", probability: 0.06, stepProbability: 0.60, state: "ESTIMATED", tokens: ["mkt"], isEnd: true },
+              { id: "enter_1_4_limit", prefix: " lmt", probability: 0.04, stepProbability: 0.40, state: "ESTIMATED", tokens: ["lmt"], isEnd: true },
+            ],
+          },
+          {
+            id: "enter_1_2",
+            prefix: " 1/2",
+            probability: 0.04,
+            stepProbability: 0.11,
+            state: "ESTIMATED",
+            tokens: ["1", "/", "2"],
+            isEnd: true,
+          },
+          {
+            id: "enter_1_1",
+            prefix: " 1/1",
+            probability: 0.01,
+            stepProbability: 0.03,
+            state: "ESTIMATED",
+            tokens: ["1", "/", "1"],
+            isEnd: true,
+          },
+        ],
+      },
+      {
+        id: "retreat",
+        prefix: "retreat",
+        probability: 0.15,
+        stepProbability: 0.15,
+        state: "ESTIMATED",
+        tokens: ["retreat"],
+        children: [
+          {
+            id: "retreat_fraction",
+            prefix: "_fraction",
+            probability: 0.10,
+            stepProbability: 0.66,
+            state: "ESTIMATED",
+            tokens: ["frac"],
+            children: [
+              { id: "retreat_fraction_zscore", prefix: "_zscore", probability: 0.08, stepProbability: 0.80, state: "ESTIMATED", tokens: ["zscr"], isEnd: true },
+              { id: "retreat_fraction_fixed", prefix: "_fixed", probability: 0.02, stepProbability: 0.20, state: "ESTIMATED", tokens: ["fxd"], isEnd: true },
+            ],
+          },
+          {
+            id: "retreat_full",
+            prefix: "_full",
+            probability: 0.05,
+            stepProbability: 0.33,
+            state: "ESTIMATED",
+            tokens: ["full"],
+            isEnd: true,
+          },
+        ],
+      },
+      {
+        id: "hedge",
+        prefix: "hedge",
+        probability: 0.05,
+        stepProbability: 0.05,
+        state: "ESTIMATED",
+        tokens: ["hedge"],
+        children: [
+          { id: "hedge_btc", prefix: " BTC/USD", probability: 0.03, stepProbability: 0.60, state: "ESTIMATED", tokens: ["BTC"], isEnd: true },
+          { id: "hedge_eth", prefix: " ETH/USD", probability: 0.02, stepProbability: 0.40, state: "ESTIMATED", tokens: ["ETH"], isEnd: true },
+        ],
+      },
+    ],
+  };
+};
