@@ -43,4 +43,18 @@ func main() {
 		errnie.Error(errnie.Err(errnie.IO, "catalog: write primitives.json", err))
 		os.Exit(1)
 	}
+
+	registrySource, err := nmscan.GenerateRegistry("nomagique")
+
+	if err != nil {
+		errnie.Error(err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(
+		"nomagique/runtime/catalog/registry_gen.go", registrySource, 0o644,
+	); err != nil {
+		errnie.Error(errnie.Err(errnie.IO, "catalog: write registry_gen.go", err))
+		os.Exit(1)
+	}
 }

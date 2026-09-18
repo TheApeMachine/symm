@@ -79,9 +79,18 @@ func (sympathy *Sympathy[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 			}
 
 			observation := (*Observation[T])(arriving)
+
+			if observation == nil || any(observation.Address) == nil {
+				continue
+			}
+
 			targetIndex := -1
 
 			for index, heldAddress := range sympathy.addresses {
+				if any(heldAddress) == nil {
+					continue
+				}
+
 				if !heldAddress.Less(observation.Address) && !observation.Address.Less(heldAddress) {
 					targetIndex = index
 					break

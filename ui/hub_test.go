@@ -11,8 +11,12 @@ import (
 	"github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -122,7 +126,7 @@ func TestHubNextEvaluation(t *testing.T) {
 
 		frame := wire.GetRootAsMeasurementsFrame(received, 0).UnPack()
 		So(frame, ShouldNotBeNil)
-		So(len(frame.Rows), ShouldEqual, 12)
+		So(len(frame.Rows), ShouldEqual, 1)
 
 		row := frame.Rows[0]
 		So(row.Source, ShouldEqual, "training")
@@ -140,15 +144,86 @@ func TestHubNextEvaluation(t *testing.T) {
 		So(metricMap["contrast"], ShouldEqual, 0.67)
 		So(metricMap["support"], ShouldEqual, 100)
 		So(metricMap["steps"], ShouldEqual, 42)
+	})
+}
 
-		kernelMap := make(map[string]bool)
-		for _, r := range frame.Rows[1:] {
-			kernelMap[r.Source] = true
-			So(r.Snr, ShouldEqual, 0.88)
+func TestHubRegisterSignals(t *testing.T) {
+	Convey("Hub with registered signals encodes actual signal metrics into frame", t, func() {
+		ctx := context.Background()
+		grid := store.NewGrid[*geometry.Coordinate]()
+		signals, err := signal.LoadAll(ctx, grid)
+		So(err, ShouldBeNil)
+		So(len(signals), ShouldEqual, 15)
+
+		hub := NewHub(ctx, nil, nil)
+		hub.RegisterSignals(signals)
+		hub.Transition(runtime.READY)
+
+		eval := &cognition.Evaluation{
+			Step:       42,
+			Surprisal:  1.23,
+			Ambiguity:  0.45,
+			Confidence: 0.88,
+			Contrast:   0.67,
+			Support:    100,
 		}
-		So(kernelMap["cvd"], ShouldBeTrue)
-		So(kernelMap["depthflow"], ShouldBeTrue)
-		So(kernelMap["correlation"], ShouldBeTrue)
+
+		for range hub.Next(sequence.NewValue(*eval)) {
+		}
+
+		ptr, ok := hub.queue.Dequeue()
+		So(ok, ShouldBeTrue)
+		So(ptr, ShouldNotBeNil)
+
+		payload := *(*[]byte)(ptr)
+		frame := wire.GetRootAsMeasurementsFrame(payload, 0).UnPack()
+		So(frame, ShouldNotBeNil)
+		So(len(frame.Rows), ShouldEqual, 16)
+		So(frame.Rows[0].Source, ShouldEqual, "training")
+
+		sourceMap := make(map[string]bool)
+		for _, r := range frame.Rows[1:] {
+			sourceMap[r.Source] = true
+		}
+		So(sourceMap["correlation:ticker"], ShouldBeTrue)
+		So(sourceMap["cvd:trade"], ShouldBeTrue)
+		So(sourceMap["depthflow:level3"], ShouldBeTrue)
+		So(sourceMap["derivatives:ticker"], ShouldBeTrue)
+		So(sourceMap["derivatives:trade"], ShouldBeTrue)
+		So(sourceMap["hawkes:trade"], ShouldBeTrue)
+		So(sourceMap["leadlag:ticker"], ShouldBeTrue)
+		So(sourceMap["liquidity:ticker"], ShouldBeTrue)
+		So(sourceMap["morphology:level3"], ShouldBeTrue)
+		So(sourceMap["pumpdump:level3"], ShouldBeTrue)
+		So(sourceMap["pumpdump:ticker"], ShouldBeTrue)
+		So(sourceMap["pumpdump:trade"], ShouldBeTrue)
+		So(sourceMap["sentiment:ticker"], ShouldBeTrue)
+		So(sourceMap["toxicity:level3"], ShouldBeTrue)
+		So(sourceMap["toxicity:trade"], ShouldBeTrue)
+
+		Convey("Incoming market data updates signal metrics streamed to hub", func() {
+			writeQuery := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](nil, core.Write)
+			marketPayload := map[string]any{
+				"ticker": map[string]any{
+					"data": map[string]any{
+						"symbol": "BTC/USD",
+						"last":   65000.0,
+					},
+				},
+			}
+
+			for range grid.Next(writeQuery.Next(sequence.NewValue(marketPayload))) {
+			}
+
+			for range hub.Next(sequence.NewValue(*eval)) {
+			}
+
+			ptr2, ok2 := hub.queue.Dequeue()
+			So(ok2, ShouldBeTrue)
+			frame2 := wire.GetRootAsMeasurementsFrame(*(*[]byte)(ptr2), 0).UnPack()
+			So(frame2, ShouldNotBeNil)
+			So(len(frame2.Rows), ShouldEqual, 16)
+		})
 	})
 }
 

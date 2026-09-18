@@ -21,10 +21,12 @@ package catalog
 
 import (
 	_ "embed"
+	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -110,4 +112,38 @@ func Primitives() (map[string]Schema, error) {
 	})
 
 	return loaded, err
+}
+
+/*
+Builder constructs one core.Primitive given its values and child primitives.
+*/
+type Builder func(
+	values map[string]any,
+	primitives map[string]core.Primitive,
+) (core.Primitive, error)
+
+/*
+Build instantiates one core.Primitive by Op using the generated PrimitiveRegistry.
+*/
+func Build(
+	op string,
+	values map[string]any,
+	primitives map[string]core.Primitive,
+) (core.Primitive, error) {
+	builder, ok := PrimitiveRegistry[op]
+
+	if !ok {
+		cleanOp := strings.TrimPrefix(op, "nomagique.")
+		builder, ok = PrimitiveRegistry[cleanOp]
+	}
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"catalog: primitive op not found in registry: "+op,
+			nil,
+		))
+	}
+
+	return builder(values, primitives)
 }

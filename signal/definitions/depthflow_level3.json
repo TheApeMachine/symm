@@ -1,0 +1,636 @@
+{
+  "id": "depthflow:level3",
+  "name": "depthflow:level3",
+  "source": "depthflow:level3",
+  "nodes": {
+    "sink_removedBid": {
+      "id": "sink_removedBid",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "removedBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "removedBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "removedAsk": {
+      "id": "removedAsk",
+      "type": "depthflow.RemovedAsk",
+      "x": 520,
+      "y": 480,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_removedAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_removedAsk": {
+      "id": "sink_removedAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 480,
+      "inputData": {
+        "_config": {
+          "metric": "removedAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "removedAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "interests": "level3"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "depthflow.Assemble",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "addedBid": {
+      "id": "addedBid",
+      "type": "depthflow.AddedBid",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_addedBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_addedAsk": {
+      "id": "sink_addedAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "addedAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "addedAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "removedBid": {
+      "id": "removedBid",
+      "type": "depthflow.RemovedBid",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_removedBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "turnover": {
+      "id": "turnover",
+      "type": "depthflow.Turnover",
+      "x": 520,
+      "y": 540,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_turnover",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "imbalanceBase": {
+      "id": "imbalanceBase",
+      "type": "depthflow.ImbalanceBaseline",
+      "x": 520,
+      "y": 600,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_imbalanceBase",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_imbalanceBase": {
+      "id": "sink_imbalanceBase",
+      "type": "sink",
+      "x": 700,
+      "y": 600,
+      "inputData": {
+        "_config": {
+          "metric": "imbalanceBase"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "imbalanceBase",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "notional": {
+      "id": "notional",
+      "type": "depthflow.BookNotional",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_notional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_notional": {
+      "id": "sink_notional",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "notional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_addedBid": {
+      "id": "sink_addedBid",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "addedBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "addedBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "addedAsk": {
+      "id": "addedAsk",
+      "type": "depthflow.AddedAsk",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_addedAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "imbalanceZ": {
+      "id": "imbalanceZ",
+      "type": "depthflow.ImbalanceZScore",
+      "x": 520,
+      "y": 660,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_imbalanceZ",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_bidNotional": {
+      "id": "sink_bidNotional",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "bidNotional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bidNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "imbalance": {
+      "id": "imbalance",
+      "type": "depthflow.BookImbalance",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_imbalance",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_imbalance": {
+      "id": "sink_imbalance",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "imbalance"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_turnover": {
+      "id": "sink_turnover",
+      "type": "sink",
+      "x": 700,
+      "y": 540,
+      "inputData": {
+        "_config": {
+          "metric": "turnover"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "turnover",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_imbalanceZ": {
+      "id": "sink_imbalanceZ",
+      "type": "sink",
+      "x": 700,
+      "y": 660,
+      "inputData": {
+        "_config": {
+          "metric": "imbalanceZ"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "imbalanceZ",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "depthflow.Book",
+      "x": 360,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bidNotional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "askNotional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "notional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "imbalance",
+              "portName": "in"
+            },
+            {
+              "nodeId": "addedBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "addedAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "removedBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "removedAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "turnover",
+              "portName": "in"
+            },
+            {
+              "nodeId": "imbalanceBase",
+              "portName": "in"
+            },
+            {
+              "nodeId": "imbalanceZ",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "bidNotional": {
+      "id": "bidNotional",
+      "type": "depthflow.BidNotional",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_bidNotional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "askNotional": {
+      "id": "askNotional",
+      "type": "depthflow.AskNotional",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_askNotional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_askNotional": {
+      "id": "sink_askNotional",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "askNotional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "askNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "id": "correlation:ticker",
+  "name": "correlation:ticker",
+  "source": "correlation:ticker",
+  "interests": [
+    ["ticker", "data", "symbol"],
+    ["ticker", "data", "last"],
+    ["ticker", "data", "timestamp"]
+  ],
+  "nodes": {
+    "src_last": {
+      "id": "src_last",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "interests": "symbol_last"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            { "nodeId": "tick_last", "portName": "in" }
+          ]
+        }
+      }
+    },
+    "tick_last": {
+      "id": "tick_last",
+      "type": "correlation.Tick",
+      "x": 240,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            { "nodeId": "src_last", "portName": "value" }
+          ]
+        },
+        "outputs": {
+          "out": [
+            { "nodeId": "lastPrice", "portName": "in" }
+          ]
+        }
+      }
+    },
+    "lastPrice": {
+      "id": "lastPrice",
+      "type": "correlation.LastPrice",
+      "x": 440,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            { "nodeId": "tick_last", "portName": "out" }
+          ]
+        },
+        "outputs": {
+          "out": [
+            { "nodeId": "sink_lastPrice", "portName": "value" }
+          ]
+        }
+      }
+    },
+    "sink_lastPrice": {
+      "id": "sink_lastPrice",
+      "type": "sink",
+      "x": 640,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "metric": "lastPrice"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            { "nodeId": "lastPrice", "portName": "out" }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

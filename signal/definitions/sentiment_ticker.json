@@ -1,0 +1,738 @@
+{
+  "id": "sentiment:ticker",
+  "name": "sentiment:ticker",
+  "source": "sentiment:ticker",
+  "nodes": {
+    "sink_valid": {
+      "id": "sink_valid",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "valid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "valid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "advance": {
+      "id": "advance",
+      "type": "sentiment.AdvanceCount",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_advance",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_decline": {
+      "id": "sink_decline",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "decline"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "decline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_breadth": {
+      "id": "sink_breadth",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "breadth"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "breadth",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_medianAbs": {
+      "id": "sink_medianAbs",
+      "type": "sink",
+      "x": 700,
+      "y": 480,
+      "inputData": {
+        "_config": {
+          "metric": "medianAbs"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "medianAbs",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "signed": {
+      "id": "signed",
+      "type": "sentiment.SignedFraction",
+      "x": 520,
+      "y": 660,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_signed",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "valid": {
+      "id": "valid",
+      "type": "sentiment.ValidCount",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_valid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "medianAbs": {
+      "id": "medianAbs",
+      "type": "sentiment.MedianAbsolute",
+      "x": 520,
+      "y": 480,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_medianAbs",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "largest": {
+      "id": "largest",
+      "type": "sentiment.LargestAbsolute",
+      "x": 520,
+      "y": 600,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_largest",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "decline": {
+      "id": "decline",
+      "type": "sentiment.DeclineCount",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_decline",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "median": {
+      "id": "median",
+      "type": "sentiment.MedianReturn",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_median",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_largest": {
+      "id": "sink_largest",
+      "type": "sink",
+      "x": 700,
+      "y": 600,
+      "inputData": {
+        "_config": {
+          "metric": "largest"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "largest",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "breadth": {
+      "id": "breadth",
+      "type": "sentiment.Breadth",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_breadth",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "sentiment.Cohort",
+      "x": 360,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "last",
+              "portName": "in"
+            },
+            {
+              "nodeId": "valid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "advance",
+              "portName": "in"
+            },
+            {
+              "nodeId": "decline",
+              "portName": "in"
+            },
+            {
+              "nodeId": "unchanged",
+              "portName": "in"
+            },
+            {
+              "nodeId": "breadth",
+              "portName": "in"
+            },
+            {
+              "nodeId": "median",
+              "portName": "in"
+            },
+            {
+              "nodeId": "medianAbs",
+              "portName": "in"
+            },
+            {
+              "nodeId": "mad",
+              "portName": "in"
+            },
+            {
+              "nodeId": "largest",
+              "portName": "in"
+            },
+            {
+              "nodeId": "signed",
+              "portName": "in"
+            },
+            {
+              "nodeId": "signedBase",
+              "portName": "in"
+            },
+            {
+              "nodeId": "signedZ",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "last": {
+      "id": "last",
+      "type": "sentiment.Last",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_last",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_advance": {
+      "id": "sink_advance",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "advance"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "advance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "unchanged": {
+      "id": "unchanged",
+      "type": "sentiment.UnchangedCount",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_unchanged",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "signedBase": {
+      "id": "signedBase",
+      "type": "sentiment.SignedBaseline",
+      "x": 520,
+      "y": 720,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_signedBase",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_signedBase": {
+      "id": "sink_signedBase",
+      "type": "sink",
+      "x": 700,
+      "y": 720,
+      "inputData": {
+        "_config": {
+          "metric": "signedBase"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signedBase",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "signedZ": {
+      "id": "signedZ",
+      "type": "sentiment.SignedZScore",
+      "x": 520,
+      "y": 780,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_signedZ",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_signed": {
+      "id": "sink_signed",
+      "type": "sink",
+      "x": 700,
+      "y": 660,
+      "inputData": {
+        "_config": {
+          "metric": "signed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_signedZ": {
+      "id": "sink_signedZ",
+      "type": "sink",
+      "x": 700,
+      "y": 780,
+      "inputData": {
+        "_config": {
+          "metric": "signedZ"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signedZ",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_unchanged": {
+      "id": "sink_unchanged",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "unchanged"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "unchanged",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "interests": "ticker"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "sentiment.Assemble",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_last": {
+      "id": "sink_last",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "last"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "last",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_mad": {
+      "id": "sink_mad",
+      "type": "sink",
+      "x": 700,
+      "y": 540,
+      "inputData": {
+        "_config": {
+          "metric": "mad"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "mad",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "mad": {
+      "id": "mad",
+      "type": "sentiment.ReturnMAD",
+      "x": 520,
+      "y": 540,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_mad",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_median": {
+      "id": "sink_median",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "median"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "median",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

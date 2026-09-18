@@ -1,0 +1,891 @@
+{
+  "id": "toxicity:level3",
+  "name": "toxicity:level3",
+  "source": "toxicity:level3",
+  "nodes": {
+    "retBid": {
+      "id": "retBid",
+      "type": "toxicity.RetreatedBidQty",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_retBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "wdBid": {
+      "id": "wdBid",
+      "type": "toxicity.WithdrawnBidQty",
+      "x": 520,
+      "y": 540,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_wdBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_repBid": {
+      "id": "sink_repBid",
+      "type": "sink",
+      "x": 700,
+      "y": 660,
+      "inputData": {
+        "_config": {
+          "metric": "repBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "repBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "retBidF": {
+      "id": "retBidF",
+      "type": "toxicity.RetreatBidFraction",
+      "x": 520,
+      "y": 780,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_retBidF",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_retBidF": {
+      "id": "sink_retBidF",
+      "type": "sink",
+      "x": 700,
+      "y": 780,
+      "inputData": {
+        "_config": {
+          "metric": "retBidF"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "retBidF",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "wdBidF": {
+      "id": "wdBidF",
+      "type": "toxicity.WithdrawBidFraction",
+      "x": 520,
+      "y": 900,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_wdBidF",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_wdBidF": {
+      "id": "sink_wdBidF",
+      "type": "sink",
+      "x": 700,
+      "y": 900,
+      "inputData": {
+        "_config": {
+          "metric": "wdBidF"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "wdBidF",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "interests": "level3"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "toxicity.Disposition",
+      "x": 360,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "ask",
+              "portName": "in"
+            },
+            {
+              "nodeId": "bidQty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "askQty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "bidLog",
+              "portName": "in"
+            },
+            {
+              "nodeId": "askLog",
+              "portName": "in"
+            },
+            {
+              "nodeId": "retBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "retAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "wdBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "wdAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "repBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "repAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "retBidF",
+              "portName": "in"
+            },
+            {
+              "nodeId": "retAskF",
+              "portName": "in"
+            },
+            {
+              "nodeId": "wdBidF",
+              "portName": "in"
+            },
+            {
+              "nodeId": "wdAskF",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_bidLog": {
+      "id": "sink_bidLog",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "bidLog"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bidLog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_askLog": {
+      "id": "sink_askLog",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "askLog"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "askLog",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_wdAskF": {
+      "id": "sink_wdAskF",
+      "type": "sink",
+      "x": 700,
+      "y": 960,
+      "inputData": {
+        "_config": {
+          "metric": "wdAskF"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "wdAskF",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_retAsk": {
+      "id": "sink_retAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 480,
+      "inputData": {
+        "_config": {
+          "metric": "retAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "retAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_repAsk": {
+      "id": "sink_repAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 720,
+      "inputData": {
+        "_config": {
+          "metric": "repAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "repAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "wdAskF": {
+      "id": "wdAskF",
+      "type": "toxicity.WithdrawAskFraction",
+      "x": 520,
+      "y": 960,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_wdAskF",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "bid": {
+      "id": "bid",
+      "type": "toxicity.Bid",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_bid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "bidLog": {
+      "id": "bidLog",
+      "type": "toxicity.BidLogChange",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_bidLog",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_retAskF": {
+      "id": "sink_retAskF",
+      "type": "sink",
+      "x": 700,
+      "y": 840,
+      "inputData": {
+        "_config": {
+          "metric": "retAskF"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "retAskF",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "toxicity.Assemble",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_bid": {
+      "id": "sink_bid",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "bid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "ask": {
+      "id": "ask",
+      "type": "toxicity.Ask",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_ask",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_ask": {
+      "id": "sink_ask",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "ask"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "retAsk": {
+      "id": "retAsk",
+      "type": "toxicity.RetreatedAskQty",
+      "x": 520,
+      "y": 480,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_retAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "repBid": {
+      "id": "repBid",
+      "type": "toxicity.ReplenishedBidQty",
+      "x": 520,
+      "y": 660,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_repBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_bidQty": {
+      "id": "sink_bidQty",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "bidQty"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bidQty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_retBid": {
+      "id": "sink_retBid",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "retBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "retBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_wdBid": {
+      "id": "sink_wdBid",
+      "type": "sink",
+      "x": 700,
+      "y": 540,
+      "inputData": {
+        "_config": {
+          "metric": "wdBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "wdBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "askQty": {
+      "id": "askQty",
+      "type": "toxicity.AskQty",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_askQty",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_askQty": {
+      "id": "sink_askQty",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "askQty"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "askQty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "askLog": {
+      "id": "askLog",
+      "type": "toxicity.AskLogChange",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_askLog",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "retAskF": {
+      "id": "retAskF",
+      "type": "toxicity.RetreatAskFraction",
+      "x": 520,
+      "y": 840,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_retAskF",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "bidQty": {
+      "id": "bidQty",
+      "type": "toxicity.BidQty",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_bidQty",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "wdAsk": {
+      "id": "wdAsk",
+      "type": "toxicity.WithdrawnAskQty",
+      "x": 520,
+      "y": 600,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_wdAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_wdAsk": {
+      "id": "sink_wdAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 600,
+      "inputData": {
+        "_config": {
+          "metric": "wdAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "wdAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "repAsk": {
+      "id": "repAsk",
+      "type": "toxicity.ReplenishedAskQty",
+      "x": 520,
+      "y": 720,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_repAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -42,7 +42,6 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "specs",
         "tests",
         "advisor",
-        "frontend",
     }
 )
 

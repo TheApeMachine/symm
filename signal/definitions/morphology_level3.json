@@ -1,0 +1,432 @@
+{
+  "id": "morphology:level3",
+  "name": "morphology:level3",
+  "source": "morphology:level3",
+  "nodes": {
+    "stage_1": {
+      "id": "stage_1",
+      "type": "morphology.Shape",
+      "x": 360,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "distance",
+              "portName": "in"
+            },
+            {
+              "nodeId": "ks",
+              "portName": "in"
+            },
+            {
+              "nodeId": "concBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "concAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "entBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "entAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "change",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "concAsk": {
+      "id": "concAsk",
+      "type": "morphology.AskConcentration",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_concAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "change": {
+      "id": "change",
+      "type": "morphology.Change",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_change",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_entAsk": {
+      "id": "sink_entAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "entAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "entAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_distance": {
+      "id": "sink_distance",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "distance"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "distance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_ks": {
+      "id": "sink_ks",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "ks"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "ks",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "concBid": {
+      "id": "concBid",
+      "type": "morphology.BidConcentration",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_concBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_concBid": {
+      "id": "sink_concBid",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "concBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "concBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "entBid": {
+      "id": "entBid",
+      "type": "morphology.BidEntropy",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_entBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_entBid": {
+      "id": "sink_entBid",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "entBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "entBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_change": {
+      "id": "sink_change",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "change"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "change",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "interests": "level3"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "morphology.Assemble",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "distance": {
+      "id": "distance",
+      "type": "morphology.Distance",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_distance",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "ks": {
+      "id": "ks",
+      "type": "morphology.KS",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_ks",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_concAsk": {
+      "id": "sink_concAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "concAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "concAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "entAsk": {
+      "id": "entAsk",
+      "type": "morphology.AskEntropy",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_entAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

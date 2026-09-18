@@ -1,0 +1,488 @@
+{
+  "id": "leadlag:ticker",
+  "name": "leadlag:ticker",
+  "source": "leadlag:ticker",
+  "nodes": {
+    "sink_fraction": {
+      "id": "sink_fraction",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "fraction"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_prominence": {
+      "id": "sink_prominence",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "prominence"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "prominence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "curvature": {
+      "id": "curvature",
+      "type": "leadlag.Curvature",
+      "x": 520,
+      "y": 480,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_curvature",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_curvature": {
+      "id": "sink_curvature",
+      "type": "sink",
+      "x": 700,
+      "y": 480,
+      "inputData": {
+        "_config": {
+          "metric": "curvature"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "curvature",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "contemporaneous": {
+      "id": "contemporaneous",
+      "type": "leadlag.Contemporaneous",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_contemporaneous",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "index": {
+      "id": "index",
+      "type": "leadlag.BestLagIndex",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_index",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_index": {
+      "id": "sink_index",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "index"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "index",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "gain": {
+      "id": "gain",
+      "type": "leadlag.AbsoluteGain",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_gain",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "correlation.Tick",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_contemporaneous": {
+      "id": "sink_contemporaneous",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "contemporaneous"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "contemporaneous",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_gain": {
+      "id": "sink_gain",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "gain"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "gain",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_search": {
+      "id": "sink_search",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "search"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "search",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "prominence": {
+      "id": "prominence",
+      "type": "leadlag.Prominence",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_prominence",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "leadlag.Pair",
+      "x": 360,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "measured": "",
+          "reference": ""
+        }
+      },
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "contemporaneous",
+              "portName": "in"
+            },
+            {
+              "nodeId": "best",
+              "portName": "in"
+            },
+            {
+              "nodeId": "index",
+              "portName": "in"
+            },
+            {
+              "nodeId": "gain",
+              "portName": "in"
+            },
+            {
+              "nodeId": "fraction",
+              "portName": "in"
+            },
+            {
+              "nodeId": "search",
+              "portName": "in"
+            },
+            {
+              "nodeId": "prominence",
+              "portName": "in"
+            },
+            {
+              "nodeId": "curvature",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_best": {
+      "id": "sink_best",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "best"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "best",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "search": {
+      "id": "search",
+      "type": "leadlag.SearchCount",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_search",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "interests": "symbol_last_time"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "best": {
+      "id": "best",
+      "type": "leadlag.BestLagCorrelation",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_best",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "fraction": {
+      "id": "fraction",
+      "type": "leadlag.LagFraction",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_fraction",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

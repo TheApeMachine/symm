@@ -32,6 +32,9 @@ type take struct {
 func (take *take) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		if in == nil {
+			if take.out != 0 {
+				yield(unsafe.Pointer(&take.out))
+			}
 			return
 		}
 
@@ -104,24 +107,24 @@ func TestLiveWritesTickerToGrid(t *testing.T) {
 			).Next(sequence.NewValue([][]string{{"ticker", "data", "last"}})),
 		))
 
+		pipeline := nomagique.NewNumber(
+			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](nil, core.Write),
+			grid,
+		)
 		live := &Live{
-			System: runtime.NewSystem(t.Context(), "public"),
+			System:   runtime.NewSystem(t.Context(), "public"),
+			pipeline: pipeline,
 		}
 		live.Transition(runtime.READY)
 
 		raw := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ETH/USD","last":101.5}]}`)
 		live.onReceived(makeLiveEvent(raw))
 
-		pipeline := nomagique.NewNumber(live, grid)
-		for range pipeline.Next(nil) {
-		}
-
-		reading := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
+		reading := sequence.Read[float64](grid.Next(
 			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
 				conn, core.Read,
 			).Next(nil),
 		))
-		So(reading.Value, ShouldNotBeNil)
-		So(*reading.Value, ShouldEqual, 101.5)
+		So(reading, ShouldEqual, 101.5)
 	})
 }

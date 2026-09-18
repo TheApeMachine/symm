@@ -26,6 +26,10 @@ func (coordinate *Coordinate) Identify(address *Coordinate) core.Identifiable[*C
 }
 
 func (coordinate *Coordinate) Less(other *Coordinate) bool {
+	if coordinate == nil || other == nil {
+		return false
+	}
+
 	if coordinate.X != other.X {
 		return coordinate.X < other.X
 	}

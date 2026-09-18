@@ -219,7 +219,32 @@ func NewWithClient(
 				}
 
 				if live.pipeline != nil {
-					for range live.pipeline.Next(sequence.NewValue(touch)) {
+					bid := touch.Bid.Float64()
+					ask := touch.Ask.Float64()
+					var bidQty, askQty float64
+
+					if touch.BidQty != nil {
+						bidQty = touch.BidQty.Float64()
+					}
+
+					if touch.AskQty != nil {
+						askQty = touch.AskQty.Float64()
+					}
+
+					mapped := map[string]any{
+						"level3": map[string]any{
+							"data": map[string]any{
+								"symbol":    touch.Symbol,
+								"bid":       bid,
+								"ask":       ask,
+								"bid_qty":   bidQty,
+								"ask_qty":   askQty,
+								"timestamp": touch.Timestamp.UnixNano(),
+							},
+						},
+					}
+
+					for range live.pipeline.Next(sequence.NewValue[any](mapped)) {
 					}
 				}
 			}
@@ -314,7 +339,17 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 			return
 		}
 
-		live.pipeline.Next(sequence.NewValue(mapped))
+		envelope := mapped
+		if _, exists := mapped[channel]; !exists {
+			envelope = map[string]any{
+				channel: mapped,
+			}
+		}
+
+		if live.pipeline != nil {
+			for range live.pipeline.Next(sequence.NewValue[any](envelope)) {
+			}
+		}
 		return
 	}
 

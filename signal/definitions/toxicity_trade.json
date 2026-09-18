@@ -1,0 +1,531 @@
+{
+  "id": "toxicity:trade",
+  "name": "toxicity:trade",
+  "source": "toxicity:trade",
+  "interests": [
+    [
+      "trade",
+      "data",
+      "symbol"
+    ],
+    [
+      "trade",
+      "data",
+      "side"
+    ],
+    [
+      "trade",
+      "data",
+      "price"
+    ],
+    [
+      "trade",
+      "data",
+      "qty"
+    ],
+    [
+      "trade",
+      "data",
+      "timestamp"
+    ],
+    [
+      "level3",
+      "data",
+      "bid"
+    ],
+    [
+      "level3",
+      "data",
+      "ask"
+    ],
+    [
+      "level3",
+      "data",
+      "bid_qty"
+    ],
+    [
+      "level3",
+      "data",
+      "ask_qty"
+    ],
+    [
+      "level3",
+      "data",
+      "timestamp"
+    ]
+  ],
+  "nodes": {
+    "sink_qty": {
+      "id": "sink_qty",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "qty"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "qty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "fillBidF": {
+      "id": "fillBidF",
+      "type": "toxicity.FillBidFraction",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_fillBidF",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "fillAskF": {
+      "id": "fillAskF",
+      "type": "toxicity.FillAskFraction",
+      "x": 520,
+      "y": 480,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_fillAskF",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_fillAskF": {
+      "id": "sink_fillAskF",
+      "type": "sink",
+      "x": 700,
+      "y": 480,
+      "inputData": {
+        "_config": {
+          "metric": "fillAskF"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "fillAskF",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_bracket": {
+      "id": "sink_bracket",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "bracket"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "bracket",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "fillAsk": {
+      "id": "fillAsk",
+      "type": "toxicity.FillAskQty",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_fillAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_fillBidF": {
+      "id": "sink_fillBidF",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "fillBidF"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "fillBidF",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_matchedAsk": {
+      "id": "sink_matchedAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "matchedAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "matchedAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_fillBid": {
+      "id": "sink_fillBid",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "fillBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "fillBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_fillAsk": {
+      "id": "sink_fillAsk",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "fillAsk"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "fillAsk",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "qty": {
+      "id": "qty",
+      "type": "toxicity.TradeQty",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_qty",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "bracket": {
+      "id": "bracket",
+      "type": "toxicity.BracketQty",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_bracket",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "matchedBid": {
+      "id": "matchedBid",
+      "type": "toxicity.MatchedBidQty",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_matchedBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_matchedBid": {
+      "id": "sink_matchedBid",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "matchedBid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "matchedBid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "matchedAsk": {
+      "id": "matchedAsk",
+      "type": "toxicity.MatchedAskQty",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_matchedAsk",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "fillBid": {
+      "id": "fillBid",
+      "type": "toxicity.FillBidQty",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_fillBid",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "toxicity.TradeAssemble",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "toxicity.Match",
+      "x": 360,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "qty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "bracket",
+              "portName": "in"
+            },
+            {
+              "nodeId": "matchedBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "matchedAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "fillBid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "fillAsk",
+              "portName": "in"
+            },
+            {
+              "nodeId": "fillBidF",
+              "portName": "in"
+            },
+            {
+              "nodeId": "fillAskF",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

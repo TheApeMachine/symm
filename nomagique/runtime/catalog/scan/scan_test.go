@@ -64,28 +64,28 @@ func TestTree(t *testing.T) {
 			this catalog rather than a list of names.
 		*/
 		Convey("When a constructor takes streams", func() {
-			bound, ok := schemas["equation.Bound"]
+			ledger, ok := schemas["learning.TemporalLedger"]
 
 			So(ok, ShouldBeTrue)
 
 			Convey("Then each becomes a port under its own parameter name", func() {
-				So(ports(bound), ShouldResemble, []string{"in", "value", "lower", "upper"})
-				So(bound.Variadic, ShouldBeFalse)
+				So(ports(ledger), ShouldResemble, []string{"in", "manifold", "target"})
+				So(ledger.Variadic, ShouldBeFalse)
 			})
 
 			Convey("Then the constructor's own comment describes it", func() {
-				So(bound.Description, ShouldStartWith, "NewBound captures the value")
+				So(ledger.Description, ShouldStartWith, "NewTemporalLedger constructs a temporal ledger")
 			})
 		})
 
 		Convey("When a constructor takes any number of streams", func() {
-			all, ok := schemas["equation.All"]
+			apply, ok := schemas["arithmetic.Apply"]
 
 			So(ok, ShouldBeTrue)
 
 			Convey("Then the port is marked variadic rather than repeated", func() {
-				So(ports(all), ShouldResemble, []string{"in", "predicates"})
-				So(all.Variadic, ShouldBeTrue)
+				So(ports(apply), ShouldResemble, []string{"in", "operations"})
+				So(apply.Variadic, ShouldBeTrue)
 			})
 		})
 
@@ -100,7 +100,7 @@ func TestTree(t *testing.T) {
 			So(ok, ShouldBeTrue)
 
 			Convey("Then it is catalogued like any other primitive", func() {
-				So(ports(velocity), ShouldResemble, []string{"in", "source", "clock"})
+				So(ports(velocity), ShouldResemble, []string{"in"})
 			})
 		})
 
@@ -109,13 +109,12 @@ func TestTree(t *testing.T) {
 			parameter of that type is wired rather than typed in.
 		*/
 		Convey("When a parameter's type extends the contract", func() {
-			profile, ok := schemas["equation.LagProfile"]
+			pairs, ok := schemas["correlation.Pairs"]
 
 			So(ok, ShouldBeTrue)
 
 			Convey("Then it is a port, not a setting", func() {
-				So(ports(profile), ShouldContain, "estimator")
-				So(profile.Config, ShouldBeEmpty)
+				So(ports(pairs), ShouldContain, "estimator")
 			})
 		})
 

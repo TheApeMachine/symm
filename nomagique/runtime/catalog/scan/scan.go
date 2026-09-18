@@ -19,8 +19,12 @@ not there, and cannot miss one that is.
 package scan
 
 import (
+	"bytes"
+	"fmt"
 	"go/ast"
+	"go/format"
 	"go/types"
+	"sort"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -377,3 +381,351 @@ func lowered(name string) string {
 
 	return strings.ToLower(short[:1]) + short[1:]
 }
+
+type constructorEntry struct {
+	op           string
+	pkgPath      string
+	pkgAlias     string
+	funcName     string
+	typeArgs     string
+	returnsError bool
+	params       []paramEntry
+}
+
+type paramEntry struct {
+	name        string
+	rawName     string
+	typeStr     string
+	isPrimitive bool
+	isVariadic  bool
+}
+
+var goKeywords = map[string]bool{
+	"break": true, "case": true, "chan": true, "const": true, "continue": true,
+	"default": true, "defer": true, "else": true, "fallthrough": true, "for": true,
+	"func": true, "go": true, "goto": true, "if": true, "import": true,
+	"interface": true, "map": true, "package": true, "range": true, "return": true,
+	"select": true, "struct": true, "switch": true, "type": true, "var": true,
+}
+
+func sanitizeParamName(name string) string {
+	if goKeywords[name] || name == "primitives" || name == "values" {
+		return "param_" + name
+	}
+
+	return name
+}
+
+func packageAlias(pkgPath string) string {
+	rel := strings.TrimPrefix(pkgPath, "github.com/theapemachine/symm/")
+	rel = strings.ReplaceAll(rel, "/", "_")
+	rel = strings.ReplaceAll(rel, "-", "_")
+	rel = strings.ReplaceAll(rel, ".", "_")
+	return "pkg_" + rel
+}
+
+func determineTypeArgs(funcName string) (string, bool) {
+	switch funcName {
+	case "NewRetained":
+		return "[float64]", true
+	case "NewMapping", "NewObservation", "NewSympathy", "NewConn":
+		return "[*pkg_nomagique_geometry.Coordinate]", true
+	case "NewIO":
+		return "[any]", true
+	default:
+		return "", false
+	}
+}
+
+func isSupportedParam(param *types.Var, isPrimitive bool, isVariadic bool) (string, bool) {
+	kind := param.Type()
+
+	if isVariadic {
+		if sliced, ok := kind.(*types.Slice); ok {
+			kind = sliced.Elem()
+		}
+	}
+
+	if isPrimitive {
+		if sliced, ok := kind.(*types.Slice); ok {
+			kind = sliced.Elem()
+		}
+
+		if kind.String() == contract {
+			return "core.Primitive", true
+		}
+
+		return "", false
+	}
+
+	basic, ok := kind.Underlying().(*types.Basic)
+
+	if ok {
+		switch basic.Kind() {
+		case types.String:
+			return "string", true
+		case types.Int:
+			return "int", true
+		case types.Int64:
+			return "int64", true
+		case types.Int32:
+			return "int32", true
+		case types.Float64:
+			return "float64", true
+		case types.Float32:
+			return "float32", true
+		case types.Bool:
+			return "bool", true
+		}
+	}
+
+	return "", false
+}
+
+/*
+GenerateRegistry inspects all constructors satisfying core.Primitive and emits
+Go code declaring catalog.PrimitiveRegistry.
+*/
+func GenerateRegistry(directory string) ([]byte, error) {
+	loaded, err := packages.Load(&packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedSyntax |
+			packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
+		Dir: directory,
+	}, "./...")
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"catalog: load "+directory,
+			err,
+		))
+	}
+
+	primitive, err := contractOf(loaded)
+
+	if err != nil {
+		return nil, err
+	}
+
+	var entries []constructorEntry
+	packagesUsed := make(map[string]string)
+
+	for _, loadedPackage := range loaded {
+		if _, ok := skipped[loadedPackage.Name]; ok {
+			continue
+		}
+
+		if len(loadedPackage.Errors) > 0 {
+			continue
+		}
+
+		for _, file := range loadedPackage.Syntax {
+			for _, declaration := range file.Decls {
+				function, ok := declaration.(*ast.FuncDecl)
+
+				if !ok || !named(function) {
+					continue
+				}
+
+				signature := signatureOf(loadedPackage, function)
+
+				if signature == nil || !builds(signature, primitive) {
+					continue
+				}
+
+				schema := describe(loadedPackage.Name, function, signature, primitive)
+				alias := packageAlias(loadedPackage.PkgPath)
+
+				typeArgs := ""
+
+				if function.Type.TypeParams != nil && len(function.Type.TypeParams.List) > 0 {
+					tArgs, ok := determineTypeArgs(function.Name.Name)
+
+					if !ok {
+						continue
+					}
+
+					typeArgs = tArgs
+					packagesUsed["pkg_nomagique_geometry"] = "github.com/theapemachine/symm/nomagique/geometry"
+				}
+
+				params := make([]paramEntry, 0)
+				supported := true
+
+				for index := range signature.Params().Len() {
+					param := signature.Params().At(index)
+					isVar := signature.Variadic() && index == signature.Params().Len()-1
+					kind := param.Type()
+
+					if isVar {
+						if sliced, ok := kind.(*types.Slice); ok {
+							kind = sliced.Elem()
+						}
+					}
+
+					pName := param.Name()
+
+					if pName == "" || pName == "_" {
+						pName = lowered(kind.String())
+					}
+
+					cleanName := sanitizeParamName(pName)
+					isPrim := satisfies(kind, primitive)
+					typeStr, ok := isSupportedParam(param, isPrim, isVar)
+
+					if !ok {
+						supported = false
+						break
+					}
+
+					params = append(params, paramEntry{
+						name:        cleanName,
+						rawName:     pName,
+						typeStr:     typeStr,
+						isPrimitive: isPrim,
+						isVariadic:  isVar,
+					})
+				}
+
+				if !supported {
+					continue
+				}
+
+				packagesUsed[alias] = loadedPackage.PkgPath
+				entries = append(entries, constructorEntry{
+					op:           schema.Op,
+					pkgPath:      loadedPackage.PkgPath,
+					pkgAlias:     alias,
+					funcName:     function.Name.Name,
+					typeArgs:     typeArgs,
+					returnsError: signature.Results().Len() > 1,
+					params:       params,
+				})
+			}
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].op < entries[j].op
+	})
+
+	var buf bytes.Buffer
+	buf.WriteString("// Code generated by tools/nomagiquecatalog. DO NOT EDIT.\n\n")
+	buf.WriteString("package catalog\n\n")
+	buf.WriteString("import (\n")
+	buf.WriteString("\t\"fmt\"\n")
+	buf.WriteString("\t\"github.com/theapemachine/symm/nomagique/core\"\n")
+
+	var sortedAliases []string
+
+	for a := range packagesUsed {
+		sortedAliases = append(sortedAliases, a)
+	}
+
+	sort.Strings(sortedAliases)
+
+	for _, a := range sortedAliases {
+		buf.WriteString(fmt.Sprintf("\t%s %q\n", a, packagesUsed[a]))
+	}
+
+	buf.WriteString(")\n\n")
+	buf.WriteString("var PrimitiveRegistry = map[string]Builder{\n")
+
+	for _, entry := range entries {
+		buf.WriteString(fmt.Sprintf("\t%q: func(values map[string]any, primitives map[string]core.Primitive) (core.Primitive, error) {\n", entry.op))
+
+		callArgs := make([]string, 0, len(entry.params))
+
+		for _, p := range entry.params {
+			if p.isPrimitive {
+				if p.isVariadic {
+					buf.WriteString(fmt.Sprintf("\t\tvar %s []core.Primitive\n", p.name))
+					buf.WriteString(fmt.Sprintf("\t\tif p, ok := primitives[%q]; ok {\n\t\t\t%s = append(%s, p)\n\t\t}\n", p.rawName, p.name, p.name))
+					buf.WriteString("\t\tfor i := 0; ; i++ {\n")
+					buf.WriteString(fmt.Sprintf("\t\t\tp, ok := primitives[fmt.Sprintf(\"%%s_%%d\", %q, i)]\n", p.rawName))
+					buf.WriteString("\t\t\tif !ok {\n\t\t\t\tbreak\n\t\t\t}\n")
+					buf.WriteString(fmt.Sprintf("\t\t\t%s = append(%s, p)\n", p.name, p.name))
+					buf.WriteString("\t\t}\n")
+					buf.WriteString(fmt.Sprintf("\t\tif len(%s) == 0 {\n", p.name))
+					buf.WriteString(fmt.Sprintf("\t\t\tfor _, p := range primitives {\n\t\t\t\t%s = append(%s, p)\n\t\t\t}\n\t\t}\n", p.name, p.name))
+					callArgs = append(callArgs, p.name+"...")
+				}
+
+				if !p.isVariadic {
+					buf.WriteString(fmt.Sprintf("\t\tvar %s core.Primitive\n", p.name))
+					buf.WriteString(fmt.Sprintf("\t\tif p, ok := primitives[%q]; ok {\n\t\t\t%s = p\n\t\t}\n", p.rawName, p.name))
+					callArgs = append(callArgs, p.name)
+				}
+			}
+
+			if !p.isPrimitive {
+				if p.isVariadic {
+					switch p.typeStr {
+					case "string":
+						buf.WriteString(fmt.Sprintf("\t\tvar %s []string\n", p.name))
+						buf.WriteString(fmt.Sprintf("\t\tif v, ok := values[%q]; ok {\n", p.rawName))
+						buf.WriteString("\t\t\tswitch val := v.(type) {\n")
+						buf.WriteString(fmt.Sprintf("\t\t\tcase []string:\n\t\t\t\t%s = val\n", p.name))
+						buf.WriteString(fmt.Sprintf("\t\t\tcase []any:\n\t\t\t\tfor _, item := range val {\n\t\t\t\t\tif s, ok := item.(string); ok {\n\t\t\t\t\t\t%s = append(%s, s)\n\t\t\t\t\t}\n\t\t\t\t}\n", p.name, p.name))
+						buf.WriteString(fmt.Sprintf("\t\t\tcase string:\n\t\t\t\tif val != \"\" {\n\t\t\t\t\t%s = []string{val}\n\t\t\t\t}\n", p.name))
+						buf.WriteString("\t\t\t}\n\t\t}\n")
+						callArgs = append(callArgs, p.name+"...")
+					default:
+						buf.WriteString(fmt.Sprintf("\t\tvar %s []%s\n", p.name, p.typeStr))
+						callArgs = append(callArgs, p.name+"...")
+					}
+				}
+
+				if !p.isVariadic {
+					switch p.typeStr {
+					case "string":
+						buf.WriteString(fmt.Sprintf("\t\tvar %s string\n", p.name))
+						buf.WriteString(fmt.Sprintf("\t\tif v, ok := values[%q]; ok {\n\t\t\tif s, ok := v.(string); ok {\n\t\t\t\t%s = s\n\t\t\t}\n\t\t}\n", p.rawName, p.name))
+					case "int", "int64", "int32":
+						buf.WriteString(fmt.Sprintf("\t\tvar %s %s\n", p.name, p.typeStr))
+						buf.WriteString(fmt.Sprintf("\t\tif v, ok := values[%q]; ok {\n\t\t\tswitch n := v.(type) {\n\t\t\tcase float64:\n\t\t\t\t%s = %s(n)\n\t\t\tcase int:\n\t\t\t\t%s = %s(n)\n\t\t\tcase int64:\n\t\t\t\t%s = %s(n)\n\t\t\t}\n\t\t}\n", p.rawName, p.name, p.typeStr, p.name, p.typeStr, p.name, p.typeStr))
+					case "float64", "float32":
+						buf.WriteString(fmt.Sprintf("\t\tvar %s %s\n", p.name, p.typeStr))
+						buf.WriteString(fmt.Sprintf("\t\tif v, ok := values[%q]; ok {\n\t\t\tswitch n := v.(type) {\n\t\t\tcase float64:\n\t\t\t\t%s = %s(n)\n\t\t\tcase int:\n\t\t\t\t%s = %s(n)\n\t\t\tcase int64:\n\t\t\t\t%s = %s(n)\n\t\t\t}\n\t\t}\n", p.rawName, p.name, p.typeStr, p.name, p.typeStr, p.name, p.typeStr))
+					case "bool":
+						buf.WriteString(fmt.Sprintf("\t\tvar %s bool\n", p.name))
+						buf.WriteString(fmt.Sprintf("\t\tif v, ok := values[%q]; ok {\n\t\t\tif b, ok := v.(bool); ok {\n\t\t\t\t%s = b\n\t\t\t}\n\t\t}\n", p.rawName, p.name))
+					default:
+						buf.WriteString(fmt.Sprintf("\t\tvar %s %s\n", p.name, p.typeStr))
+					}
+
+					callArgs = append(callArgs, p.name)
+				}
+			}
+		}
+
+		callStr := fmt.Sprintf("%s.%s%s(%s)", entry.pkgAlias, entry.funcName, entry.typeArgs, strings.Join(callArgs, ", "))
+
+		if entry.returnsError {
+			buf.WriteString(fmt.Sprintf("\t\tres, err := %s\n", callStr))
+			buf.WriteString("\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n")
+			buf.WriteString("\t\treturn res, nil\n")
+		}
+
+		if !entry.returnsError {
+			buf.WriteString(fmt.Sprintf("\t\treturn %s, nil\n", callStr))
+		}
+
+		buf.WriteString("\t},\n")
+	}
+
+	buf.WriteString("}\n")
+
+	formatted, err := format.Source(buf.Bytes())
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"catalog: format registry source: "+err.Error(),
+			err,
+		))
+	}
+
+	return formatted, nil
+}
+

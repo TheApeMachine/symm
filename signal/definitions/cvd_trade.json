@@ -1,0 +1,942 @@
+{
+  "id": "cvd:trade",
+  "name": "cvd:trade",
+  "source": "cvd:trade",
+  "nodes": {
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {
+        "_config": {
+          "interests": "trade"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_buyQty": {
+      "id": "sink_buyQty",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "buyQty"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "buyQty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sellNotional": {
+      "id": "sellNotional",
+      "type": "cvd.SellNotional",
+      "x": 520,
+      "y": 540,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_sellNotional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_epoch": {
+      "id": "sink_epoch",
+      "type": "sink",
+      "x": 700,
+      "y": 900,
+      "inputData": {
+        "_config": {
+          "metric": "epoch"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "epoch",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_signedNet": {
+      "id": "sink_signedNet",
+      "type": "sink",
+      "x": 700,
+      "y": 1020,
+      "inputData": {
+        "_config": {
+          "metric": "signedNet"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signedNet",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "cvd.Assemble",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_grossNotional": {
+      "id": "sink_grossNotional",
+      "type": "sink",
+      "x": 700,
+      "y": 600,
+      "inputData": {
+        "_config": {
+          "metric": "grossNotional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "grossNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "netNotional": {
+      "id": "netNotional",
+      "type": "cvd.NetNotional",
+      "x": 520,
+      "y": 660,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_netNotional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_netNotional": {
+      "id": "sink_netNotional",
+      "type": "sink",
+      "x": 700,
+      "y": 660,
+      "inputData": {
+        "_config": {
+          "metric": "netNotional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "netNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "signedCount": {
+      "id": "signedCount",
+      "type": "cvd.SignedCount",
+      "x": 520,
+      "y": 960,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_signedCount",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_sellCount": {
+      "id": "sink_sellCount",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "sellCount"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "sellCount",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "buyQty": {
+      "id": "buyQty",
+      "type": "cvd.BuyQty",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_buyQty",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sellQty": {
+      "id": "sellQty",
+      "type": "cvd.SellQty",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_sellQty",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "grossNotional": {
+      "id": "grossNotional",
+      "type": "cvd.GrossNotional",
+      "x": 520,
+      "y": 600,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_grossNotional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_meanNotional": {
+      "id": "sink_meanNotional",
+      "type": "sink",
+      "x": 700,
+      "y": 720,
+      "inputData": {
+        "_config": {
+          "metric": "meanNotional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "meanNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_cvd": {
+      "id": "sink_cvd",
+      "type": "sink",
+      "x": 700,
+      "y": 780,
+      "inputData": {
+        "_config": {
+          "metric": "cvd"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "cvd",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "cnd": {
+      "id": "cnd",
+      "type": "cvd.CND",
+      "x": 520,
+      "y": 840,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_cnd",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "buyCount": {
+      "id": "buyCount",
+      "type": "cvd.BuyCount",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_buyCount",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_sellQty": {
+      "id": "sink_sellQty",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "sellQty"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "sellQty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_buyNotional": {
+      "id": "sink_buyNotional",
+      "type": "sink",
+      "x": 700,
+      "y": 480,
+      "inputData": {
+        "_config": {
+          "metric": "buyNotional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "buyNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "tradeCount": {
+      "id": "tradeCount",
+      "type": "cvd.TradeCount",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_tradeCount",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_grossQty": {
+      "id": "sink_grossQty",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "grossQty"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "grossQty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "netQty": {
+      "id": "netQty",
+      "type": "cvd.NetQty",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_netQty",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "cvd": {
+      "id": "cvd",
+      "type": "cvd.CVD",
+      "x": 520,
+      "y": 780,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_cvd",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_signedCount": {
+      "id": "sink_signedCount",
+      "type": "sink",
+      "x": 700,
+      "y": 960,
+      "inputData": {
+        "_config": {
+          "metric": "signedCount"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signedCount",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_netQty": {
+      "id": "sink_netQty",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "netQty"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "netQty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_sellNotional": {
+      "id": "sink_sellNotional",
+      "type": "sink",
+      "x": 700,
+      "y": 540,
+      "inputData": {
+        "_config": {
+          "metric": "sellNotional"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "sellNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_cnd": {
+      "id": "sink_cnd",
+      "type": "sink",
+      "x": 700,
+      "y": 840,
+      "inputData": {
+        "_config": {
+          "metric": "cnd"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "cnd",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_tradeCount": {
+      "id": "sink_tradeCount",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "tradeCount"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "tradeCount",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_buyCount": {
+      "id": "sink_buyCount",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "buyCount"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "buyCount",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "buyNotional": {
+      "id": "buyNotional",
+      "type": "cvd.BuyNotional",
+      "x": 520,
+      "y": 480,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_buyNotional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "meanNotional": {
+      "id": "meanNotional",
+      "type": "cvd.MeanNotional",
+      "x": 520,
+      "y": 720,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_meanNotional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "epoch": {
+      "id": "epoch",
+      "type": "cvd.Epoch",
+      "x": 520,
+      "y": 900,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_epoch",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "cvd.Flow",
+      "x": 360,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "tradeCount",
+              "portName": "in"
+            },
+            {
+              "nodeId": "buyCount",
+              "portName": "in"
+            },
+            {
+              "nodeId": "sellCount",
+              "portName": "in"
+            },
+            {
+              "nodeId": "buyQty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "sellQty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "grossQty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "netQty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "buyNotional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "sellNotional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "grossNotional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "netNotional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "meanNotional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "cvd",
+              "portName": "in"
+            },
+            {
+              "nodeId": "cnd",
+              "portName": "in"
+            },
+            {
+              "nodeId": "epoch",
+              "portName": "in"
+            },
+            {
+              "nodeId": "signedCount",
+              "portName": "in"
+            },
+            {
+              "nodeId": "signedNet",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sellCount": {
+      "id": "sellCount",
+      "type": "cvd.SellCount",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_sellCount",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "grossQty": {
+      "id": "grossQty",
+      "type": "cvd.GrossQty",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_grossQty",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "signedNet": {
+      "id": "signedNet",
+      "type": "cvd.SignedNet",
+      "x": 520,
+      "y": 1020,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_signedNet",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

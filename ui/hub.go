@@ -19,6 +19,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -59,6 +60,7 @@ type Hub struct {
 	Fluid            *FluidRTC
 	learningInterval time.Duration
 	lastLearning     time.Time
+	signals          []*signal.Signal
 }
 
 /*
@@ -380,22 +382,73 @@ func (hub *Hub) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			rows := []*wire.MeasurementT{row}
-			for _, kernel := range []string{
-				"correlation", "cvd", "depthflow", "derivatives", "hawkes",
-				"leadlag", "liquidity", "morphology", "pumpdump", "sentiment", "toxicity",
-			} {
-				rows = append(rows, &wire.MeasurementT{
-					Source:   kernel,
-					Symbol:   "BTC/USD",
-					Tick:     int64(eval.Step),
-					At:       time.Now().UnixNano(),
-					Snr:      eval.Confidence,
-					Maturity: eval.Ambiguity,
-					Metrics: []*wire.MetricT{
-						{Name: "snr", Raw: eval.Confidence},
-						{Name: "confidence", Raw: eval.Confidence},
-					},
-				})
+			focusSymbol := types.Focus()
+
+			if focusSymbol == "" {
+				focusSymbol = "BTC/USD"
+			}
+
+			if len(hub.signals) > 0 {
+				for _, sig := range hub.signals {
+					for ptr := range sig.Next(nil) {
+						if ptr == nil {
+							continue
+						}
+
+						measurement := *(**data.Measurement[float64])(ptr)
+						symbol := measurement.Label
+
+						if symbol == "" {
+							symbol = focusSymbol
+						}
+
+						metrics := make([]*wire.MetricT, 0, len(measurement.Metrics))
+
+						for metName, met := range measurement.Metrics {
+							name := met.Label
+
+							if name == "" {
+								name = metName
+							}
+
+							var normVal float64
+							hasNorm := false
+
+							if met.Normalized != nil {
+								normVal = *met.Normalized
+								hasNorm = true
+							}
+
+							metrics = append(metrics, &wire.MetricT{
+								Name:          name,
+								Raw:           met.Raw,
+								Normalized:    normVal,
+								HasNormalized: hasNorm,
+								Unit:          string(met.Unit),
+							})
+						}
+
+						snr := measurement.SNR
+						if !measurement.SNRDefined {
+							snr = eval.Confidence
+						}
+
+						maturity := measurement.Maturity
+						if maturity == 0 {
+							maturity = eval.Ambiguity
+						}
+
+						rows = append(rows, &wire.MeasurementT{
+							Source:   sig.Source(),
+							Symbol:   symbol,
+							Tick:     measurement.SeqIdx,
+							At:       measurement.Timestamp,
+							Snr:      snr,
+							Maturity: maturity,
+							Metrics:  metrics,
+						})
+					}
+				}
 			}
 
 			frame := &wire.MeasurementsFrameT{Rows: rows}
@@ -407,6 +460,18 @@ func (hub *Hub) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			hub.queue.Enqueue(unsafe.Pointer(payload))
 		}
 	}
+}
+
+/*
+RegisterSignals attaches the running signal engines so their real-time metric
+measurements are broadcast to the dashboard.
+*/
+func (hub *Hub) RegisterSignals(signals []*signal.Signal) {
+	if hub == nil {
+		return
+	}
+
+	hub.signals = signals
 }
 
 /*

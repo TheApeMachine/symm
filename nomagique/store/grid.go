@@ -1,11 +1,13 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"iter"
 	"math"
 	"strconv"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -189,21 +191,87 @@ func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 								current := any(mapped)
 
 								for _, segment := range interest {
-									nestedMap, isMap := current.(map[string]any)
-
-									if !isMap {
-										current = nil
-										break
+									if nestedMap, isMap := current.(map[string]any); isMap {
+										current = nestedMap[segment]
+										continue
 									}
 
-									current = nestedMap[segment]
+									if slice, isSlice := current.([]any); isSlice && len(slice) > 0 {
+										if firstMap, isMap := slice[0].(map[string]any); isMap {
+											current = firstMap[segment]
+											continue
+										}
+									}
+
+									if slice, isSlice := current.([]map[string]any); isSlice && len(slice) > 0 {
+										current = slice[0][segment]
+										continue
+									}
+
+									current = nil
+									break
 								}
 
 								if current == nil {
 									continue
 								}
 
+								lastSegment := ""
+								if len(interest) > 0 {
+									lastSegment = interest[len(interest)-1]
+								}
+
 								extracted = current
+
+								if lastSegment == "timestamp" {
+									switch val := current.(type) {
+									case int64:
+										extracted = val
+									case float64:
+										extracted = int64(val)
+									case json.Number:
+										if i, err := val.Int64(); err == nil {
+											extracted = i
+										}
+
+										if _, err := val.Int64(); err != nil {
+											if f, err := val.Float64(); err == nil {
+												extracted = int64(f)
+											}
+										}
+									case string:
+										if parsedTime, err := time.Parse(time.RFC3339Nano, val); err == nil {
+											extracted = parsedTime.UnixNano()
+										}
+
+										if parsedTime, err := time.Parse(time.RFC3339, val); err == nil {
+											extracted = parsedTime.UnixNano()
+										}
+
+										if i, err := strconv.ParseInt(val, 10, 64); err == nil {
+											extracted = i
+										}
+									}
+								}
+
+								if lastSegment != "timestamp" {
+									switch val := current.(type) {
+									case json.Number:
+										if f, err := val.Float64(); err == nil {
+											extracted = f
+										}
+
+										if _, err := val.Float64(); err != nil {
+											extracted = val.String()
+										}
+									case string:
+										if lastSegment != "symbol" && lastSegment != "side" && lastSegment != "type" {
+											if f, err := strconv.ParseFloat(val, 64); err == nil {
+												extracted = f
+											}
+										}
+									}
+								}
 							}
 
 							input := core.NewInput[any](

@@ -31,17 +31,7 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/derivatives"
-	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
-	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/morphology"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -130,21 +120,13 @@ var (
 
 			drain := tables.NewDrain(ctx, catalog, epoch)
 
-			correlation.NewTicker(ctx, grid, "", "")
-			leadlag.NewTicker(ctx, grid, "", "")
-			liquidity.NewTicker(ctx, grid, "")
-			sentiment.NewTicker(ctx, grid, "")
-			pumpdump.NewTicker(ctx, grid, "")
-			cvd.NewTrade(ctx, grid, "")
-			hawkes.NewTrade(ctx, grid, "")
-			toxicity.NewTrade(ctx, grid, "")
-			pumpdump.NewTrade(ctx, grid, "")
-			depthflow.NewLevel3(ctx, grid, "")
-			morphology.NewLevel3(ctx, grid, "")
-			toxicity.NewLevel3(ctx, grid, "")
-			pumpdump.NewLevel3(ctx, grid, "")
-			derivatives.NewTicker(ctx, grid, "")
-			derivatives.NewTrade(ctx, grid, "")
+			signals, err := signal.LoadAll(ctx, grid)
+
+			if err != nil {
+				return errnie.Error(err)
+			}
+
+			hub.RegisterSignals(signals)
 
 			category.NewSolver(ctx)
 			resonance.NewSolver(
@@ -152,9 +134,10 @@ var (
 			)
 			cognition.NewSolver(ctx)
 			trainingStrategy := strategy.NewTraining[*geometry.Coordinate](ctx)
+			hub.RegisterTraining(trainingStrategy)
 
 			pipeline := nomagique.NewNumber(
-				core.NewQuery[any, map[string]any](nil, core.Write),
+				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](nil, core.Write),
 				grid,
 				trainingStrategy,
 				transport.NewParallel(hub, drain),

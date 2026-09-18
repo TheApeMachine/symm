@@ -490,7 +490,17 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		futures.pipeline.Next(sequence.NewValue(mapped))
+		envelope := mapped
+		if _, exists := mapped["ticker"]; !exists {
+			envelope = map[string]any{
+				"ticker": mapped,
+			}
+		}
+
+		if futures.pipeline != nil {
+			for range futures.pipeline.Next(sequence.NewValue[any](envelope)) {
+			}
+		}
 		return
 
 	case "trade", "trade_snapshot":
@@ -515,7 +525,17 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		futures.pipeline.Next(sequence.NewValue(mapped))
+		tradeEnvelope := mapped
+		if _, exists := mapped["trade"]; !exists {
+			tradeEnvelope = map[string]any{
+				"trade": mapped,
+			}
+		}
+
+		if futures.pipeline != nil {
+			for range futures.pipeline.Next(sequence.NewValue[any](tradeEnvelope)) {
+			}
+		}
 		return
 	}
 }

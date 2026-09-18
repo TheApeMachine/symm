@@ -1,0 +1,460 @@
+{
+  "id": "derivatives:trade",
+  "name": "derivatives:trade",
+  "source": "derivatives:trade",
+  "interests": [
+    [
+      "futures",
+      "data",
+      "symbol"
+    ],
+    [
+      "futures",
+      "data",
+      "side"
+    ],
+    [
+      "futures",
+      "data",
+      "price"
+    ],
+    [
+      "futures",
+      "data",
+      "qty"
+    ],
+    [
+      "futures",
+      "data",
+      "type"
+    ],
+    [
+      "futures",
+      "data",
+      "timestamp"
+    ]
+  ],
+  "nodes": {
+    "buy": {
+      "id": "buy",
+      "type": "derivatives.LiquidationBuy",
+      "x": 520,
+      "y": 120,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_buy",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_sell": {
+      "id": "sink_sell",
+      "type": "sink",
+      "x": 700,
+      "y": 180,
+      "inputData": {
+        "_config": {
+          "metric": "sell"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "signed": {
+      "id": "signed",
+      "type": "derivatives.LiquidationSigned",
+      "x": 520,
+      "y": 420,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_signed",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_signed": {
+      "id": "sink_signed",
+      "type": "sink",
+      "x": 700,
+      "y": 420,
+      "inputData": {
+        "_config": {
+          "metric": "signed"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_buy": {
+      "id": "sink_buy",
+      "type": "sink",
+      "x": 700,
+      "y": 120,
+      "inputData": {
+        "_config": {
+          "metric": "buy"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_share": {
+      "id": "sink_share",
+      "type": "sink",
+      "x": 700,
+      "y": 360,
+      "inputData": {
+        "_config": {
+          "metric": "share"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "share",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "net": {
+      "id": "net",
+      "type": "derivatives.NetLiquidation",
+      "x": 520,
+      "y": 300,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_net",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "src": {
+      "id": "src",
+      "type": "source",
+      "x": 40,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "value": [
+            {
+              "nodeId": "stage_0",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "stage_1": {
+      "id": "stage_1",
+      "type": "derivatives.Liquidation",
+      "x": 360,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "gross",
+              "portName": "in"
+            },
+            {
+              "nodeId": "buy",
+              "portName": "in"
+            },
+            {
+              "nodeId": "sell",
+              "portName": "in"
+            },
+            {
+              "nodeId": "liqGross",
+              "portName": "in"
+            },
+            {
+              "nodeId": "net",
+              "portName": "in"
+            },
+            {
+              "nodeId": "share",
+              "portName": "in"
+            },
+            {
+              "nodeId": "signed",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "gross": {
+      "id": "gross",
+      "type": "derivatives.GrossTradeNotional",
+      "x": 520,
+      "y": 60,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_gross",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sell": {
+      "id": "sell",
+      "type": "derivatives.LiquidationSell",
+      "x": 520,
+      "y": 180,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_sell",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "liqGross": {
+      "id": "liqGross",
+      "type": "derivatives.GrossLiquidation",
+      "x": 520,
+      "y": 240,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_liqGross",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_liqGross": {
+      "id": "sink_liqGross",
+      "type": "sink",
+      "x": 700,
+      "y": 240,
+      "inputData": {
+        "_config": {
+          "metric": "liqGross"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "liqGross",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "stage_0": {
+      "id": "stage_0",
+      "type": "derivatives.TradeAssemble",
+      "x": 200,
+      "y": 100,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "src",
+              "portName": "value"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "stage_1",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_gross": {
+      "id": "sink_gross",
+      "type": "sink",
+      "x": 700,
+      "y": 60,
+      "inputData": {
+        "_config": {
+          "metric": "gross"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "gross",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_net": {
+      "id": "sink_net",
+      "type": "sink",
+      "x": 700,
+      "y": 300,
+      "inputData": {
+        "_config": {
+          "metric": "net"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "net",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "share": {
+      "id": "share",
+      "type": "derivatives.LiquidationShare",
+      "x": 520,
+      "y": 360,
+      "inputData": {},
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "stage_1",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_share",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

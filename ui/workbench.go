@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	nmcatalog "github.com/theapemachine/symm/nomagique/runtime/catalog"
+	"github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -42,6 +43,42 @@ func (hub *Hub) registerWorkbench() {
 		}
 
 		return c.JSON(primitives)
+	})
+
+	/*
+		/workbench/signals provides access to Flume signal graph definitions.
+	*/
+	hub.app.Get("/workbench/signals", func(ctx fiber.Ctx) error {
+		ids, err := signal.ListDefinitions()
+
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+
+		return ctx.JSON(ids)
+	})
+
+	hub.app.Get("/workbench/signals/:id", func(ctx fiber.Ctx) error {
+		id := ctx.Params("id")
+		rawJSON, err := signal.GetDefinition(id)
+
+		if err != nil {
+			return fiber.NewError(fiber.StatusNotFound, err.Error())
+		}
+
+		ctx.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		return ctx.Send(rawJSON)
+	})
+
+	hub.app.Post("/workbench/signals/:id", func(ctx fiber.Ctx) error {
+		id := ctx.Params("id")
+		body := ctx.Body()
+
+		if err := signal.SaveDefinition(id, body); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+
+		return ctx.SendStatus(fiber.StatusOK)
 	})
 
 	// /workbench/query proxies one analytical statement to the standalone

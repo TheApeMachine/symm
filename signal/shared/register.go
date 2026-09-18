@@ -38,15 +38,27 @@ var Trade = [][]string{
 	{"trade", "data", "timestamp"},
 }
 
+var Level3 = [][]string{
+	{"level3", "data", "symbol"},
+	{"level3", "data", "bid"},
+	{"level3", "data", "ask"},
+	{"level3", "data", "bid_qty"},
+	{"level3", "data", "ask_qty"},
+	{"level3", "data", "timestamp"},
+}
+
 
 func Register(
 	grid *store.Grid[*geometry.Coordinate], conn *transport.Conn[*geometry.Coordinate],
 	interests [][]string,
 ) {
-	nomagique.NewNumber(
-		core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-			conn, core.Identify,
-		),
-		grid,
-	).Next(sequence.NewValue(interests))
+	sequence.Read[core.Connectable[*geometry.Coordinate]](
+		nomagique.NewNumber(
+			sequence.NewValues(interests),
+			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
+				conn, core.Identify,
+			),
+			grid,
+		).Next(nil),
+	)
 }
