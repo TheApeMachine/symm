@@ -1,7 +1,6 @@
 package signal
 
 import (
-	"context"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -10,8 +9,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/geometry"
-	"github.com/theapemachine/symm/nomagique/store"
+
 )
 
 //go:embed definitions/*.json
@@ -89,11 +87,8 @@ func GetDefinition(id string) ([]byte, error) {
 	return embeddedData, nil
 }
 
-/*
-SaveDefinition updates or adds a custom signal definition at runtime.
-*/
 func SaveDefinition(id string, rawJSON []byte) error {
-	var parsed Definition
+	var parsed map[string]any
 
 	if err := sonic.Unmarshal(rawJSON, &parsed); err != nil {
 		return errnie.Error(errnie.Err(
@@ -109,48 +104,4 @@ func SaveDefinition(id string, rawJSON []byte) error {
 	return nil
 }
 
-/*
-Load compiles and registers one signal from its definition ID.
-*/
-func Load(
-	ctx context.Context,
-	grid *store.Grid[*geometry.Coordinate],
-	id string,
-	symbol string,
-) (*Signal, error) {
-	rawJSON, err := GetDefinition(id)
 
-	if err != nil {
-		return nil, err
-	}
-
-	return Compile(ctx, grid, rawJSON, symbol)
-}
-
-/*
-LoadAll compiles and registers all available signal definitions.
-*/
-func LoadAll(
-	ctx context.Context,
-	grid *store.Grid[*geometry.Coordinate],
-) ([]*Signal, error) {
-	ids, err := ListDefinitions()
-
-	if err != nil {
-		return nil, err
-	}
-
-	signals := make([]*Signal, 0, len(ids))
-
-	for _, id := range ids {
-		sig, err := Load(ctx, grid, id, "")
-
-		if err != nil {
-			return nil, err
-		}
-
-		signals = append(signals, sig)
-	}
-
-	return signals, nil
-}

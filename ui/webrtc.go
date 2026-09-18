@@ -15,26 +15,46 @@ WebRTC follows the simple data channel example from pion.
 */
 type WebRTC struct {
 	*runtime.System
-	hub *Hub
+	hub    *Hub
+	api    *webrtc.API
+	config webrtc.Configuration
 }
 
 /*
 NewWebRTC configures the WebRTC transport.
+If api is nil, a default pion WebRTC API is used.
+If config is nil, default ICE servers and mux policy are used.
 */
 func NewWebRTC(
 	ctx context.Context,
 	hub *Hub,
+	api *webrtc.API,
+	config *webrtc.Configuration,
 ) *WebRTC {
-	rtc := &WebRTC{
-		hub: hub,
+	if api == nil {
+		api = webrtc.NewAPI()
 	}
 
-	var pc *webrtc.PeerConnection
+	if config == nil {
+		config = &webrtc.Configuration{
+			ICEServers: []webrtc.ICEServer{
+				{URLs: []string{"stun:stun.l.google.com:19302"}},
+			},
+			BundlePolicy:  webrtc.BundlePolicyBalanced,
+			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
+		}
+	}
 
-	hub.app.Post("/webrtc/manifold", func(c fiber.Ctx) (err error) {
+	rtc := &WebRTC{
+		hub:    hub,
+		api:    api,
+		config: *config,
+	}
+
+	hub.app.Post("/webrtc/manifold", func(fiberCtx fiber.Ctx) (err error) {
 		var offer webrtc.SessionDescription
 
-		if err = c.Bind().Body(&offer); err != nil {
+		if err = fiberCtx.Bind().Body(&offer); err != nil {
 			rtc.Error(errnie.Err(
 				errnie.BadRequest,
 				"[webrtc] failed to bind offer",
@@ -44,14 +64,7 @@ func NewWebRTC(
 			return fiber.ErrBadRequest
 		}
 
-		// PeerConnection with enhanced configuration for better browser compatibility
-		pc, err = webrtc.NewPeerConnection(webrtc.Configuration{
-			ICEServers: []webrtc.ICEServer{
-				{URLs: []string{"stun:stun.l.google.com:19302"}},
-			},
-			BundlePolicy:  webrtc.BundlePolicyBalanced,
-			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
-		})
+		peerConn, err := rtc.api.NewPeerConnection(rtc.config)
 
 		if err != nil {
 			rtc.Error(errnie.Err(
@@ -63,17 +76,15 @@ func NewWebRTC(
 			return fiber.ErrBadRequest
 		}
 
-		setupICECandidateHandler(pc)
-		setupDataChannelHandler(rtc, pc)
+		setupICECandidateHandler(peerConn)
+		setupDataChannelHandler(rtc, peerConn)
 
-		if err := processOffer(rtc, pc, offer, c); err != nil {
+		if err := processOffer(rtc, peerConn, offer, fiberCtx); err != nil {
 			return err
 		}
 
 		return nil
 	})
-
-	setupCandidateHandler(rtc, &pc)
 
 	rtc.System = runtime.NewSystem(ctx, "webrtc", rtc)
 	rtc.Transition(runtime.READY)
@@ -81,20 +92,20 @@ func NewWebRTC(
 	return rtc
 }
 
-func setupICECandidateHandler(pc *webrtc.PeerConnection) {
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		if c != nil {
-			errnie.Info(fmt.Sprintf("[webrtc] new ICE candidate: %s", c.Address))
+func setupICECandidateHandler(peerConn *webrtc.PeerConnection) {
+	peerConn.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		if candidate != nil {
+			errnie.Info(fmt.Sprintf("[webrtc] new ICE candidate: %s", candidate.Address))
 		}
 	})
 }
 
-func setupDataChannelHandler(rtc *WebRTC, pc *webrtc.PeerConnection) {
-	pc.OnDataChannel(func(d *webrtc.DataChannel) {
-		d.OnOpen(func() {
+func setupDataChannelHandler(rtc *WebRTC, peerConn *webrtc.PeerConnection) {
+	peerConn.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
+		dataChannel.OnOpen(func() {
 			errnie.Info("[webrtc] data channel opened")
 
-			if sendErr := d.SendText("Hello from Go server 👋"); sendErr != nil {
+			if sendErr := dataChannel.SendText("Hello from Go server 👋"); sendErr != nil {
 				rtc.Error(errnie.Err(
 					errnie.IO,
 					"[webrtc] failed to send greeting text",
@@ -103,19 +114,19 @@ func setupDataChannelHandler(rtc *WebRTC, pc *webrtc.PeerConnection) {
 			}
 		})
 
-		d.OnMessage(func(msg webrtc.DataChannelMessage) {
-			errnie.Info(fmt.Sprintf("[webrtc] received: %s", string(msg.Data)))
+		dataChannel.OnMessage(func(message webrtc.DataChannelMessage) {
+			errnie.Info(fmt.Sprintf("[webrtc] received: %s", string(message.Data)))
 		})
 	})
 }
 
 func processOffer(
 	rtc *WebRTC,
-	pc *webrtc.PeerConnection,
+	peerConn *webrtc.PeerConnection,
 	offer webrtc.SessionDescription,
-	c fiber.Ctx,
+	fiberCtx fiber.Ctx,
 ) error {
-	if err := pc.SetRemoteDescription(offer); err != nil {
+	if err := peerConn.SetRemoteDescription(offer); err != nil {
 		rtc.Error(errnie.Err(
 			errnie.BadRequest,
 			"[webrtc] failed to set remote description",
@@ -125,7 +136,7 @@ func processOffer(
 		return fiber.ErrBadRequest
 	}
 
-	answer, err := pc.CreateAnswer(nil)
+	answer, err := peerConn.CreateAnswer(nil)
 
 	if err != nil {
 		rtc.Error(errnie.Err(
@@ -137,7 +148,7 @@ func processOffer(
 		return fiber.ErrInternalServerError
 	}
 
-	if err := pc.SetLocalDescription(answer); err != nil {
+	if err := peerConn.SetLocalDescription(answer); err != nil {
 		rtc.Error(errnie.Err(
 			errnie.Internal,
 			"[webrtc] failed to set local description",
@@ -147,10 +158,10 @@ func processOffer(
 		return fiber.ErrInternalServerError
 	}
 
-	gatherComplete := webrtc.GatheringCompletePromise(pc)
+	gatherComplete := webrtc.GatheringCompletePromise(peerConn)
 	<-gatherComplete
 
-	finalAnswer := pc.LocalDescription()
+	finalAnswer := peerConn.LocalDescription()
 
 	if finalAnswer == nil {
 		rtc.Error(errnie.Err(
@@ -162,35 +173,5 @@ func processOffer(
 		return fiber.ErrInternalServerError
 	}
 
-	return c.JSON(*finalAnswer)
-}
-
-func setupCandidateHandler(rtc *WebRTC, pc **webrtc.PeerConnection) {
-	rtc.hub.app.Post("/candidate", func(c fiber.Ctx) error {
-		var candidate webrtc.ICECandidateInit
-
-		if err := c.Bind().Body(&candidate); err != nil {
-			rtc.Error(errnie.Err(
-				errnie.BadRequest,
-				"[webrtc] failed to bind ICE candidate",
-				err,
-			))
-
-			return fiber.ErrBadRequest
-		}
-
-		if *pc != nil {
-			if err := (*pc).AddICECandidate(candidate); err != nil {
-				rtc.Error(errnie.Err(
-					errnie.BadRequest,
-					"[webrtc] failed to add ICE candidate",
-					err,
-				))
-
-				return fiber.ErrBadRequest
-			}
-		}
-
-		return nil
-	})
+	return fiberCtx.JSON(*finalAnswer)
 }

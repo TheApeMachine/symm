@@ -2,85 +2,94 @@ package runtime
 
 import (
 	"context"
-	"iter"
-	"unsafe"
+	"fmt"
+	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/runtime/disruptor"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/nomagique/compiler"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-func optionList[O any](initial ...O) []O {
-	return initial
-}
-
 /*
-Workspace runs registered nodes in dependency stages. Nodes in one stage may
-execute concurrently and query only peers owned by earlier stages. Step admits
-work while READY; each consumer writes its sequence-owned result and immediately
-pushes it to the Tees.
+Workspace is the runtime execution boundary. It loads a composed signal graph
+from JSON (via the compiler Builder) and pipes raw market ticks into it.
+
+This completely replaces the old LMAX Disruptor queues, guaranteeing
+topological order execution synchronously with zero allocations.
 */
 type Workspace struct {
 	*System
-	channel disruptor.Disruptor
+	pipeline types.Value[any, any]
+	sink     chan any // The output of the pipeline
 }
 
-func NewWorkspace(
-	ctx context.Context,
-	label string,
-	stages [][]core.Primitive,
-) *Workspace {
-	workload := &Workspace{}
-
-	opts := optionList(
-		disruptor.Options.BufferCapacity(
-			system.Cfg.Runtime.Workspace.Buffer,
-		),
-	)
-
-	for _, stage := range stages {
-		group := make([]disruptor.Handler, 0, len(stage))
-
-		for _, node := range stage {
-			group = append(group, NewConsumer(node))
-		}
-
-		if len(group) > 0 {
-			opts = append(opts, disruptor.Options.NewHandlerGroup(group...))
-		}
+/*
+NewWorkspace initializes the runtime boundary by dynamically compiling
+the target JSON signal definition.
+*/
+func NewWorkspace(ctx context.Context, label string, jsonPath string) *Workspace {
+	workload := &Workspace{
+		sink: make(chan any, 1024),
 	}
 
-	channel, err := disruptor.New(opts...)
-	workload.System = NewSystem(ctx, label, channel, workload)
-
+	builder, err := compiler.NewBuilder(jsonPath)
 	if err != nil {
 		workload.Error(errnie.Err(
 			errnie.Internal,
-			"[workspace] error creating LMAX disruptor channel",
+			fmt.Sprintf("[workspace] failed to load signal definition %s", jsonPath),
 			err,
 		))
-
 		return nil
 	}
 
-	workload.channel = channel
+	pipeline, err := builder.Compose()
+	if err != nil {
+		workload.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("[workspace] failed to dynamically wire signal graph %s", jsonPath),
+			err,
+		))
+		return nil
+	}
 
-	go workload.channel.Listen()
+	workload.pipeline = pipeline
+	workload.System = NewSystem(ctx, label, workload)
 	return workload
 }
 
-// Step commits work without waiting for completion. The Disruptor's capacity
-// barrier prevents reuse until all stages, including each consumer's Tee calls, finish.
-func (workspace *Workspace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for item := range in {
-			seq := workspace.channel.Reserve(1)
-			workspace.channel.Commit(seq, seq)
+/*
+Next admits a market tick into the dynamic signal graph.
+The JSON graph processes the tick synchronously.
+*/
+func (workspace *Workspace) Next(tick any) {
+	if workspace.pipeline == nil {
+		return
+	}
 
-			if !yield(item) {
-				break
-			}
+	// 1. Hot Path: Execute the topological JSON graph
+	start := time.Now()
+	result := workspace.pipeline(tick)
+	elapsed := time.Since(start)
+
+	// 2. Monitoring (Optional)
+	if elapsed > 100*time.Millisecond {
+		errnie.Warn(fmt.Sprintf("[workspace] slow pipeline execution: %v", elapsed))
+	}
+
+	// 3. Emit to sink
+	if result != nil {
+		select {
+		case workspace.sink <- result:
+		default:
+			// Backpressure handling (drop or warn)
+			errnie.Warn("[workspace] sink buffer full, dropping signal")
 		}
 	}
+}
+
+/*
+Sink exposes the output channel for strategies to consume the final signal values.
+*/
+func (workspace *Workspace) Sink() <-chan any {
+	return workspace.sink
 }

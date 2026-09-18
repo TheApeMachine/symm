@@ -12,8 +12,35 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/types"
 )
+
+type EntryCost struct {
+	Total              *decimal.Decimal
+	EntryPrice         *decimal.Decimal
+	BestAsk            *decimal.Decimal
+	BestBid            *decimal.Decimal
+	Midpoint           *decimal.Decimal
+	GrossNotional      *decimal.Decimal
+	EntryFee           *decimal.Decimal
+	ExitFeeAtBreakEven *decimal.Decimal
+	RoundTripFees      *decimal.Decimal
+	BreakEven          *decimal.Decimal
+	Spread             *decimal.Decimal
+	Impact             *decimal.Decimal
+}
+
+type ExecutionSurface struct {
+	Symbol          string
+	At              time.Time
+	SellableQty     *decimal.Decimal
+	BookComplete    bool
+	BestBid         *decimal.Decimal
+	ExecutableQty   *decimal.Decimal
+	Gross           *decimal.Decimal
+	FullyExecutable bool
+	ExecutableVWAP  *decimal.Decimal
+	ExecutableValue *decimal.Decimal
+}
 
 type Direction string
 
@@ -335,12 +362,12 @@ func (price *Price) Walk(
 }
 
 /* EntryCost prices a complete entry from the resident book and current fee. */
-func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.EntryCost, error) {
+func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryCost, error) {
 	if quantity == nil || quantity.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "entry cost: positive quantity required", nil))
 	}
 
-	var cost *types.EntryCost
+	var cost *EntryCost
 	var err error
 
 	if price.Books == nil {
@@ -392,7 +419,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 		exitFee := breakEvenGross.Sub(total)
 		midpoint := book.Midpoint()
 
-		cost = &types.EntryCost{
+		cost = &EntryCost{
 			Total:              total,
 			EntryPrice:         entry,
 			BestAsk:            book.BestAsk().Price,
@@ -431,15 +458,15 @@ func reported(err error) error {
 }
 
 /* SellQuote prices a complete liquidation from visible bids and current fee. */
-func (price *Price) SellQuote(symbol string, quantity *decimal.Decimal) (*types.ExecutionSurface, error) {
+func (price *Price) SellQuote(symbol string, quantity *decimal.Decimal) (*ExecutionSurface, error) {
 	return price.Surface(symbol, quantity, time.Now().UTC())
 }
 
 /* Surface prices a complete liquidation; incomplete depth stays explicit. */
 func (price *Price) Surface(
 	symbol string, quantity *decimal.Decimal, at time.Time,
-) (*types.ExecutionSurface, error) {
-	surface := &types.ExecutionSurface{Symbol: symbol, At: at, SellableQty: quantity}
+) (*ExecutionSurface, error) {
+	surface := &ExecutionSurface{Symbol: symbol, At: at, SellableQty: quantity}
 	var err error
 
 	if price.Books == nil {

@@ -13,11 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/geometry"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
@@ -26,12 +21,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic/category"
-	"github.com/theapemachine/symm/logic/cognition"
-	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/logic/resonance"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -103,8 +93,6 @@ var (
 				))
 			}
 
-			grid := store.NewGrid[*geometry.Coordinate]()
-
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
@@ -115,41 +103,13 @@ var (
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
-			hub := ui.NewHub(ctx, nil, catalog)
-			hub.Run()
-			hub.Transition(nmruntime.READY)
-
-			drain := tables.NewDrain(ctx, catalog, epoch)
-
-			signals, err := signal.LoadAll(ctx, grid)
-
-			if err != nil {
-				return errnie.Error(err)
-			}
-
-			hub.RegisterSignals(signals)
-
-			category.NewSolver(ctx)
-			resonance.NewSolver(
-				ctx, system.Cfg.Resonance.LearningRate,
-			)
-			cognition.NewSolver(ctx)
-			trainingStrategy := strategy.NewTraining[*geometry.Coordinate](ctx)
-			hub.RegisterTraining(trainingStrategy)
-
-			pipeline := nomagique.NewNumber(
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](nil, core.Write),
-				grid,
-				trainingStrategy,
-				transport.NewParallel(hub, drain),
-			)
-
+			// The WebSocket feeds market data into the system
 			public := websocket.New(
 				ctx,
 				websocket.NewSimulator(),
 				false,
 				system.Cfg.WebSocket.Endpoints.Public,
-				pipeline,
+				nil, // Pipeline is now handled dynamically
 			)
 
 			private := websocket.New(
@@ -157,20 +117,27 @@ var (
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
-				pipeline,
+				nil,
 			)
 
 			futures := websocket.NewFutures(
 				ctx,
 				system.Cfg.WebSocket.Endpoints.Futures,
-				pipeline,
+				nil,
 			)
 
 			api := websocket.NewAPI(
 				ctx, public, private, futures,
 			)
 
-			manifoldSolver := manifold.NewSolver(ctx, api)
+			desk := broker.NewDesk(ctx, api)
+			trader := strategy.NewTrader(ctx, api, "correlation:ticker") // Loads from internal definitions
+
+			hub := ui.NewHub(ctx, nil, catalog, trader, desk)
+			hub.Run()
+			hub.Transition(nmruntime.READY)
+
+
 
 			instrument := broker.NewInstrument(api)
 			price := broker.NewPrice(ctx, api, instrument)
@@ -226,9 +193,7 @@ var (
 				))
 			}
 
-			manifoldSolver.Start()
 
-			// Every processing and off-ramp owner is ready before ingress opens.
 			for _, connection := range private.Connections() {
 				connection.Transition(nmruntime.READY)
 			}
@@ -238,8 +203,6 @@ var (
 			}
 
 			for ctx.Err() == nil {
-				for range pipeline.Next(nil) {
-				}
 				time.Sleep(10 * time.Millisecond)
 			}
 

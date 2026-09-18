@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique/runtime/catalog"
+	"github.com/theapemachine/symm/nomagique/compiler"
 	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -245,7 +245,7 @@ func NewRoutes(hub *Hub) *Routes {
 	})
 
 	hub.app.Get("/workbench/primitives", func(c fiber.Ctx) error {
-		primitives, err := catalog.Primitives()
+		primitives, err := compiler.Primitives()
 
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -253,6 +253,7 @@ func NewRoutes(hub *Hub) *Routes {
 
 		return c.JSON(primitives)
 	})
+
 
 	hub.app.Get("/workbench/signals", func(ctx fiber.Ctx) error {
 		ids, err := signal.ListDefinitions()
