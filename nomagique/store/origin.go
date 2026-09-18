@@ -23,6 +23,10 @@ func NewOrigin(symbol string) *Origin {
 
 func (origin *Origin) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			input := (*core.Input[string, []string, any])(arriving)
 

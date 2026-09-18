@@ -53,7 +53,7 @@ func NewGrid[T interface {
 }
 
 func (grid *Grid[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if in == nil {
+	if in == nil || grid.Error() != nil {
 		return nil
 	}
 

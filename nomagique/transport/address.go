@@ -31,11 +31,17 @@ Next ...
 func (address *Address[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		if address.conn == nil {
+			for arriving := range in {
+				if !yield(arriving) {
+					return
+				}
+			}
+
 			return
 		}
 
-		for i := range address.conn.Next(in) {
-			if !yield(i) {
+		for item := range address.conn.Next(in) {
+			if !yield(item) {
 				return
 			}
 		}

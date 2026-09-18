@@ -39,6 +39,10 @@ func NewCausalResidual() *CausalResidual {
 
 func (causalResidual *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := *(*MomentReading)(arriving)
 			result := CausalResidualResult{
@@ -96,6 +100,10 @@ func NewResidualBaseline() *ResidualBaseline {
 
 func (residualBaseline *ResidualBaseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			result := (*CausalResidualResult)(arriving)
 			residualBaseline.out = result.Baseline
@@ -122,6 +130,10 @@ func NewResidualDivergence() *ResidualDivergence {
 
 func (residualDivergence *ResidualDivergence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			result := (*CausalResidualResult)(arriving)
 			residualDivergence.out = result.Residual
@@ -148,6 +160,10 @@ func NewResidualZScore() *ResidualZScore {
 
 func (residualZScore *ResidualZScore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			result := (*CausalResidualResult)(arriving)
 			residualZScore.out = result.ZScore

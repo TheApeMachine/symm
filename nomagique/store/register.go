@@ -49,132 +49,123 @@ slot outside the register is a shape failure that ends the stream.
 */
 func (register *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		next, stop := iter.Pull(in)
-		defer stop()
+		for arriving := range in {
+			query := (*Query[int, T])(arriving)
 
-		arriving, ok := next()
-		if !ok {
-			return
-		}
-
-		query := (*Query[int, T])(arriving)
-
-		switch query.Action {
-		case core.Identify:
-			for {
-				ptr, ok := next()
-				if !ok {
-					break
-				}
-				register.slots = append(register.slots, *(*T)(ptr))
-				register.frames = append(register.frames, make([]T, register.capacity))
-			}
-
-			slotID := len(register.slots) - 1
-			query.Identify(slotID)
-
-			if slotID >= 0 {
-				if meas, ok := any(register.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
-					meas.ID = float64(slotID)
-				}
-			}
-
-			slotVal := register.slots[query.Identity()]
-
-			if !yield(unsafe.Pointer(&slotVal)) {
-				return
-			}
-		case core.Write:
-			if query.Identity() < 0 || query.Identity() >= len(register.slots) {
-				register.Error(core.ErrShape)
-				return
-			}
-
-			ptr, ok := next()
-			if !ok {
-				register.Error(core.ErrShape)
-				return
-			}
-
-			value := *(*T)(ptr)
-			register.slots[query.Identity()] = value
-
-			if !yield(unsafe.Pointer(&value)) {
-				return
-			}
-
-		case core.Read:
-			if query.Identity() < 0 {
-				for index := range register.slots {
-					value := register.published(index, -1)
-
-					if !yield(unsafe.Pointer(&value)) {
-						return
+			switch query.Action {
+			case core.Identify:
+				if query.Payload != nil {
+					for ptr := range query.Payload {
+						register.slots = append(register.slots, *(*T)(ptr))
+						register.frames = append(register.frames, make([]T, register.capacity))
 					}
 				}
 
-				return
-			}
+				slotID := len(register.slots) - 1
+				query.Identify(slotID)
 
-			if query.Identity() >= len(register.slots) {
-				register.Error(core.ErrShape)
-				return
-			}
-
-			slotVal := register.slots[query.Identity()]
-
-			if meas, ok := any(slotVal).(*data.Measurement[float64]); ok && meas != nil {
-				working := meas.Clone()
-				interest := ""
-
-				if working.Metadata != nil {
-					interest = working.Metadata["peer-interest"]
-				}
-
-				if interest != "" {
-					working.Peers = working.Peers[:0]
-					interests := strings.Split(interest, ",")
-
-					for idx := range interests {
-						interests[idx] = strings.TrimSpace(interests[idx])
-					}
-
-					limit := len(register.slots)
-
-					for idx := 0; idx < limit; idx++ {
-						if idx == query.Identity() {
-							continue
-						}
-
-						value := register.published(idx, -1)
-
-						peer, peerOk := any(value).(*data.Measurement[float64])
-
-						if !peerOk || peer == nil {
-							continue
-						}
-
-						if matchPeer(peer, interests) {
-							working.Peers = append(working.Peers, peer)
-						}
+				if slotID >= 0 {
+					if meas, ok := any(register.slots[slotID]).(*data.Measurement[float64]); ok && meas != nil {
+						meas.ID = float64(slotID)
 					}
 				}
 
-				out := any(working).(T)
+				slotVal := register.slots[query.Identity()]
 
-				if !yield(unsafe.Pointer(&out)) {
+				if !yield(unsafe.Pointer(&slotVal)) {
 					return
 				}
 
-				return
-			}
+			case core.Write:
+				if query.Identity() < 0 || query.Identity() >= len(register.slots) {
+					register.Error(core.ErrShape)
+					return
+				}
 
-			if !yield(unsafe.Pointer(&slotVal)) {
+				if query.Payload != nil {
+					for ptr := range query.Payload {
+						value := *(*T)(ptr)
+						register.slots[query.Identity()] = value
+
+						if !yield(unsafe.Pointer(&value)) {
+							return
+						}
+					}
+				}
+
+			case core.Read:
+				if query.Identity() < 0 {
+					for index := range register.slots {
+						value := register.published(index, -1)
+
+						if !yield(unsafe.Pointer(&value)) {
+							return
+						}
+					}
+
+					return
+				}
+
+				if query.Identity() >= len(register.slots) {
+					register.Error(core.ErrShape)
+					return
+				}
+
+				slotVal := register.slots[query.Identity()]
+
+				if meas, ok := any(slotVal).(*data.Measurement[float64]); ok && meas != nil {
+					working := meas.Clone()
+					interest := ""
+
+					if working.Metadata != nil {
+						interest = working.Metadata["peer-interest"]
+					}
+
+					if interest != "" {
+						working.Peers = working.Peers[:0]
+						interests := strings.Split(interest, ",")
+
+						for idx := range interests {
+							interests[idx] = strings.TrimSpace(interests[idx])
+						}
+
+						limit := len(register.slots)
+
+						for idx := 0; idx < limit; idx++ {
+							if idx == query.Identity() {
+								continue
+							}
+
+							value := register.published(idx, -1)
+
+							peer, peerOk := any(value).(*data.Measurement[float64])
+
+							if !peerOk || peer == nil {
+								continue
+							}
+
+							if matchPeer(peer, interests) {
+								working.Peers = append(working.Peers, peer)
+							}
+						}
+					}
+
+					out := any(working).(T)
+
+					if !yield(unsafe.Pointer(&out)) {
+						return
+					}
+
+					return
+				}
+
+				if !yield(unsafe.Pointer(&slotVal)) {
+					return
+				}
+			default:
+				register.Error(core.ErrShape)
 				return
 			}
-		default:
-			register.Error(core.ErrShape)
-			return
 		}
 	}
 }

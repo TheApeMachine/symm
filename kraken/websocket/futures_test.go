@@ -11,14 +11,12 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"golang.design/x/lockfree/lf"
 )
 
 func newTestFutures(ctx context.Context) *FuturesLive {
 	futures := &FuturesLive{
 		System:        runtime.NewSystem(ctx, "websocket:futures"),
 		callbacks:     &sync.Map{},
-		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
 	}
 
@@ -72,22 +70,6 @@ func TestFuturesLive(t *testing.T) {
 
 			Convey("The session transitions to ready", func() {
 				So(futures.Status(), ShouldEqual, runtime.READY)
-			})
-
-			Convey("And a ticker frame is received and enqueued", func() {
-				event := makeFuturesEvent([]byte(`{"feed":"ticker","product_id":"PI_XBTUSD","bid":50000.0,"ask":50001.0,"last":50000.5,"markPrice":50000.2,"index":50000.1,"openInterest":1000.0}`))
-				futures.onReceived(event)
-
-				So(futures.Pending(), ShouldEqual, 1)
-				So(futures.Error(), ShouldBeNil)
-			})
-
-			Convey("And a trade frame is received and enqueued", func() {
-				event := makeFuturesEvent([]byte(`{"feed":"trade","product_id":"PI_XBTUSD","side":"buy","type":"fill","price":50000.5,"qty":2.5,"uid":"trade-123"}`))
-				futures.onReceived(event)
-
-				So(futures.Pending(), ShouldEqual, 1)
-				So(futures.Error(), ShouldBeNil)
 			})
 		})
 

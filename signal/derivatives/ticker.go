@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 type Ticker struct {
@@ -28,18 +28,6 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symb
 		{"futures", "data", "mark_price"},
 		{"futures", "data", "open_interest"},
 		{"futures", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(wanted),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
 	}
 
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
@@ -78,17 +66,17 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symb
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
-	register(ingress, interests)
-	register(last, nil)
-	register(index, nil)
-	register(oi, nil)
-	register(basis, nil)
-	register(logBasis, nil)
-	register(basisBase, nil)
-	register(basisZ, nil)
-	register(oiChange, nil)
-	register(oiGrowth, nil)
-	register(gap, nil)
+	shared.Register(grid, ingress, interests)
+	shared.Register(grid, last, nil)
+	shared.Register(grid, index, nil)
+	shared.Register(grid, oi, nil)
+	shared.Register(grid, basis, nil)
+	shared.Register(grid, logBasis, nil)
+	shared.Register(grid, basisBase, nil)
+	shared.Register(grid, basisZ, nil)
+	shared.Register(grid, oiChange, nil)
+	shared.Register(grid, oiGrowth, nil)
+	shared.Register(grid, gap, nil)
 
 	ticker := &Ticker{grid: grid}
 	ticker.System = runtime.NewSystem(ctx, "derivatives:ticker", ticker)

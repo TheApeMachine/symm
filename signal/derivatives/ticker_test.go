@@ -6,7 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
@@ -14,15 +14,19 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/signal/quote"
 )
 
-func pushFutures(grid *store.Grid[*geometry.Coordinate], data kraken.FuturesTickerData) {
+func pushFutures(grid *store.Grid[*geometry.Coordinate], data map[string]any) {
 	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
 		nil, core.Execute,
 	)
+	pipeline := nomagique.NewNumber(query, grid)
 
-	for range grid.Next(query.Next(quote.NewFutures().Next(sequence.NewValue(data)))) {
+	for range pipeline.Next(sequence.NewValue(map[string]any{
+		"futures": map[string]any{
+			"data": data,
+		},
+	})) {
 	}
 }
 
@@ -54,13 +58,13 @@ func TestTickerNext(t *testing.T) {
 		entity := NewTicker(t.Context(), grid, "PF_ETHUSD")
 
 		Convey("a futures snapshot updates retained derivative price and basis", func() {
-			pushFutures(grid, kraken.FuturesTickerData{
-				Symbol:       "PF_ETHUSD",
-				Last:         decimal.NewFromFloat64(200),
-				IndexPrice:   decimal.NewFromFloat64(100),
-				MarkPrice:    decimal.NewFromFloat64(100),
-				OpenInterest: 10,
-				Timestamp:    time.Unix(1, 0),
+			pushFutures(grid, map[string]any{
+				"symbol":        "PF_ETHUSD",
+				"last":          decimal.NewFromFloat64(200),
+				"index_price":   decimal.NewFromFloat64(100),
+				"mark_price":    decimal.NewFromFloat64(100),
+				"open_interest": 10,
+				"timestamp":     time.Unix(1, 0),
 			})
 			last, have := valueAt(collect(grid), 0)
 			So(have, ShouldBeTrue)
@@ -71,17 +75,17 @@ func TestTickerNext(t *testing.T) {
 		})
 
 		Convey("Ticker.Next does not mutate retained values", func() {
-			pushFutures(grid, kraken.FuturesTickerData{
-				Symbol:       "PF_ETHUSD",
-				Last:         decimal.NewFromFloat64(200),
-				IndexPrice:   decimal.NewFromFloat64(100),
-				OpenInterest: 10,
-				Timestamp:    time.Unix(1, 0),
+			pushFutures(grid, map[string]any{
+				"symbol":        "PF_ETHUSD",
+				"last":          decimal.NewFromFloat64(200),
+				"index_price":   decimal.NewFromFloat64(100),
+				"open_interest": 10,
+				"timestamp":     time.Unix(1, 0),
 			})
 			before, _ := valueAt(collect(grid), 0)
-			entity.Next(sequence.NewValue(kraken.FuturesTickerData{
-				Symbol: "PF_ETHUSD",
-				Last:   decimal.NewFromFloat64(1),
+			entity.Next(sequence.NewValue(map[string]any{
+				"symbol": "PF_ETHUSD",
+				"last":   decimal.NewFromFloat64(1),
 			}))
 			after, _ := valueAt(collect(grid), 0)
 			So(after, ShouldEqual, before)

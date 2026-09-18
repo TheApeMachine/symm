@@ -15,6 +15,10 @@ type pickBasis struct {
 
 func (pick *pickBasis) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*BasisReading)(arriving)
 			value, ok := pick.selectField(reading)
@@ -94,6 +98,10 @@ type pickLiq struct {
 
 func (pick *pickLiq) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*LiquidationReading)(arriving)
 			value, ok := pick.selectField(reading)

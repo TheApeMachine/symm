@@ -424,7 +424,7 @@
       "metric": "ambiguity",
       "package": "github.com/theapemachine/symm/hindsight/tables",
       "file": "hindsight/tables/drain.go",
-      "line": 112,
+      "line": 107,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -435,7 +435,7 @@
       "metric": "confidence",
       "package": "github.com/theapemachine/symm/hindsight/tables",
       "file": "hindsight/tables/drain.go",
-      "line": 113,
+      "line": 108,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -446,7 +446,7 @@
       "metric": "contrast",
       "package": "github.com/theapemachine/symm/hindsight/tables",
       "file": "hindsight/tables/drain.go",
-      "line": 114,
+      "line": 109,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -457,7 +457,7 @@
       "metric": "support",
       "package": "github.com/theapemachine/symm/hindsight/tables",
       "file": "hindsight/tables/drain.go",
-      "line": 115,
+      "line": 110,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -468,7 +468,7 @@
       "metric": "surprisal",
       "package": "github.com/theapemachine/symm/hindsight/tables",
       "file": "hindsight/tables/drain.go",
-      "line": 111,
+      "line": 106,
       "consumers": [],
       "dead": true,
       "kernelOnly": false

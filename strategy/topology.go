@@ -1,10 +1,12 @@
 package strategy
 
 import (
+	"fmt"
 	"iter"
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/geometry"
 )
@@ -43,6 +45,9 @@ func NewGridTopologyCollector[T core.Ordered[T]]() *GridTopologyCollector[T] {
 }
 
 func (c *GridTopologyCollector[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	fmt.Println("[grid topology collector debug] Next")
+	spew.Dump(in)
+
 	return func(yield func(unsafe.Pointer) bool) {
 		var edges []*geometry.Edge
 		for arriving := range in {

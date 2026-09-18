@@ -24,6 +24,10 @@ func NewLastPrice() *LastPrice {
 
 func (lastPrice *LastPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			observation := *(*PriceObservation)(arriving)
 
@@ -62,6 +66,10 @@ func NewObservationCount(symbol ...string) *ObservationCount {
 
 func (observationCount *ObservationCount) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -93,6 +101,10 @@ func NewSigned() *Signed {
 
 func (signed *Signed) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -124,6 +136,10 @@ func NewAbsoluteCorrelation() *AbsoluteCorrelation {
 
 func (absoluteCorrelation *AbsoluteCorrelation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -155,6 +171,10 @@ func NewPairCovariance() *PairCovariance {
 
 func (pairCovariance *PairCovariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -186,6 +206,10 @@ func NewReferenceEnergy() *ReferenceEnergy {
 
 func (referenceEnergy *ReferenceEnergy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -217,6 +241,10 @@ func NewMeasuredEnergy() *MeasuredEnergy {
 
 func (measuredEnergy *MeasuredEnergy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -248,6 +276,10 @@ func NewReferenceEnergyRate() *ReferenceEnergyRate {
 
 func (referenceEnergyRate *ReferenceEnergyRate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -283,6 +315,10 @@ func NewMeasuredEnergyRate() *MeasuredEnergyRate {
 
 func (measuredEnergyRate *MeasuredEnergyRate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -318,6 +354,10 @@ func NewOverlapDensity() *OverlapDensity {
 
 func (overlapDensity *OverlapDensity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -349,6 +389,10 @@ func NewMeasuredReturns() *MeasuredReturns {
 
 func (measuredReturns *MeasuredReturns) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -380,6 +424,10 @@ func NewReferenceReturns() *ReferenceReturns {
 
 func (referenceReturns *ReferenceReturns) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -411,6 +459,10 @@ func NewOverlapCount() *OverlapCount {
 
 func (overlapCount *OverlapCount) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -442,6 +494,10 @@ func NewSharedTime() *SharedTime {
 
 func (sharedTime *SharedTime) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -473,6 +529,10 @@ func NewPValue() *PValue {
 
 func (pValue *PValue) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -504,6 +564,10 @@ func NewStandardError() *StandardError {
 
 func (standardError *StandardError) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -536,6 +600,10 @@ func NewEnergyPair() *EnergyPair {
 
 func (energyPair *EnergyPair) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -578,6 +646,10 @@ func NewAdmitted() *Admitted {
 
 func (admitted *Admitted) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -608,6 +680,10 @@ func NewFisherPoint() *FisherPoint {
 
 func (fisherPoint *FisherPoint) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 
@@ -649,6 +725,10 @@ func NewEnergyPoint() *EnergyPoint {
 
 func (energyPoint *EnergyPoint) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*PairsReading)(arriving)
 

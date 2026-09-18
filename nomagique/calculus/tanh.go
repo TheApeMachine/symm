@@ -22,6 +22,10 @@ func NewTanh() *Tanh {
 
 func (tanh *Tanh) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			in := (*float64)(arriving)
 			*in = math.Tanh(*in)

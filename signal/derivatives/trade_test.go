@@ -7,21 +7,35 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/signal/quote"
 )
 
 func pushFuturesTrade(grid *store.Grid[*geometry.Coordinate], data kraken.FuturesTradeData) {
 	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
 		nil, core.Execute,
 	)
+	pipeline := nomagique.NewNumber(query, grid)
 
-	for range grid.Next(query.Next(quote.NewFuturesTrade().Next(sequence.NewValue(data)))) {
+	payload := map[string]any{
+		"futures": map[string]any{
+			"data": map[string]any{
+				"symbol":    data.Symbol,
+				"side":      data.Side,
+				"price":     data.Price.Float64(),
+				"qty":       data.Qty,
+				"type":      data.Type,
+				"timestamp": data.Timestamp,
+			},
+		},
+	}
+
+	for range pipeline.Next(sequence.NewValue(payload)) {
 	}
 }
 

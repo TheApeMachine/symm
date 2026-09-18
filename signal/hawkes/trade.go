@@ -8,12 +8,12 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 type Trade struct {
@@ -26,18 +26,6 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 		{"trade", "data", "symbol"},
 		{"trade", "data", "side"},
 		{"trade", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(wanted),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
 	}
 
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
@@ -80,19 +68,19 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
-	register(ingress, interests)
-	register(count, nil)
-	register(buyCount, nil)
-	register(sellCount, nil)
-	register(buyFrac, nil)
-	register(sellFrac, nil)
-	register(rate, nil)
-	register(buyRate, nil)
-	register(sellRate, nil)
-	register(lambda, nil)
-	register(lambdaBuy, nil)
-	register(lambdaSell, nil)
-	register(radius, nil)
+	shared.Register(grid, ingress, interests)
+	shared.Register(grid, count, nil)
+	shared.Register(grid, buyCount, nil)
+	shared.Register(grid, sellCount, nil)
+	shared.Register(grid, buyFrac, nil)
+	shared.Register(grid, sellFrac, nil)
+	shared.Register(grid, rate, nil)
+	shared.Register(grid, buyRate, nil)
+	shared.Register(grid, sellRate, nil)
+	shared.Register(grid, lambda, nil)
+	shared.Register(grid, lambdaBuy, nil)
+	shared.Register(grid, lambdaSell, nil)
+	shared.Register(grid, radius, nil)
 
 	trade := &Trade{grid: grid}
 	trade.System = runtime.NewSystem(ctx, "hawkes:trade", trade)

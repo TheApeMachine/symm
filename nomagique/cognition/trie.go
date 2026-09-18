@@ -42,8 +42,8 @@ type Trie struct {
 func NewTrie() *Trie {
 	trie := &Trie{
 		PrimitiveError: core.NewPrimitiveError(),
-		weightDecoder: NewWeight(),
-		packEncoder:   NewPack(),
+		weightDecoder:  NewWeight(),
+		packEncoder:    NewPack(),
 	}
 
 	trie.Root.Store(iradix.New[[]byte]())
@@ -52,7 +52,7 @@ func NewTrie() *Trie {
 
 func (trie *Trie) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if trie.Error() != nil {
+		if in == nil || trie.Error() != nil {
 			return
 		}
 

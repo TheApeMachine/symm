@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 type Trade struct {
@@ -28,18 +28,6 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 		{"futures", "data", "qty"},
 		{"futures", "data", "type"},
 		{"futures", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(wanted),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
 	}
 
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
@@ -75,14 +63,14 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
-	register(ingress, interests)
-	register(gross, nil)
-	register(buy, nil)
-	register(sell, nil)
-	register(liqGross, nil)
-	register(net, nil)
-	register(share, nil)
-	register(signed, nil)
+	shared.Register(grid, ingress, interests)
+	shared.Register(grid, gross, nil)
+	shared.Register(grid, buy, nil)
+	shared.Register(grid, sell, nil)
+	shared.Register(grid, liqGross, nil)
+	shared.Register(grid, net, nil)
+	shared.Register(grid, share, nil)
+	shared.Register(grid, signed, nil)
 
 	trade := &Trade{grid: grid}
 	trade.System = runtime.NewSystem(ctx, "derivatives:trade", trade)

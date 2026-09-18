@@ -1,7 +1,9 @@
 package websocket
 
 import (
+	"iter"
 	"testing"
+	"unsafe"
 
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
@@ -19,6 +21,39 @@ import (
 func makeLiveEvent(raw []byte) *callback.Event[*sdk.WebSocketMessage] {
 	return &callback.Event[*sdk.WebSocketMessage]{
 		Data: sdk.NewWebSocketMessage(raw),
+	}
+}
+
+type take struct {
+	*core.PrimitiveError
+	out float64
+}
+
+func (take *take) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
+		for arriving := range in {
+			input := (*core.Input[string, []string, any])(arriving)
+
+			if input == nil || input.Value == nil {
+				continue
+			}
+
+			value, ok := (*input.Value).(float64)
+
+			if !ok {
+				continue
+			}
+
+			take.out = value
+
+			if !yield(unsafe.Pointer(&take.out)) {
+				return
+			}
+		}
 	}
 }
 
@@ -61,7 +96,7 @@ func TestLiveWritesTickerToGrid(t *testing.T) {
 		grid := store.NewGrid[*geometry.Coordinate]()
 		held := store.NewRetained[float64]()
 		conn := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(store.NewField("ticker", "data", "last"), held),
+			nomagique.NewNumber(&take{PrimitiveError: core.NewPrimitiveError()}, held),
 		)
 		sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
 			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
@@ -71,12 +106,15 @@ func TestLiveWritesTickerToGrid(t *testing.T) {
 
 		live := &Live{
 			System: runtime.NewSystem(t.Context(), "public"),
-			grid:   grid,
 		}
 		live.Transition(runtime.READY)
 
 		raw := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ETH/USD","last":101.5}]}`)
 		live.onReceived(makeLiveEvent(raw))
+
+		pipeline := nomagique.NewNumber(live, grid)
+		for range pipeline.Next(nil) {
+		}
 
 		reading := sequence.Read[core.Input[*geometry.Coordinate, string, float64]](grid.Next(
 			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](

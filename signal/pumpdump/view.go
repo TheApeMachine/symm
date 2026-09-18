@@ -15,6 +15,10 @@ type pickTouch struct {
 
 func (pick *pickTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*TouchReading)(arriving)
 			value, ok := pick.selectField(reading)
@@ -88,6 +92,10 @@ type pickClock struct {
 
 func (pick *pickClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*ClockReading)(arriving)
 			value, ok := pick.selectField(reading)

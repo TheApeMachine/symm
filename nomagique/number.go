@@ -32,20 +32,17 @@ func NewNumber(stages ...core.Primitive) *Number {
 
 func (number *Number) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	curr := input
-	if curr == nil {
-		curr = func(yield func(unsafe.Pointer) bool) {}
-	}
 
 	for _, stage := range number.stages {
 		if stage == nil {
 			continue
 		}
 
+		curr = stage.Next(curr)
+
 		if curr == nil {
 			break
 		}
-
-		curr = stage.Next(curr)
 	}
 
 	if curr == nil {

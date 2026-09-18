@@ -47,6 +47,7 @@ func (trade *Trade) Action() string {
 	return "trade"
 }
 
+
 type TradeVolumeInput struct {
 	DomainSpotVolume30D    string `json:"domain_spot_volume_30d"`
 	DomainAssetsOnPlatform string `json:"domain_assets_on_platform"`

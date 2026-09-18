@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -112,11 +113,59 @@ var (
 				))
 			}
 
+			grid := store.NewGrid[*geometry.Coordinate]()
+
+			if err := catalog.RecordRun(ctx, tables.Run{
+				Epoch:        epoch,
+				StartedAt:    processStartedAt,
+				BuildID:      "training",
+				ConfigDigest: viper.GetString("system.log.level"),
+				Status:       "ACTIVE",
+			}); err != nil {
+				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
+			}
+
+			hub := ui.NewHub(ctx, nil, catalog)
+			hub.Run()
+
+			drain := tables.NewDrain(ctx, catalog, epoch)
+
+			correlation.NewTicker(ctx, grid, "", "")
+			leadlag.NewTicker(ctx, grid, "", "")
+			liquidity.NewTicker(ctx, grid, "")
+			sentiment.NewTicker(ctx, grid, "")
+			pumpdump.NewTicker(ctx, grid, "")
+			cvd.NewTrade(ctx, grid, "")
+			hawkes.NewTrade(ctx, grid, "")
+			toxicity.NewTrade(ctx, grid, "")
+			pumpdump.NewTrade(ctx, grid, "")
+			depthflow.NewLevel3(ctx, grid, "")
+			morphology.NewLevel3(ctx, grid, "")
+			toxicity.NewLevel3(ctx, grid, "")
+			pumpdump.NewLevel3(ctx, grid, "")
+			derivatives.NewTicker(ctx, grid, "")
+			derivatives.NewTrade(ctx, grid, "")
+
+			category.NewSolver(ctx)
+			resonance.NewSolver(
+				ctx, system.Cfg.Resonance.LearningRate,
+			)
+			cognition.NewSolver(ctx)
+			trainingStrategy := strategy.NewTraining[*geometry.Coordinate](ctx)
+
+			pipeline := nomagique.NewNumber(
+				core.NewQuery[any, map[string]any](nil, core.Write),
+				grid,
+				trainingStrategy,
+				transport.NewParallel(hub, drain),
+			)
+
 			public := websocket.New(
 				ctx,
 				websocket.NewSimulator(),
 				false,
 				system.Cfg.WebSocket.Endpoints.Public,
+				pipeline,
 			)
 
 			private := websocket.New(
@@ -124,16 +173,20 @@ var (
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
+				pipeline,
 			)
 
 			futures := websocket.NewFutures(
 				ctx,
 				system.Cfg.WebSocket.Endpoints.Futures,
+				pipeline,
 			)
 
 			api := websocket.NewAPI(
 				ctx, public, private, futures,
 			)
+
+			manifoldSolver := manifold.NewSolver(ctx, api)
 
 			instrument := broker.NewInstrument(api)
 			price := broker.NewPrice(ctx, api, instrument)
@@ -170,56 +223,6 @@ var (
 					nil,
 				))
 			}
-
-			grid := store.NewGrid[*geometry.Coordinate]()
-
-			if err := catalog.RecordRun(ctx, tables.Run{
-				Epoch:        epoch,
-				StartedAt:    processStartedAt,
-				BuildID:      "training",
-				ConfigDigest: viper.GetString("system.log.level"),
-				Status:       "ACTIVE",
-			}); err != nil {
-				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
-			}
-
-			hub := ui.NewHub(ctx, nil, catalog)
-			hub.Run()
-
-			drain := tables.NewDrain(ctx, catalog, epoch)
-
-			manifoldSolver := manifold.NewSolver(ctx, api)
-
-			correlation.NewTicker(ctx, grid, "", "")
-			leadlag.NewTicker(ctx, grid, "", "")
-			liquidity.NewTicker(ctx, grid, "")
-			sentiment.NewTicker(ctx, grid, "")
-			pumpdump.NewTicker(ctx, grid, "")
-			cvd.NewTrade(ctx, grid, "")
-			hawkes.NewTrade(ctx, grid, "")
-			toxicity.NewTrade(ctx, grid, "")
-			pumpdump.NewTrade(ctx, grid, "")
-			depthflow.NewLevel3(ctx, grid, "")
-			morphology.NewLevel3(ctx, grid, "")
-			toxicity.NewLevel3(ctx, grid, "")
-			pumpdump.NewLevel3(ctx, grid, "")
-			derivatives.NewTicker(ctx, grid, "")
-			derivatives.NewTrade(ctx, grid, "")
-
-			category.NewSolver(ctx)
-			resonance.NewSolver(
-				ctx, system.Cfg.Resonance.LearningRate,
-			)
-			cognition.NewSolver(ctx)
-
-			pipeline := nomagique.NewNumber(
-				transport.NewParallel(
-					public, private, futures,
-				),
-				grid,
-				strategy.NewTraining[*geometry.Coordinate](ctx),
-				transport.NewParallel(hub, drain),
-			)
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.

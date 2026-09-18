@@ -25,7 +25,7 @@ func NewTee(offramp core.Primitive) *Tee {
 
 func (tee *Tee) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if in == nil {
+		if in == nil || tee.Error() != nil {
 			return
 		}
 

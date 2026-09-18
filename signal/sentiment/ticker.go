@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 type Ticker struct {
@@ -21,24 +21,6 @@ type Ticker struct {
 }
 
 func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], members ...string) *Ticker {
-	interests := [][]string{
-		{"ticker", "data", "symbol"},
-		{"ticker", "data", "last"},
-		{"ticker", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(wanted),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
-	}
-
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
 		retained := store.NewRetained[float64]()
 		conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
@@ -94,10 +76,10 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], memb
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
-	register(ingress, interests)
+	shared.Register(grid, ingress, shared.Ticker)
 
 	for _, conn := range conns {
-		register(conn, nil)
+		shared.Register(grid, conn, nil)
 	}
 
 	ticker := &Ticker{grid: grid}

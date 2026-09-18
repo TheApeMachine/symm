@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 /*
@@ -24,30 +24,18 @@ type Trade struct {
 }
 
 func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbol string) *Trade {
-	interests := [][]string{
-		{"trade", "data", "symbol"},
-		{"trade", "data", "side"},
-		{"trade", "data", "price"},
-		{"trade", "data", "qty"},
-		{"trade", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(wanted),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
-	}
-
-	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
+	hold := func(extractor core.Primitive) (
+		*transport.Conn[*geometry.Coordinate], core.Primitive,
+	) {
 		retained := store.NewRetained[float64]()
-		conn := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(extractor, retained))
-		return conn, nomagique.NewNumber(extractor, retained, transport.NewDiscard())
+		
+		conn := transport.NewConn[*geometry.Coordinate](
+			nomagique.NewNumber(extractor, retained),
+		)
+
+		return conn, nomagique.NewNumber(
+			extractor, retained, transport.NewDiscard(),
+		)
 	}
 
 	tradeCount, tradeCountBranch := hold(NewTradeCount())
@@ -79,35 +67,47 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 		NewFlow(),
 		transport.NewFan(
 			transport.NewIO[any](nil, nil),
-			tradeCountBranch, buyCountBranch, sellCountBranch,
-			buyQtyBranch, sellQtyBranch, grossQtyBranch, netQtyBranch,
-			buyNotionalBranch, sellNotionalBranch, grossNotionalBranch, netNotionalBranch,
-			meanNotionalBranch, cvdBranch, cndBranch, epochBranch,
-			signedCountBranch, signedNetBranch,
+			tradeCountBranch,
+			buyCountBranch,
+			sellCountBranch,
+			buyQtyBranch,
+			sellQtyBranch,
+			grossQtyBranch,
+			netQtyBranch,
+			buyNotionalBranch,
+			sellNotionalBranch,
+			grossNotionalBranch,
+			netNotionalBranch,
+			meanNotionalBranch,
+			cvdBranch,
+			cndBranch,
+			epochBranch,
+			signedCountBranch,
+			signedNetBranch,
 		),
 		NewTradeCount(),
 		store.NewRetained[float64](),
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
-	register(ingress, interests)
-	register(tradeCount, nil)
-	register(buyCount, nil)
-	register(sellCount, nil)
-	register(buyQty, nil)
-	register(sellQty, nil)
-	register(grossQty, nil)
-	register(netQty, nil)
-	register(buyNotional, nil)
-	register(sellNotional, nil)
-	register(grossNotional, nil)
-	register(netNotional, nil)
-	register(meanNotional, nil)
-	register(cvd, nil)
-	register(cnd, nil)
-	register(epoch, nil)
-	register(signedCount, nil)
-	register(signedNet, nil)
+	shared.Register(grid, ingress, shared.Trade)
+	shared.Register(grid, tradeCount, nil)
+	shared.Register(grid, buyCount, nil)
+	shared.Register(grid, sellCount, nil)
+	shared.Register(grid, buyQty, nil)
+	shared.Register(grid, sellQty, nil)
+	shared.Register(grid, grossQty, nil)
+	shared.Register(grid, netQty, nil)
+	shared.Register(grid, buyNotional, nil)
+	shared.Register(grid, sellNotional, nil)
+	shared.Register(grid, grossNotional, nil)
+	shared.Register(grid, netNotional, nil)
+	shared.Register(grid, meanNotional, nil)
+	shared.Register(grid, cvd, nil)
+	shared.Register(grid, cnd, nil)
+	shared.Register(grid, epoch, nil)
+	shared.Register(grid, signedCount, nil)
+	shared.Register(grid, signedNet, nil)
 
 	trade := &Trade{grid: grid}
 	trade.System = runtime.NewSystem(ctx, "cvd:trade", trade)

@@ -306,3 +306,4 @@ type Level3TouchFrame struct {
 	Type    string        `json:"type"`
 	Data    []Level3Touch `json:"data"`
 }
+

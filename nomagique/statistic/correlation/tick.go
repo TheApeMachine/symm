@@ -22,6 +22,10 @@ func NewTick() *Tick {
 
 func (tick *Tick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		var observation PriceObservation
 		havePrice := false
 

@@ -13,7 +13,8 @@ run completes; First reads U, independently of the address representation.
 type Query[T, U any] struct {
 	*PrimitiveError
 	Connectable[T]
-	Action Action
+	Action  Action
+	Payload iter.Seq[unsafe.Pointer]
 }
 
 /*
@@ -40,16 +41,14 @@ payload can be a new value.
 */
 func (query *Query[T, U]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if !yield(unsafe.Pointer(query)) {
+		if query.Error() != nil {
 			return
 		}
 
-		if in != nil {
-			for i := range in {
-				if !yield(i) {
-					return
-				}
-			}
+		query.Payload = in
+
+		if !yield(unsafe.Pointer(query)) {
+			return
 		}
 	}
 }

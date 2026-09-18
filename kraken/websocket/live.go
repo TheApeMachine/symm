@@ -18,11 +18,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/data/sequence"
-	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
-	"golang.design/x/lockfree/lf"
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
@@ -33,7 +30,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/signal/quote"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -62,7 +58,7 @@ subscriptions; protocol and ingestion failures remain terminal.
 */
 type Live struct {
 	*runtime.System
-	queue        *lf.Queue[map[string]any]
+	pipeline     core.Primitive
 	funding      FundingLedger
 	schema       map[string]data.Metric[float64]
 	client       atomic.Pointer[spot.WebSocket]
@@ -82,7 +78,6 @@ type Live struct {
 	pinger       *Pinger
 	level3Client func() *spot.WebSocket
 	pingReqID    atomic.Int64
-	grid         *store.Grid[*geometry.Coordinate]
 }
 
 /*
@@ -93,9 +88,10 @@ func New(
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
+	pipeline core.Primitive,
 ) *Live {
 	return NewWithClient(
-		ctx, simulator, auth, endpoint, nil,
+		ctx, simulator, auth, endpoint, nil, pipeline,
 	)
 }
 
@@ -110,6 +106,7 @@ func NewWithClient(
 	auth bool,
 	endpoint string,
 	client *spot.WebSocket,
+	pipeline core.Primitive,
 ) *Live {
 	if client == nil {
 		client = spot.NewWebSocket()
@@ -134,7 +131,7 @@ func NewWithClient(
 	}
 
 	live := &Live{
-		queue:      lf.NewQueue[map[string]any](),
+		pipeline:   pipeline,
 		simulator:  simulator,
 		endpoint:   endpoint,
 		normalizer: spot.NewNormalizer(),
@@ -216,18 +213,13 @@ func NewWithClient(
 				return
 			}
 
-			if live.grid != nil {
-				touchQuote := quote.NewTouch()
-				query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					nil, core.Execute,
-				)
+			for _, touch := range touches {
+				if touch.Bid == nil || touch.Ask == nil {
+					continue
+				}
 
-				for _, touch := range touches {
-					if touch.Bid == nil || touch.Ask == nil {
-						continue
-					}
-
-					for range live.grid.Next(query.Next(touchQuote.Next(sequence.NewValue(touch)))) {
+				if live.pipeline != nil {
+					for range live.pipeline.Next(sequence.NewValue(touch)) {
 					}
 				}
 			}
@@ -256,14 +248,32 @@ func NewWithClient(
 	return live
 }
 
-func (live *Live) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	value, ok := live.queue.Dequeue()
+func (live *Live) Connect(pipeline core.Primitive) {
+	live.pipeline = pipeline
 
-	if !ok {
-		return nil
+	if live.level3 != nil {
+		live.level3.Range(func(_, val any) bool {
+			if child, ok := val.(*Live); ok && child != nil {
+				child.Connect(pipeline)
+			}
+
+			return true
+		})
 	}
+}
 
-	return sequence.NewValue(value)
+func (live *Live) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil || live.Error() != nil {
+			return
+		}
+
+		for stream := range in {
+			if !yield(stream) {
+				return
+			}
+		}
+	}
 }
 
 func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
@@ -287,14 +297,8 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 	}
 
 	switch channel {
-	case "ticker":
+	case "ticker", "trade":
 		if live.Status() != runtime.READY {
-			return
-		}
-
-		ticker := kraken.NewTicker(raw)
-
-		if ticker == nil || len(ticker.Data) == 0 {
 			return
 		}
 
@@ -302,39 +306,15 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 
 		if err != nil {
 			live.Error(errnie.Err(
-				errnie.Validation,
-				"futures: failed to map ticker",
+				errnie.UnprocessableContent,
+				"websocket: failed to map "+channel+" message",
 				err,
 			))
+
 			return
 		}
 
-		live.queue.Enqueue(mapped)
-		return
-
-	case "trade":
-		if live.Status() != runtime.READY {
-			return
-		}
-
-		trade := kraken.NewTrade(raw)
-
-		if trade == nil || len(trade.Data) == 0 {
-			return
-		}
-
-		mapped, err := event.Data.Map()
-
-		if err != nil {
-			live.Error(errnie.Err(
-				errnie.Validation,
-				"futures: failed to map ticker",
-				err,
-			))
-			return
-		}
-
-		live.queue.Enqueue(mapped)
+		live.pipeline.Next(sequence.NewValue(mapped))
 		return
 	}
 
@@ -393,18 +373,6 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 			}
 		}
 
-		mapped, err := event.Data.Map()
-
-		if err != nil {
-			live.Error(errnie.Err(
-				errnie.Validation,
-				"futures: failed to map ticker",
-				err,
-			))
-			return
-		}
-
-		live.queue.Enqueue(mapped)
 		return
 	}
 
@@ -695,6 +663,7 @@ func (live *Live) SubL3(symbols []string) {
 			live.auth,
 			system.Cfg.WebSocket.Endpoints.Level3,
 			live.level3ClientFor(),
+			live.pipeline,
 		)
 
 		if conn.Error() != nil {
@@ -819,6 +788,10 @@ func (live *Live) AttachLevel3(groupKey string, conn *Live) {
 
 	if live.level3 == nil {
 		live.level3 = &sync.Map{}
+	}
+
+	if live.pipeline != nil {
+		conn.Connect(live.pipeline)
 	}
 
 	live.level3.Store(groupKey, conn)

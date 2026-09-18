@@ -23,6 +23,10 @@ func NewMatch(symbol string) *Match {
 
 func (match *Match) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			observation := *(*PriceObservation)(arriving)
 

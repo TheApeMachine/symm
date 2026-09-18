@@ -69,6 +69,8 @@ func TestFluidRTCPublish(t *testing.T) {
 			state.WaveReal[len(state.WaveReal)-1] = 4
 			state.WaveImag[len(state.WaveImag)-1] = -5
 
+			server.Publish(state)
+
 			// Give the sender goroutine a moment to finish transmitting all chunks
 			for i := 0; i < 200; i++ {
 				if fake.segmentCount() > 0 && channel.idle() {

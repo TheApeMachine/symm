@@ -2,17 +2,16 @@ package transport
 
 import (
 	"iter"
-	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/runtime/disruptor"
 )
 
 /*
-Parallel combines multiple nomagique Primitives that reside in different
-processes. Each of the Primitives is given a goroutine, and is run in
-isolation, with the exception of the top-most and bottom-most Primitive.
+Parallel streams transparent throughput across multiple nomagique Primitives.
+When stepped without input, it drains each configured primitive in order.
+When stepped with an input stream, it broadcasts arriving payloads across
+all primitives and yields their outputs.
 */
 type Parallel struct {
 	*core.PrimitiveError
@@ -20,7 +19,7 @@ type Parallel struct {
 }
 
 /*
-New takes a slice of Primitives and returns a new Parallel Primitive.
+NewParallel takes a slice of Primitives and returns a new Parallel Primitive.
 */
 func NewParallel(primitives ...core.Primitive) *Parallel {
 	return &Parallel{
@@ -30,82 +29,47 @@ func NewParallel(primitives ...core.Primitive) *Parallel {
 }
 
 /*
-Next takes the input and proxies it through the input Primitive, then takes
-the result of the input Primitive's Next method, and passes that as the input
-to the output Primitive.
+Next provides transparent throughput across the configured primitives.
 */
 func (parallel *Parallel) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		capacity := uint32(1024)
-		ringBuffer := make([]unsafe.Pointer, capacity)
+		defer func() {
+			for _, primitive := range parallel.primitives {
+				if err := primitive.Error(); err != nil {
+					parallel.Error(err)
+				}
+			}
+		}()
 
-		handler := &outHandler{
-			ringBuffer: ringBuffer,
-			yield:      yield,
-			capacity:   int64(capacity),
-		}
-
-		channel, err := disruptor.New(
-			disruptor.Options.BufferCapacity(capacity),
-			disruptor.Options.WriterCount(uint8(len(parallel.primitives))),
-			disruptor.Options.NewHandlerGroup(handler),
-		)
-		if err != nil {
-			parallel.Error(err)
+		if in == nil {
+			for _, primitive := range parallel.primitives {
+				stream := primitive.Next(nil)
+				if stream != nil {
+					for item := range stream {
+						if !yield(item) {
+							return
+						}
+					}
+				}
+			}
 			return
 		}
 
-		handler.channel = channel
+		for arriving := range in {
+			one := func(yieldOne func(unsafe.Pointer) bool) {
+				yieldOne(arriving)
+			}
 
-		var wg sync.WaitGroup
-		for _, primitive := range parallel.primitives {
-			wg.Add(1)
-			go func(prim core.Primitive) {
-				defer wg.Done()
-				stream := prim.Next(in)
+			for _, primitive := range parallel.primitives {
+				stream := primitive.Next(one)
 				if stream != nil {
 					for item := range stream {
-						seq := channel.Reserve(1)
-						ringBuffer[seq&(int64(capacity)-1)] = item
-						channel.Commit(seq, seq)
+						if !yield(item) {
+							return
+						}
 					}
 				}
-			}(primitive)
-		}
-
-		go func() {
-			wg.Wait()
-			channel.Close()
-		}()
-
-		// Listen runs on the main goroutine so that yield is called safely.
-		channel.Listen()
-	}
-}
-
-type outHandler struct {
-	ringBuffer []unsafe.Pointer
-	yield      func(unsafe.Pointer) bool
-	capacity   int64
-	channel    disruptor.Disruptor
-	aborted    bool
-}
-
-func (h *outHandler) Next(seq iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if h.aborted {
-		return nil
-	}
-	for ptr := range seq {
-		bounds := *(*[]int64)(ptr)
-		lower, upper := bounds[0], bounds[1]
-		for i := lower; i <= upper; i++ {
-			item := h.ringBuffer[i&(h.capacity-1)]
-			if !h.yield(item) {
-				h.aborted = true
-				h.channel.Close()
-				return nil
 			}
 		}
 	}
-	return nil
 }

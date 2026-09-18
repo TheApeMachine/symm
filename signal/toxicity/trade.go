@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 type Trade struct {
@@ -32,18 +32,6 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 		{"level3", "data", "bid_qty"},
 		{"level3", "data", "ask_qty"},
 		{"level3", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(wanted),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
 	}
 
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
@@ -82,15 +70,15 @@ func NewTrade(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symbo
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
-	register(ingress, interests)
-	register(qty, nil)
-	register(bracket, nil)
-	register(matchedBid, nil)
-	register(matchedAsk, nil)
-	register(fillBid, nil)
-	register(fillAsk, nil)
-	register(fillBidF, nil)
-	register(fillAskF, nil)
+	shared.Register(grid, ingress, interests)
+	shared.Register(grid, qty, nil)
+	shared.Register(grid, bracket, nil)
+	shared.Register(grid, matchedBid, nil)
+	shared.Register(grid, matchedAsk, nil)
+	shared.Register(grid, fillBid, nil)
+	shared.Register(grid, fillAsk, nil)
+	shared.Register(grid, fillBidF, nil)
+	shared.Register(grid, fillAskF, nil)
 
 	trade := &Trade{grid: grid}
 	trade.System = runtime.NewSystem(ctx, "toxicity:trade", trade)

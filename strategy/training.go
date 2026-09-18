@@ -58,7 +58,6 @@ func NewTraining[T interface {
 		gridTap: gridTap,
 		trie:    trie,
 		pipeline: nomagique.NewNumber(
-			NewGridObservationAdapter(),
 			associative.NewGrid[T](),
 			transport.NewTee(gridTap),
 			associative.NewRegion(),

@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 type Level3 struct {
@@ -28,18 +28,6 @@ func NewLevel3(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symb
 		{"level3", "data", "bid_qty"},
 		{"level3", "data", "ask_qty"},
 		{"level3", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], wanted [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(wanted),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
 	}
 
 	hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
@@ -87,23 +75,23 @@ func NewLevel3(ctx context.Context, grid *store.Grid[*geometry.Coordinate], symb
 	)
 
 	ingress := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(ingressStages...))
-	register(ingress, interests)
-	register(bid, nil)
-	register(ask, nil)
-	register(bidQty, nil)
-	register(askQty, nil)
-	register(bidLog, nil)
-	register(askLog, nil)
-	register(retBid, nil)
-	register(retAsk, nil)
-	register(wdBid, nil)
-	register(wdAsk, nil)
-	register(repBid, nil)
-	register(repAsk, nil)
-	register(retBidF, nil)
-	register(retAskF, nil)
-	register(wdBidF, nil)
-	register(wdAskF, nil)
+	shared.Register(grid, ingress, interests)
+	shared.Register(grid, bid, nil)
+	shared.Register(grid, ask, nil)
+	shared.Register(grid, bidQty, nil)
+	shared.Register(grid, askQty, nil)
+	shared.Register(grid, bidLog, nil)
+	shared.Register(grid, askLog, nil)
+	shared.Register(grid, retBid, nil)
+	shared.Register(grid, retAsk, nil)
+	shared.Register(grid, wdBid, nil)
+	shared.Register(grid, wdAsk, nil)
+	shared.Register(grid, repBid, nil)
+	shared.Register(grid, repAsk, nil)
+	shared.Register(grid, retBidF, nil)
+	shared.Register(grid, retAskF, nil)
+	shared.Register(grid, wdBidF, nil)
+	shared.Register(grid, wdAskF, nil)
 
 	level3 := &Level3{grid: grid}
 	level3.System = runtime.NewSystem(ctx, "toxicity:level3", level3)

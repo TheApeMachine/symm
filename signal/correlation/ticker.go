@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -20,6 +19,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 /*
@@ -37,28 +37,6 @@ func NewTicker(
 	measured, reference string,
 	cohort ...string,
 ) *Ticker {
-	symbolLast := [][]string{
-		{"ticker", "data", "symbol"},
-		{"ticker", "data", "last"},
-	}
-	symbolLastTime := [][]string{
-		{"ticker", "data", "symbol"},
-		{"ticker", "data", "last"},
-		{"ticker", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], interests [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(interests),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
-	}
-
 	lastHold := store.NewRetained[float64]()
 	lastStages := []core.Primitive{nmcorrelation.NewTick(), nmcorrelation.NewLastPrice(), lastHold}
 
@@ -71,8 +49,11 @@ func NewTicker(
 		}
 	}
 
-	lastPrice := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(lastStages...))
-	register(lastPrice, symbolLast)
+	lastPrice := transport.NewConn[*geometry.Coordinate](
+		nomagique.NewNumber(lastStages...),
+	)
+
+	shared.Register(grid, lastPrice, shared.SymbolLast)
 
 	if measured != "" && reference != "" {
 		countHold := store.NewRetained[float64]()
@@ -133,7 +114,7 @@ func NewTicker(
 		overlap := transport.NewConn[*geometry.Coordinate](
 			nomagique.NewNumber(nmcorrelation.NewOverlapCount(), overlapHold),
 		)
-		shared := transport.NewConn[*geometry.Coordinate](
+		sharedTime := transport.NewConn[*geometry.Coordinate](
 			nomagique.NewNumber(nmcorrelation.NewSharedTime(), sharedHold),
 		)
 		pValue := transport.NewConn[*geometry.Coordinate](
@@ -258,12 +239,12 @@ func NewTicker(
 				transport.NewDiscard(),
 			))
 
-			register(peerEnergy, nil)
-			register(cohortSigned, nil)
-			register(cohortAbs, nil)
-			register(peerCount, nil)
-			register(effective, nil)
-			register(dispersion, nil)
+			shared.Register(grid, peerEnergy, nil)
+			shared.Register(grid, cohortSigned, nil)
+			shared.Register(grid, cohortAbs, nil)
+			shared.Register(grid, peerCount, nil)
+			shared.Register(grid, effective, nil)
+			shared.Register(grid, dispersion, nil)
 		}
 
 		signed := transport.NewConn[*geometry.Coordinate](
@@ -295,30 +276,30 @@ func NewTicker(
 			),
 		)
 
-		register(signed, symbolLastTime)
-		register(count, nil)
-		register(absolute, nil)
-		register(covariance, nil)
-		register(refEnergy, nil)
-		register(measEnergy, nil)
-		register(refRate, nil)
-		register(measRate, nil)
-		register(density, nil)
-		register(measReturns, nil)
-		register(refReturns, nil)
-		register(overlap, nil)
-		register(shared, nil)
-		register(pValue, nil)
-		register(stdError, nil)
-		register(relative, nil)
-		register(baseline, nil)
-		register(divergence, nil)
-		register(zscore, nil)
-		register(velocity, nil)
-		register(energyBase, nil)
-		register(energyDiv, nil)
-		register(energyZ, nil)
-		register(energyVel, nil)
+		shared.Register(grid, signed, shared.SymbolLastTime)
+		shared.Register(grid, count, nil)
+		shared.Register(grid, absolute, nil)
+		shared.Register(grid, covariance, nil)
+		shared.Register(grid, refEnergy, nil)
+		shared.Register(grid, measEnergy, nil)
+		shared.Register(grid, refRate, nil)
+		shared.Register(grid, measRate, nil)
+		shared.Register(grid, density, nil)
+		shared.Register(grid, measReturns, nil)
+		shared.Register(grid, refReturns, nil)
+		shared.Register(grid, overlap, nil)
+		shared.Register(grid, sharedTime, nil)
+		shared.Register(grid, pValue, nil)
+		shared.Register(grid, stdError, nil)
+		shared.Register(grid, relative, nil)
+		shared.Register(grid, baseline, nil)
+		shared.Register(grid, divergence, nil)
+		shared.Register(grid, zscore, nil)
+		shared.Register(grid, velocity, nil)
+		shared.Register(grid, energyBase, nil)
+		shared.Register(grid, energyDiv, nil)
+		shared.Register(grid, energyZ, nil)
+		shared.Register(grid, energyVel, nil)
 	}
 
 	ticker := &Ticker{grid: grid}
@@ -343,9 +324,8 @@ func (ticker *Ticker) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			return
 		}
 
-		address := transport.NewAddress[*geometry.Coordinate]()
 		query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-			address, core.Read,
+			nil, core.Read,
 		)
 
 		for out := range ticker.grid.Next(query.Next(nil)) {

@@ -7,21 +7,31 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/signal/quote"
 )
 
 func pushTouch(grid *store.Grid[*geometry.Coordinate], data kraken.Level3Touch) {
 	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
 		nil, core.Execute,
 	)
+	pipeline := nomagique.NewNumber(query, grid)
 
-	for range grid.Next(query.Next(quote.NewTouch().Next(sequence.NewValue(data)))) {
+	for range pipeline.Next(sequence.NewValue(map[string]any{
+		"level3": map[string]any{
+			"data": map[string]any{
+				"symbol":    data.Symbol,
+				"bid":       data.Bid.Float64(),
+				"ask":       data.Ask.Float64(),
+				"timestamp": data.Timestamp.UnixNano(),
+			},
+		},
+	})) {
 	}
 }
 

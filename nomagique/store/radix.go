@@ -30,65 +30,63 @@ func NewRadix[T any]() *Radix[T] {
 
 func (radix *Radix[T]) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var query *Query[*[]byte, T]
-		var found bool
-		var value T
-
 		for arriving := range input {
-			if query == nil {
-				query = (*Query[*[]byte, T])(arriving)
-				address := query.Identity()
-
-				if address == nil || len(*address) == 0 {
-					radix.Error(core.ErrShape)
-					return
-				}
-
-				root := radix.root.Load()
-				value, found = root.Get(*address)
-
-				if query.Action == core.Read {
-					if found && !yield(unsafe.Pointer(&value)) {
-						return
-					}
-
-					query = nil
-					continue
-				}
-
-				if query.Action != core.Write && query.Action != core.Identify {
-					radix.Error(core.ErrShape)
-					return
-				}
-
-				if query.Action == core.Identify && found {
-					if !yield(unsafe.Pointer(&value)) {
-						return
-					}
-
-					continue
-				}
-
-				continue
-			}
-
-			if query.Action == core.Identify && found {
-				query = nil
-				continue
-			}
-
-			value = *(*T)(arriving)
+			query := (*Query[*[]byte, T])(arriving)
 			address := query.Identity()
 
-			root := radix.root.Load()
-			updated, _, _ := root.Insert(bytes.Clone(*address), value)
-			radix.root.Store(updated)
-
-			if !yield(unsafe.Pointer(&value)) {
+			if address == nil || len(*address) == 0 {
+				radix.Error(core.ErrShape)
 				return
 			}
 
-			query = nil
+			root := radix.root.Load()
+			value, found := root.Get(*address)
+
+			switch query.Action {
+			case core.Read:
+				if found && !yield(unsafe.Pointer(&value)) {
+					return
+				}
+
+			case core.Identify:
+				if found {
+					if !yield(unsafe.Pointer(&value)) {
+						return
+					}
+					continue
+				}
+
+				if query.Payload != nil {
+					for ptr := range query.Payload {
+						value = *(*T)(ptr)
+						root = radix.root.Load()
+						updated, _, _ := root.Insert(bytes.Clone(*address), value)
+						radix.root.Store(updated)
+
+						if !yield(unsafe.Pointer(&value)) {
+							return
+						}
+					}
+				}
+
+			case core.Write:
+				if query.Payload != nil {
+					for ptr := range query.Payload {
+						value = *(*T)(ptr)
+						root = radix.root.Load()
+						updated, _, _ := root.Insert(bytes.Clone(*address), value)
+						radix.root.Store(updated)
+
+						if !yield(unsafe.Pointer(&value)) {
+							return
+						}
+					}
+				}
+
+			default:
+				radix.Error(core.ErrShape)
+				return
+			}
 		}
 	}
 }

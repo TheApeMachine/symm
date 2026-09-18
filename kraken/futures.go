@@ -43,6 +43,7 @@ type FuturesTicker struct {
 	Data FuturesTickerData `json:"-"`
 }
 
+
 /*
 NewFuturesTicker parses raw wire bytes from the Kraken Futures ticker feed.
 */
@@ -129,6 +130,7 @@ type FuturesTrade struct {
 	Feed string             `json:"feed"`
 	Data []FuturesTradeData `json:"data"`
 }
+
 
 /*
 NewFuturesTrade parses raw wire bytes from the Kraken Futures trade feed.

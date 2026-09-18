@@ -16,6 +16,10 @@ type pick struct {
 
 func (pick *pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
 		for arriving := range in {
 			reading := (*nmcorrelation.LeadLagReading)(arriving)
 			value, ok := pick.selectField(reading)

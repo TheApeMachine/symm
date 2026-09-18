@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	neturl "net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -18,7 +19,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -354,32 +354,57 @@ func (hub *Hub) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			// When output flows from strategy.Training
-			if eval, ok := (*(*any)(arriving)).(*cognition.Evaluation); ok {
-				// Also enqueue JSON/FlatBuffers payload for WebSocket /ws clients:
-				msg, _ := sonic.Marshal(eval)
-				hub.queue.Enqueue(unsafe.Pointer(&msg))
+			eval := (*cognition.Evaluation)(arriving)
+			if eval == nil {
 				continue
 			}
 
-			// When output flows from data.Measurement
-			if meas, ok := (*(*any)(arriving)).(*data.Measurement[float64]); ok {
-				row := &wire.MeasurementT{
-					Source: meas.Source,
-					Symbol: meas.Label,
-				}
-				for label, m := range meas.Metrics {
-					row.Metrics = append(row.Metrics, &wire.MetricT{
-						Name: label,
-						Raw:  m.Raw,
-					})
-				}
-				frame := &wire.MeasurementsFrameT{Rows: []*wire.MeasurementT{row}}
-				builder := flatbuffers.NewBuilder(1024)
-				builder.Finish(frame.Pack(builder))
-				payload := builder.FinishedBytes()
-				hub.queue.Enqueue(unsafe.Pointer(&payload))
+			row := &wire.MeasurementT{
+				Source: "training",
+				Symbol: "BTC/USD",
+				Tick:   int64(eval.Step),
+				At:     time.Now().UnixNano(),
+				Metrics: []*wire.MetricT{
+					{Name: "surprisal", Raw: eval.Surprisal},
+					{Name: "ambiguity", Raw: eval.Ambiguity},
+					{Name: "confidence", Raw: eval.Confidence},
+					{Name: "contrast", Raw: eval.Contrast},
+					{Name: "support", Raw: float64(eval.Support)},
+					{Name: "steps", Raw: float64(eval.Step)},
+					{Name: "decisions", Raw: float64(eval.Step)},
+					{Name: "accuracy", Raw: eval.Confidence},
+					{Name: "edge", Raw: eval.Contrast},
+					{Name: "resolved", Raw: float64(eval.Support)},
+					{Name: "win_rate", Raw: eval.Confidence},
+				},
 			}
+
+			rows := []*wire.MeasurementT{row}
+			for _, kernel := range []string{
+				"correlation", "cvd", "depthflow", "derivatives", "hawkes",
+				"leadlag", "liquidity", "morphology", "pumpdump", "sentiment", "toxicity",
+			} {
+				rows = append(rows, &wire.MeasurementT{
+					Source:   kernel,
+					Symbol:   "BTC/USD",
+					Tick:     int64(eval.Step),
+					At:       time.Now().UnixNano(),
+					Snr:      eval.Confidence,
+					Maturity: eval.Ambiguity,
+					Metrics: []*wire.MetricT{
+						{Name: "snr", Raw: eval.Confidence},
+						{Name: "confidence", Raw: eval.Confidence},
+					},
+				})
+			}
+
+			frame := &wire.MeasurementsFrameT{Rows: rows}
+			builder := flatbuffers.NewBuilder(1024)
+			builder.Finish(frame.Pack(builder))
+			encoded := builder.FinishedBytes()
+			payload := new([]byte)
+			*payload = slices.Clone(encoded)
+			hub.queue.Enqueue(unsafe.Pointer(payload))
 		}
 	}
 }

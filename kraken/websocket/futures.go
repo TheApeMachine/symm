@@ -17,12 +17,12 @@ import (
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/utils"
-	"golang.design/x/lockfree/lf"
 )
 
 /*
@@ -56,8 +56,8 @@ failures remain terminal and are reported to the process supervisor.
 */
 type FuturesLive struct {
 	*runtime.System
+	pipeline       core.Primitive
 	client         atomic.Pointer[derivatives.WebSocket]
-	queue          *lf.Queue[map[string]any]
 	simulator      *Simulator
 	callbacks      *sync.Map
 	subscriptionMu sync.RWMutex
@@ -151,8 +151,9 @@ constructor, mirroring New.
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
+	pipeline core.Primitive,
 ) *FuturesLive {
-	return NewFuturesWithClient(ctx, endpoint, nil)
+	return NewFuturesWithClient(ctx, endpoint, nil, pipeline)
 }
 
 /*
@@ -163,6 +164,7 @@ func NewFuturesWithClient(
 	ctx context.Context,
 	endpoint string,
 	client *derivatives.WebSocket,
+	pipeline core.Primitive,
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = system.Cfg.WebSocket.Endpoints.Futures
@@ -181,8 +183,8 @@ func NewFuturesWithClient(
 
 	futures := &FuturesLive{
 		callbacks:     &sync.Map{},
-		queue:         lf.NewQueue[map[string]any](),
 		subscriptions: make(map[string][]string),
+		pipeline:      pipeline,
 	}
 	futures.client.Store(client)
 
@@ -272,14 +274,12 @@ func NewFuturesWithClient(
 	return futures
 }
 
+func (futures *FuturesLive) Connect(pipeline core.Primitive) {
+	futures.pipeline = pipeline
+}
+
 func (futures *FuturesLive) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	value, ok := futures.queue.Dequeue()
-
-	if !ok {
-		return nil
-	}
-
-	return sequence.NewValue(value)
+	return in
 }
 
 /*
@@ -478,24 +478,19 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		ticker, ok := out.(*kraken.FuturesTicker)
-
-		if !ok || ticker == nil {
-			return
-		}
-
 		mapped, err := event.Data.Map()
 
 		if err != nil {
 			futures.Error(errnie.Err(
-				errnie.Validation,
-				"futures: failed to map ticker",
+				errnie.UnprocessableContent,
+				"futures: failed to map ticker message",
 				err,
 			))
+
 			return
 		}
 
-		futures.queue.Enqueue(mapped)
+		futures.pipeline.Next(sequence.NewValue(mapped))
 		return
 
 	case "trade", "trade_snapshot":
@@ -508,24 +503,19 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 			return
 		}
 
-		trades, ok := out.(*kraken.FuturesTrade)
-
-		if !ok || trades == nil {
-			return
-		}
-
 		mapped, err := event.Data.Map()
 
 		if err != nil {
 			futures.Error(errnie.Err(
-				errnie.Validation,
-				"futures: failed to map ticker",
+				errnie.UnprocessableContent,
+				"futures: failed to map trade message",
 				err,
 			))
+
 			return
 		}
 
-		futures.queue.Enqueue(mapped)
+		futures.pipeline.Next(sequence.NewValue(mapped))
 		return
 	}
 }
@@ -536,17 +526,6 @@ the venue's futures rows can produce, none valued.
 */
 func (futures *FuturesLive) Register() *data.Measurement[float64] {
 	return data.NewMeasurement("futures", map[string]data.Metric[float64]{})
-}
-
-/*
-Pending reports the count of unprocessed rows waiting in the inbound queue.
-*/
-func (futures *FuturesLive) Pending() uint64 {
-	if futures == nil || futures.queue == nil {
-		return 0
-	}
-
-	return futures.queue.Length()
 }
 
 func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {

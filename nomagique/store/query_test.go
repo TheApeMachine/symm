@@ -25,15 +25,16 @@ func TestQueryNext(t *testing.T) {
 				receivedQuery = (*store.Query[*[]byte, float64])(ptr)
 			}
 
-			if count == 1 {
-				receivedVal = *(*float64)(ptr)
-			}
-
 			count++
 		}
 
-		So(count, ShouldEqual, 2)
+		So(count, ShouldEqual, 1)
 		So(receivedQuery, ShouldEqual, query)
+
+		for payload := range receivedQuery.Payload {
+			receivedVal = *(*float64)(payload)
+		}
+
 		So(receivedVal, ShouldEqual, 42.0)
 	})
 }

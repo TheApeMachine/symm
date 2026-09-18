@@ -8,12 +8,12 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/statistic/correlation"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/shared"
 )
 
 /*
@@ -25,28 +25,6 @@ type Ticker struct {
 }
 
 func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], measured, reference string) *Ticker {
-	symbolLast := [][]string{
-		{"ticker", "data", "symbol"},
-		{"ticker", "data", "last"},
-	}
-	symbolLastTime := [][]string{
-		{"ticker", "data", "symbol"},
-		{"ticker", "data", "last"},
-		{"ticker", "data", "timestamp"},
-	}
-
-	register := func(conn *transport.Conn[*geometry.Coordinate], interests [][]string) {
-		sequence.Read[core.Connectable[*geometry.Coordinate]](
-			nomagique.NewNumber(
-				sequence.NewValues(interests),
-				core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-					conn, core.Identify,
-				),
-				grid,
-			).Next(nil),
-		)
-	}
-
 	lastHold := store.NewRetained[float64]()
 	lastStages := []core.Primitive{nmcorrelation.NewTick(), nmcorrelation.NewLastPrice(), lastHold}
 
@@ -60,7 +38,7 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], meas
 	}
 
 	lastPrice := transport.NewConn[*geometry.Coordinate](nomagique.NewNumber(lastStages...))
-	register(lastPrice, symbolLast)
+	shared.Register(grid, lastPrice, shared.SymbolLast)
 
 	if measured != "" && reference != "" {
 		hold := func(extractor core.Primitive) (*transport.Conn[*geometry.Coordinate], core.Primitive) {
@@ -91,15 +69,15 @@ func NewTicker(ctx context.Context, grid *store.Grid[*geometry.Coordinate], meas
 				store.NewRetained[float64](),
 			),
 		)
-		register(ingress, symbolLastTime)
-		register(contemporaneous, nil)
-		register(best, nil)
-		register(index, nil)
-		register(gain, nil)
-		register(fraction, nil)
-		register(search, nil)
-		register(prominence, nil)
-		register(curvature, nil)
+		shared.Register(grid, ingress, shared.SymbolLastTime)
+		shared.Register(grid, contemporaneous, nil)
+		shared.Register(grid, best, nil)
+		shared.Register(grid, index, nil)
+		shared.Register(grid, gain, nil)
+		shared.Register(grid, fraction, nil)
+		shared.Register(grid, search, nil)
+		shared.Register(grid, prominence, nil)
+		shared.Register(grid, curvature, nil)
 	}
 
 	ticker := &Ticker{grid: grid}

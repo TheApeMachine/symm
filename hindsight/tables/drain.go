@@ -99,14 +99,9 @@ func (drain *Drain) flushQueue(writer *Writer) {
 		}
 		drain.pending.Add(-1)
 
-		// 1. Direct Measurement
-		if meas, ok := (*(*any)(item)).(*data.Measurement[float64]); ok {
-			writer.Add(meas.Source, meas)
-			continue
-		}
-
-		// 2. Evaluation from Training System
-		if eval, ok := (*(*any)(item)).(*cognition.Evaluation); ok {
+		// Evaluation from Training System
+		eval := (*cognition.Evaluation)(item)
+		if eval != nil {
 			meas := data.NewMeasurement("training", map[string]data.Metric[float64]{
 				"surprisal":  data.NewMetric[float64]("surprisal", data.UnitNat, data.TimescaleInstantaneous, 0, 1).Write(eval.Surprisal),
 				"ambiguity":  data.NewMetric[float64]("ambiguity", data.UnitDimensionless, data.TimescaleInstantaneous, 0, 1).Write(eval.Ambiguity),

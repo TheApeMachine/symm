@@ -7,8 +7,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/signal/quote"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -39,8 +39,17 @@ func push(grid *store.Grid[*geometry.Coordinate], data kraken.TickerData) {
 	query := core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
 		nil, core.Execute,
 	)
+	pipeline := nomagique.NewNumber(query, grid)
 
-	for range grid.Next(query.Next(quote.NewTicker().Next(sequence.NewValue(data)))) {
+	for range pipeline.Next(sequence.NewValue(map[string]any{
+		"ticker": map[string]any{
+			"data": map[string]any{
+				"symbol":    data.Symbol,
+				"last":      data.Last.Float64(),
+				"timestamp": data.Timestamp.UnixNano(),
+			},
+		},
+	})) {
 	}
 }
 

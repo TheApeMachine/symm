@@ -42,7 +42,7 @@ func (conn *Conn[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			stream = conn.member.Next(in)
 		}
 
-		if conn.peer != nil {
+		if in != nil && conn.peer != nil {
 			stream = conn.peer.Next(stream)
 		}
 
