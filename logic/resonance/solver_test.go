@@ -244,7 +244,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 			}
 			So(hasNonZeroLatent, ShouldBeTrue)
 
-			wire := lastArtifact.EncodeWire(false)
+			wire := lastArtifact.EncodeWire(true)
 			So(wire, ShouldNotBeNil)
 			So(len(wire.Latent), ShouldEqual, len(lastArtifact.Snapshot.Latent))
 			So(len(wire.Layers), ShouldEqual, len(lastArtifact.Snapshot.Layers))

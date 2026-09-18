@@ -32,6 +32,25 @@ export const Decisions = () => {
 
 		for (const frame of frames) {
 			if (typeof frame?.decisionsLength !== "function") {
+				if (Array.isArray(frame?.decisions)) {
+					for (const dec of frame.decisions) {
+						const symbol = dec.symbol ?? "";
+						if (!symbol) continue;
+
+						merged.set(symbol, {
+							id: dec.id ?? `dec-${symbol}`,
+							symbol,
+							action: dec.action ?? "—",
+							confidence:
+								typeof dec.confidence === "number"
+									? dec.confidence
+									: typeof dec.confidence === "function"
+										? dec.confidence()
+										: 0,
+							reason: dec.reason ?? "No rejection reason published",
+						});
+					}
+				}
 				continue;
 			}
 

@@ -1,186 +1,208 @@
 package ui
 
 import (
+	"bytes"
 	"context"
-	"encoding/binary"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
-	"unsafe"
 
+	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/nomagique/physics/sensorium"
-	"github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
-	"golang.design/x/lockfree/lf"
 )
 
-func TestFluidRTCPublish(t *testing.T) {
-	Convey("Given a FluidRTC server with a connected viewer peer", t, func() {
-		originalRoute := types.Route()
-		types.SetRoute("fluid")
-		defer types.SetRoute(originalRoute)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-
-		server := NewFluidRTC(ctx, "test-server")
-		defer server.Close()
-
-		fake := &fakeFluidTransport{}
-		channel := testFluidChannel(fake)
-		channel.label = types.ManifoldChannel
-		channel.start()
-
-		peer := &fluidPeer{
-			ctx:           ctx,
-			bufferedLimit: 64 * fluidSegmentSize,
-			channels: map[string]*fluidChannel{
-				types.ManifoldChannel: channel,
-			},
-		}
-		pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
-		So(err, ShouldBeNil)
-		server.add(pc, peer)
-
-		Convey("server reports that it wants manifold frames", func() {
-			So(server.Wants(types.ManifoldChannel), ShouldBeTrue)
-
-			// Publish a full 64x64x64 manifold state (~7.3MB, ~449 chunks)
-			dim := 64
-			state := &types.ManifoldState{
-				Version:     1,
-				At:          time.Now(),
-				GridX:       dim,
-				GridY:       dim,
-				GridZ:       dim,
-				GridSpacing: 1.0,
-				MomRho:      make([]float32, dim*dim*dim*4),
-				FieldEnergy: make([]float32, dim*dim*dim),
-				WaveReal:    make([]float32, dim*dim*dim),
-				WaveImag:    make([]float32, dim*dim*dim),
-				Reading: sensorium.Reading{
-					CoherenceMag2: 0.5,
-				},
-			}
-
-			state.MomRho[len(state.MomRho)-1] = 2
-			state.FieldEnergy[len(state.FieldEnergy)-1] = 3
-			state.WaveReal[len(state.WaveReal)-1] = 4
-			state.WaveImag[len(state.WaveImag)-1] = -5
-
-			server.Publish(state)
-
-			// Give the sender goroutine a moment to finish transmitting all chunks
-			for i := 0; i < 200; i++ {
-				if fake.segmentCount() > 0 && channel.idle() {
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-
-			totalSegments := fake.segmentCount()
-			So(totalSegments, ShouldBeGreaterThan, 400)
-
-			// Verify first chunk header
-			firstChunk := fake.segments[0]
-			So(len(firstChunk), ShouldBeGreaterThanOrEqualTo, 16)
-			So(string(firstChunk[:4]), ShouldEqual, "SFD1")
-
-			totalChunks := binary.LittleEndian.Uint32(firstChunk[12:16])
-			So(int(totalChunks), ShouldEqual, totalSegments)
-
-			var payload []byte
-			// Verify every chunk has valid header and sequential indices
-			for index, chunk := range fake.segments {
-				So(string(chunk[:4]), ShouldEqual, "SFD1")
-				chunkIndex := binary.LittleEndian.Uint32(chunk[8:12])
-				So(int(chunkIndex), ShouldEqual, index)
-				payload = append(payload, chunk[fluidChunkHeaderSize:]...)
-			}
-			message := telemetry.GetRootAsMessage(payload, 0).UnPack()
-			frame := message.Frame.Value.(*telemetry.ManifoldFrameT)
-			So(frame.GridX, ShouldEqual, dim)
-			So(frame.GridY, ShouldEqual, dim)
-			So(frame.GridZ, ShouldEqual, dim)
-			So(frame.GridSpacing, ShouldEqual, state.GridSpacing)
-			So(frame.MomRho, ShouldResemble, state.MomRho)
-			So(frame.FieldEnergy, ShouldResemble, state.FieldEnergy)
-			So(frame.WaveReal, ShouldResemble, state.WaveReal)
-			So(frame.WaveImag, ShouldResemble, state.WaveImag)
-
-		})
-	})
+/*
+webrtcFixture encapsulates shared test setup and lifecycle for WebRTC tests,
+ensuring constructor changes are localized to a single fixture owner.
+*/
+type webrtcFixture struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	hub    *Hub
+	rtc    *WebRTC
 }
 
-func TestFluidRTCRun(t *testing.T) {
-	Convey("Published owner state crosses an actual WebRTC data channel", t, func() {
-		originalRoute := types.Route()
-		types.SetRoute("fluid")
-		defer types.SetRoute(originalRoute)
+/*
+withWebRTC decorates GoConvey tests with a managed WebRTC and Hub fixture,
+following the GoConvey decorator and execution order conventions.
+*/
+func withWebRTC(t *testing.T, testFunc func(fx *webrtcFixture)) func() {
+	return func() {
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		defer cancel()
-		previous := viper.GetDuration("ui.websocket.learning_interval")
-		viper.Set("ui.websocket.learning_interval", time.Millisecond)
-		defer viper.Set("ui.websocket.learning_interval", previous)
-		server := NewFluidRTC(ctx, "loopback")
-		defer func() { So(server.Close(), ShouldBeNil) }()
-		settings := webrtc.SettingEngine{}
-		settings.SetIncludeLoopbackCandidate(true)
-		client, err := webrtc.NewAPI(webrtc.WithSettingEngine(settings)).NewPeerConnection(webrtc.Configuration{})
-		So(err, ShouldBeNil)
-		defer func() { So(client.Close(), ShouldBeNil) }()
-		ordered := false
-		retransmits := uint16(0)
-		channel, err := client.CreateDataChannel(types.ManifoldChannel, &webrtc.DataChannelInit{Ordered: &ordered, MaxRetransmits: &retransmits})
-		So(err, ShouldBeNil)
-		received := make(chan []byte, 1)
-		channel.OnMessage(func(message webrtc.DataChannelMessage) {
-			select {
-			case received <- message.Data:
-			default:
-			}
-		})
-		offer, err := client.CreateOffer(nil)
-		So(err, ShouldBeNil)
-		gathered := webrtc.GatheringCompletePromise(client)
-		So(client.SetLocalDescription(offer), ShouldBeNil)
-		select {
-		case <-gathered:
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
+		hub := NewHub(ctx, nil, nil, nil, nil)
+		hub.Transition(runtime.READY)
+
+		rtc := NewWebRTC(ctx, hub)
+
+		fx := &webrtcFixture{
+			ctx:    ctx,
+			cancel: cancel,
+			hub:    hub,
+			rtc:    rtc,
 		}
-		answer, err := server.Answer(*client.LocalDescription())
-		So(err, ShouldBeNil)
-		So(client.SetRemoteDescription(answer), ShouldBeNil)
-		state := &types.ManifoldState{Version: 7, At: time.Unix(100, 0), GridX: 1, GridY: 1, GridZ: 1,
-			GridSpacing: 1, MomRho: []float32{1, 2, 3, 4}, FieldEnergy: []float32{5}, WaveReal: []float32{6}, WaveImag: []float32{7}}
-		queue := lf.NewQueue[unsafe.Pointer]()
-		finished := make(chan error, 1)
-		go func() { finished <- server.Run(queue) }()
-		defer func() {
+
+		Reset(func() {
 			cancel()
-			So(<-finished, ShouldBeNil)
-		}()
-		// Repeated owner notifications also exercise latest-wins publication during negotiation.
-		tick := time.NewTicker(10 * time.Millisecond)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				t.Fatal("No decoded WebRTC frame: ", ctx.Err())
-			case <-tick.C:
-				var artifact any = state
-				queue.Enqueue(unsafe.Pointer(&artifact))
-			case packet := <-received:
-				So(string(packet[:4]), ShouldEqual, "SFD1")
-				So(binary.LittleEndian.Uint32(packet[12:16]), ShouldEqual, 1)
-				decoded := telemetry.GetRootAsMessage(packet[fluidChunkHeaderSize:], 0).UnPack()
-				frame := decoded.Frame.Value.(*telemetry.ManifoldFrameT)
-				So(frame.MomRho, ShouldResemble, state.MomRho)
-				So(frame.FieldEnergy, ShouldResemble, state.FieldEnergy)
-				return
-			}
-		}
+		})
+
+		testFunc(fx)
+	}
+}
+
+func (fx *webrtcFixture) newClient(dataChannelLabel string) (*webrtc.PeerConnection, *webrtc.DataChannel, chan string, chan struct{}) {
+	settings := webrtc.SettingEngine{}
+	settings.SetIncludeLoopbackCandidate(true)
+	settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+
+	client, err := webrtc.NewAPI(
+		webrtc.WithSettingEngine(settings),
+	).NewPeerConnection(webrtc.Configuration{})
+	So(err, ShouldBeNil)
+
+	ordered := false
+	retransmits := uint16(0)
+
+	channel, err := client.CreateDataChannel(
+		dataChannelLabel, &webrtc.DataChannelInit{
+			Ordered:        &ordered,
+			MaxRetransmits: &retransmits,
+		},
+	)
+	So(err, ShouldBeNil)
+
+	messages := make(chan string, 10)
+	opened := make(chan struct{}, 1)
+
+	channel.OnOpen(func() {
+		opened <- struct{}{}
 	})
+
+	channel.OnMessage(func(msg webrtc.DataChannelMessage) {
+		messages <- string(msg.Data)
+	})
+
+	return client, channel, messages, opened
+}
+
+func (fx *webrtcFixture) exchangeOffer(client *webrtc.PeerConnection) *http.Response {
+	offer, err := client.CreateOffer(nil)
+	So(err, ShouldBeNil)
+
+	gathered := webrtc.GatheringCompletePromise(client)
+	So(client.SetLocalDescription(offer), ShouldBeNil)
+
+	select {
+	case <-gathered:
+	case <-fx.ctx.Done():
+		So(fx.ctx.Err(), ShouldBeNil)
+	}
+
+	offerJSON, err := json.Marshal(client.LocalDescription())
+	So(err, ShouldBeNil)
+
+	req := httptest.NewRequest("POST", "/webrtc/manifold", bytes.NewReader(offerJSON))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := fx.hub.app.Test(req)
+	So(err, ShouldBeNil)
+
+	return resp
+}
+
+func TestWebRTC(t *testing.T) {
+	Convey("Feature: WebRTC Transport", t, withWebRTC(t, func(fx *webrtcFixture) {
+		Convey("Scenario: Client initiates peer connection with data channel", func() {
+			client, channel, messages, opened := fx.newClient(types.ManifoldChannel)
+			defer client.Close()
+
+			Convey("When the client posts an SDP offer to /webrtc/manifold", func() {
+				resp := fx.exchangeOffer(client)
+
+				Convey("Then the server responds with 200 OK containing an SDP answer", func() {
+					So(resp.StatusCode, ShouldEqual, 200)
+
+					var answer webrtc.SessionDescription
+					So(json.NewDecoder(resp.Body).Decode(&answer), ShouldBeNil)
+					So(answer.Type, ShouldEqual, webrtc.SDPTypeAnswer)
+					So(answer.SDP, ShouldNotBeEmpty)
+
+					Convey("And when the client accepts the answer, the data channel opens", func() {
+						So(client.SetRemoteDescription(answer), ShouldBeNil)
+
+						select {
+						case <-fx.ctx.Done():
+							t.Fatal("Timeout waiting for data channel to open")
+						case <-opened:
+							So(channel.ReadyState(), ShouldEqual, webrtc.DataChannelStateOpen)
+						}
+
+						Convey("And the server sends its greeting to the client", func() {
+							select {
+							case <-fx.ctx.Done():
+								t.Fatal("Timeout waiting for server greeting")
+							case greeting := <-messages:
+								So(greeting, ShouldEqual, "Hello from Go server 👋")
+							}
+						})
+
+						Convey("And the client can send a message back to the server", func() {
+							So(channel.SendText("Hello from Test Client"), ShouldBeNil)
+						})
+					})
+				})
+			})
+		})
+
+		Convey("Scenario: Client sends an invalid offer payload", func() {
+			Convey("When the request body contains invalid JSON", func() {
+				req := httptest.NewRequest("POST", "/webrtc/manifold", bytes.NewReader([]byte("not-json")))
+				req.Header.Set("Content-Type", "application/json")
+
+				resp, err := fx.hub.app.Test(req)
+				So(err, ShouldBeNil)
+
+				Convey("Then the server records the error and returns 400 Bad Request", func() {
+					So(resp.StatusCode, ShouldEqual, 400)
+					So(fx.rtc.Error(), ShouldNotBeNil)
+				})
+			})
+		})
+
+		Convey("Scenario: Trickle ICE candidate signaling", func() {
+			Convey("When a client sends a valid candidate to /candidate", func() {
+				candidateJSON, err := json.Marshal(webrtc.ICECandidateInit{
+					Candidate: "candidate:1 1 UDP 2130706431 127.0.0.1 50000 typ host",
+				})
+				So(err, ShouldBeNil)
+
+				req := httptest.NewRequest("POST", "/candidate", bytes.NewReader(candidateJSON))
+				req.Header.Set("Content-Type", "application/json")
+
+				resp, err := fx.hub.app.Test(req)
+				So(err, ShouldBeNil)
+
+				Convey("Then the server returns 200 OK", func() {
+					So(resp.StatusCode, ShouldEqual, 200)
+				})
+			})
+
+			Convey("When a client sends a malformed candidate", func() {
+				req := httptest.NewRequest("POST", "/candidate", bytes.NewReader([]byte("bad-candidate")))
+				req.Header.Set("Content-Type", "application/json")
+
+				resp, err := fx.hub.app.Test(req)
+				So(err, ShouldBeNil)
+
+				Convey("Then the server records the error and returns 400 Bad Request", func() {
+					So(resp.StatusCode, ShouldEqual, 400)
+					So(fx.rtc.Error(), ShouldNotBeNil)
+				})
+			})
+		})
+	}))
 }

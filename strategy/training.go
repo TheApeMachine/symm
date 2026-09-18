@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"iter"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
@@ -40,6 +41,7 @@ type Training[T interface {
 	comparable
 }] struct {
 	*runtime.System
+	mu       sync.Mutex
 	pipeline *nomagique.Number
 	gridTap  *GridTopologyCollector[T]
 	trie     *cognition.Trie
@@ -76,7 +78,20 @@ func NewTraining[T interface {
 Next evaluates the current owner-held metric publications in sequence order.
 */
 func (training *Training[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return training.pipeline.Next(in)
+	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
+		training.mu.Lock()
+		defer training.mu.Unlock()
+
+		for out := range training.pipeline.Next(in) {
+			if !yield(out) {
+				return
+			}
+		}
+	}
 }
 
 func (training *Training[T]) LatestTopology() *GridTopologySnapshot {

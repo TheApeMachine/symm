@@ -251,6 +251,10 @@ func main() {
 		}
 	}
 
+	defProducers, defUnresolved := scanDefinitionProducers(root)
+	producers = append(producers, defProducers...)
+	unresolved = append(unresolved, defUnresolved...)
+
 	rep := buildReport(producers, consumers, unresolved)
 
 	data, err := json.MarshalIndent(rep, "", "  ")
@@ -320,11 +324,11 @@ func scanLearnedConsumers(pkg *packages.Package, file *ast.File, relFile string)
 			}
 		}
 
-		if function.Name.Name == "Step" {
+		if function.Name.Name == "Step" || function.Name.Name == "Next" {
 			readsGrid := false
 			ast.Inspect(function.Body, func(node ast.Node) bool {
 				if sel, valid := node.(*ast.SelectorExpr); valid {
-					if sel.Sel.Name == "Read" {
+					if sel.Sel.Name == "Read" || sel.Sel.Name == "pipeline" {
 						readsGrid = true
 						return false
 					}
@@ -520,6 +524,264 @@ func scanProducers(pkg *packages.Package, file *ast.File, relFile string) ([]pro
 	}
 
 	return out, unresolved
+}
+
+var metricAliases = map[string]map[string]string{
+	"cvd": {
+		"tradeCount":    "trade_count",
+		"buyCount":      "trade_count:buy",
+		"sellCount":     "trade_count:sell",
+		"buyQty":        "executed_quantity:buy",
+		"sellQty":       "executed_quantity:sell",
+		"grossQty":      "gross_executed_quantity",
+		"netQty":        "net_executed_quantity",
+		"buyNotional":   "aggressive_notional:buy",
+		"sellNotional":  "aggressive_notional:sell",
+		"grossNotional": "gross_notional",
+		"netNotional":   "net_notional",
+		"meanNotional":  "mean_trade_notional",
+		"cvd":           "cumulative_volume_delta",
+		"cnd":           "cumulative_notional_delta",
+		"signedCount":   "signed_count_fraction",
+		"signedNet":     "signed_net_fraction",
+	},
+	"liquidity": {
+		"mid":         "midpoint",
+		"rel":         "relative_spread",
+		"bidBase":     "bid_depth_baseline",
+		"askBase":     "ask_depth_baseline",
+		"spreadBase":  "spread_baseline",
+		"bidRatio":    "bid_depth_ratio",
+		"askRatio":    "ask_depth_ratio",
+		"spreadRatio": "spread_ratio",
+		"bidDiv":      "bid_depth_divergence",
+		"askDiv":      "ask_depth_divergence",
+		"spreadDiv":   "spread_divergence",
+		"bidNoise":    "bid_depth_noise_scale",
+		"askNoise":    "ask_depth_noise_scale",
+		"spreadNoise": "spread_noise_scale",
+		"bidZ":        "bid_depth_zscore",
+		"askZ":        "ask_depth_zscore",
+		"spreadZ":     "spread_zscore",
+		"bidVel":      "bid_depth_velocity",
+		"askVel":      "ask_depth_velocity",
+		"spreadVel":   "spread_velocity",
+		"bidSNR":      "bid_depth_snr",
+		"askSNR":      "ask_depth_snr",
+		"spreadSNR":   "spread_snr",
+		"bidNotional": "bid_notional",
+		"askNotional": "ask_notional",
+		"twoSided":    "two_sided_liquidity",
+	},
+	"depthflow": {
+		"bidNotional":   "bid_depth_notional",
+		"askNotional":   "ask_depth_notional",
+		"notional":      "observed_notional",
+		"imbalance":     "book_imbalance",
+		"turnover":      "book_turnover",
+		"addedBid":      "bid_depth_added",
+		"addedAsk":      "ask_depth_added",
+		"removedBid":    "bid_depth_removed",
+		"removedAsk":    "ask_depth_removed",
+		"imbalanceBase": "book_imbalance_baseline",
+		"imbalanceZ":    "book_imbalance_zscore",
+	},
+	"hawkes": {
+		"rate":       "arrival_rate",
+		"buyRate":    "arrival_rate:buy",
+		"sellRate":   "arrival_rate:sell",
+		"buyFrac":    "arrival_fraction:buy",
+		"sellFrac":   "arrival_fraction:sell",
+		"lambda":     "conditional_intensity",
+		"lambdaBuy":  "conditional_intensity:buy",
+		"lambdaSell": "conditional_intensity:sell",
+		"radius":     "spectral_radius",
+	},
+	"leadlag": {
+		"contemporaneous": "contemporaneous_correlation",
+		"best":            "best_lag_correlation",
+		"index":           "best_lag_index",
+		"gain":            "absolute_correlation_gain",
+		"fraction":        "lag_fraction",
+		"prominence":      "lag_peak_prominence",
+		"curvature":       "lag_curvature",
+	},
+	"morphology": {
+		"concBid": "concentration:bid",
+		"concAsk": "concentration:ask",
+		"entBid":  "entropy:bid",
+		"entAsk":  "entropy:ask",
+		"change":  "shape_change",
+	},
+	"sentiment": {
+		"last":       "last_price",
+		"median":     "median_return",
+		"medianAbs":  "median_absolute_return",
+		"mad":        "return_mad",
+		"largest":    "largest_absolute_return",
+		"signed":     "signed_fraction",
+		"signedBase": "signed_fraction_baseline",
+		"signedZ":    "signed_fraction_zscore",
+	},
+	"toxicity": {
+		"matchedBid": "matched_qty:bid",
+		"matchedAsk": "matched_qty:ask",
+		"fillBid":    "fill_qty:bid",
+		"fillAsk":    "fill_qty:ask",
+		"fillBidF":   "fill_fraction:bid",
+		"fillAskF":   "fill_fraction:ask",
+		"retBid":     "retreated_qty:bid",
+		"retAsk":     "retreated_qty:ask",
+		"wdBid":      "withdrawn_qty:bid",
+		"wdAsk":      "withdrawn_qty:ask",
+		"repBid":     "replenished_qty:bid",
+		"repAsk":     "replenished_qty:ask",
+		"retBidF":    "retreat_fraction:bid",
+		"retAskF":    "retreat_fraction:ask",
+		"wdBidF":     "withdraw_fraction:bid",
+		"wdAskF":     "withdraw_fraction:ask",
+	},
+	"derivatives": {
+		"last":        "derivative_price",
+		"index":       "reference_price",
+		"oi":          "open_interest",
+		"basisVal":    "basis_value",
+		"logBasis":    "log_basis",
+		"basisBase":   "basis_baseline",
+		"basisZ":      "basis_zscore",
+		"oiChange":    "open_interest_change",
+		"oiGrowth":    "open_interest_growth",
+		"gap":         "return_gap",
+		"gross":       "gross_notional",
+		"buy":         "liquidation_notional:buy",
+		"sell":        "liquidation_notional:sell",
+		"liqGross":    "gross_liquidation_notional",
+		"net":         "net_liquidation_notional",
+		"share":       "liquidation_share",
+		"signed":      "liquidation_signed",
+	},
+	"pumpdump": {
+		"mid":          "midpoint",
+		"rel":          "relative_spread",
+		"base":         "spread_baseline",
+		"ratio":        "spread_ratio",
+		"div":          "spread_divergence",
+		"zscore":       "spread_zscore",
+		"qty":          "trade_quantity",
+		"notional":     "trade_notional",
+		"interval":     "trade_interval",
+		"target":       "bar_target",
+		"barQty":       "bar_quantity",
+		"barNotional":  "bar_notional",
+		"barCount":     "bar_trade_count",
+		"duration":     "bar_duration",
+		"volumeRate":   "volume_rate",
+		"notionalRate": "notional_rate",
+		"tradeRate":    "trade_rate",
+		"completed":    "completed_bars",
+		"rateBase":     "notional_rate_baseline",
+		"rateRatio":    "notional_rate_ratio",
+		"rateDiv":      "notional_rate_divergence",
+		"rateZ":        "notional_rate_zscore",
+	},
+	"correlation": {
+		"lastPrice": "last_price",
+	},
+}
+
+func scanDefinitionProducers(root string) ([]producer, []unresolvedOut) {
+	var producers []producer
+	var unresolved []unresolvedOut
+
+	defDir := filepath.Join(root, "signal", "definitions")
+	entries, err := os.ReadDir(defDir)
+
+	if err != nil {
+		return nil, nil
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		filePath := filepath.Join(defDir, entry.Name())
+		relFile := filepath.Join("signal", "definitions", entry.Name())
+		data, err := os.ReadFile(filePath)
+
+		if err != nil {
+			continue
+		}
+
+		var def struct {
+			ID     string `json:"id"`
+			Source string `json:"source"`
+			Nodes  map[string]struct {
+				ID        string                    `json:"id"`
+				Type      string                    `json:"type"`
+				InputData map[string]map[string]any `json:"inputData"`
+			} `json:"nodes"`
+		}
+
+		if err := json.Unmarshal(data, &def); err != nil {
+			unresolved = append(unresolved, unresolvedOut{
+				Package: "github.com/theapemachine/symm/signal",
+				File:    relFile,
+				Line:    1,
+				Reason:  fmt.Sprintf("failed to parse flume json: %v", err),
+			})
+
+			continue
+		}
+
+		source := def.Source
+
+		if idx := strings.IndexByte(source, ':'); idx >= 0 {
+			source = source[:idx]
+		}
+
+		for nodeID, node := range def.Nodes {
+			if node.Type != "sink" && node.Type != "builtin.sink" {
+				continue
+			}
+
+			metricName := ""
+
+			if node.InputData != nil {
+				if cfg, ok := node.InputData["_config"]; ok {
+					if m, ok := cfg["metric"].(string); ok {
+						metricName = m
+					}
+				}
+			}
+
+			if metricName == "" {
+				metricName = strings.TrimPrefix(nodeID, "sink_")
+			}
+
+			producers = append(producers, producer{
+				ID:       splitMetricIdentity(source, metricName),
+				Package:  "github.com/theapemachine/symm/signal",
+				File:     relFile,
+				Line:     1,
+				Resolved: true,
+			})
+
+			if aliasMap, foundSource := metricAliases[source]; foundSource {
+				if alias, foundAlias := aliasMap[metricName]; foundAlias {
+					producers = append(producers, producer{
+						ID:       splitMetricIdentity(source, alias),
+						Package:  "github.com/theapemachine/symm/signal",
+						File:     relFile,
+						Line:     1,
+						Resolved: true,
+					})
+				}
+			}
+		}
+	}
+
+	return producers, unresolved
 }
 
 /*

@@ -3,6 +3,7 @@ package geometry
 import (
 	"iter"
 	"math"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -16,6 +17,7 @@ Hot spots emerge around cells with high maturity/SNR authority.
 */
 type Relaxation struct {
 	*core.PrimitiveError
+	mu        sync.Mutex
 	positions map[core.Primitive][2]float64
 }
 
@@ -49,6 +51,7 @@ func (relaxation *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 				continue
 			}
 
+			relaxation.mu.Lock()
 			if _, exists := relaxation.positions[edge.Left]; !exists {
 				initX, initY := 0.0, 0.0
 				if coord, ok := edge.Left.(*Coordinate); ok {
@@ -67,6 +70,7 @@ func (relaxation *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 
 			leftPos := relaxation.positions[edge.Left]
 			rightPos := relaxation.positions[edge.Right]
+			relaxation.mu.Unlock()
 
 			strength := 0.0
 			for ptr := range edge.Weight.Next(nil) {
@@ -94,8 +98,10 @@ func (relaxation *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 				rightPos[0] -= force * deltaX * 0.5
 				rightPos[1] -= force * deltaY * 0.5
 
+				relaxation.mu.Lock()
 				relaxation.positions[edge.Left] = leftPos
 				relaxation.positions[edge.Right] = rightPos
+				relaxation.mu.Unlock()
 			}
 
 			if !yield(unsafe.Pointer(edge)) {

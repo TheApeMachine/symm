@@ -23,13 +23,9 @@ import (
 func newHubConnection(testingContext testing.TB) (*Hub, *websocket.Conn) {
 	testingContext.Helper()
 	ctx, cancel := context.WithCancel(testingContext.Context())
-	hub := NewHub(ctx, nil, nil)
+	hub := NewHub(ctx, nil, nil, nil, nil)
 	testingContext.Cleanup(func() {
 		cancel()
-
-		if err := hub.Fluid.Close(); err != nil {
-			testingContext.Error(err)
-		}
 
 		if err := hub.Close(); err != nil {
 			testingContext.Error(err)
@@ -155,8 +151,7 @@ func TestHubRegisterSignals(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(len(signals), ShouldEqual, 15)
 
-		hub := NewHub(ctx, nil, nil)
-		hub.RegisterSignals(signals)
+		hub := NewHub(ctx, nil, nil, nil, nil)
 		hub.Transition(runtime.READY)
 
 		eval := &cognition.Evaluation{

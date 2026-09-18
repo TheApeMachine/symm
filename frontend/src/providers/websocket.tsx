@@ -11,6 +11,7 @@ import {
 	RingBuffer,
 	routeAtom,
 	signals,
+	strategyStore,
 	symbolsAtom,
 	tickCountAtom,
 	updateClock,
@@ -81,6 +82,37 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 				[symbol]: row.unpack(),
 			}));
 			touched.add(source);
+			continue;
+		}
+
+		if (source === "decision" || source === "strategy") {
+			let action = "wait";
+			let reason = "attractor transition basin";
+			let confidence = row.snr();
+
+			const metricCount = row.metricsLength();
+			for (let mi = 0; mi < metricCount; mi++) {
+				const met = row.metrics(mi);
+				if (!met) continue;
+				const name = met.name();
+				if (name === "action") {
+					action = met.unit() || "wait";
+				} else if (name === "reason") {
+					reason = met.unit() || "attractor transition basin";
+				} else if (name === "confidence") {
+					confidence = met.raw();
+				}
+			}
+
+			strategyStore.setState(() => [{
+				decisions: [{
+					id: `dec-${symbol}`,
+					symbol,
+					action,
+					confidence,
+					reason,
+				}],
+			}]);
 			continue;
 		}
 

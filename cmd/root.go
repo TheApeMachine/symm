@@ -117,6 +117,7 @@ var (
 
 			hub := ui.NewHub(ctx, nil, catalog)
 			hub.Run()
+			hub.Transition(nmruntime.READY)
 
 			drain := tables.NewDrain(ctx, catalog, epoch)
 
@@ -232,7 +233,7 @@ var (
 				connection.Transition(nmruntime.READY)
 			}
 
-			for _, transport := range []nmruntime.RuntimeSystem{public, private, futures} {
+			for _, transport := range []nmruntime.RuntimeSystem{hub, public, private, futures} {
 				transport.Transition(nmruntime.READY)
 			}
 

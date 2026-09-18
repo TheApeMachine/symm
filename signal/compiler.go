@@ -104,6 +104,56 @@ func Compile(
 	return signal, nil
 }
 
+var metricCoordCounter atomic.Int64
+
+type metricSink struct {
+	*core.PrimitiveError
+	coord    *geometry.Coordinate
+	retained *store.Retained[float64]
+}
+
+func newMetricSink(coord *geometry.Coordinate, retained *store.Retained[float64]) *metricSink {
+	return &metricSink{
+		PrimitiveError: core.NewPrimitiveError(),
+		coord:          coord,
+		retained:       retained,
+	}
+}
+
+func (sink *metricSink) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			for ptr := range sink.retained.Next(nil) {
+				if !yield(ptr) {
+					return
+				}
+			}
+
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			val := *(*float64)(arriving)
+			one := func(yieldRet func(unsafe.Pointer) bool) {
+				yieldRet(arriving)
+			}
+
+			for range sink.retained.Next(one) {
+			}
+
+			obs := statistic.NewObservation[*geometry.Coordinate](sink.coord, val, 1.0, 1.0)
+
+			if !yield(unsafe.Pointer(obs)) {
+				return
+			}
+		}
+	}
+}
+
 type graphCompiler struct {
 	def       *Definition
 	signal    *Signal
@@ -217,8 +267,10 @@ func (c *graphCompiler) instantiateNode(nodeID string) (core.Primitive, error) {
 			c.signal.holds[metricName] = hold
 		}
 
-		c.instances[nodeID] = hold
-		return hold, nil
+		coord := geometry.NewCoordinate(int(metricCoordCounter.Add(1)), 0)
+		sink := newMetricSink(coord, hold)
+		c.instances[nodeID] = sink
+		return sink, nil
 	}
 
 	// Resolve constructor connections (all incoming ports EXCEPT "in")

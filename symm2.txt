@@ -1,271 +1,4 @@
-= (*AugmentInput)(arriving)
-
-			if len(input.Left) != len(input.Right) {
-				augment.Error(core.ErrShape)
-				return
-			}
-
-			augment.out = make([][]float64, len(input.Left))
-
-			for index, left := range input.Left {
-				joined := make([]float64, 0, len(left)+len(input.Right[index]))
-				joined = append(joined, left...)
-				joined = append(joined, input.Right[index]...)
-				augment.out[index] = joined
-			}
-
-			if !yield(unsafe.Pointer(&augment.out)) {
-				return
-			}
-		}
-	}
-}
-
----
-
----
-File: /nomagique/arithmetic/column.go
----
-
-package arithmetic
-
-import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-/*
-Column arranges a scalar run as an n-by-one matrix.
-*/
-type Column struct {
-	*core.PrimitiveError
-
-	out [][]float64
-}
-
-func NewColumn() *Column {
-	return &Column{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (column *Column) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		var values []float64
-
-		for arriving := range in {
-			values = append(values, *(*float64)(arriving))
-		}
-
-		column.out = make([][]float64, len(values))
-
-		for index, value := range values {
-			column.out[index] = []float64{value}
-		}
-
-		if !yield(unsafe.Pointer(&column.out)) {
-			return
-		}
-	}
-}
-
----
-
----
-File: /nomagique/arithmetic/design.go
----
-
-package arithmetic
-
-import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-/*
-Design selects configured feature positions and prepends the affine intercept.
-Its output is a design vector; it does not fit or predict.
-*/
-type Design struct {
-	*core.PrimitiveError
-
-	indices []int
-	out     []float64
-}
-
-func NewDesign(indices ...int) *Design {
-	return &Design{PrimitiveError: core.NewPrimitiveError(), indices: indices}
-}
-
-func (design *Design) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			features := *(*[]float64)(arriving)
-
-			if len(design.indices) == 0 {
-				design.out = make([]float64, 0, len(features)+1)
-				design.out = append(design.out, 1.0)
-				design.out = append(design.out, features...)
-			} else {
-				design.out = make([]float64, 0, len(design.indices)+1)
-				design.out = append(design.out, 1.0)
-
-				for _, idx := range design.indices {
-					if idx < 0 || idx >= len(features) {
-						design.Error(core.ErrShape)
-						return
-					}
-
-					design.out = append(design.out, features[idx])
-				}
-			}
-
-			if !yield(unsafe.Pointer(&design.out)) {
-				return
-			}
-		}
-	}
-}
-
----
-
----
-File: /nomagique/arithmetic/determinant.go
----
-
-package arithmetic
-
-import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-/*
-Matrix2 is the four entries of a 2-by-2 matrix.
-*/
-type Matrix2 struct {
-	A, B, C, D float64
-}
-
-/*
-Determinant2 owns ad − bc.
-*/
-type Determinant2 struct {
-	*core.PrimitiveError
-
-	out float64
-}
-
-func NewDeterminant2() *Determinant2 {
-	return &Determinant2{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (determinant2 *Determinant2) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			m := *(*Matrix2)(arriving)
-			determinant2.out = m.A*m.D - m.B*m.C
-
-			if !yield(unsafe.Pointer(&determinant2.out)) {
-				return
-			}
-		}
-	}
-}
-
----
-
----
-File: /nomagique/arithmetic/diagonal.go
----
-
-package arithmetic
-
-import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-/*
-Diagonal selects row i's member i. An undersized row is a shape error.
-*/
-type Diagonal struct {
-	*core.PrimitiveError
-
-	out []float64
-}
-
-func NewDiagonal() *Diagonal {
-	return &Diagonal{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (diagonal *Diagonal) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			rows := *(*[][]float64)(arriving)
-			diagonal.out = make([]float64, len(rows))
-			ok := true
-
-			for index, row := range rows {
-				if index >= len(row) {
-					diagonal.Error(core.ErrShape)
-					ok = false
-					break
-				}
-
-				diagonal.out[index] = row[index]
-			}
-
-			if !ok {
-				return
-			}
-
-			if !yield(unsafe.Pointer(&diagonal.out)) {
-				return
-			}
-		}
-	}
-}
-
----
-
----
-File: /nomagique/arithmetic/difference.go
----
-
-package arithmetic
-
-import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-/*
-Difference subtracts paired members. Unequal lengths are a shape error.
-*/
-type Difference struct {
-	*core.PrimitiveError
-
-	out []float64
-}
-
-func NewDifference() *Difference {
-	return &Difference{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (difference *Difference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
+nge in {
 			pair := (*Pair)(arriving)
 
 			if len(pair.Left) != len(pair.Right) {
@@ -9027,6 +8760,7 @@ package geometry
 import (
 	"iter"
 	"math"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -9040,6 +8774,7 @@ Hot spots emerge around cells with high maturity/SNR authority.
 */
 type Relaxation struct {
 	*core.PrimitiveError
+	mu        sync.Mutex
 	positions map[core.Primitive][2]float64
 }
 
@@ -9073,6 +8808,7 @@ func (relaxation *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 				continue
 			}
 
+			relaxation.mu.Lock()
 			if _, exists := relaxation.positions[edge.Left]; !exists {
 				initX, initY := 0.0, 0.0
 				if coord, ok := edge.Left.(*Coordinate); ok {
@@ -9091,6 +8827,7 @@ func (relaxation *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 
 			leftPos := relaxation.positions[edge.Left]
 			rightPos := relaxation.positions[edge.Right]
+			relaxation.mu.Unlock()
 
 			strength := 0.0
 			for ptr := range edge.Weight.Next(nil) {
@@ -9118,8 +8855,10 @@ func (relaxation *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 				rightPos[0] -= force * deltaX * 0.5
 				rightPos[1] -= force * deltaY * 0.5
 
+				relaxation.mu.Lock()
 				relaxation.positions[edge.Left] = leftPos
 				relaxation.positions[edge.Right] = rightPos
+				relaxation.mu.Unlock()
 			}
 
 			if !yield(unsafe.Pointer(edge)) {
@@ -56063,9 +55802,18 @@ func (sympathy *Sympathy[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 			}
 
 			observation := (*Observation[T])(arriving)
+
+			if observation == nil || any(observation.Address) == nil {
+				continue
+			}
+
 			targetIndex := -1
 
 			for index, heldAddress := range sympathy.addresses {
+				if any(heldAddress) == nil {
+					continue
+				}
+
 				if !heldAddress.Less(observation.Address) && !observation.Address.Less(heldAddress) {
 					targetIndex = index
 					break
@@ -60145,6 +59893,9 @@ package signal
 import (
 	"context"
 	"fmt"
+	"iter"
+	"sync/atomic"
+	"unsafe"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -60152,6 +59903,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime/catalog"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/signal/shared"
@@ -60240,6 +59992,56 @@ func Compile(
 	}
 
 	return signal, nil
+}
+
+var metricCoordCounter atomic.Int64
+
+type metricSink struct {
+	*core.PrimitiveError
+	coord    *geometry.Coordinate
+	retained *store.Retained[float64]
+}
+
+func newMetricSink(coord *geometry.Coordinate, retained *store.Retained[float64]) *metricSink {
+	return &metricSink{
+		PrimitiveError: core.NewPrimitiveError(),
+		coord:          coord,
+		retained:       retained,
+	}
+}
+
+func (sink *metricSink) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			for ptr := range sink.retained.Next(nil) {
+				if !yield(ptr) {
+					return
+				}
+			}
+
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			val := *(*float64)(arriving)
+			one := func(yieldRet func(unsafe.Pointer) bool) {
+				yieldRet(arriving)
+			}
+
+			for range sink.retained.Next(one) {
+			}
+
+			obs := statistic.NewObservation[*geometry.Coordinate](sink.coord, val, 1.0, 1.0)
+
+			if !yield(unsafe.Pointer(obs)) {
+				return
+			}
+		}
+	}
 }
 
 type graphCompiler struct {
@@ -60355,8 +60157,10 @@ func (c *graphCompiler) instantiateNode(nodeID string) (core.Primitive, error) {
 			c.signal.holds[metricName] = hold
 		}
 
-		c.instances[nodeID] = hold
-		return hold, nil
+		coord := geometry.NewCoordinate(int(metricCoordCounter.Add(1)), 0)
+		sink := newMetricSink(coord, hold)
+		c.instances[nodeID] = sink
+		return sink, nil
 	}
 
 	// Resolve constructor connections (all incoming ports EXCEPT "in")
@@ -61177,12 +60981,10 @@ File: /strategy/topology.go
 package strategy
 
 import (
-	"fmt"
 	"iter"
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/geometry"
 )
@@ -61221,9 +61023,6 @@ func NewGridTopologyCollector[T core.Ordered[T]]() *GridTopologyCollector[T] {
 }
 
 func (c *GridTopologyCollector[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	fmt.Println("[grid topology collector debug] Next")
-	spew.Dump(in)
-
 	return func(yield func(unsafe.Pointer) bool) {
 		var edges []*geometry.Edge
 		for arriving := range in {
@@ -61362,6 +61161,7 @@ package strategy
 import (
 	"context"
 	"iter"
+	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
@@ -61399,6 +61199,7 @@ type Training[T interface {
 	comparable
 }] struct {
 	*runtime.System
+	mu       sync.Mutex
 	pipeline *nomagique.Number
 	gridTap  *GridTopologyCollector[T]
 	trie     *cognition.Trie
@@ -61435,7 +61236,20 @@ func NewTraining[T interface {
 Next evaluates the current owner-held metric publications in sequence order.
 */
 func (training *Training[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return training.pipeline.Next(in)
+	return func(yield func(unsafe.Pointer) bool) {
+		if in == nil {
+			return
+		}
+
+		training.mu.Lock()
+		defer training.mu.Unlock()
+
+		for out := range training.pipeline.Next(in) {
+			if !yield(out) {
+				return
+			}
+		}
+	}
 }
 
 func (training *Training[T]) LatestTopology() *GridTopologySnapshot {
@@ -62540,6 +62354,10 @@ func main() {
 		}
 	}
 
+	defProducers, defUnresolved := scanDefinitionProducers(root)
+	producers = append(producers, defProducers...)
+	unresolved = append(unresolved, defUnresolved...)
+
 	rep := buildReport(producers, consumers, unresolved)
 
 	data, err := json.MarshalIndent(rep, "", "  ")
@@ -62609,11 +62427,11 @@ func scanLearnedConsumers(pkg *packages.Package, file *ast.File, relFile string)
 			}
 		}
 
-		if function.Name.Name == "Step" {
+		if function.Name.Name == "Step" || function.Name.Name == "Next" {
 			readsGrid := false
 			ast.Inspect(function.Body, func(node ast.Node) bool {
 				if sel, valid := node.(*ast.SelectorExpr); valid {
-					if sel.Sel.Name == "Read" {
+					if sel.Sel.Name == "Read" || sel.Sel.Name == "pipeline" {
 						readsGrid = true
 						return false
 					}
@@ -62809,6 +62627,264 @@ func scanProducers(pkg *packages.Package, file *ast.File, relFile string) ([]pro
 	}
 
 	return out, unresolved
+}
+
+var metricAliases = map[string]map[string]string{
+	"cvd": {
+		"tradeCount":    "trade_count",
+		"buyCount":      "trade_count:buy",
+		"sellCount":     "trade_count:sell",
+		"buyQty":        "executed_quantity:buy",
+		"sellQty":       "executed_quantity:sell",
+		"grossQty":      "gross_executed_quantity",
+		"netQty":        "net_executed_quantity",
+		"buyNotional":   "aggressive_notional:buy",
+		"sellNotional":  "aggressive_notional:sell",
+		"grossNotional": "gross_notional",
+		"netNotional":   "net_notional",
+		"meanNotional":  "mean_trade_notional",
+		"cvd":           "cumulative_volume_delta",
+		"cnd":           "cumulative_notional_delta",
+		"signedCount":   "signed_count_fraction",
+		"signedNet":     "signed_net_fraction",
+	},
+	"liquidity": {
+		"mid":         "midpoint",
+		"rel":         "relative_spread",
+		"bidBase":     "bid_depth_baseline",
+		"askBase":     "ask_depth_baseline",
+		"spreadBase":  "spread_baseline",
+		"bidRatio":    "bid_depth_ratio",
+		"askRatio":    "ask_depth_ratio",
+		"spreadRatio": "spread_ratio",
+		"bidDiv":      "bid_depth_divergence",
+		"askDiv":      "ask_depth_divergence",
+		"spreadDiv":   "spread_divergence",
+		"bidNoise":    "bid_depth_noise_scale",
+		"askNoise":    "ask_depth_noise_scale",
+		"spreadNoise": "spread_noise_scale",
+		"bidZ":        "bid_depth_zscore",
+		"askZ":        "ask_depth_zscore",
+		"spreadZ":     "spread_zscore",
+		"bidVel":      "bid_depth_velocity",
+		"askVel":      "ask_depth_velocity",
+		"spreadVel":   "spread_velocity",
+		"bidSNR":      "bid_depth_snr",
+		"askSNR":      "ask_depth_snr",
+		"spreadSNR":   "spread_snr",
+		"bidNotional": "bid_notional",
+		"askNotional": "ask_notional",
+		"twoSided":    "two_sided_liquidity",
+	},
+	"depthflow": {
+		"bidNotional":   "bid_depth_notional",
+		"askNotional":   "ask_depth_notional",
+		"notional":      "observed_notional",
+		"imbalance":     "book_imbalance",
+		"turnover":      "book_turnover",
+		"addedBid":      "bid_depth_added",
+		"addedAsk":      "ask_depth_added",
+		"removedBid":    "bid_depth_removed",
+		"removedAsk":    "ask_depth_removed",
+		"imbalanceBase": "book_imbalance_baseline",
+		"imbalanceZ":    "book_imbalance_zscore",
+	},
+	"hawkes": {
+		"rate":       "arrival_rate",
+		"buyRate":    "arrival_rate:buy",
+		"sellRate":   "arrival_rate:sell",
+		"buyFrac":    "arrival_fraction:buy",
+		"sellFrac":   "arrival_fraction:sell",
+		"lambda":     "conditional_intensity",
+		"lambdaBuy":  "conditional_intensity:buy",
+		"lambdaSell": "conditional_intensity:sell",
+		"radius":     "spectral_radius",
+	},
+	"leadlag": {
+		"contemporaneous": "contemporaneous_correlation",
+		"best":            "best_lag_correlation",
+		"index":           "best_lag_index",
+		"gain":            "absolute_correlation_gain",
+		"fraction":        "lag_fraction",
+		"prominence":      "lag_peak_prominence",
+		"curvature":       "lag_curvature",
+	},
+	"morphology": {
+		"concBid": "concentration:bid",
+		"concAsk": "concentration:ask",
+		"entBid":  "entropy:bid",
+		"entAsk":  "entropy:ask",
+		"change":  "shape_change",
+	},
+	"sentiment": {
+		"last":       "last_price",
+		"median":     "median_return",
+		"medianAbs":  "median_absolute_return",
+		"mad":        "return_mad",
+		"largest":    "largest_absolute_return",
+		"signed":     "signed_fraction",
+		"signedBase": "signed_fraction_baseline",
+		"signedZ":    "signed_fraction_zscore",
+	},
+	"toxicity": {
+		"matchedBid": "matched_qty:bid",
+		"matchedAsk": "matched_qty:ask",
+		"fillBid":    "fill_qty:bid",
+		"fillAsk":    "fill_qty:ask",
+		"fillBidF":   "fill_fraction:bid",
+		"fillAskF":   "fill_fraction:ask",
+		"retBid":     "retreated_qty:bid",
+		"retAsk":     "retreated_qty:ask",
+		"wdBid":      "withdrawn_qty:bid",
+		"wdAsk":      "withdrawn_qty:ask",
+		"repBid":     "replenished_qty:bid",
+		"repAsk":     "replenished_qty:ask",
+		"retBidF":    "retreat_fraction:bid",
+		"retAskF":    "retreat_fraction:ask",
+		"wdBidF":     "withdraw_fraction:bid",
+		"wdAskF":     "withdraw_fraction:ask",
+	},
+	"derivatives": {
+		"last":        "derivative_price",
+		"index":       "reference_price",
+		"oi":          "open_interest",
+		"basisVal":    "basis_value",
+		"logBasis":    "log_basis",
+		"basisBase":   "basis_baseline",
+		"basisZ":      "basis_zscore",
+		"oiChange":    "open_interest_change",
+		"oiGrowth":    "open_interest_growth",
+		"gap":         "return_gap",
+		"gross":       "gross_notional",
+		"buy":         "liquidation_notional:buy",
+		"sell":        "liquidation_notional:sell",
+		"liqGross":    "gross_liquidation_notional",
+		"net":         "net_liquidation_notional",
+		"share":       "liquidation_share",
+		"signed":      "liquidation_signed",
+	},
+	"pumpdump": {
+		"mid":          "midpoint",
+		"rel":          "relative_spread",
+		"base":         "spread_baseline",
+		"ratio":        "spread_ratio",
+		"div":          "spread_divergence",
+		"zscore":       "spread_zscore",
+		"qty":          "trade_quantity",
+		"notional":     "trade_notional",
+		"interval":     "trade_interval",
+		"target":       "bar_target",
+		"barQty":       "bar_quantity",
+		"barNotional":  "bar_notional",
+		"barCount":     "bar_trade_count",
+		"duration":     "bar_duration",
+		"volumeRate":   "volume_rate",
+		"notionalRate": "notional_rate",
+		"tradeRate":    "trade_rate",
+		"completed":    "completed_bars",
+		"rateBase":     "notional_rate_baseline",
+		"rateRatio":    "notional_rate_ratio",
+		"rateDiv":      "notional_rate_divergence",
+		"rateZ":        "notional_rate_zscore",
+	},
+	"correlation": {
+		"lastPrice": "last_price",
+	},
+}
+
+func scanDefinitionProducers(root string) ([]producer, []unresolvedOut) {
+	var producers []producer
+	var unresolved []unresolvedOut
+
+	defDir := filepath.Join(root, "signal", "definitions")
+	entries, err := os.ReadDir(defDir)
+
+	if err != nil {
+		return nil, nil
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		filePath := filepath.Join(defDir, entry.Name())
+		relFile := filepath.Join("signal", "definitions", entry.Name())
+		data, err := os.ReadFile(filePath)
+
+		if err != nil {
+			continue
+		}
+
+		var def struct {
+			ID     string `json:"id"`
+			Source string `json:"source"`
+			Nodes  map[string]struct {
+				ID        string                    `json:"id"`
+				Type      string                    `json:"type"`
+				InputData map[string]map[string]any `json:"inputData"`
+			} `json:"nodes"`
+		}
+
+		if err := json.Unmarshal(data, &def); err != nil {
+			unresolved = append(unresolved, unresolvedOut{
+				Package: "github.com/theapemachine/symm/signal",
+				File:    relFile,
+				Line:    1,
+				Reason:  fmt.Sprintf("failed to parse flume json: %v", err),
+			})
+
+			continue
+		}
+
+		source := def.Source
+
+		if idx := strings.IndexByte(source, ':'); idx >= 0 {
+			source = source[:idx]
+		}
+
+		for nodeID, node := range def.Nodes {
+			if node.Type != "sink" && node.Type != "builtin.sink" {
+				continue
+			}
+
+			metricName := ""
+
+			if node.InputData != nil {
+				if cfg, ok := node.InputData["_config"]; ok {
+					if m, ok := cfg["metric"].(string); ok {
+						metricName = m
+					}
+				}
+			}
+
+			if metricName == "" {
+				metricName = strings.TrimPrefix(nodeID, "sink_")
+			}
+
+			producers = append(producers, producer{
+				ID:       splitMetricIdentity(source, metricName),
+				Package:  "github.com/theapemachine/symm/signal",
+				File:     relFile,
+				Line:     1,
+				Resolved: true,
+			})
+
+			if aliasMap, foundSource := metricAliases[source]; foundSource {
+				if alias, foundAlias := aliasMap[metricName]; foundAlias {
+					producers = append(producers, producer{
+						ID:       splitMetricIdentity(source, alias),
+						Package:  "github.com/theapemachine/symm/signal",
+						File:     relFile,
+						Line:     1,
+						Resolved: true,
+					})
+				}
+			}
+		}
+	}
+
+	return producers, unresolved
 }
 
 /*

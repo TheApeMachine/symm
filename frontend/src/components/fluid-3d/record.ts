@@ -27,10 +27,16 @@ export class FluidRecordReader {
 			throw new Error("fluid WebRTC chunk is shorter than its 16-byte header");
 		}
 
+		let isChunked = true;
 		for (let index = 0; index < RECORD_MAGIC.length; index += 1) {
 			if (bytes[index] !== RECORD_MAGIC[index]) {
-				throw new Error("fluid WebRTC chunk has an invalid SFD1 header");
+				isChunked = false;
+				break;
 			}
+		}
+
+		if (!isChunked) {
+			return message;
 		}
 
 		const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
