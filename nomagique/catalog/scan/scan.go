@@ -143,6 +143,24 @@ func collect(
 			retTypeName := namedType.Obj().Name()
 			
 			if primType, found := customTypes[retTypeName]; found {
+				params := make([]catalog.Param, signature.Params().Len())
+				injected := make([]string, 0)
+				for i := 0; i < signature.Params().Len(); i++ {
+					p := signature.Params().At(i)
+					pType := simplifyType(p.Type().String())
+					isVar := signature.Variadic() && i == signature.Params().Len()-1
+					params[i] = catalog.Param{
+						Name:     p.Name(),
+						Type:     pType,
+						Variadic: isVar,
+					}
+					if strings.Contains(pType, "context.Context") || strings.Contains(pType, "Config") {
+						injected = append(injected, pType)
+					}
+				}
+
+				stateful := function.Body != nil && len(function.Body.List) > 1
+
 				schema := describe(
 					loadedPackage.Name,
 					loadedPackage.PkgPath,
@@ -151,6 +169,9 @@ func collect(
 					primType.U,
 					signature.Params().Len(),
 					signature.TypeParams().Len(),
+					params,
+					stateful,
+					injected,
 				)
 				into[schema.Op] = schema
 			}
@@ -201,23 +222,29 @@ func describe(
 	outType string,
 	paramCount int,
 	typeParamCount int,
+	params []catalog.Param,
+	stateful bool,
+	injected []string,
 ) catalog.Schema {
 	thing := function.Name.Name
-	if after, ok :=strings.CutPrefix(thing, constructorStart); ok  {
+	if after, ok := strings.CutPrefix(thing, constructorStart); ok {
 		thing = after
 	}
 
 	schema := catalog.Schema{
-		Kind:           "primitive",
-		Category:       category,
-		Op:             category + "." + thing,
-		Name:           thing,
-		Label:          spaced(thing),
-		Description:    doc(function),
-		Package:        pkgPath,
-		Builder:        function.Name.Name,
-		ParamCount:     paramCount,
-		TypeParamCount: typeParamCount,
+		Kind:              "primitive",
+		Category:          category,
+		Op:                category + "." + thing,
+		Name:              thing,
+		Label:             spaced(thing),
+		Description:       doc(function),
+		Package:           pkgPath,
+		Builder:           function.Name.Name,
+		ParamCount:        paramCount,
+		TypeParamCount:    typeParamCount,
+		ConstructorParams: params,
+		Stateful:          stateful,
+		InjectedDeps:      injected,
 		Inputs: []catalog.Port{{
 			Name:        "in",
 			Type:        inType,

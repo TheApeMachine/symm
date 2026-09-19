@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -73,18 +74,20 @@ func (b *Builder) Interests() [][]string {
 }
 
 /*
-Compose dynamically wires the graph at runtime.
-It returns a single execution closure that runs the entire graph topologically.
+Compose dynamically wires the graph at runtime into a nomagique.Number pipeline.
+It returns an executable Number closure that runs the entire graph topologically.
 */
-func (b *Builder) Compose() (types.Value[any, any], error) {
+func (b *Builder) Compose() (nomagique.Number[any], error) {
 	instances := make(map[string]types.Value[any, any])
 	inDegree := make(map[string]int)
 	adjacency := make(map[string][]string)
 
 	// 1. Instantiate the nodes and build dependency graph
-	for id, node := range b.graph.Nodes {
+	for id := range b.graph.Nodes {
 		inDegree[id] = 0 // Initialize
+	}
 
+	for id, node := range b.graph.Nodes {
 		if factory, exists := Registry[node.Type]; exists {
 			instances[id] = factory()
 		}
@@ -124,8 +127,8 @@ func (b *Builder) Compose() (types.Value[any, any], error) {
 		return nil, fmt.Errorf("cycle detected in signal graph: %s", b.graph.Name)
 	}
 
-	// 3. Return the dynamic execution closure
-	return func(input any) any {
+	// 3. Return the dynamic execution Number pipeline
+	execPipeline := nomagique.NewNumber[any](func(input any) any {
 		state := make(map[string]any)
 
 		for id, node := range b.graph.Nodes {
@@ -177,5 +180,7 @@ func (b *Builder) Compose() (types.Value[any, any], error) {
 		}
 
 		return nil
-	}, nil
+	})
+
+	return execPipeline, nil
 }

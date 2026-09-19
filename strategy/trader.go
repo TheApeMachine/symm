@@ -42,17 +42,23 @@ type Trader struct {
 }
 
 func NewTrader(ctx context.Context, api *websocket.API, jsonPath string) *Trader {
+	return NewTraderWithWorkspace(ctx, api, runtime.NewWorkspace(ctx, "nomagique", jsonPath))
+}
+
+/*
+NewTraderWithWorkspace constructs a Trader with an already compiled nomagique Workspace.
+*/
+func NewTraderWithWorkspace(ctx context.Context, api *websocket.API, ws *runtime.Workspace) *Trader {
 	trader := &Trader{
 		System:    runtime.NewSystem(ctx, "trader"),
-		workspace: runtime.NewWorkspace(ctx, "nomagique", jsonPath),
+		workspace: ws,
 		desk:      broker.NewDesk(ctx, api),
 		positions: make(map[string]*broker.Position),
 	}
-	
-	
-	// Start consuming the dynamic JSON graph sink
+
+	// Start consuming the compiled JSON graph sink
 	go trader.listen()
-	
+
 	return trader
 }
 
@@ -92,6 +98,14 @@ func (trader *Trader) listen() {
 			}
 		case Action:
 			trader.OnAction("BTC/USD", s)
+		case map[string]any:
+			if actionStr, ok := s["action"].(string); ok {
+				symbol, _ := s["symbol"].(string)
+				if symbol == "" {
+					symbol = "BTC/USD"
+				}
+				trader.OnAction(symbol, Action(actionStr))
+			}
 		}
 	}
 }

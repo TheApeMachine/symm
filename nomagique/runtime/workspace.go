@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/compiler"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -22,8 +22,20 @@ topological order execution synchronously with zero allocations.
 */
 type Workspace struct {
 	*System
-	pipeline types.Value[any, any]
+	pipeline nomagique.Number[any]
 	sink     chan any // The output of the pipeline
+}
+
+/*
+NewWorkspaceWithPipeline initializes a workspace with an already compiled nomagique.Number pipeline.
+*/
+func NewWorkspaceWithPipeline(ctx context.Context, label string, pipeline nomagique.Number[any]) *Workspace {
+	workload := &Workspace{
+		pipeline: pipeline,
+		sink:     make(chan any, 1024),
+	}
+	workload.System = NewSystem(ctx, label, workload)
+	return workload
 }
 
 /*

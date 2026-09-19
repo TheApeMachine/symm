@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"iter"
 	"math"
 
 	"github.com/theapemachine/symm/nomagique/types"
@@ -11,9 +12,9 @@ NewClassification creates a Value closure that normalizes candidate masses, iden
 the winning class via argmax, finds the runner-up, and computes confidence and evidence contrast in bits.
 No structs, pure Value closure.
 */
-type Classification types.Value[func(func([]byte, float64, uint64) bool), func() (winner, runnerUp []byte, confidence, contrast float64, support uint64)]
+type Classification types.Value[func(func([]byte, float64, uint64) bool), Evaluation]
 func NewClassification() Classification {
-	return func(candidates func(func([]byte, float64, uint64) bool)) func() ([]byte, []byte, float64, float64, uint64) {
+	return func(candidates func(func([]byte, float64, uint64) bool)) Evaluation {
 		if candidates == nil {
 			return nil
 		}
@@ -66,8 +67,10 @@ func NewClassification() Classification {
 			contrast = math.Log2(winner.prob / highestOther)
 		}
 
-		return func() ([]byte, []byte, float64, float64, uint64) {
-			return winner.name, runnerUp, winner.prob, contrast, winner.support
+		return func() (
+			[]byte, []byte, float64, float64, uint64, float64, bool, float64, iter.Seq2[[]byte, float64],
+		) {
+			return winner.name, runnerUp, winner.prob, contrast, winner.support, 0, false, 0, nil
 		}
 	}
 }

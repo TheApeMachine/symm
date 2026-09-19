@@ -10,13 +10,35 @@ import (
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
+var (
+	defaultMemoryRoot, defaultStepCounter = NewMemory()
+)
+
 /*
-NewReinforce creates a Value closure that reinforces empirical basin (b/<context>/<class>)
-and sensory (s/<context>) weights into the immutable radix tree, advancing the monotonic
-step counter and yielding the active evaluation context bytes downstream.
-No structs, pure Value closure.
+Reinforce updates empirical basin and sensory weights with unit feedback and yields context bytes.
 */
-func NewReinforce(
+type Reinforce types.Value[[2][]byte, []byte]
+
+/*
+NewReinforce creates a parameterless Value closure that reinforces empirical basin
+and sensory weights into default memory, yielding the active evaluation context bytes downstream.
+*/
+func NewReinforce() Reinforce {
+	curried := NewReinforceWithMemory(defaultMemoryRoot, defaultStepCounter)
+	return func(assoc [2][]byte) []byte {
+		stepFn := curried(assoc)
+		if stepFn == nil {
+			return nil
+		}
+		return stepFn(core.Unit)
+	}
+}
+
+/*
+NewReinforceWithMemory creates a Value closure that reinforces empirical basin (b/<context>/<class>)
+and sensory (s/<context>) weights into the specified immutable radix tree.
+*/
+func NewReinforceWithMemory(
 	root *atomic.Pointer[iradix.Tree[[]byte]],
 	stepCounter *atomic.Uint64,
 ) types.Value[[2][]byte, types.Value[float64, []byte]] {

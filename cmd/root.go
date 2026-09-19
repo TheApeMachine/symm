@@ -17,15 +17,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/generated"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/catalog/scan"
-	"github.com/theapemachine/symm/nomagique/cognition"
-	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -72,15 +66,6 @@ var (
 
 			startPprof()
 
-			errnie.Info("Scanning primitives catalog...")
-			if schemas, err := scan.Tree("nomagique"); err == nil {
-				if err := scan.GenerateRegistry(schemas); err != nil {
-					errnie.Error(errnie.Err(errnie.IO, "cmd: update registry", err))
-				}
-			} else {
-				errnie.Error(errnie.Err(errnie.IO, "cmd: scan catalog", err))
-			}
-
 			// Everything started here implements *runtime.System, which allows you to pass
 			// a variadic amount of closers, and everything passes itself to that. There is
 			// thus no need to call a deferred Close method for anything.
@@ -113,127 +98,18 @@ var (
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
-			// The WebSocket feeds market data into the system
-			public := websocket.New(
-				ctx,
-				websocket.NewSimulator(),
-				false,
-				system.Cfg.WebSocket.Endpoints.Public,
-				nil, // Pipeline is now handled dynamically
-			)
-
-			private := websocket.New(
-				ctx,
-				websocket.NewSimulator(),
-				true,
-				system.Cfg.WebSocket.Endpoints.Private,
-				nil,
-			)
-
-			futures := websocket.NewFutures(
-				ctx,
-				system.Cfg.WebSocket.Endpoints.Futures,
-				nil,
-			)
-
-			api := websocket.NewAPI(
-				ctx, public, private, futures,
-			)
-
-			desk := broker.NewDesk(ctx, api)
-			trader := strategy.NewTrader(ctx, api, "training")
-
-			pipeline := func(in any) any {
-				trader.Workspace().Next(in)
-				return nil
+			deps := generated.Dependencies{
+				Context: ctx,
+				Config:  system.Cfg,
+				Catalog: catalog,
 			}
 
-			public.Connect(pipeline)
-			private.Connect(pipeline)
-			futures.Connect(pipeline)
-
-			hub := ui.NewHub(ctx, nil, catalog, trader, desk)
-			ui.NewWebRTC(ctx, hub, nil, nil)
-
-			trader.OnEvaluation(func(eval cognition.Evaluation) {
-				hub.BroadcastEvaluation(eval)
-			})
-
-			go func() {
-				if err := hub.Run(); err != nil {
-					errnie.Error(err)
-				}
-			}()
-
-			hub.Transition(nmruntime.READY)
-
-			instrument := broker.NewInstrument(api)
-			price := broker.NewPrice(ctx, api, instrument)
-			balance := broker.NewBalance(ctx, api)
-
-			if err := instrument.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: instrument registry failed during construction",
-					err,
-				))
+			sys, err := generated.NewTrainingSystem(deps)
+			if err != nil {
+				return errnie.Error(err)
 			}
 
-			if err := price.GetFees(instrument.Symbols()); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"[symm] initial fees are not available",
-					nil,
-				))
-			}
-
-			if price.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"[symm] initial price fees are not ready",
-					nil,
-				))
-			}
-
-			if balance.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"[symm] initial balance is not ready",
-					nil,
-				))
-			}
-
-			// Subscribe and seed while transports remain BUSY. Only a complete
-			// instrument universe and restored learner may open the workspace.
-			if err := instrument.Subscribe(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: subscribe to instrument universe",
-					err,
-				))
-			}
-
-			if instrument.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"symm: instrument universe is not seeded",
-					nil,
-				))
-			}
-
-			for _, connection := range private.Connections() {
-				connection.Transition(nmruntime.READY)
-			}
-
-			for _, transport := range []nmruntime.RuntimeSystem{hub, public, private, futures} {
-				transport.Transition(nmruntime.READY)
-			}
-
-			for ctx.Err() == nil {
-				time.Sleep(10 * time.Millisecond)
-			}
-
-			return nil
+			return sys.Run()
 		},
 	}
 )

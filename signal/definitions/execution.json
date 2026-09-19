@@ -1,0 +1,102 @@
+{
+  "id": "execution:stage",
+  "name": "execution:stage",
+  "nodes": {
+    "source": {
+      "id": "source",
+      "type": "data.Source",
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "decide",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "decide": {
+      "id": "decide",
+      "type": "execution.Decide",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "gate",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "gate": {
+      "id": "gate",
+      "type": "execution.Gate",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "decide",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "submit",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "submit": {
+      "id": "submit",
+      "type": "execution.Submit",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "gate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink": {
+      "id": "sink",
+      "type": "data.Sink",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "submit",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

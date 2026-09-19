@@ -9,14 +9,26 @@ import (
 )
 
 /*
-NewSurprisal creates a Value closure that computes the information-theoretic surprisal
-(-log2 P) in bits for an observed sensory context transition based on its measured occurrence frequency.
-No structs, pure Value closure.
+Surprisal computes the information-theoretic surprisal in bits.
 */
-func NewSurprisal(
+type Surprisal types.Value[[]byte, float64]
+
+/*
+NewSurprisal creates a parameterless Value closure that computes the information-theoretic surprisal
+(-log2 P) in bits for an observed sensory context transition based on default memory.
+*/
+func NewSurprisal() Surprisal {
+	return NewSurprisalWithMemory(defaultMemoryRoot, defaultStepCounter)
+}
+
+/*
+NewSurprisalWithMemory creates a Value closure that computes the information-theoretic surprisal
+for the specified memory pointers.
+*/
+func NewSurprisalWithMemory(
 	root *atomic.Pointer[iradix.Tree[[]byte]],
 	stepCounter *atomic.Uint64,
-) types.Value[[]byte, float64] {
+) Surprisal {
 	weightDecoder := NewWeight()
 
 	return func(context []byte) float64 {

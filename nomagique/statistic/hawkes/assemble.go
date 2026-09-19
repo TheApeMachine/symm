@@ -8,11 +8,11 @@ import (
 NewAssemble creates a Value closure that gathers trade inputs into one Hawkes Event.
 State and behavior are expressed directly as a Value closure with no struct overhead.
 */
-type Assemble types.Value[map[string]any, *Event]
+type Assemble types.Value[map[string]any, Event]
 func NewAssemble() Assemble {
-	return func(input map[string]any) *Event {
+	return func(input map[string]any) Event {
 		if input == nil {
-			return nil
+			return Event{}
 		}
 
 		trade, ok := input["trade"].(map[string]any)
@@ -27,7 +27,7 @@ func NewAssemble() Assemble {
 
 		side, _ := data["side"].(string)
 		if side != "buy" && side != "sell" {
-			return nil
+			return Event{}
 		}
 
 		symbol, _ := data["symbol"].(string)
@@ -39,7 +39,7 @@ func NewAssemble() Assemble {
 			at = int64(ts)
 		}
 
-		return &Event{
+		return Event{
 			Symbol: symbol,
 			Side:   side,
 			At:     at,

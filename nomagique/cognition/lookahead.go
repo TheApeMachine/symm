@@ -11,13 +11,23 @@ import (
 )
 
 /*
-NewLookahead creates a Value closure that explores forward continuation paths in the sensory tree.
-It follows only empirical branches observed in the store, scoring paths by cumulative log-probability.
-No structs, pure Value closure.
+Lookahead explores forward continuation paths in the sensory tree.
 */
-func NewLookahead(
+type Lookahead types.Value[[]byte, iter.Seq2[[]byte, float64]]
+
+/*
+NewLookahead creates a parameterless Value closure that explores forward continuation paths in the default sensory tree.
+*/
+func NewLookahead() Lookahead {
+	return NewLookaheadWithMemory(defaultMemoryRoot)
+}
+
+/*
+NewLookaheadWithMemory creates a Value closure that explores forward continuation paths in the specified sensory tree.
+*/
+func NewLookaheadWithMemory(
 	root *atomic.Pointer[iradix.Tree[[]byte]],
-) types.Value[[]byte, iter.Seq2[[]byte, float64]] {
+) Lookahead {
 	weightDecoder := NewWeight()
 
 	return func(prefix []byte) iter.Seq2[[]byte, float64] {

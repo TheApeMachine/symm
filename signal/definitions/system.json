@@ -1,0 +1,102 @@
+{
+  "id": "system:orchestration",
+  "name": "system:orchestration",
+  "nodes": {
+    "source": {
+      "id": "source",
+      "type": "data.Source",
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "signals",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "signals": {
+      "id": "signals",
+      "type": "pipeline.Signals",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "logic",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "logic": {
+      "id": "logic",
+      "type": "pipeline.Logic",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "signals",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "execution",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "execution": {
+      "id": "execution",
+      "type": "pipeline.Execution",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "logic",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink": {
+      "id": "sink",
+      "type": "data.Sink",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "execution",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

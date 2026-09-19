@@ -9,7 +9,9 @@ import (
 	associative "github.com/theapemachine/symm/nomagique/learning/associative"
 	calculus "github.com/theapemachine/symm/nomagique/calculus"
 	cognition "github.com/theapemachine/symm/nomagique/cognition"
+	cvd "github.com/theapemachine/symm/nomagique/statistic/cvd"
 	data "github.com/theapemachine/symm/nomagique/data"
+	execution "github.com/theapemachine/symm/nomagique/execution"
 	geometry "github.com/theapemachine/symm/nomagique/geometry"
 	hawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	probability "github.com/theapemachine/symm/nomagique/probability"
@@ -268,10 +270,22 @@ var Registry = map[string]func() types.Value[any, any]{
 			return closure(in.([]byte))
 		}
 	},
+	"cognition.Attractor": func() types.Value[any, any] {
+		closure := cognition.NewAttractor()
+		return func(in any) any {
+			return closure(in.([]byte))
+		}
+	},
 	"cognition.Classification": func() types.Value[any, any] {
 		closure := cognition.NewClassification()
 		return func(in any) any {
 			return closure(in.(func(func([]byte, float64, uint64) bool)))
+		}
+	},
+	"cognition.Lookahead": func() types.Value[any, any] {
+		closure := cognition.NewLookahead()
+		return func(in any) any {
+			return closure(in.([]byte))
 		}
 	},
 	"cognition.Pack": func() types.Value[any, any] {
@@ -280,10 +294,136 @@ var Registry = map[string]func() types.Value[any, any]{
 			return closure(in.([3]uint64))
 		}
 	},
+	"cognition.Reinforce": func() types.Value[any, any] {
+		closure := cognition.NewReinforce()
+		return func(in any) any {
+			return closure(in.([2][]byte))
+		}
+	},
+	"cognition.Surprisal": func() types.Value[any, any] {
+		closure := cognition.NewSurprisal()
+		return func(in any) any {
+			return closure(in.([]byte))
+		}
+	},
 	"cognition.Weight": func() types.Value[any, any] {
 		closure := cognition.NewWeight()
 		return func(in any) any {
 			return closure(in.([]byte))
+		}
+	},
+	"cvd.Assemble": func() types.Value[any, any] {
+		closure := cvd.NewAssemble()
+		return func(in any) any {
+			return closure(in.(map[string]any))
+		}
+	},
+	"cvd.BuyCount": func() types.Value[any, any] {
+		closure := cvd.NewBuyCount()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.BuyNotional": func() types.Value[any, any] {
+		closure := cvd.NewBuyNotional()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.BuyQty": func() types.Value[any, any] {
+		closure := cvd.NewBuyQty()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.CND": func() types.Value[any, any] {
+		closure := cvd.NewCND()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.CVD": func() types.Value[any, any] {
+		closure := cvd.NewCVD()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.Epoch": func() types.Value[any, any] {
+		closure := cvd.NewEpoch()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.Flow": func() types.Value[any, any] {
+		closure := cvd.NewFlow()
+		return func(in any) any {
+			return closure(in.(*cvd.Fill))
+		}
+	},
+	"cvd.GrossNotional": func() types.Value[any, any] {
+		closure := cvd.NewGrossNotional()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.GrossQty": func() types.Value[any, any] {
+		closure := cvd.NewGrossQty()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.MeanNotional": func() types.Value[any, any] {
+		closure := cvd.NewMeanNotional()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.NetNotional": func() types.Value[any, any] {
+		closure := cvd.NewNetNotional()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.NetQty": func() types.Value[any, any] {
+		closure := cvd.NewNetQty()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.SellCount": func() types.Value[any, any] {
+		closure := cvd.NewSellCount()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.SellNotional": func() types.Value[any, any] {
+		closure := cvd.NewSellNotional()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.SellQty": func() types.Value[any, any] {
+		closure := cvd.NewSellQty()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.SignedCount": func() types.Value[any, any] {
+		closure := cvd.NewSignedCount()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.SignedNet": func() types.Value[any, any] {
+		closure := cvd.NewSignedNet()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
+		}
+	},
+	"cvd.TradeCount": func() types.Value[any, any] {
+		closure := cvd.NewTradeCount()
+		return func(in any) any {
+			return closure(in.(cvd.Reading))
 		}
 	},
 	"data.Extract": func() types.Value[any, any] {
@@ -296,6 +436,24 @@ var Registry = map[string]func() types.Value[any, any]{
 		closure := data.NewQuality()
 		return func(in any) any {
 			return closure(in.(data.QualityFacts))
+		}
+	},
+	"execution.Decide": func() types.Value[any, any] {
+		closure := execution.NewDecide()
+		return func(in any) any {
+			return closure(in.(cognition.Evaluation))
+		}
+	},
+	"execution.Gate": func() types.Value[any, any] {
+		closure := execution.NewGate()
+		return func(in any) any {
+			return closure(in.(string))
+		}
+	},
+	"execution.Submit": func() types.Value[any, any] {
+		closure := execution.NewSubmit()
+		return func(in any) any {
+			return closure(in.(string))
 		}
 	},
 	"geometry.Intersection": func() types.Value[any, any] {

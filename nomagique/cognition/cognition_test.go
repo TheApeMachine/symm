@@ -10,8 +10,8 @@ import (
 func TestCognitionPipeline(t *testing.T) {
 	Convey("Given cognition zero-struct Value closures", t, func() {
 		root, stepCounter := cognition.NewMemory()
-		reinforce := cognition.NewReinforce(root, stepCounter)
-		attractor := cognition.NewAttractor(root)
+		reinforce := cognition.NewReinforceWithMemory(root, stepCounter)
+		attractor := cognition.NewAttractorWithMemory(root)
 		classifier := cognition.NewClassification()
 
 		Convey("An unseen context produces no evaluation", func() {
@@ -31,7 +31,7 @@ func TestCognitionPipeline(t *testing.T) {
 
 			So(classResult, ShouldNotBeNil)
 			
-			winner, _, confidence, _, support := classResult()
+			winner, _, confidence, _, support, _, _, _, _ := classResult()
 			So(string(winner), ShouldEqual, "enter")
 			So(confidence, ShouldEqual, 1.0)
 			So(support, ShouldEqual, 1)
@@ -46,7 +46,7 @@ func TestCognitionPipeline(t *testing.T) {
 			classResult := classifier(candidates)
 
 			So(classResult, ShouldNotBeNil)
-			winner, _, _, _, support := classResult()
+			winner, _, _, _, support, _, _, _, _ := classResult()
 			So(string(winner), ShouldEqual, "enter")
 			So(support, ShouldEqual, 2)
 		})
@@ -68,6 +68,28 @@ func TestCognitionPipeline(t *testing.T) {
 			So(third[0], ShouldNotBeNil)
 			So(string(third[0]), ShouldEqual, "r1")
 			So(string(third[1]), ShouldEqual, "r2")
+		})
+
+		Convey("Parameterless constructors operate on shared default memory", func() {
+			reinforce := cognition.NewReinforce()
+			attractor := cognition.NewAttractor()
+			surprisal := cognition.NewSurprisal()
+			lookahead := cognition.NewLookahead()
+
+			ctx := reinforce([2][]byte{[]byte("ctxA"), []byte("actA")})
+			So(string(ctx), ShouldEqual, "actA")
+
+			candidates := attractor([]byte("ctxA"))
+			So(candidates, ShouldNotBeNil)
+
+			s := surprisal([]byte("ctxA"))
+			So(s, ShouldBeGreaterThanOrEqualTo, 0)
+
+			count := 0
+			for range lookahead([]byte("ctxA")) {
+				count++
+			}
+			So(count, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }

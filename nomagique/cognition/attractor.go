@@ -10,14 +10,25 @@ import (
 )
 
 /*
-NewAttractor creates a Value closure that seeks matching attractor basin records
-in the radix trie under b/<context>/.
-It yields observed class candidates via a closure iterator, providing Name, Probability, and Support.
-No structs, pure Value closure.
+Attractor seeks matching attractor basin records in the radix trie.
 */
-func NewAttractor(
+type Attractor types.Value[[]byte, func(func([]byte, float64, uint64) bool)]
+
+/*
+NewAttractor creates a parameterless Value closure that seeks matching attractor basin records
+in default memory.
+*/
+func NewAttractor() Attractor {
+	return NewAttractorWithMemory(defaultMemoryRoot)
+}
+
+/*
+NewAttractorWithMemory creates a Value closure that seeks matching attractor basin records
+in the specified radix trie under b/<context>/.
+*/
+func NewAttractorWithMemory(
 	root *atomic.Pointer[iradix.Tree[[]byte]],
-) types.Value[[]byte, func(func([]byte, float64, uint64) bool)] {
+) Attractor {
 	weightDecoder := NewWeight()
 
 	return func(context []byte) func(func([]byte, float64, uint64) bool) {
