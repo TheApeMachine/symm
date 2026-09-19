@@ -39,8 +39,8 @@
       "id": "extract_last",
       "type": "data.Extract",
       "inputData": {
-        "_config": {
-          "path": "last"
+        "path": {
+          "string": "last"
         }
       },
       "connections": {
@@ -68,10 +68,10 @@
     },
     "sink_price": {
       "id": "sink_price",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_price"
+        "metric": {
+          "string": "derivative_price"
         }
       },
       "connections": {
@@ -118,10 +118,10 @@
     },
     "sink_returns": {
       "id": "sink_returns",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_returns"
+        "metric": {
+          "string": "derivative_returns"
         }
       },
       "connections": {
@@ -168,10 +168,10 @@
     },
     "sink_basis": {
       "id": "sink_basis",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "basis"
+        "metric": {
+          "string": "basis"
         }
       },
       "connections": {
@@ -210,10 +210,10 @@
     },
     "sink_basis_baseline": {
       "id": "sink_basis_baseline",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "basis_baseline"
+        "metric": {
+          "string": "basis_baseline"
         }
       },
       "connections": {
@@ -252,10 +252,10 @@
     },
     "sink_basis_divergence": {
       "id": "sink_basis_divergence",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "basis_divergence"
+        "metric": {
+          "string": "basis_divergence"
         }
       },
       "connections": {
@@ -294,10 +294,10 @@
     },
     "sink_basis_zscore": {
       "id": "sink_basis_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "basis_zscore"
+        "metric": {
+          "string": "basis_zscore"
         }
       },
       "connections": {

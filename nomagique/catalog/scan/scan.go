@@ -204,15 +204,7 @@ func simplifyType(t string) string {
 	if idx := strings.LastIndex(t, "/"); idx != -1 {
 		dotIdx := strings.Index(t[idx:], ".")
 		if dotIdx != -1 {
-			startIdx := idx
-			for startIdx >= 0 {
-				if t[startIdx] == ' ' || t[startIdx] == '*' || t[startIdx] == '[' || t[startIdx] == ']' {
-					break
-				}
-				startIdx--
-			}
-			startIdx++
-			t = t[:startIdx] + t[idx+1:]
+			t = t[:0] + t[idx+1:]
 		}
 	}
 	return t

@@ -48,8 +48,8 @@
       "id": "extract_price",
       "type": "data.Extract",
       "inputData": {
-        "_config": {
-          "path": "price"
+        "path": {
+          "string": "price"
         }
       },
       "connections": {
@@ -79,8 +79,8 @@
       "id": "extract_qty",
       "type": "data.Extract",
       "inputData": {
-        "_config": {
-          "path": "qty"
+        "path": {
+          "string": "qty"
         }
       },
       "connections": {
@@ -116,10 +116,10 @@
     },
     "sink_trade_qty": {
       "id": "sink_trade_qty",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_qty"
+        "metric": {
+          "string": "trade_qty"
         }
       },
       "connections": {
@@ -162,10 +162,10 @@
     },
     "sink_trade_notional": {
       "id": "sink_trade_notional",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_notional"
+        "metric": {
+          "string": "trade_notional"
         }
       },
       "connections": {
@@ -204,10 +204,10 @@
     },
     "sink_returns": {
       "id": "sink_returns",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_returns"
+        "metric": {
+          "string": "trade_returns"
         }
       },
       "connections": {
@@ -246,10 +246,10 @@
     },
     "sink_flow_zscore": {
       "id": "sink_flow_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "flow_zscore"
+        "metric": {
+          "string": "flow_zscore"
         }
       },
       "connections": {
@@ -288,10 +288,10 @@
     },
     "sink_flow_baseline": {
       "id": "sink_flow_baseline",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "flow_baseline"
+        "metric": {
+          "string": "flow_baseline"
         }
       },
       "connections": {

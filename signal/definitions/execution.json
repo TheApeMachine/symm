@@ -87,9 +87,11 @@
       "id": "shell",
       "type": "transport.Process",
       "inputData": {
-        "_config": {
-          "binary": "kraken",
-          "args": ["paper"]
+        "binary": {
+          "string": "kraken"
+        },
+        "args": {
+          "string": "['paper']"
         }
       },
       "connections": {
@@ -113,7 +115,7 @@
     },
     "sink": {
       "id": "sink",
-      "type": "data.Sink",
+      "type": "sink",
       "connections": {
         "inputs": {
           "in": [

@@ -39,8 +39,8 @@
       "id": "lastPrice",
       "type": "data.Extract",
       "inputData": {
-        "_config": {
-          "path": "last"
+        "path": {
+          "string": "last"
         }
       },
       "connections": {
@@ -68,9 +68,9 @@
     },
     "sink_lastPrice": {
       "id": "sink_lastPrice",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "last_price"
         }
       },
@@ -148,9 +148,9 @@
     },
     "sink_signed_correlation": {
       "id": "sink_signed_correlation",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "signed_correlation"
         }
       },
@@ -190,9 +190,9 @@
     },
     "sink_absolute_correlation": {
       "id": "sink_absolute_correlation",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "absolute_correlation"
         }
       },
@@ -232,9 +232,9 @@
     },
     "sink_atanh": {
       "id": "sink_atanh",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "correlation_atanh"
         }
       },
@@ -274,9 +274,9 @@
     },
     "sink_correlation_zscore": {
       "id": "sink_correlation_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "correlation_zscore"
         }
       },
@@ -324,9 +324,9 @@
     },
     "sink_relative_return_energy": {
       "id": "sink_relative_return_energy",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "relative_return_energy"
         }
       },
@@ -366,9 +366,9 @@
     },
     "sink_relative_return_energy_baseline": {
       "id": "sink_relative_return_energy_baseline",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "relative_return_energy_baseline"
         }
       },
@@ -408,9 +408,9 @@
     },
     "sink_relative_return_energy_zscore": {
       "id": "sink_relative_return_energy_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
+        "path": {
           "metric": "relative_return_energy_zscore"
         }
       },

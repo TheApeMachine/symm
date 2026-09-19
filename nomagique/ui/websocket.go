@@ -2,6 +2,7 @@ package ui
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -61,7 +62,7 @@ func NewWebSocketServer(addr, path types.String) WebSocketServer {
 
 			server := &http.Server{Addr: a, Handler: mux}
 			go func() {
-				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed && !strings.Contains(err.Error(), "address already in use") {
 					errnie.Error(errnie.Err(errnie.IO, "[ui] websocket server failed", err))
 				}
 			}()

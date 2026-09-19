@@ -98,6 +98,27 @@ func TestCompile(t *testing.T) {
 			So(result, ShouldNotBeNil)
 		})
 
+		Convey("Compiling hawkes:trade signal graph", func() {
+			hawkesGraph, err := definitions.Load("hawkes:trade")
+			So(err, ShouldBeNil)
+
+			hawkesPipeline, err := compiler.Compile[any, []float64](hawkesGraph, reg, repo)
+			So(err, ShouldBeNil)
+			So(hawkesPipeline, ShouldNotBeNil)
+
+			tradeData := map[string]any{
+				"symbol":    "BTC/USD",
+				"side":      "buy",
+				"price":     50000.0,
+				"qty":       1.5,
+				"timestamp": int64(1700000000000000000),
+			}
+
+			metrics := hawkesPipeline(tradeData)
+			So(metrics, ShouldNotBeNil)
+			So(len(metrics), ShouldEqual, 12)
+		})
+
 		Convey("Cycle detection in graph", func() {
 			cycleGraph := compiler.Graph{
 				ID:   "cycle:test",

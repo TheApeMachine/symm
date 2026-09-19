@@ -79,8 +79,8 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "bid"
+        "path": {
+          "string": "bid"
         }
       }
     },
@@ -106,8 +106,8 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "ask"
+        "path": {
+          "string": "ask"
         }
       }
     },
@@ -133,8 +133,8 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "bid_qty"
+        "path": {
+          "string": "bid_qty"
         }
       }
     },
@@ -160,8 +160,8 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "ask_qty"
+        "path": {
+          "string": "ask_qty"
         }
       }
     },
@@ -197,10 +197,10 @@
     },
     "sink_bid_notional": {
       "id": "sink_bid_notional",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "bid_notional"
+        "metric": {
+          "string": "bid_notional"
         }
       },
       "connections": {
@@ -247,10 +247,10 @@
     },
     "sink_ask_notional": {
       "id": "sink_ask_notional",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ask_notional"
+        "metric": {
+          "string": "ask_notional"
         }
       },
       "connections": {
@@ -293,10 +293,10 @@
     },
     "sink_book_notional": {
       "id": "sink_book_notional",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "book_notional"
+        "metric": {
+          "string": "book_notional"
         }
       },
       "connections": {
@@ -377,10 +377,10 @@
     },
     "sink_book_imbalance": {
       "id": "sink_book_imbalance",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "book_imbalance"
+        "metric": {
+          "string": "book_imbalance"
         }
       },
       "connections": {
@@ -412,10 +412,10 @@
     },
     "sink_imbalance_zscore": {
       "id": "sink_imbalance_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "imbalance_zscore"
+        "metric": {
+          "string": "imbalance_zscore"
         }
       },
       "connections": {
@@ -447,10 +447,10 @@
     },
     "sink_imbalance_baseline": {
       "id": "sink_imbalance_baseline",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "imbalance_baseline"
+        "metric": {
+          "string": "imbalance_baseline"
         }
       },
       "connections": {
@@ -482,10 +482,10 @@
     },
     "sink_removed_bid": {
       "id": "sink_removed_bid",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "removed_bid"
+        "metric": {
+          "string": "removed_bid"
         }
       },
       "connections": {
@@ -517,10 +517,10 @@
     },
     "sink_removed_ask": {
       "id": "sink_removed_ask",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "removed_ask"
+        "metric": {
+          "string": "removed_ask"
         }
       },
       "connections": {

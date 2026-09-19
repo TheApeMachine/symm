@@ -22,7 +22,7 @@ func TestArchitecturalInvariants(t *testing.T) {
 		Convey("Compiler registry contains no pipeline.* pseudo-primitives", func() {
 			reg := compiler.DefaultRegistry()
 			for _, pseudo := range []string{"pipeline.Signals", "pipeline.Logic", "pipeline.Execution"} {
-				_, err := reg.Resolve(compiler.Node{ID: "test", Type: pseudo})
+				_, err := reg.Resolve(compiler.Node{ID: "test", Type: pseudo}, nil)
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "unknown primitive type")
 			}
@@ -163,7 +163,7 @@ func TestArchitecturalInvariants(t *testing.T) {
 					"binary": "echo",
 				},
 			}
-			closure, err := reg.Resolve(procNode)
+			closure, err := reg.Resolve(procNode, nil)
 			So(err, ShouldBeNil)
 			So(closure, ShouldNotBeNil)
 		})

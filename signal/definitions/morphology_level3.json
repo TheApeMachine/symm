@@ -61,8 +61,8 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "bids"
+        "path": {
+          "string": "bids"
         }
       }
     },
@@ -88,8 +88,8 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "asks"
+        "path": {
+          "string": "asks"
         }
       }
     },
@@ -166,10 +166,10 @@
     },
     "sink_bid_entropy": {
       "id": "sink_bid_entropy",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "bid_entropy"
+        "metric": {
+          "string": "bid_entropy"
         }
       },
       "connections": {
@@ -201,10 +201,10 @@
     },
     "sink_ask_entropy": {
       "id": "sink_ask_entropy",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ask_entropy"
+        "metric": {
+          "string": "ask_entropy"
         }
       },
       "connections": {
@@ -236,10 +236,10 @@
     },
     "sink_bid_concentration": {
       "id": "sink_bid_concentration",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "bid_concentration"
+        "metric": {
+          "string": "bid_concentration"
         }
       },
       "connections": {
@@ -271,10 +271,10 @@
     },
     "sink_ask_concentration": {
       "id": "sink_ask_concentration",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ask_concentration"
+        "metric": {
+          "string": "ask_concentration"
         }
       },
       "connections": {
@@ -306,10 +306,10 @@
     },
     "sink_ks_distance": {
       "id": "sink_ks_distance",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ks_distance"
+        "metric": {
+          "string": "ks_distance"
         }
       },
       "connections": {

@@ -66,17 +66,17 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "price"
+        "path": {
+          "string": "price"
         }
       }
     },
     "sink_trade_price": {
       "id": "sink_trade_price",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_price"
+        "metric": {
+          "string": "trade_price"
         }
       },
       "connections": {
@@ -117,17 +117,17 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "qty"
+        "path": {
+          "string": "qty"
         }
       }
     },
     "sink_trade_quantity": {
       "id": "sink_trade_quantity",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_quantity"
+        "metric": {
+          "string": "trade_quantity"
         }
       },
       "connections": {
@@ -170,10 +170,10 @@
     },
     "sink_trade_notional": {
       "id": "sink_trade_notional",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_notional"
+        "metric": {
+          "string": "trade_notional"
         }
       },
       "connections": {
@@ -220,10 +220,10 @@
     },
     "sink_trade_interval": {
       "id": "sink_trade_interval",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_interval"
+        "metric": {
+          "string": "trade_interval"
         }
       },
       "connections": {
@@ -255,10 +255,10 @@
     },
     "sink_trade_rate": {
       "id": "sink_trade_rate",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "trade_rate"
+        "metric": {
+          "string": "trade_rate"
         }
       },
       "connections": {
@@ -294,10 +294,10 @@
     },
     "sink_volume_rate": {
       "id": "sink_volume_rate",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "volume_rate"
+        "metric": {
+          "string": "volume_rate"
         }
       },
       "connections": {
@@ -344,10 +344,10 @@
     },
     "sink_notional_rate": {
       "id": "sink_notional_rate",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "notional_rate"
+        "metric": {
+          "string": "notional_rate"
         }
       },
       "connections": {
@@ -379,10 +379,10 @@
     },
     "sink_notional_rate_baseline": {
       "id": "sink_notional_rate_baseline",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "notional_rate_baseline"
+        "metric": {
+          "string": "notional_rate_baseline"
         }
       },
       "connections": {
@@ -414,10 +414,10 @@
     },
     "sink_notional_rate_zscore": {
       "id": "sink_notional_rate_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "notional_rate_zscore"
+        "metric": {
+          "string": "notional_rate_zscore"
         }
       },
       "connections": {

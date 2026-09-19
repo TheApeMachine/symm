@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -50,8 +52,11 @@ func Compile[In, Out any](
 
 	// 1. Build adjacency and in-degree maps for operational and source/sink nodes
 	inDegree := make(map[string]int)
-	adjacency := make(map[string][]string)
-	incoming := make(map[string][]string)
+	adjacency := make(map[string][]string)       // For topological sort
+	incoming := make(map[string][]string)        // For topological sort
+	
+	pipelineAdjacency := make(map[string][]string) // For push pipeline
+	pipelineIncoming := make(map[string][]string)  // For push pipeline
 
 	for id := range graph.Nodes {
 		inDegree[id] = 0
@@ -64,6 +69,11 @@ func Compile[In, Out any](
 					adjacency[id] = append(adjacency[id], target.NodeID)
 					incoming[target.NodeID] = append(incoming[target.NodeID], id)
 					inDegree[target.NodeID]++
+					
+					if target.PortName == "in" || target.PortName == "" { // "" for older schemas
+						pipelineAdjacency[id] = append(pipelineAdjacency[id], target.NodeID)
+						pipelineIncoming[target.NodeID] = append(pipelineIncoming[target.NodeID], id)
+					}
 				}
 			}
 		}
@@ -99,10 +109,11 @@ func Compile[In, Out any](
 		))
 	}
 
-	// 3. Instantiate operational nodes and recursively resolve definition references
+	// 3. Instantiate operational nodes and recursively resolve definition references in topological order
 	instances := make(map[string]types.Value[any, any])
-	for id, node := range graph.Nodes {
-		if isSource(node) || isSink(node) {
+	for _, id := range execOrder {
+		node := graph.Nodes[id]
+		if isSource(node) {
 			continue
 		}
 
@@ -135,7 +146,7 @@ func Compile[In, Out any](
 			continue
 		}
 
-		closure, err := reg.Resolve(node)
+		closure, err := reg.Resolve(node, instances)
 		if err != nil {
 			return nil, errnie.Error(err)
 		}
@@ -182,7 +193,7 @@ func Compile[In, Out any](
 	}
 
 	// 4. Lower graph topology directly into nested nomagique composition closures
-	composed, err := lowerTopology(graph, opOrder, incoming, adjacency, instances)
+	composed, err := lowerTopology(graph, opOrder, pipelineIncoming, pipelineAdjacency, instances)
 	if err != nil {
 		return nil, errnie.Error(err)
 	}
@@ -191,12 +202,30 @@ func Compile[In, Out any](
 
 	return func(in In) Out {
 		res := composed(in)
+		if res == nil {
+			var zero Out
+			return zero
+		}
 		if out, ok := res.(Out); ok {
 			return out
 		}
-		// If Out is any, interface conversion succeeds
 		if anyOut, ok := any(res).(Out); ok {
 			return anyOut
+		}
+		if slice, ok := res.([]any); ok {
+			if _, isFloatSlice := any(*new(Out)).([]float64); isFloatSlice {
+				floats := make([]float64, 0, len(slice))
+				for _, elem := range slice {
+					if f, ok := elem.(float64); ok {
+						floats = append(floats, f)
+					} else if i, ok := elem.(int); ok {
+						floats = append(floats, float64(i))
+					} else if i64, ok := elem.(int64); ok {
+						floats = append(floats, float64(i64))
+					}
+				}
+				return any(floats).(Out)
+			}
 		}
 		panic(fmt.Sprintf("compiler: boundary type mismatch for graph %s: expected %T, got %T", graph.Name, *new(Out), res))
 	}, nil
@@ -346,16 +375,48 @@ func lowerTopology(
 			// Receives directly from graph input
 			nodeClosures[id] = instance
 		} else if len(upstreamOps) == 1 {
-			// Chained directly to upstream output closure
+			// Chained directly to upstream output closure with port extraction
+			var sourcePort string
+			for _, wires := range graph.Nodes[id].Connections.Inputs {
+				for _, wire := range wires {
+					if wire.NodeID == upstreamOps[0] {
+						sourcePort = wire.PortName
+						break
+					}
+				}
+				if sourcePort != "" {
+					break
+				}
+			}
+
 			upClosure := nodeClosures[upstreamOps[0]]
+			p := sourcePort
 			nodeClosures[id] = func(in any) any {
-				return instance(upClosure(in))
+				upVal := upClosure(in)
+				portVal := extractPortFromOutput(upVal, p)
+				return instance(portVal)
 			}
 		} else {
 			// Explicit collection/join of upstream outputs
 			upClosures := make([]types.Value[any, any], len(upstreamOps))
 			for i, upID := range upstreamOps {
-				upClosures[i] = nodeClosures[upID]
+				baseUp := nodeClosures[upID]
+				var port string
+				for _, wires := range graph.Nodes[id].Connections.Inputs {
+					for _, wire := range wires {
+						if wire.NodeID == upID {
+							port = wire.PortName
+							break
+						}
+					}
+					if port != "" {
+						break
+					}
+				}
+				p := port
+				upClosures[i] = func(in any) any {
+					return extractPortFromOutput(baseUp(in), p)
+				}
 			}
 
 			fork := transport.NewFork[any, any](upClosures...)
@@ -395,6 +456,8 @@ func lowerTopology(
 		terminalClosures[i] = nodeClosures[termID]
 	}
 
+	errnie.Debug(fmt.Sprintf("[lowerTopology] %s: %d terminal nodes: %v", graph.Name, len(terminalNodes), terminalNodes))
+
 	fork := transport.NewFork[any, any](terminalClosures...)
 	return func(in any) any {
 		return fork(in)
@@ -407,4 +470,59 @@ func isSource(node Node) bool {
 
 func isSink(node Node) bool {
 	return node.Type == "data.Sink" || node.Type == "sink"
+}
+
+func extractPortFromOutput(output any, portName string) any {
+	if portName == "" || portName == "out" || portName == "value" {
+		return output
+	}
+	if output == nil {
+		return nil
+	}
+	if m, ok := output.(map[string]any); ok {
+		if v, exists := m[portName]; exists {
+			return v
+		}
+	}
+	if r, ok := output.(hawkes.Reading); ok {
+		switch strings.ToLower(portName) {
+		case "eventcount", "count":
+			return r.EventCount
+		case "buycount":
+			return r.BuyCount
+		case "sellcount":
+			return r.SellCount
+		case "buyfraction", "buyfrac":
+			return r.BuyFraction
+		case "sellfraction", "sellfrac":
+			return r.SellFraction
+		case "arrivalrate", "rate":
+			return r.ArrivalRate
+		case "buyrate":
+			return r.BuyRate
+		case "sellrate":
+			return r.SellRate
+		case "lambda", "intensity", "conditionalintensity":
+			return r.Lambda
+		case "lambdabuy", "buyintensity":
+			return r.LambdaBuy
+		case "lambdasell", "sellintensity":
+			return r.LambdaSell
+		case "spectralradius", "radius":
+			return r.SpectralRadius
+		}
+	}
+	val := reflect.ValueOf(output)
+	if val.Kind() == reflect.Pointer {
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Struct {
+		field := val.FieldByNameFunc(func(n string) bool {
+			return strings.EqualFold(n, portName)
+		})
+		if field.IsValid() && field.CanInterface() {
+			return field.Interface()
+		}
+	}
+	return output
 }

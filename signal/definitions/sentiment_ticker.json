@@ -57,17 +57,17 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "last"
+        "path": {
+          "string": "last"
         }
       }
     },
     "sink_last": {
       "id": "sink_last",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "last"
+        "metric": {
+          "string": "last"
         }
       },
       "connections": {
@@ -110,10 +110,10 @@
     },
     "sink_median_return": {
       "id": "sink_median_return",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "median_return"
+        "metric": {
+          "string": "median_return"
         }
       },
       "connections": {
@@ -145,10 +145,10 @@
     },
     "sink_breadth": {
       "id": "sink_breadth",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "breadth"
+        "metric": {
+          "string": "breadth"
         }
       },
       "connections": {
@@ -180,10 +180,10 @@
     },
     "sink_signed_zscore": {
       "id": "sink_signed_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "signed_zscore"
+        "metric": {
+          "string": "signed_zscore"
         }
       },
       "connections": {

@@ -65,17 +65,17 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "bid"
+        "path": {
+          "string": "bid"
         }
       }
     },
     "sink_bid": {
       "id": "sink_bid",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "bid"
+        "metric": {
+          "string": "bid"
         }
       },
       "connections": {
@@ -116,17 +116,17 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "ask"
+        "path": {
+          "string": "ask"
         }
       }
     },
     "sink_ask": {
       "id": "sink_ask",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ask"
+        "metric": {
+          "string": "ask"
         }
       },
       "connections": {
@@ -177,10 +177,10 @@
     },
     "sink_spread": {
       "id": "sink_spread",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "spread"
+        "metric": {
+          "string": "spread"
         }
       },
       "connections": {
@@ -223,10 +223,10 @@
     },
     "sink_midpoint": {
       "id": "sink_midpoint",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "midpoint"
+        "metric": {
+          "string": "midpoint"
         }
       },
       "connections": {
@@ -262,10 +262,10 @@
     },
     "sink_relative_spread": {
       "id": "sink_relative_spread",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "relative_spread"
+        "metric": {
+          "string": "relative_spread"
         }
       },
       "connections": {
@@ -297,10 +297,10 @@
     },
     "sink_spread_baseline": {
       "id": "sink_spread_baseline",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "spread_baseline"
+        "metric": {
+          "string": "spread_baseline"
         }
       },
       "connections": {
@@ -332,10 +332,10 @@
     },
     "sink_spread_zscore": {
       "id": "sink_spread_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "spread_zscore"
+        "metric": {
+          "string": "spread_zscore"
         }
       },
       "connections": {

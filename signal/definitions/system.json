@@ -2,51 +2,11 @@
   "id": "system:orchestration",
   "name": "system:orchestration",
   "nodes": {
-    "sub_message": {
-      "id": "sub_message",
-      "type": "transport.Message",
-      "inputData": {
-        "message": {
-          "method": "subscribe",
-          "params": {
-            "channel": "trade",
-            "symbol": [
-              "BTC/USD",
-              "ETH/USD"
-            ]
-          }
-        }
-      },
+    "source": {
+      "id": "source",
+      "type": "data.Source",
       "connections": {
         "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "ingress",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "ingress": {
-      "id": "ingress",
-      "type": "transport.WSStream",
-      "inputData": {
-        "_config": {
-          "endpoint": "wss://ws.kraken.com/v2",
-          "pace": "500ms"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "sub_message",
-              "portName": "out"
-            }
-          ]
-        },
         "outputs": {
           "out": [
             {
@@ -64,7 +24,7 @@
         "inputs": {
           "in": [
             {
-              "nodeId": "ingress",
+              "nodeId": "source",
               "portName": "out"
             }
           ]
@@ -103,7 +63,7 @@
     },
     "ui": {
       "id": "ui",
-      "type": "ui.Broadcast",
+      "type": "ui.WebSocketServer",
       "connections": {
         "inputs": {
           "in": [

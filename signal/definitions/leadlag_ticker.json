@@ -57,8 +57,8 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "last"
+        "path": {
+          "string": "last"
         }
       }
     },
@@ -116,10 +116,10 @@
     },
     "sink_contemporaneous_correlation": {
       "id": "sink_contemporaneous_correlation",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "contemporaneous_correlation"
+        "metric": {
+          "string": "contemporaneous_correlation"
         }
       },
       "connections": {
@@ -138,8 +138,8 @@
       "id": "delay",
       "type": "temporal.Delay",
       "inputData": {
-        "_config": {
-          "horizon": 1
+        "horizon": {
+          "number": 1
         }
       },
       "connections": {
@@ -189,10 +189,10 @@
     },
     "sink_best_lag_correlation": {
       "id": "sink_best_lag_correlation",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "best_lag_correlation"
+        "metric": {
+          "string": "best_lag_correlation"
         }
       },
       "connections": {
@@ -231,10 +231,10 @@
     },
     "sink_lag_peak_prominence": {
       "id": "sink_lag_peak_prominence",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "lag_peak_prominence"
+        "metric": {
+          "string": "lag_peak_prominence"
         }
       },
       "connections": {
@@ -273,10 +273,10 @@
     },
     "sink_lag_zscore": {
       "id": "sink_lag_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "lag_zscore"
+        "metric": {
+          "string": "lag_zscore"
         }
       },
       "connections": {

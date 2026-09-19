@@ -83,17 +83,17 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "bid"
+        "path": {
+          "string": "bid"
         }
       }
     },
     "sink_bid": {
       "id": "sink_bid",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "bid"
+        "metric": {
+          "string": "bid"
         }
       },
       "connections": {
@@ -134,17 +134,17 @@
         }
       },
       "inputData": {
-        "_config": {
-          "path": "ask"
+        "path": {
+          "string": "ask"
         }
       }
     },
     "sink_ask": {
       "id": "sink_ask",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ask"
+        "metric": {
+          "string": "ask"
         }
       },
       "connections": {
@@ -174,17 +174,17 @@
         "outputs": {}
       },
       "inputData": {
-        "_config": {
-          "path": "bid_qty"
+        "path": {
+          "string": "bid_qty"
         }
       }
     },
     "sink_bid_qty": {
       "id": "sink_bid_qty",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "bid_qty"
+        "metric": {
+          "string": "bid_qty"
         }
       },
       "connections": {
@@ -214,17 +214,17 @@
         "outputs": {}
       },
       "inputData": {
-        "_config": {
-          "path": "ask_qty"
+        "path": {
+          "string": "ask_qty"
         }
       }
     },
     "sink_ask_qty": {
       "id": "sink_ask_qty",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ask_qty"
+        "metric": {
+          "string": "ask_qty"
         }
       },
       "connections": {
@@ -256,10 +256,10 @@
     },
     "sink_bid_log_change": {
       "id": "sink_bid_log_change",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "bid_log_change"
+        "metric": {
+          "string": "bid_log_change"
         }
       },
       "connections": {
@@ -291,10 +291,10 @@
     },
     "sink_ask_log_change": {
       "id": "sink_ask_log_change",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "ask_log_change"
+        "metric": {
+          "string": "ask_log_change"
         }
       },
       "connections": {
@@ -326,10 +326,10 @@
     },
     "sink_retreat_bid_fraction": {
       "id": "sink_retreat_bid_fraction",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "retreat_bid_fraction"
+        "metric": {
+          "string": "retreat_bid_fraction"
         }
       },
       "connections": {
@@ -361,10 +361,10 @@
     },
     "sink_retreat_ask_fraction": {
       "id": "sink_retreat_ask_fraction",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "retreat_ask_fraction"
+        "metric": {
+          "string": "retreat_ask_fraction"
         }
       },
       "connections": {

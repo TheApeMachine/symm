@@ -14,7 +14,9 @@ type Broadcast types.Value[any, any]
 func NewBroadcast(server types.Value[any, any]) Broadcast {
 	return func(in any) any {
 		if server != nil && in != nil {
-			return server(in)
+			if res := server(in); res != nil {
+				return res
+			}
 		}
 		return in
 	}

@@ -53,8 +53,8 @@
       "id": "extract_price",
       "type": "data.Extract",
       "inputData": {
-        "_config": {
-          "path": "price"
+        "path": {
+          "string": "price"
         }
       },
       "connections": {
@@ -86,10 +86,10 @@
     },
     "sink_price": {
       "id": "sink_price",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_price"
+        "metric": {
+          "string": "derivative_price"
         }
       },
       "connections": {
@@ -108,8 +108,8 @@
       "id": "extract_qty",
       "type": "data.Extract",
       "inputData": {
-        "_config": {
-          "path": "qty"
+        "path": {
+          "string": "qty"
         }
       },
       "connections": {
@@ -141,10 +141,10 @@
     },
     "sink_qty": {
       "id": "sink_qty",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_qty"
+        "metric": {
+          "string": "derivative_qty"
         }
       },
       "connections": {
@@ -195,10 +195,10 @@
     },
     "sink_notional": {
       "id": "sink_notional",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_notional"
+        "metric": {
+          "string": "derivative_notional"
         }
       },
       "connections": {
@@ -237,10 +237,10 @@
     },
     "sink_returns": {
       "id": "sink_returns",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_returns"
+        "metric": {
+          "string": "derivative_returns"
         }
       },
       "connections": {
@@ -279,10 +279,10 @@
     },
     "sink_qty_zscore": {
       "id": "sink_qty_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_qty_zscore"
+        "metric": {
+          "string": "derivative_qty_zscore"
         }
       },
       "connections": {
@@ -321,10 +321,10 @@
     },
     "sink_notional_zscore": {
       "id": "sink_notional_zscore",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_notional_zscore"
+        "metric": {
+          "string": "derivative_notional_zscore"
         }
       },
       "connections": {
@@ -363,10 +363,10 @@
     },
     "sink_notional_baseline": {
       "id": "sink_notional_baseline",
-      "type": "data.Sink",
+      "type": "sink",
       "inputData": {
-        "_config": {
-          "metric": "derivative_notional_baseline"
+        "metric": {
+          "string": "derivative_notional_baseline"
         }
       },
       "connections": {
