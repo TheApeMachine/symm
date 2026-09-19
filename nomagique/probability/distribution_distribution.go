@@ -34,9 +34,13 @@ NewDistributionNormalize creates a Value closure scaling non-negative weights to
 Negative weights are treated as zero.
 No structs, pure Value closure.
 */
-func NewDistributionNormalize() DistributionNormalize {
+func NewDistributionNormalize(params ...types.Value[any, WeightsInput]) DistributionNormalize {
 	return func(input WeightsInput) NormalizedReading {
-		weights, total := normalizeWeights(input.Weights)
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		weights, total := normalizeWeights(in.Weights)
 		return NormalizedReading{Weights: weights, Total: total}
 	}
 }
@@ -79,13 +83,17 @@ NewWasserstein1 creates a Value closure computing the first Wasserstein distance
 between two distributions over the same sorted position support.
 No structs, pure Value closure.
 */
-func NewWasserstein1() Wasserstein1 {
+func NewWasserstein1(params ...types.Value[any, DistanceInput]) Wasserstein1 {
 	return func(input DistanceInput) float64 {
-		if len(input.Positions) == 0 || len(input.Positions) != len(input.WeightsA) || len(input.Positions) != len(input.WeightsB) {
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		if len(in.Positions) == 0 || len(in.Positions) != len(in.WeightsA) || len(in.Positions) != len(in.WeightsB) {
 			return math.Inf(1)
 		}
 
-		return wassersteinDistance(input.Positions, input.WeightsA, input.WeightsB)
+		return wassersteinDistance(in.Positions, in.WeightsA, in.WeightsB)
 	}
 }
 
@@ -118,13 +126,17 @@ NewKolmogorovSmirnov creates a Value closure computing the Kolmogorov-Smirnov st
 between two distributions over the same sorted position support.
 No structs, pure Value closure.
 */
-func NewKolmogorovSmirnov() KolmogorovSmirnov {
+func NewKolmogorovSmirnov(params ...types.Value[any, DistanceInput]) KolmogorovSmirnov {
 	return func(input DistanceInput) float64 {
-		if len(input.Positions) == 0 || len(input.Positions) != len(input.WeightsA) || len(input.Positions) != len(input.WeightsB) {
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		if len(in.Positions) == 0 || len(in.Positions) != len(in.WeightsA) || len(in.Positions) != len(in.WeightsB) {
 			return math.Inf(1)
 		}
 
-		return cumulativeDistance(input.Positions, input.WeightsA, input.WeightsB)
+		return cumulativeDistance(in.Positions, in.WeightsA, in.WeightsB)
 	}
 }
 
@@ -165,10 +177,14 @@ type DistributionEntropy types.Value[ShapeInput, float64]
 NewDistributionEntropy creates a Value closure computing the Shannon entropy (nats) of a distribution.
 No structs, pure Value closure.
 */
-func NewDistributionEntropy() DistributionEntropy {
+func NewDistributionEntropy(params ...types.Value[any, ShapeInput]) DistributionEntropy {
 	return func(input ShapeInput) float64 {
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
 		entropy := 0.0
-		for _, weight := range input.Weights {
+		for _, weight := range in.Weights {
 			if weight > 0 {
 				entropy -= weight * math.Log(weight)
 			}
@@ -183,10 +199,14 @@ type Concentration types.Value[ShapeInput, float64]
 NewConcentration creates a Value closure computing the Herfindahl index of a distribution: sum of squared weights.
 No structs, pure Value closure.
 */
-func NewConcentration() Concentration {
+func NewConcentration(params ...types.Value[any, ShapeInput]) Concentration {
 	return func(input ShapeInput) float64 {
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
 		total := 0.0
-		for _, weight := range input.Weights {
+		for _, weight := range in.Weights {
 			total += weight * weight
 		}
 
@@ -215,13 +235,17 @@ type SortedPositions types.Value[SortedInput, SortedReading]
 NewSortedPositions creates a Value closure that sorts unsorted positions ascending and reorders weights to match.
 No structs, pure Value closure.
 */
-func NewSortedPositions() SortedPositions {
+func NewSortedPositions(params ...types.Value[any, SortedInput]) SortedPositions {
 	return func(input SortedInput) SortedReading {
-		if len(input.Positions) != len(input.Weights) {
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		if len(in.Positions) != len(in.Weights) {
 			return SortedReading{}
 		}
 
-		positions, weights := sortPositions(input.Positions, input.Weights)
+		positions, weights := sortPositions(in.Positions, in.Weights)
 		return SortedReading{Positions: positions, Weights: weights}
 	}
 }
@@ -274,9 +298,13 @@ NewWasserstein1Pairs creates a Value closure computing the first Wasserstein dis
 between two distributions given as ascending-sorted WeightedPoint streams via a merged walk.
 No structs, pure Value closure.
 */
-func NewWasserstein1Pairs() Wasserstein1Pairs {
+func NewWasserstein1Pairs(params ...types.Value[any, PairsInput]) Wasserstein1Pairs {
 	return func(input PairsInput) float64 {
-		_, distance, _ := mergedWalk(input.Left, input.Right)
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		_, distance, _ := mergedWalk(in.Left, in.Right)
 		return distance
 	}
 }
@@ -287,9 +315,13 @@ NewKolmogorovSmirnovPairs creates a Value closure computing the Kolmogorov-Smirn
 between two distributions given as ascending-sorted WeightedPoint streams via a merged walk.
 No structs, pure Value closure.
 */
-func NewKolmogorovSmirnovPairs() KolmogorovSmirnovPairs {
+func NewKolmogorovSmirnovPairs(params ...types.Value[any, PairsInput]) KolmogorovSmirnovPairs {
 	return func(input PairsInput) float64 {
-		statistic, _, _ := mergedWalk(input.Left, input.Right)
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		statistic, _, _ := mergedWalk(in.Left, in.Right)
 		return statistic
 	}
 }
@@ -306,7 +338,8 @@ func mergedWalk(left []WeightedPoint, right []WeightedPoint) (float64, float64, 
 	rightIndex := 0
 	cumulativeLeft := 0.0
 	cumulativeRight := 0.0
-	previousPosition := math.NaN()
+	hasPrevious := false
+	var previousPosition float64
 	statistic := 0.0
 	distance := 0.0
 	distinct := 0
@@ -341,7 +374,7 @@ func mergedWalk(left []WeightedPoint, right []WeightedPoint) (float64, float64, 
 			}
 		}
 
-		if !math.IsNaN(previousPosition) {
+		if hasPrevious {
 			width := position - previousPosition
 			if width > 0 {
 				distance += math.Abs(cumulativeLeft-cumulativeRight) * width
@@ -367,6 +400,7 @@ func mergedWalk(left []WeightedPoint, right []WeightedPoint) (float64, float64, 
 			statistic = difference
 		}
 
+		hasPrevious = true
 		previousPosition = position
 		distinct++
 	}
@@ -396,13 +430,17 @@ type ConcentrationPoints types.Value[PointsInput, float64]
 NewConcentrationPoints creates a Value closure computing Herfindahl concentration of a point stream.
 No structs, pure Value closure.
 */
-func NewConcentrationPoints() ConcentrationPoints {
+func NewConcentrationPoints(params ...types.Value[any, PointsInput]) ConcentrationPoints {
 	return func(input PointsInput) float64 {
-		total := totalWeight(input.Points)
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		total := totalWeight(in.Points)
 		concentration := 0.0
 
 		if total != 0 {
-			for _, point := range input.Points {
+			for _, point := range in.Points {
 				if point.Weight > 0 {
 					normalized := point.Weight / total
 					concentration += normalized * normalized
@@ -419,13 +457,17 @@ type EntropyPoints types.Value[PointsInput, float64]
 NewEntropyPoints creates a Value closure computing Shannon entropy (nats) of a point stream.
 No structs, pure Value closure.
 */
-func NewEntropyPoints() EntropyPoints {
+func NewEntropyPoints(params ...types.Value[any, PointsInput]) EntropyPoints {
 	return func(input PointsInput) float64 {
-		total := totalWeight(input.Points)
+		in := input
+		if len(params) > 0 && params[0] != nil {
+			in = params[0](input)
+		}
+		total := totalWeight(in.Points)
 		entropy := 0.0
 
 		if total != 0 {
-			for _, point := range input.Points {
+			for _, point := range in.Points {
 				if point.Weight > 0 {
 					normalized := point.Weight / total
 					entropy -= normalized * math.Log(normalized)

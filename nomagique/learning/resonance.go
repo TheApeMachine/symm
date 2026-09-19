@@ -13,14 +13,11 @@ package learning
 import (
 	"errors"
 	"fmt"
-	"iter"
 	"math"
 	"math/rand"
-	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/types"
 
 	"gonum.org/v1/gonum/floats"
@@ -164,7 +161,7 @@ type ResonanceManifold struct {
 
 	taskWeights      *mat.Dense
 	taskBias         *mat.VecDense
-	taskLearners     []core.Primitive
+	taskLearners     []TaskLearner
 	taskVar          *mat.VecDense
 	taskScale        *mat.VecDense
 	taskPrecision    *mat.VecDense
@@ -390,9 +387,9 @@ func NewResonanceManifold(
 		denseFill(m.taskPrecision, 1.0)
 		denseFill(m.taskSkill, 1.0)
 
-		m.taskLearners = make([]core.Primitive, taskRows)
+		m.taskLearners = make([]TaskLearner, taskRows)
 		for i := range taskRows {
-			m.taskLearners[i] = newRLSPrimitive(readoutDim, cfg.LambdaRLS)
+			m.taskLearners[i] = newRLSTaskLearner(readoutDim, cfg.LambdaRLS)
 		}
 	}
 
@@ -402,106 +399,122 @@ func NewResonanceManifold(
 	return m
 }
 
-// Next processes streaming commands using the constructed pipelines.
-func (m *ResonanceManifold) Next(seq iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for v := range seq {
-			if v == nil {
-				continue
-			}
-
-			// In the original implementation, sequence.NewValues returned types.Value[struct{}, []T]
-			// or similar, but the payload passed was inside a value. 
-			var cmd ManifoldCommand
-			var ok bool
-			
-			// Extract command depending on how it's boxed
-			valPtr := (*ManifoldCommand)(v)
-			if valPtr != nil {
-				cmd = *valPtr
-				ok = true
-			} else {
-				m.err = fmt.Errorf("resonance: expected ManifoldCommand")
-				break
-			}
-
-			if !ok {
-				break
-			}
-
-			if cmd.Settle != nil {
-				if len(cmd.Settle.Features) != m.arch[0] {
-					m.err = fmt.Errorf("resonance: input dimension mismatch")
-					break
-				}
-
-				xCol := m.workspace.xCol
-				copy(xCol.RawVector().Data, cmd.Settle.Features)
-				m.initializeLatents(xCol)
-
-				m.settleAdvancedTemporal = false
-				m.settlePipeline(m)
-
-				if cmd.Settle.AdvanceTemporal {
-					m.advanceTemporalState()
-					m.settleAdvancedTemporal = true
-				}
-
-				if cmd.Settle.Target != nil {
-					if m.settleAdvancedTemporal {
-						m.err = fmt.Errorf("resonance: temporal state advanced before learning")
-						break
-					}
-					if len(cmd.Settle.Target) != m.targetDim {
-						m.err = fmt.Errorf("resonance: target dimension mismatch")
-						break
-					}
-
-					if m.taskWeights != nil {
-						yCol := m.workspace.yCol
-						copy(yCol.RawVector().Data, cmd.Settle.Target)
-					}
-
-					m.learnPipeline(m)
-				}
-
-				reading := m.snapshot()
-				if !yield(unsafe.Pointer(&reading)) {
-					return
-				}
-			}
-
-			if cmd.Forecast != nil {
-				if cmd.Forecast.Steps < 1 {
-					m.err = fmt.Errorf("resonance: task forecast requires a positive step count")
-					break
-				}
-				forecast, err := m.rolloutTaskForecast(cmd.Forecast.Steps)
-				if err != nil {
-					m.err = err
-					break
-				}
-				reading := ManifoldReading{Forecast: forecast}
-				if !yield(unsafe.Pointer(&reading)) {
-					return
-				}
-			}
-
-			if cmd.Retention != nil {
-				reading := ManifoldReading{Retention: m.retentionVector()}
-				if !yield(unsafe.Pointer(&reading)) {
-					return
-				}
-			}
+// Execute processes a single ManifoldCommand and returns the resulting ManifoldReading.
+func (m *ResonanceManifold) Execute(cmd ManifoldCommand) (ManifoldReading, error) {
+	if cmd.Settle != nil {
+		if len(cmd.Settle.Features) != m.arch[0] {
+			m.err = fmt.Errorf("resonance: input dimension mismatch")
+			return ManifoldReading{}, m.err
 		}
+
+		xCol := m.workspace.xCol
+		copy(xCol.RawVector().Data, cmd.Settle.Features)
+		m.initializeLatents(xCol)
+
+		m.settleAdvancedTemporal = false
+		m.settlePipeline(m)
+
+		if cmd.Settle.AdvanceTemporal {
+			m.advanceTemporalState()
+			m.settleAdvancedTemporal = true
+		}
+
+		if cmd.Settle.Target != nil {
+			if m.settleAdvancedTemporal {
+				m.err = fmt.Errorf("resonance: temporal state advanced before learning")
+				return ManifoldReading{}, m.err
+			}
+			if len(cmd.Settle.Target) != m.targetDim {
+				m.err = fmt.Errorf("resonance: target dimension mismatch")
+				return ManifoldReading{}, m.err
+			}
+
+			if m.taskWeights != nil {
+				yCol := m.workspace.yCol
+				copy(yCol.RawVector().Data, cmd.Settle.Target)
+			}
+
+			m.learnPipeline(m)
+		}
+
+		return m.snapshot(), nil
+	}
+
+	if cmd.Forecast != nil {
+		if cmd.Forecast.Steps < 1 {
+			m.err = fmt.Errorf("resonance: task forecast requires a positive step count")
+			return ManifoldReading{}, m.err
+		}
+		forecast, err := m.rolloutTaskForecast(cmd.Forecast.Steps)
+		if err != nil {
+			m.err = err
+			return ManifoldReading{}, err
+		}
+		return ManifoldReading{Forecast: forecast}, nil
+	}
+
+	if cmd.Retention != nil {
+		return ManifoldReading{Retention: m.retentionVector()}, nil
+	}
+
+	if cmd.Alpha != nil {
+		if err := m.setAlpha(cmd.Alpha.Alpha); err != nil {
+			m.err = err
+			return ManifoldReading{}, err
+		}
+		return m.snapshot(), nil
+	}
+
+	if cmd.Reading != nil {
+		return m.snapshot(), nil
+	}
+
+	if cmd.Batch != nil {
+		if len(cmd.Batch.Input) != m.arch[0] {
+			m.err = fmt.Errorf("resonance: input dimension mismatch")
+			return ManifoldReading{}, m.err
+		}
+		xCol := m.workspace.xCol
+		copy(xCol.RawVector().Data, cmd.Batch.Input)
+		m.initializeLatents(xCol)
+
+		m.settleAdvancedTemporal = false
+		m.settlePipeline(m)
+
+		if cmd.Batch.AdvanceTemporal {
+			m.advanceTemporalState()
+			m.settleAdvancedTemporal = true
+		}
+
+		if cmd.Batch.Learn {
+			m.learnPipeline(m)
+		}
+
+		return m.snapshot(), nil
+	}
+
+	if cmd.ObserveTask != nil {
+		err := m.observeTask(cmd.ObserveTask.Horizon, cmd.ObserveTask.Features, cmd.ObserveTask.Prediction, cmd.ObserveTask.Target)
+		if err != nil {
+			m.err = err
+			return ManifoldReading{}, err
+		}
+		return m.snapshot(), nil
+	}
+
+	return m.snapshot(), nil
+}
+
+// AsValue returns a types.Value closure for executing commands.
+func (m *ResonanceManifold) AsValue() types.Value[ManifoldCommand, ManifoldReading] {
+	return func(cmd ManifoldCommand) ManifoldReading {
+		reading, _ := m.Execute(cmd)
+		return reading
 	}
 }
 
-// Error returns any errors encountered during stream processing.
-func (m *ResonanceManifold) Error(errs ...error) error {
-	if len(errs) > 0 {
-		m.err = errs[0]
-	}
+// Error returns any errors encountered during processing.
+func (m *ResonanceManifold) Error() error {
 	return m.err
 }
 
@@ -673,21 +686,16 @@ func (resonanceManifold *ResonanceManifold) taskReading(
 	features []float64,
 	target float64,
 ) (algo.RLSPosterior, error) {
-	evaluation := resonanceManifold.taskLearners[rowIndex]
-	var reading algo.RLSPosterior
-
-	for out := range evaluation.Next(func(yield func(unsafe.Pointer) bool) {
-		sample := Sample{
-			Features: features,
-			Target:   target,
-			Observed: true,
-		}
-		yield(unsafe.Pointer(&sample))
-	}) {
-		reading = *(*algo.RLSPosterior)(out)
+	if rowIndex < 0 || rowIndex >= len(resonanceManifold.taskLearners) {
+		return algo.RLSPosterior{}, fmt.Errorf("resonance: invalid task row %d", rowIndex)
 	}
-
-	return reading, evaluation.Error()
+	evaluation := resonanceManifold.taskLearners[rowIndex]
+	reading := evaluation(Sample{
+		Features: features,
+		Target:   target,
+		Observed: true,
+	})
+	return reading, nil
 }
 
 /*
@@ -1352,22 +1360,13 @@ func (resonanceManifold *ResonanceManifold) rolloutTaskForecast(steps int) ([]RL
 taskForecast evaluates one task-head row's learner on a feature vector without
 updating its weights.
 */
-func taskForecast(learner core.Primitive, features []float64) (RLSOutput, error) {
-	evaluation := learner
-	var reading algo.RLSPosterior
-
-	for out := range evaluation.Next(func(yield func(unsafe.Pointer) bool) {
-		sample := Sample{
-			Features: features,
-		}
-		yield(unsafe.Pointer(&sample))
-	}) {
-		reading = *(*algo.RLSPosterior)(out)
+func taskForecast(learner TaskLearner, features []float64) (RLSOutput, error) {
+	if learner == nil {
+		return RLSOutput{}, fmt.Errorf("resonance: learner is nil")
 	}
-
-	if err := evaluation.Error(); err != nil {
-		return RLSOutput{}, err
-	}
+	reading := learner(Sample{
+		Features: features,
+	})
 
 	return RLSOutput{
 		Value:            reading.Prediction,

@@ -7,14 +7,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-Event is one marked arrival.
-*/
-type Event struct {
-	Symbol string
-	Side   string
-	At     int64
-}
+
 
 /*
 Reading is the empirical arrival state and, when a model exists, the
@@ -43,28 +36,32 @@ type Reading struct {
 }
 
 /*
-NewProcess returns a stateful Value closure that tracks arrival history, empirical counts,
-and the fitted bivariate Hawkes evaluation.
-No structs, pure closure encapsulating history state.
+Process evaluates an arriving marked point process [timestampNano, mark]
+into its empirical arrival state and fitted Hawkes decomposition.
+Mark > 0 represents buy/A, mark <= 0 represents sell/B.
+No structs, pure Value closure.
 */
-type Process types.Value[Event, Reading]
-func NewProcess() Process {
-	history := newPaths()
+type Process types.Value[[2]float64, Reading]
 
-	return func(event Event) Reading {
-		if event.Side != "buy" && event.Side != "sell" {
+func NewProcess(params ...types.Float) Process {
+	state := &path{samples: make([]sample, 0)}
+
+	return func(event [2]float64) Reading {
+		atNano := int64(event[0])
+		markRaw := event[1]
+
+		if atNano <= 0 {
 			return Reading{}
 		}
 
-		state := history.at(event.Symbol)
-		at := time.Unix(0, event.At)
+		at := time.Unix(0, atNano)
 
 		if state.hasLast && at.Before(state.lastAt) {
 			return Reading{}
 		}
 
 		mark := -core.Unit
-		if event.Side == "buy" {
+		if markRaw > 0 {
 			mark = core.Unit
 		}
 
@@ -93,7 +90,7 @@ func NewProcess() Process {
 			from = state.origin()
 		}
 
-		atSec := float64(event.At) * 1e-9
+		atSec := float64(atNano) * 1e-9
 		fromSec := float64(from.UnixNano()) * 1e-9
 		span := atSec - fromSec
 

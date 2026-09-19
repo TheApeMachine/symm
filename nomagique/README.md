@@ -13,26 +13,25 @@ Every component in `nomagique` conforms to a single universal transformation con
 
 At its core, `nomagique` is built on some foundational pillars:
 
-1. **A Composable Streaming Algebra**: Everything operates on Go 1.23+ push iterators (`iter.Seq[unsafe.Pointer]`). Primitives connect end-to-end like mathematical operators. The output of one primitive directly feeds the input of the next without intermediate memory allocations or copying.
+1. **A Composable Functional Algebra**: Everything operates on `types.Value[T, U]` closures (`func(T) U`). Primitives connect end-to-end like mathematical operators. The output of one primitive directly feeds the input of the next without intermediate memory allocations or boxing.
 2. **No Magic Numbers**: Belief, statistical baselines, horizons, confidence intervals, and regime shifts must be derived from honest data and measured uncertainty—never hardcoded constants, heuristic thresholds, or fake fallback defaults.
 3. **Radical Minimalism**: Every primitive performs exactly **one** mathematical, structural, or transport transformation, and does it completely.
 4. **No Domain Leakage**: This package will be extracted into a stand-alone package to be used in many projects, it is not specific to markets, finance, or crypto. Domain specific language must not leak into nomagique. It is about computation, logic, data, etc. All generically conceptualized.
 
 ### The Universal Contract
 
-Every type in `nomagique` implements the `core.Primitive` interface:
+Every atom in `nomagique` is a `types.Value[T, U]` closure:
 
 ```go
-type Primitive interface {
-    Next(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
-    Error(...error) error
-}
+type Value[T, U any] func(T) U
 ```
 
-Because every component shares the exact same shape:
-- Pipelines are primitives (`nomagique.Number` implements `Primitive`).
-- Stores are primitives (`store.Grid`, `store.KV` implement `Primitive`).
-- Transports are primitives (`transport.Fan`, `transport.IO` implement `Primitive`).
+Constructors accept port closures (`types.Float`, `types.Integer`, `types.String`, etc.) enabling dynamic graphical composition via Flume and direct programmatic execution:
+- Arithmetic (`arithmetic.Multiply`, `arithmetic.Divide`, `arithmetic.Add`)
+- Statistics (`statistic.Mean`, `statistic.Variance`, `statistic.EMA`)
+- Learning (`learning.LinearFit`, `learning.LinearPrediction`, `learning.TaskLearner`)
+- Store (`tables.IcebergTable`, `tables.IcebergScan`)
+- Transport (`transport.HTTPRequest`, `transport.WebSocketServer`)
 - Mathematical and statistical stages are primitives (`statistic.Sympathy`, `geometry.Inversion` implement `Primitive`).
 
 Any primitive can plug into any other primitive.
@@ -159,10 +158,10 @@ A `Grid` in `nomagique` is not a monolithic database or centralized array; its c
 When working in `nomagique`, follow these rules to the letter:
 
 ### Rule 1: What Defines a Primitive
-- A Primitive is a **constructor**, a **`Next` method**, and **`*core.PrimitiveError`** embedded on the type.
-- A Primitive does **one** thing and does it well. It is a single mathematical or streaming transformation.
-- A Primitive is **forbidden to contain helper methods**. Helper methods are a severe anti-pattern.
-- A Primitive is allowed to implement interfaces from the `core` package (`Identifiable`, `Connectable`, `Ordered`). The `core` package may not be arbitrarily extended.
+- A Primitive is a **type definition aliasing `types.Value[T, U]`** and a **constructor** returning that closure.
+- A Primitive does **one** thing and does it well. It is a single mathematical, statistical, learning, or transport transformation.
+- A Primitive takes typed port closures (`types.Float`, `types.Integer`, etc.) in its constructor for dynamic graph wiring.
+- A Primitive has **zero ceremony**: no boilerplate structs, no wrapper methods, no unsafe pointer gymnastics.
 
 ### Rule 2: Zero Helper Functions
 - Never write free helper functions (e.g. `func medianSpacing(...)`, `func quotedPrice(...)`) inside primitive files.
@@ -243,41 +242,21 @@ When implementing a new primitive:
 package domain
 
 import (
-    "iter"
-    "unsafe"
-
-    "github.com/theapemachine/symm/nomagique/core"
+    "github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Transform description: exactly what transformation it performs.
+Transform performs a single mathematical or computational operation.
 */
-type Transform struct {
-    *core.PrimitiveError
-    state float64
-}
+type Transform types.Value[float64, float64]
 
-func NewTransform(initial float64) *Transform {
-    return &Transform{
-        PrimitiveError: core.NewPrimitiveError(),
-        state:          initial,
-    }
-}
-
-func (transform *Transform) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-    return func(yield func(unsafe.Pointer) bool) {
-        for arriving := range in {
-            if arriving == nil {
-                continue
-            }
-
-            value := *(*float64)(arriving)
-            transform.state += value
-
-            if !yield(unsafe.Pointer(&transform.state)) {
-                return
-            }
+func NewTransform(factor types.Float) Transform {
+    return func(in float64) float64 {
+        f := 1.0
+        if factor != nil {
+            f = factor(in)
         }
+        return in * f
     }
 }
 ```

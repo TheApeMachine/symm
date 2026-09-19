@@ -2,10 +2,8 @@ package learning
 
 import (
 	"fmt"
-	"iter"
-	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -90,11 +88,9 @@ That nested supervision is what makes each task row an honest forecast for its
 own horizon rather than a blend of several.
 */
 type TemporalLedger struct {
-	*core.PrimitiveError
-
 	maxHorizon int
-	manifold   core.Primitive
-	target     core.Primitive
+	manifold   *ResonanceManifold
+	target     types.Value[[2]float64, float64]
 	pending    map[int64]*PendingReference
 	references map[int64]float64
 	seq        int64
@@ -103,6 +99,7 @@ type TemporalLedger struct {
 	total      int
 	last       *ResolutionOutcome
 	out        LedgerReading
+	err        error
 }
 
 /*
@@ -113,22 +110,19 @@ shape failure, not a defaulted one.
 */
 func NewTemporalLedger(
 	maxHorizon int,
-	manifold core.Primitive,
-	target core.Primitive,
+	manifold *ResonanceManifold,
+	target types.Value[[2]float64, float64],
 ) *TemporalLedger {
 	if maxHorizon <= 0 {
-		tl := &TemporalLedger{PrimitiveError: core.NewPrimitiveError()}
-		tl.Error(fmt.Errorf("ledger: horizon must be positive"))
-		return tl
+		return &TemporalLedger{err: fmt.Errorf("ledger: horizon must be positive")}
 	}
 
 	if manifold == nil || target == nil {
-		tl := &TemporalLedger{PrimitiveError: core.NewPrimitiveError()}
-		tl.Error(fmt.Errorf("ledger: requires a manifold and a target transform"))
-		return tl
+		return &TemporalLedger{err: fmt.Errorf("ledger: requires a manifold and a target transform")}
 	}
 
-	return &TemporalLedger{PrimitiveError: core.NewPrimitiveError(), maxHorizon: maxHorizon,
+	return &TemporalLedger{
+		maxHorizon: maxHorizon,
 		manifold:   manifold,
 		target:     target,
 		pending:    make(map[int64]*PendingReference),
@@ -138,51 +132,46 @@ func NewTemporalLedger(
 }
 
 /*
-Next receives *LedgerCommand payloads and yields a *LedgerReading for each.
-Any invalid intent ends the stream with the error recorded.
+Execute receives a LedgerCommand and returns the resulting LedgerReading.
 */
-func (temporalLedger *TemporalLedger) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
-	if temporalLedger.Error() !=
-		nil {
-		return func(yield func(unsafe.Pointer) bool) {}
+func (temporalLedger *TemporalLedger) Execute(command LedgerCommand) (LedgerReading, error) {
+	if temporalLedger.err != nil {
+		return LedgerReading{}, temporalLedger.err
 	}
 
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			command := (*LedgerCommand)(arriving)
+	if (command.Issue == nil) == (command.Resolve == nil) {
+		return LedgerReading{}, fmt.Errorf("ledger: command must set exactly one intent")
+	}
 
-			if (command.Issue == nil) == (command.Resolve == nil) {
-				temporalLedger.Error(fmt.Errorf(
-					"ledger: command must set exactly one intent",
-				))
-				return
-			}
+	if command.Issue != nil {
+		temporalLedger.issue(command.Issue)
+	}
 
-			if command.Issue != nil {
-				temporalLedger.issue(command.Issue)
-			}
-
-			if command.Resolve != nil {
-				if err := temporalLedger.resolve(command.Resolve); err != nil {
-					temporalLedger.Error(err)
-					return
-				}
-			}
-
-			temporalLedger.out = LedgerReading{
-				Outcome:  temporalLedger.last,
-				Resolved: temporalLedger.resolved,
-				Total:    temporalLedger.total,
-				Pending:  len(temporalLedger.pending),
-			}
-
-			if !yield(unsafe.Pointer(&temporalLedger.out)) {
-				return
-			}
+	if command.Resolve != nil {
+		if err := temporalLedger.resolve(command.Resolve); err != nil {
+			return LedgerReading{}, err
 		}
 	}
+
+	temporalLedger.out = LedgerReading{
+		Outcome:  temporalLedger.last,
+		Resolved: temporalLedger.resolved,
+		Total:    temporalLedger.total,
+		Pending:  len(temporalLedger.pending),
+	}
+
+	return temporalLedger.out, nil
+}
+
+func (temporalLedger *TemporalLedger) AsValue() types.Value[LedgerCommand, LedgerReading] {
+	return func(cmd LedgerCommand) LedgerReading {
+		reading, _ := temporalLedger.Execute(cmd)
+		return reading
+	}
+}
+
+func (temporalLedger *TemporalLedger) Error() error {
+	return temporalLedger.err
 }
 
 /*
@@ -312,30 +301,11 @@ func (temporalLedger *TemporalLedger) resolve(intent *ResolveIntent) error {
 transform maps one resolved reference pair into its supervised target through
 the configured target primitive.
 */
-type TargetObservation struct {
-	Current float64
-	Past    float64
-}
-
 func (temporalLedger *TemporalLedger) transform(current, past float64) (float64, error) {
-	evaluation := temporalLedger.target
-	var target float64
-
-	for out := range evaluation.Next(func(yield func(unsafe.Pointer) bool) {
-		obs := TargetObservation{
-			Current: current,
-			Past:    past,
-		}
-		yield(unsafe.Pointer(&obs))
-	}) {
-		target = *(*float64)(out)
+	if temporalLedger.target == nil {
+		return 0, fmt.Errorf("ledger: target is nil")
 	}
-
-	if err := evaluation.Error(); err != nil {
-		return 0, err
-	}
-
-	return target, nil
+	return temporalLedger.target([2]float64{current, past}), nil
 }
 
 /*
@@ -347,22 +317,10 @@ func (temporalLedger *TemporalLedger) observeTask(
 	prediction float64,
 	target float64,
 ) error {
-	evaluation := temporalLedger.manifold
-
-	for range evaluation.Next(func(yield func(unsafe.Pointer) bool) {
-		cmd := ManifoldCommand{
-			ObserveTask: &TaskIntent{
-				Horizon:    horizon,
-				Features:   features,
-				Prediction: prediction,
-				Target:     target,
-			},
-		}
-		yield(unsafe.Pointer(&cmd))
-	}) {
+	if temporalLedger.manifold == nil {
+		return fmt.Errorf("ledger: manifold is nil")
 	}
-
-	return evaluation.Error()
+	return temporalLedger.manifold.observeTask(horizon, features, prediction, target)
 }
 
 func (temporalLedger *TemporalLedger) prune() {

@@ -1,26 +1,21 @@
 package ui
 
 import (
-	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Broadcast provides an execution offramp that feeds cognitive evaluations into the Hub.
-No structs, pure Value closure.
+Broadcast provides an execution offramp that broadcasts incoming frames or evaluations
+via the configured WebSocketServer, WebRTCServer, or downstream consumers.
+No hub application hack, pure Value closure.
 */
 type Broadcast types.Value[any, any]
 
-func NewBroadcast(hub *Hub) Broadcast {
+func NewBroadcast(server types.Value[any, any]) Broadcast {
 	return func(in any) any {
-		if hub == nil || in == nil {
-			return in
+		if server != nil && in != nil {
+			return server(in)
 		}
-
-		if eval, ok := in.(cognition.Evaluation); ok {
-			hub.BroadcastEvaluation(eval)
-		}
-
 		return in
 	}
 }

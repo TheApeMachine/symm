@@ -1,12 +1,8 @@
 package tables
 
 import (
-	"errors"
-	"strconv"
-	"strings"
+	"fmt"
 	"time"
-
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -34,340 +30,239 @@ func arrowSchemaFor(schema *iceberg.Schema) (*arrow.Schema, error) {
 	return converted, nil
 }
 
-func fillMeasurements(
-	recordBuilder *array.RecordBuilder,
-	measurements []*data.Measurement[float64],
-	epoch int64,
-) {
-	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
-	tickBuilder := recordBuilder.Field(1).(*array.Int64Builder)
-	sourceBuilder := recordBuilder.Field(2).(*array.StringBuilder)
-	symbolBuilder := recordBuilder.Field(3).(*array.StringBuilder)
-	venueAtBuilder := recordBuilder.Field(4).(*array.TimestampBuilder)
-	maturityBuilder := recordBuilder.Field(5).(*array.Float64Builder)
-	snrBuilder := recordBuilder.Field(6).(*array.Float64Builder)
-	snrDefinedBuilder := recordBuilder.Field(7).(*array.BooleanBuilder)
-	metricsBuilder := recordBuilder.Field(8).(*array.MapBuilder)
-	metadataBuilder := recordBuilder.Field(9).(*array.MapBuilder)
-	provenanceBuilder := recordBuilder.Field(10).(*array.MapBuilder)
-
-	metricsKey := metricsBuilder.KeyBuilder().(*array.StringBuilder)
-	metricsVal := metricsBuilder.ItemBuilder().(*array.Float64Builder)
-
-	metadataKey := metadataBuilder.KeyBuilder().(*array.StringBuilder)
-	metadataVal := metadataBuilder.ItemBuilder().(*array.StringBuilder)
-
-	provenanceKey := provenanceBuilder.KeyBuilder().(*array.StringBuilder)
-	provenanceVal := provenanceBuilder.ItemBuilder().(*array.StringBuilder)
-
-	for _, measurement := range measurements {
-		epochBuilder.Append(epoch)
-		tickBuilder.Append(measurement.SeqIdx)
-		sourceBuilder.Append(measurement.Source)
-		symbolBuilder.Append(measurement.Label)
-
-		if measurement.At.IsZero() {
-			venueAtBuilder.Append(arrow.Timestamp(time.Now().UTC().UnixMicro()))
-		}
-
-		if !measurement.At.IsZero() {
-			venueAtBuilder.Append(arrow.Timestamp(measurement.At.UTC().UnixMicro()))
-		}
-
-		maturityBuilder.Append(measurement.Maturity)
-
-		if measurement.SNRDefined {
-			snrBuilder.Append(measurement.SNR)
-		}
-
-		if !measurement.SNRDefined {
-			snrBuilder.AppendNull()
-		}
-
-		snrDefinedBuilder.Append(measurement.SNRDefined)
-
-		if len(measurement.Metrics) == 0 {
-			metricsBuilder.AppendNull()
-		}
-
-		if len(measurement.Metrics) > 0 {
-			metricsBuilder.Append(true)
-
-			for metricKey, metricVal := range measurement.Metrics {
-				metricsKey.Append(metricKey)
-				metricsVal.Append(metricVal.Raw)
-			}
-		}
-
-		if len(measurement.Metadata) == 0 {
-			metadataBuilder.AppendNull()
-		}
-
-		if len(measurement.Metadata) > 0 {
-			metadataBuilder.Append(true)
-
-			for metaKey, metaVal := range measurement.Metadata {
-				metadataKey.Append(metaKey)
-				metadataVal.Append(metaVal)
-			}
-		}
-
-		if len(measurement.Provenance) == 0 && len(measurement.Metrics) == 0 && measurement.Err == nil {
-			provenanceBuilder.AppendNull()
-		}
-
-		if len(measurement.Provenance) > 0 || len(measurement.Metrics) > 0 || measurement.Err != nil {
-			provenanceBuilder.Append(true)
-
-			for provKey, provVal := range measurement.Provenance {
-				provenanceKey.Append(provKey)
-				provenanceVal.Append(provVal)
-			}
-			if measurement.Err != nil {
-				provenanceKey.Append("symm:error")
-				provenanceVal.Append(measurement.Err.Error())
-			}
-			provenanceKey.Append("symm:estimated")
-			provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
-			for key, metric := range measurement.Metrics {
-				if metric.Exact != nil {
-					provenanceKey.Append("symm:exact:" + key)
-					provenanceVal.Append(metric.Exact.String())
-				}
-			}
-
-		}
-	}
-}
-
-func readMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], error) {
-	totalRows := int(batch.NumRows())
-	measurements := make([]*data.Measurement[float64], 0, totalRows)
-
-	cols := make(map[string]arrow.Array, batch.NumCols())
-
-	for colIdx := range int(batch.NumCols()) {
-		cols[batch.ColumnName(colIdx)] = batch.Column(colIdx)
-	}
-
-	tickCol, _ := cols["tick"].(*array.Int64)
-	sourceCol, _ := cols["source"].(*array.String)
-	symbolCol, _ := cols["symbol"].(*array.String)
-	venueAtCol, _ := cols["venue_at"].(*array.Timestamp)
-	maturityCol, _ := cols["maturity"].(*array.Float64)
-	snrCol, _ := cols["snr"].(*array.Float64)
-	snrDefinedCol, _ := cols["snr_defined"].(*array.Boolean)
-	metricsCol, _ := cols["metrics"].(*array.Map)
-	metadataCol, _ := cols["metadata"].(*array.Map)
-	provenanceCol, _ := cols["provenance"].(*array.Map)
-
-	for rowIdx := range totalRows {
-		source := ""
-
-		if sourceCol != nil && !sourceCol.IsNull(rowIdx) {
-			source = sourceCol.Value(rowIdx)
-		}
-
-		measurement := data.NewMeasurement[float64](source, nil)
-
-		if tickCol != nil && !tickCol.IsNull(rowIdx) {
-			measurement.SeqIdx = tickCol.Value(rowIdx)
-		}
-
-		if symbolCol != nil && !symbolCol.IsNull(rowIdx) {
-			measurement.Label = symbolCol.Value(rowIdx)
-		}
-
-		if venueAtCol != nil && !venueAtCol.IsNull(rowIdx) {
-			measurement.At = time.UnixMicro(int64(venueAtCol.Value(rowIdx))).UTC()
-		}
-
-		if maturityCol != nil && !maturityCol.IsNull(rowIdx) {
-			measurement.Maturity = maturityCol.Value(rowIdx)
-		}
-
-		if snrDefinedCol != nil && !snrDefinedCol.IsNull(rowIdx) {
-			measurement.SNRDefined = snrDefinedCol.Value(rowIdx)
-		}
-
-		if snrCol != nil && !snrCol.IsNull(rowIdx) && measurement.SNRDefined {
-			measurement.SNR = snrCol.Value(rowIdx)
-		}
-
-		if metricsCol != nil && !metricsCol.IsNull(rowIdx) {
-			if measurement.Metrics == nil {
-				measurement.Metrics = make(map[string]data.Metric[float64])
-			}
-
-			keyArray := metricsCol.Keys().(*array.String)
-			valArray := metricsCol.Items().(*array.Float64)
-			start, end := metricsCol.ValueOffsets(rowIdx)
-			startOffset, endOffset := int(start), int(end)
-
-			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				metricKey := keyArray.Value(itemIdx)
-				metricVal := valArray.Value(itemIdx)
-				measurement.Metrics[metricKey] = data.Metric[float64]{
-					Label: metricKey,
-					Raw:   metricVal,
-				}
-			}
-		}
-
-		if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
-			if measurement.Metadata == nil {
-				measurement.Metadata = make(map[string]string)
-			}
-
-			keyArray := metadataCol.Keys().(*array.String)
-			valArray := metadataCol.Items().(*array.String)
-			start, end := metadataCol.ValueOffsets(rowIdx)
-			startOffset, endOffset := int(start), int(end)
-
-			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				measurement.Metadata[keyArray.Value(itemIdx)] = valArray.Value(itemIdx)
-			}
-		}
-
-		if provenanceCol != nil && !provenanceCol.IsNull(rowIdx) {
-			if measurement.Provenance == nil {
-				measurement.Provenance = make(map[string]string)
-			}
-
-			keyArray := provenanceCol.Keys().(*array.String)
-			valArray := provenanceCol.Items().(*array.String)
-			start, end := provenanceCol.ValueOffsets(rowIdx)
-			startOffset, endOffset := int(start), int(end)
-
-			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				key, value := keyArray.Value(itemIdx), valArray.Value(itemIdx)
-				if key == "symm:error" {
-					measurement.Err = errors.New(value)
-					continue
-				}
-
-				if key == "symm:estimated" {
-					measurement.Estimated = value == "true"
-					continue
-				}
-
-				if strings.HasPrefix(key, "symm:exact:") {
-					metricKey := strings.TrimPrefix(key, "symm:exact:")
-					exact, err := decimal.NewFromString(value)
-
-					if err != nil {
-						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid original decimal quantity", err))
-					}
-
-					metric := measurement.Metrics[metricKey]
-					metric.Exact = exact
-					measurement.Metrics[metricKey] = metric
-					continue
-				}
-
-				measurement.Provenance[key] = value
-			}
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
-}
-
-func fillRuns(recordBuilder *array.RecordBuilder, runs []Run) {
-	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
-	startedAtBuilder := recordBuilder.Field(1).(*array.TimestampBuilder)
-	codeCommitBuilder := recordBuilder.Field(2).(*array.StringBuilder)
-	buildIDBuilder := recordBuilder.Field(3).(*array.StringBuilder)
-	configDigestBuilder := recordBuilder.Field(4).(*array.StringBuilder)
-	statusBuilder := recordBuilder.Field(5).(*array.StringBuilder)
-
-	for _, run := range runs {
-		epochBuilder.Append(run.Epoch)
-		startedAtBuilder.Append(arrow.Timestamp(run.StartedAt.UTC().UnixMicro()))
-		codeCommitBuilder.Append(run.CodeCommit)
-		buildIDBuilder.Append(run.BuildID)
-		configDigestBuilder.Append(run.ConfigDigest)
-		statusBuilder.Append(run.Status)
-	}
-}
-
-func readRuns(batch arrow.RecordBatch) []Run {
-	totalRows := int(batch.NumRows())
-	runs := make([]Run, 0, totalRows)
-
-	cols := make(map[string]arrow.Array, batch.NumCols())
-
-	for colIdx := range int(batch.NumCols()) {
-		cols[batch.ColumnName(colIdx)] = batch.Column(colIdx)
-	}
-
-	epochCol, _ := cols["epoch"].(*array.Int64)
-	startedAtCol, _ := cols["started_at"].(*array.Timestamp)
-	codeCommitCol, _ := cols["code_commit"].(*array.String)
-	buildIDCol, _ := cols["build_id"].(*array.String)
-	configDigestCol, _ := cols["config_digest"].(*array.String)
-	statusCol, _ := cols["status"].(*array.String)
-
-	for rowIdx := range totalRows {
-		run := Run{}
-
-		if epochCol != nil && !epochCol.IsNull(rowIdx) {
-			run.Epoch = epochCol.Value(rowIdx)
-		}
-
-		if startedAtCol != nil && !startedAtCol.IsNull(rowIdx) {
-			run.StartedAt = time.UnixMicro(int64(startedAtCol.Value(rowIdx))).UTC()
-		}
-
-		if codeCommitCol != nil && !codeCommitCol.IsNull(rowIdx) {
-			run.CodeCommit = codeCommitCol.Value(rowIdx)
-		}
-
-		if buildIDCol != nil && !buildIDCol.IsNull(rowIdx) {
-			run.BuildID = buildIDCol.Value(rowIdx)
-		}
-
-		if configDigestCol != nil && !configDigestCol.IsNull(rowIdx) {
-			run.ConfigDigest = configDigestCol.Value(rowIdx)
-		}
-
-		if statusCol != nil && !statusCol.IsNull(rowIdx) {
-			run.Status = statusCol.Value(rowIdx)
-		}
-
-		runs = append(runs, run)
-	}
-
-	return runs
-}
-
-func measurementRecords(
-	schema *iceberg.Schema,
-	measurements []*data.Measurement[float64],
-	epoch int64,
-) (array.RecordReader, error) {
-	converted, err := arrowSchemaFor(schema)
-
+/*
+BuildRecordBatch dynamically converts an arbitrary slice of map[string]any records
+into an Apache Arrow RecordBatch matching the provided Iceberg schema.
+No domain structs, pure dynamic Arrow generation.
+*/
+func BuildRecordBatch(schema *iceberg.Schema, records []map[string]any) (arrow.RecordBatch, error) {
+	arrowSchema, err := arrowSchemaFor(schema)
 	if err != nil {
 		return nil, err
 	}
 
-	recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
-	defer recordBuilder.Release()
+	builder := array.NewRecordBuilder(memory.DefaultAllocator, arrowSchema)
+	defer builder.Release()
 
-	recordBuilder.Reserve(len(measurements))
-	fillMeasurements(recordBuilder, measurements, epoch)
-	batch := recordBuilder.NewRecord()
+	builder.Reserve(len(records))
+
+	for _, rec := range records {
+		for i, field := range arrowSchema.Fields() {
+			val := rec[field.Name]
+			appendFieldValue(builder.Field(i), field.Type, val)
+		}
+	}
+
+	batch := builder.NewRecord()
+	return batch, nil
+}
+
+func appendFieldValue(builder array.Builder, arrowType arrow.DataType, val any) {
+	if val == nil {
+		builder.AppendNull()
+		return
+	}
+
+	switch b := builder.(type) {
+	case *array.Int64Builder:
+		switch v := val.(type) {
+		case int64:
+			b.Append(v)
+		case int:
+			b.Append(int64(v))
+		case float64:
+			b.Append(int64(v))
+		default:
+			builder.AppendNull()
+		}
+	case *array.Float64Builder:
+		switch v := val.(type) {
+		case float64:
+			b.Append(v)
+		case float32:
+			b.Append(float64(v))
+		case int:
+			b.Append(float64(v))
+		case int64:
+			b.Append(float64(v))
+		default:
+			builder.AppendNull()
+		}
+	case *array.StringBuilder:
+		switch v := val.(type) {
+		case string:
+			b.Append(v)
+		default:
+			b.Append(fmt.Sprint(v))
+		}
+	case *array.BooleanBuilder:
+		switch v := val.(type) {
+		case bool:
+			b.Append(v)
+		default:
+			builder.AppendNull()
+		}
+	case *array.TimestampBuilder:
+		switch v := val.(type) {
+		case time.Time:
+			b.Append(arrow.Timestamp(v.UTC().UnixMicro()))
+		case int64:
+			b.Append(arrow.Timestamp(v))
+		default:
+			builder.AppendNull()
+		}
+	case *array.BinaryBuilder:
+		switch v := val.(type) {
+		case []byte:
+			b.Append(v)
+		default:
+			builder.AppendNull()
+		}
+	case *array.MapBuilder:
+		if val == nil {
+			b.AppendNull()
+			return
+		}
+		keyBuilder, okKey := b.KeyBuilder().(*array.StringBuilder)
+		valFloatBuilder, okValFloat := b.ItemBuilder().(*array.Float64Builder)
+		valStrBuilder, okValStr := b.ItemBuilder().(*array.StringBuilder)
+
+		switch mv := val.(type) {
+		case map[string]float64:
+			if len(mv) == 0 {
+				b.AppendNull()
+				return
+			}
+			b.Append(true)
+			if okKey && okValFloat {
+				for k, v := range mv {
+					keyBuilder.Append(k)
+					valFloatBuilder.Append(v)
+				}
+			}
+		case map[string]string:
+			if len(mv) == 0 {
+				b.AppendNull()
+				return
+			}
+			b.Append(true)
+			if okKey && okValStr {
+				for k, v := range mv {
+					keyBuilder.Append(k)
+					valStrBuilder.Append(v)
+				}
+			}
+		case map[string]any:
+			if len(mv) == 0 {
+				b.AppendNull()
+				return
+			}
+			b.Append(true)
+			if okKey && okValFloat {
+				for k, v := range mv {
+					keyBuilder.Append(k)
+					switch fv := v.(type) {
+					case float64:
+						valFloatBuilder.Append(fv)
+					case int:
+						valFloatBuilder.Append(float64(fv))
+					case int64:
+						valFloatBuilder.Append(float64(fv))
+					default:
+						valFloatBuilder.Append(0)
+					}
+				}
+			}
+			if okKey && okValStr {
+				for k, v := range mv {
+					keyBuilder.Append(k)
+					valStrBuilder.Append(fmt.Sprint(v))
+				}
+			}
+		default:
+			b.AppendNull()
+		}
+	default:
+		builder.AppendNull()
+	}
+}
+
+/*
+RecordBatchToMaps dynamically extracts rows from an Arrow RecordBatch into a slice of maps.
+*/
+func RecordBatchToMaps(batch arrow.RecordBatch) []map[string]any {
+	totalRows := int(batch.NumRows())
+	records := make([]map[string]any, totalRows)
+
+	for rowIdx := range totalRows {
+		rec := make(map[string]any, batch.NumCols())
+		for colIdx := range int(batch.NumCols()) {
+			colName := batch.ColumnName(colIdx)
+			col := batch.Column(colIdx)
+			if col.IsNull(rowIdx) {
+				rec[colName] = nil
+				continue
+			}
+
+			switch c := col.(type) {
+			case *array.Int64:
+				rec[colName] = c.Value(rowIdx)
+			case *array.Float64:
+				rec[colName] = c.Value(rowIdx)
+			case *array.String:
+				rec[colName] = c.Value(rowIdx)
+			case *array.Boolean:
+				rec[colName] = c.Value(rowIdx)
+			case *array.Timestamp:
+				rec[colName] = time.UnixMicro(int64(c.Value(rowIdx))).UTC()
+			case *array.Binary:
+				rec[colName] = c.Value(rowIdx)
+			case *array.Map:
+				start, end := c.ValueOffsets(rowIdx)
+				m := make(map[string]any)
+				if keyArr, ok := c.Keys().(*array.String); ok {
+					if valFloat, okV := c.Items().(*array.Float64); okV {
+						for idx := int(start); idx < int(end); idx++ {
+							m[keyArr.Value(idx)] = valFloat.Value(idx)
+						}
+					}
+					if valStr, okV := c.Items().(*array.String); okV {
+						for idx := int(start); idx < int(end); idx++ {
+							m[keyArr.Value(idx)] = valStr.Value(idx)
+						}
+					}
+				}
+				rec[colName] = m
+			default:
+				rec[colName] = nil
+			}
+		}
+		records[rowIdx] = rec
+	}
+
+	return records
+}
+
+/*
+RecordsToReader converts generic map records into an Arrow RecordReader for Iceberg appends.
+*/
+func RecordsToReader(schema *iceberg.Schema, records []map[string]any) (array.RecordReader, error) {
+	converted, err := arrowSchemaFor(schema)
+	if err != nil {
+		return nil, err
+	}
+
+	batch, err := BuildRecordBatch(schema, records)
+	if err != nil {
+		return nil, err
+	}
 	defer batch.Release()
 
 	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{batch})
-
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"[iceberg] failed to build measurement record reader",
+			"[iceberg] failed to build record reader",
 			err,
 		))
 	}
@@ -376,260 +271,252 @@ func measurementRecords(
 }
 
 func runRecords(schema *iceberg.Schema, runs []Run) (array.RecordReader, error) {
-	converted, err := arrowSchemaFor(schema)
-
-	if err != nil {
-		return nil, err
+	maps := make([]map[string]any, len(runs))
+	for i, r := range runs {
+		maps[i] = map[string]any{
+			"epoch":         r.Epoch,
+			"started_at":    r.StartedAt,
+			"code_commit":   r.CodeCommit,
+			"build_id":      r.BuildID,
+			"config_digest": r.ConfigDigest,
+			"status":        r.Status,
+		}
 	}
-
-	recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
-	defer recordBuilder.Release()
-
-	recordBuilder.Reserve(len(runs))
-	fillRuns(recordBuilder, runs)
-	batch := recordBuilder.NewRecord()
-	defer batch.Release()
-
-	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{batch})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to build run record reader",
-			err,
-		))
-	}
-
-	return reader, nil
+	return RecordsToReader(schema, maps)
 }
 
-type ExcursionRecord struct {
-	Epoch              int64   `json:"epoch"`
-	ID                 string  `json:"id"`
-	Symbol             string  `json:"symbol"`
-	Direction          string  `json:"direction"`
-	ClearsFriction     bool    `json:"clearsFriction"`
-	PrecursorStartTick int64   `json:"precursorStartTick"`
-	AnchorTick         int64   `json:"anchorTick"`
-	ExtremumTick       int64   `json:"extremumTick"`
-	ExitTick           int64   `json:"exitTick"`
-	PostEndTick        int64   `json:"postEndTick"`
-	EntryPrice         float64 `json:"entryPrice"`
-	ExtremumPrice      float64 `json:"extremumPrice"`
-	ExitPrice          float64 `json:"exitPrice"`
-	PositionSize       float64 `json:"positionSize"`
-	Fee                float64 `json:"fee"`
-	Profit             float64 `json:"profit"`
-	ProfitFraction     float64 `json:"profitFraction"`
-	GrossExcursion     float64 `json:"grossExcursion"`
-	ObservationCount   int64   `json:"observationCount"`
-	Status             string  `json:"status"`
+func readRuns(batch arrow.RecordBatch) []Run {
+	maps := RecordBatchToMaps(batch)
+	runs := make([]Run, len(maps))
+	for i, m := range maps {
+		var epoch int64
+		if e, ok := m["epoch"].(int64); ok {
+			epoch = e
+		}
+		var startedAt time.Time
+		if s, ok := m["started_at"].(time.Time); ok {
+			startedAt = s
+		}
+		var commit, buildID, digest, status string
+		if s, ok := m["code_commit"].(string); ok {
+			commit = s
+		}
+		if s, ok := m["build_id"].(string); ok {
+			buildID = s
+		}
+		if s, ok := m["config_digest"].(string); ok {
+			digest = s
+		}
+		if s, ok := m["status"].(string); ok {
+			status = s
+		}
+		runs[i] = Run{
+			Epoch:        epoch,
+			StartedAt:    startedAt,
+			CodeCommit:   commit,
+			BuildID:      buildID,
+			ConfigDigest: digest,
+			Status:       status,
+		}
+	}
+	return runs
 }
 
-func fillExcursions(
-	recordBuilder *array.RecordBuilder,
-	excursions []ExcursionRecord,
-	epoch int64,
-) {
-	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
-	idBuilder := recordBuilder.Field(1).(*array.StringBuilder)
-	symbolBuilder := recordBuilder.Field(2).(*array.StringBuilder)
-	directionBuilder := recordBuilder.Field(3).(*array.StringBuilder)
-	clearsFrictionBuilder := recordBuilder.Field(4).(*array.BooleanBuilder)
-	precursorStartTickBuilder := recordBuilder.Field(5).(*array.Int64Builder)
-	anchorTickBuilder := recordBuilder.Field(6).(*array.Int64Builder)
-	extremumTickBuilder := recordBuilder.Field(7).(*array.Int64Builder)
-	exitTickBuilder := recordBuilder.Field(8).(*array.Int64Builder)
-	postEndTickBuilder := recordBuilder.Field(9).(*array.Int64Builder)
-	entryPriceBuilder := recordBuilder.Field(10).(*array.Float64Builder)
-	extremumPriceBuilder := recordBuilder.Field(11).(*array.Float64Builder)
-	exitPriceBuilder := recordBuilder.Field(12).(*array.Float64Builder)
-	positionSizeBuilder := recordBuilder.Field(13).(*array.Float64Builder)
-	feeBuilder := recordBuilder.Field(14).(*array.Float64Builder)
-	profitBuilder := recordBuilder.Field(15).(*array.Float64Builder)
-	profitFractionBuilder := recordBuilder.Field(16).(*array.Float64Builder)
-	grossExcursionBuilder := recordBuilder.Field(17).(*array.Float64Builder)
-	observationCountBuilder := recordBuilder.Field(18).(*array.Int64Builder)
-	statusBuilder := recordBuilder.Field(19).(*array.StringBuilder)
-
-	for _, excursion := range excursions {
-		recEpoch := excursion.Epoch
-
-		if recEpoch <= 0 {
+func excursionRecords(schema *iceberg.Schema, excursions []ExcursionRecord, epoch int64) (array.RecordReader, error) {
+	maps := make([]map[string]any, len(excursions))
+	for i, e := range excursions {
+		recEpoch := e.Epoch
+		if recEpoch == 0 {
 			recEpoch = epoch
 		}
-
-		epochBuilder.Append(recEpoch)
-		idBuilder.Append(excursion.ID)
-		symbolBuilder.Append(excursion.Symbol)
-		directionBuilder.Append(excursion.Direction)
-		clearsFrictionBuilder.Append(excursion.ClearsFriction)
-		precursorStartTickBuilder.Append(excursion.PrecursorStartTick)
-		anchorTickBuilder.Append(excursion.AnchorTick)
-		extremumTickBuilder.Append(excursion.ExtremumTick)
-		exitTickBuilder.Append(excursion.ExitTick)
-		postEndTickBuilder.Append(excursion.PostEndTick)
-		entryPriceBuilder.Append(excursion.EntryPrice)
-		extremumPriceBuilder.Append(excursion.ExtremumPrice)
-		exitPriceBuilder.Append(excursion.ExitPrice)
-		positionSizeBuilder.Append(excursion.PositionSize)
-		feeBuilder.Append(excursion.Fee)
-		profitBuilder.Append(excursion.Profit)
-		profitFractionBuilder.Append(excursion.ProfitFraction)
-		grossExcursionBuilder.Append(excursion.GrossExcursion)
-		observationCountBuilder.Append(excursion.ObservationCount)
-		statusBuilder.Append(excursion.Status)
+		maps[i] = map[string]any{
+			"epoch":                recEpoch,
+			"id":                   e.ID,
+			"symbol":               e.Symbol,
+			"direction":            e.Direction,
+			"clears_friction":      e.ClearsFriction,
+			"precursor_start_tick": e.PrecursorStartTick,
+			"anchor_tick":          e.AnchorTick,
+			"extremum_tick":        e.ExtremumTick,
+			"exit_tick":            e.ExitTick,
+			"post_end_tick":        e.PostEndTick,
+			"entry_price":          e.EntryPrice,
+			"extremum_price":       e.ExtremumPrice,
+			"exit_price":           e.ExitPrice,
+			"position_size":        e.PositionSize,
+			"fee":                  e.Fee,
+			"profit":               e.Profit,
+			"profit_fraction":      e.ProfitFraction,
+			"gross_excursion":      e.GrossExcursion,
+			"observation_count":    e.ObservationCount,
+			"status":               e.Status,
+		}
 	}
+	return RecordsToReader(schema, maps)
 }
 
 func readExcursions(batch arrow.RecordBatch) []ExcursionRecord {
-	totalRows := int(batch.NumRows())
-	excursions := make([]ExcursionRecord, 0, totalRows)
-
-	cols := make(map[string]arrow.Array, batch.NumCols())
-
-	for colIdx := range int(batch.NumCols()) {
-		cols[batch.ColumnName(colIdx)] = batch.Column(colIdx)
+	maps := RecordBatchToMaps(batch)
+	records := make([]ExcursionRecord, len(maps))
+	for i, m := range maps {
+		rec := ExcursionRecord{}
+		if v, ok := m["epoch"].(int64); ok {
+			rec.Epoch = v
+		}
+		if v, ok := m["id"].(string); ok {
+			rec.ID = v
+		}
+		if v, ok := m["symbol"].(string); ok {
+			rec.Symbol = v
+		}
+		if v, ok := m["direction"].(string); ok {
+			rec.Direction = v
+		}
+		if v, ok := m["clears_friction"].(bool); ok {
+			rec.ClearsFriction = v
+		}
+		if v, ok := m["precursor_start_tick"].(int64); ok {
+			rec.PrecursorStartTick = v
+		}
+		if v, ok := m["anchor_tick"].(int64); ok {
+			rec.AnchorTick = v
+		}
+		if v, ok := m["extremum_tick"].(int64); ok {
+			rec.ExtremumTick = v
+		}
+		if v, ok := m["exit_tick"].(int64); ok {
+			rec.ExitTick = v
+		}
+		if v, ok := m["post_end_tick"].(int64); ok {
+			rec.PostEndTick = v
+		}
+		if v, ok := m["entry_price"].(float64); ok {
+			rec.EntryPrice = v
+		}
+		if v, ok := m["extremum_price"].(float64); ok {
+			rec.ExtremumPrice = v
+		}
+		if v, ok := m["exit_price"].(float64); ok {
+			rec.ExitPrice = v
+		}
+		if v, ok := m["position_size"].(float64); ok {
+			rec.PositionSize = v
+		}
+		if v, ok := m["fee"].(float64); ok {
+			rec.Fee = v
+		}
+		if v, ok := m["profit"].(float64); ok {
+			rec.Profit = v
+		}
+		if v, ok := m["profit_fraction"].(float64); ok {
+			rec.ProfitFraction = v
+		}
+		if v, ok := m["gross_excursion"].(float64); ok {
+			rec.GrossExcursion = v
+		}
+		if v, ok := m["observation_count"].(int64); ok {
+			rec.ObservationCount = v
+		}
+		if v, ok := m["status"].(string); ok {
+			rec.Status = v
+		}
+		records[i] = rec
 	}
-
-	epochCol, _ := cols["epoch"].(*array.Int64)
-	idCol, _ := cols["id"].(*array.String)
-	symbolCol, _ := cols["symbol"].(*array.String)
-	directionCol, _ := cols["direction"].(*array.String)
-	clearsFrictionCol, _ := cols["clears_friction"].(*array.Boolean)
-	precursorStartTickCol, _ := cols["precursor_start_tick"].(*array.Int64)
-	anchorTickCol, _ := cols["anchor_tick"].(*array.Int64)
-	extremumTickCol, _ := cols["extremum_tick"].(*array.Int64)
-	exitTickCol, _ := cols["exit_tick"].(*array.Int64)
-	postEndTickCol, _ := cols["post_end_tick"].(*array.Int64)
-	entryPriceCol, _ := cols["entry_price"].(*array.Float64)
-	extremumPriceCol, _ := cols["extremum_price"].(*array.Float64)
-	exitPriceCol, _ := cols["exit_price"].(*array.Float64)
-	positionSizeCol, _ := cols["position_size"].(*array.Float64)
-	feeCol, _ := cols["fee"].(*array.Float64)
-	profitCol, _ := cols["profit"].(*array.Float64)
-	profitFractionCol, _ := cols["profit_fraction"].(*array.Float64)
-	grossExcursionCol, _ := cols["gross_excursion"].(*array.Float64)
-	observationCountCol, _ := cols["observation_count"].(*array.Int64)
-	statusCol, _ := cols["status"].(*array.String)
-
-	for rowIdx := range totalRows {
-		excursion := ExcursionRecord{}
-
-		if epochCol != nil && !epochCol.IsNull(rowIdx) {
-			excursion.Epoch = epochCol.Value(rowIdx)
-		}
-
-		if idCol != nil && !idCol.IsNull(rowIdx) {
-			excursion.ID = idCol.Value(rowIdx)
-		}
-
-		if symbolCol != nil && !symbolCol.IsNull(rowIdx) {
-			excursion.Symbol = symbolCol.Value(rowIdx)
-		}
-
-		if directionCol != nil && !directionCol.IsNull(rowIdx) {
-			excursion.Direction = directionCol.Value(rowIdx)
-		}
-
-		if clearsFrictionCol != nil && !clearsFrictionCol.IsNull(rowIdx) {
-			excursion.ClearsFriction = clearsFrictionCol.Value(rowIdx)
-		}
-
-		if precursorStartTickCol != nil && !precursorStartTickCol.IsNull(rowIdx) {
-			excursion.PrecursorStartTick = precursorStartTickCol.Value(rowIdx)
-		}
-
-		if anchorTickCol != nil && !anchorTickCol.IsNull(rowIdx) {
-			excursion.AnchorTick = anchorTickCol.Value(rowIdx)
-		}
-
-		if extremumTickCol != nil && !extremumTickCol.IsNull(rowIdx) {
-			excursion.ExtremumTick = extremumTickCol.Value(rowIdx)
-		}
-
-		if exitTickCol != nil && !exitTickCol.IsNull(rowIdx) {
-			excursion.ExitTick = exitTickCol.Value(rowIdx)
-		}
-
-		if postEndTickCol != nil && !postEndTickCol.IsNull(rowIdx) {
-			excursion.PostEndTick = postEndTickCol.Value(rowIdx)
-		}
-
-		if entryPriceCol != nil && !entryPriceCol.IsNull(rowIdx) {
-			excursion.EntryPrice = entryPriceCol.Value(rowIdx)
-		}
-
-		if extremumPriceCol != nil && !extremumPriceCol.IsNull(rowIdx) {
-			excursion.ExtremumPrice = extremumPriceCol.Value(rowIdx)
-		}
-
-		if exitPriceCol != nil && !exitPriceCol.IsNull(rowIdx) {
-			excursion.ExitPrice = exitPriceCol.Value(rowIdx)
-		}
-
-		if positionSizeCol != nil && !positionSizeCol.IsNull(rowIdx) {
-			excursion.PositionSize = positionSizeCol.Value(rowIdx)
-		}
-
-		if feeCol != nil && !feeCol.IsNull(rowIdx) {
-			excursion.Fee = feeCol.Value(rowIdx)
-		}
-
-		if profitCol != nil && !profitCol.IsNull(rowIdx) {
-			excursion.Profit = profitCol.Value(rowIdx)
-		}
-
-		if profitFractionCol != nil && !profitFractionCol.IsNull(rowIdx) {
-			excursion.ProfitFraction = profitFractionCol.Value(rowIdx)
-		}
-
-		if grossExcursionCol != nil && !grossExcursionCol.IsNull(rowIdx) {
-			excursion.GrossExcursion = grossExcursionCol.Value(rowIdx)
-		}
-
-		if observationCountCol != nil && !observationCountCol.IsNull(rowIdx) {
-			excursion.ObservationCount = observationCountCol.Value(rowIdx)
-		}
-
-		if statusCol != nil && !statusCol.IsNull(rowIdx) {
-			excursion.Status = statusCol.Value(rowIdx)
-		}
-
-		excursions = append(excursions, excursion)
-	}
-
-	return excursions
+	return records
 }
 
-func excursionRecords(
-	schema *iceberg.Schema,
-	excursions []ExcursionRecord,
-	epoch int64,
-) (array.RecordReader, error) {
-	converted, err := arrowSchemaFor(schema)
-
-	if err != nil {
-		return nil, err
+func measurementRecords(schema *iceberg.Schema, measurements []*data.Measurement[float64], epoch int64) (array.RecordReader, error) {
+	maps := make([]map[string]any, len(measurements))
+	for i, m := range measurements {
+		metricMap := make(map[string]float64)
+		for k, v := range m.Metrics {
+			metricMap[k] = v.Raw
+		}
+		maps[i] = map[string]any{
+			"epoch":       epoch,
+			"tick":        m.SeqIdx,
+			"source":      m.Source,
+			"symbol":      m.Label,
+			"venue_at":    m.At,
+			"maturity":    m.Maturity,
+			"snr":         m.SNR,
+			"snr_defined": m.SNRDefined,
+			"metrics":     metricMap,
+			"metadata":    m.Metadata,
+			"provenance":  m.Provenance,
+		}
 	}
-
-	recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
-	defer recordBuilder.Release()
-
-	recordBuilder.Reserve(len(excursions))
-	fillExcursions(recordBuilder, excursions, epoch)
-	batch := recordBuilder.NewRecord()
-	defer batch.Release()
-
-	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{batch})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to build excursion record reader",
-			err,
-		))
-	}
-
-	return reader, nil
+	return RecordsToReader(schema, maps)
 }
+
+func readMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], error) {
+	maps := RecordBatchToMaps(batch)
+	measurements := make([]*data.Measurement[float64], len(maps))
+	for i, m := range maps {
+		meas := data.NewMeasurement[float64]("", nil)
+		if v, ok := m["tick"].(int64); ok {
+			meas.SeqIdx = v
+		}
+		if v, ok := m["source"].(string); ok {
+			meas.Source = v
+		}
+		if v, ok := m["symbol"].(string); ok {
+			meas.Label = v
+		}
+		if v, ok := m["venue_at"].(time.Time); ok {
+			meas.At = v
+		}
+		if v, ok := m["maturity"].(float64); ok {
+			meas.Maturity = v
+		}
+		if v, ok := m["snr"].(float64); ok {
+			meas.SNR = v
+		}
+		if v, ok := m["snr_defined"].(bool); ok {
+			meas.SNRDefined = v
+		}
+		switch met := m["metrics"].(type) {
+		case map[string]float64:
+			meas.Metrics = make(map[string]data.Metric[float64])
+			for mk, mv := range met {
+				meas.Metrics[mk] = data.Metric[float64]{
+					Label: mk,
+					Raw:   mv,
+				}
+			}
+		case map[string]any:
+			meas.Metrics = make(map[string]data.Metric[float64])
+			for mk, mv := range met {
+				if f, okF := mv.(float64); okF {
+					meas.Metrics[mk] = data.Metric[float64]{
+						Label: mk,
+						Raw:   f,
+					}
+				}
+			}
+		}
+
+		switch md := m["metadata"].(type) {
+		case map[string]string:
+			meas.Metadata = md
+		case map[string]any:
+			meas.Metadata = make(map[string]string)
+			for mk, mv := range md {
+				meas.Metadata[mk] = fmt.Sprint(mv)
+			}
+		}
+
+		switch prov := m["provenance"].(type) {
+		case map[string]string:
+			meas.Provenance = prov
+		case map[string]any:
+			meas.Provenance = make(map[string]string)
+			for mk, mv := range prov {
+				meas.Provenance[mk] = fmt.Sprint(mv)
+			}
+		}
+		measurements[i] = meas
+	}
+	return measurements, nil
+}
+

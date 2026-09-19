@@ -9,9 +9,7 @@ import (
 	associative "github.com/theapemachine/symm/nomagique/learning/associative"
 	calculus "github.com/theapemachine/symm/nomagique/calculus"
 	cognition "github.com/theapemachine/symm/nomagique/cognition"
-	cvd "github.com/theapemachine/symm/nomagique/statistic/cvd"
 	data "github.com/theapemachine/symm/nomagique/data"
-	derivatives "github.com/theapemachine/symm/nomagique/statistic/derivatives"
 	geometry "github.com/theapemachine/symm/nomagique/geometry"
 	hawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	learning "github.com/theapemachine/symm/nomagique/learning"
@@ -314,120 +312,6 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 			return closure(in.([]byte))
 		}
 	},
-	"cvd.Assemble": func() types.Value[any, any] {
-		closure := cvd.NewAssemble()
-		return func(in any) any {
-			return closure(in.(map[string]any))
-		}
-	},
-	"cvd.BuyCount": func() types.Value[any, any] {
-		closure := cvd.NewBuyCount()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.BuyNotional": func() types.Value[any, any] {
-		closure := cvd.NewBuyNotional()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.BuyQty": func() types.Value[any, any] {
-		closure := cvd.NewBuyQty()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.CND": func() types.Value[any, any] {
-		closure := cvd.NewCND()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.CVD": func() types.Value[any, any] {
-		closure := cvd.NewCVD()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.Epoch": func() types.Value[any, any] {
-		closure := cvd.NewEpoch()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.Flow": func() types.Value[any, any] {
-		closure := cvd.NewFlow()
-		return func(in any) any {
-			return closure(in.(*cvd.Fill))
-		}
-	},
-	"cvd.GrossNotional": func() types.Value[any, any] {
-		closure := cvd.NewGrossNotional()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.GrossQty": func() types.Value[any, any] {
-		closure := cvd.NewGrossQty()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.MeanNotional": func() types.Value[any, any] {
-		closure := cvd.NewMeanNotional()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.NetNotional": func() types.Value[any, any] {
-		closure := cvd.NewNetNotional()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.NetQty": func() types.Value[any, any] {
-		closure := cvd.NewNetQty()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.SellCount": func() types.Value[any, any] {
-		closure := cvd.NewSellCount()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.SellNotional": func() types.Value[any, any] {
-		closure := cvd.NewSellNotional()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.SellQty": func() types.Value[any, any] {
-		closure := cvd.NewSellQty()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.SignedCount": func() types.Value[any, any] {
-		closure := cvd.NewSignedCount()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.SignedNet": func() types.Value[any, any] {
-		closure := cvd.NewSignedNet()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
-	"cvd.TradeCount": func() types.Value[any, any] {
-		closure := cvd.NewTradeCount()
-		return func(in any) any {
-			return closure(in.(cvd.Reading))
-		}
-	},
 	"data.Extract": func() types.Value[any, any] {
 		closure := data.NewExtract(types.Const("value"))
 		return func(in any) any {
@@ -438,132 +322,6 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 		closure := data.NewQuality()
 		return func(in any) any {
 			return closure(in.(data.QualityFacts))
-		}
-	},
-	"derivatives.Assemble": func() types.Value[any, any] {
-		closure := derivatives.NewAssemble()
-		return func(in any) any {
-			return closure(in.(map[string]any))
-		}
-	},
-	"derivatives.Basis": func() types.Value[any, any] {
-		closure := derivatives.NewBasis()
-		return func(in any) any {
-			return closure(in.(*derivatives.Snapshot))
-		}
-	},
-	"derivatives.BasisBaseline": func() types.Value[any, any] {
-		closure := derivatives.NewBasisBaseline()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.BasisValue": func() types.Value[any, any] {
-		closure := derivatives.NewBasisValue()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.BasisZScore": func() types.Value[any, any] {
-		closure := derivatives.NewBasisZScore()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.DerivativePrice": func() types.Value[any, any] {
-		closure := derivatives.NewDerivativePrice()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.GrossLiquidation": func() types.Value[any, any] {
-		closure := derivatives.NewGrossLiquidation()
-		return func(in any) any {
-			return closure(in.(derivatives.LiquidationReading))
-		}
-	},
-	"derivatives.GrossTradeNotional": func() types.Value[any, any] {
-		closure := derivatives.NewGrossTradeNotional()
-		return func(in any) any {
-			return closure(in.(derivatives.LiquidationReading))
-		}
-	},
-	"derivatives.Liquidation": func() types.Value[any, any] {
-		closure := derivatives.NewLiquidation()
-		return func(in any) any {
-			return closure(in.(*derivatives.Fill))
-		}
-	},
-	"derivatives.LiquidationBuy": func() types.Value[any, any] {
-		closure := derivatives.NewLiquidationBuy()
-		return func(in any) any {
-			return closure(in.(derivatives.LiquidationReading))
-		}
-	},
-	"derivatives.LiquidationSell": func() types.Value[any, any] {
-		closure := derivatives.NewLiquidationSell()
-		return func(in any) any {
-			return closure(in.(derivatives.LiquidationReading))
-		}
-	},
-	"derivatives.LiquidationShare": func() types.Value[any, any] {
-		closure := derivatives.NewLiquidationShare()
-		return func(in any) any {
-			return closure(in.(derivatives.LiquidationReading))
-		}
-	},
-	"derivatives.LiquidationSigned": func() types.Value[any, any] {
-		closure := derivatives.NewLiquidationSigned()
-		return func(in any) any {
-			return closure(in.(derivatives.LiquidationReading))
-		}
-	},
-	"derivatives.LogBasis": func() types.Value[any, any] {
-		closure := derivatives.NewLogBasis()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.NetLiquidation": func() types.Value[any, any] {
-		closure := derivatives.NewNetLiquidation()
-		return func(in any) any {
-			return closure(in.(derivatives.LiquidationReading))
-		}
-	},
-	"derivatives.OIChange": func() types.Value[any, any] {
-		closure := derivatives.NewOIChange()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.OIGrowth": func() types.Value[any, any] {
-		closure := derivatives.NewOIGrowth()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.OpenInterest": func() types.Value[any, any] {
-		closure := derivatives.NewOpenInterest()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.ReferencePrice": func() types.Value[any, any] {
-		closure := derivatives.NewReferencePrice()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.ReturnGap": func() types.Value[any, any] {
-		closure := derivatives.NewReturnGap()
-		return func(in any) any {
-			return closure(in.(derivatives.BasisReading))
-		}
-	},
-	"derivatives.TradeAssemble": func() types.Value[any, any] {
-		closure := derivatives.NewTradeAssemble()
-		return func(in any) any {
-			return closure(in.(map[string]any))
 		}
 	},
 	"geometry.Intersection": func() types.Value[any, any] {
@@ -594,12 +352,6 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 		closure := hawkes.NewArrivalRate()
 		return func(in any) any {
 			return closure(in.(hawkes.Reading))
-		}
-	},
-	"hawkes.Assemble": func() types.Value[any, any] {
-		closure := hawkes.NewAssemble()
-		return func(in any) any {
-			return closure(in.(map[string]any))
 		}
 	},
 	"hawkes.BuyCount": func() types.Value[any, any] {
@@ -641,7 +393,7 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 	"hawkes.Process": func() types.Value[any, any] {
 		closure := hawkes.NewProcess()
 		return func(in any) any {
-			return closure(in.(hawkes.Event))
+			return closure(in.([2]float64))
 		}
 	},
 	"hawkes.SellCount": func() types.Value[any, any] {

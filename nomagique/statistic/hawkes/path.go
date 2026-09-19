@@ -33,34 +33,10 @@ type path struct {
 }
 
 /*
-paths owns every symbol's path. The pipeline's stages share one registry so a
-measurement's Label addresses the same arrival history in every stage.
+newPath creates an isolated point process path state.
 */
-type paths struct {
-	byLabel map[string]*path
-}
-
-/*
-newPaths creates the shared per-symbol registry.
-*/
-func newPaths() *paths {
-	return &paths{byLabel: make(map[string]*path)}
-}
-
-/*
-at resolves one symbol's path, creating it on first sight.
-*/
-func (paths *paths) at(label string) *path {
-	existing, found := paths.byLabel[label]
-
-	if found {
-		return existing
-	}
-
-	fresh := &path{samples: make([]sample, 0)}
-	paths.byLabel[label] = fresh
-
-	return fresh
+func newPath() *path {
+	return &path{samples: make([]sample, 0)}
 }
 
 /*

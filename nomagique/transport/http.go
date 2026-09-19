@@ -54,10 +54,12 @@ func NewHTTPRequest(method types.String, rawURL types.String) HTTPRequest {
 			cfg.Param = params
 		}
 
+		if len(body) > 0 && m != "GET" && m != "HEAD" {
+			cfg.Body = body
+		}
+
 		if bodyPayload, ok := body["body"]; ok {
 			cfg.Body = bodyPayload
-		} else if len(body) > 0 && m != "GET" && m != "HEAD" {
-			cfg.Body = body
 		}
 
 		var resp *client.Response

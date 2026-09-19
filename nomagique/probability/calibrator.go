@@ -29,11 +29,10 @@ func NewCalibrator(retention types.Value[[]float64, []float64]) Calibrator {
 			rank = hits / float64(len(history))
 		}
 
+		history = append(history, val)
+
 		if retention != nil {
-			candidate := append(slices.Clone(history), val)
-			history = retention(candidate)
-		} else {
-			history = append(history, val)
+			history = retention(slices.Clone(history))
 		}
 
 		return rank

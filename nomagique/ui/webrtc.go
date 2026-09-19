@@ -1,179 +1,128 @@
 package ui
 
 import (
-	"context"
-	"fmt"
+	"net/http"
+	"sync"
 
-	"github.com/gofiber/fiber/v3"
+	"github.com/bytedance/sonic"
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-WebRTC follows the simple data channel example from pion.
+WebRTCServer creates a streaming WebRTC data channel server closure.
+It listens for HTTP SDP offers at the configured endpoint, negotiates peer connections,
+and broadcasts binary/payload frames across data channels.
+No hub application hack, pure Value closure.
 */
-type WebRTC struct {
-	*runtime.System
-	hub    *Hub
-	api    *webrtc.API
-	config webrtc.Configuration
-}
+type WebRTCServer types.Value[any, any]
 
-/*
-NewWebRTC configures the WebRTC transport.
-If api is nil, a default pion WebRTC API is used.
-If config is nil, default ICE servers and mux policy are used.
-*/
-func NewWebRTC(
-	ctx context.Context,
-	hub *Hub,
-	api *webrtc.API,
-	config *webrtc.Configuration,
-) *WebRTC {
-	if api == nil {
-		api = webrtc.NewAPI()
+func NewWebRTCServer(addr, path types.String) WebRTCServer {
+	api := webrtc.NewAPI()
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{URLs: []string{"stun:stun.l.google.com:19302"}},
+		},
+		BundlePolicy:  webrtc.BundlePolicyBalanced,
+		RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
 	}
+	var dataChannels sync.Map
+	var once sync.Once
 
-	if config == nil {
-		config = &webrtc.Configuration{
-			ICEServers: []webrtc.ICEServer{
-				{URLs: []string{"stun:stun.l.google.com:19302"}},
-			},
-			BundlePolicy:  webrtc.BundlePolicyBalanced,
-			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
-		}
-	}
-
-	rtc := &WebRTC{
-		hub:    hub,
-		api:    api,
-		config: *config,
-	}
-
-	hub.app.Post("/webrtc/manifold", func(fiberCtx fiber.Ctx) (err error) {
-		var offer webrtc.SessionDescription
-
-		if err = fiberCtx.Bind().Body(&offer); err != nil {
-			rtc.Error(errnie.Err(
-				errnie.BadRequest,
-				"[webrtc] failed to bind offer",
-				err,
-			))
-
-			return fiber.ErrBadRequest
-		}
-
-		peerConn, err := rtc.api.NewPeerConnection(rtc.config)
-
-		if err != nil {
-			rtc.Error(errnie.Err(
-				errnie.BadRequest,
-				"[webrtc] failed to create peer connection",
-				err,
-			))
-
-			return fiber.ErrBadRequest
-		}
-
-		setupICECandidateHandler(peerConn)
-		setupDataChannelHandler(rtc, peerConn)
-
-		if err := processOffer(rtc, peerConn, offer, fiberCtx); err != nil {
-			return err
-		}
-
-		return nil
-	})
-
-	rtc.System = runtime.NewSystem(ctx, "webrtc", rtc)
-	rtc.Transition(runtime.READY)
-
-	return rtc
-}
-
-func setupICECandidateHandler(peerConn *webrtc.PeerConnection) {
-	peerConn.OnICECandidate(func(candidate *webrtc.ICECandidate) {
-		if candidate != nil {
-			errnie.Info(fmt.Sprintf("[webrtc] new ICE candidate: %s", candidate.Address))
-		}
-	})
-}
-
-func setupDataChannelHandler(rtc *WebRTC, peerConn *webrtc.PeerConnection) {
-	peerConn.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
-		dataChannel.OnOpen(func() {
-			errnie.Info("[webrtc] data channel opened")
-			rtc.hub.RegisterDataChannel(dataChannel)
-
-			if sendErr := dataChannel.SendText("Hello from Go server 👋"); sendErr != nil {
-				rtc.Error(errnie.Err(
-					errnie.IO,
-					"[webrtc] failed to send greeting text",
-					sendErr,
-				))
+	return func(in any) any {
+		once.Do(func() {
+			a := ":8766"
+			if addr != nil {
+				if evaluated := addr(in); evaluated != "" {
+					a = evaluated
+				}
 			}
+			p := "/webrtc"
+			if path != nil {
+				if evaluated := path(in); evaluated != "" {
+					p = evaluated
+				}
+			}
+
+			mux := http.NewServeMux()
+			mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				var offer webrtc.SessionDescription
+				if err := sonic.ConfigDefault.NewDecoder(r.Body).Decode(&offer); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+
+				peerConn, err := api.NewPeerConnection(config)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				peerConn.OnDataChannel(func(dc *webrtc.DataChannel) {
+					dataChannels.Store(dc, struct{}{})
+					dc.OnClose(func() {
+						dataChannels.Delete(dc)
+					})
+				})
+
+				if err := peerConn.SetRemoteDescription(offer); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+
+				answer, err := peerConn.CreateAnswer(nil)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				gatherComplete := webrtc.GatheringCompletePromise(peerConn)
+				if err := peerConn.SetLocalDescription(answer); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				<-gatherComplete
+
+				w.Header().Set("Content-Type", "application/json")
+				_ = sonic.ConfigDefault.NewEncoder(w).Encode(peerConn.LocalDescription())
+			})
+
+			server := &http.Server{Addr: a, Handler: mux}
+			go func() {
+				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					errnie.Error(errnie.Err(errnie.IO, "[ui] webrtc server failed", err))
+				}
+			}()
 		})
 
-		dataChannel.OnMessage(func(message webrtc.DataChannelMessage) {
-			errnie.Info(fmt.Sprintf("[webrtc] received: %s", string(message.Data)))
-		})
-	})
-}
+		if in != nil {
+			var payload []byte
+			switch v := in.(type) {
+			case []byte:
+				payload = v
+			case string:
+				payload = []byte(v)
+			default:
+				data, err := sonic.Marshal(v)
+				if err == nil {
+					payload = data
+				}
+			}
+			if len(payload) > 0 {
+				dataChannels.Range(func(key, value any) bool {
+					if dc, ok := key.(*webrtc.DataChannel); ok && dc.ReadyState() == webrtc.DataChannelStateOpen {
+						_ = dc.Send(payload)
+					}
+					return true
+				})
+			}
+		}
 
-func processOffer(
-	rtc *WebRTC,
-	peerConn *webrtc.PeerConnection,
-	offer webrtc.SessionDescription,
-	fiberCtx fiber.Ctx,
-) error {
-	if err := peerConn.SetRemoteDescription(offer); err != nil {
-		rtc.Error(errnie.Err(
-			errnie.BadRequest,
-			"[webrtc] failed to set remote description",
-			err,
-		))
-
-		return fiber.ErrBadRequest
+		return in
 	}
-
-	answer, err := peerConn.CreateAnswer(nil)
-
-	if err != nil {
-		rtc.Error(errnie.Err(
-			errnie.Internal,
-			"[webrtc] failed to create answer",
-			err,
-		))
-
-		return fiber.ErrInternalServerError
-	}
-
-	gatherComplete := webrtc.GatheringCompletePromise(peerConn)
-
-	if err := peerConn.SetLocalDescription(answer); err != nil {
-		rtc.Error(errnie.Err(
-			errnie.Internal,
-			"[webrtc] failed to set local description",
-			err,
-		))
-
-		return fiber.ErrInternalServerError
-	}
-
-	<-gatherComplete
-
-	finalAnswer := peerConn.LocalDescription()
-
-	if finalAnswer == nil {
-		rtc.Error(errnie.Err(
-			errnie.Internal,
-			"[webrtc] local description is nil after ICE gathering",
-			nil,
-		))
-
-		return fiber.ErrInternalServerError
-	}
-
-	return fiberCtx.JSON(*finalAnswer)
 }

@@ -2,10 +2,7 @@ package learning
 
 import (
 	"errors"
-	"iter"
-	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -20,7 +17,7 @@ adaptive learning rate; when absent the coder runs at the manifold's own.
 type PredictiveCoderConfig struct {
 	CustomArch   []int
 	MaxHorizon   int
-	Target       core.Primitive
+	Target       types.Value[[2]float64, float64]
 	Pace         types.Value[float64, float64]
 	InitialAlpha float64
 	Learn        bool
@@ -112,20 +109,19 @@ only once the outcome arrives, so the head is never trained against a target
 it was allowed to see.
 */
 type PredictiveCoder struct {
-	*core.PrimitiveError
-
-	manifold core.Primitive
-	target   core.Primitive
+	manifold *ResonanceManifold
+	target   types.Value[[2]float64, float64]
 	pace     types.Value[float64, float64]
 	alpha    float64
 	learn    bool
 
 	horizon  int
-	ledger   core.Primitive
+	ledger   *TemporalLedger
 	last     *Resolution
 	pending  int
 	resolved int
 	out      PredictiveOutput
+	err      error
 }
 
 /*
@@ -142,7 +138,8 @@ reconstructing its own input. A config supplying none gets a default
 controller rather than a fabricated constant.
 */
 func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
-	coder := &PredictiveCoder{PrimitiveError: &core.PrimitiveError{}, target: config.Target,
+	coder := &PredictiveCoder{
+		target:  config.Target,
 		pace:    config.Pace,
 		alpha:   config.InitialAlpha,
 		learn:   config.Learn,
@@ -186,31 +183,26 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 }
 
 /*
-Next receives *PredictiveInput payloads, settles the manifold over each,
-resolves whatever predictions the new outcome has made scorable, issues a
-fresh forecast, and yields a *PredictiveOutput per arrival. An invalid
-observation ends the stream with the error recorded.
+Step receives a PredictiveInput, settles the manifold, resolves pending predictions,
+issues a fresh forecast, and yields the PredictiveOutput.
 */
-func (predictiveCoder *PredictiveCoder) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			input := (*PredictiveInput)(arriving)
-			output, err := predictiveCoder.step(*input)
+func (predictiveCoder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error) {
+	return predictiveCoder.step(input)
+}
 
-			if err != nil {
-				predictiveCoder.Error(err)
-				return
-			}
-
-			predictiveCoder.out = output
-
-			if !yield(unsafe.Pointer(&predictiveCoder.out)) {
-				return
-			}
+func (predictiveCoder *PredictiveCoder) AsValue() types.Value[PredictiveInput, PredictiveOutput] {
+	return func(in PredictiveInput) PredictiveOutput {
+		out, err := predictiveCoder.step(in)
+		if err != nil {
+			predictiveCoder.err = err
+			return PredictiveOutput{}
 		}
+		return out
 	}
+}
+
+func (predictiveCoder *PredictiveCoder) Error() error {
+	return predictiveCoder.err
 }
 
 /*
@@ -404,16 +396,10 @@ manifoldExecute drives one manifold command and returns its reading.
 func (predictiveCoder *PredictiveCoder) manifoldExecute(
 	command ManifoldCommand,
 ) (ManifoldReading, error) {
-	evaluation := predictiveCoder.manifold
-	var reading ManifoldReading
-
-	for out := range evaluation.Next(func(yield func(unsafe.Pointer) bool) {
-		yield(unsafe.Pointer(&command))
-	}) {
-		reading = *(*ManifoldReading)(out)
+	if predictiveCoder.manifold == nil {
+		return ManifoldReading{}, errors.New("learning: predictive coder has no manifold")
 	}
-
-	return reading, evaluation.Error()
+	return predictiveCoder.manifold.Execute(command)
 }
 
 /*
@@ -422,14 +408,8 @@ ledgerExecute drives one ledger command and returns its reading.
 func (predictiveCoder *PredictiveCoder) ledgerExecute(
 	command LedgerCommand,
 ) (LedgerReading, error) {
-	evaluation := predictiveCoder.ledger
-	var reading LedgerReading
-
-	for out := range evaluation.Next(func(yield func(unsafe.Pointer) bool) {
-		yield(unsafe.Pointer(&command))
-	}) {
-		reading = *(*LedgerReading)(out)
+	if predictiveCoder.ledger == nil {
+		return LedgerReading{}, errors.New("learning: predictive coder has no ledger")
 	}
-
-	return reading, evaluation.Error()
+	return predictiveCoder.ledger.Execute(command)
 }

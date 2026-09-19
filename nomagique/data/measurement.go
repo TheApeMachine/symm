@@ -1,10 +1,8 @@
 package data
 
 import (
-	"iter"
 	"maps"
 	"time"
-	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -198,23 +196,7 @@ func (measurement *Measurement[T]) Pull(other *Measurement[T], keys ...string) {
 	}
 }
 
-/*
-Standardize walks the measurement's metrics as pointers, so a standardization
-stage can fill each metric's normalized and standardized forms in place.
-*/
-func (measurement *Measurement[T]) Standardize() iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for key := range measurement.Metrics {
-			metric := measurement.Metrics[key]
 
-			if !yield(unsafe.Pointer(&metric)) {
-				return
-			}
-
-			measurement.Metrics[key] = metric
-		}
-	}
-}
 
 /*
 Reset zeroes every metric's values in place, so a pre-allocated measurement
