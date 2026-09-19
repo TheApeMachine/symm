@@ -4,553 +4,50 @@
   "source": "derivatives:ticker",
   "interests": [
     [
-      "futures",
+      "ticker",
       "data",
       "symbol"
     ],
     [
-      "futures",
+      "ticker",
       "data",
       "last"
     ],
     [
-      "futures",
-      "data",
-      "index_price"
-    ],
-    [
-      "futures",
-      "data",
-      "mark_price"
-    ],
-    [
-      "futures",
-      "data",
-      "open_interest"
-    ],
-    [
-      "futures",
+      "ticker",
       "data",
       "timestamp"
     ]
   ],
   "nodes": {
-    "oiChange": {
-      "id": "oiChange",
-      "type": "derivatives.OIChange",
-      "x": 520,
-      "y": 480,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_oiChange",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_oiChange": {
-      "id": "sink_oiChange",
-      "type": "sink",
-      "x": 700,
-      "y": 480,
-      "inputData": {
-        "_config": {
-          "metric": "oiChange"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "oiChange",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_oiGrowth": {
-      "id": "sink_oiGrowth",
-      "type": "sink",
-      "x": 700,
-      "y": 540,
-      "inputData": {
-        "_config": {
-          "metric": "oiGrowth"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "oiGrowth",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_last": {
-      "id": "sink_last",
-      "type": "sink",
-      "x": 700,
-      "y": 60,
-      "inputData": {
-        "_config": {
-          "metric": "last"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "last",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "index": {
-      "id": "index",
-      "type": "derivatives.ReferencePrice",
-      "x": 520,
-      "y": 120,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_index",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_index": {
-      "id": "sink_index",
-      "type": "sink",
-      "x": 700,
-      "y": 120,
-      "inputData": {
-        "_config": {
-          "metric": "index"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "index",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_basisVal": {
-      "id": "sink_basisVal",
-      "type": "sink",
-      "x": 700,
-      "y": 240,
-      "inputData": {
-        "_config": {
-          "metric": "basisVal"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "basisVal",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "logBasis": {
-      "id": "logBasis",
-      "type": "derivatives.LogBasis",
-      "x": 520,
-      "y": 300,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_logBasis",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "basisBase": {
-      "id": "basisBase",
-      "type": "derivatives.BasisBaseline",
-      "x": 520,
-      "y": 360,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_basisBase",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "oiGrowth": {
-      "id": "oiGrowth",
-      "type": "derivatives.OIGrowth",
-      "x": 520,
-      "y": 540,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_oiGrowth",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_gap": {
-      "id": "sink_gap",
-      "type": "sink",
-      "x": 700,
-      "y": 600,
-      "inputData": {
-        "_config": {
-          "metric": "gap"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "gap",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "stage_1": {
-      "id": "stage_1",
-      "type": "derivatives.Basis",
-      "x": 360,
-      "y": 100,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_0",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "last",
-              "portName": "in"
-            },
-            {
-              "nodeId": "index",
-              "portName": "in"
-            },
-            {
-              "nodeId": "oi",
-              "portName": "in"
-            },
-            {
-              "nodeId": "basisVal",
-              "portName": "in"
-            },
-            {
-              "nodeId": "logBasis",
-              "portName": "in"
-            },
-            {
-              "nodeId": "basisBase",
-              "portName": "in"
-            },
-            {
-              "nodeId": "basisZ",
-              "portName": "in"
-            },
-            {
-              "nodeId": "oiChange",
-              "portName": "in"
-            },
-            {
-              "nodeId": "oiGrowth",
-              "portName": "in"
-            },
-            {
-              "nodeId": "gap",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "oi": {
-      "id": "oi",
-      "type": "derivatives.OpenInterest",
-      "x": 520,
-      "y": 180,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_oi",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_basisZ": {
-      "id": "sink_basisZ",
-      "type": "sink",
-      "x": 700,
-      "y": 420,
-      "inputData": {
-        "_config": {
-          "metric": "basisZ"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "basisZ",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "gap": {
-      "id": "gap",
-      "type": "derivatives.ReturnGap",
-      "x": 520,
-      "y": 600,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_gap",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "stage_0": {
-      "id": "stage_0",
-      "type": "derivatives.Assemble",
-      "x": 200,
-      "y": 100,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "src",
-              "portName": "value"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "stage_1",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "last": {
-      "id": "last",
-      "type": "derivatives.DerivativePrice",
-      "x": 520,
-      "y": 60,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_last",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "basisZ": {
-      "id": "basisZ",
-      "type": "derivatives.BasisZScore",
-      "x": 520,
-      "y": 420,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_basisZ",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "src": {
-      "id": "src",
-      "type": "source",
-      "x": 40,
-      "y": 100,
-      "inputData": {},
+    "source": {
+      "id": "source",
+      "type": "data.Source",
       "connections": {
         "inputs": {},
         "outputs": {
-          "value": [
+          "out": [
             {
-              "nodeId": "stage_0",
+              "nodeId": "extract_last",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "sink_oi": {
-      "id": "sink_oi",
-      "type": "sink",
-      "x": 700,
-      "y": 180,
+    "extract_last": {
+      "id": "extract_last",
+      "type": "data.Extract",
       "inputData": {
         "_config": {
-          "metric": "oi"
+          "path": "last"
         }
       },
       "connections": {
         "inputs": {
-          "value": [
-            {
-              "nodeId": "oi",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "basisVal": {
-      "id": "basisVal",
-      "type": "derivatives.BasisValue",
-      "x": 520,
-      "y": 240,
-      "inputData": {},
-      "connections": {
-        "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "source",
               "portName": "out"
             }
           ]
@@ -558,28 +55,30 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_basisVal",
+              "nodeId": "sink_price",
               "portName": "value"
+            },
+            {
+              "nodeId": "returns",
+              "portName": "in"
             }
           ]
         }
       }
     },
-    "sink_logBasis": {
-      "id": "sink_logBasis",
-      "type": "sink",
-      "x": 700,
-      "y": 300,
+    "sink_price": {
+      "id": "sink_price",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "logBasis"
+          "metric": "derivative_price"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "logBasis",
+              "nodeId": "extract_last",
               "portName": "out"
             }
           ]
@@ -587,21 +86,225 @@
         "outputs": {}
       }
     },
-    "sink_basisBase": {
-      "id": "sink_basisBase",
-      "type": "sink",
-      "x": 700,
-      "y": 360,
+    "returns": {
+      "id": "returns",
+      "type": "temporal.LogReturns",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "extract_last",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_returns",
+              "portName": "value"
+            },
+            {
+              "nodeId": "basis_tanh",
+              "portName": "in"
+            },
+            {
+              "nodeId": "basis_zscore",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_returns": {
+      "id": "sink_returns",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "basisBase"
+          "metric": "derivative_returns"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "basisBase",
+              "nodeId": "returns",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "basis_tanh": {
+      "id": "basis_tanh",
+      "type": "calculus.Tanh",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "returns",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_basis",
+              "portName": "value"
+            },
+            {
+              "nodeId": "basis_baseline",
+              "portName": "in"
+            },
+            {
+              "nodeId": "basis_divergence",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_basis": {
+      "id": "sink_basis",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "basis"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "basis_tanh",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "basis_baseline": {
+      "id": "basis_baseline",
+      "type": "statistic.ResidualBaseline",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "basis_tanh",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_basis_baseline",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_basis_baseline": {
+      "id": "sink_basis_baseline",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "basis_baseline"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "basis_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "basis_divergence": {
+      "id": "basis_divergence",
+      "type": "statistic.ResidualDivergence",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "basis_tanh",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_basis_divergence",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_basis_divergence": {
+      "id": "sink_basis_divergence",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "basis_divergence"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "basis_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "basis_zscore": {
+      "id": "basis_zscore",
+      "type": "statistic.ZScore",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "returns",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_basis_zscore",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sink_basis_zscore": {
+      "id": "sink_basis_zscore",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "basis_zscore"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "basis_zscore",
               "portName": "out"
             }
           ]

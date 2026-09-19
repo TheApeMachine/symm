@@ -2,163 +2,212 @@
   "id": "depthflow:level3",
   "name": "depthflow:level3",
   "source": "depthflow:level3",
+  "interests": [
+    [
+      "level3",
+      "data",
+      "symbol"
+    ],
+    [
+      "level3",
+      "data",
+      "bid"
+    ],
+    [
+      "level3",
+      "data",
+      "ask"
+    ],
+    [
+      "level3",
+      "data",
+      "bid_qty"
+    ],
+    [
+      "level3",
+      "data",
+      "ask_qty"
+    ]
+  ],
   "nodes": {
-    "sink_removedBid": {
-      "id": "sink_removedBid",
-      "type": "sink",
-      "x": 700,
-      "y": 420,
-      "inputData": {
-        "_config": {
-          "metric": "removedBid"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "removedBid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "removedAsk": {
-      "id": "removedAsk",
-      "type": "depthflow.RemovedAsk",
-      "x": 520,
-      "y": 480,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_removedAsk",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_removedAsk": {
-      "id": "sink_removedAsk",
-      "type": "sink",
-      "x": 700,
-      "y": 480,
-      "inputData": {
-        "_config": {
-          "metric": "removedAsk"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "removedAsk",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "src": {
-      "id": "src",
-      "type": "source",
-      "x": 40,
-      "y": 100,
-      "inputData": {
-        "_config": {
-          "interests": "level3"
-        }
-      },
+    "source": {
+      "id": "source",
+      "type": "data.Source",
       "connections": {
         "inputs": {},
         "outputs": {
-          "value": [
+          "out": [
             {
-              "nodeId": "stage_0",
+              "nodeId": "extract_bid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "extract_ask",
+              "portName": "in"
+            },
+            {
+              "nodeId": "extract_bid_qty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "extract_ask_qty",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "stage_0": {
-      "id": "stage_0",
-      "type": "depthflow.Assemble",
-      "x": 200,
-      "y": 100,
-      "inputData": {},
+    "extract_bid": {
+      "id": "extract_bid",
+      "type": "data.Extract",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "src",
-              "portName": "value"
+              "nodeId": "source",
+              "portName": "out"
             }
           ]
         },
         "outputs": {
           "out": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "bid_notional",
+              "portName": "in"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "_config": {
+          "path": "bid"
+        }
+      }
+    },
+    "extract_ask": {
+      "id": "extract_ask",
+      "type": "data.Extract",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "ask_notional",
+              "portName": "in"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "_config": {
+          "path": "ask"
+        }
+      }
+    },
+    "extract_bid_qty": {
+      "id": "extract_bid_qty",
+      "type": "data.Extract",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "bid_notional",
+              "portName": "in"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "_config": {
+          "path": "bid_qty"
+        }
+      }
+    },
+    "extract_ask_qty": {
+      "id": "extract_ask_qty",
+      "type": "data.Extract",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "ask_notional",
+              "portName": "in"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "_config": {
+          "path": "ask_qty"
+        }
+      }
+    },
+    "bid_notional": {
+      "id": "bid_notional",
+      "type": "arithmetic.Multiply",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "extract_bid",
+              "portName": "out"
+            },
+            {
+              "nodeId": "extract_bid_qty",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "book_notional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "diff",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "addedBid": {
-      "id": "addedBid",
-      "type": "depthflow.AddedBid",
-      "x": 520,
-      "y": 300,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_addedBid",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_addedAsk": {
-      "id": "sink_addedAsk",
-      "type": "sink",
-      "x": 700,
-      "y": 360,
+    "sink_bid_notional": {
+      "id": "sink_bid_notional",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "addedAsk"
+          "metric": "bid_notional"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "addedAsk",
+              "nodeId": "bid_notional",
               "portName": "out"
             }
           ]
@@ -166,17 +215,18 @@
         "outputs": {}
       }
     },
-    "removedBid": {
-      "id": "removedBid",
-      "type": "depthflow.RemovedBid",
-      "x": 520,
-      "y": 420,
-      "inputData": {},
+    "ask_notional": {
+      "id": "ask_notional",
+      "type": "arithmetic.Multiply",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "extract_ask",
+              "portName": "out"
+            },
+            {
+              "nodeId": "extract_ask_qty",
               "portName": "out"
             }
           ]
@@ -184,78 +234,30 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_removedBid",
-              "portName": "value"
+              "nodeId": "book_notional",
+              "portName": "in"
+            },
+            {
+              "nodeId": "diff",
+              "portName": "in"
             }
           ]
         }
       }
     },
-    "turnover": {
-      "id": "turnover",
-      "type": "depthflow.Turnover",
-      "x": 520,
-      "y": 540,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_turnover",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "imbalanceBase": {
-      "id": "imbalanceBase",
-      "type": "depthflow.ImbalanceBaseline",
-      "x": 520,
-      "y": 600,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_imbalanceBase",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_imbalanceBase": {
-      "id": "sink_imbalanceBase",
-      "type": "sink",
-      "x": 700,
-      "y": 600,
+    "sink_ask_notional": {
+      "id": "sink_ask_notional",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "imbalanceBase"
+          "metric": "ask_notional"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "imbalanceBase",
+              "nodeId": "ask_notional",
               "portName": "out"
             }
           ]
@@ -263,17 +265,18 @@
         "outputs": {}
       }
     },
-    "notional": {
-      "id": "notional",
-      "type": "depthflow.BookNotional",
-      "x": 520,
-      "y": 180,
-      "inputData": {},
+    "book_notional": {
+      "id": "book_notional",
+      "type": "arithmetic.Add",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "bid_notional",
+              "portName": "out"
+            },
+            {
+              "nodeId": "ask_notional",
               "portName": "out"
             }
           ]
@@ -281,28 +284,26 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_notional",
-              "portName": "value"
+              "nodeId": "imbalance",
+              "portName": "in"
             }
           ]
         }
       }
     },
-    "sink_notional": {
-      "id": "sink_notional",
-      "type": "sink",
-      "x": 700,
-      "y": 180,
+    "sink_book_notional": {
+      "id": "sink_book_notional",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "notional"
+          "metric": "book_notional"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "notional",
+              "nodeId": "book_notional",
               "portName": "out"
             }
           ]
@@ -310,39 +311,18 @@
         "outputs": {}
       }
     },
-    "sink_addedBid": {
-      "id": "sink_addedBid",
-      "type": "sink",
-      "x": 700,
-      "y": 300,
-      "inputData": {
-        "_config": {
-          "metric": "addedBid"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "addedBid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "addedAsk": {
-      "id": "addedAsk",
-      "type": "depthflow.AddedAsk",
-      "x": 520,
-      "y": 360,
-      "inputData": {},
+    "diff": {
+      "id": "diff",
+      "type": "arithmetic.Subtract",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "bid_notional",
+              "portName": "out"
+            },
+            {
+              "nodeId": "ask_notional",
               "portName": "out"
             }
           ]
@@ -350,71 +330,33 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_addedAsk",
-              "portName": "value"
+              "nodeId": "imbalance",
+              "portName": "in"
+            },
+            {
+              "nodeId": "removed_bid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "removed_ask",
+              "portName": "in"
             }
           ]
         }
-      }
-    },
-    "imbalanceZ": {
-      "id": "imbalanceZ",
-      "type": "depthflow.ImbalanceZScore",
-      "x": 520,
-      "y": 660,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_imbalanceZ",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_bidNotional": {
-      "id": "sink_bidNotional",
-      "type": "sink",
-      "x": 700,
-      "y": 60,
-      "inputData": {
-        "_config": {
-          "metric": "bidNotional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "bidNotional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
       }
     },
     "imbalance": {
       "id": "imbalance",
-      "type": "depthflow.BookImbalance",
-      "x": 520,
-      "y": 240,
-      "inputData": {},
+      "type": "arithmetic.Divide",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "diff",
+              "portName": "out"
+            },
+            {
+              "nodeId": "book_notional",
               "portName": "out"
             }
           ]
@@ -422,21 +364,23 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_imbalance",
-              "portName": "value"
+              "nodeId": "imbalance_zscore",
+              "portName": "in"
+            },
+            {
+              "nodeId": "imbalance_baseline",
+              "portName": "in"
             }
           ]
         }
       }
     },
-    "sink_imbalance": {
-      "id": "sink_imbalance",
-      "type": "sink",
-      "x": 700,
-      "y": 240,
+    "sink_book_imbalance": {
+      "id": "sink_book_imbalance",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "imbalance"
+          "metric": "book_imbalance"
         }
       },
       "connections": {
@@ -451,180 +395,139 @@
         "outputs": {}
       }
     },
-    "sink_turnover": {
-      "id": "sink_turnover",
-      "type": "sink",
-      "x": 700,
-      "y": 540,
-      "inputData": {
-        "_config": {
-          "metric": "turnover"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "turnover",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_imbalanceZ": {
-      "id": "sink_imbalanceZ",
-      "type": "sink",
-      "x": 700,
-      "y": 660,
-      "inputData": {
-        "_config": {
-          "metric": "imbalanceZ"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "imbalanceZ",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "stage_1": {
-      "id": "stage_1",
-      "type": "depthflow.Book",
-      "x": 360,
-      "y": 100,
-      "inputData": {},
+    "imbalance_zscore": {
+      "id": "imbalance_zscore",
+      "type": "statistic.ZScore",
       "connections": {
         "inputs": {
           "in": [
-            {
-              "nodeId": "stage_0",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "bidNotional",
-              "portName": "in"
-            },
-            {
-              "nodeId": "askNotional",
-              "portName": "in"
-            },
-            {
-              "nodeId": "notional",
-              "portName": "in"
-            },
             {
               "nodeId": "imbalance",
-              "portName": "in"
-            },
-            {
-              "nodeId": "addedBid",
-              "portName": "in"
-            },
-            {
-              "nodeId": "addedAsk",
-              "portName": "in"
-            },
-            {
-              "nodeId": "removedBid",
-              "portName": "in"
-            },
-            {
-              "nodeId": "removedAsk",
-              "portName": "in"
-            },
-            {
-              "nodeId": "turnover",
-              "portName": "in"
-            },
-            {
-              "nodeId": "imbalanceBase",
-              "portName": "in"
-            },
-            {
-              "nodeId": "imbalanceZ",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "bidNotional": {
-      "id": "bidNotional",
-      "type": "depthflow.BidNotional",
-      "x": 520,
-      "y": 60,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
               "portName": "out"
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_bidNotional",
-              "portName": "value"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
-    "askNotional": {
-      "id": "askNotional",
-      "type": "depthflow.AskNotional",
-      "x": 520,
-      "y": 120,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_askNotional",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_askNotional": {
-      "id": "sink_askNotional",
-      "type": "sink",
-      "x": 700,
-      "y": 120,
+    "sink_imbalance_zscore": {
+      "id": "sink_imbalance_zscore",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "askNotional"
+          "metric": "imbalance_zscore"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "askNotional",
+              "nodeId": "imbalance_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "imbalance_baseline": {
+      "id": "imbalance_baseline",
+      "type": "statistic.Mean",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_imbalance_baseline": {
+      "id": "sink_imbalance_baseline",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "imbalance_baseline"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "imbalance_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "removed_bid": {
+      "id": "removed_bid",
+      "type": "calculus.Absolute",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "diff",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_removed_bid": {
+      "id": "sink_removed_bid",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "removed_bid"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "removed_bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "removed_ask": {
+      "id": "removed_ask",
+      "type": "calculus.Absolute",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "diff",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_removed_ask": {
+      "id": "sink_removed_ask",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "removed_ask"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "removed_ask",
               "portName": "out"
             }
           ]

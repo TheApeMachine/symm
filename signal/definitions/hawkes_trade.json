@@ -16,184 +16,78 @@
     [
       "trade",
       "data",
+      "qty"
+    ],
+    [
+      "trade",
+      "data",
       "timestamp"
     ]
   ],
   "nodes": {
-    "sellRate": {
-      "id": "sellRate",
-      "type": "hawkes.SellRate",
-      "x": 520,
-      "y": 480,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_sellRate",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "lambda": {
-      "id": "lambda",
-      "type": "hawkes.ConditionalIntensity",
-      "x": 520,
-      "y": 540,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_lambda",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_lambdaBuy": {
-      "id": "sink_lambdaBuy",
-      "type": "sink",
-      "x": 700,
-      "y": 600,
-      "inputData": {
-        "_config": {
-          "metric": "lambdaBuy"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "lambdaBuy",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_lambdaSell": {
-      "id": "sink_lambdaSell",
-      "type": "sink",
-      "x": 700,
-      "y": 660,
-      "inputData": {
-        "_config": {
-          "metric": "lambdaSell"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "lambdaSell",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_sellFrac": {
-      "id": "sink_sellFrac",
-      "type": "sink",
-      "x": 700,
-      "y": 300,
-      "inputData": {
-        "_config": {
-          "metric": "sellFrac"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "sellFrac",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "src": {
-      "id": "src",
-      "type": "source",
-      "x": 40,
-      "y": 100,
-      "inputData": {},
+    "source": {
+      "id": "source",
+      "type": "data.Source",
       "connections": {
         "inputs": {},
         "outputs": {
-          "value": [
+          "out": [
             {
-              "nodeId": "stage_0",
+              "nodeId": "extract_qty",
+              "portName": "in"
+            },
+            {
+              "nodeId": "extract_time",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "stage_0": {
-      "id": "stage_0",
-      "type": "hawkes.Assemble",
-      "x": 200,
-      "y": 100,
-      "inputData": {},
+    "extract_qty": {
+      "id": "extract_qty",
+      "type": "data.Extract",
+      "inputData": {
+        "_config": {
+          "path": "qty"
+        }
+      },
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "src",
-              "portName": "value"
+              "nodeId": "source",
+              "portName": "out"
             }
           ]
         },
         "outputs": {
           "out": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "sink_qty",
+              "portName": "value"
+            },
+            {
+              "nodeId": "qty_zscore",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "sink_buyCount": {
-      "id": "sink_buyCount",
-      "type": "sink",
-      "x": 700,
-      "y": 120,
+    "sink_qty": {
+      "id": "sink_qty",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "buyCount"
+          "metric": "hawkes_qty"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "buyCount",
+              "nodeId": "extract_qty",
               "portName": "out"
             }
           ]
@@ -201,71 +95,76 @@
         "outputs": {}
       }
     },
-    "sellCount": {
-      "id": "sellCount",
-      "type": "hawkes.SellCount",
-      "x": 520,
-      "y": 180,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_sellCount",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sellFrac": {
-      "id": "sellFrac",
-      "type": "hawkes.SellFraction",
-      "x": 520,
-      "y": 300,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_sellFrac",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_buyRate": {
-      "id": "sink_buyRate",
-      "type": "sink",
-      "x": 700,
-      "y": 420,
+    "extract_time": {
+      "id": "extract_time",
+      "type": "data.Extract",
       "inputData": {
         "_config": {
-          "metric": "buyRate"
+          "path": "timestamp"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "elapsed",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "elapsed": {
+      "id": "elapsed",
+      "type": "temporal.Elapsed",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "extract_time",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_elapsed",
+              "portName": "value"
+            },
+            {
+              "nodeId": "intensity_zscore",
+              "portName": "in"
+            },
+            {
+              "nodeId": "intensity_baseline",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink_elapsed": {
+      "id": "sink_elapsed",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "hawkes_elapsed"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "buyRate",
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]
@@ -273,17 +172,14 @@
         "outputs": {}
       }
     },
-    "lambdaBuy": {
-      "id": "lambdaBuy",
-      "type": "hawkes.BuyIntensity",
-      "x": 520,
-      "y": 600,
-      "inputData": {},
+    "intensity_zscore": {
+      "id": "intensity_zscore",
+      "type": "statistic.ZScore",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]
@@ -291,97 +187,26 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_lambdaBuy",
+              "nodeId": "sink_intensity_zscore",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "stage_1": {
-      "id": "stage_1",
-      "type": "hawkes.Process",
-      "x": 360,
-      "y": 100,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_0",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "count",
-              "portName": "in"
-            },
-            {
-              "nodeId": "buyCount",
-              "portName": "in"
-            },
-            {
-              "nodeId": "sellCount",
-              "portName": "in"
-            },
-            {
-              "nodeId": "buyFrac",
-              "portName": "in"
-            },
-            {
-              "nodeId": "sellFrac",
-              "portName": "in"
-            },
-            {
-              "nodeId": "rate",
-              "portName": "in"
-            },
-            {
-              "nodeId": "buyRate",
-              "portName": "in"
-            },
-            {
-              "nodeId": "sellRate",
-              "portName": "in"
-            },
-            {
-              "nodeId": "lambda",
-              "portName": "in"
-            },
-            {
-              "nodeId": "lambdaBuy",
-              "portName": "in"
-            },
-            {
-              "nodeId": "lambdaSell",
-              "portName": "in"
-            },
-            {
-              "nodeId": "radius",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "sink_count": {
-      "id": "sink_count",
-      "type": "sink",
-      "x": 700,
-      "y": 60,
+    "sink_intensity_zscore": {
+      "id": "sink_intensity_zscore",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "count"
+          "metric": "hawkes_intensity_zscore"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "count",
+              "nodeId": "intensity_zscore",
               "portName": "out"
             }
           ]
@@ -389,17 +214,14 @@
         "outputs": {}
       }
     },
-    "buyRate": {
-      "id": "buyRate",
-      "type": "hawkes.BuyRate",
-      "x": 520,
-      "y": 420,
-      "inputData": {},
+    "intensity_baseline": {
+      "id": "intensity_baseline",
+      "type": "statistic.ResidualBaseline",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]
@@ -407,28 +229,26 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_buyRate",
+              "nodeId": "sink_intensity_baseline",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_lambda": {
-      "id": "sink_lambda",
-      "type": "sink",
-      "x": 700,
-      "y": 540,
+    "sink_intensity_baseline": {
+      "id": "sink_intensity_baseline",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "lambda"
+          "metric": "hawkes_intensity_baseline"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "lambda",
+              "nodeId": "intensity_baseline",
               "portName": "out"
             }
           ]
@@ -436,17 +256,14 @@
         "outputs": {}
       }
     },
-    "radius": {
-      "id": "radius",
-      "type": "hawkes.SpectralRadius",
-      "x": 520,
-      "y": 720,
-      "inputData": {},
+    "qty_zscore": {
+      "id": "qty_zscore",
+      "type": "statistic.ZScore",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "extract_qty",
               "portName": "out"
             }
           ]
@@ -454,241 +271,26 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_radius",
+              "nodeId": "sink_qty_zscore",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_radius": {
-      "id": "sink_radius",
-      "type": "sink",
-      "x": 700,
-      "y": 720,
+    "sink_qty_zscore": {
+      "id": "sink_qty_zscore",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "radius"
+          "metric": "hawkes_qty_zscore"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "radius",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "rate": {
-      "id": "rate",
-      "type": "hawkes.ArrivalRate",
-      "x": 520,
-      "y": 360,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_rate",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "count": {
-      "id": "count",
-      "type": "hawkes.EventCount",
-      "x": 520,
-      "y": 60,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_count",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "buyCount": {
-      "id": "buyCount",
-      "type": "hawkes.BuyCount",
-      "x": 520,
-      "y": 120,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_buyCount",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "buyFrac": {
-      "id": "buyFrac",
-      "type": "hawkes.BuyFraction",
-      "x": 520,
-      "y": 240,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_buyFrac",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_sellRate": {
-      "id": "sink_sellRate",
-      "type": "sink",
-      "x": 700,
-      "y": 480,
-      "inputData": {
-        "_config": {
-          "metric": "sellRate"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "sellRate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "lambdaSell": {
-      "id": "lambdaSell",
-      "type": "hawkes.SellIntensity",
-      "x": 520,
-      "y": 660,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_lambdaSell",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_sellCount": {
-      "id": "sink_sellCount",
-      "type": "sink",
-      "x": 700,
-      "y": 180,
-      "inputData": {
-        "_config": {
-          "metric": "sellCount"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "sellCount",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_buyFrac": {
-      "id": "sink_buyFrac",
-      "type": "sink",
-      "x": 700,
-      "y": 240,
-      "inputData": {
-        "_config": {
-          "metric": "buyFrac"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "buyFrac",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_rate": {
-      "id": "sink_rate",
-      "type": "sink",
-      "x": 700,
-      "y": 360,
-      "inputData": {
-        "_config": {
-          "metric": "rate"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "rate",
+              "nodeId": "qty_zscore",
               "portName": "out"
             }
           ]

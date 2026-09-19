@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/catalog"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -60,7 +61,18 @@ func NewRegistry(schemas map[string]catalog.Schema) *Registry {
 	for op, legacyFactory := range DefaultPrimitiveFactories {
 		fn := legacyFactory
 		registry.factories[op] = func(Node) (types.Value[any, any], error) {
-			return fn(), nil
+			childClosure := fn()
+			return func(in any) (out any) {
+				if in == nil {
+					in = 0.0
+				}
+				defer func() {
+					if r := recover(); r != nil {
+						out = 0.0
+					}
+				}()
+				return childClosure(in)
+			}, nil
 		}
 	}
 
@@ -70,17 +82,19 @@ func NewRegistry(schemas map[string]catalog.Schema) *Registry {
 		if node.InputData != nil {
 			if k, ok := node.InputData["key"].(string); ok && k != "" {
 				key = k
+			} else if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if p, ok := cfg["path"].(string); ok && p != "" {
+					key = p
+				} else if k, ok := cfg["key"].(string); ok && k != "" {
+					key = k
+				}
 			}
 		}
 
 		closure := data.NewExtract(key)
 
 		return func(in any) any {
-			if m, ok := in.(map[string]any); ok {
-				return closure(m)
-			}
-
-			return nil
+			return closure(in)
 		}, nil
 	}
 
@@ -105,6 +119,28 @@ func NewRegistry(schemas map[string]catalog.Schema) *Registry {
 
 		return func(in any) any {
 			return closure(in)
+		}, nil
+	}
+
+	registry.factories["temporal.Delay"] = func(node Node) (types.Value[any, any], error) {
+		horizon := 1
+
+		if node.InputData != nil {
+			if h, ok := node.InputData["horizon"].(float64); ok && h > 0 {
+				horizon = int(h)
+			}
+		}
+
+		closure := temporal.NewDelay[float64](horizon)
+
+		return func(in any) any {
+			var val float64
+			if in != nil {
+				if f, ok := in.(float64); ok {
+					val = f
+				}
+			}
+			return closure(val)
 		}, nil
 	}
 

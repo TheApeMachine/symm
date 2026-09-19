@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -148,29 +147,27 @@ func composeTopology(
 	instances map[string]types.Value[any, any],
 ) types.Value[any, any] {
 	// Identify branch nodes (nodes whose only outgoing edges go to sinks)
-	isBranch := make(map[string]bool)
-	branchNodes := make([]string, 0)
-	trunkNodes := make([]string, 0)
-
+	// Case A: Pure Linear Pipeline (e.g. system.json, logic.json, execution.json)
+	// Every operational node must have at most 1 input and at most 1 operational child.
+	isLinear := true
 	for _, id := range opOrder {
-		nonSinkChildren := 0
+		if len(incoming[id]) > 1 {
+			isLinear = false
+			break
+		}
+		opsChildren := 0
 		for _, child := range adjacency[id] {
-			childNode := graph.Nodes[child]
-			if !isSink(child, childNode) {
-				nonSinkChildren++
+			if _, ok := instances[child]; ok {
+				opsChildren++
 			}
 		}
-
-		if nonSinkChildren == 0 && len(adjacency[id]) > 0 {
-			isBranch[id] = true
-			branchNodes = append(branchNodes, id)
-		} else {
-			trunkNodes = append(trunkNodes, id)
+		if opsChildren > 1 {
+			isLinear = false
+			break
 		}
 	}
 
-	// Case A: Pure Linear Pipeline (e.g. system.json, logic.json, execution.json)
-	if len(branchNodes) <= 1 && len(trunkNodes) == len(opOrder) {
+	if isLinear {
 		stages := make([]types.Value[any, any], len(opOrder))
 		for i, id := range opOrder {
 			stages[i] = instances[id]
@@ -179,53 +176,6 @@ func composeTopology(
 		return types.Value[any, any](num)
 	}
 
-	// Case B: Linear Trunk with Multi-Sink Fan-Out (e.g. signals like cvd_trade, derivatives_trade)
-	// All branch nodes receive input from the last trunk node (or source)
-	branchesFromSameParent := true
-	if len(branchNodes) > 1 {
-		var commonParent string
-		for _, bid := range branchNodes {
-			parents := incoming[bid]
-			operationalParent := ""
-			for _, p := range parents {
-				pNode := graph.Nodes[p]
-				if !isSource(p, pNode) {
-					operationalParent = p
-					break
-				}
-			}
-
-			if commonParent == "" {
-				commonParent = operationalParent
-			} else if operationalParent != commonParent {
-				branchesFromSameParent = false
-				break
-			}
-		}
-	}
-
-	if len(branchNodes) > 1 && branchesFromSameParent {
-		branchClosures := make([]types.Value[any, any], len(branchNodes))
-		for i, id := range branchNodes {
-			branchClosures[i] = instances[id]
-		}
-		fan := transport.NewFan[any, any](branchClosures...)
-		fanVal := func(in any) any { return fan(in) }
-
-		if len(trunkNodes) > 0 {
-			trunkStages := make([]types.Value[any, any], len(trunkNodes))
-			for i, id := range trunkNodes {
-				trunkStages[i] = instances[id]
-			}
-			trunkNum := nomagique.NewNumber[any](trunkStages...)
-			return types.Value[any, any](nomagique.NewNumber[any](
-				types.Value[any, any](trunkNum),
-				fanVal,
-			))
-		}
-
-		return fanVal
-	}
 
 	// Case C: General DAG Composition (indexed flat slot array, zero map allocations)
 	slotIndex := make(map[string]int)
@@ -234,22 +184,22 @@ func composeTopology(
 	}
 
 	n := len(opOrder)
-	inputIndices := make([]int, n)
+	inputSlots := make([][]int, n)
 	closures := make([]types.Value[any, any], n)
 
 	for i, id := range opOrder {
 		closures[i] = instances[id]
-		inputIndices[i] = -1 // -1 indicates read from graph input
+		var upIndices []int
 
 		for _, upID := range incoming[id] {
 			upNode := graph.Nodes[upID]
 			if !isSource(upID, upNode) {
 				if idx, found := slotIndex[upID]; found {
-					inputIndices[i] = idx
-					break
+					upIndices = append(upIndices, idx)
 				}
 			}
 		}
+		inputSlots[i] = upIndices
 	}
 
 	// Identify terminal output slot indices
@@ -278,10 +228,25 @@ func composeTopology(
 
 		for i := 0; i < n; i++ {
 			var inVal any
-			if inputIndices[i] == -1 {
+			ups := inputSlots[i]
+			if len(ups) == 0 {
 				inVal = in
+			} else if len(ups) == 1 {
+				inVal = slots[ups[0]]
+			} else if len(ups) == 2 {
+				f1, ok1 := slots[ups[0]].(float64)
+				f2, ok2 := slots[ups[1]].(float64)
+				if ok1 && ok2 {
+					inVal = [2]float64{f1, f2}
+				} else {
+					inVal = []any{slots[ups[0]], slots[ups[1]]}
+				}
 			} else {
-				inVal = slots[inputIndices[i]]
+				vals := make([]any, len(ups))
+				for j, u := range ups {
+					vals[j] = slots[u]
+				}
+				inVal = vals
 			}
 
 			if closures[i] != nil {

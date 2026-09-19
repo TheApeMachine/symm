@@ -2,787 +2,158 @@
   "id": "pumpdump:trade",
   "name": "pumpdump:trade",
   "source": "pumpdump:trade",
+  "interests": [
+    [
+      "trade",
+      "data",
+      "symbol"
+    ],
+    [
+      "trade",
+      "data",
+      "price"
+    ],
+    [
+      "trade",
+      "data",
+      "qty"
+    ],
+    [
+      "trade",
+      "data",
+      "timestamp"
+    ]
+  ],
   "nodes": {
-    "src": {
-      "id": "src",
-      "type": "source",
-      "x": 40,
-      "y": 100,
-      "inputData": {
-        "_config": {
-          "interests": "trade"
-        }
-      },
+    "source": {
+      "id": "source",
+      "type": "data.Source",
       "connections": {
         "inputs": {},
         "outputs": {
-          "value": [
-            {
-              "nodeId": "stage_0",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "price": {
-      "id": "price",
-      "type": "pumpdump.TradePrice",
-      "x": 520,
-      "y": 60,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
           "out": [
             {
-              "nodeId": "sink_price",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_target": {
-      "id": "sink_target",
-      "type": "sink",
-      "x": 700,
-      "y": 300,
-      "inputData": {
-        "_config": {
-          "metric": "target"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "target",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_barCount": {
-      "id": "sink_barCount",
-      "type": "sink",
-      "x": 700,
-      "y": 480,
-      "inputData": {
-        "_config": {
-          "metric": "barCount"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "barCount",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "notionalRate": {
-      "id": "notionalRate",
-      "type": "pumpdump.NotionalRate",
-      "x": 520,
-      "y": 660,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_notionalRate",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "rateBase": {
-      "id": "rateBase",
-      "type": "pumpdump.NotionalRateBaseline",
-      "x": 520,
-      "y": 840,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_rateBase",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_rateDiv": {
-      "id": "sink_rateDiv",
-      "type": "sink",
-      "x": 700,
-      "y": 960,
-      "inputData": {
-        "_config": {
-          "metric": "rateDiv"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "rateDiv",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "stage_1": {
-      "id": "stage_1",
-      "type": "pumpdump.Clock",
-      "x": 360,
-      "y": 100,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_0",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "price",
+              "nodeId": "extract_price",
               "portName": "in"
             },
             {
-              "nodeId": "qty",
+              "nodeId": "extract_qty",
               "portName": "in"
-            },
+            }
+          ]
+        }
+      }
+    },
+    "extract_price": {
+      "id": "extract_price",
+      "type": "data.Extract",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "notional",
+              "portName": "in"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "_config": {
+          "path": "price"
+        }
+      }
+    },
+    "sink_trade_price": {
+      "id": "sink_trade_price",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "trade_price"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "extract_price",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "extract_qty": {
+      "id": "extract_qty",
+      "type": "data.Extract",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
             {
               "nodeId": "notional",
               "portName": "in"
             },
             {
-              "nodeId": "interval",
-              "portName": "in"
-            },
-            {
-              "nodeId": "target",
-              "portName": "in"
-            },
-            {
-              "nodeId": "barQty",
-              "portName": "in"
-            },
-            {
-              "nodeId": "barNotional",
-              "portName": "in"
-            },
-            {
-              "nodeId": "barCount",
-              "portName": "in"
-            },
-            {
-              "nodeId": "duration",
-              "portName": "in"
-            },
-            {
-              "nodeId": "volumeRate",
-              "portName": "in"
-            },
-            {
-              "nodeId": "notionalRate",
-              "portName": "in"
-            },
-            {
-              "nodeId": "tradeRate",
-              "portName": "in"
-            },
-            {
-              "nodeId": "completed",
-              "portName": "in"
-            },
-            {
-              "nodeId": "rateBase",
-              "portName": "in"
-            },
-            {
-              "nodeId": "rateRatio",
-              "portName": "in"
-            },
-            {
-              "nodeId": "rateDiv",
-              "portName": "in"
-            },
-            {
-              "nodeId": "rateZ",
+              "nodeId": "volume_rate",
               "portName": "in"
             }
           ]
         }
-      }
-    },
-    "sink_price": {
-      "id": "sink_price",
-      "type": "sink",
-      "x": 700,
-      "y": 60,
+      },
       "inputData": {
         "_config": {
-          "metric": "price"
+          "path": "qty"
+        }
+      }
+    },
+    "sink_trade_quantity": {
+      "id": "sink_trade_quantity",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "trade_quantity"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "price",
+              "nodeId": "extract_qty",
               "portName": "out"
             }
           ]
         },
         "outputs": {}
-      }
-    },
-    "interval": {
-      "id": "interval",
-      "type": "pumpdump.TradeInterval",
-      "x": 520,
-      "y": 240,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_interval",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "volumeRate": {
-      "id": "volumeRate",
-      "type": "pumpdump.VolumeRate",
-      "x": 520,
-      "y": 600,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_volumeRate",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_rateRatio": {
-      "id": "sink_rateRatio",
-      "type": "sink",
-      "x": 700,
-      "y": 900,
-      "inputData": {
-        "_config": {
-          "metric": "rateRatio"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "rateRatio",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "barQty": {
-      "id": "barQty",
-      "type": "pumpdump.BarQuantity",
-      "x": 520,
-      "y": 360,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_barQty",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "stage_0": {
-      "id": "stage_0",
-      "type": "pumpdump.TradeAssemble",
-      "x": 200,
-      "y": 100,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "src",
-              "portName": "value"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "stage_1",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "qty": {
-      "id": "qty",
-      "type": "pumpdump.TradeQuantity",
-      "x": 520,
-      "y": 120,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_qty",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "duration": {
-      "id": "duration",
-      "type": "pumpdump.BarDuration",
-      "x": 520,
-      "y": 540,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_duration",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_rateBase": {
-      "id": "sink_rateBase",
-      "type": "sink",
-      "x": 700,
-      "y": 840,
-      "inputData": {
-        "_config": {
-          "metric": "rateBase"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "rateBase",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_barNotional": {
-      "id": "sink_barNotional",
-      "type": "sink",
-      "x": 700,
-      "y": 420,
-      "inputData": {
-        "_config": {
-          "metric": "barNotional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "barNotional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_rateZ": {
-      "id": "sink_rateZ",
-      "type": "sink",
-      "x": 700,
-      "y": 1020,
-      "inputData": {
-        "_config": {
-          "metric": "rateZ"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "rateZ",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "completed": {
-      "id": "completed",
-      "type": "pumpdump.CompletedBars",
-      "x": 520,
-      "y": 780,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_completed",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_notional": {
-      "id": "sink_notional",
-      "type": "sink",
-      "x": 700,
-      "y": 180,
-      "inputData": {
-        "_config": {
-          "metric": "notional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "barCount": {
-      "id": "barCount",
-      "type": "pumpdump.BarTradeCount",
-      "x": 520,
-      "y": 480,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_barCount",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_volumeRate": {
-      "id": "sink_volumeRate",
-      "type": "sink",
-      "x": 700,
-      "y": 600,
-      "inputData": {
-        "_config": {
-          "metric": "volumeRate"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "volumeRate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_completed": {
-      "id": "sink_completed",
-      "type": "sink",
-      "x": 700,
-      "y": 780,
-      "inputData": {
-        "_config": {
-          "metric": "completed"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "completed",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_qty": {
-      "id": "sink_qty",
-      "type": "sink",
-      "x": 700,
-      "y": 120,
-      "inputData": {
-        "_config": {
-          "metric": "qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_duration": {
-      "id": "sink_duration",
-      "type": "sink",
-      "x": 700,
-      "y": 540,
-      "inputData": {
-        "_config": {
-          "metric": "duration"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "duration",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "tradeRate": {
-      "id": "tradeRate",
-      "type": "pumpdump.TradeRate",
-      "x": 520,
-      "y": 720,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_tradeRate",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_tradeRate": {
-      "id": "sink_tradeRate",
-      "type": "sink",
-      "x": 700,
-      "y": 720,
-      "inputData": {
-        "_config": {
-          "metric": "tradeRate"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "tradeRate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "rateDiv": {
-      "id": "rateDiv",
-      "type": "pumpdump.NotionalRateDivergence",
-      "x": 520,
-      "y": 960,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_rateDiv",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "rateZ": {
-      "id": "rateZ",
-      "type": "pumpdump.NotionalRateZScore",
-      "x": 520,
-      "y": 1020,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_rateZ",
-              "portName": "value"
-            }
-          ]
-        }
       }
     },
     "notional": {
       "id": "notional",
-      "type": "pumpdump.TradeNotional",
-      "x": 520,
-      "y": 180,
-      "inputData": {},
+      "type": "arithmetic.Multiply",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "extract_price",
+              "portName": "out"
+            },
+            {
+              "nodeId": "extract_qty",
               "portName": "out"
             }
           ]
@@ -790,53 +161,26 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_notional",
-              "portName": "value"
+              "nodeId": "notional_rate",
+              "portName": "in"
             }
           ]
         }
       }
     },
-    "target": {
-      "id": "target",
-      "type": "pumpdump.BarTarget",
-      "x": 520,
-      "y": 300,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_target",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_notionalRate": {
-      "id": "sink_notionalRate",
-      "type": "sink",
-      "x": 700,
-      "y": 660,
+    "sink_trade_notional": {
+      "id": "sink_trade_notional",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "notionalRate"
+          "metric": "trade_notional"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "notionalRate",
+              "nodeId": "notional",
               "portName": "out"
             }
           ]
@@ -844,61 +188,14 @@
         "outputs": {}
       }
     },
-    "sink_interval": {
-      "id": "sink_interval",
-      "type": "sink",
-      "x": 700,
-      "y": 240,
-      "inputData": {
-        "_config": {
-          "metric": "interval"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "interval",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_barQty": {
-      "id": "sink_barQty",
-      "type": "sink",
-      "x": 700,
-      "y": 360,
-      "inputData": {
-        "_config": {
-          "metric": "barQty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "barQty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "barNotional": {
-      "id": "barNotional",
-      "type": "pumpdump.BarNotional",
-      "x": 520,
-      "y": 420,
-      "inputData": {},
+    "elapsed": {
+      "id": "elapsed",
+      "type": "temporal.Elapsed",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "source",
               "portName": "out"
             }
           ]
@@ -906,24 +203,127 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_barNotional",
-              "portName": "value"
+              "nodeId": "trade_rate",
+              "portName": "in"
+            },
+            {
+              "nodeId": "volume_rate",
+              "portName": "in"
+            },
+            {
+              "nodeId": "notional_rate",
+              "portName": "in"
             }
           ]
         }
       }
     },
-    "rateRatio": {
-      "id": "rateRatio",
-      "type": "pumpdump.NotionalRateRatio",
-      "x": 520,
-      "y": 900,
-      "inputData": {},
+    "sink_trade_interval": {
+      "id": "sink_trade_interval",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "trade_interval"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "trade_rate": {
+      "id": "trade_rate",
+      "type": "calculus.Reciprocal",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_trade_rate": {
+      "id": "sink_trade_rate",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "trade_rate"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "trade_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "volume_rate": {
+      "id": "volume_rate",
+      "type": "arithmetic.Divide",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "extract_qty",
+              "portName": "out"
+            },
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_volume_rate": {
+      "id": "sink_volume_rate",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "volume_rate"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "volume_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "notional_rate": {
+      "id": "notional_rate",
+      "type": "arithmetic.Divide",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "notional",
+              "portName": "out"
+            },
+            {
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]
@@ -931,11 +331,105 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_rateRatio",
-              "portName": "value"
+              "nodeId": "baseline",
+              "portName": "in"
+            },
+            {
+              "nodeId": "zscore",
+              "portName": "in"
             }
           ]
         }
+      }
+    },
+    "sink_notional_rate": {
+      "id": "sink_notional_rate",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "notional_rate"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "baseline": {
+      "id": "baseline",
+      "type": "statistic.Mean",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_notional_rate_baseline": {
+      "id": "sink_notional_rate_baseline",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "notional_rate_baseline"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "zscore": {
+      "id": "zscore",
+      "type": "statistic.ZScore",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_notional_rate_zscore": {
+      "id": "sink_notional_rate_zscore",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "notional_rate_zscore"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
       }
     }
   }

@@ -10,6 +10,28 @@
         "outputs": {
           "out": [
             {
+              "nodeId": "signals",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "signals": {
+      "id": "signals",
+      "type": "pipeline.Signals",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
               "nodeId": "associative_grid",
               "portName": "in"
             }
@@ -24,7 +46,7 @@
         "inputs": {
           "in": [
             {
-              "nodeId": "source",
+              "nodeId": "signals",
               "portName": "out"
             }
           ]

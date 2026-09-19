@@ -17,43 +17,36 @@
       "level3",
       "data",
       "ask"
-    ],
-    [
-      "level3",
-      "data",
-      "timestamp"
     ]
   ],
   "nodes": {
-    "src": {
-      "id": "src",
-      "type": "source",
-      "x": 40,
-      "y": 100,
-      "inputData": {},
+    "source": {
+      "id": "source",
+      "type": "data.Source",
       "connections": {
         "inputs": {},
         "outputs": {
-          "value": [
+          "out": [
             {
-              "nodeId": "stage_0",
+              "nodeId": "extract_bid",
+              "portName": "in"
+            },
+            {
+              "nodeId": "extract_ask",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "stage_1": {
-      "id": "stage_1",
-      "type": "pumpdump.Touch",
-      "x": 360,
-      "y": 100,
-      "inputData": {},
+    "extract_bid": {
+      "id": "extract_bid",
+      "type": "data.Extract",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_0",
+              "nodeId": "source",
               "portName": "out"
             }
           ]
@@ -61,50 +54,25 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "bid",
-              "portName": "in"
-            },
-            {
-              "nodeId": "ask",
-              "portName": "in"
-            },
-            {
-              "nodeId": "mid",
-              "portName": "in"
-            },
-            {
               "nodeId": "spread",
               "portName": "in"
             },
             {
-              "nodeId": "rel",
-              "portName": "in"
-            },
-            {
-              "nodeId": "base",
-              "portName": "in"
-            },
-            {
-              "nodeId": "ratio",
-              "portName": "in"
-            },
-            {
-              "nodeId": "div",
-              "portName": "in"
-            },
-            {
-              "nodeId": "zscore",
+              "nodeId": "midpoint",
               "portName": "in"
             }
           ]
+        }
+      },
+      "inputData": {
+        "_config": {
+          "path": "bid"
         }
       }
     },
     "sink_bid": {
       "id": "sink_bid",
-      "type": "sink",
-      "x": 700,
-      "y": 60,
+      "type": "data.Sink",
       "inputData": {
         "_config": {
           "metric": "bid"
@@ -114,7 +82,7 @@
         "inputs": {
           "value": [
             {
-              "nodeId": "bid",
+              "nodeId": "extract_bid",
               "portName": "out"
             }
           ]
@@ -122,11 +90,94 @@
         "outputs": {}
       }
     },
+    "extract_ask": {
+      "id": "extract_ask",
+      "type": "data.Extract",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "spread",
+              "portName": "in"
+            },
+            {
+              "nodeId": "midpoint",
+              "portName": "in"
+            }
+          ]
+        }
+      },
+      "inputData": {
+        "_config": {
+          "path": "ask"
+        }
+      }
+    },
+    "sink_ask": {
+      "id": "sink_ask",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "ask"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "extract_ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "spread": {
+      "id": "spread",
+      "type": "arithmetic.Subtract",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "extract_ask",
+              "portName": "out"
+            },
+            {
+              "nodeId": "extract_bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "relative_spread",
+              "portName": "in"
+            },
+            {
+              "nodeId": "spread_baseline",
+              "portName": "in"
+            },
+            {
+              "nodeId": "spread_zscore",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
     "sink_spread": {
       "id": "sink_spread",
-      "type": "sink",
-      "x": 700,
-      "y": 240,
+      "type": "data.Sink",
       "inputData": {
         "_config": {
           "metric": "spread"
@@ -144,17 +195,18 @@
         "outputs": {}
       }
     },
-    "div": {
-      "id": "div",
-      "type": "pumpdump.SpreadDivergence",
-      "x": 520,
-      "y": 480,
-      "inputData": {},
+    "midpoint": {
+      "id": "midpoint",
+      "type": "arithmetic.Add",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "extract_ask",
+              "portName": "out"
+            },
+            {
+              "nodeId": "extract_bid",
               "portName": "out"
             }
           ]
@@ -162,291 +214,26 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_div",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "zscore": {
-      "id": "zscore",
-      "type": "pumpdump.SpreadZScore",
-      "x": 520,
-      "y": 540,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "spread": {
-      "id": "spread",
-      "type": "pumpdump.Spread",
-      "x": 520,
-      "y": 240,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_spread",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "ratio": {
-      "id": "ratio",
-      "type": "pumpdump.SpreadRatio",
-      "x": 520,
-      "y": 420,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_ratio",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_div": {
-      "id": "sink_div",
-      "type": "sink",
-      "x": 700,
-      "y": 480,
-      "inputData": {
-        "_config": {
-          "metric": "div"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "div",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_zscore": {
-      "id": "sink_zscore",
-      "type": "sink",
-      "x": 700,
-      "y": 540,
-      "inputData": {
-        "_config": {
-          "metric": "zscore"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "bid": {
-      "id": "bid",
-      "type": "pumpdump.Bid",
-      "x": 520,
-      "y": 60,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_bid",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "mid": {
-      "id": "mid",
-      "type": "pumpdump.Midpoint",
-      "x": 520,
-      "y": 180,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_mid",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_rel": {
-      "id": "sink_rel",
-      "type": "sink",
-      "x": 700,
-      "y": 300,
-      "inputData": {
-        "_config": {
-          "metric": "rel"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "rel",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_base": {
-      "id": "sink_base",
-      "type": "sink",
-      "x": 700,
-      "y": 360,
-      "inputData": {
-        "_config": {
-          "metric": "base"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "base",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "stage_0": {
-      "id": "stage_0",
-      "type": "pumpdump.TouchAssemble",
-      "x": 200,
-      "y": 100,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "src",
-              "portName": "value"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "stage_1",
+              "nodeId": "relative_spread",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "ask": {
-      "id": "ask",
-      "type": "pumpdump.Ask",
-      "x": 520,
-      "y": 120,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_ask",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_ask": {
-      "id": "sink_ask",
-      "type": "sink",
-      "x": 700,
-      "y": 120,
+    "sink_midpoint": {
+      "id": "sink_midpoint",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "ask"
+          "metric": "midpoint"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "ask",
+              "nodeId": "midpoint",
               "portName": "out"
             }
           ]
@@ -454,21 +241,18 @@
         "outputs": {}
       }
     },
-    "sink_mid": {
-      "id": "sink_mid",
-      "type": "sink",
-      "x": 700,
-      "y": 180,
-      "inputData": {
-        "_config": {
-          "metric": "mid"
-        }
-      },
+    "relative_spread": {
+      "id": "relative_spread",
+      "type": "arithmetic.Divide",
       "connections": {
         "inputs": {
-          "value": [
+          "in": [
             {
-              "nodeId": "mid",
+              "nodeId": "spread",
+              "portName": "out"
+            },
+            {
+              "nodeId": "midpoint",
               "portName": "out"
             }
           ]
@@ -476,71 +260,89 @@
         "outputs": {}
       }
     },
-    "rel": {
-      "id": "rel",
-      "type": "pumpdump.RelativeSpread",
-      "x": 520,
-      "y": 300,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_rel",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "base": {
-      "id": "base",
-      "type": "pumpdump.SpreadBaseline",
-      "x": 520,
-      "y": 360,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_base",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_ratio": {
-      "id": "sink_ratio",
-      "type": "sink",
-      "x": 700,
-      "y": 420,
+    "sink_relative_spread": {
+      "id": "sink_relative_spread",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "ratio"
+          "metric": "relative_spread"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "ratio",
+              "nodeId": "relative_spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "spread_baseline": {
+      "id": "spread_baseline",
+      "type": "statistic.Mean",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_spread_baseline": {
+      "id": "sink_spread_baseline",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "spread_baseline"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "spread_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "spread_zscore": {
+      "id": "spread_zscore",
+      "type": "statistic.ZScore",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "sink_spread_zscore": {
+      "id": "sink_spread_zscore",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "spread_zscore"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "spread_zscore",
               "portName": "out"
             }
           ]

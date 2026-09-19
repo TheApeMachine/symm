@@ -20,84 +20,24 @@
     ]
   ],
   "nodes": {
-    "rel_divide": {
-      "id": "rel_divide",
-      "type": "arithmetic.Divide",
-      "x": 800,
-      "y": 1020,
-      "inputData": {},
+    "source": {
+      "id": "source",
+      "type": "data.Source",
       "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "energy_pair",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_relative_return_energy",
-              "portName": "value"
-            },
-            {
-              "nodeId": "energy_zscore_engine",
+              "nodeId": "lastPrice",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "sink_relative_return_energy_baseline": {
-      "id": "sink_relative_return_energy_baseline",
-      "type": "sink",
-      "x": 1260,
-      "y": 1060,
-      "inputData": {
-        "_config": {
-          "metric": "relative_return_energy_baseline"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "energy_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_relative_return_energy_divergence": {
-      "id": "sink_relative_return_energy_divergence",
-      "type": "sink",
-      "x": 1260,
-      "y": 1100,
-      "inputData": {
-        "_config": {
-          "metric": "relative_return_energy_divergence"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "energy_divergence",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
     "lastPrice": {
       "id": "lastPrice",
       "type": "data.Extract",
-      "x": 260,
-      "y": 60,
       "inputData": {
         "_config": {
           "path": "last"
@@ -107,8 +47,8 @@
         "inputs": {
           "in": [
             {
-              "nodeId": "src",
-              "portName": "value"
+              "nodeId": "source",
+              "portName": "out"
             }
           ]
         },
@@ -117,127 +57,9 @@
             {
               "nodeId": "sink_lastPrice",
               "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "return_energy_rate_reference": {
-      "id": "return_energy_rate_reference",
-      "type": "correlation.ReferenceEnergyRate",
-      "x": 640,
-      "y": 480,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
+            },
             {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_return_energy_rate_reference",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "supported_return_count_measured": {
-      "id": "supported_return_count_measured",
-      "type": "correlation.MeasuredReturns",
-      "x": 640,
-      "y": 660,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_supported_return_count_measured",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_overlap_pair_count": {
-      "id": "sink_overlap_pair_count",
-      "type": "sink",
-      "x": 1260,
-      "y": 780,
-      "inputData": {
-        "_config": {
-          "metric": "overlap_pair_count"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "overlap_pair_count",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "p_value": {
-      "id": "p_value",
-      "type": "correlation.PValue",
-      "x": 640,
-      "y": 900,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_p_value",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "corr_baseline_raw": {
-      "id": "corr_baseline_raw",
-      "type": "statistic.ResidualBaseline",
-      "x": 1240,
-      "y": 140,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "corr_residual",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "corr_baseline_tanh",
+              "nodeId": "returns",
               "portName": "in"
             }
           ]
@@ -246,12 +68,10 @@
     },
     "sink_lastPrice": {
       "id": "sink_lastPrice",
-      "type": "sink",
-      "x": 1260,
-      "y": 60,
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "lastPrice"
+          "metric": "last_price"
         }
       },
       "connections": {
@@ -266,753 +86,40 @@
         "outputs": {}
       }
     },
-    "estimator": {
-      "id": "estimator",
-      "type": "algo.HayashiYoshida",
-      "x": 220,
-      "y": 240,
-      "inputData": {},
+    "returns": {
+      "id": "returns",
+      "type": "temporal.LogReturns",
       "connections": {
-        "inputs": {},
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "lastPrice",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
-              "nodeId": "stage_1",
-              "portName": "estimator"
-            }
-          ]
-        }
-      }
-    },
-    "sink_supported_return_count_reference": {
-      "id": "sink_supported_return_count_reference",
-      "type": "sink",
-      "x": 1260,
-      "y": 720,
-      "inputData": {
-        "_config": {
-          "metric": "supported_return_count_reference"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "supported_return_count_reference",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_relative_return_energy_velocity": {
-      "id": "sink_relative_return_energy_velocity",
-      "type": "sink",
-      "x": 1260,
-      "y": 1260,
-      "inputData": {
-        "_config": {
-          "metric": "relative_return_energy_velocity"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "energy_rate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "src": {
-      "id": "src",
-      "type": "source",
-      "x": 40,
-      "y": 300,
-      "inputData": {
-        "_config": {
-          "interests": "symbol_last_time"
-        }
-      },
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "value": [
-            {
-              "nodeId": "lastPrice",
+              "nodeId": "corr",
               "portName": "in"
             },
             {
-              "nodeId": "stage_0",
+              "nodeId": "square",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "stage_0": {
-      "id": "stage_0",
-      "type": "correlation.Tick",
-      "x": 220,
-      "y": 400,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "src",
-              "portName": "value"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "stage_1",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "overlap_pair_count": {
-      "id": "overlap_pair_count",
-      "type": "correlation.OverlapCount",
-      "x": 640,
-      "y": 780,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_overlap_pair_count",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "energy_rate": {
-      "id": "energy_rate",
-      "type": "temporal.Rate",
-      "x": 960,
-      "y": 1260,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "energy_vel",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_relative_return_energy_velocity",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "overlap_density": {
-      "id": "overlap_density",
-      "type": "correlation.OverlapDensity",
-      "x": 640,
-      "y": 600,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_overlap_density",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "standard_error": {
-      "id": "standard_error",
-      "type": "correlation.StandardError",
-      "x": 640,
-      "y": 960,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_standard_error",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "observationCount": {
-      "id": "observationCount",
-      "type": "correlation.ObservationCount",
-      "x": 640,
-      "y": 120,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_observationCount",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "return_energy_reference": {
-      "id": "return_energy_reference",
-      "type": "correlation.ReferenceEnergy",
-      "x": 640,
-      "y": 360,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_return_energy_reference",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_return_energy_rate_reference": {
-      "id": "sink_return_energy_rate_reference",
-      "type": "sink",
-      "x": 1260,
-      "y": 480,
-      "inputData": {
-        "_config": {
-          "metric": "return_energy_rate_reference"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return_energy_rate_reference",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_standard_error": {
-      "id": "sink_standard_error",
-      "type": "sink",
-      "x": 1260,
-      "y": 960,
-      "inputData": {
-        "_config": {
-          "metric": "standard_error"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "standard_error",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "corr_zscore": {
-      "id": "corr_zscore",
-      "type": "statistic.ResidualZScore",
-      "x": 1240,
-      "y": 220,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "corr_residual",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_correlation_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "energy_baseline": {
-      "id": "energy_baseline",
-      "type": "statistic.ResidualBaseline",
-      "x": 1120,
-      "y": 1060,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "energy_zscore_engine",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_relative_return_energy_baseline",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "energy_divergence": {
-      "id": "energy_divergence",
-      "type": "statistic.ResidualDivergence",
-      "x": 1120,
-      "y": 1100,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "energy_zscore_engine",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_relative_return_energy_divergence",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_return_energy_reference": {
-      "id": "sink_return_energy_reference",
-      "type": "sink",
-      "x": 1260,
-      "y": 360,
-      "inputData": {
-        "_config": {
-          "metric": "return_energy_reference"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return_energy_reference",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_overlap_density": {
-      "id": "sink_overlap_density",
-      "type": "sink",
-      "x": 1260,
-      "y": 600,
-      "inputData": {
-        "_config": {
-          "metric": "overlap_density"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "overlap_density",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "fisher_point": {
-      "id": "fisher_point",
-      "type": "correlation.FisherPoint",
-      "x": 640,
-      "y": 1200,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "fisher_vel",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "corr_baseline_tanh": {
-      "id": "corr_baseline_tanh",
+    "corr": {
+      "id": "corr",
       "type": "calculus.Tanh",
-      "x": 1380,
-      "y": 140,
-      "inputData": {},
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "corr_baseline_raw",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_correlation_baseline",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "corr_divergence": {
-      "id": "corr_divergence",
-      "type": "statistic.ResidualDivergence",
-      "x": 1240,
-      "y": 180,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "corr_residual",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_correlation_divergence",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_correlation_zscore": {
-      "id": "sink_correlation_zscore",
-      "type": "sink",
-      "x": 1520,
-      "y": 220,
-      "inputData": {
-        "_config": {
-          "metric": "correlation_zscore"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "corr_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "energy_point": {
-      "id": "energy_point",
-      "type": "correlation.EnergyPoint",
-      "x": 640,
-      "y": 1260,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "energy_vel",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "sink_covariance": {
-      "id": "sink_covariance",
-      "type": "sink",
-      "x": 1260,
-      "y": 300,
-      "inputData": {
-        "_config": {
-          "metric": "covariance"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "covariance",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_observationCount": {
-      "id": "sink_observationCount",
-      "type": "sink",
-      "x": 1260,
-      "y": 120,
-      "inputData": {
-        "_config": {
-          "metric": "observationCount"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "observationCount",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_return_energy_measured": {
-      "id": "sink_return_energy_measured",
-      "type": "sink",
-      "x": 1260,
-      "y": 420,
-      "inputData": {
-        "_config": {
-          "metric": "return_energy_measured"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return_energy_measured",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_return_energy_rate_measured": {
-      "id": "sink_return_energy_rate_measured",
-      "type": "sink",
-      "x": 1260,
-      "y": 540,
-      "inputData": {
-        "_config": {
-          "metric": "return_energy_rate_measured"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "return_energy_rate_measured",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "energy_pair": {
-      "id": "energy_pair",
-      "type": "correlation.EnergyPair",
-      "x": 640,
-      "y": 1020,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "rel_divide",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "energy_zscore": {
-      "id": "energy_zscore",
-      "type": "statistic.ResidualZScore",
-      "x": 1120,
-      "y": 1140,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "energy_zscore_engine",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_relative_return_energy_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "fisher_rate": {
-      "id": "fisher_rate",
-      "type": "temporal.Rate",
-      "x": 960,
-      "y": 1200,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "fisher_vel",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_correlation_velocity",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "energy_vel": {
-      "id": "energy_vel",
-      "type": "temporal.Velocity",
-      "x": 800,
-      "y": 1260,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "energy_point",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "energy_rate",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "signed_correlation": {
-      "id": "signed_correlation",
-      "type": "correlation.Signed",
-      "x": 640,
-      "y": 180,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
+              "nodeId": "returns",
               "portName": "out"
             }
           ]
@@ -1024,28 +131,34 @@
               "portName": "value"
             },
             {
-              "nodeId": "corr_atanh",
+              "nodeId": "abs",
+              "portName": "in"
+            },
+            {
+              "nodeId": "atanh",
+              "portName": "in"
+            },
+            {
+              "nodeId": "zscore",
               "portName": "in"
             }
           ]
         }
       }
     },
-    "sink_supported_return_count_measured": {
-      "id": "sink_supported_return_count_measured",
-      "type": "sink",
-      "x": 1260,
-      "y": 660,
+    "sink_signed_correlation": {
+      "id": "sink_signed_correlation",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "supported_return_count_measured"
+          "metric": "signed_correlation"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "supported_return_count_measured",
+              "nodeId": "corr",
               "portName": "out"
             }
           ]
@@ -1053,86 +166,14 @@
         "outputs": {}
       }
     },
-    "sink_p_value": {
-      "id": "sink_p_value",
-      "type": "sink",
-      "x": 1260,
-      "y": 900,
-      "inputData": {
-        "_config": {
-          "metric": "p_value"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "p_value",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "corr_atanh": {
-      "id": "corr_atanh",
-      "type": "calculus.Atanh",
-      "x": 820,
-      "y": 180,
-      "inputData": {},
+    "abs": {
+      "id": "abs",
+      "type": "calculus.Absolute",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "signed_correlation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "corr_estimator",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "sink_relative_return_energy": {
-      "id": "sink_relative_return_energy",
-      "type": "sink",
-      "x": 1260,
-      "y": 1020,
-      "inputData": {
-        "_config": {
-          "metric": "relative_return_energy"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "rel_divide",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "absolute_correlation": {
-      "id": "absolute_correlation",
-      "type": "correlation.AbsoluteCorrelation",
-      "x": 640,
-      "y": 240,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
+              "nodeId": "corr",
               "portName": "out"
             }
           ]
@@ -1147,17 +188,34 @@
         }
       }
     },
-    "covariance": {
-      "id": "covariance",
-      "type": "correlation.PairCovariance",
-      "x": 640,
-      "y": 300,
-      "inputData": {},
+    "sink_absolute_correlation": {
+      "id": "sink_absolute_correlation",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "absolute_correlation"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "abs",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "atanh": {
+      "id": "atanh",
+      "type": "calculus.Atanh",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "stage_1",
+              "nodeId": "corr",
               "portName": "out"
             }
           ]
@@ -1165,24 +223,41 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_covariance",
+              "nodeId": "sink_atanh",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "corr_residual": {
-      "id": "corr_residual",
-      "type": "statistic.CausalResidual",
-      "x": 1100,
-      "y": 180,
-      "inputData": {},
+    "sink_atanh": {
+      "id": "sink_atanh",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "correlation_atanh"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "atanh",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "zscore": {
+      "id": "zscore",
+      "type": "statistic.ZScore",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "corr_estimator",
+              "nodeId": "corr",
               "portName": "out"
             }
           ]
@@ -1190,32 +265,41 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "corr_baseline_raw",
-              "portName": "in"
-            },
-            {
-              "nodeId": "corr_divergence",
-              "portName": "in"
-            },
-            {
-              "nodeId": "corr_zscore",
-              "portName": "in"
+              "nodeId": "sink_correlation_zscore",
+              "portName": "value"
             }
           ]
         }
       }
     },
-    "energy_zscore_engine": {
-      "id": "energy_zscore_engine",
-      "type": "equation.AdaptiveZScore",
-      "x": 960,
-      "y": 1080,
-      "inputData": {},
+    "sink_correlation_zscore": {
+      "id": "sink_correlation_zscore",
+      "type": "data.Sink",
+      "inputData": {
+        "_config": {
+          "metric": "correlation_zscore"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "square": {
+      "id": "square",
+      "type": "calculus.Square",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "rel_divide",
+              "nodeId": "returns",
               "portName": "out"
             }
           ]
@@ -1223,11 +307,11 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "energy_baseline",
-              "portName": "in"
+              "nodeId": "sink_relative_return_energy",
+              "portName": "value"
             },
             {
-              "nodeId": "energy_divergence",
+              "nodeId": "energy_mean",
               "portName": "in"
             },
             {
@@ -1238,175 +322,19 @@
         }
       }
     },
-    "return_energy_rate_measured": {
-      "id": "return_energy_rate_measured",
-      "type": "correlation.MeasuredEnergyRate",
-      "x": 640,
-      "y": 540,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_return_energy_rate_measured",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "stage_1": {
-      "id": "stage_1",
-      "type": "correlation.Pairs",
-      "x": 420,
-      "y": 400,
+    "sink_relative_return_energy": {
+      "id": "sink_relative_return_energy",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "measured": "",
-          "reference": ""
-        }
-      },
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_0",
-              "portName": "out"
-            }
-          ],
-          "estimator": [
-            {
-              "nodeId": "estimator",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "observationCount",
-              "portName": "in"
-            },
-            {
-              "nodeId": "signed_correlation",
-              "portName": "in"
-            },
-            {
-              "nodeId": "absolute_correlation",
-              "portName": "in"
-            },
-            {
-              "nodeId": "covariance",
-              "portName": "in"
-            },
-            {
-              "nodeId": "return_energy_reference",
-              "portName": "in"
-            },
-            {
-              "nodeId": "return_energy_measured",
-              "portName": "in"
-            },
-            {
-              "nodeId": "return_energy_rate_reference",
-              "portName": "in"
-            },
-            {
-              "nodeId": "return_energy_rate_measured",
-              "portName": "in"
-            },
-            {
-              "nodeId": "overlap_density",
-              "portName": "in"
-            },
-            {
-              "nodeId": "supported_return_count_measured",
-              "portName": "in"
-            },
-            {
-              "nodeId": "supported_return_count_reference",
-              "portName": "in"
-            },
-            {
-              "nodeId": "overlap_pair_count",
-              "portName": "in"
-            },
-            {
-              "nodeId": "shared_time",
-              "portName": "in"
-            },
-            {
-              "nodeId": "p_value",
-              "portName": "in"
-            },
-            {
-              "nodeId": "standard_error",
-              "portName": "in"
-            },
-            {
-              "nodeId": "energy_pair",
-              "portName": "in"
-            },
-            {
-              "nodeId": "fisher_point",
-              "portName": "in"
-            },
-            {
-              "nodeId": "energy_point",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "return_energy_measured": {
-      "id": "return_energy_measured",
-      "type": "correlation.MeasuredEnergy",
-      "x": 640,
-      "y": 420,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_return_energy_measured",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_shared_time": {
-      "id": "sink_shared_time",
-      "type": "sink",
-      "x": 1260,
-      "y": 840,
-      "inputData": {
-        "_config": {
-          "metric": "shared_time"
+          "metric": "relative_return_energy"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "shared_time",
+              "nodeId": "square",
               "portName": "out"
             }
           ]
@@ -1414,17 +342,14 @@
         "outputs": {}
       }
     },
-    "corr_estimator": {
-      "id": "corr_estimator",
-      "type": "statistic.Estimator",
-      "x": 960,
-      "y": 180,
-      "inputData": {},
+    "energy_mean": {
+      "id": "energy_mean",
+      "type": "statistic.Mean",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "corr_atanh",
+              "nodeId": "square",
               "portName": "out"
             }
           ]
@@ -1432,40 +357,58 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "corr_residual",
-              "portName": "in"
+              "nodeId": "sink_relative_return_energy_baseline",
+              "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_correlation_baseline": {
-      "id": "sink_correlation_baseline",
-      "type": "sink",
-      "x": 1520,
-      "y": 140,
+    "sink_relative_return_energy_baseline": {
+      "id": "sink_relative_return_energy_baseline",
+      "type": "data.Sink",
       "inputData": {
         "_config": {
-          "metric": "correlation_baseline"
+          "metric": "relative_return_energy_baseline"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "corr_baseline_tanh",
+              "nodeId": "energy_mean",
               "portName": "out"
             }
           ]
         },
         "outputs": {}
+      }
+    },
+    "energy_zscore": {
+      "id": "energy_zscore",
+      "type": "statistic.ZScore",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "square",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink_relative_return_energy_zscore",
+              "portName": "value"
+            }
+          ]
+        }
       }
     },
     "sink_relative_return_energy_zscore": {
       "id": "sink_relative_return_energy_zscore",
-      "type": "sink",
-      "x": 1260,
-      "y": 1140,
+      "type": "data.Sink",
       "inputData": {
         "_config": {
           "metric": "relative_return_energy_zscore"
@@ -1476,169 +419,6 @@
           "value": [
             {
               "nodeId": "energy_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "fisher_vel": {
-      "id": "fisher_vel",
-      "type": "temporal.Velocity",
-      "x": 800,
-      "y": 1200,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "fisher_point",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "fisher_rate",
-              "portName": "in"
-            }
-          ]
-        }
-      }
-    },
-    "sink_correlation_velocity": {
-      "id": "sink_correlation_velocity",
-      "type": "sink",
-      "x": 1260,
-      "y": 1200,
-      "inputData": {
-        "_config": {
-          "metric": "correlation_velocity"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "fisher_rate",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_signed_correlation": {
-      "id": "sink_signed_correlation",
-      "type": "sink",
-      "x": 1260,
-      "y": 180,
-      "inputData": {
-        "_config": {
-          "metric": "signed_correlation"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "signed_correlation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_absolute_correlation": {
-      "id": "sink_absolute_correlation",
-      "type": "sink",
-      "x": 1260,
-      "y": 240,
-      "inputData": {
-        "_config": {
-          "metric": "absolute_correlation"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "absolute_correlation",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "supported_return_count_reference": {
-      "id": "supported_return_count_reference",
-      "type": "correlation.ReferenceReturns",
-      "x": 640,
-      "y": 720,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_supported_return_count_reference",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "shared_time": {
-      "id": "shared_time",
-      "type": "correlation.SharedTime",
-      "x": 640,
-      "y": 840,
-      "inputData": {},
-      "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "stage_1",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_shared_time",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_correlation_divergence": {
-      "id": "sink_correlation_divergence",
-      "type": "sink",
-      "x": 1520,
-      "y": 180,
-      "inputData": {
-        "_config": {
-          "metric": "correlation_divergence"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "corr_divergence",
               "portName": "out"
             }
           ]
