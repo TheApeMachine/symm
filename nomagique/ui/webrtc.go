@@ -149,6 +149,8 @@ func processOffer(
 		return fiber.ErrInternalServerError
 	}
 
+	gatherComplete := webrtc.GatheringCompletePromise(peerConn)
+
 	if err := peerConn.SetLocalDescription(answer); err != nil {
 		rtc.Error(errnie.Err(
 			errnie.Internal,
@@ -159,7 +161,6 @@ func processOffer(
 		return fiber.ErrInternalServerError
 	}
 
-	gatherComplete := webrtc.GatheringCompletePromise(peerConn)
 	<-gatherComplete
 
 	finalAnswer := peerConn.LocalDescription()

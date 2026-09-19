@@ -25,6 +25,7 @@ import (
 	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store/tables"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/ui"
 	"github.com/theapemachine/symm/system"
 )
@@ -128,24 +129,6 @@ var (
 			errnie.Debug(fmt.Sprintf("[root] scanned %d schemas, building compiler registry...", len(schemas)))
 			reg := compiler.NewRegistry(schemas)
 
-			errnie.Debug("[root] loading system graph definition...")
-			systemGraph, err := definitions.Load("system")
-
-			if err != nil {
-				return errnie.Error(err)
-			}
-
-			errnie.Debug(fmt.Sprintf("[root] system graph loaded (%d nodes), compiling...", len(systemGraph.Nodes)))
-			systemPipeline, err := compiler.Compile[any](systemGraph, reg)
-
-			if err != nil {
-				return errnie.Error(err)
-			}
-
-			errnie.Debug("[root] system pipeline compiled successfully, initializing workspace...")
-			workspace := nomagiqueruntime.NewWorkspaceWithPipeline(ctx, "system", nomagique.Number[any](systemPipeline))
-			defer workspace.Close()
-
 			// 1. Initialize UI Hub and WebRTC server
 			errnie.Debug("[root] initializing UI hub and WebRTC server...")
 			hub := ui.NewHub(ctx, nil, catalog)
@@ -165,7 +148,34 @@ var (
 				}
 			}()
 
-			// 2. Forward pipeline evaluations to UI Hub
+			reg.Register("ui.Broadcast", func(compiler.Node) (types.Value[any, any], error) {
+				return func(in any) any {
+					if eval, ok := in.(cognition.Evaluation); ok && hub != nil {
+						hub.BroadcastEvaluation(eval)
+					}
+					return in
+				}, nil
+			})
+
+			errnie.Debug("[root] loading system graph definition...")
+			systemGraph, err := definitions.Load("system")
+
+			if err != nil {
+				return errnie.Error(err)
+			}
+
+			errnie.Debug(fmt.Sprintf("[root] system graph loaded (%d nodes), compiling...", len(systemGraph.Nodes)))
+			systemPipeline, err := compiler.Compile[any](systemGraph, reg)
+
+			if err != nil {
+				return errnie.Error(err)
+			}
+
+			errnie.Debug("[root] system pipeline compiled successfully, initializing workspace...")
+			workspace := nomagiqueruntime.NewWorkspaceWithPipeline(ctx, "system", nomagique.Number[any](systemPipeline))
+			defer workspace.Close()
+
+			// 2. Consume workspace execution events and forward pipeline evaluations to UI Hub
 			go func() {
 				for {
 					select {
@@ -178,6 +188,10 @@ var (
 
 						if eval, ok := result.(cognition.Evaluation); ok && hub != nil {
 							hub.BroadcastEvaluation(eval)
+						}
+
+						if execIntent, ok := result.(map[string]any); ok {
+							errnie.Info(fmt.Sprintf("[root] execution intent: %v", execIntent))
 						}
 					}
 				}
@@ -202,7 +216,7 @@ var (
 			excludedBases := viper.GetStringSlice("market.instrument.excluded")
 			errnie.Info(fmt.Sprintf("[root] discovering %s universe from %s (excluding %d bases)...", quoteCurrency, publicEndpoint, len(excludedBases)))
 
-			symbols, err := transport.DiscoverUniverse(ctx, publicEndpoint, quoteCurrency, excludedBases)
+			symbols, err := system.DiscoverUniverse(ctx, publicEndpoint, quoteCurrency, excludedBases)
 			if err != nil {
 				errnie.Warn(fmt.Sprintf("[root] dynamic universe discovery failed: %v", err))
 				symbols = viper.GetStringSlice("market.symbols")
@@ -235,10 +249,19 @@ var (
 			model := viper.GetString("market.model")
 			if model == "paper" {
 				errnie.Info("[root] initializing paper trading runner...")
-				paperRunner := transport.NewPaper(
+				paperRunner := system.NewPaper(
 					ctx,
 					func(balance map[string]any) {
 						errnie.Debug(fmt.Sprintf("[paper] balance update: %v", balance))
+						if balances, ok := balance["balances"].(map[string]any); ok {
+							if usd, ok := balances["USD"].(map[string]any); ok {
+								avail := formatBalance(usd["available"])
+								total := formatBalance(usd["total"])
+								if hub != nil {
+									hub.UpdateBalance(avail, "0.00", total)
+								}
+							}
+						}
 					},
 					func(execution map[string]any) {
 						errnie.Info(fmt.Sprintf("[paper] execution update: %v", execution))
@@ -252,6 +275,15 @@ var (
 
 				if bal != nil {
 					errnie.Info(fmt.Sprintf("[root] paper trading initial balance: %v", bal["balances"]))
+					if balances, ok := bal["balances"].(map[string]any); ok {
+						if usd, ok := balances["USD"].(map[string]any); ok {
+							avail := formatBalance(usd["available"])
+							total := formatBalance(usd["total"])
+							if hub != nil {
+								hub.UpdateBalance(avail, "0.00", total)
+							}
+						}
+					}
 				}
 
 				paperRunner.StartPoll(10 * time.Second)
@@ -410,6 +442,19 @@ func initConfig() {
 	system.Cfg = system.NewConfig()
 
 	// Live watching is disabled until an atomic config generation swap exists.
+}
+
+func formatBalance(val any) string {
+	switch v := val.(type) {
+	case float64:
+		return fmt.Sprintf("%.2f", v)
+	case string:
+		return v
+	case int:
+		return fmt.Sprintf("%d.00", v)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 const rootLong = `

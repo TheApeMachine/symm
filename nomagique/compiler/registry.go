@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/catalog"
@@ -119,6 +120,89 @@ func NewRegistry(schemas map[string]catalog.Schema) *Registry {
 
 		return func(in any) any {
 			return closure(in)
+		}, nil
+	}
+
+	registry.factories["transport.Pace"] = func(node Node) (types.Value[any, any], error) {
+		delay := time.Duration(0)
+
+		if node.InputData != nil {
+			if d, ok := node.InputData["delay"].(float64); ok && d > 0 {
+				delay = time.Duration(d) * time.Millisecond
+			} else if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if d, ok := cfg["delay"].(float64); ok && d > 0 {
+					delay = time.Duration(d) * time.Millisecond
+				}
+			}
+		}
+
+		closure := transport.NewPace[any](delay)
+
+		return func(in any) any {
+			return closure(in)
+		}, nil
+	}
+
+	registry.factories["transport.Process"] = func(node Node) (types.Value[any, any], error) {
+		binary := ""
+		var defaultArgs []string
+
+		if node.InputData != nil {
+			if b, ok := node.InputData["binary"].(string); ok {
+				binary = b
+			}
+			if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if b, ok := cfg["binary"].(string); ok {
+					binary = b
+				}
+				if args, ok := cfg["args"].([]any); ok {
+					for _, a := range args {
+						if s, ok := a.(string); ok {
+							defaultArgs = append(defaultArgs, s)
+						}
+					}
+				}
+			}
+		}
+
+		closure := transport.NewProcess(binary, defaultArgs...)
+
+		return func(in any) any {
+			var args []string
+			if in != nil {
+				if strList, ok := in.([]string); ok {
+					args = strList
+				} else if str, ok := in.(string); ok {
+					args = []string{str}
+				}
+			}
+			return closure(args)
+		}, nil
+	}
+
+	registry.factories["data.Select"] = func(node Node) (types.Value[any, any], error) {
+		path := ""
+
+		if node.InputData != nil {
+			if p, ok := node.InputData["path"].(string); ok {
+				path = p
+			} else if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if p, ok := cfg["path"].(string); ok {
+					path = p
+				}
+			}
+		}
+
+		closure := data.NewSelect(path)
+
+		return func(in any) any {
+			return closure(in)
+		}, nil
+	}
+
+	registry.factories["ui.Broadcast"] = func(node Node) (types.Value[any, any], error) {
+		return func(in any) any {
+			return in
 		}, nil
 	}
 

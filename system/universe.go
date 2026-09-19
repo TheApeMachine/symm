@@ -1,8 +1,9 @@
-package transport
+package system
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -61,33 +62,17 @@ func DiscoverUniverseWithDialer(
 	quoteCurrency string,
 	excludedBases []string,
 ) ([]string, error) {
-	if dialer == nil {
-		dialer = websocket.DefaultDialer
-	}
+	errnie.Info(fmt.Sprintf("[universe] querying %s for %s instruments...", endpoint, quoteCurrency))
 
-	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	conn, resp, err := dialer.DialContext(dialCtx, endpoint, nil)
+	conn, _, err := dialer.DialContext(ctx, endpoint, nil)
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.IO,
-			"universe: dial failed for "+endpoint,
+			"[universe] dial failed: "+endpoint,
 			err,
 		))
 	}
-
-	if resp != nil && resp.Body != nil {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			errnie.Error(errnie.Err(errnie.IO, "universe: close response body", closeErr))
-		}
-	}
-
-	defer func() {
-		if closeErr := conn.Close(); closeErr != nil {
-			errnie.Error(errnie.Err(errnie.IO, "universe: close websocket conn", closeErr))
-		}
-	}()
+	defer conn.Close()
 
 	subMsg := map[string]any{
 		"method": "subscribe",
@@ -96,55 +81,56 @@ func DiscoverUniverseWithDialer(
 		},
 	}
 
-	subPayload, err := json.Marshal(subMsg)
+	payload, err := json.Marshal(subMsg)
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"universe: marshal instrument subscribe message",
+			"[universe] failed to marshal subscription",
 			err,
 		))
 	}
 
-	if err := conn.WriteMessage(websocket.TextMessage, subPayload); err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.IO,
-			"universe: write instrument subscribe message",
+			"[universe] failed to write subscription",
 			err,
 		))
 	}
 
-	normalizedQuote := strings.ToUpper(strings.TrimSpace(quoteCurrency))
-	excludedSet := make(map[string]struct{}, len(excludedBases))
+	excludedMap := make(map[string]bool, len(excludedBases))
 	for _, base := range excludedBases {
-		excludedSet[strings.ToUpper(strings.TrimSpace(base))] = struct{}{}
+		excludedMap[strings.ToUpper(strings.TrimSpace(base))] = true
 	}
+
+	targetQuote := strings.ToUpper(strings.TrimSpace(quoteCurrency))
+	timeout := time.After(10 * time.Second)
 
 	for {
 		select {
-		case <-dialCtx.Done():
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeout:
 			return nil, errnie.Error(errnie.Err(
 				errnie.Timeout,
-				"universe: snapshot await timed out",
-				dialCtx.Err(),
+				"[universe] timeout waiting for instrument snapshot",
+				nil,
 			))
 		default:
 		}
 
-		msgType, payload, err := conn.ReadMessage()
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, msgBytes, err := conn.ReadMessage()
 		if err != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.IO,
-				"universe: read message from websocket",
+				"[universe] read error from instrument channel",
 				err,
 			))
 		}
 
-		if msgType != websocket.TextMessage || len(payload) == 0 {
-			continue
-		}
-
 		var snapshot InstrumentSnapshotMessage
-		if err := json.Unmarshal(payload, &snapshot); err != nil {
+		if err := json.Unmarshal(msgBytes, &snapshot); err != nil {
 			continue
 		}
 
@@ -152,18 +138,17 @@ func DiscoverUniverseWithDialer(
 			continue
 		}
 
-		symbols := make([]string, 0, len(snapshot.Data.Pairs))
+		var symbols []string
 		for _, pair := range snapshot.Data.Pairs {
-			if strings.ToUpper(pair.Quote) != normalizedQuote {
+			if strings.ToUpper(pair.Quote) != targetQuote {
 				continue
 			}
 
-			if pair.Status != "online" {
+			if strings.ToLower(pair.Status) != "online" {
 				continue
 			}
 
-			baseUpper := strings.ToUpper(strings.TrimSpace(pair.Base))
-			if _, excluded := excludedSet[baseUpper]; excluded {
+			if excludedMap[strings.ToUpper(pair.Base)] {
 				continue
 			}
 
@@ -171,6 +156,7 @@ func DiscoverUniverseWithDialer(
 		}
 
 		slices.Sort(symbols)
+		errnie.Info(fmt.Sprintf("[universe] discovered %d online %s trading pairs", len(symbols), targetQuote))
 		return symbols, nil
 	}
 }

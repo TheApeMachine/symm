@@ -42,6 +42,11 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "specs",
         "tests",
         "advisor",
+        "frontend/src-tauri",
+        "src-tauri",
+        "frontend/test-results"
+        "frontend/tmp",
+        "tmp"
     }
 )
 
@@ -57,6 +62,17 @@ SKIP_FILE_NAMES: frozenset[str] = frozenset(
         "AGENTS.md",
         "pnpm-lock.yaml",
         ".md",
+        ".cta.json",
+        "biome.json",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.lib.json",
+        "tsconfig.typecheck.json",
+        ".conf.json",
+        "manifests.json",
+        "manifest.json",
+        "metric-lineage.json",
+        "advisors.json"
     }
 )
 
@@ -71,7 +87,8 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".h",
     "cuh",
     ".cu",
-    ".inc"
+    ".inc",
+    ".json"
 )
 
 

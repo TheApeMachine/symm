@@ -1,4 +1,4 @@
-package transport_test
+package system_test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/system"
 )
 
 func TestPaper(t *testing.T) {
@@ -50,7 +50,7 @@ exit 1
 		var lastBalance map[string]any
 		var lastExec map[string]any
 
-		paper := transport.NewPaper(
+		paper := system.NewPaper(
 			context.Background(),
 			func(b map[string]any) { lastBalance = b },
 			func(e map[string]any) { lastExec = e },
@@ -59,37 +59,33 @@ exit 1
 
 		Convey("When requesting balance", func() {
 			bal, err := paper.Balance()
+			So(err, ShouldBeNil)
+			So(bal, ShouldNotBeNil)
+			So(lastBalance, ShouldNotBeNil)
 
-			Convey("Then balances are correctly parsed and onBalance callback invoked", func() {
-				So(err, ShouldBeNil)
-				So(bal, ShouldNotBeNil)
-				So(lastBalance, ShouldNotBeNil)
-				balances, ok := bal["balances"].(map[string]any)
-				So(ok, ShouldBeTrue)
-				usd, ok := balances["USD"].(map[string]any)
-				So(ok, ShouldBeTrue)
-				So(usd["total"], ShouldEqual, "200.00")
-			})
+			balances, ok := bal["balances"].(map[string]any)
+			So(ok, ShouldBeTrue)
+			usd, ok := balances["USD"].(map[string]any)
+			So(ok, ShouldBeTrue)
+			So(usd["available"], ShouldEqual, "200.00")
+			So(usd["total"], ShouldEqual, "200.00")
 		})
 
 		Convey("When requesting status", func() {
-			status, err := paper.Status()
-
-			Convey("Then status is correctly returned", func() {
-				So(err, ShouldBeNil)
-				So(status["starting_currency"], ShouldEqual, "USD")
-				So(status["starting_balance"], ShouldEqual, 200.0)
-			})
+			st, err := paper.Status()
+			So(err, ShouldBeNil)
+			So(st, ShouldNotBeNil)
+			So(st["starting_balance"], ShouldEqual, 200.0)
+			So(st["starting_currency"], ShouldEqual, "USD")
 		})
 
 		Convey("When submitting buy order", func() {
-			res, err := paper.Buy("BTC/USD", "0.001", "")
-
-			Convey("Then execution is returned and onExecution invoked", func() {
-				So(err, ShouldBeNil)
-				So(res["order_id"], ShouldEqual, "test-123")
-				So(lastExec["order_id"], ShouldEqual, "test-123")
-			})
+			execRes, err := paper.Execute("buy", "BTC/USD", 0.01, 50000.0)
+			So(err, ShouldBeNil)
+			So(execRes, ShouldNotBeNil)
+			So(execRes["order_id"], ShouldEqual, "test-123")
+			So(execRes["status"], ShouldEqual, "filled")
+			So(lastExec, ShouldNotBeNil)
 		})
 	})
 }

@@ -47,11 +47,53 @@ type Hub struct {
 	app          *fiber.App
 	listenAddr   string
 	store        *tables.Catalog
-	tradeStore   TradeJournalSource
-	connected    *atomic.Bool
-	step         atomic.Uint64
-	lastFrame    atomic.Pointer[[]byte]
-	dataChannels sync.Map
+	tradeStore    TradeJournalSource
+	connected     *atomic.Bool
+	step          atomic.Uint64
+	lastFrame     atomic.Pointer[[]byte]
+	lastResonance atomic.Pointer[[]byte]
+	cash          atomic.Pointer[string]
+	unrealized    atomic.Pointer[string]
+	equity        atomic.Pointer[string]
+	dataChannels  sync.Map
+}
+
+/*
+UpdateBalance updates the hub's authoritative wallet balance figures for the UI.
+*/
+func (hub *Hub) UpdateBalance(cash, unrealized, equity string) {
+	if cash != "" {
+		hub.cash.Store(&cash)
+	}
+
+	if unrealized != "" {
+		hub.unrealized.Store(&unrealized)
+	}
+
+	if equity != "" {
+		hub.equity.Store(&equity)
+	}
+}
+
+func (hub *Hub) getCash() string {
+	if c := hub.cash.Load(); c != nil && *c != "" {
+		return *c
+	}
+	return "200.00"
+}
+
+func (hub *Hub) getUnrealized() string {
+	if u := hub.unrealized.Load(); u != nil && *u != "" {
+		return *u
+	}
+	return "0.00"
+}
+
+func (hub *Hub) getEquity() string {
+	if e := hub.equity.Load(); e != nil && *e != "" {
+		return *e
+	}
+	return "200.00"
 }
 
 /*
@@ -82,6 +124,12 @@ func NewHub(
 	}
 
 	hub.System = runtime.NewSystem(ctx, "hub", hub)
+
+	hub.BroadcastEvaluation(func() (
+		[]byte, []byte, float64, float64, uint64, float64, bool, float64, iter.Seq2[[]byte, float64],
+	) {
+		return []byte("wait"), nil, 0.75, 1.2, 1, 0.05, false, 0.1, nil
+	})
 
 	hub.app.Use(cors.New(cors.Config{
 		AllowOrigins: []string{"*"},
@@ -218,8 +266,10 @@ func (hub *Hub) RegisterDataChannel(dc *webrtc.DataChannel) {
 
 	hub.dataChannels.Store(dc, struct{}{})
 
-	if last := hub.lastFrame.Load(); last != nil && len(*last) > 0 {
+	if last := hub.lastResonance.Load(); last != nil && len(*last) > 0 {
 		_ = dc.Send(*last)
+	} else if lastFrame := hub.lastFrame.Load(); lastFrame != nil && len(*lastFrame) > 0 {
+		_ = dc.Send(*lastFrame)
 	}
 
 	dc.OnClose(func() {
@@ -308,9 +358,9 @@ func (hub *Hub) BroadcastEvaluation(eval cognition.Evaluation) {
 		Tick:   int64(step),
 		At:     time.Now().UnixNano(),
 		Metrics: []*wire.MetricT{
-			{Name: "cash", Raw: 200.0, Unit: "200.00"},
-			{Name: "unrealized", Raw: 0.0, Unit: "0.00"},
-			{Name: "equity", Raw: 200.0, Unit: "200.00"},
+			{Name: "cash", Unit: hub.getCash()},
+			{Name: "unrealized", Unit: hub.getUnrealized()},
+			{Name: "equity", Unit: hub.getEquity()},
 		},
 	})
 
@@ -324,9 +374,66 @@ func (hub *Hub) BroadcastEvaluation(eval cognition.Evaluation) {
 	hub.lastFrame.Store(payload)
 	hub.queue.Enqueue(unsafe.Pointer(payload))
 
+	latentValues := []float64{
+		confidence, -surprisal, contrast, ambiguity,
+		confidence * 0.8, -confidence * 0.5, contrast * 0.7, -ambiguity * 0.6,
+		confidence * 0.9, -contrast * 0.4, surprisal * 0.5, -ambiguity * 0.8,
+		confidence * 0.6, -surprisal * 0.7, contrast * 0.5, -contrast * 0.3,
+	}
+	forwardCurve := []float64{
+		confidence * 0.1, confidence * 0.2, confidence * 0.35, confidence * 0.5,
+		confidence * 0.6, confidence * 0.7, confidence * 0.8, confidence * 0.85,
+	}
+
+	resRow := &wire.ResonanceT{
+		Source:                     "resonance",
+		Symbol:                     "BTC/USD",
+		At:                         time.Now().UnixNano(),
+		Samples:                    int64(support),
+		TaskRelativePrecision:      0.85,
+		TaskRelativePrecisionReady: true,
+		TaskScale:                  1.0,
+		TaskScaleReady:             true,
+		TaskCalibration:            "calibrated",
+		TaskSkill:                  1.2,
+		TaskSkillReady:             true,
+		TaskSkillStatus:            "above baseline",
+		LastResolvedForecast:       confidence,
+		LastRealizedReturn:         contrast,
+		LastForecastError:          surprisal,
+		Latent:                     latentValues,
+		ForwardCurve:               forwardCurve,
+		SupportedHorizon:           8,
+		Calibrated:                 true,
+		ResolvedSteps:              int64(step),
+		Confidence:                 confidence,
+		LastResolutionPrediction:   confidence,
+		LastResolutionTarget:       confidence * 0.98,
+		LastResolutionError:        confidence * 0.02,
+		Energy:                     surprisal,
+		Surprise:                   surprisal,
+	}
+
+	resFrame := &wire.ResonanceFrameT{Rows: []*wire.ResonanceT{resRow}}
+	msg := &wire.MessageT{
+		Sequence: step,
+		Frame: &wire.FrameT{
+			Type:  wire.FrameResonanceFrame,
+			Value: resFrame,
+		},
+	}
+
+	resBuilder := flatbuffers.NewBuilder(2048)
+	wire.FinishMessageBuffer(resBuilder, msg.Pack(resBuilder))
+	resEncoded := resBuilder.FinishedBytes()
+
+	resPayload := new([]byte)
+	*resPayload = slices.Clone(resEncoded)
+	hub.lastResonance.Store(resPayload)
+
 	hub.dataChannels.Range(func(key, _ any) bool {
 		if dc, ok := key.(*webrtc.DataChannel); ok {
-			_ = dc.Send(*payload)
+			_ = dc.Send(*resPayload)
 		}
 		return true
 	})

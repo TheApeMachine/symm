@@ -11,7 +11,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/compiler"
+	"github.com/theapemachine/symm/nomagique/catalog"
 	"github.com/theapemachine/symm/nomagique/store/tables"
 	"github.com/theapemachine/symm/signal"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -245,7 +245,7 @@ func NewRoutes(hub *Hub) *Routes {
 	})
 
 	hub.app.Get("/workbench/primitives", func(c fiber.Ctx) error {
-		primitives, err := compiler.Primitives()
+		primitives, err := catalog.Load()
 
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())

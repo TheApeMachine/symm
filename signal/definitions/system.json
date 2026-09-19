@@ -54,6 +54,28 @@
         "outputs": {
           "out": [
             {
+              "nodeId": "ui",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "ui": {
+      "id": "ui",
+      "type": "ui.Broadcast",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "logic",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
               "nodeId": "execution",
               "portName": "in"
             }
@@ -68,7 +90,7 @@
         "inputs": {
           "in": [
             {
-              "nodeId": "logic",
+              "nodeId": "ui",
               "portName": "out"
             }
           ]
