@@ -3,6 +3,8 @@ package hawkes
 import (
 	"math"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 func TestSpectralRadiusDiagonalMatrix(testingT *testing.T) {
@@ -74,7 +76,7 @@ func TestTotalDescendantsExceedsImmediateOffspring(testingT *testing.T) {
 }
 
 func TestTotalDescendantsRejectsSupercriticalProcess(testingT *testing.T) {
-	if _, _, ok := totalDescendants(1.0, 0.1, 0.1, 1.0, 1); ok {
+	if _, _, ok := totalDescendants(core.Unit, 0.1, 0.1, core.Unit, 1); ok {
 		testingT.Fatal("expected totalDescendants to fail for a supercritical process")
 	}
 }

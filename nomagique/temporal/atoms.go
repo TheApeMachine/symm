@@ -6,12 +6,14 @@ import (
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
+type Velocity types.Value[[2]float64, float64]
+
 /*
 NewVelocity creates a stateful closure that tracks previous values and timestamps
 to calculate the finite-difference rate of change (Velocity/Rate).
 It expects an input array of [value, timestamp_seconds].
 */
-func NewVelocity() types.Value[[2]float64, float64] {
+func NewVelocity() Velocity {
 	var prevValue, prevTime float64
 	var hasPrior bool
 
@@ -39,11 +41,13 @@ func NewVelocity() types.Value[[2]float64, float64] {
 	}
 }
 
+type LogReturns types.Value[float64, float64]
+
 /*
 NewLogReturns creates a stateful closure that tracks the previous value
 and calculates the natural log of the ratio (Current/Previous).
 */
-func NewLogReturns() types.Value[float64, float64] {
+func NewLogReturns() LogReturns {
 	var previous float64
 	var initialized bool
 	return func(in float64) float64 {
@@ -58,11 +62,13 @@ func NewLogReturns() types.Value[float64, float64] {
 	}
 }
 
+type Elapsed types.Value[int64, float64]
+
 /*
 NewElapsed creates a stateful closure that tracks the previous timestamp (in nanoseconds)
 and returns the elapsed time in seconds.
 */
-func NewElapsed() types.Value[int64, float64] {
+func NewElapsed() Elapsed {
 	var previous int64
 	var initialized bool
 	return func(in int64) float64 {
@@ -74,5 +80,39 @@ func NewElapsed() types.Value[int64, float64] {
 		ret := float64(in-previous) / 1e9 // nanoseconds to seconds
 		previous = in
 		return ret
+	}
+}
+
+type Transition types.Value[[]byte, []byte]
+
+/*
+NewTransition creates a stateful closure that emits sequential transitions across consecutive signatures.
+On the initial observation, it retains previous without emitting.
+On each subsequent observation, it emits (previous, current) encoded as "previous->current".
+No structs, pure Value closure.
+*/
+func NewTransition() Transition {
+	var previous []byte
+
+	return func(current []byte) []byte {
+		if len(current) == 0 {
+			return nil
+		}
+
+		if len(previous) == 0 {
+			previous = make([]byte, len(current))
+			copy(previous, current)
+			return nil
+		}
+
+		out := make([]byte, len(previous)+2+len(current))
+		copy(out, previous)
+		out[len(previous)] = '-'
+		out[len(previous)+1] = '>'
+		copy(out[len(previous)+2:], current)
+
+		previous = make([]byte, len(current))
+		copy(previous, current)
+		return out
 	}
 }

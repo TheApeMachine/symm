@@ -1,78 +1,48 @@
 package hawkes
 
 import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Assemble gathers keyed trade inputs into one Hawkes event.
+NewAssemble creates a Value closure that gathers trade inputs into one Hawkes Event.
+State and behavior are expressed directly as a Value closure with no struct overhead.
 */
-type Assemble struct {
-	*core.PrimitiveError
-
-	out Event
-}
-
-func NewAssemble() *Assemble {
-	return &Assemble{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (assemble *Assemble) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		var event Event
-		haveSide := false
-
-		for arriving := range in {
-			input := (*core.Input[string, []string, any])(arriving)
-
-			if input == nil {
-				continue
-			}
-
-			if input.Origin != nil {
-				event.Symbol = input.Origin.Identity()
-			}
-
-			if input.Value == nil || len(input.Key) != 3 {
-				continue
-			}
-
-			if input.Key[0] != "trade" || input.Key[1] != "data" {
-				continue
-			}
-
-			switch input.Key[2] {
-			case "side":
-				value, isString := (*input.Value).(string)
-
-				if !isString {
-					continue
-				}
-
-				event.Side = value
-				haveSide = true
-			case "timestamp":
-				value, isTime := (*input.Value).(int64)
-
-				if !isTime {
-					continue
-				}
-
-				event.At = value
-			}
+type Assemble types.Value[map[string]any, *Event]
+func NewAssemble() Assemble {
+	return func(input map[string]any) *Event {
+		if input == nil {
+			return nil
 		}
 
-		if !haveSide || (event.Side != "buy" && event.Side != "sell") {
-			return
+		trade, ok := input["trade"].(map[string]any)
+		if !ok {
+			trade = input
 		}
 
-		assemble.out = event
+		data, ok := trade["data"].(map[string]any)
+		if !ok {
+			data = trade
+		}
 
-		if !yield(unsafe.Pointer(&assemble.out)) {
-			return
+		side, _ := data["side"].(string)
+		if side != "buy" && side != "sell" {
+			return nil
+		}
+
+		symbol, _ := data["symbol"].(string)
+		var at int64
+		switch ts := data["timestamp"].(type) {
+		case int64:
+			at = ts
+		case float64:
+			at = int64(ts)
+		}
+
+		return &Event{
+			Symbol: symbol,
+			Side:   side,
+			At:     at,
 		}
 	}
 }

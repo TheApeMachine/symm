@@ -6,8 +6,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -248,17 +247,6 @@ const (
 	MetadataMahalanobisSNR = "mahalanobis_snr"
 )
 
-/*
-qualityOf reads the measurement's own quality facts as one reading.
-*/
-func qualityOf[T any](measurement *Measurement[T]) QualityReading {
-	return QualityReading{
-		SNR:        measurement.SNR,
-		SNRDefined: measurement.SNRDefined,
-		Estimated:  measurement.Estimated,
-		Maturity:   measurement.Maturity,
-	}
-}
 
 /*
 Finalize derives the measurement's quality facts from its own estimator
@@ -266,57 +254,27 @@ metadata, mutating the measurement in place.
 */
 func (measurement *Measurement[Value]) Finalize() {
 	finalizer := NewFinalizer[Value]()
-	held := measurement
-
-	for range finalizer.Next(sequence.NewOne(unsafe.Pointer(&held)).Next(nil)) {
-	}
+	finalizer(measurement)
 }
 
 /*
-Finalizer derives Maturity and SNR from each arriving measurement's own
-estimator facts, mutating the measurement in place.
+NewFinalizer creates the measurement quality derivation Value closure.
+No structs, pure Value closure.
 */
-type Finalizer[Value any] struct {
-	*core.PrimitiveError
+type Finalizer[Value any] types.Value[*Measurement[Value], *Measurement[Value]]
+func NewFinalizer[Value any]() Finalizer[Value] {
+	quality := NewQuality()
 
-	quality core.Primitive
-}
+	return func(measurement *Measurement[Value]) *Measurement[Value] {
+		if measurement != nil {
+			reading := quality(factsFromMetadata(measurement.Metadata))
 
-/*
-NewFinalizer creates the measurement quality derivation primitive.
-*/
-func NewFinalizer[Value any]() *Finalizer[Value] {
-	return &Finalizer[Value]{PrimitiveError: core.NewPrimitiveError(), quality: NewQuality()}
-}
-
-func (finalizer *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			measurement := *(**Measurement[Value])(arriving)
-
-			if measurement != nil {
-				readingEval := finalizer.quality
-				var reading QualityReading
-
-				for out := range readingEval.Next(sequence.NewValues(factsFromMetadata(measurement.Metadata)).Next(nil)) {
-					reading = *(*QualityReading)(out)
-				}
-
-				err := readingEval.Error()
-
-				if err != nil && measurement.Err == nil {
-					measurement.Err = err
-				}
-
-				measurement.Maturity = reading.Maturity
-				measurement.SNR = reading.SNR
-				measurement.SNRDefined = reading.SNRDefined
-				measurement.Estimated = reading.Estimated
-			}
-
-			if !yield(arriving) {
-				return
-			}
+			measurement.Maturity = reading.Maturity
+			measurement.SNR = reading.SNR
+			measurement.SNRDefined = reading.SNRDefined
+			measurement.Estimated = reading.Estimated
 		}
+
+		return measurement
 	}
 }

@@ -2,91 +2,94 @@ package store
 
 import (
 	"bytes"
-	"iter"
 	"sync/atomic"
-	"unsafe"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Radix owns immutable addressed values. One writer publishes new roots; readers
-borrow values from the root they loaded. Read misses yield nothing. Identify
+Action specifies the operation performed on an addressable store.
+*/
+type Action int
+
+const (
+	Read Action = iota
+	Write
+	Identify
+)
+
+/*
+RadixCommandData carries the address, payload, and operation for Radix storage.
+*/
+type RadixCommandData[T any] struct {
+	Key    []byte
+	Value  T
+	Action Action
+}
+
+/*
+NewRadixCommand builds a command carrier closure for pipelines.
+No structs, pure Value closure.
+*/
+type RadixCommand[T any] types.Value[T, RadixCommandData[T]]
+func NewRadixCommand[T any](key []byte, action Action) RadixCommand[T] {
+	return func(val T) RadixCommandData[T] {
+		return RadixCommandData[T]{
+			Key:    key,
+			Value:  val,
+			Action: action,
+		}
+	}
+}
+
+/*
+NewRadix owns immutable addressed values. One writer publishes new roots; readers
+borrow values from the root they loaded. Read misses yield nil. Identify
 inserts its explicit initial payload only when the key is absent. Payloads must
 be values without mutable aliases: the store copies T, not an object graph.
 Writes retain their own key bytes; reads borrow the caller's address.
+No structs, pure Value closure.
 */
-type Radix[T any] struct {
-	*core.PrimitiveError
-	root atomic.Pointer[iradix.Tree[T]]
-}
+type Radix[T any] types.Value[RadixCommandData[T], *T]
+func NewRadix[T any]() Radix[T] {
+	var root atomic.Pointer[iradix.Tree[T]]
+	root.Store(iradix.New[T]())
 
-func NewRadix[T any]() *Radix[T] {
-	radix := &Radix[T]{PrimitiveError: core.NewPrimitiveError()}
-	radix.root.Store(iradix.New[T]())
-	return radix
-}
+	return func(cmd RadixCommandData[T]) *T {
+		if len(cmd.Key) == 0 {
+			return nil
+		}
 
-func (radix *Radix[T]) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range input {
-			query := (*Query[*[]byte, T])(arriving)
-			address := query.Identity()
+		current := root.Load()
+		val, found := current.Get(cmd.Key)
 
-			if address == nil || len(*address) == 0 {
-				radix.Error(core.ErrShape)
-				return
+		switch cmd.Action {
+		case Read:
+			if !found {
+				return nil
 			}
+			out := val
+			return &out
 
-			root := radix.root.Load()
-			value, found := root.Get(*address)
-
-			switch query.Action {
-			case core.Read:
-				if found && !yield(unsafe.Pointer(&value)) {
-					return
-				}
-
-			case core.Identify:
-				if found {
-					if !yield(unsafe.Pointer(&value)) {
-						return
-					}
-					continue
-				}
-
-				if query.Payload != nil {
-					for ptr := range query.Payload {
-						value = *(*T)(ptr)
-						root = radix.root.Load()
-						updated, _, _ := root.Insert(bytes.Clone(*address), value)
-						radix.root.Store(updated)
-
-						if !yield(unsafe.Pointer(&value)) {
-							return
-						}
-					}
-				}
-
-			case core.Write:
-				if query.Payload != nil {
-					for ptr := range query.Payload {
-						value = *(*T)(ptr)
-						root = radix.root.Load()
-						updated, _, _ := root.Insert(bytes.Clone(*address), value)
-						radix.root.Store(updated)
-
-						if !yield(unsafe.Pointer(&value)) {
-							return
-						}
-					}
-				}
-
-			default:
-				radix.Error(core.ErrShape)
-				return
+		case Identify:
+			if found {
+				out := val
+				return &out
 			}
+			updated, _, _ := current.Insert(bytes.Clone(cmd.Key), cmd.Value)
+			root.Store(updated)
+			res, _ := updated.Get(cmd.Key)
+			return &res
+
+		case Write:
+			updated, _, _ := current.Insert(bytes.Clone(cmd.Key), cmd.Value)
+			root.Store(updated)
+			res, _ := updated.Get(cmd.Key)
+			return &res
+
+		default:
+			return nil
 		}
 	}
 }

@@ -1,39 +1,24 @@
 package probability
 
 import (
-	"iter"
 	"math"
-	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-GeometricMean owns exp(mean(log x)).
+NewGeometricMean owns exp(mean(log x)).
+No structs, pure Value closure holding running geometric mean state.
 */
-type GeometricMean struct {
-	*core.PrimitiveError
+type GeometricMean types.Value[float64, float64]
+func NewGeometricMean() GeometricMean {
+	var count float64
+	var sum float64
 
-	count float64
-	sum   float64
-	out   float64
-}
+	return func(val float64) float64 {
+		count++
+		sum += math.Log(val)
 
-func NewGeometricMean() *GeometricMean {
-	return &GeometricMean{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (geometricMean *GeometricMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			val := *(*float64)(arriving)
-			geometricMean.count++
-			geometricMean.sum += math.Log(val)
-			geometricMean.out = math.Exp(geometricMean.sum / geometricMean.count)
-
-			if !yield(unsafe.Pointer(&geometricMean.out)) {
-				return
-			}
-		}
+		return math.Exp(sum / count)
 	}
 }

@@ -1,47 +1,30 @@
 package probability
 
 import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Normalize divides each arrival by the run's total.
+NewNormalize divides each arrival by the total.
+No structs, pure Value closure.
 */
-type Normalize struct {
-	*core.PrimitiveError
-
-	out float64
-}
-
-func NewNormalize() *Normalize {
-	return &Normalize{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (normalize *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		var values []float64
+type Normalize types.Value[[]float64, []float64]
+func NewNormalize() Normalize {
+	return func(values []float64) []float64 {
 		var total float64
-
-		for arriving := range in {
-			val := *(*float64)(arriving)
-			values = append(values, val)
+		for _, val := range values {
 			total += val
 		}
 
 		if total == 0 {
-			normalize.Error(core.ErrShape)
-			return
+			return nil
 		}
 
-		for _, val := range values {
-			normalize.out = val / total
-
-			if !yield(unsafe.Pointer(&normalize.out)) {
-				return
-			}
+		out := make([]float64, len(values))
+		for index, val := range values {
+			out[index] = val / total
 		}
+
+		return out
 	}
 }

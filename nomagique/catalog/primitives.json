@@ -1,0 +1,3174 @@
+{
+	"calculus.Absolute": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Absolute",
+		"name": "Absolute",
+		"label": "Absolute",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewAbsolute",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"data.Quality": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Quality",
+		"name": "Quality",
+		"label": "Quality",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewQuality",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "data.QualityFacts",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "data.QualityReading",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.CausalVariance": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.CausalVariance",
+		"name": "CausalVariance",
+		"label": "Causal Variance",
+		"description": "/*\nNewCausalVariance creates a stateful running variance that yields the PRIOR variance.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewCausalVariance",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.ZScore": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.ZScore",
+		"name": "ZScore",
+		"label": "Z Score",
+		"description": "/*\nNewZScore creates a stateful closure that calculates the Z-Score of an incoming stream.\nIt encapsulates its own causal mean and variance, completely eliminating the need for DTOs.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewZScore",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"store.Key": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Key",
+		"name": "Key",
+		"label": "Key",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewKey",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "*float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"temporal.Delay": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Delay",
+		"name": "Delay",
+		"label": "Delay",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewDelay",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"cognition.Associate": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Associate",
+		"name": "Associate",
+		"label": "Associate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewAssociate",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]byte",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[2][]byte",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Multiply": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Multiply",
+		"name": "Multiply",
+		"label": "Multiply",
+		"description": "/*\nNewMultiply takes a pair of floats and returns their product.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewMultiply",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.AddVec": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.AddVec",
+		"name": "AddVec",
+		"label": "Add Vec",
+		"description": "/*\nNewAddVec adds vector B to vector A.\nInput is [2][]float64{A, B}. Returns A + B.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewAddVec",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"geometry.Normalize": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Normalize",
+		"name": "Normalize",
+		"label": "Normalize",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewNormalize",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "geometry.PhaseDial",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "geometry.PhaseDial",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Concentration": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Concentration",
+		"name": "Concentration",
+		"label": "Concentration",
+		"description": "/*\nNewConcentration creates a Value closure computing the Herfindahl index of a distribution: sum of squared weights.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewConcentration",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.ShapeInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.OuterProduct": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.OuterProduct",
+		"name": "OuterProduct",
+		"label": "Outer Product",
+		"description": "/*\nNewOuterProduct computes the outer product of two vectors A and B.\nInput is [2][]float64{A, B}. Returns a 2D matrix [][]float64.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewOuterProduct",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[][]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Log": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Log",
+		"name": "Log",
+		"label": "Log",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewLog",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.ConcentrationPoints": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.ConcentrationPoints",
+		"name": "ConcentrationPoints",
+		"label": "Concentration Points",
+		"description": "/*\nNewConcentrationPoints creates a Value closure computing Herfindahl concentration of a point stream.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewConcentrationPoints",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.PointsInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Fan": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Fan",
+		"name": "Fan",
+		"label": "Fan",
+		"description": "/*\nNewFan creates a Value closure that broadcasts input across multiple branches,\ncollecting all results into a typed slice []U.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewFan",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]U",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 2
+	},
+	"arithmetic.ScaleVec": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.ScaleVec",
+		"name": "ScaleVec",
+		"label": "Scale Vec",
+		"description": "/*\nNewScaleVec scales vector A by a scalar.\nInput is [2][]float64{A, {scale}}. Returns A * scale.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewScaleVec",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"geometry.Corpus": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Corpus",
+		"name": "Corpus",
+		"label": "Corpus",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewCorpus",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "geometry.CorpusCommand[Outcome]",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "geometry.CorpusResult[Outcome]",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"calculus.Reciprocal": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Reciprocal",
+		"name": "Reciprocal",
+		"label": "Reciprocal",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewReciprocal",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.SellCount": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellCount",
+		"name": "SellCount",
+		"label": "Sell Count",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellCount",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Floor": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Floor",
+		"name": "Floor",
+		"label": "Floor",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewFloor",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Tee": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Tee",
+		"name": "Tee",
+		"label": "Tee",
+		"description": "/*\nNewTee creates a Value closure that taps input to offramp closures,\nthen returns the original input unchanged.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewTee",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 2
+	},
+	"arithmetic.SquareRoot": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.SquareRoot",
+		"name": "SquareRoot",
+		"label": "Square Root",
+		"description": "/*\nNewSquareRoot calculates the principal square root.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewSquareRoot",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"data.Series": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Series",
+		"name": "Series",
+		"label": "Series",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewSeries",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "data.SeriesInput[Value]",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "data.SeriesReading[Value]",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"hawkes.Process": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Process",
+		"name": "Process",
+		"label": "Process",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewProcess",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Event",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"geometry.Weight": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Weight",
+		"name": "Weight",
+		"label": "Weight",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewWeight",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 2
+	},
+	"algo.RLSUpdate": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.RLSUpdate",
+		"name": "RLSUpdate",
+		"label": "R L S Update",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewRLSUpdate",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "algo.RLSObservation",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "algo.RLSPosterior",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Calibrator": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Calibrator",
+		"name": "Calibrator",
+		"label": "Calibrator",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewCalibrator",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1
+	},
+	"hawkes.SellIntensity": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellIntensity",
+		"name": "SellIntensity",
+		"label": "Sell Intensity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellIntensity",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"sequence.At": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.At",
+		"name": "At",
+		"label": "At",
+		"description": "/*\nNewAt returns the item at index in the slice.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewAt",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"learning.Counterfactual": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Counterfactual",
+		"name": "Counterfactual",
+		"label": "Counterfactual",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewCounterfactual",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[2]float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 5
+	},
+	"arithmetic.SpectralRadius2": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.SpectralRadius2",
+		"name": "SpectralRadius2",
+		"label": "Spectral Radius2",
+		"description": "/*\nNewSpectralRadius2 calculates the spectral radius of a 2x2 matrix.\nComplex eigenvalues use modulus; real eigenvalues use maximum absolute value.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewSpectralRadius2",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.BuyFraction": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.BuyFraction",
+		"name": "BuyFraction",
+		"label": "Buy Fraction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyFraction",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"cognition.Pack": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Pack",
+		"name": "Pack",
+		"label": "Pack",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewPack",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[3]uint64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]byte",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Sum": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Sum",
+		"name": "Sum",
+		"label": "Sum",
+		"description": "/*\nNewSum creates a stateful accumulator that sums incoming values.\nThe state is perfectly closed over, requiring zero structs.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewSum",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Minimum": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Minimum",
+		"name": "Minimum",
+		"label": "Minimum",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewMinimum",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.GeometricMean": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.GeometricMean",
+		"name": "GeometricMean",
+		"label": "Geometric Mean",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewGeometricMean",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Clamp": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Clamp",
+		"name": "Clamp",
+		"label": "Clamp",
+		"description": "/*\nNewClamp creates a state-free closure that restricts input to the specified bounds.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewClamp",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 2
+	},
+	"probability.Distribution": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Distribution",
+		"name": "Distribution",
+		"label": "Distribution",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewDistribution",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "probability.Reading",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Softmax": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Softmax",
+		"name": "Softmax",
+		"label": "Softmax",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewSoftmax",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Subtract": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Subtract",
+		"name": "Subtract",
+		"label": "Subtract",
+		"description": "/*\nNewSubtract takes a pair of floats and returns their difference (in[0] - in[1]).\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewSubtract",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"temporal.Velocity": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Velocity",
+		"name": "Velocity",
+		"label": "Velocity",
+		"description": "/*\nNewVelocity creates a stateful closure that tracks previous values and timestamps\nto calculate the finite-difference rate of change (Velocity/Rate).\nIt expects an input array of [value, timestamp_seconds].\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewVelocity",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.Backdoor": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Backdoor",
+		"name": "Backdoor",
+		"label": "Backdoor",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewBackdoor",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 5
+	},
+	"algo.HayashiYoshida": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.HayashiYoshida",
+		"name": "HayashiYoshida",
+		"label": "Hayashi Yoshida",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewHayashiYoshida",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][2]int64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "types.Value[[2]float64, float64]",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Maximum": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Maximum",
+		"name": "Maximum",
+		"label": "Maximum",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewMaximum",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"sequence.Tail": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Tail",
+		"name": "Tail",
+		"label": "Tail",
+		"description": "/*\nNewTail creates a closure returning the last N items of a slice.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewTail",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"store.Radix": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Radix",
+		"name": "Radix",
+		"label": "Radix",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewRadix",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "store.RadixCommandData[T]",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "*T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"typeParamCount": 1
+	},
+	"arithmetic.Identity": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Identity",
+		"name": "Identity",
+		"label": "Identity",
+		"description": "/*\nNewIdentity returns an n x n identity matrix.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewIdentity",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "int",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[][]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.Parallel": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Parallel",
+		"name": "Parallel",
+		"label": "Parallel",
+		"description": "/*\nNewParallel creates a Value closure that processes items concurrently across workers.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewParallel",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]U",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 2
+	},
+	"geometry.Intersection": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Intersection",
+		"name": "Intersection",
+		"label": "Intersection",
+		"description": "/*\nNewIntersection returns true if two 1D intervals overlap.\nIntervals are passed as primitive arrays [from, to] to avoid bespoke DTOs.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewIntersection",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][2]int64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "bool",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Argmax": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Argmax",
+		"name": "Argmax",
+		"label": "Argmax",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewArgmax",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "probability.ArgmaxResult",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.SortedPositions": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.SortedPositions",
+		"name": "SortedPositions",
+		"label": "Sorted Positions",
+		"description": "/*\nNewSortedPositions creates a Value closure that sorts unsorted positions ascending and reorders weights to match.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewSortedPositions",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.SortedInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "probability.SortedReading",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.Variance": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.Variance",
+		"name": "Variance",
+		"label": "Variance",
+		"description": "/*\nNewVariance creates a stateful closure calculating running sample variance using Welford's algorithm.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewVariance",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.LinearPrediction": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.LinearPrediction",
+		"name": "LinearPrediction",
+		"label": "Linear Prediction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewLinearPrediction",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1
+	},
+	"algo.GaussJordan": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.GaussJordan",
+		"name": "GaussJordan",
+		"label": "Gauss Jordan",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewGaussJordan",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[][]float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1
+	},
+	"calculus.Erfc": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Erfc",
+		"name": "Erfc",
+		"label": "Erfc",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewErfc",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"data.Finalizer": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Finalizer",
+		"name": "Finalizer",
+		"label": "Finalizer",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewFinalizer",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "*data.Measurement[Value]",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "*data.Measurement[Value]",
+				"description": "The run this primitive produces"
+			}
+		],
+		"typeParamCount": 1
+	},
+	"probability.EntropyPoints": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.EntropyPoints",
+		"name": "EntropyPoints",
+		"label": "Entropy Points",
+		"description": "/*\nNewEntropyPoints creates a Value closure computing Shannon entropy (nats) of a point stream.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewEntropyPoints",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.PointsInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.BuyRate": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.BuyRate",
+		"name": "BuyRate",
+		"label": "Buy Rate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyRate",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Polarize": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Polarize",
+		"name": "Polarize",
+		"label": "Polarize",
+		"description": "/*\nNewPolarize creates a closure that splits a signed value into nonnegative components\nand normalizes them against a configured scale.\nInput is [value, scale]. Output is the normalized value.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewPolarize",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.VectorEMA": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.VectorEMA",
+		"name": "VectorEMA",
+		"label": "Vector E M A",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewVectorEMA",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1
+	},
+	"temporal.LogReturns": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.LogReturns",
+		"name": "LogReturns",
+		"label": "Log Returns",
+		"description": "/*\nNewLogReturns creates a stateful closure that tracks the previous value\nand calculates the natural log of the ratio (Current/Previous).\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewLogReturns",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"cognition.Classification": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Classification",
+		"name": "Classification",
+		"label": "Classification",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewClassification",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "func(func([]byte, float64, uint64) bool)",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "func() (winner []byte, runnerUp []byte, confidence float64, contrast float64, support uint64)",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"cognition.Weight": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Weight",
+		"name": "Weight",
+		"label": "Weight",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewWeight",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]byte",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[3]uint64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"algo.RLSPrediction": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.RLSPrediction",
+		"name": "RLSPrediction",
+		"label": "R L S Prediction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewRLSPrediction",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "algo.RLSState",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "algo.RLSForecast",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Sqrt": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Sqrt",
+		"name": "Sqrt",
+		"label": "Sqrt",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSqrt",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"associative.Grid": {
+		"kind": "primitive",
+		"category": "associative",
+		"op": "associative.Grid",
+		"name": "Grid",
+		"label": "Grid",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning/associative",
+		"builder": "NewGrid",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]byte",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Wasserstein1": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Wasserstein1",
+		"name": "Wasserstein1",
+		"label": "Wasserstein1",
+		"description": "/*\nNewWasserstein1 creates a Value closure computing the first Wasserstein distance\nbetween two distributions over the same sorted position support.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewWasserstein1",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.DistanceInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.SellFraction": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellFraction",
+		"name": "SellFraction",
+		"label": "Sell Fraction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellFraction",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Add": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Add",
+		"name": "Add",
+		"label": "Add",
+		"description": "/*\nNewAdd takes a pair of floats and returns their sum.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewAdd",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Atanh": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Atanh",
+		"name": "Atanh",
+		"label": "Atanh",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewAtanh",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Exp": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Exp",
+		"name": "Exp",
+		"label": "Exp",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewExp",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Square": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Square",
+		"name": "Square",
+		"label": "Square",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSquare",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Negate": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Negate",
+		"name": "Negate",
+		"label": "Negate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewNegate",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"transport.IO": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.IO",
+		"name": "IO",
+		"label": "I O",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewIO",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "U",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 2
+	},
+	"hawkes.SpectralRadius": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SpectralRadius",
+		"name": "SpectralRadius",
+		"label": "Spectral Radius",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSpectralRadius",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"temporal.Transition": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Transition",
+		"name": "Transition",
+		"label": "Transition",
+		"description": "/*\nNewTransition creates a stateful closure that emits sequential transitions across consecutive signatures.\nOn the initial observation, it retains previous without emitting.\nOn each subsequent observation, it emits (previous, current) encoded as \"previous->current\".\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewTransition",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]byte",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]byte",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.DistributionNormalize": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.DistributionNormalize",
+		"name": "DistributionNormalize",
+		"label": "Distribution Normalize",
+		"description": "/*\nNewDistributionNormalize creates a Value closure scaling non-negative weights to a unit sum.\nNegative weights are treated as zero.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewDistributionNormalize",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.WeightsInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "probability.NormalizedReading",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Entropy": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Entropy",
+		"name": "Entropy",
+		"label": "Entropy",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewEntropy",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.ArrivalRate": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.ArrivalRate",
+		"name": "ArrivalRate",
+		"label": "Arrival Rate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewArrivalRate",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Divide": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Divide",
+		"name": "Divide",
+		"label": "Divide",
+		"description": "/*\nNewDivide takes a pair of floats and returns their quotient.\nWe do not use fallback defaults or Inf checks; we return pure mathematical results.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewDivide",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.VecPrecisionWeight": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.VecPrecisionWeight",
+		"name": "VecPrecisionWeight",
+		"label": "Vec Precision Weight",
+		"description": "/*\nNewVecPrecisionWeight element-wise multiplies an error vector by a precision vector.\nInput is [2][]float64{error, precision}.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewVecPrecisionWeight",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Wasserstein1Pairs": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Wasserstein1Pairs",
+		"name": "Wasserstein1Pairs",
+		"label": "Wasserstein1 Pairs",
+		"description": "/*\nNewWasserstein1Pairs creates a Value closure computing the first Wasserstein distance\nbetween two distributions given as ascending-sorted WeightedPoint streams via a merged walk.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewWasserstein1Pairs",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.PairsInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Bound": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Bound",
+		"name": "Bound",
+		"label": "Bound",
+		"description": "/*\nNewBound creates a closure that clamps an incoming value within fixed min/max thresholds.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewBound",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 2
+	},
+	"statistic.ResidualDivergence": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.ResidualDivergence",
+		"name": "ResidualDivergence",
+		"label": "Residual Divergence",
+		"description": "/*\nNewResidualDivergence creates a stateful closure returning the difference\nbetween the current value and the causal baseline.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewResidualDivergence",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.EventCount": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.EventCount",
+		"name": "EventCount",
+		"label": "Event Count",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewEventCount",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.AddScaledVec": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.AddScaledVec",
+		"name": "AddScaledVec",
+		"label": "Add Scaled Vec",
+		"description": "/*\nNewAddScaledVec adds scaled vector B to vector A.\nInput is [3][]float64{A, B, {scale}}. Returns A + scale * B.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewAddScaledVec",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[3][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.SecondDifference": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.SecondDifference",
+		"name": "SecondDifference",
+		"label": "Second Difference",
+		"description": "/*\nNewSecondDifference creates a stateful closure calculating the acceleration\nof a time series (difference of differences).\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSecondDifference",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.BuyCount": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.BuyCount",
+		"name": "BuyCount",
+		"label": "Buy Count",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyCount",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.KolmogorovSmirnov": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.KolmogorovSmirnov",
+		"name": "KolmogorovSmirnov",
+		"label": "Kolmogorov Smirnov",
+		"description": "/*\nNewKolmogorovSmirnov creates a Value closure computing the Kolmogorov-Smirnov statistic\nbetween two distributions over the same sorted position support.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewKolmogorovSmirnov",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.DistanceInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Normalize": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Normalize",
+		"name": "Normalize",
+		"label": "Normalize",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewNormalize",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"sequence.Order": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Order",
+		"name": "Order",
+		"label": "Order",
+		"description": "/*\nNewOrder returns a closure that sorts a slice of ordered items in ascending order.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewOrder",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"typeParamCount": 1
+	},
+	"geometry.PhasePath": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.PhasePath",
+		"name": "PhasePath",
+		"label": "Phase Path",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewPhasePath",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "int",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "geometry.PhasePathReading",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.RelativeChange": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.RelativeChange",
+		"name": "RelativeChange",
+		"label": "Relative Change",
+		"description": "/*\nNewRelativeChange creates a stateful closure calculating the relative difference\nbetween the current and previous observations.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewRelativeChange",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.DistributionEntropy": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.DistributionEntropy",
+		"name": "DistributionEntropy",
+		"label": "Distribution Entropy",
+		"description": "/*\nNewDistributionEntropy creates a Value closure computing the Shannon entropy (nats) of a distribution.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewDistributionEntropy",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.ShapeInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"physics.Simulation": {
+		"kind": "primitive",
+		"category": "physics",
+		"op": "physics.Simulation",
+		"name": "Simulation",
+		"label": "Simulation",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/physics",
+		"builder": "NewSimulation",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 4
+	},
+	"nomagique.Number": {
+		"kind": "primitive",
+		"category": "nomagique",
+		"op": "nomagique.Number",
+		"name": "Number",
+		"label": "Number",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique",
+		"builder": "NewNumber",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"arithmetic.SubVec": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.SubVec",
+		"name": "SubVec",
+		"label": "Sub Vec",
+		"description": "/*\nNewSubVec subtracts vector B from vector A.\nInput is [2][]float64{A, B}. Returns A - B.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewSubVec",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"geometry.Coordinate": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Coordinate",
+		"name": "Coordinate",
+		"label": "Coordinate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewCoordinate",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]int",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[2]int",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 2
+	},
+	"geometry.Overlap": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Overlap",
+		"name": "Overlap",
+		"label": "Overlap",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewOverlap",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "geometry.OverlapPair",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "complex128",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"probability.Geomean": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Geomean",
+		"name": "Geomean",
+		"label": "Geomean",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewGeomean",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.EMA": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.EMA",
+		"name": "EMA",
+		"label": "E M A",
+		"description": "/*\nNewEMA creates a stateful Exponential Moving Average closure.\nThe smoothing factor (alpha) is permanently closed over.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewEMA",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1
+	},
+	"store.Constant": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Constant",
+		"name": "Constant",
+		"label": "Constant",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewConstant",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "Any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 2
+	},
+	"arithmetic.MatVecMul": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.MatVecMul",
+		"name": "MatVecMul",
+		"label": "Mat Vec Mul",
+		"description": "/*\nNewMatVecMul multiplies Matrix A by Vector B.\nInput is [2]any{A, B} where A is [][]float64 and B is []float64.\nWe use any because Go lacks generic tuples of mixed types.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewMatVecMul",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.BuyIntensity": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.BuyIntensity",
+		"name": "BuyIntensity",
+		"label": "Buy Intensity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyIntensity",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.CausalMean": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.CausalMean",
+		"name": "CausalMean",
+		"label": "Causal Mean",
+		"description": "/*\nNewCausalMean creates a stateful running average that yields the PRIOR mean\nbefore incorporating the current value.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewCausalMean",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.Threshold": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.Threshold",
+		"name": "Threshold",
+		"label": "Threshold",
+		"description": "/*\nNewThreshold creates a state-free closure that maps a rank (0.0 to 1.0) to a target value.\nIt uses a threshold band to decide whether to output the min, max, or rest value.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewThreshold",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 4
+	},
+	"temporal.Elapsed": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Elapsed",
+		"name": "Elapsed",
+		"label": "Elapsed",
+		"description": "/*\nNewElapsed creates a stateful closure that tracks the previous timestamp (in nanoseconds)\nand returns the elapsed time in seconds.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewElapsed",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "int64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"sequence.Append": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Append",
+		"name": "Append",
+		"label": "Append",
+		"description": "/*\nNewAppend returns a closure that appends an item to a slice.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewAppend",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2]any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"typeParamCount": 1
+	},
+	"transport.Discard": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Discard",
+		"name": "Discard",
+		"label": "Discard",
+		"description": "/*\nNewDiscard creates a Value closure that drops input and returns struct{}.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewDiscard",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "struct{}",
+				"description": "The run this primitive produces"
+			}
+		],
+		"typeParamCount": 1
+	},
+	"algo.OLS": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.OLS",
+		"name": "OLS",
+		"label": "O L S",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewOLS",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1
+	},
+	"probability.Ambiguity": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Ambiguity",
+		"name": "Ambiguity",
+		"label": "Ambiguity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewAmbiguity",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.Assemble": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Assemble",
+		"name": "Assemble",
+		"label": "Assemble",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewAssemble",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "map[string]any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "*hawkes.Event",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.SellRate": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellRate",
+		"name": "SellRate",
+		"label": "Sell Rate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellRate",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"sequence.Values": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Values",
+		"name": "Values",
+		"label": "Values",
+		"description": "/*\nNewValues returns a constant slice supplier.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewValues",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "struct{}",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"store.RadixCommand": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.RadixCommand",
+		"name": "RadixCommand",
+		"label": "Radix Command",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewRadixCommand",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "store.RadixCommandData[T]",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 2,
+		"typeParamCount": 1
+	},
+	"arithmetic.DotProduct": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.DotProduct",
+		"name": "DotProduct",
+		"label": "Dot Product",
+		"description": "/*\nNewDotProduct calculates the dot product of two equal-length float slices.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewDotProduct",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"calculus.Tanh": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Tanh",
+		"name": "Tanh",
+		"label": "Tanh",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewTanh",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.Mean": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.Mean",
+		"name": "Mean",
+		"label": "Mean",
+		"description": "/*\nNewMean creates a stateful closure that tracks the running average.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewMean",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"learning.LinearFit": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.LinearFit",
+		"name": "LinearFit",
+		"label": "Linear Fit",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewLinearFit",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 3
+	},
+	"arithmetic.Transpose": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Transpose",
+		"name": "Transpose",
+		"label": "Transpose",
+		"description": "/*\nNewTranspose transposes a 2D float matrix.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewTranspose",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[][]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.Exp": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Exp",
+		"name": "Exp",
+		"label": "Exp",
+		"description": "/*\nNewExp calculates the base-e exponential.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewExp",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"arithmetic.MulVec": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.MulVec",
+		"name": "MulVec",
+		"label": "Mul Vec",
+		"description": "/*\nNewMulVec element-wise multiplies vector A and vector B.\nInput is [2][]float64{A, B}. Returns A * B.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewMulVec",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[2][]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"algo.RLS": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.RLS",
+		"name": "RLS",
+		"label": "R L S",
+		"description": "/*\nNewRLS creates a stateful closure for Recursive Least Squares (RLS) with symmetric\nsquare-root rank-one updates. It encapsulates all covariance and coefficient state,\ncompletely eliminating the need for RLSState, RLSForecast, and RLSPosterior DTOs.\n\nInput: A slice of float64 where the first N elements are the feature vector (X),\nand the last element is the target (y).\nOutput: An array [prediction, predictive_variance].\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewRLS",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "[]float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[2]float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 2
+	},
+	"calculus.Sign": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Sign",
+		"name": "Sign",
+		"label": "Sign",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSign",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"data.Extract": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Extract",
+		"name": "Extract",
+		"label": "Extract",
+		"description": "/*\nNewExtract creates a pure closure that pulls a scalar value from a map by key.\nIt completely avoids unsafe.Pointer casting and bespoke DTOs.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewExtract",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "map[string]any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1
+	},
+	"probability.KolmogorovSmirnovPairs": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.KolmogorovSmirnovPairs",
+		"name": "KolmogorovSmirnovPairs",
+		"label": "Kolmogorov Smirnov Pairs",
+		"description": "/*\nNewKolmogorovSmirnovPairs creates a Value closure computing the Kolmogorov-Smirnov statistic\nbetween two distributions given as ascending-sorted WeightedPoint streams via a merged walk.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewKolmogorovSmirnovPairs",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "probability.PairsInput",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"statistic.ResidualBaseline": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.ResidualBaseline",
+		"name": "ResidualBaseline",
+		"label": "Residual Baseline",
+		"description": "/*\nNewResidualBaseline satisfies the JSON graph by returning a causal mean.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewResidualBaseline",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"sequence.Window": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Window",
+		"name": "Window",
+		"label": "Window",
+		"description": "/*\nNewWindow creates a stateful rolling window closure.\nIt accumulates incoming items up to size, emitting the current window slice.\nNo structs, pure Value closure.\n*/",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewWindow",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "T",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "[]T",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"typeParamCount": 1
+	},
+	"probability.ShannonAmbiguity": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.ShannonAmbiguity",
+		"name": "ShannonAmbiguity",
+		"label": "Shannon Ambiguity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewShannonAmbiguity",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "float64",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	},
+	"hawkes.ConditionalIntensity": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.ConditionalIntensity",
+		"name": "ConditionalIntensity",
+		"label": "Conditional Intensity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewConditionalIntensity",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "hawkes.Reading",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		]
+	}
+}

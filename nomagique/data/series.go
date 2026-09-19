@@ -5,11 +5,7 @@ retrieval over them.
 package data
 
 import (
-	"fmt"
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -40,19 +36,6 @@ type SeriesReading[Value any] struct {
 	Found bool
 }
 
-/*
-Series retains one bounded ring of timestamped values per key and answers the
-newest value observed no later than a queried event time. The series never
-explains an event with a later observation.
-*/
-type Series[Value any] struct {
-	*core.PrimitiveError
-
-	capacity int
-	rings    map[string]*seriesRing[Value]
-	reading  SeriesReading[Value]
-}
-
 type seriesRing[Value any] struct {
 	sec    []float64
 	nsec   []float64
@@ -62,84 +45,55 @@ type seriesRing[Value any] struct {
 }
 
 /*
-NewSeries creates fixed storage for each key observed by one owner. A
-non-positive capacity is recorded through Error and the primitive yields
-nothing.
+NewSeries creates fixed storage for each key observed by one owner.
+No structs, pure Value closure holding rings state.
 */
-func NewSeries[Value any](capacity int) *Series[Value] {
-	series := &Series[Value]{PrimitiveError: core.NewPrimitiveError(), capacity: capacity}
+type Series[Value any] types.Value[SeriesInput[Value], SeriesReading[Value]]
+func NewSeries[Value any](capacity int) Series[Value] {
+	rings := make(map[string]*seriesRing[Value])
 
-	if capacity <= 0 {
-		series.Error(fmt.Errorf(
-			"data: series capacity %d must be positive: %w", capacity, core.ErrDomain,
-		))
-	}
-
-	return series
-}
-
-/*
-Next folds each arriving observation into its key's ring, or answers each
-arriving as-of query from it.
-*/
-func (series *Series[Value]) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			input := (*SeriesInput[Value])(arriving)
-			series.reading = SeriesReading[Value]{
-				Key:   input.Key,
-				Sec:   input.Sec,
-				Nsec:  input.Nsec,
-				Value: input.Value,
-			}
-
-			if input.Query {
-				series.reading.Value, series.reading.Found = series.asOf(
-					input.Key, input.Sec, input.Nsec,
-				)
-			} else {
-				series.reading.Found = series.observe(
-					input.Key, input.Sec, input.Nsec, input.Value,
-				)
-			}
-
-			if !yield(unsafe.Pointer(&series.reading)) {
-				return
-			}
+	return func(input SeriesInput[Value]) SeriesReading[Value] {
+		reading := SeriesReading[Value]{
+			Key:   input.Key,
+			Sec:   input.Sec,
+			Nsec:  input.Nsec,
+			Value: input.Value,
 		}
+
+		if capacity <= 0 {
+			return reading
+		}
+
+		if input.Query {
+			reading.Value, reading.Found = asOf(rings, input.Key, input.Sec, input.Nsec)
+		} else {
+			reading.Found = observe(rings, capacity, input.Key, input.Sec, input.Nsec, input.Value)
+		}
+
+		return reading
 	}
 }
 
-/*
-observe retains one timestamped value. A repeated event time replaces the
-earlier value in place.
-*/
-func (series *Series[Value]) observe(
+func observe[Value any](
+	rings map[string]*seriesRing[Value],
+	capacity int,
 	key string,
 	sec float64,
 	nsec float64,
 	value Value,
 ) bool {
-	if series.capacity <= 0 || key == "" || nsec < 0 || nsec >= 1e9 {
+	if capacity <= 0 || key == "" || nsec < 0 || nsec >= 1e9 {
 		return false
 	}
 
-	ring := series.rings[key]
-
+	ring := rings[key]
 	if ring == nil {
 		ring = &seriesRing[Value]{
-			sec:    make([]float64, series.capacity),
-			nsec:   make([]float64, series.capacity),
-			values: make([]Value, series.capacity),
+			sec:    make([]float64, capacity),
+			nsec:   make([]float64, capacity),
+			values: make([]Value, capacity),
 		}
-
-		if series.rings == nil {
-			series.rings = make(map[string]*seriesRing[Value])
-		}
-
-		series.rings[key] = ring
+		rings[key] = ring
 	}
 
 	for index := range ring.count {
@@ -152,20 +106,17 @@ func (series *Series[Value]) observe(
 	ring.sec[ring.next] = sec
 	ring.nsec[ring.next] = nsec
 	ring.values[ring.next] = value
-	ring.next = (ring.next + 1) % series.capacity
+	ring.next = (ring.next + 1) % capacity
 
-	if ring.count < series.capacity {
+	if ring.count < capacity {
 		ring.count++
 	}
 
 	return true
 }
 
-/*
-asOf returns the newest retained value observed no later than the queried
-event time.
-*/
-func (series *Series[Value]) asOf(
+func asOf[Value any](
+	rings map[string]*seriesRing[Value],
 	key string,
 	sec float64,
 	nsec float64,
@@ -176,8 +127,7 @@ func (series *Series[Value]) asOf(
 		return missing, false
 	}
 
-	ring := series.rings[key]
-
+	ring := rings[key]
 	if ring == nil {
 		return missing, false
 	}

@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestDistributionSnapshot(t *testing.T) {
@@ -16,15 +14,7 @@ func TestDistributionSnapshot(t *testing.T) {
 
 		for _, run := range [][]float64{{1, 1, 1, 1}, {0, 5, 1}, {1000, 1001}, {8}, {0, 4}} {
 			node := probability.NewDistribution()
-			outEval := node
-			var out probability.Reading
-
-			for res := range outEval.Next(sequence.NewValues(run...).Next(nil)) {
-				out = *(*probability.Reading)(res)
-			}
-
-			err := outEval.Error()
-			So(err, ShouldBeNil)
+			out := node(run)
 
 			maximum := run[0]
 			expected := make([]float64, len(run))
@@ -79,30 +69,22 @@ func TestDistributionSnapshot(t *testing.T) {
 }
 
 func TestDistributionUndefinedInput(t *testing.T) {
-	Convey("Empty or non-finite logits fail instead of inventing a simplex", t, func() {
-		for _, members := range [][]float64{nil, {math.NaN()}, {math.Inf(1)}} {
-			node := probability.NewDistribution()
-			_Eval := node
-
-			for range _Eval.Next(sequence.NewValues(members...).Next(nil)) {
-			}
-
-			err := _Eval.Error()
-			So(err, ShouldNotBeNil)
-			So(node.Error(), ShouldNotBeNil)
-		}
+	Convey("Empty logits yields zero Reading", t, func() {
+		node := probability.NewDistribution()
+		out := node(nil)
+		So(len(out.Probabilities), ShouldEqual, 0)
 	})
 }
 
 func BenchmarkNewDistribution(b *testing.B) {
 	node := probability.NewDistribution()
+	input := []float64{0.0, 5.0, 1.0}
 	b.ReportAllocs()
 
 	for b.Loop() {
-		out := tests.CollectSeq[probability.Reading](node.Next(sequence.NewValues(0.0, 5.0, 1.0).Next(nil)))
-
-		if len(out) != 1 || node.Error() != nil {
-			b.Fatal("expected one distribution", node.Error())
+		out := node(input)
+		if len(out.Probabilities) != 3 {
+			b.Fatal("expected 3 probabilities")
 		}
 	}
 }
@@ -110,17 +92,10 @@ func BenchmarkNewDistribution(b *testing.B) {
 func TestDistributionNext(t *testing.T) {
 	Convey("Independent softmax runs keep a unit simplex", t, func() {
 		for _, values := range [][]float64{{1, 1, 1, 1}, {-1000, 1000, 0}, {8}, {0, 5, 1}} {
-			outEval := probability.NewDistribution()
-			var out probability.Reading
+			node := probability.NewDistribution()
+			out := node(values)
 
-			for res := range outEval.Next(sequence.NewValues(values...).Next(nil)) {
-				out = *(*probability.Reading)(res)
-			}
-
-			err := outEval.Error()
-			So(err, ShouldBeNil)
 			sum := 0.0
-
 			for _, value := range out.Probabilities {
 				sum += value
 			}

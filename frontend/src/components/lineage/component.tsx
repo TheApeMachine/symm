@@ -182,44 +182,64 @@ export const MetricLineage = () => {
 
 	if (loadError) {
 		return (
-			<div className="flex h-full w-full flex-col overflow-hidden bg-(--sunken) text-(--f1)">
+			<Flex.Column
+				className="overflow-hidden bg-(--sunken) text-(--f1)"
+				fullHeight
+				fullWidth
+			>
 				<Toolbar>
 					<Icon name="target" size="m" className="text-(--f3)" />
 					<Typography.Label size="m" tone="f3">
 						Metric lineage
 					</Typography.Label>
 				</Toolbar>
-				<div className="flex flex-1 items-center justify-center px-8 text-center font-mono text-[12px] text-(--f4)">
+				<Flex.Row
+					align="center"
+					justify="center"
+					className="flex-1 px-8 text-center font-mono text-[12px] text-(--f4)"
+				>
 					Could not load /metric-lineage.json ({loadError}). Regenerate it with{" "}
 					<span className="text-(--f2)">
 						go run ./tools/metriclineage . frontend/public/metric-lineage.json
 					</span>
 					.
-				</div>
-			</div>
+				</Flex.Row>
+			</Flex.Column>
 		);
 	}
 
 	if (!report) {
 		return (
-			<div className="flex h-full w-full flex-col overflow-hidden bg-(--sunken) text-(--f1)">
+			<Flex.Column
+				className="overflow-hidden bg-(--sunken) text-(--f1)"
+				fullHeight
+				fullWidth
+			>
 				<Toolbar>
 					<Icon name="target" size="m" className="text-(--f3)" />
 					<Typography.Label size="m" tone="f3">
 						Metric lineage
 					</Typography.Label>
 				</Toolbar>
-				<div className="flex flex-1 items-center justify-center font-mono text-[12px] text-(--f4)">
+				<Flex.Row
+					align="center"
+					justify="center"
+					className="flex-1 font-mono text-[12px] text-(--f4)"
+				>
 					Loading static lineage report…
-				</div>
-			</div>
+				</Flex.Row>
+			</Flex.Column>
 		);
 	}
 
 	const { summary } = report;
 
 	return (
-		<div className="flex h-full w-full flex-col overflow-hidden bg-(--sunken) text-(--f1)">
+		<Flex.Column
+			className="overflow-hidden bg-(--sunken) text-(--f1)"
+			fullHeight
+			fullWidth
+		>
 			<Toolbar>
 				<Icon name="target" size="m" className="text-(--f3)" />
 				<Typography.Label size="m" tone="f3" className="mr-1 shrink-0">
@@ -232,7 +252,7 @@ export const MetricLineage = () => {
 				<Chip label="bound refs" value={summary.boundConsumerEdges} />
 				<Chip label="catalog refs" value={summary.catalogConsumerEdges} />
 
-				<div className="ml-4 flex items-center gap-1">
+				<Flex.Row align="center" gap={1} className="ml-4">
 					{(
 						[
 							"all",
@@ -255,7 +275,7 @@ export const MetricLineage = () => {
 							{filter === "kernelOnly" ? "kernel-only" : filter}
 						</button>
 					))}
-				</div>
+				</Flex.Row>
 
 				<select
 					value={sourceFilter ?? ""}
@@ -279,8 +299,6 @@ export const MetricLineage = () => {
 					className="absolute inset-0"
 				>
 					<title>Metric producer to consumer lineage</title>
-
-					{/* Column headers */}
 					<text
 						x={dimensions.width * COLUMN_KERNEL}
 						y={16}
@@ -306,7 +324,6 @@ export const MetricLineage = () => {
 						consumers
 					</text>
 
-					{/* Kernel -> metric edges (every metric to its own kernel dot) */}
 					<g opacity={0.25} stroke="var(--line)" strokeWidth={1}>
 						{layout.metricPoints.map((m) => {
 							const row = layout.metricById.get(m.id);
@@ -319,11 +336,6 @@ export const MetricLineage = () => {
 						})}
 					</g>
 
-					{/* Metric -> consumer edges, only for fine (named) consumption —
-					    kernel/generic edges are structurally many-to-many (every metric
-					    of a kernel to one wildcard consumer) and would render as an
-					    unreadable solid block; they're shown in the detail panel and
-					    consumer list instead. */}
 					<g opacity={0.5}>
 						{layout.metricPoints.map((m) => {
 							const row = layout.metricById.get(m.id);
@@ -348,7 +360,6 @@ export const MetricLineage = () => {
 						})}
 					</g>
 
-					{/* Kernel nodes */}
 					{layout.kernelPoints.map((k) => (
 						<g key={k.id} transform={`translate(${k.x},${k.y})`}>
 							<circle
@@ -376,7 +387,6 @@ export const MetricLineage = () => {
 						</g>
 					))}
 
-					{/* Metric nodes */}
 					{layout.metricPoints.map((m) => {
 						const row = layout.metricById.get(m.id);
 						if (!row) return null;
@@ -417,10 +427,6 @@ export const MetricLineage = () => {
 						);
 					})}
 
-					{/* Consumer nodes — dot only; the label renders as an HTML overlay
-					    below so long consumer names (e.g. "graph.Solver
-					    (causal-influence catalog)") can wrap instead of being
-					    clipped at the SVG's right edge. */}
 					{layout.consumerPoints.map((c) => {
 						const row = relevantConsumers.find((r) => r.consumer === c.id);
 						return (
@@ -442,12 +448,6 @@ export const MetricLineage = () => {
 					})}
 				</svg>
 
-				{/* Consumer labels as an HTML overlay, not SVG <text>: SVG text
-				    doesn't wrap, so a long consumer name (e.g. "graph.Solver
-				    (causal-influence catalog)") either overflows the canvas or has
-				    to be truncated. A positioned <div> can wrap onto a second line
-				    and use the genuinely large amount of free space to the right of
-				    the dot column instead. */}
 				{layout.consumerPoints.map((c) => {
 					const row = relevantConsumers.find((r) => r.consumer === c.id);
 					return (
@@ -456,11 +456,6 @@ export const MetricLineage = () => {
 							className="pointer-events-none absolute font-mono text-[10px] text-(--f3) leading-tight break-words"
 							style={{
 								left: `${c.x + 12}px`,
-								// Anchor the label's first line to the dot's y (not
-								// vertically centered): a wrapped 2-line label centered
-								// on its own height pushes its first line below the dot
-								// it belongs to, which reads as misaligned with the next
-								// dot down instead.
 								top: `${c.y - 6}px`,
 								right: 12,
 							}}
@@ -540,6 +535,6 @@ export const MetricLineage = () => {
 					</Panel>
 				)}
 			</div>
-		</div>
+		</Flex.Column>
 	);
 };

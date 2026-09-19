@@ -3,64 +3,100 @@ package calculus
 import (
 	"math"
 
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var Tanh types.Value[float64, float64] = math.Tanh
-var Absolute types.Value[float64, float64] = math.Abs
-var Atanh types.Value[float64, float64] = math.Atanh
-var Erfc types.Value[float64, float64] = math.Erfc
-var Exp types.Value[float64, float64] = math.Exp
-var Floor types.Value[float64, float64] = math.Floor
-var Log types.Value[float64, float64] = math.Log
-var Sqrt types.Value[float64, float64] = math.Sqrt
+type Tanh types.Value[float64, float64]
+func NewTanh() Tanh { return math.Tanh }
 
-var Reciprocal types.Value[float64, float64] = func(in float64) float64 {
-	if in == 0 {
-		return 0 
+type Absolute types.Value[float64, float64]
+func NewAbsolute() Absolute { return math.Abs }
+
+type Atanh types.Value[float64, float64]
+func NewAtanh() Atanh { return math.Atanh }
+
+type Erfc types.Value[float64, float64]
+func NewErfc() Erfc { return math.Erfc }
+
+type Exp types.Value[float64, float64]
+func NewExp() Exp { return math.Exp }
+
+type Floor types.Value[float64, float64]
+func NewFloor() Floor { return math.Floor }
+
+type Log types.Value[float64, float64]
+func NewLog() Log { return math.Log }
+
+type Sqrt types.Value[float64, float64]
+func NewSqrt() Sqrt { return math.Sqrt }
+
+type Reciprocal types.Value[float64, float64]
+func NewReciprocal() Reciprocal {
+	return func(in float64) float64 {
+		if in == 0 {
+			return 0
+		}
+		return core.Unit / in
 	}
-	return 1.0 / in
 }
 
-var Square types.Value[float64, float64] = func(in float64) float64 {
-	return in * in
-}
-
-var Sign types.Value[float64, float64] = func(in float64) float64 {
-	if in < 0 {
-		return -1
-	} else if in > 0 {
-		return 1
+type Square types.Value[float64, float64]
+func NewSquare() Square {
+	return func(in float64) float64 {
+		return in * in
 	}
-	return 0
 }
 
-var Negate types.Value[float64, float64] = func(in float64) float64 {
-	return -in
+type Sign types.Value[float64, float64]
+func NewSign() Sign {
+	return func(in float64) float64 {
+		if in < 0 {
+			return -1
+		} else if in > 0 {
+			return 1
+		}
+		return 0
+	}
 }
 
-var Maximum types.Value[[2]float64, float64] = func(in [2]float64) float64 {
-	return math.Max(in[0], in[1])
+type Negate types.Value[float64, float64]
+func NewNegate() Negate {
+	return func(in float64) float64 {
+		return -in
+	}
 }
 
-var Minimum types.Value[[2]float64, float64] = func(in [2]float64) float64 {
-	return math.Min(in[0], in[1])
+type Maximum types.Value[[2]float64, float64]
+func NewMaximum() Maximum {
+	return func(in [2]float64) float64 {
+		return math.Max(in[0], in[1])
+	}
 }
 
+type Minimum types.Value[[2]float64, float64]
+func NewMinimum() Minimum {
+	return func(in [2]float64) float64 {
+		return math.Min(in[0], in[1])
+	}
+}
+
+type Bound types.Value[float64, float64]
 /*
 NewBound creates a closure that clamps an incoming value within fixed min/max thresholds.
 */
-func NewBound(min, max float64) types.Value[float64, float64] {
+func NewBound(min, max float64) Bound {
 	return func(in float64) float64 {
 		return math.Max(min, math.Min(max, in))
 	}
 }
 
+type SecondDifference types.Value[float64, float64]
 /*
 NewSecondDifference creates a stateful closure calculating the acceleration
 of a time series (difference of differences).
 */
-func NewSecondDifference() types.Value[float64, float64] {
+func NewSecondDifference() SecondDifference {
 	var v1, v2 float64
 	var count int
 	return func(in float64) float64 {
@@ -76,12 +112,13 @@ func NewSecondDifference() types.Value[float64, float64] {
 	}
 }
 
+type Polarize types.Value[[2]float64, float64]
 /*
-NewPolarize creates a closure that splits a signed value into nonnegative components 
+NewPolarize creates a closure that splits a signed value into nonnegative components
 and normalizes them against a configured scale.
 Input is [value, scale]. Output is the normalized value.
 */
-func NewPolarize() types.Value[[2]float64, float64] {
+func NewPolarize() Polarize {
 	return func(in [2]float64) float64 {
 		val, scale := in[0], in[1]
 		alpha := val
@@ -101,11 +138,12 @@ func NewPolarize() types.Value[[2]float64, float64] {
 	}
 }
 
+type RelativeChange types.Value[float64, float64]
 /*
 NewRelativeChange creates a stateful closure calculating the relative difference
 between the current and previous observations.
 */
-func NewRelativeChange() types.Value[float64, float64] {
+func NewRelativeChange() RelativeChange {
 	var previous float64
 	var initialized bool
 	return func(in float64) float64 {
@@ -123,4 +161,3 @@ func NewRelativeChange() types.Value[float64, float64] {
 		return change
 	}
 }
-

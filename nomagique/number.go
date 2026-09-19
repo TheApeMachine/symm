@@ -1,69 +1,27 @@
 package nomagique
 
 import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Number is the pipeline composer Primitive.
-It is specifically named this way to make the consumer always
-restate the core pillar of this package:
+NewNumber instantiates a nomagique pipeline composer with the given stages.
+It chains stages of types.Value closures sequentially.
 
 nomagique.Number
 no, magic, number
 */
-type Number struct {
-	*core.PrimitiveError
-	stages []core.Primitive
-}
+type Number[T any] types.Value[T, T]
+func NewNumber[T any](stages ...types.Value[T, T]) Number[T] {
+	return func(in T) T {
+		curr := in
 
-/*
-NewNumber instantiates a nomagique.Number composer with the given stages.
-*/
-func NewNumber(stages ...core.Primitive) *Number {
-	return &Number{
-		PrimitiveError: core.NewPrimitiveError(),
-		stages:         stages,
-	}
-}
-
-func (number *Number) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	curr := input
-
-	for _, stage := range number.stages {
-		if stage == nil {
-			continue
-		}
-
-		curr = stage.Next(curr)
-
-		if curr == nil {
-			break
-		}
-	}
-
-	if curr == nil {
-		return func(yield func(unsafe.Pointer) bool) {}
-	}
-
-	return func(yield func(unsafe.Pointer) bool) {
-		defer func() {
-			for _, stage := range number.stages {
-				if stage != nil {
-					if err := stage.Error(); err != nil {
-						number.Error(err)
-					}
-				}
-			}
-		}()
-
-		for output := range curr {
-			if !yield(output) {
-				return
+		for _, stage := range stages {
+			if stage != nil {
+				curr = stage(curr)
 			}
 		}
+
+		return curr
 	}
 }

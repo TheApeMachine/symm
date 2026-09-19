@@ -65,6 +65,7 @@ const generateInitialSignals = (count = 120): ImpulsePoint[] => {
 export interface ImpulseViewProps {
 	livePoints?: ImpulsePoint[];
 	liveRegions?: HotRegion[];
+	recentActivity?: { id: string | number; name: string; latency: string; hot: boolean }[];
 }
 
 interface Point2D {
@@ -309,6 +310,7 @@ function computeDensityContours(
 export const ImpulseView = ({
 	livePoints,
 	liveRegions,
+	recentActivity,
 }: ImpulseViewProps) => {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
@@ -328,11 +330,7 @@ export const ImpulseView = ({
 		y: number;
 	} | null>(null);
 
-	const [recentPulses] = useState([
-		{ id: 1, name: "Orderbook Imbalance", latency: "12ms", hot: true },
-		{ id: 2, name: "ETH/USD Vol Break", latency: "38ms", hot: false },
-		{ id: 3, name: "BTC Momentum Shift", latency: "94ms", hot: false },
-	]);
+	const recentPulses = recentActivity || [];
 
 	// Update nodes from livePoints if telemetry arrives
 	useEffect(() => {
@@ -388,20 +386,6 @@ export const ImpulseView = ({
 			// Smooth contour fade (in for regions, out for grid)
 			const targetContourAlpha = currentMode === "regions" ? 1.0 : 0.0;
 			contourAlpha += (targetContourAlpha - contourAlpha) * 0.06;
-
-			// Tape impulse injection every ~1.2s
-			if (playing && time - lastTapePulse > 1200) {
-				lastTapePulse = time;
-				const targetCluster = Math.floor(Math.random() * 4);
-				for (const node of nodes) {
-					if (node.cluster === targetCluster && Math.random() < 0.6) {
-						node.activation = Math.min(
-							1.0,
-							node.activation + Math.random() * 0.5 + 0.3,
-						);
-					}
-				}
-			}
 
 			// Damped Physics Step: Critically damped spring prevents rubbery bounce
 			const k = 0.045; // attraction rate

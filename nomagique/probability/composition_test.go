@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestEntropyNext(t *testing.T) {
@@ -16,8 +14,12 @@ func TestEntropyNext(t *testing.T) {
 			values []float64
 			want   float64
 		}{{[]float64{1}, 0}, {[]float64{.5, .5}, math.Log(2)}, {[]float64{0, 1}, 0}} {
-			out := tests.CollectSeq[float64](probability.NewEntropy().Next(sequence.NewValues(test.values...).Next(nil)))
-			So(out[len(out)-1], ShouldAlmostEqual, test.want)
+			entropy := probability.NewEntropy()
+			var res float64
+			for _, v := range test.values {
+				res = entropy(v)
+			}
+			So(res, ShouldAlmostEqual, test.want, 1e-9)
 		}
 	})
 }

@@ -31,6 +31,48 @@ func NewBuilder(jsonPath string) (*Builder, error) {
 }
 
 /*
+Interests extracts the required data keys from the graph's source nodes.
+*/
+func (b *Builder) Interests() [][]string {
+	var interests [][]string
+	for _, node := range b.graph.Nodes {
+		if node.Type == "source" || node.Type == "data.Source" || node.ID == "source" || node.ID == "src" {
+			if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if interestStr, ok := cfg["interests"].(string); ok {
+					// Temporary fallback mapping for legacy single-string configs
+					switch interestStr {
+					case "trade":
+						interests = append(interests, []string{"trade", "price"})
+					case "ticker":
+						interests = append(interests, []string{"ticker", "data", "last"})
+					case "level3":
+						interests = append(interests, []string{"level3", "price"})
+					default:
+						interests = append(interests, []string{interestStr})
+					}
+				} else if interestArr, ok := cfg["interests"].([]any); ok {
+					// Handle the new structure where interests is an array of arrays
+					for _, arr := range interestArr {
+						if path, ok := arr.([]any); ok {
+							var strPath []string
+							for _, p := range path {
+								if s, ok := p.(string); ok {
+									strPath = append(strPath, s)
+								}
+							}
+							if len(strPath) > 0 {
+								interests = append(interests, strPath)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return interests
+}
+
+/*
 Compose dynamically wires the graph at runtime.
 It returns a single execution closure that runs the entire graph topologically.
 */
@@ -83,40 +125,57 @@ func (b *Builder) Compose() (types.Value[any, any], error) {
 	}
 
 	// 3. Return the dynamic execution closure
-	return func(in any) any {
-		// Wire state holds the output of every executed node
+	return func(input any) any {
 		state := make(map[string]any)
-		state["source"] = in // Inject the tick/stream data
+
+		for id, node := range b.graph.Nodes {
+			if node.Type == "source" || node.Type == "data.Source" || id == "source" || id == "src" {
+				state[id] = input
+			}
+		}
 
 		for _, nodeID := range execOrder {
 			node := b.graph.Nodes[nodeID]
 			closure, ok := instances[nodeID]
+
 			if !ok {
-				// If it's a boundary node (source/sink) or unmapped, skip execution
 				continue
 			}
 
-			// Gather inputs
 			var inputData any
+
 			for _, targets := range node.Connections.Inputs {
 				if len(targets) > 0 {
 					upstreamID := targets[0].NodeID
 					inputData = state[upstreamID]
-					break // For simplicity, we assume single main input per port in this demo
+					break
 				}
 			}
 
-			// Execute the atom and save its output to the wire
+			if inputData == nil {
+				state[nodeID] = nil
+				continue
+			}
+
 			state[nodeID] = closure(inputData)
 		}
 
-		// Retrieve data from the node connected to the sink
-		for _, targets := range b.graph.Nodes["sink"].Connections.Inputs {
-			if len(targets) > 0 {
-				return state[targets[0].NodeID]
+		for id, node := range b.graph.Nodes {
+			if id != "sink" && node.Type != "sink" && node.Type != "data.Sink" {
+				continue
+			}
+
+			for _, targets := range node.Connections.Inputs {
+				if len(targets) == 0 {
+					continue
+				}
+
+				if value := state[targets[0].NodeID]; value != nil {
+					return value
+				}
 			}
 		}
-		
+
 		return nil
 	}, nil
 }

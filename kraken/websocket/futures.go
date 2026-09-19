@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -17,10 +15,8 @@ import (
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/utils"
 )
@@ -56,7 +52,7 @@ failures remain terminal and are reported to the process supervisor.
 */
 type FuturesLive struct {
 	*runtime.System
-	pipeline       core.Primitive
+	pipeline       types.Value[any, any]
 	client         atomic.Pointer[derivatives.WebSocket]
 	simulator      *Simulator
 	callbacks      *sync.Map
@@ -151,7 +147,7 @@ constructor, mirroring New.
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
-	pipeline core.Primitive,
+	pipeline types.Value[any, any],
 ) *FuturesLive {
 	return NewFuturesWithClient(ctx, endpoint, nil, pipeline)
 }
@@ -164,7 +160,7 @@ func NewFuturesWithClient(
 	ctx context.Context,
 	endpoint string,
 	client *derivatives.WebSocket,
-	pipeline core.Primitive,
+	pipeline types.Value[any, any],
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = system.Cfg.WebSocket.Endpoints.Futures
@@ -274,12 +270,8 @@ func NewFuturesWithClient(
 	return futures
 }
 
-func (futures *FuturesLive) Connect(pipeline core.Primitive) {
+func (futures *FuturesLive) Connect(pipeline types.Value[any, any]) {
 	futures.pipeline = pipeline
-}
-
-func (futures *FuturesLive) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return in
 }
 
 /*
@@ -459,9 +451,11 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 	}
 
 	// Dispatch one-shot callbacks.
-	if cb, ok := futures.callbacks.LoadAndDelete(feed); ok {
-		if msgChan, ok := cb.(chan any); ok {
-			msgChan <- out
+	if futures.callbacks != nil {
+		if cb, ok := futures.callbacks.LoadAndDelete(feed); ok {
+			if msgChan, ok := cb.(chan any); ok {
+				msgChan <- out
+			}
 		}
 	}
 
@@ -498,8 +492,7 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 		}
 
 		if futures.pipeline != nil {
-			for range futures.pipeline.Next(sequence.NewValue[any](envelope)) {
-			}
+			futures.pipeline(envelope)
 		}
 		return
 
@@ -533,19 +526,10 @@ func (futures *FuturesLive) onReceived(event *callback.Event[*sdkkraken.WebSocke
 		}
 
 		if futures.pipeline != nil {
-			for range futures.pipeline.Next(sequence.NewValue[any](tradeEnvelope)) {
-			}
+			futures.pipeline(tradeEnvelope)
 		}
 		return
 	}
-}
-
-/*
-Register implements the runtime.Node interface: it declares every numeric field
-the venue's futures rows can produce, none valued.
-*/
-func (futures *FuturesLive) Register() *data.Measurement[float64] {
-	return data.NewMeasurement("futures", map[string]data.Metric[float64]{})
 }
 
 func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {

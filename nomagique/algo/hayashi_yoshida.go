@@ -13,7 +13,8 @@ Notice that there is ZERO implementation logic here, and ZERO DTOs.
 By currying the inputs, we can pass multiple different types (Bounds, then Returns)
 through the pure `Value[T, U]` pipeline without ever defining a struct.
 */
-func NewHayashiYoshida() types.Value[[2][2]int64, types.Value[[2]float64, float64]] {
+type HayashiYoshida types.Value[[2][2]int64, types.Value[[2]float64, float64]]
+func NewHayashiYoshida() HayashiYoshida {
 	// Instantiate the stateful mathematical accumulators
 	covSum := arithmetic.NewSum()
 	leftEnergySum := arithmetic.NewSum()
@@ -21,27 +22,33 @@ func NewHayashiYoshida() types.Value[[2][2]int64, types.Value[[2]float64, float6
 
 	// 1. First stage of the pipeline takes the time boundaries (Geometry)
 	return func(bounds [2][2]int64) types.Value[[2]float64, float64] {
-		isOverlapping := geometry.Intersection(bounds)
+		intersectOp := geometry.NewIntersection()
+		isOverlapping := intersectOp(bounds)
 
 		// 2. Second stage takes the returns (Arithmetic)
 		return func(returns [2]float64) float64 {
+			multOp := arithmetic.NewMultiply()
 			var covariance float64
 			if isOverlapping {
 				// Arithmetic (Covariance product & accumulation)
-				covariance = covSum(arithmetic.Multiply(returns))
+				covariance = covSum(multOp(returns))
 			} else {
 				covariance = covSum(0) // Read current sum
 			}
 
-			// Arithmetic (Final Correlation: Covariance / Sqrt(LeftEnergy * RightEnergy))
-			scale := arithmetic.SquareRoot(
-				arithmetic.Multiply([2]float64{
-					leftEnergySum(arithmetic.Multiply([2]float64{returns[0], returns[0]})),
-					rightEnergySum(arithmetic.Multiply([2]float64{returns[1], returns[1]})),
+			sqrtOp := arithmetic.NewSquareRoot()
+			scale := sqrtOp(
+				multOp([2]float64{
+					leftEnergySum(multOp([2]float64{returns[0], returns[0]})),
+					rightEnergySum(multOp([2]float64{returns[1], returns[1]})),
 				}),
 			)
 
-			return arithmetic.Divide([2]float64{covariance, scale})
+			divOp := arithmetic.NewDivide()
+			if scale == 0 {
+				return 0
+			}
+			return divOp([2]float64{covariance, scale})
 		}
 	}
 }

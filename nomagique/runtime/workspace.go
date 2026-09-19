@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	goruntime "runtime"
+	"strings"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -30,6 +33,14 @@ the target JSON signal definition.
 func NewWorkspace(ctx context.Context, label string, jsonPath string) *Workspace {
 	workload := &Workspace{
 		sink: make(chan any, 1024),
+	}
+
+	// If a logical name was provided, translate it to the definitions folder
+	if !strings.HasSuffix(jsonPath, ".json") {
+		filename := strings.ReplaceAll(jsonPath, ":", "_") + ".json"
+		_, goFile, _, _ := goruntime.Caller(0)
+		root := filepath.Join(filepath.Dir(goFile), "..", "..")
+		jsonPath = filepath.Join(root, "signal", "definitions", filename)
 	}
 
 	builder, err := compiler.NewBuilder(jsonPath)

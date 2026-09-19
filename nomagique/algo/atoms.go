@@ -7,6 +7,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
+type RLS types.Value[[]float64, [2]float64]
 /*
 NewRLS creates a stateful closure for Recursive Least Squares (RLS) with symmetric
 square-root rank-one updates. It encapsulates all covariance and coefficient state,
@@ -16,7 +17,7 @@ Input: A slice of float64 where the first N elements are the feature vector (X),
 and the last element is the target (y).
 Output: An array [prediction, predictive_variance].
 */
-func NewRLS(dimensions int, lambda float64) types.Value[[]float64, [2]float64] {
+func NewRLS(dimensions int, lambda float64) RLS {
 	beta := make([]float64, dimensions)
 	root := make([][]float64, dimensions)
 	for i := range root {
@@ -85,14 +86,4 @@ func NewRLS(dimensions int, lambda float64) types.Value[[]float64, [2]float64] {
 	}
 }
 
-/*
-NewOLS creates a stateful Ordinary Least Squares closure using a rolling window.
-This encapsulates the X and Y history.
-*/
-func NewOLS(windowSize int) types.Value[[]float64, float64] {
-	// For simplicity in this architectural rewrite, we stub the pure closure
-	// to prove the structural replacement of ols.go.
-	return func(in []float64) float64 {
-		return 0.0
-	}
-}
+

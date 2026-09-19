@@ -1,0 +1,1389 @@
+commit ba64fe901ed7985c3dc5b106081eb7f02158d8c8
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Fri Sep 18 22:30:20 2026 +0200
+
+    cleanup
+
+diff --git a/nomagique/learning/forecast.go b/nomagique/learning/forecast.go
+deleted file mode 100644
+index 2fbb80aae..000000000
+--- a/nomagique/learning/forecast.go
++++ /dev/null
+@@ -1,140 +0,0 @@
+-package learning
+-
+-import (
+-	"iter"
+-	"math"
+-	"unsafe"
+-
+-	"github.com/theapemachine/symm/nomagique/calculus"
+-	"github.com/theapemachine/symm/nomagique/core"
+-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+-	"github.com/theapemachine/symm/nomagique/statistic"
+-)
+-
+-/*
+-Pair is a predicted-versus-actual observation.
+-*/
+-type Pair struct {
+-	Predicted float64
+-	Actual    float64
+-}
+-
+-/*
+-ForecastReading is the learned multiplicative scale and its trust.
+-*/
+-type ForecastReading struct {
+-	Value       float64
+-	Scale       float64
+-	Trust       float64
+-	Rate        float64
+-	Count       float64
+-	WeightCount float64
+-}
+-
+-/*
+-Forecast owns residual moments and the trust/scale recurrences. Mix supplies
+-both interpolations. The current residual participates in its surprise
+-statistic.
+-*/
+-type Forecast struct {
+-	*core.PrimitiveError
+-
+-	moments statistic.Moments
+-	mix     core.Primitive
+-	trust   float64
+-	scale   float64
+-	rate    float64
+-	out     ForecastReading
+-}
+-
+-func NewForecast() *Forecast {
+-	return &Forecast{PrimitiveError: core.NewPrimitiveError(), mix: calculus.NewMix(),
+-		trust: 1,
+-		scale: 1,
+-	}
+-}
+-
+-func (forecast *Forecast) Next(
+-	in iter.Seq[unsafe.Pointer],
+-) iter.Seq[unsafe.Pointer] {
+-	return func(yield func(unsafe.Pointer) bool) {
+-		for arriving := range in {
+-			pair := (*Pair)(arriving)
+-
+-			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
+-				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
+-				forecast.Error(core.ErrDomain)
+-				return
+-			}
+-
+-			residual := pair.Actual - pair.Predicted
+-			moments := forecast.moments.Update(residual)
+-
+-			if moments.Count > 1 {
+-				forecast.rate = 0
+-
+-				if moments.Variance > 0 {
+-					deviation := math.Abs(residual - moments.Mean)
+-					spread := math.Sqrt(moments.Variance)
+-					forecast.rate = deviation / spread
+-				}
+-
+-				mixRec := calculus.MixRecord{
+-					Left:   forecast.trust,
+-					Right:  math.Max(0, 1-forecast.rate),
+-					Weight: forecast.rate,
+-				}
+-
+-				var trust float64
+-
+-				for out := range forecast.mix.Next(sequence.NewValues(mixRec).Next(nil)) {
+-					trust = *(*float64)(out)
+-				}
+-
+-				if err := forecast.mix.Error(); err != nil {
+-					forecast.Error(err)
+-					return
+-				}
+-
+-				forecast.trust = trust
+-
+-				actualAbs := math.Abs(pair.Actual)
+-				predictedAbs := math.Abs(pair.Predicted)
+-
+-				target := math.Exp(math.Log(actualAbs) - math.Log(predictedAbs))
+-
+-				scaleMix := calculus.MixRecord{
+-					Left:   forecast.scale,
+-					Right:  target,
+-					Weight: forecast.rate * (1 - forecast.trust),
+-				}
+-
+-				var scale float64
+-
+-				for out := range forecast.mix.Next(sequence.NewValues(scaleMix).Next(nil)) {
+-					scale = *(*float64)(out)
+-				}
+-
+-				if err := forecast.mix.Error(); err != nil {
+-					forecast.Error(err)
+-					return
+-				}
+-
+-				forecast.scale = scale
+-			}
+-
+-			forecast.out = ForecastReading{
+-				Value:       forecast.scale,
+-				Scale:       forecast.scale,
+-				Trust:       forecast.trust,
+-				Rate:        forecast.rate,
+-				Count:       moments.Count,
+-				WeightCount: moments.Count,
+-			}
+-
+-			if !yield(unsafe.Pointer(&forecast.out)) {
+-				return
+-			}
+-		}
+-	}
+-}
+
+commit a6b51f643829e8ff50d8356e5ac3b91fd5eb5ae1
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Wed Sep 16 23:24:07 2026 +0200
+
+    cleanup
+
+diff --git a/nomagique/learning/forecast.go b/nomagique/learning/forecast.go
+index eca3a7303..2fbb80aae 100644
+--- a/nomagique/learning/forecast.go
++++ b/nomagique/learning/forecast.go
+@@ -1,15 +1,14 @@
+ package learning
+ 
+ import (
+-	"errors"
+ 	"iter"
+ 	"math"
+ 	"unsafe"
+ 
+ 	"github.com/theapemachine/symm/nomagique/calculus"
+ 	"github.com/theapemachine/symm/nomagique/core"
++	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+ 	"github.com/theapemachine/symm/nomagique/statistic"
+-	"github.com/theapemachine/symm/nomagique/transport"
+ )
+ 
+ /*
+@@ -38,7 +37,8 @@ both interpolations. The current residual participates in its surprise
+ statistic.
+ */
+ type Forecast struct {
+-	err     error
++	*core.PrimitiveError
++
+ 	moments statistic.Moments
+ 	mix     core.Primitive
+ 	trust   float64
+@@ -47,15 +47,14 @@ type Forecast struct {
+ 	out     ForecastReading
+ }
+ 
+-func NewForecast() core.Primitive {
+-	return &Forecast{
+-		mix:   calculus.NewMix(),
++func NewForecast() *Forecast {
++	return &Forecast{PrimitiveError: core.NewPrimitiveError(), mix: calculus.NewMix(),
+ 		trust: 1,
+ 		scale: 1,
+ 	}
+ }
+ 
+-func (op *Forecast) Next(
++func (forecast *Forecast) Next(
+ 	in iter.Seq[unsafe.Pointer],
+ ) iter.Seq[unsafe.Pointer] {
+ 	return func(yield func(unsafe.Pointer) bool) {
+@@ -64,40 +63,40 @@ func (op *Forecast) Next(
+ 
+ 			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
+ 				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
+-				op.Error(core.ErrDomain)
++				forecast.Error(core.ErrDomain)
+ 				return
+ 			}
+ 
+ 			residual := pair.Actual - pair.Predicted
+-			moments := op.moments.Update(residual)
++			moments := forecast.moments.Update(residual)
+ 
+ 			if moments.Count > 1 {
+-				op.rate = 0
++				forecast.rate = 0
+ 
+ 				if moments.Variance > 0 {
+ 					deviation := math.Abs(residual - moments.Mean)
+ 					spread := math.Sqrt(moments.Variance)
+-					op.rate = deviation / spread
++					forecast.rate = deviation / spread
+ 				}
+ 
+ 				mixRec := calculus.MixRecord{
+-					Left:   op.trust,
+-					Right:  math.Max(0, 1-op.rate),
+-					Weight: op.rate,
++					Left:   forecast.trust,
++					Right:  math.Max(0, 1-forecast.rate),
++					Weight: forecast.rate,
+ 				}
+ 
+ 				var trust float64
+ 
+-				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
++				for out := range forecast.mix.Next(sequence.NewValues(mixRec).Next(nil)) {
+ 					trust = *(*float64)(out)
+ 				}
+ 
+-				if err := op.mix.Error(); err != nil {
+-					op.Error(err)
++				if err := forecast.mix.Error(); err != nil {
++					forecast.Error(err)
+ 					return
+ 				}
+ 
+-				op.trust = trust
++				forecast.trust = trust
+ 
+ 				actualAbs := math.Abs(pair.Actual)
+ 				predictedAbs := math.Abs(pair.Predicted)
+@@ -105,47 +104,37 @@ func (op *Forecast) Next(
+ 				target := math.Exp(math.Log(actualAbs) - math.Log(predictedAbs))
+ 
+ 				scaleMix := calculus.MixRecord{
+-					Left:   op.scale,
++					Left:   forecast.scale,
+ 					Right:  target,
+-					Weight: op.rate * (1 - op.trust),
++					Weight: forecast.rate * (1 - forecast.trust),
+ 				}
+ 
+ 				var scale float64
+ 
+-				for out := range op.mix.Next(transport.NewValues(scaleMix).Next(nil)) {
++				for out := range forecast.mix.Next(sequence.NewValues(scaleMix).Next(nil)) {
+ 					scale = *(*float64)(out)
+ 				}
+ 
+-				if err := op.mix.Error(); err != nil {
+-					op.Error(err)
++				if err := forecast.mix.Error(); err != nil {
++					forecast.Error(err)
+ 					return
+ 				}
+ 
+-				op.scale = scale
++				forecast.scale = scale
+ 			}
+ 
+-			op.out = ForecastReading{
+-				Value:       op.scale,
+-				Scale:       op.scale,
+-				Trust:       op.trust,
+-				Rate:        op.rate,
++			forecast.out = ForecastReading{
++				Value:       forecast.scale,
++				Scale:       forecast.scale,
++				Trust:       forecast.trust,
++				Rate:        forecast.rate,
+ 				Count:       moments.Count,
+ 				WeightCount: moments.Count,
+ 			}
+ 
+-			if !yield(unsafe.Pointer(&op.out)) {
++			if !yield(unsafe.Pointer(&forecast.out)) {
+ 				return
+ 			}
+ 		}
+ 	}
+ }
+-
+-func (op *Forecast) Error(errs ...error) error {
+-	for _, err := range errs {
+-		if err != nil {
+-			op.err = errors.Join(op.err, err)
+-		}
+-	}
+-
+-	return op.err
+-}
+
+commit ffe42707004066515b2eb00314cb39d79e5293f3
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Sun Sep 13 00:58:04 2026 +0200
+
+    restructure
+
+diff --git a/nomagique/learning/forecast.go b/nomagique/learning/forecast.go
+index 9f0baffc9..eca3a7303 100644
+--- a/nomagique/learning/forecast.go
++++ b/nomagique/learning/forecast.go
+@@ -1,13 +1,14 @@
+ package learning
+ 
+ import (
++	"errors"
+ 	"iter"
+ 	"math"
++	"unsafe"
+ 
+ 	"github.com/theapemachine/symm/nomagique/calculus"
+ 	"github.com/theapemachine/symm/nomagique/core"
+-	"github.com/theapemachine/symm/nomagique/equation"
+-	"github.com/theapemachine/symm/nomagique/logic"
++	"github.com/theapemachine/symm/nomagique/statistic"
+ 	"github.com/theapemachine/symm/nomagique/transport"
+ )
+ 
+@@ -37,164 +38,114 @@ both interpolations. The current residual participates in its surprise
+ statistic.
+ */
+ type Forecast struct {
+-	core.Base[Pair, ForecastReading]
+-	valid   *equation.ValidPair[float64]
+-	welford *equation.Welford
+-	mix     *equation.Mix[float64]
+-	abs     *calculus.Absolute[float64]
+-	log     *calculus.Log[float64]
+-	exp     *calculus.Exp[float64]
+-	sqrt    *calculus.Sqrt[float64]
+-	finite  *logic.Finite[float64]
++	err     error
++	moments statistic.Moments
++	mix     core.Primitive
+ 	trust   float64
+ 	scale   float64
+ 	rate    float64
++	out     ForecastReading
+ }
+ 
+-func NewForecast() *Forecast {
++func NewForecast() core.Primitive {
+ 	return &Forecast{
+-		valid:   equation.NewValidPair[float64](),
+-		welford: equation.NewWelford(),
+-		mix:     equation.NewMix[float64](),
+-		abs:     calculus.NewAbsolute[float64](),
+-		log:     calculus.NewLog[float64](),
+-		exp:     calculus.NewExp[float64](),
+-		sqrt:    calculus.NewSqrt[float64](),
+-		finite:  logic.NewFinite[float64](),
+-		trust:   1,
+-		scale:   1,
++		mix:   calculus.NewMix(),
++		trust: 1,
++		scale: 1,
+ 	}
+ }
+ 
+ func (op *Forecast) Next(
+-	in iter.Seq[core.Primitive[Pair, Pair]],
+-) iter.Seq[core.Primitive[ForecastReading, ForecastReading]] {
+-	return func(yield func(core.Primitive[ForecastReading, ForecastReading]) bool) {
++	in iter.Seq[unsafe.Pointer],
++) iter.Seq[unsafe.Pointer] {
++	return func(yield func(unsafe.Pointer) bool) {
+ 		for arriving := range in {
+-			reading, err := op.Measure(arriving.Read())
++			pair := (*Pair)(arriving)
+ 
+-			if err != nil {
+-				op.Error(err)
++			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
++				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
++				op.Error(core.ErrDomain)
+ 				return
+ 			}
+ 
+-			if !yield(op.Carrier(reading)) {
+-				return
+-			}
+-		}
+-	}
+-}
++			residual := pair.Actual - pair.Predicted
++			moments := op.moments.Update(residual)
+ 
+-func (op *Forecast) Measure(pair Pair) (ForecastReading, error) {
+-	ok, err := transport.Evaluate(op.valid, transport.Values(equation.ValidPairInput[float64]{
+-		Predicted: pair.Predicted,
+-		Actual:    pair.Actual,
+-	}))
++			if moments.Count > 1 {
++				op.rate = 0
+ 
+-	if err != nil {
+-		return ForecastReading{}, err
+-	}
++				if moments.Variance > 0 {
++					deviation := math.Abs(residual - moments.Mean)
++					spread := math.Sqrt(moments.Variance)
++					op.rate = deviation / spread
++				}
+ 
+-	if !ok {
+-		return ForecastReading{}, core.ErrDomain
+-	}
+-
+-	residual := pair.Actual - pair.Predicted
+-	moments, err := transport.Evaluate(op.welford, transport.Values(residual))
++				mixRec := calculus.MixRecord{
++					Left:   op.trust,
++					Right:  math.Max(0, 1-op.rate),
++					Weight: op.rate,
++				}
+ 
+-	if err != nil {
+-		return ForecastReading{}, err
+-	}
++				var trust float64
+ 
+-	if moments.Count > 1 {
+-		op.rate = 0
++				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
++					trust = *(*float64)(out)
++				}
+ 
+-		if moments.Variance > 0 {
+-			deviation, err := transport.Evaluate(op.abs, transport.Values(residual-moments.Mean))
+-
+-			if err != nil {
+-				return ForecastReading{}, err
+-			}
++				if err := op.mix.Error(); err != nil {
++					op.Error(err)
++					return
++				}
+ 
+-			spread, err := transport.Evaluate(op.sqrt, transport.Values(moments.Variance))
++				op.trust = trust
+ 
+-			if err != nil {
+-				return ForecastReading{}, err
+-			}
+-
+-			op.rate = deviation / spread
+-		}
+-
+-		trust, err := transport.Evaluate(op.mix, transport.Values(equation.MixRecord[float64]{
+-			Left:   op.trust,
+-			Right:  math.Max(0, 1-op.rate),
+-			Weight: op.rate,
+-		}))
+-
+-		if err != nil {
+-			return ForecastReading{}, err
+-		}
+-
+-		op.trust = trust
+-		actualAbs, err := transport.Evaluate(op.abs, transport.Values(pair.Actual))
+-
+-		if err != nil {
+-			return ForecastReading{}, err
+-		}
++				actualAbs := math.Abs(pair.Actual)
++				predictedAbs := math.Abs(pair.Predicted)
+ 
+-		predictedAbs, err := transport.Evaluate(op.abs, transport.Values(pair.Predicted))
++				target := math.Exp(math.Log(actualAbs) - math.Log(predictedAbs))
+ 
+-		if err != nil {
+-			return ForecastReading{}, err
+-		}
++				scaleMix := calculus.MixRecord{
++					Left:   op.scale,
++					Right:  target,
++					Weight: op.rate * (1 - op.trust),
++				}
+ 
+-		actualLog, err := transport.Evaluate(op.log, transport.Values(actualAbs))
++				var scale float64
+ 
+-		if err != nil {
+-			return ForecastReading{}, err
+-		}
++				for out := range op.mix.Next(transport.NewValues(scaleMix).Next(nil)) {
++					scale = *(*float64)(out)
++				}
+ 
+-		predictedLog, err := transport.Evaluate(op.log, transport.Values(predictedAbs))
++				if err := op.mix.Error(); err != nil {
++					op.Error(err)
++					return
++				}
+ 
+-		if err != nil {
+-			return ForecastReading{}, err
+-		}
++				op.scale = scale
++			}
+ 
+-		target, err := transport.Evaluate(op.exp, transport.Values(actualLog-predictedLog))
++			op.out = ForecastReading{
++				Value:       op.scale,
++				Scale:       op.scale,
++				Trust:       op.trust,
++				Rate:        op.rate,
++				Count:       moments.Count,
++				WeightCount: moments.Count,
++			}
+ 
+-		if err != nil {
+-			return ForecastReading{}, err
++			if !yield(unsafe.Pointer(&op.out)) {
++				return
++			}
+ 		}
++	}
++}
+ 
+-		scale, err := transport.Evaluate(op.mix, transport.Values(equation.MixRecord[float64]{
+-			Left:   op.scale,
+-			Right:  target,
+-			Weight: op.rate * (1 - op.trust),
+-		}))
+-
++func (op *Forecast) Error(errs ...error) error {
++	for _, err := range errs {
+ 		if err != nil {
+-			return ForecastReading{}, err
++			op.err = errors.Join(op.err, err)
+ 		}
+-
+-		op.scale = scale
+-	}
+-
+-	defined, err := transport.Evaluate(op.finite, transport.Values(op.scale))
+-
+-	if err != nil {
+-		return ForecastReading{}, err
+-	}
+-
+-	if !defined {
+-		return ForecastReading{}, core.ErrDomain
+ 	}
+ 
+-	return ForecastReading{
+-		Value:       op.scale,
+-		Scale:       op.scale,
+-		Trust:       op.trust,
+-		Rate:        op.rate,
+-		Count:       moments.Count,
+-		WeightCount: moments.Count,
+-	}, nil
++	return op.err
+ }
+
+commit 9df44b149e7ffb0d267ff11864bf853aaf3f3885
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Thu Sep 10 19:56:36 2026 +0200
+
+    migrate
+
+diff --git a/nomagique/learning/forecast.go b/nomagique/learning/forecast.go
+index d1b32dded..9f0baffc9 100644
+--- a/nomagique/learning/forecast.go
++++ b/nomagique/learning/forecast.go
+@@ -1,133 +1,200 @@
+ package learning
+ 
+ import (
+-	"github.com/theapemachine/symm/nomagique/algo"
++	"iter"
++	"math"
++
+ 	"github.com/theapemachine/symm/nomagique/calculus"
+ 	"github.com/theapemachine/symm/nomagique/core"
+ 	"github.com/theapemachine/symm/nomagique/equation"
+ 	"github.com/theapemachine/symm/nomagique/logic"
+-	"github.com/theapemachine/symm/nomagique/store"
+ 	"github.com/theapemachine/symm/nomagique/transport"
+ )
+ 
+-// NewForecast composes the supplied multiplicative forecast-scale learner.
+-// Welford owns the residual moments. Storage owns trust/scale; Mix supplies both
+-// recurrences. The current residual participates in its source-defined surprise
+-// statistic; this is not mislabeled as a strictly prior standardized residual.
+-func NewForecast() core.Primitive {
+-	memory := store.NewRetained(core.From(map[string]core.Primitive{"trust": core.From(1.0), "scale": core.From(1.0), "rate": core.From(0.0)}))
+-	state := transport.NewPipe(store.NewKV[string](memory), memory)
+-	return transport.NewMap(
+-		logic.NewGate(
+-			equation.NewValidPair(),
+-			transport.NewPipe(
+-				store.NewRecord(
+-					transport.NewPipe(),
+-					transport.NewPipe(equation.NewDifference[float64](store.NewGet("actual"), store.NewGet("predicted")), store.NewKey("residual")),
+-				),
+-				store.NewRecord(
+-					transport.NewPipe(),
+-					transport.NewPipe(transport.NewPipe(store.NewGet("residual"), algo.NewWelford()), store.NewKey("moments")),
+-				),
+-				state,
+-				logic.NewGate(
+-					equation.NewGreater[float64](transport.NewPipe(store.NewGet("moments"), store.NewGet("count")), store.NewConstant(core.From(1.0))),
+-					transport.NewPipe(
+-						store.NewRecord(
+-							transport.NewPipe(),
+-							transport.NewPipe(
+-								logic.NewGate(
+-									equation.NewGreater[float64](
+-										transport.NewPipe(store.NewGet("moments"), store.NewGet("variance")),
+-										store.NewConstant(core.From(0.0)),
+-									),
+-									equation.NewRatio[float64](
+-										transport.NewPipe(
+-											equation.NewDifference[float64](store.NewGet("residual"), transport.NewPipe(store.NewGet("moments"), store.NewGet("mean"))),
+-											calculus.NewAbsolute(transport.NewIO(core.From(0.0))),
+-										),
+-										transport.NewPipe(
+-											transport.NewPipe(store.NewGet("moments"), store.NewGet("variance")),
+-											calculus.NewSqrt(transport.NewIO(core.From(0.0))),
+-										),
+-									),
+-									store.NewConstant(core.From(0.0)),
+-								),
+-								store.NewKey("rate"),
+-							),
+-						),
+-						store.NewRecord(
+-							transport.NewPipe(),
+-							transport.NewPipe(
+-								transport.NewPipe(
+-									store.NewRecord(
+-										transport.NewPipe(store.NewGet("trust"), store.NewKey("left")),
+-										transport.NewPipe(
+-											transport.NewPipe(
+-												equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("rate")),
+-												calculus.NewMaximum(transport.NewIO(core.From(0.0))),
+-											),
+-											store.NewKey("right"),
+-										),
+-										transport.NewPipe(store.NewGet("rate"), store.NewKey("weight")),
+-									),
+-									equation.NewMix(),
+-								),
+-								store.NewKey("trust"),
+-							),
+-						),
+-						store.NewRecord(
+-							transport.NewPipe(),
+-							transport.NewPipe(
+-								equation.NewProduct[float64](
+-									store.NewGet("rate"),
+-									equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("trust")),
+-								),
+-								store.NewKey("learning_rate"),
+-							),
+-							transport.NewPipe(
+-								transport.NewPipe(
+-									equation.NewDifference[float64](
+-										transport.NewPipe(
+-											transport.NewPipe(store.NewGet("actual"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
+-											calculus.NewLog(transport.NewIO(core.From(0.0))),
+-										),
+-										transport.NewPipe(
+-											transport.NewPipe(store.NewGet("predicted"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
+-											calculus.NewLog(transport.NewIO(core.From(0.0))),
+-										),
+-									),
+-									calculus.NewExp(transport.NewIO(core.From(0.0))),
+-								),
+-								store.NewKey("target_scale"),
+-							),
+-						),
+-						store.NewRecord(
+-							transport.NewPipe(),
+-							transport.NewPipe(
+-								transport.NewPipe(
+-									store.NewRecord(
+-										transport.NewPipe(store.NewGet("scale"), store.NewKey("left")),
+-										transport.NewPipe(store.NewGet("target_scale"), store.NewKey("right")),
+-										transport.NewPipe(store.NewGet("learning_rate"), store.NewKey("weight")),
+-									),
+-									equation.NewMix(),
+-								),
+-								store.NewKey("scale"),
+-							),
+-						),
+-					),
+-					transport.NewPipe(),
+-				),
+-				store.NewRecord(
+-					transport.NewPipe(),
+-					transport.NewPipe(store.NewGet("scale"), store.NewKey("value")),
+-					transport.NewPipe(transport.NewPipe(store.NewGet("moments"), store.NewGet("count")), store.NewKey("count")),
+-					transport.NewPipe(transport.NewPipe(store.NewGet("moments"), store.NewGet("count")), store.NewKey("weight_count")),
+-				),
+-				logic.NewGate(transport.NewPipe(store.NewGet("scale"), logic.NewFinite()), state, logic.NewReject(core.ErrDomain)),
+-			),
+-			logic.NewReject(core.ErrDomain),
+-		),
+-	)
++/*
++Pair is a predicted-versus-actual observation.
++*/
++type Pair struct {
++	Predicted float64
++	Actual    float64
++}
++
++/*
++ForecastReading is the learned multiplicative scale and its trust.
++*/
++type ForecastReading struct {
++	Value       float64
++	Scale       float64
++	Trust       float64
++	Rate        float64
++	Count       float64
++	WeightCount float64
++}
++
++/*
++Forecast owns residual moments and the trust/scale recurrences. Mix supplies
++both interpolations. The current residual participates in its surprise
++statistic.
++*/
++type Forecast struct {
++	core.Base[Pair, ForecastReading]
++	valid   *equation.ValidPair[float64]
++	welford *equation.Welford
++	mix     *equation.Mix[float64]
++	abs     *calculus.Absolute[float64]
++	log     *calculus.Log[float64]
++	exp     *calculus.Exp[float64]
++	sqrt    *calculus.Sqrt[float64]
++	finite  *logic.Finite[float64]
++	trust   float64
++	scale   float64
++	rate    float64
++}
++
++func NewForecast() *Forecast {
++	return &Forecast{
++		valid:   equation.NewValidPair[float64](),
++		welford: equation.NewWelford(),
++		mix:     equation.NewMix[float64](),
++		abs:     calculus.NewAbsolute[float64](),
++		log:     calculus.NewLog[float64](),
++		exp:     calculus.NewExp[float64](),
++		sqrt:    calculus.NewSqrt[float64](),
++		finite:  logic.NewFinite[float64](),
++		trust:   1,
++		scale:   1,
++	}
++}
++
++func (op *Forecast) Next(
++	in iter.Seq[core.Primitive[Pair, Pair]],
++) iter.Seq[core.Primitive[ForecastReading, ForecastReading]] {
++	return func(yield func(core.Primitive[ForecastReading, ForecastReading]) bool) {
++		for arriving := range in {
++			reading, err := op.Measure(arriving.Read())
++
++			if err != nil {
++				op.Error(err)
++				return
++			}
++
++			if !yield(op.Carrier(reading)) {
++				return
++			}
++		}
++	}
++}
++
++func (op *Forecast) Measure(pair Pair) (ForecastReading, error) {
++	ok, err := transport.Evaluate(op.valid, transport.Values(equation.ValidPairInput[float64]{
++		Predicted: pair.Predicted,
++		Actual:    pair.Actual,
++	}))
++
++	if err != nil {
++		return ForecastReading{}, err
++	}
++
++	if !ok {
++		return ForecastReading{}, core.ErrDomain
++	}
++
++	residual := pair.Actual - pair.Predicted
++	moments, err := transport.Evaluate(op.welford, transport.Values(residual))
++
++	if err != nil {
++		return ForecastReading{}, err
++	}
++
++	if moments.Count > 1 {
++		op.rate = 0
++
++		if moments.Variance > 0 {
++			deviation, err := transport.Evaluate(op.abs, transport.Values(residual-moments.Mean))
++
++			if err != nil {
++				return ForecastReading{}, err
++			}
++
++			spread, err := transport.Evaluate(op.sqrt, transport.Values(moments.Variance))
++
++			if err != nil {
++				return ForecastReading{}, err
++			}
++
++			op.rate = deviation / spread
++		}
++
++		trust, err := transport.Evaluate(op.mix, transport.Values(equation.MixRecord[float64]{
++			Left:   op.trust,
++			Right:  math.Max(0, 1-op.rate),
++			Weight: op.rate,
++		}))
++
++		if err != nil {
++			return ForecastReading{}, err
++		}
++
++		op.trust = trust
++		actualAbs, err := transport.Evaluate(op.abs, transport.Values(pair.Actual))
++
++		if err != nil {
++			return ForecastReading{}, err
++		}
++
++		predictedAbs, err := transport.Evaluate(op.abs, transport.Values(pair.Predicted))
++
++		if err != nil {
++			return ForecastReading{}, err
++		}
++
++		actualLog, err := transport.Evaluate(op.log, transport.Values(actualAbs))
++
++		if err != nil {
++			return ForecastReading{}, err
++		}
++
++		predictedLog, err := transport.Evaluate(op.log, transport.Values(predictedAbs))
++
++		if err != nil {
++			return ForecastReading{}, err
++		}
++
++		target, err := transport.Evaluate(op.exp, transport.Values(actualLog-predictedLog))
++
++		if err != nil {
++			return ForecastReading{}, err
++		}
++
++		scale, err := transport.Evaluate(op.mix, transport.Values(equation.MixRecord[float64]{
++			Left:   op.scale,
++			Right:  target,
++			Weight: op.rate * (1 - op.trust),
++		}))
++
++		if err != nil {
++			return ForecastReading{}, err
++		}
++
++		op.scale = scale
++	}
++
++	defined, err := transport.Evaluate(op.finite, transport.Values(op.scale))
++
++	if err != nil {
++		return ForecastReading{}, err
++	}
++
++	if !defined {
++		return ForecastReading{}, core.ErrDomain
++	}
++
++	return ForecastReading{
++		Value:       op.scale,
++		Scale:       op.scale,
++		Trust:       op.trust,
++		Rate:        op.rate,
++		Count:       moments.Count,
++		WeightCount: moments.Count,
++	}, nil
+ }
+
+commit b89caf4ad9d937ec1f4dfecdf6e247d67a4c92ef
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Sun Sep 6 22:38:04 2026 +0200
+
+    slop
+
+diff --git a/nomagique/learning/forecast.go b/nomagique/learning/forecast.go
+index f469a90cf..d1b32dded 100644
+--- a/nomagique/learning/forecast.go
++++ b/nomagique/learning/forecast.go
+@@ -1,154 +1,133 @@
+ package learning
+ 
+ import (
+-	"math"
+-
+-	"github.com/theapemachine/errnie"
++	"github.com/theapemachine/symm/nomagique/algo"
++	"github.com/theapemachine/symm/nomagique/calculus"
++	"github.com/theapemachine/symm/nomagique/core"
++	"github.com/theapemachine/symm/nomagique/equation"
++	"github.com/theapemachine/symm/nomagique/logic"
++	"github.com/theapemachine/symm/nomagique/store"
++	"github.com/theapemachine/symm/nomagique/transport"
+ )
+ 
+-/*
+-ForecastOutput reports learned multiplicative scale.
+-*/
+-type ForecastOutput struct {
+-	Value       float64
+-	Predicted   float64
+-	Actual      float64
+-	Scale       float64
+-	Trust       float64
+-	Rate        float64
+-	Count       int
+-	WeightCount int
+-}
+-
+-/*
+-Forecaster learns a multiplicative scale from predicted-vs-actual outcomes.
+-Residual mean and variance are tracked online so a zero residual span is a
+-valid zero-surprise condition rather than a validation failure.
+-*/
+-type Forecaster struct {
+-	scale       float64
+-	trust       float64
+-	rate        float64
+-	mean        float64
+-	m2          float64
+-	weightCount int
+-	count       int
+-}
+-
+-/*
+-Forecast returns a typed scale learner.
+-*/
+-func Forecast() *Forecaster {
+-	return &Forecaster{}
+-}
+-
+-/*
+-Measure updates forecast scale from one prediction outcome.
+-*/
+-func (forecaster *Forecaster) Measure(pair LearningPair) (ForecastOutput, error) {
+-	predicted, actual, err := validatePair(pair, "forecast")
+-
+-	if err != nil {
+-		return ForecastOutput{}, err
+-	}
+-
+-	residual := actual - predicted
+-
+-	if forecaster.count == 0 {
+-		forecaster.scale = 1
+-		forecaster.trust = 1
+-		forecaster.mean = residual
+-		forecaster.m2 = 0
+-		forecaster.weightCount = 1
+-		forecaster.count = 1
+-
+-		return ForecastOutput{
+-			Value:       forecaster.scale,
+-			Predicted:   predicted,
+-			Actual:      actual,
+-			Scale:       forecaster.scale,
+-			Trust:       forecaster.trust,
+-			Rate:        0,
+-			Count:       forecaster.count,
+-			WeightCount: forecaster.weightCount,
+-		}, nil
+-	}
+-
+-	forecaster.weightCount++
+-	delta := residual - forecaster.mean
+-	forecaster.mean += delta / float64(forecaster.weightCount)
+-	forecaster.m2 += delta * (residual - forecaster.mean)
+-
+-	variance := 0.0
+-
+-	if forecaster.weightCount > 1 {
+-		variance = forecaster.m2 / float64(forecaster.weightCount-1)
+-	}
+-
+-	if variance < 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
+-		return ForecastOutput{}, errnie.Error(errnie.Err(
+-			errnie.Validation,
+-			"forecast: residual variance must be finite and non-negative",
+-			nil,
+-		))
+-	}
+-
+-	surprise := 0.0
+-
+-	if variance > 0 {
+-		surprise = math.Abs(residual-forecaster.mean) / math.Sqrt(variance)
+-	}
+-
+-	forecaster.rate = surprise
+-	targetTrust := math.Max(0, 1-surprise)
+-	forecaster.trust += surprise * (targetTrust - forecaster.trust)
+-	learningRate := surprise * (1 - forecaster.trust)
+-	magnitudePredicted := math.Abs(predicted)
+-	magnitudeActual := math.Abs(actual)
+-
+-	if magnitudePredicted <= 0 {
+-		return ForecastOutput{}, errnie.Error(errnie.Err(
+-			errnie.Validation,
+-			"forecast: predicted magnitude must be positive for log-ratio scale",
+-			nil,
+-		))
+-	}
+-
+-	if magnitudeActual <= 0 {
+-		return ForecastOutput{}, errnie.Error(errnie.Err(
+-			errnie.Validation,
+-			"forecast: actual magnitude must be positive for log-ratio scale",
+-			nil,
+-		))
+-	}
+-
+-	targetScale := math.Exp(math.Log(magnitudeActual) - math.Log(magnitudePredicted))
+-	forecaster.scale += learningRate * (targetScale - forecaster.scale)
+-	forecaster.count++
+-
+-	if !finite(forecaster.scale) {
+-		return ForecastOutput{}, errnie.Error(errnie.Err(
+-			errnie.Validation,
+-			"forecast: scale must stay finite",
+-			nil,
+-		))
+-	}
+-
+-	return ForecastOutput{
+-		Value:       forecaster.scale,
+-		Predicted:   predicted,
+-		Actual:      actual,
+-		Scale:       forecaster.scale,
+-		Trust:       forecaster.trust,
+-		Rate:        forecaster.rate,
+-		Count:       forecaster.count,
+-		WeightCount: forecaster.weightCount,
+-	}, nil
+-}
+-
+-/*
+-Reset clears learned forecast state.
+-*/
+-func (forecaster *Forecaster) Reset() {
+-	*forecaster = Forecaster{}
++// NewForecast composes the supplied multiplicative forecast-scale learner.
++// Welford owns the residual moments. Storage owns trust/scale; Mix supplies both
++// recurrences. The current residual participates in its source-defined surprise
++// statistic; this is not mislabeled as a strictly prior standardized residual.
++func NewForecast() core.Primitive {
++	memory := store.NewRetained(core.From(map[string]core.Primitive{"trust": core.From(1.0), "scale": core.From(1.0), "rate": core.From(0.0)}))
++	state := transport.NewPipe(store.NewKV[string](memory), memory)
++	return transport.NewMap(
++		logic.NewGate(
++			equation.NewValidPair(),
++			transport.NewPipe(
++				store.NewRecord(
++					transport.NewPipe(),
++					transport.NewPipe(equation.NewDifference[float64](store.NewGet("actual"), store.NewGet("predicted")), store.NewKey("residual")),
++				),
++				store.NewRecord(
++					transport.NewPipe(),
++					transport.NewPipe(transport.NewPipe(store.NewGet("residual"), algo.NewWelford()), store.NewKey("moments")),
++				),
++				state,
++				logic.NewGate(
++					equation.NewGreater[float64](transport.NewPipe(store.NewGet("moments"), store.NewGet("count")), store.NewConstant(core.From(1.0))),
++					transport.NewPipe(
++						store.NewRecord(
++							transport.NewPipe(),
++							transport.NewPipe(
++								logic.NewGate(
++									equation.NewGreater[float64](
++										transport.NewPipe(store.NewGet("moments"), store.NewGet("variance")),
++										store.NewConstant(core.From(0.0)),
++									),
++									equation.NewRatio[float64](
++										transport.NewPipe(
++											equation.NewDifference[float64](store.NewGet("residual"), transport.NewPipe(store.NewGet("moments"), store.NewGet("mean"))),
++											calculus.NewAbsolute(transport.NewIO(core.From(0.0))),
++										),
++										transport.NewPipe(
++											transport.NewPipe(store.NewGet("moments"), store.NewGet("variance")),
++											calculus.NewSqrt(transport.NewIO(core.From(0.0))),
++										),
++									),
++									store.NewConstant(core.From(0.0)),
++								),
++								store.NewKey("rate"),
++							),
++						),
++						store.NewRecord(
++							transport.NewPipe(),
++							transport.NewPipe(
++								transport.NewPipe(
++									store.NewRecord(
++										transport.NewPipe(store.NewGet("trust"), store.NewKey("left")),
++										transport.NewPipe(
++											transport.NewPipe(
++												equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("rate")),
++												calculus.NewMaximum(transport.NewIO(core.From(0.0))),
++											),
++											store.NewKey("right"),
++										),
++										transport.NewPipe(store.NewGet("rate"), store.NewKey("weight")),
++									),
++									equation.NewMix(),
++								),
++								store.NewKey("trust"),
++							),
++						),
++						store.NewRecord(
++							transport.NewPipe(),
++							transport.NewPipe(
++								equation.NewProduct[float64](
++									store.NewGet("rate"),
++									equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("trust")),
++								),
++								store.NewKey("learning_rate"),
++							),
++							transport.NewPipe(
++								transport.NewPipe(
++									equation.NewDifference[float64](
++										transport.NewPipe(
++											transport.NewPipe(store.NewGet("actual"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
++											calculus.NewLog(transport.NewIO(core.From(0.0))),
++										),
++										transport.NewPipe(
++											transport.NewPipe(store.NewGet("predicted"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
++											calculus.NewLog(transport.NewIO(core.From(0.0))),
++										),
++									),
++									calculus.NewExp(transport.NewIO(core.From(0.0))),
++								),
++								store.NewKey("target_scale"),
++							),
++						),
++						store.NewRecord(
++							transport.NewPipe(),
++							transport.NewPipe(
++								transport.NewPipe(
++									store.NewRecord(
++										transport.NewPipe(store.NewGet("scale"), store.NewKey("left")),
++										transport.NewPipe(store.NewGet("target_scale"), store.NewKey("right")),
++										transport.NewPipe(store.NewGet("learning_rate"), store.NewKey("weight")),
++									),
++									equation.NewMix(),
++								),
++								store.NewKey("scale"),
++							),
++						),
++					),
++					transport.NewPipe(),
++				),
++				store.NewRecord(
++					transport.NewPipe(),
++					transport.NewPipe(store.NewGet("scale"), store.NewKey("value")),
++					transport.NewPipe(transport.NewPipe(store.NewGet("moments"), store.NewGet("count")), store.NewKey("count")),
++					transport.NewPipe(transport.NewPipe(store.NewGet("moments"), store.NewGet("count")), store.NewKey("weight_count")),
++				),
++				logic.NewGate(transport.NewPipe(store.NewGet("scale"), logic.NewFinite()), state, logic.NewReject(core.ErrDomain)),
++			),
++			logic.NewReject(core.ErrDomain),
++		),
++	)
+ }
+
+commit fe0efcbc8af4fa173bd599cea6048153b85b3a5a
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Mon Aug 17 22:38:07 2026 +0200
+
+    Implement calibration and trust weight mechanisms with associated tests
+    
+    - Added SampleRatio and TrustWeight structures for calibration of predicted vs actual outcomes.
+    - Implemented Measure and Reset methods for both SampleRatio and TrustWeight to update and clear their states.
+    - Created validation logic for LearningPair to ensure predicted and actual values are finite and non-zero.
+    - Developed empirical error Calibrator for scoring incoming error readings against retained history.
+    - Added tests for SampleRatio, TrustWeight, and Calibrator to ensure functionality and performance.
+    - Introduced utility functions for handling finite probability checks and decision tracing in strategy.
+    - Enhanced candidate management in strategy with functions to retain, remove, and copy candidates.
+
+diff --git a/nomagique/learning/forecast.go b/nomagique/learning/forecast.go
+new file mode 100644
+index 000000000..f469a90cf
+--- /dev/null
++++ b/nomagique/learning/forecast.go
+@@ -0,0 +1,154 @@
++package learning
++
++import (
++	"math"
++
++	"github.com/theapemachine/errnie"
++)
++
++/*
++ForecastOutput reports learned multiplicative scale.
++*/
++type ForecastOutput struct {
++	Value       float64
++	Predicted   float64
++	Actual      float64
++	Scale       float64
++	Trust       float64
++	Rate        float64
++	Count       int
++	WeightCount int
++}
++
++/*
++Forecaster learns a multiplicative scale from predicted-vs-actual outcomes.
++Residual mean and variance are tracked online so a zero residual span is a
++valid zero-surprise condition rather than a validation failure.
++*/
++type Forecaster struct {
++	scale       float64
++	trust       float64
++	rate        float64
++	mean        float64
++	m2          float64
++	weightCount int
++	count       int
++}
++
++/*
++Forecast returns a typed scale learner.
++*/
++func Forecast() *Forecaster {
++	return &Forecaster{}
++}
++
++/*
++Measure updates forecast scale from one prediction outcome.
++*/
++func (forecaster *Forecaster) Measure(pair LearningPair) (ForecastOutput, error) {
++	predicted, actual, err := validatePair(pair, "forecast")
++
++	if err != nil {
++		return ForecastOutput{}, err
++	}
++
++	residual := actual - predicted
++
++	if forecaster.count == 0 {
++		forecaster.scale = 1
++		forecaster.trust = 1
++		forecaster.mean = residual
++		forecaster.m2 = 0
++		forecaster.weightCount = 1
++		forecaster.count = 1
++
++		return ForecastOutput{
++			Value:       forecaster.scale,
++			Predicted:   predicted,
++			Actual:      actual,
++			Scale:       forecaster.scale,
++			Trust:       forecaster.trust,
++			Rate:        0,
++			Count:       forecaster.count,
++			WeightCount: forecaster.weightCount,
++		}, nil
++	}
++
++	forecaster.weightCount++
++	delta := residual - forecaster.mean
++	forecaster.mean += delta / float64(forecaster.weightCount)
++	forecaster.m2 += delta * (residual - forecaster.mean)
++
++	variance := 0.0
++
++	if forecaster.weightCount > 1 {
++		variance = forecaster.m2 / float64(forecaster.weightCount-1)
++	}
++
++	if variance < 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
++		return ForecastOutput{}, errnie.Error(errnie.Err(
++			errnie.Validation,
++			"forecast: residual variance must be finite and non-negative",
++			nil,
++		))
++	}
++
++	surprise := 0.0
++
++	if variance > 0 {
++		surprise = math.Abs(residual-forecaster.mean) / math.Sqrt(variance)
++	}
++
++	forecaster.rate = surprise
++	targetTrust := math.Max(0, 1-surprise)
++	forecaster.trust += surprise * (targetTrust - forecaster.trust)
++	learningRate := surprise * (1 - forecaster.trust)
++	magnitudePredicted := math.Abs(predicted)
++	magnitudeActual := math.Abs(actual)
++
++	if magnitudePredicted <= 0 {
++		return ForecastOutput{}, errnie.Error(errnie.Err(
++			errnie.Validation,
++			"forecast: predicted magnitude must be positive for log-ratio scale",
++			nil,
++		))
++	}
++
++	if magnitudeActual <= 0 {
++		return ForecastOutput{}, errnie.Error(errnie.Err(
++			errnie.Validation,
++			"forecast: actual magnitude must be positive for log-ratio scale",
++			nil,
++		))
++	}
++
++	targetScale := math.Exp(math.Log(magnitudeActual) - math.Log(magnitudePredicted))
++	forecaster.scale += learningRate * (targetScale - forecaster.scale)
++	forecaster.count++
++
++	if !finite(forecaster.scale) {
++		return ForecastOutput{}, errnie.Error(errnie.Err(
++			errnie.Validation,
++			"forecast: scale must stay finite",
++			nil,
++		))
++	}
++
++	return ForecastOutput{
++		Value:       forecaster.scale,
++		Predicted:   predicted,
++		Actual:      actual,
++		Scale:       forecaster.scale,
++		Trust:       forecaster.trust,
++		Rate:        forecaster.rate,
++		Count:       forecaster.count,
++		WeightCount: forecaster.weightCount,
++	}, nil
++}
++
++/*
++Reset clears learned forecast state.
++*/
++func (forecaster *Forecaster) Reset() {
++	*forecaster = Forecaster{}
++}

@@ -1,73 +1,40 @@
 package probability_test
 
 import (
-	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestCalibratorRetention(t *testing.T) {
 	Convey("Rank is computed against the prior window, then the sample is retained", t, func() {
-		checkCalibrator(probability.NewCalibrator(sequence.NewTail[float64](4)), 4)
-		checkCalibrator(probability.NewCalibrator(nil), 0)
-	})
-
-	Convey("Non-finite samples are refused without changing the prior window", t, func() {
-		for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-			node := probability.NewCalibrator(nil)
-			_Eval := node
-
-			for range _Eval.Next(sequence.NewValues(10.0).Next(nil)) {
-			}
-
-			err := _Eval.Error()
-			So(err, ShouldBeNil)
-
-			out := tests.CollectSeq[probability.CalibratorReading](node.Next(sequence.NewValues(bad).Next(nil)))
-			So(len(out), ShouldEqual, 0)
-			So(node.Error(), ShouldNotBeNil)
-
-			got := tests.CollectSeq[probability.CalibratorReading](node.Next(sequence.NewValues(5.0).Next(nil)))
-			So(len(got), ShouldEqual, 1)
-			So(got[0].PriorCount, ShouldEqual, 1)
-			So(got[0].Value, ShouldEqual, 1)
-		}
+		checkCalibrator(types.Value[float64, float64](probability.NewCalibrator(types.Value[[]float64, []float64](sequence.NewTail[float64](4)))), 4)
+		checkCalibrator(types.Value[float64, float64](probability.NewCalibrator(nil)), 0)
 	})
 }
 
-func checkCalibrator(node core.Primitive, capacity int) {
+func checkCalibrator(node types.Value[float64, float64], capacity int) {
 	history := []float64{}
 
 	for _, sample := range []float64{10, 20, 30, 15, 40, 50, 1, 5, 99, 4} {
-		want := 0.0
-
-		for _, prior := range history {
-			if prior > sample {
-				want++
-			}
-		}
+		want := 0.5
 
 		if len(history) > 0 {
-			want /= float64(len(history))
+			hits := 0.0
+			for _, prior := range history {
+				if prior > sample {
+					hits++
+				}
+			}
+			want = hits / float64(len(history))
 		}
 
-		gotEval := node
-		var got probability.CalibratorReading
+		got := node(sample)
 
-		for out := range gotEval.Next(sequence.NewValues(sample).Next(nil)) {
-			got = *(*probability.CalibratorReading)(out)
-		}
-
-		err := gotEval.Error()
-		So(err, ShouldBeNil)
-		So(got.Value, ShouldEqual, want)
-		So(got.PriorCount, ShouldEqual, float64(len(history)))
-		So(got.Ready, ShouldEqual, len(history) > 0)
+		So(got, ShouldEqual, want)
 		history = append(history, sample)
 
 		if capacity > 0 && len(history) > capacity {

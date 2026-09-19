@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"maps"
 	"os"
 	"slices"
@@ -13,12 +12,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
 
 	"github.com/bytedance/sonic"
@@ -58,7 +55,7 @@ subscriptions; protocol and ingestion failures remain terminal.
 */
 type Live struct {
 	*runtime.System
-	pipeline     core.Primitive
+	pipeline     types.Value[any, any]
 	funding      FundingLedger
 	schema       map[string]data.Metric[float64]
 	client       atomic.Pointer[spot.WebSocket]
@@ -88,7 +85,7 @@ func New(
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
-	pipeline core.Primitive,
+	pipeline types.Value[any, any],
 ) *Live {
 	return NewWithClient(
 		ctx, simulator, auth, endpoint, nil, pipeline,
@@ -106,7 +103,7 @@ func NewWithClient(
 	auth bool,
 	endpoint string,
 	client *spot.WebSocket,
-	pipeline core.Primitive,
+	pipeline types.Value[any, any],
 ) *Live {
 	if client == nil {
 		client = spot.NewWebSocket()
@@ -244,7 +241,8 @@ func NewWithClient(
 						},
 					}
 
-					for range live.pipeline.Next(sequence.NewValue[any](mapped)) {
+					if live.pipeline != nil {
+						live.pipeline(mapped)
 					}
 				}
 			}
@@ -273,7 +271,7 @@ func NewWithClient(
 	return live
 }
 
-func (live *Live) Connect(pipeline core.Primitive) {
+func (live *Live) Connect(pipeline types.Value[any, any]) {
 	live.pipeline = pipeline
 
 	if live.level3 != nil {
@@ -284,20 +282,6 @@ func (live *Live) Connect(pipeline core.Primitive) {
 
 			return true
 		})
-	}
-}
-
-func (live *Live) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		if in == nil || live.Error() != nil {
-			return
-		}
-
-		for stream := range in {
-			if !yield(stream) {
-				return
-			}
-		}
 	}
 }
 
@@ -347,8 +331,7 @@ func (live *Live) onReceived(event *callback.Event[*sdk.WebSocketMessage]) {
 		}
 
 		if live.pipeline != nil {
-			for range live.pipeline.Next(sequence.NewValue[any](envelope)) {
-			}
+			live.pipeline(envelope)
 		}
 		return
 	}

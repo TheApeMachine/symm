@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -21,6 +20,8 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/catalog/scan"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
@@ -70,6 +71,15 @@ var (
 			defer cancel()
 
 			startPprof()
+
+			errnie.Info("Scanning primitives catalog...")
+			if schemas, err := scan.Tree("nomagique"); err == nil {
+				if err := scan.GenerateRegistry(schemas); err != nil {
+					errnie.Error(errnie.Err(errnie.IO, "cmd: update registry", err))
+				}
+			} else {
+				errnie.Error(errnie.Err(errnie.IO, "cmd: scan catalog", err))
+			}
 
 			// Everything started here implements *runtime.System, which allows you to pass
 			// a variadic amount of closers, and everything passes itself to that. There is
@@ -131,13 +141,31 @@ var (
 			)
 
 			desk := broker.NewDesk(ctx, api)
-			trader := strategy.NewTrader(ctx, api, "correlation:ticker") // Loads from internal definitions
+			trader := strategy.NewTrader(ctx, api, "training")
+
+			pipeline := func(in any) any {
+				trader.Workspace().Next(in)
+				return nil
+			}
+
+			public.Connect(pipeline)
+			private.Connect(pipeline)
+			futures.Connect(pipeline)
 
 			hub := ui.NewHub(ctx, nil, catalog, trader, desk)
-			hub.Run()
+			ui.NewWebRTC(ctx, hub, nil, nil)
+
+			trader.OnEvaluation(func(eval cognition.Evaluation) {
+				hub.BroadcastEvaluation(eval)
+			})
+
+			go func() {
+				if err := hub.Run(); err != nil {
+					errnie.Error(err)
+				}
+			}()
+
 			hub.Transition(nmruntime.READY)
-
-
 
 			instrument := broker.NewInstrument(api)
 			price := broker.NewPrice(ctx, api, instrument)
@@ -192,7 +220,6 @@ var (
 					nil,
 				))
 			}
-
 
 			for _, connection := range private.Connections() {
 				connection.Transition(nmruntime.READY)

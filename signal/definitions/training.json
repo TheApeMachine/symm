@@ -1,0 +1,168 @@
+{
+  "id": "training:pipeline",
+  "name": "training:pipeline",
+  "nodes": {
+    "source": {
+      "id": "source",
+      "type": "data.Source",
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "associative_grid",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "associative_grid": {
+      "id": "associative_grid",
+      "type": "associative.Grid",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "temporal_transition",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "temporal_transition": {
+      "id": "temporal_transition",
+      "type": "temporal.Transition",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "associative_grid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "cognition_associate",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "cognition_associate": {
+      "id": "cognition_associate",
+      "type": "cognition.Associate",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "temporal_transition",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "cognition_reinforce",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "cognition_reinforce": {
+      "id": "cognition_reinforce",
+      "type": "cognition.Reinforce",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "cognition_associate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "cognition_attractor",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "cognition_attractor": {
+      "id": "cognition_attractor",
+      "type": "cognition.Attractor",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "cognition_reinforce",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "cognition_classification",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "cognition_classification": {
+      "id": "cognition_classification",
+      "type": "cognition.Classification",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "cognition_attractor",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink": {
+      "id": "sink",
+      "type": "data.Sink",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "cognition_classification",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

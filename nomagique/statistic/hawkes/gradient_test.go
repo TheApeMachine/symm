@@ -3,6 +3,8 @@ package hawkes
 import (
 	"math"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 func TestLogLikelihoodGradientMatchesFiniteDifference(testingT *testing.T) {
@@ -62,7 +64,7 @@ func TestLogSpaceGradientChainRule(testingT *testing.T) {
 	fit := bivariateFit{
 		muX: 0.5, muY: 0.4,
 		alphaXX: 0.2, alphaXY: 0.1, alphaYX: 0.1, alphaYY: 0.2,
-		beta: 1.0,
+		beta: core.Unit,
 	}
 	natural := [bivariateParamCount]float64{1, 1, 1, 1, 1, 1, 1}
 	logSpace := logSpaceGradient(natural, fit)

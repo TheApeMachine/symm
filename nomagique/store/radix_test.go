@@ -2,72 +2,93 @@ package store_test
 
 import (
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/tests"
 )
 
-func TestRadixNext(t *testing.T) {
+func TestRadix(t *testing.T) {
 	Convey("An explicit query/store/add/query/store composition owns addressed counts", t, func() {
 		radix := store.NewRadix[float64]()
 		key := []byte("BTC/USD:enter")
-		pipeline := nomagique.NewNumber(
-			sequence.NewValues(0.0), store.NewKeyQuery[float64](&key, core.Identify), radix, sequence.NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
-			store.NewKeyQuery[float64](&key, core.Write), radix,
-		)
+
 		for _, expected := range []float64{1, 2, 3} {
-			values := tests.CollectSeq[float64](pipeline.Next(nil))
-			So(pipeline.Error(), ShouldBeNil)
-			So(values, ShouldResemble, []float64{expected})
+			current := radix(store.RadixCommandData[float64]{
+				Key:    key,
+				Value:  0.0,
+				Action: store.Identify,
+			})
+			So(current, ShouldNotBeNil)
+
+			updatedVal := *current + 1.0
+			written := radix(store.RadixCommandData[float64]{
+				Key:    key,
+				Value:  updatedVal,
+				Action: store.Write,
+			})
+			So(written, ShouldNotBeNil)
+			So(*written, ShouldEqual, expected)
 		}
+
 		Convey("A different address has independent evidence", func() {
-			key = []byte("ETH/USD:enter")
-			So(tests.CollectSeq[float64](pipeline.Next(nil)), ShouldResemble, []float64{1})
-			key = []byte("BTC/USD:enter")
-			So(tests.CollectSeq[float64](pipeline.Next(nil)), ShouldResemble, []float64{4})
+			ethKey := []byte("ETH/USD:enter")
+			resEth := radix(store.RadixCommandData[float64]{
+				Key:    ethKey,
+				Value:  1.0,
+				Action: store.Write,
+			})
+			So(*resEth, ShouldEqual, 1.0)
+
+			btcRead := radix(store.RadixCommandData[float64]{
+				Key:    key,
+				Action: store.Read,
+			})
+			So(btcRead, ShouldNotBeNil)
+			So(*btcRead, ShouldEqual, 3.0)
 		})
+
 		Convey("An unseen read remains absent and does not create evidence", func() {
-			key = []byte("missing")
-			read := nomagique.NewNumber(store.NewKeyQuery[float64](&key, core.Read), radix)
-			So(tests.CollectSeq[float64](read.Next(nil)), ShouldBeEmpty)
-			So(read.Error(), ShouldBeNil)
+			missing := radix(store.RadixCommandData[float64]{
+				Key:    []byte("missing"),
+				Action: store.Read,
+			})
+			So(missing, ShouldBeNil)
 		})
+
 		Convey("Reusing the caller's address buffer cannot mutate published keys", func() {
-			copy(key, []byte("ETH/USD:enter"))
-			So(tests.CollectSeq[float64](pipeline.Next(nil)), ShouldResemble, []float64{1})
-			copy(key, []byte("BTC/USD:enter"))
-			So(tests.CollectSeq[float64](pipeline.Next(nil)), ShouldResemble, []float64{4})
+			tempKey := make([]byte, len(key))
+			copy(tempKey, key)
+			written := radix(store.RadixCommandData[float64]{
+				Key:    tempKey,
+				Value:  42.0,
+				Action: store.Write,
+			})
+			So(written, ShouldNotBeNil)
+			So(*written, ShouldEqual, 42.0)
+
+			copy(tempKey, []byte("MODIFIED"))
+			readBack := radix(store.RadixCommandData[float64]{
+				Key:    key,
+				Action: store.Read,
+			})
+			So(readBack, ShouldNotBeNil)
+			So(*readBack, ShouldEqual, 42.0)
 		})
+
 		Convey("Changing the caller's write value does not mutate stored evidence", func() {
-			value := 7.0
-			write := nomagique.NewNumber(sequence.NewOne(unsafe.Pointer(&value)), store.NewKeyQuery[float64](&key, core.Write), radix)
-			So(tests.CollectSeq[float64](write.Next(nil)), ShouldResemble, []float64{7})
-			value = 99
-			read := nomagique.NewNumber(store.NewKeyQuery[float64](&key, core.Read), radix)
-			So(tests.CollectSeq[float64](read.Next(nil)), ShouldResemble, []float64{7})
+			val := 7.0
+			radix(store.RadixCommandData[float64]{
+				Key:    key,
+				Value:  val,
+				Action: store.Write,
+			})
+			val = 99.0
+			readBack := radix(store.RadixCommandData[float64]{
+				Key:    key,
+				Action: store.Read,
+			})
+			So(readBack, ShouldNotBeNil)
+			So(*readBack, ShouldEqual, 7.0)
 		})
 	})
-}
-
-func BenchmarkRadixNext(b *testing.B) {
-	radix := store.NewRadix[float64]()
-	key := []byte("BTC/USD:enter")
-	pipeline := nomagique.NewNumber(
-		sequence.NewValues(0.0), store.NewKeyQuery[float64](&key, core.Identify), radix, sequence.NewZip2[float64](sequence.NewValues(1.0).Next(nil)), arithmetic.NewAdd(),
-		store.NewKeyQuery[float64](&key, core.Write), radix,
-	)
-	b.ReportAllocs()
-	for b.Loop() {
-		for range pipeline.Next(nil) {
-		}
-	}
-	if err := pipeline.Error(); err != nil {
-		b.Fatal(err)
-	}
 }

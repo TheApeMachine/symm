@@ -3,6 +3,8 @@ package hawkes
 import (
 	"math"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 func TestLogLikelihoodRejectsNonPositiveSpan(testingT *testing.T) {
@@ -13,7 +15,7 @@ func TestLogLikelihoodRejectsNonPositiveSpan(testingT *testing.T) {
 		alphaXY: 0.05,
 		alphaYX: 0.05,
 		alphaYY: 0.1,
-		beta:    1.0,
+		beta:    core.Unit,
 	}
 
 	stream := newArrivalStream([]float64{10.0}, []float64{10.0})
@@ -33,7 +35,7 @@ func TestLogLikelihoodRejectsInvalidFitParameters(testingT *testing.T) {
 	nonPositiveMu := bivariateFit{
 		muX:  0.0,
 		muY:  0.5,
-		beta: 1.0,
+		beta: core.Unit,
 	}
 
 	if _, ok := nonPositiveMu.logLikelihood(stream, 15.0); ok {
@@ -44,7 +46,7 @@ func TestLogLikelihoodRejectsInvalidFitParameters(testingT *testing.T) {
 		muX:     0.5,
 		muY:     0.5,
 		alphaXX: -0.1,
-		beta:    1.0,
+		beta:    core.Unit,
 	}
 
 	if _, ok := negativeAlpha.logLikelihood(stream, 15.0); ok {
@@ -64,7 +66,7 @@ func TestLogLikelihoodSucceedsOnValidStream(testingT *testing.T) {
 	}
 
 	stream := newArrivalStream(
-		[]float64{1.0, 2.5, 3.2, 5.0},
+		[]float64{core.Unit, 2.5, 3.2, 5.0},
 		[]float64{1.5, 2.8, 4.0, 5.5},
 	)
 

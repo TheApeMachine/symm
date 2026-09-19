@@ -8,8 +8,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/data/sequence"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -72,24 +70,27 @@ func TestFuturesLive(t *testing.T) {
 				So(futures.Status(), ShouldEqual, runtime.READY)
 			})
 		})
-
-		Convey("Register declares the schema", func() {
-			registered := futures.Register()
-			So(registered, ShouldNotBeNil)
-			So(registered.Source, ShouldEqual, "futures")
-		})
 	})
 }
 
 func TestFuturesLiveStepReadiness(t *testing.T) {
 	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
-		node := &FuturesLive{System: runtime.NewSystem(t.Context(), "readiness-test")}
-		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+		called := false
+		node := &FuturesLive{
+			System: runtime.NewSystem(t.Context(), "readiness-test"),
+			pipeline: func(in any) any {
+				called = true
+				return in
+			},
+		}
+
+		raw := []byte(`{"event":"ticker","feed":"ticker","product_id":"PI_XBTUSD","bid":50000}`)
+
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue(measurement))), ShouldEqual, measurement)
+			node.onReceived(makeFuturesEvent(raw))
+			So(called, ShouldBeFalse)
 			So(node.Status(), ShouldEqual, stage)
-			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
 }

@@ -1,0 +1,1824 @@
+commit ba64fe901ed7985c3dc5b106081eb7f02158d8c8
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Fri Sep 18 22:30:20 2026 +0200
+
+    cleanup
+
+diff --git a/nomagique/learning/pace.go b/nomagique/learning/pace.go
+deleted file mode 100644
+index e371e0efa..000000000
+--- a/nomagique/learning/pace.go
++++ /dev/null
+@@ -1,203 +0,0 @@
+-package learning
+-
+-import (
+-	"iter"
+-	"math"
+-	"unsafe"
+-
+-	"github.com/theapemachine/symm/nomagique/calculus"
+-	"github.com/theapemachine/symm/nomagique/core"
+-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+-	"github.com/theapemachine/symm/nomagique/probability"
+-)
+-
+-/*
+-PaceConfig is rest, bounds, gain, band, and window. These are explicit
+-configuration, not newly chosen tuning constants.
+-*/
+-type PaceConfig struct {
+-	Rest   float64
+-	Lower  float64
+-	Upper  float64
+-	Gain   float64
+-	Band   float64
+-	Window float64
+-}
+-
+-/*
+-PaceReading is the adapted learning pace and the current error rank.
+-*/
+-type PaceReading struct {
+-	Alpha float64
+-	Rank  float64
+-	Ready bool
+-	Count float64
+-}
+-
+-/*
+-Pace owns empirical prior-error rank and the bounded log-alpha controller.
+-The calibrator owns history; Mix owns movement.
+-*/
+-type Pace struct {
+-	*core.PrimitiveError
+-
+-	config     PaceConfig
+-	calibrator core.Primitive
+-	mix        core.Primitive
+-	bound      core.Primitive
+-	logAlpha   float64
+-	alpha      float64
+-	seeded     bool
+-	out        PaceReading
+-}
+-
+-func NewPace(config PaceConfig) *Pace {
+-	return &Pace{PrimitiveError: core.NewPrimitiveError(), config: config,
+-		calibrator: probability.NewCalibrator(sequence.NewTail[float64](int(config.Window))),
+-		mix:        calculus.NewMix(),
+-		bound:      calculus.NewBound(),
+-	}
+-}
+-
+-func (pace *Pace) Next(
+-	in iter.Seq[unsafe.Pointer],
+-) iter.Seq[unsafe.Pointer] {
+-	return func(yield func(unsafe.Pointer) bool) {
+-		for arriving := range in {
+-			val := *(*float64)(arriving)
+-
+-			if err := pace.validate(); err != nil {
+-				pace.Error(err)
+-				return
+-			}
+-
+-			if math.IsNaN(val) || math.IsInf(val, 0) {
+-				pace.Error(core.ErrDomain)
+-				return
+-			}
+-
+-			if !pace.seeded {
+-				pace.logAlpha = math.Log(pace.config.Rest)
+-				pace.alpha = pace.config.Rest
+-				pace.seeded = true
+-			}
+-
+-			var calibration probability.CalibratorReading
+-
+-			for out := range pace.calibrator.Next(sequence.NewValues(val).Next(nil)) {
+-				calibration = *(*probability.CalibratorReading)(out)
+-			}
+-
+-			if err := pace.calibrator.Error(); err != nil {
+-				pace.Error(err)
+-				return
+-			}
+-
+-			ready := pace.config.Window <= calibration.PriorCount
+-			count := math.Min(pace.config.Window, calibration.PriorCount+1)
+-			rank := 0.0
+-
+-			if ready {
+-				rank = calibration.Value
+-				logRest := math.Log(pace.config.Rest)
+-				logMin := math.Log(pace.config.Lower)
+-				logMax := math.Log(pace.config.Upper)
+-
+-				target := logRest
+-
+-				if rank < pace.config.Band {
+-					target = logMax
+-				}
+-
+-				if rank > 1-pace.config.Band {
+-					target = logMin
+-				}
+-
+-				mixRec := calculus.MixRecord{
+-					Left:   pace.logAlpha,
+-					Right:  target,
+-					Weight: pace.config.Gain,
+-				}
+-
+-				var mixed float64
+-
+-				for out := range pace.mix.Next(sequence.NewValues(mixRec).Next(nil)) {
+-					mixed = *(*float64)(out)
+-				}
+-
+-				if err := pace.mix.Error(); err != nil {
+-					pace.Error(err)
+-					return
+-				}
+-
+-				boundRec := calculus.BoundRecord{
+-					Value: mixed,
+-					Lower: logMin,
+-					Upper: logMax,
+-				}
+-
+-				var logAlpha float64
+-
+-				for out := range pace.bound.Next(sequence.NewValues(boundRec).Next(nil)) {
+-					logAlpha = *(*float64)(out)
+-				}
+-
+-				if err := pace.bound.Error(); err != nil {
+-					pace.Error(err)
+-					return
+-				}
+-
+-				alpha := math.Exp(logAlpha)
+-				boundAlpha := calculus.BoundRecord{
+-					Value: alpha,
+-					Lower: pace.config.Lower,
+-					Upper: pace.config.Upper,
+-				}
+-
+-				for out := range pace.bound.Next(sequence.NewValues(boundAlpha).Next(nil)) {
+-					alpha = *(*float64)(out)
+-				}
+-
+-				if err := pace.bound.Error(); err != nil {
+-					pace.Error(err)
+-					return
+-				}
+-
+-				pace.logAlpha = logAlpha
+-				pace.alpha = alpha
+-			}
+-
+-			pace.out = PaceReading{
+-				Alpha: pace.alpha,
+-				Rank:  rank,
+-				Ready: ready,
+-				Count: count,
+-			}
+-
+-			if !yield(unsafe.Pointer(&pace.out)) {
+-				return
+-			}
+-		}
+-	}
+-}
+-
+-func (pace *Pace) validate() error {
+-	for _, value := range []float64{
+-		pace.config.Rest, pace.config.Lower, pace.config.Upper,
+-		pace.config.Gain, pace.config.Band, pace.config.Window,
+-	} {
+-		if math.IsNaN(value) || math.IsInf(value, 0) {
+-			return core.ErrDomain
+-		}
+-	}
+-
+-	if !(pace.config.Lower > 0) ||
+-		!(pace.config.Lower <= pace.config.Rest) ||
+-		!(pace.config.Rest <= pace.config.Upper) ||
+-		!(pace.config.Window > 0) ||
+-		math.Floor(pace.config.Window) != pace.config.Window {
+-		return core.ErrDomain
+-	}
+-
+-	return nil
+-}
+
+commit a6b51f643829e8ff50d8356e5ac3b91fd5eb5ae1
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Wed Sep 16 23:24:07 2026 +0200
+
+    cleanup
+
+diff --git a/nomagique/learning/pace.go b/nomagique/learning/pace.go
+index 790cb6b96..e371e0efa 100644
+--- a/nomagique/learning/pace.go
++++ b/nomagique/learning/pace.go
+@@ -1,16 +1,14 @@
+ package learning
+ 
+ import (
+-	"errors"
+ 	"iter"
+ 	"math"
+ 	"unsafe"
+ 
+ 	"github.com/theapemachine/symm/nomagique/calculus"
+-	"github.com/theapemachine/symm/nomagique/collection"
+ 	"github.com/theapemachine/symm/nomagique/core"
++	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+ 	"github.com/theapemachine/symm/nomagique/probability"
+-	"github.com/theapemachine/symm/nomagique/transport"
+ )
+ 
+ /*
+@@ -41,7 +39,8 @@ Pace owns empirical prior-error rank and the bounded log-alpha controller.
+ The calibrator owns history; Mix owns movement.
+ */
+ type Pace struct {
+-	err        error
++	*core.PrimitiveError
++
+ 	config     PaceConfig
+ 	calibrator core.Primitive
+ 	mix        core.Primitive
+@@ -52,83 +51,82 @@ type Pace struct {
+ 	out        PaceReading
+ }
+ 
+-func NewPace(config PaceConfig) core.Primitive {
+-	return &Pace{
+-		config:     config,
+-		calibrator: probability.NewCalibrator(collection.NewTail[float64](int(config.Window))),
++func NewPace(config PaceConfig) *Pace {
++	return &Pace{PrimitiveError: core.NewPrimitiveError(), config: config,
++		calibrator: probability.NewCalibrator(sequence.NewTail[float64](int(config.Window))),
+ 		mix:        calculus.NewMix(),
+ 		bound:      calculus.NewBound(),
+ 	}
+ }
+ 
+-func (op *Pace) Next(
++func (pace *Pace) Next(
+ 	in iter.Seq[unsafe.Pointer],
+ ) iter.Seq[unsafe.Pointer] {
+ 	return func(yield func(unsafe.Pointer) bool) {
+ 		for arriving := range in {
+ 			val := *(*float64)(arriving)
+ 
+-			if err := op.validate(); err != nil {
+-				op.Error(err)
++			if err := pace.validate(); err != nil {
++				pace.Error(err)
+ 				return
+ 			}
+ 
+ 			if math.IsNaN(val) || math.IsInf(val, 0) {
+-				op.Error(core.ErrDomain)
++				pace.Error(core.ErrDomain)
+ 				return
+ 			}
+ 
+-			if !op.seeded {
+-				op.logAlpha = math.Log(op.config.Rest)
+-				op.alpha = op.config.Rest
+-				op.seeded = true
++			if !pace.seeded {
++				pace.logAlpha = math.Log(pace.config.Rest)
++				pace.alpha = pace.config.Rest
++				pace.seeded = true
+ 			}
+ 
+ 			var calibration probability.CalibratorReading
+ 
+-			for out := range op.calibrator.Next(transport.NewValues(val).Next(nil)) {
++			for out := range pace.calibrator.Next(sequence.NewValues(val).Next(nil)) {
+ 				calibration = *(*probability.CalibratorReading)(out)
+ 			}
+ 
+-			if err := op.calibrator.Error(); err != nil {
+-				op.Error(err)
++			if err := pace.calibrator.Error(); err != nil {
++				pace.Error(err)
+ 				return
+ 			}
+ 
+-			ready := op.config.Window <= calibration.PriorCount
+-			count := math.Min(op.config.Window, calibration.PriorCount+1)
++			ready := pace.config.Window <= calibration.PriorCount
++			count := math.Min(pace.config.Window, calibration.PriorCount+1)
+ 			rank := 0.0
+ 
+ 			if ready {
+ 				rank = calibration.Value
+-				logRest := math.Log(op.config.Rest)
+-				logMin := math.Log(op.config.Lower)
+-				logMax := math.Log(op.config.Upper)
++				logRest := math.Log(pace.config.Rest)
++				logMin := math.Log(pace.config.Lower)
++				logMax := math.Log(pace.config.Upper)
+ 
+ 				target := logRest
+ 
+-				if rank < op.config.Band {
++				if rank < pace.config.Band {
+ 					target = logMax
+ 				}
+ 
+-				if rank > 1-op.config.Band {
++				if rank > 1-pace.config.Band {
+ 					target = logMin
+ 				}
+ 
+ 				mixRec := calculus.MixRecord{
+-					Left:   op.logAlpha,
++					Left:   pace.logAlpha,
+ 					Right:  target,
+-					Weight: op.config.Gain,
++					Weight: pace.config.Gain,
+ 				}
+ 
+ 				var mixed float64
+ 
+-				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
++				for out := range pace.mix.Next(sequence.NewValues(mixRec).Next(nil)) {
+ 					mixed = *(*float64)(out)
+ 				}
+ 
+-				if err := op.mix.Error(); err != nil {
+-					op.Error(err)
++				if err := pace.mix.Error(); err != nil {
++					pace.Error(err)
+ 					return
+ 				}
+ 
+@@ -140,74 +138,64 @@ func (op *Pace) Next(
+ 
+ 				var logAlpha float64
+ 
+-				for out := range op.bound.Next(transport.NewValues(boundRec).Next(nil)) {
++				for out := range pace.bound.Next(sequence.NewValues(boundRec).Next(nil)) {
+ 					logAlpha = *(*float64)(out)
+ 				}
+ 
+-				if err := op.bound.Error(); err != nil {
+-					op.Error(err)
++				if err := pace.bound.Error(); err != nil {
++					pace.Error(err)
+ 					return
+ 				}
+ 
+ 				alpha := math.Exp(logAlpha)
+ 				boundAlpha := calculus.BoundRecord{
+ 					Value: alpha,
+-					Lower: op.config.Lower,
+-					Upper: op.config.Upper,
++					Lower: pace.config.Lower,
++					Upper: pace.config.Upper,
+ 				}
+ 
+-				for out := range op.bound.Next(transport.NewValues(boundAlpha).Next(nil)) {
++				for out := range pace.bound.Next(sequence.NewValues(boundAlpha).Next(nil)) {
+ 					alpha = *(*float64)(out)
+ 				}
+ 
+-				if err := op.bound.Error(); err != nil {
+-					op.Error(err)
++				if err := pace.bound.Error(); err != nil {
++					pace.Error(err)
+ 					return
+ 				}
+ 
+-				op.logAlpha = logAlpha
+-				op.alpha = alpha
++				pace.logAlpha = logAlpha
++				pace.alpha = alpha
+ 			}
+ 
+-			op.out = PaceReading{
+-				Alpha: op.alpha,
++			pace.out = PaceReading{
++				Alpha: pace.alpha,
+ 				Rank:  rank,
+ 				Ready: ready,
+ 				Count: count,
+ 			}
+ 
+-			if !yield(unsafe.Pointer(&op.out)) {
++			if !yield(unsafe.Pointer(&pace.out)) {
+ 				return
+ 			}
+ 		}
+ 	}
+ }
+ 
+-func (op *Pace) Error(errs ...error) error {
+-	for _, err := range errs {
+-		if err != nil {
+-			op.err = errors.Join(op.err, err)
+-		}
+-	}
+-
+-	return op.err
+-}
+-
+-func (op *Pace) validate() error {
++func (pace *Pace) validate() error {
+ 	for _, value := range []float64{
+-		op.config.Rest, op.config.Lower, op.config.Upper,
+-		op.config.Gain, op.config.Band, op.config.Window,
++		pace.config.Rest, pace.config.Lower, pace.config.Upper,
++		pace.config.Gain, pace.config.Band, pace.config.Window,
+ 	} {
+ 		if math.IsNaN(value) || math.IsInf(value, 0) {
+ 			return core.ErrDomain
+ 		}
+ 	}
+ 
+-	if !(op.config.Lower > 0) ||
+-		!(op.config.Lower <= op.config.Rest) ||
+-		!(op.config.Rest <= op.config.Upper) ||
+-		!(op.config.Window > 0) ||
+-		math.Floor(op.config.Window) != op.config.Window {
++	if !(pace.config.Lower > 0) ||
++		!(pace.config.Lower <= pace.config.Rest) ||
++		!(pace.config.Rest <= pace.config.Upper) ||
++		!(pace.config.Window > 0) ||
++		math.Floor(pace.config.Window) != pace.config.Window {
+ 		return core.ErrDomain
+ 	}
+ 
+
+commit ffe42707004066515b2eb00314cb39d79e5293f3
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Sun Sep 13 00:58:04 2026 +0200
+
+    restructure
+
+diff --git a/nomagique/learning/pace.go b/nomagique/learning/pace.go
+index a149f76de..790cb6b96 100644
+--- a/nomagique/learning/pace.go
++++ b/nomagique/learning/pace.go
+@@ -1,14 +1,14 @@
+ package learning
+ 
+ import (
++	"errors"
+ 	"iter"
+ 	"math"
++	"unsafe"
+ 
+ 	"github.com/theapemachine/symm/nomagique/calculus"
+ 	"github.com/theapemachine/symm/nomagique/collection"
+ 	"github.com/theapemachine/symm/nomagique/core"
+-	"github.com/theapemachine/symm/nomagique/equation"
+-	"github.com/theapemachine/symm/nomagique/logic"
+ 	"github.com/theapemachine/symm/nomagique/probability"
+ 	"github.com/theapemachine/symm/nomagique/transport"
+ )
+@@ -41,165 +41,156 @@ Pace owns empirical prior-error rank and the bounded log-alpha controller.
+ The calibrator owns history; Mix owns movement.
+ */
+ type Pace struct {
+-	core.Base[float64, PaceReading]
++	err        error
+ 	config     PaceConfig
+-	calibrator *probability.Calibrator
+-	mix        *equation.Mix[float64]
+-	bound      *equation.Bound[float64]
+-	log        *calculus.Log[float64]
+-	exp        *calculus.Exp[float64]
+-	floor      *calculus.Floor[float64]
+-	finite     *logic.Finite[float64]
++	calibrator core.Primitive
++	mix        core.Primitive
++	bound      core.Primitive
+ 	logAlpha   float64
+ 	alpha      float64
+ 	seeded     bool
++	out        PaceReading
+ }
+ 
+-func NewPace(config PaceConfig) *Pace {
++func NewPace(config PaceConfig) core.Primitive {
+ 	return &Pace{
+ 		config:     config,
+ 		calibrator: probability.NewCalibrator(collection.NewTail[float64](int(config.Window))),
+-		mix:        equation.NewMix[float64](),
+-		bound:      equation.NewBound[float64](),
+-		log:        calculus.NewLog[float64](),
+-		exp:        calculus.NewExp[float64](),
+-		floor:      calculus.NewFloor[float64](),
+-		finite:     logic.NewFinite[float64](),
++		mix:        calculus.NewMix(),
++		bound:      calculus.NewBound(),
+ 	}
+ }
+ 
+ func (op *Pace) Next(
+-	in iter.Seq[core.Primitive[float64, float64]],
+-) iter.Seq[core.Primitive[PaceReading, PaceReading]] {
+-	return func(yield func(core.Primitive[PaceReading, PaceReading]) bool) {
++	in iter.Seq[unsafe.Pointer],
++) iter.Seq[unsafe.Pointer] {
++	return func(yield func(unsafe.Pointer) bool) {
+ 		for arriving := range in {
+-			reading, err := op.Measure(arriving.Read())
++			val := *(*float64)(arriving)
+ 
+-			if err != nil {
++			if err := op.validate(); err != nil {
+ 				op.Error(err)
+ 				return
+ 			}
+ 
+-			if !yield(op.Carrier(reading)) {
++			if math.IsNaN(val) || math.IsInf(val, 0) {
++				op.Error(core.ErrDomain)
+ 				return
+ 			}
+-		}
+-	}
+-}
+-
+-func (op *Pace) Measure(value float64) (PaceReading, error) {
+-	if err := op.validate(); err != nil {
+-		return PaceReading{}, err
+-	}
+-
+-	defined, err := transport.Evaluate(op.finite, transport.Values(value))
+-
+-	if err != nil {
+-		return PaceReading{}, err
+-	}
+-
+-	if !defined {
+-		return PaceReading{}, core.ErrDomain
+-	}
+-
+-	if !op.seeded {
+-		logRest, err := transport.Evaluate(op.log, transport.Values(op.config.Rest))
+-
+-		if err != nil {
+-			return PaceReading{}, err
+-		}
+-
+-		op.logAlpha = logRest
+-		op.alpha = op.config.Rest
+-		op.seeded = true
+-	}
+ 
+-	calibration, err := transport.Evaluate(op.calibrator, transport.Values(value))
+-
+-	if err != nil {
+-		return PaceReading{}, err
+-	}
+-
+-	ready := op.config.Window <= calibration.PriorCount
+-	count := math.Min(op.config.Window, calibration.PriorCount+1)
+-	rank := 0.0
+-
+-	if ready {
+-		rank = calibration.Value
+-		logRest, err := transport.Evaluate(op.log, transport.Values(op.config.Rest))
+-
+-		if err != nil {
+-			return PaceReading{}, err
+-		}
+-
+-		logMin, err := transport.Evaluate(op.log, transport.Values(op.config.Lower))
+-
+-		if err != nil {
+-			return PaceReading{}, err
+-		}
+-
+-		logMax, err := transport.Evaluate(op.log, transport.Values(op.config.Upper))
+-
+-		if err != nil {
+-			return PaceReading{}, err
+-		}
+-
+-		target := logRest
+-
+-		if rank < op.config.Band {
+-			target = logMax
+-		}
+-
+-		if rank > 1-op.config.Band {
+-			target = logMin
+-		}
++			if !op.seeded {
++				op.logAlpha = math.Log(op.config.Rest)
++				op.alpha = op.config.Rest
++				op.seeded = true
++			}
+ 
+-		mixed, err := transport.Evaluate(op.mix, transport.Values(equation.MixRecord[float64]{
+-			Left:   op.logAlpha,
+-			Right:  target,
+-			Weight: op.config.Gain,
+-		}))
++			var calibration probability.CalibratorReading
+ 
+-		if err != nil {
+-			return PaceReading{}, err
+-		}
++			for out := range op.calibrator.Next(transport.NewValues(val).Next(nil)) {
++				calibration = *(*probability.CalibratorReading)(out)
++			}
+ 
+-		logAlpha, err := transport.Evaluate(op.bound, transport.Values(equation.BoundRecord[float64]{
+-			Value: mixed,
+-			Lower: logMin,
+-			Upper: logMax,
+-		}))
++			if err := op.calibrator.Error(); err != nil {
++				op.Error(err)
++				return
++			}
+ 
+-		if err != nil {
+-			return PaceReading{}, err
+-		}
++			ready := op.config.Window <= calibration.PriorCount
++			count := math.Min(op.config.Window, calibration.PriorCount+1)
++			rank := 0.0
++
++			if ready {
++				rank = calibration.Value
++				logRest := math.Log(op.config.Rest)
++				logMin := math.Log(op.config.Lower)
++				logMax := math.Log(op.config.Upper)
++
++				target := logRest
++
++				if rank < op.config.Band {
++					target = logMax
++				}
++
++				if rank > 1-op.config.Band {
++					target = logMin
++				}
++
++				mixRec := calculus.MixRecord{
++					Left:   op.logAlpha,
++					Right:  target,
++					Weight: op.config.Gain,
++				}
++
++				var mixed float64
++
++				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
++					mixed = *(*float64)(out)
++				}
++
++				if err := op.mix.Error(); err != nil {
++					op.Error(err)
++					return
++				}
++
++				boundRec := calculus.BoundRecord{
++					Value: mixed,
++					Lower: logMin,
++					Upper: logMax,
++				}
++
++				var logAlpha float64
++
++				for out := range op.bound.Next(transport.NewValues(boundRec).Next(nil)) {
++					logAlpha = *(*float64)(out)
++				}
++
++				if err := op.bound.Error(); err != nil {
++					op.Error(err)
++					return
++				}
++
++				alpha := math.Exp(logAlpha)
++				boundAlpha := calculus.BoundRecord{
++					Value: alpha,
++					Lower: op.config.Lower,
++					Upper: op.config.Upper,
++				}
++
++				for out := range op.bound.Next(transport.NewValues(boundAlpha).Next(nil)) {
++					alpha = *(*float64)(out)
++				}
++
++				if err := op.bound.Error(); err != nil {
++					op.Error(err)
++					return
++				}
++
++				op.logAlpha = logAlpha
++				op.alpha = alpha
++			}
+ 
+-		alpha, err := transport.Evaluate(op.exp, transport.Values(logAlpha))
++			op.out = PaceReading{
++				Alpha: op.alpha,
++				Rank:  rank,
++				Ready: ready,
++				Count: count,
++			}
+ 
+-		if err != nil {
+-			return PaceReading{}, err
++			if !yield(unsafe.Pointer(&op.out)) {
++				return
++			}
+ 		}
++	}
++}
+ 
+-		alpha, err = transport.Evaluate(op.bound, transport.Values(equation.BoundRecord[float64]{
+-			Value: alpha,
+-			Lower: op.config.Lower,
+-			Upper: op.config.Upper,
+-		}))
+-
++func (op *Pace) Error(errs ...error) error {
++	for _, err := range errs {
+ 		if err != nil {
+-			return PaceReading{}, err
++			op.err = errors.Join(op.err, err)
+ 		}
+-
+-		op.logAlpha = logAlpha
+-		op.alpha = alpha
+ 	}
+ 
+-	return PaceReading{
+-		Alpha: op.alpha,
+-		Rank:  rank,
+-		Ready: ready,
+-		Count: count,
+-	}, nil
++	return op.err
+ }
+ 
+ func (op *Pace) validate() error {
+@@ -207,28 +198,16 @@ func (op *Pace) validate() error {
+ 		op.config.Rest, op.config.Lower, op.config.Upper,
+ 		op.config.Gain, op.config.Band, op.config.Window,
+ 	} {
+-		defined, err := transport.Evaluate(op.finite, transport.Values(value))
+-
+-		if err != nil {
+-			return err
+-		}
+-
+-		if !defined {
++		if math.IsNaN(value) || math.IsInf(value, 0) {
+ 			return core.ErrDomain
+ 		}
+ 	}
+ 
+-	floored, err := transport.Evaluate(op.floor, transport.Values(op.config.Window))
+-
+-	if err != nil {
+-		return err
+-	}
+-
+ 	if !(op.config.Lower > 0) ||
+ 		!(op.config.Lower <= op.config.Rest) ||
+ 		!(op.config.Rest <= op.config.Upper) ||
+ 		!(op.config.Window > 0) ||
+-		floored != op.config.Window {
++		math.Floor(op.config.Window) != op.config.Window {
+ 		return core.ErrDomain
+ 	}
+ 
+
+commit 9df44b149e7ffb0d267ff11864bf853aaf3f3885
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Thu Sep 10 19:56:36 2026 +0200
+
+    migrate
+
+diff --git a/nomagique/learning/pace.go b/nomagique/learning/pace.go
+index 53b22fcfb..a149f76de 100644
+--- a/nomagique/learning/pace.go
++++ b/nomagique/learning/pace.go
+@@ -1,168 +1,236 @@
+ package learning
+ 
+ import (
++	"iter"
++	"math"
++
+ 	"github.com/theapemachine/symm/nomagique/calculus"
+ 	"github.com/theapemachine/symm/nomagique/collection"
+ 	"github.com/theapemachine/symm/nomagique/core"
+ 	"github.com/theapemachine/symm/nomagique/equation"
+ 	"github.com/theapemachine/symm/nomagique/logic"
+ 	"github.com/theapemachine/symm/nomagique/probability"
+-	"github.com/theapemachine/symm/nomagique/store"
+ 	"github.com/theapemachine/symm/nomagique/transport"
+ )
+ 
+-// NewPace composes empirical prior-error rank with the source's bounded log
+-// alpha controller. config yields rest,lower,upper,gain,band,window. These are
+-// explicit configuration, not newly chosen tuning constants. The calibrator
+-// owns history, the retained connection owns log alpha, and Mix owns movement.
+-func NewPace(config core.Primitive) core.Primitive {
+-	context := store.NewRetained(nil)
+-	memory := store.NewRetained(core.From(map[string]core.Primitive{}))
+-	calibrator := probability.NewCalibrator(
+-		collection.NewTail[float64](
+-			transport.NewApply(transport.NewPipe(
+-				store.NewGet("window"), calculus.NewConvert[float64, int]()), context),
+-		),
+-	)
+-	prepare := transport.NewPipe(
+-		store.NewRecord(config, transport.NewPipe(transport.NewPipe(), store.NewKey("error"))),
+-		context,
+-		store.NewRecord(
+-			transport.NewPipe(),
+-			transport.NewPipe(store.NewGet("rest"), calculus.NewLog(transport.NewIO(core.From(0.0))), store.NewKey("log_rest")),
+-			transport.NewPipe(store.NewGet("lower"), calculus.NewLog(transport.NewIO(core.From(0.0))), store.NewKey("log_min")),
+-			transport.NewPipe(store.NewGet("upper"), calculus.NewLog(transport.NewIO(core.From(0.0))), store.NewKey("log_max")),
+-		),
+-	)
+-	seed := store.NewRecord(
+-		transport.NewPipe(),
+-		transport.NewPipe(store.NewGet("log_rest"), store.NewKey("log_alpha")),
+-		transport.NewPipe(store.NewGet("rest"), store.NewKey("alpha")),
+-	)
+-	measure := transport.NewPipe(
+-		store.NewKV[string](memory),
+-		logic.NewGate(store.NewHas("log_alpha"), transport.NewPipe(), seed),
+-		store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("error"), calibrator, store.NewKey("calibration"))),
+-		store.NewRecord(
+-			transport.NewPipe(),
+-			transport.NewPipe(
+-				equation.NewLessEqual[float64](
+-					store.NewGet("window"),
+-					transport.NewPipe(store.NewGet("calibration"), store.NewGet("prior_count")),
+-				),
+-				store.NewKey("ready"),
+-			),
+-			transport.NewPipe(
+-				equation.NewMinimum(
+-					store.NewGet("window"),
+-					equation.NewSum[float64](
+-						transport.NewPipe(store.NewGet("calibration"), store.NewGet("prior_count")),
+-						store.NewConstant(core.From(1.0)),
+-					),
+-				),
+-				store.NewKey("count"),
+-			),
+-		),
+-		store.NewRecord(
+-			transport.NewPipe(),
+-			transport.NewPipe(
+-				logic.NewGate(
+-					store.NewGet("ready"),
+-					transport.NewPipe(store.NewGet("calibration"), store.NewGet("value")),
+-					store.NewConstant(core.From(0.0)),
+-				),
+-				store.NewKey("rank"),
+-			),
+-		),
+-	)
+-	update := transport.NewPipe(
+-		store.NewRecord(
+-			transport.NewPipe(),
+-			transport.NewPipe(
+-				logic.NewGate(
+-					equation.NewLess[float64](store.NewGet("rank"), store.NewGet("band")),
+-					store.NewGet("log_max"),
+-					store.NewGet("log_rest"),
+-				),
+-				store.NewKey("target"),
+-			),
+-		),
+-		logic.NewGate(
+-			equation.NewGreater[float64](
+-				store.NewGet("rank"),
+-				equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("band")),
+-			),
+-			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("log_min"), store.NewKey("target"))),
+-			transport.NewPipe(),
+-		),
+-		store.NewRecord(
+-			transport.NewPipe(),
+-			transport.NewPipe(
+-				equation.NewBound(
+-					transport.NewPipe(
+-						store.NewRecord(
+-							transport.NewPipe(store.NewGet("log_alpha"), store.NewKey("left")),
+-							transport.NewPipe(store.NewGet("target"), store.NewKey("right")),
+-							transport.NewPipe(store.NewGet("gain"), store.NewKey("weight")),
+-						),
+-						equation.NewMix(),
+-					),
+-					store.NewGet("log_min"),
+-					store.NewGet("log_max"),
+-				),
+-				store.NewKey("log_alpha"),
+-			),
+-		),
+-		store.NewRecord(
+-			transport.NewPipe(),
+-			transport.NewPipe(
+-				equation.NewBound(
+-					transport.NewPipe(store.NewGet("log_alpha"), calculus.NewExp(transport.NewIO(core.From(0.0)))),
+-					store.NewGet("lower"),
+-					store.NewGet("upper"),
+-				),
+-				store.NewKey("alpha"),
+-			),
+-		),
+-	)
+-	commit := transport.NewFan(
+-		transport.NewPipe(),
+-		transport.NewIO(
+-			transport.NewPipe(
+-				store.NewRecord(
+-					transport.NewPipe(store.NewGet("log_alpha"), store.NewKey("log_alpha")),
+-					transport.NewPipe(store.NewGet("alpha"), store.NewKey("alpha")),
+-				),
+-				memory,
+-				transport.NewDiscard(),
+-			),
+-			transport.NewPipe(),
+-		),
+-	)
+-	return transport.NewMap(
+-		transport.NewPipe(
+-			prepare,
+-			logic.NewGate(
+-				equation.NewAll(
+-					transport.NewPipe(store.NewGet("error"), logic.NewFinite()),
+-					transport.NewPipe(store.NewGet("rest"), logic.NewFinite()),
+-					transport.NewPipe(store.NewGet("lower"), logic.NewFinite()),
+-					transport.NewPipe(store.NewGet("upper"), logic.NewFinite()),
+-					transport.NewPipe(store.NewGet("gain"), logic.NewFinite()),
+-					transport.NewPipe(store.NewGet("band"), logic.NewFinite()),
+-					transport.NewPipe(store.NewGet("window"), logic.NewFinite()),
+-					equation.NewGreater[float64](store.NewGet("lower"), store.NewConstant(core.From(0.0))),
+-					equation.NewLessEqual[float64](store.NewGet("lower"), store.NewGet("rest")),
+-					equation.NewLessEqual[float64](store.NewGet("rest"), store.NewGet("upper")),
+-					equation.NewGreater[float64](store.NewGet("window"), store.NewConstant(core.From(0.0))),
+-					equation.NewEqual[float64](
+-						store.NewGet("window"),
+-						transport.NewPipe(store.NewGet("window"), calculus.NewFloor(transport.NewIO(core.From(0.0)))),
+-					),
+-				),
+-				transport.NewPipe(measure, logic.NewGate(store.NewGet("ready"), update, transport.NewPipe()), commit),
+-				logic.NewReject(core.ErrDomain),
+-			),
+-		),
+-	)
++/*
++PaceConfig is rest, bounds, gain, band, and window. These are explicit
++configuration, not newly chosen tuning constants.
++*/
++type PaceConfig struct {
++	Rest   float64
++	Lower  float64
++	Upper  float64
++	Gain   float64
++	Band   float64
++	Window float64
++}
++
++/*
++PaceReading is the adapted learning pace and the current error rank.
++*/
++type PaceReading struct {
++	Alpha float64
++	Rank  float64
++	Ready bool
++	Count float64
++}
++
++/*
++Pace owns empirical prior-error rank and the bounded log-alpha controller.
++The calibrator owns history; Mix owns movement.
++*/
++type Pace struct {
++	core.Base[float64, PaceReading]
++	config     PaceConfig
++	calibrator *probability.Calibrator
++	mix        *equation.Mix[float64]
++	bound      *equation.Bound[float64]
++	log        *calculus.Log[float64]
++	exp        *calculus.Exp[float64]
++	floor      *calculus.Floor[float64]
++	finite     *logic.Finite[float64]
++	logAlpha   float64
++	alpha      float64
++	seeded     bool
++}
++
++func NewPace(config PaceConfig) *Pace {
++	return &Pace{
++		config:     config,
++		calibrator: probability.NewCalibrator(collection.NewTail[float64](int(config.Window))),
++		mix:        equation.NewMix[float64](),
++		bound:      equation.NewBound[float64](),
++		log:        calculus.NewLog[float64](),
++		exp:        calculus.NewExp[float64](),
++		floor:      calculus.NewFloor[float64](),
++		finite:     logic.NewFinite[float64](),
++	}
++}
++
++func (op *Pace) Next(
++	in iter.Seq[core.Primitive[float64, float64]],
++) iter.Seq[core.Primitive[PaceReading, PaceReading]] {
++	return func(yield func(core.Primitive[PaceReading, PaceReading]) bool) {
++		for arriving := range in {
++			reading, err := op.Measure(arriving.Read())
++
++			if err != nil {
++				op.Error(err)
++				return
++			}
++
++			if !yield(op.Carrier(reading)) {
++				return
++			}
++		}
++	}
++}
++
++func (op *Pace) Measure(value float64) (PaceReading, error) {
++	if err := op.validate(); err != nil {
++		return PaceReading{}, err
++	}
++
++	defined, err := transport.Evaluate(op.finite, transport.Values(value))
++
++	if err != nil {
++		return PaceReading{}, err
++	}
++
++	if !defined {
++		return PaceReading{}, core.ErrDomain
++	}
++
++	if !op.seeded {
++		logRest, err := transport.Evaluate(op.log, transport.Values(op.config.Rest))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		op.logAlpha = logRest
++		op.alpha = op.config.Rest
++		op.seeded = true
++	}
++
++	calibration, err := transport.Evaluate(op.calibrator, transport.Values(value))
++
++	if err != nil {
++		return PaceReading{}, err
++	}
++
++	ready := op.config.Window <= calibration.PriorCount
++	count := math.Min(op.config.Window, calibration.PriorCount+1)
++	rank := 0.0
++
++	if ready {
++		rank = calibration.Value
++		logRest, err := transport.Evaluate(op.log, transport.Values(op.config.Rest))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		logMin, err := transport.Evaluate(op.log, transport.Values(op.config.Lower))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		logMax, err := transport.Evaluate(op.log, transport.Values(op.config.Upper))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		target := logRest
++
++		if rank < op.config.Band {
++			target = logMax
++		}
++
++		if rank > 1-op.config.Band {
++			target = logMin
++		}
++
++		mixed, err := transport.Evaluate(op.mix, transport.Values(equation.MixRecord[float64]{
++			Left:   op.logAlpha,
++			Right:  target,
++			Weight: op.config.Gain,
++		}))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		logAlpha, err := transport.Evaluate(op.bound, transport.Values(equation.BoundRecord[float64]{
++			Value: mixed,
++			Lower: logMin,
++			Upper: logMax,
++		}))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		alpha, err := transport.Evaluate(op.exp, transport.Values(logAlpha))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		alpha, err = transport.Evaluate(op.bound, transport.Values(equation.BoundRecord[float64]{
++			Value: alpha,
++			Lower: op.config.Lower,
++			Upper: op.config.Upper,
++		}))
++
++		if err != nil {
++			return PaceReading{}, err
++		}
++
++		op.logAlpha = logAlpha
++		op.alpha = alpha
++	}
++
++	return PaceReading{
++		Alpha: op.alpha,
++		Rank:  rank,
++		Ready: ready,
++		Count: count,
++	}, nil
++}
++
++func (op *Pace) validate() error {
++	for _, value := range []float64{
++		op.config.Rest, op.config.Lower, op.config.Upper,
++		op.config.Gain, op.config.Band, op.config.Window,
++	} {
++		defined, err := transport.Evaluate(op.finite, transport.Values(value))
++
++		if err != nil {
++			return err
++		}
++
++		if !defined {
++			return core.ErrDomain
++		}
++	}
++
++	floored, err := transport.Evaluate(op.floor, transport.Values(op.config.Window))
++
++	if err != nil {
++		return err
++	}
++
++	if !(op.config.Lower > 0) ||
++		!(op.config.Lower <= op.config.Rest) ||
++		!(op.config.Rest <= op.config.Upper) ||
++		!(op.config.Window > 0) ||
++		floored != op.config.Window {
++		return core.ErrDomain
++	}
++
++	return nil
+ }
+
+commit b89caf4ad9d937ec1f4dfecdf6e247d67a4c92ef
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Sun Sep 6 22:38:04 2026 +0200
+
+    slop
+
+diff --git a/nomagique/learning/pace.go b/nomagique/learning/pace.go
+index fe9d7b7eb..53b22fcfb 100644
+--- a/nomagique/learning/pace.go
++++ b/nomagique/learning/pace.go
+@@ -1,213 +1,168 @@
+ package learning
+ 
+ import (
+-	"math"
+-
+-	"github.com/theapemachine/errnie"
++	"github.com/theapemachine/symm/nomagique/calculus"
++	"github.com/theapemachine/symm/nomagique/collection"
++	"github.com/theapemachine/symm/nomagique/core"
++	"github.com/theapemachine/symm/nomagique/equation"
++	"github.com/theapemachine/symm/nomagique/logic"
+ 	"github.com/theapemachine/symm/nomagique/probability"
++	"github.com/theapemachine/symm/nomagique/store"
++	"github.com/theapemachine/symm/nomagique/transport"
+ )
+ 
+-const (
+-	defaultRestAlpha  = 0.03
+-	defaultMinAlpha   = 0.005
+-	defaultMaxAlpha   = 0.150
+-	defaultPaceGain   = 0.1
+-	defaultPaceBand   = 0.2
+-	defaultPaceWindow = 256
+-)
+-
+-/*
+-PaceConfig configures an adaptive learning pace controller.
+-*/
+-type PaceConfig struct {
+-	InitialAlpha float64
+-	MinAlpha     float64
+-	MaxAlpha     float64
+-	Gain         float64
+-	Band         float64
+-	Window       int
+-}
+-
+-/*
+-PaceOutput reports the adapted learning pace and current error rank.
+-*/
+-type PaceOutput struct {
+-	Alpha float64
+-	Rank  float64
+-	Ready bool
+-	Count int
+-}
+-
+-/*
+-PaceController sets the learning pace from how surprising the current reconstruction
+-error is relative to its own recent empirical history.
+-
+-The control signal is the rank of the reconstruction error within its own recent
+-history, integrated in log space with an explicit restoring term toward restAlpha.
+-Surprise raises the pace to follow regime changes faster, while unusually small
+-errors lower it to prevent fitting noise.
+-*/
+-type PaceController struct {
+-	config       PaceConfig
+-	restAlpha    float64
+-	currentAlpha float64
+-	minAlpha     float64
+-	maxAlpha     float64
+-	logAlpha     float64
+-	logRest      float64
+-	logMin       float64
+-	logMax       float64
+-	surprise     *probability.Calibrator
+-}
+-
+-/*
+-NewPaceController constructs a dynamic pace controller bounded within [minAlpha, maxAlpha]
+-and resting at initialAlpha.
+-*/
+-func NewPaceController(configs ...PaceConfig) *PaceController {
+-	config := PaceConfig{
+-		InitialAlpha: defaultRestAlpha,
+-		MinAlpha:     defaultMinAlpha,
+-		MaxAlpha:     defaultMaxAlpha,
+-		Gain:         defaultPaceGain,
+-		Band:         defaultPaceBand,
+-		Window:       defaultPaceWindow,
+-	}
+-
+-	if len(configs) > 0 {
+-		provided := configs[0]
+-
+-		if provided.InitialAlpha > 0 {
+-			config.InitialAlpha = provided.InitialAlpha
+-		}
+-
+-		if provided.MinAlpha > 0 {
+-			config.MinAlpha = provided.MinAlpha
+-		}
+-
+-		if provided.MaxAlpha > 0 {
+-			config.MaxAlpha = provided.MaxAlpha
+-		}
+-
+-		if provided.Gain > 0 {
+-			config.Gain = provided.Gain
+-		}
+-
+-		if provided.Band > 0 {
+-			config.Band = provided.Band
+-		}
+-
+-		if provided.Window > 0 {
+-			config.Window = provided.Window
+-		}
+-	}
+-
+-	return &PaceController{
+-		config:       config,
+-		restAlpha:    config.InitialAlpha,
+-		currentAlpha: config.InitialAlpha,
+-		minAlpha:     config.MinAlpha,
+-		maxAlpha:     config.MaxAlpha,
+-		logAlpha:     math.Log(config.InitialAlpha),
+-		logRest:      math.Log(config.InitialAlpha),
+-		logMin:       math.Log(config.MinAlpha),
+-		logMax:       math.Log(config.MaxAlpha),
+-		surprise: probability.NewCalibrator(probability.CalibratorConfig{
+-			Window: config.Window,
+-		}),
+-	}
+-}
+-
+-/*
+-Measure folds one reconstruction error into the retained history and updates the learning pace.
+-*/
+-func (controller *PaceController) Measure(reconstructionError float64) (PaceOutput, error) {
+-	if !finite(reconstructionError) {
+-		return PaceOutput{}, errnie.Error(errnie.Err(
+-			errnie.Validation,
+-			"pace: reconstruction error must be finite",
+-			nil,
+-		))
+-	}
+-
+-	if controller.surprise.Count() < controller.config.Window {
+-		controller.surprise.Quantile(reconstructionError)
+-
+-		return PaceOutput{
+-			Alpha: controller.currentAlpha,
+-			Rank:  0,
+-			Ready: false,
+-			Count: controller.surprise.Count(),
+-		}, nil
+-	}
+-
+-	rank := controller.surprise.Quantile(reconstructionError)
+-	target := controller.logRest
+-
+-	if rank < controller.config.Band {
+-		target = controller.logMax
+-	}
+-
+-	if rank > 1.0-controller.config.Band {
+-		target = controller.logMin
+-	}
+-
+-	controller.logAlpha += controller.config.Gain * (target - controller.logAlpha)
+-	controller.logAlpha = min(controller.logMax, max(controller.logMin, controller.logAlpha))
+-	controller.currentAlpha = math.Exp(controller.logAlpha)
+-	controller.currentAlpha = min(controller.maxAlpha, max(controller.minAlpha, controller.currentAlpha))
+-
+-	return PaceOutput{
+-		Alpha: controller.currentAlpha,
+-		Rank:  rank,
+-		Ready: true,
+-		Count: controller.surprise.Count(),
+-	}, nil
+-}
+-
+-/*
+-Update folds one error reading into the calibrator and returns the updated learning pace.
+-*/
+-func (controller *PaceController) Update(reconstructionError float64, temporalError ...float64) float64 {
+-	output, err := controller.Measure(reconstructionError)
+-
+-	if err != nil {
+-		return controller.currentAlpha
+-	}
+-
+-	return output.Alpha
+-}
+-
+-/*
+-Alpha returns the current learning pace.
+-*/
+-func (controller *PaceController) Alpha() float64 {
+-	return controller.currentAlpha
+-}
+-
+-/*
+-Bounds returns the pace floor and ceiling the controller integrates between.
+-
+-A pace sitting on either rail is a controller that has run out of room rather
+-than one that has settled, so a reader of Alpha cannot tell the two apart
+-without the interval it moves inside.
+-*/
+-func (controller *PaceController) Bounds() (float64, float64) {
+-	return controller.minAlpha, controller.maxAlpha
+-}
+-
+-/*
+-Count returns the number of retained observations in the error calibrator.
+-*/
+-func (controller *PaceController) Count() int {
+-	return controller.surprise.Count()
+-}
+-
+-/*
+-Reset clears the retained calibrator history and returns alpha to restAlpha.
+-*/
+-func (controller *PaceController) Reset() {
+-	controller.currentAlpha = controller.restAlpha
+-	controller.logAlpha = controller.logRest
+-	controller.surprise.Reset()
++// NewPace composes empirical prior-error rank with the source's bounded log
++// alpha controller. config yields rest,lower,upper,gain,band,window. These are
++// explicit configuration, not newly chosen tuning constants. The calibrator
++// owns history, the retained connection owns log alpha, and Mix owns movement.
++func NewPace(config core.Primitive) core.Primitive {
++	context := store.NewRetained(nil)
++	memory := store.NewRetained(core.From(map[string]core.Primitive{}))
++	calibrator := probability.NewCalibrator(
++		collection.NewTail[float64](
++			transport.NewApply(transport.NewPipe(
++				store.NewGet("window"), calculus.NewConvert[float64, int]()), context),
++		),
++	)
++	prepare := transport.NewPipe(
++		store.NewRecord(config, transport.NewPipe(transport.NewPipe(), store.NewKey("error"))),
++		context,
++		store.NewRecord(
++			transport.NewPipe(),
++			transport.NewPipe(store.NewGet("rest"), calculus.NewLog(transport.NewIO(core.From(0.0))), store.NewKey("log_rest")),
++			transport.NewPipe(store.NewGet("lower"), calculus.NewLog(transport.NewIO(core.From(0.0))), store.NewKey("log_min")),
++			transport.NewPipe(store.NewGet("upper"), calculus.NewLog(transport.NewIO(core.From(0.0))), store.NewKey("log_max")),
++		),
++	)
++	seed := store.NewRecord(
++		transport.NewPipe(),
++		transport.NewPipe(store.NewGet("log_rest"), store.NewKey("log_alpha")),
++		transport.NewPipe(store.NewGet("rest"), store.NewKey("alpha")),
++	)
++	measure := transport.NewPipe(
++		store.NewKV[string](memory),
++		logic.NewGate(store.NewHas("log_alpha"), transport.NewPipe(), seed),
++		store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("error"), calibrator, store.NewKey("calibration"))),
++		store.NewRecord(
++			transport.NewPipe(),
++			transport.NewPipe(
++				equation.NewLessEqual[float64](
++					store.NewGet("window"),
++					transport.NewPipe(store.NewGet("calibration"), store.NewGet("prior_count")),
++				),
++				store.NewKey("ready"),
++			),
++			transport.NewPipe(
++				equation.NewMinimum(
++					store.NewGet("window"),
++					equation.NewSum[float64](
++						transport.NewPipe(store.NewGet("calibration"), store.NewGet("prior_count")),
++						store.NewConstant(core.From(1.0)),
++					),
++				),
++				store.NewKey("count"),
++			),
++		),
++		store.NewRecord(
++			transport.NewPipe(),
++			transport.NewPipe(
++				logic.NewGate(
++					store.NewGet("ready"),
++					transport.NewPipe(store.NewGet("calibration"), store.NewGet("value")),
++					store.NewConstant(core.From(0.0)),
++				),
++				store.NewKey("rank"),
++			),
++		),
++	)
++	update := transport.NewPipe(
++		store.NewRecord(
++			transport.NewPipe(),
++			transport.NewPipe(
++				logic.NewGate(
++					equation.NewLess[float64](store.NewGet("rank"), store.NewGet("band")),
++					store.NewGet("log_max"),
++					store.NewGet("log_rest"),
++				),
++				store.NewKey("target"),
++			),
++		),
++		logic.NewGate(
++			equation.NewGreater[float64](
++				store.NewGet("rank"),
++				equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("band")),
++			),
++			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("log_min"), store.NewKey("target"))),
++			transport.NewPipe(),
++		),
++		store.NewRecord(
++			transport.NewPipe(),
++			transport.NewPipe(
++				equation.NewBound(
++					transport.NewPipe(
++						store.NewRecord(
++							transport.NewPipe(store.NewGet("log_alpha"), store.NewKey("left")),
++							transport.NewPipe(store.NewGet("target"), store.NewKey("right")),
++							transport.NewPipe(store.NewGet("gain"), store.NewKey("weight")),
++						),
++						equation.NewMix(),
++					),
++					store.NewGet("log_min"),
++					store.NewGet("log_max"),
++				),
++				store.NewKey("log_alpha"),
++			),
++		),
++		store.NewRecord(
++			transport.NewPipe(),
++			transport.NewPipe(
++				equation.NewBound(
++					transport.NewPipe(store.NewGet("log_alpha"), calculus.NewExp(transport.NewIO(core.From(0.0)))),
++					store.NewGet("lower"),
++					store.NewGet("upper"),
++				),
++				store.NewKey("alpha"),
++			),
++		),
++	)
++	commit := transport.NewFan(
++		transport.NewPipe(),
++		transport.NewIO(
++			transport.NewPipe(
++				store.NewRecord(
++					transport.NewPipe(store.NewGet("log_alpha"), store.NewKey("log_alpha")),
++					transport.NewPipe(store.NewGet("alpha"), store.NewKey("alpha")),
++				),
++				memory,
++				transport.NewDiscard(),
++			),
++			transport.NewPipe(),
++		),
++	)
++	return transport.NewMap(
++		transport.NewPipe(
++			prepare,
++			logic.NewGate(
++				equation.NewAll(
++					transport.NewPipe(store.NewGet("error"), logic.NewFinite()),
++					transport.NewPipe(store.NewGet("rest"), logic.NewFinite()),
++					transport.NewPipe(store.NewGet("lower"), logic.NewFinite()),
++					transport.NewPipe(store.NewGet("upper"), logic.NewFinite()),
++					transport.NewPipe(store.NewGet("gain"), logic.NewFinite()),
++					transport.NewPipe(store.NewGet("band"), logic.NewFinite()),
++					transport.NewPipe(store.NewGet("window"), logic.NewFinite()),
++					equation.NewGreater[float64](store.NewGet("lower"), store.NewConstant(core.From(0.0))),
++					equation.NewLessEqual[float64](store.NewGet("lower"), store.NewGet("rest")),
++					equation.NewLessEqual[float64](store.NewGet("rest"), store.NewGet("upper")),
++					equation.NewGreater[float64](store.NewGet("window"), store.NewConstant(core.From(0.0))),
++					equation.NewEqual[float64](
++						store.NewGet("window"),
++						transport.NewPipe(store.NewGet("window"), calculus.NewFloor(transport.NewIO(core.From(0.0)))),
++					),
++				),
++				transport.NewPipe(measure, logic.NewGate(store.NewGet("ready"), update, transport.NewPipe()), commit),
++				logic.NewReject(core.ErrDomain),
++			),
++		),
++	)
+ }
+
+commit fe0efcbc8af4fa173bd599cea6048153b85b3a5a
+Author: Daniel Owen van Dommelen <theapemachine@gmail.com>
+Date:   Mon Aug 17 22:38:07 2026 +0200
+
+    Implement calibration and trust weight mechanisms with associated tests
+    
+    - Added SampleRatio and TrustWeight structures for calibration of predicted vs actual outcomes.
+    - Implemented Measure and Reset methods for both SampleRatio and TrustWeight to update and clear their states.
+    - Created validation logic for LearningPair to ensure predicted and actual values are finite and non-zero.
+    - Developed empirical error Calibrator for scoring incoming error readings against retained history.
+    - Added tests for SampleRatio, TrustWeight, and Calibrator to ensure functionality and performance.
+    - Introduced utility functions for handling finite probability checks and decision tracing in strategy.
+    - Enhanced candidate management in strategy with functions to retain, remove, and copy candidates.
+
+diff --git a/nomagique/learning/pace.go b/nomagique/learning/pace.go
+new file mode 100644
+index 000000000..fe9d7b7eb
+--- /dev/null
++++ b/nomagique/learning/pace.go
+@@ -0,0 +1,213 @@
++package learning
++
++import (
++	"math"
++
++	"github.com/theapemachine/errnie"
++	"github.com/theapemachine/symm/nomagique/probability"
++)
++
++const (
++	defaultRestAlpha  = 0.03
++	defaultMinAlpha   = 0.005
++	defaultMaxAlpha   = 0.150
++	defaultPaceGain   = 0.1
++	defaultPaceBand   = 0.2
++	defaultPaceWindow = 256
++)
++
++/*
++PaceConfig configures an adaptive learning pace controller.
++*/
++type PaceConfig struct {
++	InitialAlpha float64
++	MinAlpha     float64
++	MaxAlpha     float64
++	Gain         float64
++	Band         float64
++	Window       int
++}
++
++/*
++PaceOutput reports the adapted learning pace and current error rank.
++*/
++type PaceOutput struct {
++	Alpha float64
++	Rank  float64
++	Ready bool
++	Count int
++}
++
++/*
++PaceController sets the learning pace from how surprising the current reconstruction
++error is relative to its own recent empirical history.
++
++The control signal is the rank of the reconstruction error within its own recent
++history, integrated in log space with an explicit restoring term toward restAlpha.
++Surprise raises the pace to follow regime changes faster, while unusually small
++errors lower it to prevent fitting noise.
++*/
++type PaceController struct {
++	config       PaceConfig
++	restAlpha    float64
++	currentAlpha float64
++	minAlpha     float64
++	maxAlpha     float64
++	logAlpha     float64
++	logRest      float64
++	logMin       float64
++	logMax       float64
++	surprise     *probability.Calibrator
++}
++
++/*
++NewPaceController constructs a dynamic pace controller bounded within [minAlpha, maxAlpha]
++and resting at initialAlpha.
++*/
++func NewPaceController(configs ...PaceConfig) *PaceController {
++	config := PaceConfig{
++		InitialAlpha: defaultRestAlpha,
++		MinAlpha:     defaultMinAlpha,
++		MaxAlpha:     defaultMaxAlpha,
++		Gain:         defaultPaceGain,
++		Band:         defaultPaceBand,
++		Window:       defaultPaceWindow,
++	}
++
++	if len(configs) > 0 {
++		provided := configs[0]
++
++		if provided.InitialAlpha > 0 {
++			config.InitialAlpha = provided.InitialAlpha
++		}
++
++		if provided.MinAlpha > 0 {
++			config.MinAlpha = provided.MinAlpha
++		}
++
++		if provided.MaxAlpha > 0 {
++			config.MaxAlpha = provided.MaxAlpha
++		}
++
++		if provided.Gain > 0 {
++			config.Gain = provided.Gain
++		}
++
++		if provided.Band > 0 {
++			config.Band = provided.Band
++		}
++
++		if provided.Window > 0 {
++			config.Window = provided.Window
++		}
++	}
++
++	return &PaceController{
++		config:       config,
++		restAlpha:    config.InitialAlpha,
++		currentAlpha: config.InitialAlpha,
++		minAlpha:     config.MinAlpha,
++		maxAlpha:     config.MaxAlpha,
++		logAlpha:     math.Log(config.InitialAlpha),
++		logRest:      math.Log(config.InitialAlpha),
++		logMin:       math.Log(config.MinAlpha),
++		logMax:       math.Log(config.MaxAlpha),
++		surprise: probability.NewCalibrator(probability.CalibratorConfig{
++			Window: config.Window,
++		}),
++	}
++}
++
++/*
++Measure folds one reconstruction error into the retained history and updates the learning pace.
++*/
++func (controller *PaceController) Measure(reconstructionError float64) (PaceOutput, error) {
++	if !finite(reconstructionError) {
++		return PaceOutput{}, errnie.Error(errnie.Err(
++			errnie.Validation,
++			"pace: reconstruction error must be finite",
++			nil,
++		))
++	}
++
++	if controller.surprise.Count() < controller.config.Window {
++		controller.surprise.Quantile(reconstructionError)
++
++		return PaceOutput{
++			Alpha: controller.currentAlpha,
++			Rank:  0,
++			Ready: false,
++			Count: controller.surprise.Count(),
++		}, nil
++	}
++
++	rank := controller.surprise.Quantile(reconstructionError)
++	target := controller.logRest
++
++	if rank < controller.config.Band {
++		target = controller.logMax
++	}
++
++	if rank > 1.0-controller.config.Band {
++		target = controller.logMin
++	}
++
++	controller.logAlpha += controller.config.Gain * (target - controller.logAlpha)
++	controller.logAlpha = min(controller.logMax, max(controller.logMin, controller.logAlpha))
++	controller.currentAlpha = math.Exp(controller.logAlpha)
++	controller.currentAlpha = min(controller.maxAlpha, max(controller.minAlpha, controller.currentAlpha))
++
++	return PaceOutput{
++		Alpha: controller.currentAlpha,
++		Rank:  rank,
++		Ready: true,
++		Count: controller.surprise.Count(),
++	}, nil
++}
++
++/*
++Update folds one error reading into the calibrator and returns the updated learning pace.
++*/
++func (controller *PaceController) Update(reconstructionError float64, temporalError ...float64) float64 {
++	output, err := controller.Measure(reconstructionError)
++
++	if err != nil {
++		return controller.currentAlpha
++	}
++
++	return output.Alpha
++}
++
++/*
++Alpha returns the current learning pace.
++*/
++func (controller *PaceController) Alpha() float64 {
++	return controller.currentAlpha
++}
++
++/*
++Bounds returns the pace floor and ceiling the controller integrates between.
++
++A pace sitting on either rail is a controller that has run out of room rather
++than one that has settled, so a reader of Alpha cannot tell the two apart
++without the interval it moves inside.
++*/
++func (controller *PaceController) Bounds() (float64, float64) {
++	return controller.minAlpha, controller.maxAlpha
++}
++
++/*
++Count returns the number of retained observations in the error calibrator.
++*/
++func (controller *PaceController) Count() int {
++	return controller.surprise.Count()
++}
++
++/*
++Reset clears the retained calibrator history and returns alpha to restAlpha.
++*/
++func (controller *PaceController) Reset() {
++	controller.currentAlpha = controller.restAlpha
++	controller.logAlpha = controller.logRest
++	controller.surprise.Reset()
++}

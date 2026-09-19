@@ -1,103 +1,46 @@
 package hawkes
 
 import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-type pick struct {
-	*core.PrimitiveError
-	selectField func(*Reading) (float64, bool)
-	out         float64
-}
+/*
+Field pickers projecting Reading into float64 metrics.
+No structs, pure Value functions.
+*/
 
-func (pick *pick) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		if in == nil {
-			return
-		}
+type EventCount types.Value[Reading, float64]
+func NewEventCount() EventCount { return func(r Reading) float64 { return r.EventCount } }
 
-		for arriving := range in {
-			reading := (*Reading)(arriving)
-			value, ok := pick.selectField(reading)
+type BuyCount types.Value[Reading, float64]
+func NewBuyCount() BuyCount { return func(r Reading) float64 { return r.BuyCount } }
 
-			if !ok {
-				continue
-			}
+type SellCount types.Value[Reading, float64]
+func NewSellCount() SellCount { return func(r Reading) float64 { return r.SellCount } }
 
-			pick.out = value
+type BuyFraction types.Value[Reading, float64]
+func NewBuyFraction() BuyFraction { return func(r Reading) float64 { return r.BuyFraction } }
 
-			if !yield(unsafe.Pointer(&pick.out)) {
-				return
-			}
-		}
-	}
-}
+type SellFraction types.Value[Reading, float64]
+func NewSellFraction() SellFraction { return func(r Reading) float64 { return r.SellFraction } }
 
-func newPick(selectField func(*Reading) (float64, bool)) *pick {
-	return &pick{PrimitiveError: core.NewPrimitiveError(), selectField: selectField}
-}
+type ArrivalRate types.Value[Reading, float64]
+func NewArrivalRate() ArrivalRate { return func(r Reading) float64 { return r.ArrivalRate } }
 
-func NewEventCount() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) { return reading.EventCount, true })
-}
+type BuyRate types.Value[Reading, float64]
+func NewBuyRate() BuyRate { return func(r Reading) float64 { return r.BuyRate } }
 
-func NewBuyCount() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) { return reading.BuyCount, true })
-}
+type SellRate types.Value[Reading, float64]
+func NewSellRate() SellRate { return func(r Reading) float64 { return r.SellRate } }
 
-func NewSellCount() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) { return reading.SellCount, true })
-}
+type ConditionalIntensity types.Value[Reading, float64]
+func NewConditionalIntensity() ConditionalIntensity { return func(r Reading) float64 { return r.Lambda } }
 
-func NewBuyFraction() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) { return reading.BuyFraction, true })
-}
+type BuyIntensity types.Value[Reading, float64]
+func NewBuyIntensity() BuyIntensity { return func(r Reading) float64 { return r.LambdaBuy } }
 
-func NewSellFraction() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) { return reading.SellFraction, true })
-}
+type SellIntensity types.Value[Reading, float64]
+func NewSellIntensity() SellIntensity { return func(r Reading) float64 { return r.LambdaSell } }
 
-func NewArrivalRate() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) {
-		return reading.ArrivalRate, reading.HasRates
-	})
-}
-
-func NewBuyRate() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) {
-		return reading.BuyRate, reading.HasRates
-	})
-}
-
-func NewSellRate() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) {
-		return reading.SellRate, reading.HasRates
-	})
-}
-
-func NewConditionalIntensity() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) {
-		return reading.Lambda, reading.HasFit
-	})
-}
-
-func NewBuyIntensity() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) {
-		return reading.LambdaBuy, reading.HasFit
-	})
-}
-
-func NewSellIntensity() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) {
-		return reading.LambdaSell, reading.HasFit
-	})
-}
-
-func NewSpectralRadius() core.Primitive {
-	return newPick(func(reading *Reading) (float64, bool) {
-		return reading.SpectralRadius, reading.HasFit
-	})
-}
+type SpectralRadius types.Value[Reading, float64]
+func NewSpectralRadius() SpectralRadius { return func(r Reading) float64 { return r.SpectralRadius } }

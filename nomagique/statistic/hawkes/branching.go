@@ -1,13 +1,17 @@
 package hawkes
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/symm/nomagique/core"
+)
 
 /*
 criticalBranch is the spectral-radius boundary a Hawkes process must stay
 strictly below to be stable: at or above it, expected offspring per event
 diverges and the process is no longer stationary.
 */
-const criticalBranch = 1.0
+const criticalBranch = core.Unit
 
 /*
 branchingMatrix returns the 2x2 branching matrix G = A/beta for one bivariate

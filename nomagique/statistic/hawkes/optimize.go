@@ -3,6 +3,7 @@ package hawkes
 import (
 	"math"
 
+	"github.com/theapemachine/symm/nomagique/core"
 	"gonum.org/v1/gonum/optimize"
 )
 
@@ -152,7 +153,7 @@ are decisive relative to floating-point noise at whatever scale the fit's own
 likelihood happens to sit at, never a fixed absolute cutoff.
 */
 func logLikelihoodTolerance(values ...float64) float64 {
-	scale := 1.0
+	scale := core.Unit
 
 	for _, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {

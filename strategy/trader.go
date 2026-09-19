@@ -2,9 +2,11 @@ package strategy
 
 import (
 	"context"
+	"slices"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -17,6 +19,17 @@ const (
 )
 
 /*
+LegalActions returns permissible actions based on current inventory holding state.
+*/
+func LegalActions(holding bool) []Action {
+	if !holding {
+		return []Action{ActionEnter, ActionWait}
+	}
+
+	return []Action{ActionExit, ActionWait}
+}
+
+/*
 Trader runs a compiled nomagique Workspace and listens to its signals, talking to the broker and managing positions.
 It now hosts the dynamic JSON workspace and reacts to its emitted signals.
 */
@@ -25,6 +38,7 @@ type Trader struct {
 	workspace *runtime.Workspace
 	desk      *broker.Desk
 	positions map[string]*broker.Position
+	callbacks []func(cognition.Evaluation)
 }
 
 func NewTrader(ctx context.Context, api *websocket.API, jsonPath string) *Trader {
@@ -35,10 +49,19 @@ func NewTrader(ctx context.Context, api *websocket.API, jsonPath string) *Trader
 		positions: make(map[string]*broker.Position),
 	}
 	
+	
 	// Start consuming the dynamic JSON graph sink
 	go trader.listen()
 	
 	return trader
+}
+
+func (trader *Trader) Workspace() *runtime.Workspace {
+	return trader.workspace
+}
+
+func (trader *Trader) OnEvaluation(cb func(cognition.Evaluation)) {
+	trader.callbacks = append(trader.callbacks, cb)
 }
 
 /*
@@ -46,16 +69,29 @@ listen drains the compiled JSON graph sink and executes trading actions.
 */
 func (trader *Trader) listen() {
 	for signal := range trader.workspace.Sink() {
-		// The JSON sink emits dynamic signals.
-		// For example, if it's a normalized energy threshold crossing:
-		if score, ok := signal.(float64); ok {
-			// This threshold should ideally come from the JSON too (e.g. Tanh or Bound)
-			// but we handle the final boundary conversion here for now.
-			if score > 0.8 {
-				trader.OnAction("BTC/USD", ActionEnter) // Hardcoded pair for now
-			} else if score < -0.8 {
-				trader.OnAction("BTC/USD", ActionExit)
+		switch s := signal.(type) {
+		case cognition.Evaluation:
+			if s == nil {
+				continue
 			}
+
+			winnerClass, _, _, contrast, _, _, isBreak, _, _ := s()
+			
+			for _, cb := range trader.callbacks {
+				cb(s)
+			}
+
+			if isBreak {
+				continue
+			}
+			symbol := "BTC/USD"
+			legal := LegalActions(trader.Holding(symbol))
+			action := Action(string(winnerClass))
+			if slices.Contains(legal, action) && contrast > 0 {
+				trader.OnAction(symbol, action)
+			}
+		case Action:
+			trader.OnAction("BTC/USD", s)
 		}
 	}
 }

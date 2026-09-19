@@ -2,11 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/core"
 )
 
 type RuntimeSystem interface {
@@ -20,9 +20,9 @@ type RuntimeSystem interface {
 }
 
 type System struct {
-	*core.PrimitiveError
 	ctx     context.Context
 	cancel  context.CancelFunc
+	err     error
 	name    string
 	status  *Status
 	closers []io.Closer
@@ -47,12 +47,11 @@ func NewSystem(
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &System{
-		PrimitiveError: core.NewPrimitiveError(),
-		ctx:            ctx,
-		cancel:         cancel,
-		name:           name,
-		status:         NewStatus(),
-		closers:        closers,
+		ctx:     ctx,
+		cancel:  cancel,
+		name:    name,
+		status:  NewStatus(),
+		closers: closers,
 	}
 }
 
@@ -71,21 +70,28 @@ func (system *System) Transition(stage Stage) {
 func (system *System) Status() Stage { return system.status.Current() }
 
 func (system *System) Error(errs ...error) error {
-	err := system.PrimitiveError.Error(errs...)
 	for _, added := range errs {
 		if added == nil {
 			continue
 		}
-		if system.status.Current() != FATAL {
+
+		system.err = errors.Join(system.err, errnie.Error(added))
+
+		switch system.status.Current() {
+		case DONE, FATAL:
+			return system.Close()
+		default:
 			system.Transition(ERROR)
 		}
-		errnie.Error(added)
+
 		categorized, ok := errnie.AsErrnie(added)
+
 		if ok && errnie.IsInternal(categorized) {
 			return system.Close()
 		}
 	}
-	return err
+
+	return system.err
 }
 
 func (system *System) AddCloser(closer io.Closer) {
@@ -95,11 +101,9 @@ func (system *System) AddCloser(closer io.Closer) {
 func (system *System) System() *System { return system }
 
 func (system *System) Close() error {
-	if system.cancel == nil {
-		return system.PrimitiveError.Error()
+	if system.cancel != nil {
+		system.cancel()
 	}
-
-	system.cancel()
 
 	closers := system.closers
 	system.closers = nil
@@ -113,8 +117,8 @@ func (system *System) Close() error {
 			continue
 		}
 
-		system.PrimitiveError.Error(closer.Close())
+		system.Error(closer.Close())
 	}
 
-	return system.PrimitiveError.Error()
+	return system.Error()
 }

@@ -13,10 +13,10 @@ func TestSystemFail(t *testing.T) {
 		system.Transition(READY)
 		err := errors.New("execution acceptance unknown")
 		system.Error(err)
-		So(system.Error(), ShouldEqual, err)
+		So(errors.Is(system.Error(), err), ShouldBeTrue)
 		So(system.Status(), ShouldEqual, ERROR)
 		system.Error(nil)
-		So(system.Error(), ShouldEqual, err)
+		So(errors.Is(system.Error(), err), ShouldBeTrue)
 		So(system.Status(), ShouldEqual, ERROR)
 		So(system.Close(), ShouldNotBeNil)
 	})
@@ -32,7 +32,7 @@ func TestSystemFatal(t *testing.T) {
 		system.Transition(FATAL)
 		So(system.Status(), ShouldEqual, FATAL)
 
-		So(system.Error(), ShouldEqual, err)
+		So(errors.Is(system.Error(), err), ShouldBeTrue)
 		So(system.Status(), ShouldEqual, FATAL)
 
 		err2 := errors.New("subsequent invalid")

@@ -1,0 +1,258 @@
+package scan
+
+import (
+	"go/ast"
+	"go/types"
+	"strings"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/catalog"
+	"golang.org/x/tools/go/packages"
+)
+
+const (
+	module           = "github.com/theapemachine/symm/nomagique"
+	constructorStart = "New"
+)
+
+var skipped = map[string]struct{}{
+	"tests":    {},
+	"catalog":  {},
+	"scan":     {},
+	"compiler": {},
+}
+
+func Tree(directory string) (map[string]catalog.Schema, error) {
+	loaded, err := packages.Load(&packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedSyntax |
+			packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
+		Dir: directory,
+	}, "./...")
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"catalog: load "+directory,
+			err,
+		))
+	}
+
+	schemas := make(map[string]catalog.Schema)
+
+	for _, loadedPackage := range loaded {
+		if _, ok := skipped[loadedPackage.Name]; ok {
+			continue
+		}
+
+		if len(loadedPackage.Errors) > 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"catalog: "+loadedPackage.PkgPath+": "+loadedPackage.Errors[0].Error(),
+				nil,
+			))
+		}
+
+		collect(loadedPackage, schemas)
+	}
+
+	if len(schemas) == 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"catalog: no primitives found under "+directory,
+			nil,
+		))
+	}
+
+	return schemas, nil
+}
+
+type primitiveType struct {
+	Name string
+	T    string
+	U    string
+}
+
+func collect(
+	loadedPackage *packages.Package,
+	into map[string]catalog.Schema,
+) {
+	customTypes := make(map[string]primitiveType)
+	
+	for _, file := range loadedPackage.Syntax {
+		for _, declaration := range file.Decls {
+			genDecl, ok := declaration.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range genDecl.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok || !typeSpec.Name.IsExported() {
+					continue
+				}
+
+				indexExpr, ok := typeSpec.Type.(*ast.IndexListExpr)
+				if !ok {
+					continue
+				}
+				
+				selExpr, ok := indexExpr.X.(*ast.SelectorExpr)
+				if !ok {
+					continue
+				}
+				
+				ident, ok := selExpr.X.(*ast.Ident)
+				if !ok || ident.Name != "types" || selExpr.Sel.Name != "Value" {
+					continue
+				}
+				
+				if len(indexExpr.Indices) == 2 {
+					tType := loadedPackage.TypesInfo.TypeOf(indexExpr.Indices[0])
+					uType := loadedPackage.TypesInfo.TypeOf(indexExpr.Indices[1])
+					
+					if tType != nil && uType != nil {
+						customTypes[typeSpec.Name.Name] = primitiveType{
+							Name: typeSpec.Name.Name,
+							T:    simplifyType(tType.String()),
+							U:    simplifyType(uType.String()),
+						}
+					}
+				}
+			}
+		}
+	}
+
+	for _, file := range loadedPackage.Syntax {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+
+			if !ok || !named(function) {
+				continue
+			}
+
+			signature := signatureOf(loadedPackage, function)
+			if signature == nil || signature.Results().Len() == 0 {
+				continue
+			}
+
+			firstResult := signature.Results().At(0).Type()
+			namedType, ok := firstResult.(*types.Named)
+			if !ok {
+				continue
+			}
+			
+			retTypeName := namedType.Obj().Name()
+			
+			if primType, found := customTypes[retTypeName]; found {
+				schema := describe(
+					loadedPackage.Name,
+					loadedPackage.PkgPath,
+					function,
+					primType.T,
+					primType.U,
+					signature.Params().Len(),
+					signature.TypeParams().Len(),
+				)
+				into[schema.Op] = schema
+			}
+		}
+	}
+}
+
+func named(function *ast.FuncDecl) bool {
+	return function.Recv == nil &&
+		function.Name.IsExported() &&
+		(strings.HasPrefix(function.Name.Name, constructorStart) || function.Name.Name != constructorStart)
+}
+
+func signatureOf(loadedPackage *packages.Package, function *ast.FuncDecl) *types.Signature {
+	defined, ok := loadedPackage.TypesInfo.Defs[function.Name].(*types.Func)
+	if !ok {
+		return nil
+	}
+
+	signature, _ := defined.Type().(*types.Signature)
+	return signature
+}
+
+func simplifyType(t string) string {
+	t = strings.ReplaceAll(t, module+"/", "")
+	if idx := strings.LastIndex(t, "/"); idx != -1 {
+		dotIdx := strings.Index(t[idx:], ".")
+		if dotIdx != -1 {
+			startIdx := idx
+			for startIdx >= 0 {
+				if t[startIdx] == ' ' || t[startIdx] == '*' || t[startIdx] == '[' || t[startIdx] == ']' {
+					break
+				}
+				startIdx--
+			}
+			startIdx++
+			t = t[:startIdx] + t[idx+1:]
+		}
+	}
+	return t
+}
+
+func describe(
+	category string,
+	pkgPath string,
+	function *ast.FuncDecl,
+	inType string,
+	outType string,
+	paramCount int,
+	typeParamCount int,
+) catalog.Schema {
+	thing := function.Name.Name
+	if after, ok :=strings.CutPrefix(thing, constructorStart); ok  {
+		thing = after
+	}
+
+	schema := catalog.Schema{
+		Kind:           "primitive",
+		Category:       category,
+		Op:             category + "." + thing,
+		Name:           thing,
+		Label:          spaced(thing),
+		Description:    doc(function),
+		Package:        pkgPath,
+		Builder:        function.Name.Name,
+		ParamCount:     paramCount,
+		TypeParamCount: typeParamCount,
+		Inputs: []catalog.Port{{
+			Name:        "in",
+			Type:        inType,
+			Description: "The run this primitive reads",
+		}},
+		Outputs: []catalog.Port{{
+			Name:        "out",
+			Type:        outType,
+			Description: "The run this primitive produces",
+		}},
+	}
+
+	return schema
+}
+
+func doc(function *ast.FuncDecl) string {
+	if function.Doc == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range function.Doc.List {
+		text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
+		b.WriteString(text)
+		b.WriteString(" ")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func spaced(s string) string {
+	var result strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune(' ')
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
+}

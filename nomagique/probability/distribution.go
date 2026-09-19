@@ -1,11 +1,7 @@
 package probability
 
 import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -20,67 +16,30 @@ type Reading struct {
 }
 
 /*
-Distribution owns softmax then the winner, confidence, ambiguity, and sharpness.
+NewDistribution composes softmax, argmax, and ambiguity.
+No structs, pure Value closure composition.
 */
-type Distribution struct {
-	*core.PrimitiveError
+type Distribution types.Value[[]float64, Reading]
+func NewDistribution() Distribution {
+	softmax := NewSoftmax()
+	argmax := NewArgmax()
+	ambiguity := NewAmbiguity()
 
-	out Reading
-}
-
-func NewDistribution() *Distribution {
-	return &Distribution{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (distribution *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		softmax := NewSoftmax()
-		var probabilities []float64
-
-		for pPtr := range softmax.Next(in) {
-			probabilities = append(probabilities, *(*float64)(pPtr))
-		}
-
-		if err := softmax.Error(); err != nil {
-			distribution.Error(err)
-			return
-		}
-
+	return func(logits []float64) Reading {
+		probabilities := softmax(logits)
 		if len(probabilities) == 0 {
-			distribution.Error(core.ErrShape)
-			return
+			return Reading{}
 		}
 
-		winner := 0
+		best := argmax(probabilities)
+		amb := ambiguity(probabilities)
 
-		for index, p := range probabilities {
-			if p > probabilities[winner] {
-				winner = index
-			}
-		}
-
-		ambiguityValEval := NewAmbiguity()
-		var ambiguityVal float64
-
-		for out := range ambiguityValEval.Next(sequence.NewValues(probabilities...).Next(nil)) {
-			ambiguityVal = *(*float64)(out)
-		}
-
-		err := ambiguityValEval.Error()
-
-		if err != nil {
-			distribution.Error(err)
-			return
-		}
-
-		distribution.out = Reading{
+		return Reading{
 			Probabilities: probabilities,
-			Winner:        winner,
-			Confidence:    probabilities[winner],
-			Ambiguity:     ambiguityVal,
-			Sharpness:     1 - ambiguityVal,
+			Winner:        best.Index,
+			Confidence:    best.Value,
+			Ambiguity:     amb,
+			Sharpness:     1 - amb,
 		}
-
-		yield(unsafe.Pointer(&distribution.out))
 	}
 }

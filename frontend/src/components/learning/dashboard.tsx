@@ -366,7 +366,16 @@ export const LearningDashboard = () => {
 				)}
 				{tab === "trie" && <TrieView />}
 				{tab === "impulse" && (
-					<ImpulseView livePoints={livePoints} liveRegions={liveRegions} />
+					<ImpulseView 
+						livePoints={livePoints} 
+						liveRegions={liveRegions} 
+						recentActivity={recentActivity.map((a, i) => ({
+							id: i,
+							name: a.actionStr,
+							latency: a.time,
+							hot: (a.pnl ?? 0) > 0
+						}))}
+					/>
 				)}
 				{tab === "recognition" && (
 					<RecognitionView

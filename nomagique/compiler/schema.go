@@ -13,9 +13,10 @@ type Graph struct {
 Node represents an atomic operation or a composed sub-graph.
 */
 type Node struct {
-	ID          string      `json:"id"`
-	Type        string      `json:"type"`
-	Connections Connections `json:"connections"`
+	ID          string         `json:"id"`
+	Type        string         `json:"type"`
+	Connections Connections    `json:"connections"`
+	InputData   map[string]any `json:"inputData,omitempty"`
 }
 
 /*

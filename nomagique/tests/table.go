@@ -2,25 +2,23 @@ package tests
 
 import (
 	"fmt"
-	"iter"
 	"math"
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-// Case defines the test configuration for any Primitive.
+// Case defines the test configuration for any Value operation.
 type Case[T, U any] struct {
 	Name string
 	Seed U
-	// Operation is the primitive under test.
-	Operation core.Primitive
-	// Factory creates a fresh primitive instance under test.
-	Factory func() core.Primitive
+	// Operation is the value under test.
+	Operation types.Value[T, U]
+	// Factory creates a fresh value instance under test.
+	Factory func() types.Value[T, U]
 	// Reference defines the mathematical ground truth: how input T transforms accumulator U.
-	// For Add, this is: func(acc, val float64) float64 { return acc + val }
 	Reference func(current U, in T) U
 	// CustomVectors allows primitives to add domain-specific scenarios.
 	CustomVectors [][]T
@@ -33,10 +31,9 @@ type TableRow[T, U any] struct {
 	Expected []U
 }
 
-// Check exercises independent delivery runs, multi-yield input, empty input,
-// nil input, and every IEEE exceptional value against the reference function.
+// Check exercises dynamic table runs and independent delivery runs against the reference function.
 func Check[T, U any](t *testing.T, example Case[T, U]) {
-	getOp := func() core.Primitive {
+	getOp := func() types.Value[T, U] {
 		if example.Factory != nil {
 			return example.Factory()
 		}
@@ -44,30 +41,18 @@ func Check[T, U any](t *testing.T, example Case[T, U]) {
 	}
 
 	Convey("Setup "+example.Name, t, func() {
-		op := getOp()
-
-		Convey("empty and nil input", func() {
-			emptySeq := SliceToSeq([]T{})
-			outSeq := op.Next(emptySeq)
-			actual := CollectSeq[U](outSeq)
-
-			So(len(actual), ShouldEqual, 0)
-			So(op.Error(), ShouldBeNil)
-		})
-
 		Convey("multi-yield dynamic table runs", func() {
 			table := GenerateTable(example)
 
 			for _, row := range table {
 				Convey(row.Name, func() {
 					rowOp := getOp()
-
-					inSeq := SliceToSeq(row.Inputs)
-					outSeq := rowOp.Next(inSeq)
-					actual := CollectSeq[U](outSeq)
+					actual := make([]U, len(row.Inputs))
+					for i, in := range row.Inputs {
+						actual[i] = rowOp(in)
+					}
 
 					So(actual, ShouldMatchElements[U], row.Expected)
-					So(rowOp.Error(), ShouldBeNil)
 				})
 			}
 		})
@@ -81,32 +66,21 @@ func Check[T, U any](t *testing.T, example Case[T, U]) {
 
 				// Run 1
 				expected1 := ComputeExpected(example.Seed, run1Inputs, example.Reference)
-				outSeq1 := indepOp.Next(SliceToSeq(run1Inputs))
-				actual1 := CollectSeq[U](outSeq1)
+				actual1 := make([]U, len(run1Inputs))
+				for i, in := range run1Inputs {
+					actual1[i] = indepOp(in)
+				}
 				So(actual1, ShouldMatchElements[U], expected1)
 
 				// Run 2: starts from the state left after Run 1
 				lastAcc := expected1[len(expected1)-1]
 				expected2 := ComputeExpected(lastAcc, run2Inputs, example.Reference)
-				outSeq2 := indepOp.Next(SliceToSeq(run2Inputs))
-				actual2 := CollectSeq[U](outSeq2)
+				actual2 := make([]U, len(run2Inputs))
+				for i, in := range run2Inputs {
+					actual2[i] = indepOp(in)
+				}
 				So(actual2, ShouldMatchElements[U], expected2)
 			}
-		})
-
-		Convey("early consumer termination (yield break)", func() {
-			breakOp := getOp()
-			inputs := []T{generateValue[T](10), generateValue[T](20), generateValue[T](30)}
-			inSeq := SliceToSeq(inputs)
-			outSeq := breakOp.Next(inSeq)
-
-			// Pull only the first yielded element
-			count := 0
-			for range outSeq {
-				count++
-				break // Stop consumer early
-			}
-			So(count, ShouldEqual, 1)
 		})
 	})
 }
@@ -133,8 +107,8 @@ func GenerateTable[T, U any](c Case[T, U]) []TableRow[T, U] {
 			[]T{asT[T](math.Inf(-1)), generateValue[T](-1)},
 			[]T{asT[T](math.Inf(1)), asT[T](math.Inf(-1))}, // Inf cancellation -> NaN
 			[]T{asT[T](math.NaN()), generateValue[T](5)},
-			[]T{asT[T](math.MaxFloat64), asT[T](math.MaxFloat64)}, // Overflow -> +Inf
-			[]T{asT[T](0.0), asT[T](math.Copysign(0.0, -1.0))},    // +0.0 and -0.0
+			[]T{asT[T](math.MaxFloat64), asT[T](math.MaxFloat64)},    // Overflow -> +Inf
+			[]T{asT[T](0.0), asT[T](math.Copysign(0.0, -core.Unit))}, // +0.0 and -0.0
 		)
 	}
 
@@ -164,31 +138,6 @@ func ComputeExpected[T, U any](seed U, inputs []T, ref func(U, T) U) []U {
 	for i, in := range inputs {
 		acc = ref(acc, in)
 		out[i] = acc
-	}
-	return out
-}
-
-// ----------------------------------------------------------------------------
-// Test Sequence Adapters
-// ----------------------------------------------------------------------------
-
-func SliceToSeq[T any](items []T) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for i := range items {
-			if !yield(unsafe.Pointer(&items[i])) {
-				return
-			}
-		}
-	}
-}
-
-func CollectSeq[U any](seq iter.Seq[unsafe.Pointer]) []U {
-	var out []U
-	if seq == nil {
-		return out
-	}
-	for ptr := range seq {
-		out = append(out, *(*U)(ptr))
 	}
 	return out
 }

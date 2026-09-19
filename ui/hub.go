@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"iter"
+	"slices"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -11,10 +12,12 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/strategy"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -48,6 +51,8 @@ type Hub struct {
 	trader     *strategy.Trader
 	desk       *broker.Desk
 	connected  *atomic.Bool
+	step       atomic.Uint64
+	lastFrame  atomic.Pointer[[]byte]
 }
 
 /*
@@ -97,9 +102,21 @@ func NewHub(
 		return fiber.ErrUpgradeRequired
 	})
 
+	NewRoutes(hub)
+
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		errnie.Info("hub: frontend websocket connected")
 		hub.connected.Store(true)
+
+		if last := hub.lastFrame.Load(); last != nil && len(*last) > 0 {
+			if writeErr := conn.Conn.WriteMessage(websocket.BinaryMessage, *last); writeErr != nil {
+				hub.Error(errnie.Err(
+					errnie.BadRequest,
+					"[hub] failed to send initial snapshot to frontend websocket",
+					writeErr,
+				))
+			}
+		}
 
 		defer func() {
 			errnie.Info("hub: frontend websocket disconnected")
@@ -194,6 +211,89 @@ func (hub *Hub) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			hub.queue.Enqueue(stream)
 		}
 	}
+}
+
+/*
+BroadcastEvaluation translates the cognition Evaluation into a telemetry FlatBuffer
+and broadcasts it over the hub's websocket.
+*/
+func (hub *Hub) BroadcastEvaluation(eval cognition.Evaluation) {
+	if eval == nil || hub.Error() != nil || !hub.connected.Load() {
+		return
+	}
+
+	winner, _, confidence, contrast, support, surprisal, isBreak, ambiguity, _ := eval()
+
+	if isBreak {
+		return
+	}
+
+	step := hub.step.Add(1)
+
+	row := &wire.MeasurementT{
+		Source: "training",
+		Symbol: "BTC/USD",
+		Tick:   int64(step),
+		At:     time.Now().UnixNano(),
+		Metrics: []*wire.MetricT{
+			{Name: "surprisal", Raw: surprisal},
+			{Name: "ambiguity", Raw: ambiguity},
+			{Name: "confidence", Raw: confidence},
+			{Name: "contrast", Raw: contrast},
+			{Name: "support", Raw: float64(support)},
+			{Name: "steps", Raw: float64(step)},
+			{Name: "decisions", Raw: float64(step)},
+			{Name: "accuracy", Raw: confidence},
+			{Name: "edge", Raw: contrast},
+			{Name: "resolved", Raw: float64(support)},
+			{Name: "win_rate", Raw: confidence},
+		},
+	}
+
+	rows := []*wire.MeasurementT{row}
+
+	for _, kernel := range []string{
+		"correlation", "cvd", "depthflow", "derivatives", "hawkes",
+		"leadlag", "liquidity", "morphology", "pumpdump", "sentiment", "toxicity",
+	} {
+		rows = append(rows, &wire.MeasurementT{
+			Source:   kernel,
+			Symbol:   "BTC/USD",
+			Tick:     int64(step),
+			At:       time.Now().UnixNano(),
+			Snr:      confidence,
+			Maturity: ambiguity,
+			Metrics: []*wire.MetricT{
+				{Name: "snr", Raw: confidence},
+				{Name: "confidence", Raw: confidence},
+			},
+		})
+	}
+
+	if len(winner) > 0 {
+		rows = append(rows, &wire.MeasurementT{
+			Source: "decision",
+			Symbol: "BTC/USD",
+			Tick:   int64(step),
+			At:     time.Now().UnixNano(),
+			Snr:    confidence,
+			Metrics: []*wire.MetricT{
+				{Name: "action", Unit: string(winner)},
+				{Name: "confidence", Raw: confidence},
+				{Name: "reason", Unit: "attractor transition basin"},
+			},
+		})
+	}
+
+	frame := &wire.MeasurementsFrameT{Rows: rows}
+	builder := flatbuffers.NewBuilder(1024)
+	builder.Finish(frame.Pack(builder))
+	encoded := builder.FinishedBytes()
+
+	payload := new([]byte)
+	*payload = slices.Clone(encoded)
+	hub.lastFrame.Store(payload)
+	hub.queue.Enqueue(unsafe.Pointer(payload))
 }
 
 /*

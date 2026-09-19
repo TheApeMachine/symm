@@ -1,102 +1,41 @@
 package probability
 
 import (
-	"iter"
-	"math"
 	"slices"
-	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-CalibratorReading scores the arriving sample against retained prior errors
-before appending it. Ready is false until a prior exists.
+NewCalibrator creates a rank calibrator against retained prior errors.
+Retention is a configured Value transform (e.g. sequence.NewTail or nil for all history).
+Returns the empirical rank (0.0 to 1.0) of the incoming value.
+If there are no priors, returns 0.5.
 */
-type CalibratorReading struct {
-	Value      float64
-	Ready      bool
-	PriorCount float64
-}
+type Calibrator types.Value[float64, float64]
+func NewCalibrator(retention types.Value[[]float64, []float64]) Calibrator {
+	var history []float64
 
-/*
-Calibrator owns that rank. Retention is a configured collection transform:
-identity for all history, Tail for a bounded history.
-*/
-type Calibrator struct {
-	*core.PrimitiveError
+	return func(val float64) float64 {
+		rank := 0.5
 
-	history   []float64
-	retention core.Primitive
-	out       CalibratorReading
-}
-
-func NewCalibrator(retention core.Primitive) *Calibrator {
-	return &Calibrator{PrimitiveError: core.NewPrimitiveError(), retention: retention}
-}
-
-func (calibrator *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		defer func() {
-
-			if calibrator.retention != nil {
-				if err := calibrator.retention.Error(); err != nil {
-					calibrator.Error(err)
+		if len(history) > 0 {
+			hits := 0.0
+			for _, prior := range history {
+				if prior > val {
+					hits++
 				}
 			}
-		}()
-		for arriving := range in {
-			val := *(*float64)(arriving)
-
-			if math.IsNaN(val) || math.IsInf(val, 0) {
-				calibrator.Error(core.ErrShape)
-				continue
-			}
-
-			reading := CalibratorReading{
-				PriorCount: float64(len(calibrator.history)),
-				Ready:      len(calibrator.history) > 0,
-			}
-
-			if reading.Ready {
-				hits := 0.0
-
-				for _, prior := range calibrator.history {
-					if prior > val {
-						hits++
-					}
-				}
-
-				reading.Value = hits / reading.PriorCount
-			}
-
-			if calibrator.retention != nil {
-				candidate := append(slices.Clone(calibrator.history), val)
-				retainedEval := calibrator.retention
-				var retained []float64
-
-				for out := range retainedEval.Next(sequence.NewValues(candidate).Next(nil)) {
-					retained = *(*[]float64)(out)
-				}
-
-				err := retainedEval.Error()
-
-				if err != nil {
-					calibrator.Error(err)
-					return
-				}
-
-				calibrator.history = retained
-			} else {
-				calibrator.history = append(calibrator.history, val)
-			}
-
-			calibrator.out = reading
-
-			if !yield(unsafe.Pointer(&calibrator.out)) {
-				return
-			}
+			rank = hits / float64(len(history))
 		}
+
+		if retention != nil {
+			candidate := append(slices.Clone(history), val)
+			history = retention(candidate)
+		} else {
+			history = append(history, val)
+		}
+
+		return rank
 	}
 }

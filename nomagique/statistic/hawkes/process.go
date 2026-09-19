@@ -1,11 +1,10 @@
 package hawkes
 
 import (
-	"iter"
 	"time"
-	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -44,99 +43,82 @@ type Reading struct {
 }
 
 /*
-Process owns per-symbol arrival history, empirical counts, and the fitted
-bivariate Hawkes evaluation.
+NewProcess returns a stateful Value closure that tracks arrival history, empirical counts,
+and the fitted bivariate Hawkes evaluation.
+No structs, pure closure encapsulating history state.
 */
-type Process struct {
-	*core.PrimitiveError
+type Process types.Value[Event, Reading]
+func NewProcess() Process {
+	history := newPaths()
 
-	history *paths
-	out     Reading
-}
-
-func NewProcess() *Process {
-	return &Process{PrimitiveError: core.NewPrimitiveError(), history: newPaths()}
-}
-
-func (process *Process) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			event := *(*Event)(arriving)
-
-			if event.Side != "buy" && event.Side != "sell" {
-				continue
-			}
-
-			state := process.history.at(event.Symbol)
-			at := time.Unix(0, event.At)
-
-			if state.hasLast && at.Before(state.lastAt) {
-				continue
-			}
-
-			mark := -1.0
-
-			if event.Side == "buy" {
-				mark = 1.0
-			}
-
-			buyArrivals, sellArrivals := state.sides()
-			countBuy := float64(len(buyArrivals))
-			countSell := float64(len(sellArrivals))
-
-			if mark > 0 {
-				countBuy++
-			}
-
-			if mark <= 0 {
-				countSell++
-			}
-
-			count := countBuy + countSell
-			reading := Reading{
-				EventCount:   count,
-				BuyCount:     countBuy,
-				SellCount:    countSell,
-				BuyFraction:  countBuy / count,
-				SellFraction: countSell / count,
-			}
-
-			from := at
-
-			if len(state.samples) > 0 {
-				from = state.origin()
-			}
-
-			atSec := float64(event.At) * 1e-9
-			fromSec := float64(from.UnixNano()) * 1e-9
-			span := atSec - fromSec
-
-			if span > 0 {
-				reading.HasRates = true
-				reading.BuyRate = countBuy / span
-				reading.SellRate = countSell / span
-				reading.ArrivalRate = count / span
-			}
-
-			if state.modelReady {
-				reading.HasFit = true
-				process.evaluate(&reading, state, buyArrivals, sellArrivals, atSec)
-			}
-
-			state.lastAt = at
-			state.hasLast = true
-			state.remember(at, atSec, mark)
-			state.refit(atSec)
-			process.out = reading
-
-			if !yield(unsafe.Pointer(&process.out)) {
-				return
-			}
+	return func(event Event) Reading {
+		if event.Side != "buy" && event.Side != "sell" {
+			return Reading{}
 		}
+
+		state := history.at(event.Symbol)
+		at := time.Unix(0, event.At)
+
+		if state.hasLast && at.Before(state.lastAt) {
+			return Reading{}
+		}
+
+		mark := -core.Unit
+		if event.Side == "buy" {
+			mark = core.Unit
+		}
+
+		buyArrivals, sellArrivals := state.sides()
+		countBuy := float64(len(buyArrivals))
+		countSell := float64(len(sellArrivals))
+
+		if mark > 0 {
+			countBuy++
+		}
+		if mark <= 0 {
+			countSell++
+		}
+
+		count := countBuy + countSell
+		reading := Reading{
+			EventCount:   count,
+			BuyCount:     countBuy,
+			SellCount:    countSell,
+			BuyFraction:  countBuy / count,
+			SellFraction: countSell / count,
+		}
+
+		from := at
+		if len(state.samples) > 0 {
+			from = state.origin()
+		}
+
+		atSec := float64(event.At) * 1e-9
+		fromSec := float64(from.UnixNano()) * 1e-9
+		span := atSec - fromSec
+
+		if span > 0 {
+			reading.HasRates = true
+			reading.BuyRate = countBuy / span
+			reading.SellRate = countSell / span
+			reading.ArrivalRate = count / span
+		}
+
+		if state.modelReady {
+			reading.HasFit = true
+			evaluateReading(&reading, state, buyArrivals, sellArrivals, atSec)
+		}
+
+		state.lastAt = at
+		state.hasLast = true
+		state.remember(at, atSec, mark)
+		state.refit(atSec)
+
+		return reading
 	}
 }
 
-func (process *Process) evaluate(
+func evaluateReading(
 	reading *Reading,
 	state *path,
 	buyArrivals, sellArrivals []float64,

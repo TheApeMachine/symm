@@ -1,48 +1,20 @@
 package geometry
 
-import (
-	"iter"
-	"unsafe"
+import "github.com/theapemachine/symm/nomagique/types"
 
-	"github.com/theapemachine/symm/nomagique/core"
-)
-
-// Coordinate represents an addressable point in two dimensions.
-// Once used as an ordered store key, it must remain unchanged.
-type Coordinate struct {
-	*core.PrimitiveError
-	X, Y int
-}
-
-func NewCoordinate(x, y int) *Coordinate {
-	return &Coordinate{PrimitiveError: core.NewPrimitiveError(), X: x, Y: y}
-}
-
-func (coordinate *Coordinate) Identity() *Coordinate { return coordinate }
-
-func (coordinate *Coordinate) Identify(address *Coordinate) core.Identifiable[*Coordinate] {
-	coordinate.X, coordinate.Y = address.X, address.Y
-	return coordinate
-}
-
-func (coordinate *Coordinate) Less(other *Coordinate) bool {
-	if coordinate == nil || other == nil {
-		return false
-	}
-
-	if coordinate.X != other.X {
-		return coordinate.X < other.X
-	}
-
-	return coordinate.Y < other.Y
-}
-
-func (coordinate *Coordinate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		if !yield(unsafe.Pointer(&coordinate.X)) {
-			return
+/*
+NewCoordinate creates a Value closure that holds an addressable 2D position.
+When called with [2]int{0, 0}, it returns the current coordinate.
+When called with a non-zero [2]int{x, y}, it updates and returns the new coordinate.
+No structs, pure Value closure.
+*/
+type Coordinate types.Value[[2]int, [2]int]
+func NewCoordinate(x, y int) Coordinate {
+	coord := [2]int{x, y}
+	return func(update [2]int) [2]int {
+		if update != [2]int{0, 0} {
+			coord = update
 		}
-
-		yield(unsafe.Pointer(&coordinate.Y))
+		return coord
 	}
 }

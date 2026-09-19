@@ -1,10 +1,7 @@
 package probability
 
 import (
-	"iter"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -16,40 +13,23 @@ type ArgmaxResult struct {
 }
 
 /*
-Argmax preserves a winning value's ordinal through comparison.
+NewArgmax preserves a winning value's ordinal through comparison.
+No structs, pure Value closure.
 */
-type Argmax struct {
-	*core.PrimitiveError
+type Argmax types.Value[[]float64, ArgmaxResult]
+func NewArgmax() Argmax {
+	return func(values []float64) ArgmaxResult {
+		if len(values) == 0 {
+			return ArgmaxResult{}
+		}
 
-	out ArgmaxResult
-}
-
-func NewArgmax() *Argmax {
-	return &Argmax{PrimitiveError: core.NewPrimitiveError()}
-}
-
-func (argmax *Argmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		var best ArgmaxResult
-		seen := false
-		index := 0
-
-		for arriving := range in {
-			val := *(*float64)(arriving)
-
-			if !seen || val > best.Value {
-				best = ArgmaxResult{Index: index, Value: val}
-				seen = true
+		best := ArgmaxResult{Index: 0, Value: values[0]}
+		for index := 1; index < len(values); index++ {
+			if values[index] > best.Value {
+				best = ArgmaxResult{Index: index, Value: values[index]}
 			}
-
-			index++
 		}
 
-		if !seen {
-			return
-		}
-
-		argmax.out = best
-		yield(unsafe.Pointer(&argmax.out))
+		return best
 	}
 }

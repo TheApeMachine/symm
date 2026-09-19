@@ -1,60 +1,117 @@
 {
   "producers": [
     {
-      "id": "cognition/ambiguity",
-      "source": "cognition",
-      "metric": "ambiguity",
-      "package": "github.com/theapemachine/symm/logic/cognition",
-      "file": "logic/cognition/solver.go",
-      "line": 233,
+      "id": "correlation/absolute_correlation",
+      "source": "correlation",
+      "metric": "absolute_correlation",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
+          "kind": "bound",
+          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 248
         }
       ],
-      "dead": true,
+      "dead": false,
       "kernelOnly": false
     },
     {
-      "id": "cognition/stability",
-      "source": "cognition",
-      "metric": "stability",
-      "package": "github.com/theapemachine/symm/logic/cognition",
-      "file": "logic/cognition/solver.go",
-      "line": 230,
+      "id": "correlation/correlation_baseline",
+      "source": "correlation",
+      "metric": "correlation_baseline",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
+          "kind": "bound",
+          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 262
         }
       ],
-      "dead": true,
+      "dead": false,
       "kernelOnly": false
     },
     {
-      "id": "cognition/surprisal",
-      "source": "cognition",
-      "metric": "surprisal",
-      "package": "github.com/theapemachine/symm/logic/cognition",
-      "file": "logic/cognition/solver.go",
-      "line": 227,
+      "id": "correlation/correlation_divergence",
+      "source": "correlation",
+      "metric": "correlation_divergence",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
+          "kind": "bound",
+          "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 263
         }
       ],
-      "dead": true,
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/correlation_velocity",
+      "source": "correlation",
+      "metric": "correlation_velocity",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 265
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/correlation_zscore",
+      "source": "correlation",
+      "metric": "correlation_zscore",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 259
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/covariance",
+      "source": "correlation",
+      "metric": "covariance",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 249
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -64,15 +121,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/correlation_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -85,13 +134,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -103,6 +145,268 @@
       "kernelOnly": false
     },
     {
+      "id": "correlation/observationCount",
+      "source": "correlation",
+      "metric": "observationCount",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/overlap_density",
+      "source": "correlation",
+      "metric": "overlap_density",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 270
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/overlap_pair_count",
+      "source": "correlation",
+      "metric": "overlap_pair_count",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 271
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/p_value",
+      "source": "correlation",
+      "metric": "p_value",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/relative_return_energy",
+      "source": "correlation",
+      "metric": "relative_return_energy",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/relative_return_energy_baseline",
+      "source": "correlation",
+      "metric": "relative_return_energy_baseline",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 255
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/relative_return_energy_divergence",
+      "source": "correlation",
+      "metric": "relative_return_energy_divergence",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 253
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/relative_return_energy_velocity",
+      "source": "correlation",
+      "metric": "relative_return_energy_velocity",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 256
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/relative_return_energy_zscore",
+      "source": "correlation",
+      "metric": "relative_return_energy_zscore",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 252
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/return_energy_measured",
+      "source": "correlation",
+      "metric": "return_energy_measured",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/return_energy_rate_measured",
+      "source": "correlation",
+      "metric": "return_energy_rate_measured",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/return_energy_rate_reference",
+      "source": "correlation",
+      "metric": "return_energy_rate_reference",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/return_energy_reference",
+      "source": "correlation",
+      "metric": "return_energy_reference",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/shared_time",
+      "source": "correlation",
+      "metric": "shared_time",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 272
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/signed_correlation",
+      "source": "correlation",
+      "metric": "signed_correlation",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
+          "package": "github.com/theapemachine/symm/types",
+          "file": "types/category.go",
+          "line": 245
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/standard_error",
+      "source": "correlation",
+      "metric": "standard_error",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/supported_return_count_measured",
+      "source": "correlation",
+      "metric": "supported_return_count_measured",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "correlation/supported_return_count_reference",
+      "source": "correlation",
+      "metric": "supported_return_count_reference",
+      "package": "github.com/theapemachine/symm/signal",
+      "file": "signal/definitions/correlation_ticker.json",
+      "line": 1,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "cvd/aggressive_notional:buy",
       "source": "cvd",
       "metric": "aggressive_notional",
@@ -111,13 +415,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
@@ -139,13 +436,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -163,15 +453,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -182,15 +464,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -201,15 +475,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -220,15 +486,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -240,13 +498,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
@@ -267,13 +518,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -291,15 +535,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -310,15 +546,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -331,13 +559,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
@@ -359,13 +580,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -383,15 +597,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -402,15 +608,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -422,13 +620,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
@@ -449,13 +640,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -473,15 +657,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -493,13 +669,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
@@ -518,15 +687,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -537,15 +698,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -557,13 +710,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
@@ -584,13 +730,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -608,15 +747,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -627,15 +758,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -646,15 +769,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -665,15 +780,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -684,15 +791,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -704,13 +803,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
@@ -729,15 +821,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -748,15 +832,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -768,13 +844,6 @@
       "file": "signal/definitions/cvd_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
@@ -796,13 +865,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -823,13 +885,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -847,15 +902,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -866,15 +913,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -885,15 +924,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -904,15 +935,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -923,15 +946,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -942,15 +957,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -961,15 +968,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -980,15 +979,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -999,15 +990,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1018,15 +1001,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1037,15 +1012,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1056,15 +1023,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1075,15 +1034,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1094,15 +1045,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1113,15 +1056,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1132,15 +1067,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1151,15 +1078,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1170,15 +1089,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1190,13 +1101,6 @@
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
@@ -1215,15 +1119,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1234,15 +1130,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1253,15 +1141,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1272,15 +1152,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1291,15 +1163,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1310,15 +1174,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1329,15 +1185,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1348,15 +1196,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1368,13 +1208,6 @@
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:DerivativesDecoupling (github.com/theapemachine/symm/types)",
@@ -1393,15 +1226,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1413,13 +1238,6 @@
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
@@ -1438,15 +1256,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1457,15 +1267,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1476,15 +1278,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1495,15 +1289,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1514,15 +1300,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1533,15 +1311,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1552,15 +1322,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1572,15 +1334,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1592,15 +1346,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1612,13 +1358,6 @@
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:LongDeleveraging (github.com/theapemachine/symm/types)",
@@ -1637,15 +1376,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1656,15 +1387,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1675,15 +1398,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1694,15 +1409,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1714,13 +1421,6 @@
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:LongDeleveraging (github.com/theapemachine/symm/types)",
@@ -1739,15 +1439,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1758,15 +1450,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1777,15 +1461,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1796,15 +1472,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1816,13 +1484,6 @@
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:LeveragedIgnition (github.com/theapemachine/symm/types)",
@@ -1841,15 +1502,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1861,13 +1514,6 @@
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
@@ -1886,15 +1532,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1905,15 +1543,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1924,15 +1554,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1943,15 +1565,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/derivatives_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1962,15 +1576,7 @@
       "package": "github.com/theapemachine/symm/tests/market",
       "file": "tests/market/impulse.go",
       "line": 43,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -1981,15 +1587,7 @@
       "package": "github.com/theapemachine/symm/tests/market",
       "file": "tests/market/impulse.go",
       "line": 36,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2001,15 +1599,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2021,15 +1611,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2041,13 +1623,6 @@
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:Inertial (github.com/theapemachine/symm/types)",
@@ -2069,13 +1644,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:Inertial (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -2096,13 +1664,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:Inertial (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -2120,15 +1681,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2139,15 +1692,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2158,34 +1703,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/coherence_mag2",
-      "source": "hawkes",
-      "metric": "coherence_mag2",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 382,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2196,15 +1714,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2217,13 +1727,6 @@
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:Frenzy (github.com/theapemachine/symm/types)",
@@ -2245,13 +1748,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:Frenzy (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -2269,110 +1765,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/divergence",
-      "source": "hawkes",
-      "metric": "divergence",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 376,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/gas_internal",
-      "source": "hawkes",
-      "metric": "gas_internal",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 397,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/gas_kinetic",
-      "source": "hawkes",
-      "metric": "gas_kinetic",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 394,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/guidance_speed",
-      "source": "hawkes",
-      "metric": "guidance_speed",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 379,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/kuramoto_r",
-      "source": "hawkes",
-      "metric": "kuramoto_r",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 391,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2383,15 +1776,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2402,15 +1787,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2421,110 +1798,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/max_mach",
-      "source": "hawkes",
-      "metric": "max_mach",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 409,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/particle_count",
-      "source": "hawkes",
-      "metric": "particle_count",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 412,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/particle_kinetic",
-      "source": "hawkes",
-      "metric": "particle_kinetic",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 418,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/particle_thermal",
-      "source": "hawkes",
-      "metric": "particle_thermal",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 415,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/pressure_grad_norm",
-      "source": "hawkes",
-      "metric": "pressure_grad_norm",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 385,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2535,15 +1809,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2554,15 +1820,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2573,15 +1831,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2592,15 +1842,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2611,15 +1853,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2630,91 +1864,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/strain_rms",
-      "source": "hawkes",
-      "metric": "strain_rms",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 406,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/viscosity_proxy",
-      "source": "hawkes",
-      "metric": "viscosity_proxy",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 388,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/vorticity_rms",
-      "source": "hawkes",
-      "metric": "vorticity_rms",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 403,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "hawkes/wave_norm",
-      "source": "hawkes",
-      "metric": "wave_norm",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 400,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2726,13 +1876,6 @@
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
@@ -2751,15 +1894,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2771,13 +1906,6 @@
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
@@ -2798,13 +1926,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:DecoupledMove (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -2822,15 +1943,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2842,13 +1955,6 @@
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
@@ -2867,15 +1973,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2886,15 +1984,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2905,15 +1995,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2924,15 +2006,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2943,15 +2017,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2962,15 +2028,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -2982,13 +2040,6 @@
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
@@ -3007,15 +2058,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3026,15 +2069,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3045,15 +2080,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3064,15 +2091,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3083,15 +2102,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3102,15 +2113,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3121,15 +2124,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3140,15 +2135,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3159,15 +2146,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3178,15 +2157,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3197,15 +2168,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3216,15 +2179,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3235,15 +2190,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3254,15 +2201,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3273,15 +2212,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3292,15 +2223,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3311,15 +2234,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3330,15 +2245,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3349,15 +2256,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3368,15 +2267,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3387,15 +2278,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3406,15 +2289,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3425,15 +2300,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3444,15 +2311,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3463,15 +2322,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3482,15 +2333,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3501,15 +2344,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3520,15 +2355,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3539,15 +2366,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3558,15 +2377,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3577,15 +2388,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3596,15 +2399,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3615,15 +2410,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3634,15 +2421,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3653,15 +2432,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3672,15 +2443,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3691,15 +2454,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3710,15 +2465,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3729,15 +2476,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3748,15 +2487,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3768,13 +2499,6 @@
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
@@ -3793,15 +2517,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3813,13 +2529,6 @@
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
@@ -3840,13 +2549,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -3864,15 +2566,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3883,15 +2577,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3902,15 +2588,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3921,15 +2599,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3940,15 +2610,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3959,15 +2621,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3978,15 +2632,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -3997,15 +2643,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4016,15 +2654,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4036,13 +2666,6 @@
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
@@ -4061,15 +2684,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4080,15 +2695,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4099,15 +2706,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4118,15 +2717,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4137,15 +2728,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4156,300 +2739,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/coherence_mag2",
-      "source": "manifold",
-      "metric": "coherence_mag2",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 382,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/divergence",
-      "source": "manifold",
-      "metric": "divergence",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 376,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/gas_internal",
-      "source": "manifold",
-      "metric": "gas_internal",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 397,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/gas_kinetic",
-      "source": "manifold",
-      "metric": "gas_kinetic",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 394,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/guidance_speed",
-      "source": "manifold",
-      "metric": "guidance_speed",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 379,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/kuramoto_r",
-      "source": "manifold",
-      "metric": "kuramoto_r",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 391,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/max_mach",
-      "source": "manifold",
-      "metric": "max_mach",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 409,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/particle_count",
-      "source": "manifold",
-      "metric": "particle_count",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 412,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/particle_kinetic",
-      "source": "manifold",
-      "metric": "particle_kinetic",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 418,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/particle_thermal",
-      "source": "manifold",
-      "metric": "particle_thermal",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 415,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/pressure_grad_norm",
-      "source": "manifold",
-      "metric": "pressure_grad_norm",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 385,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/strain_rms",
-      "source": "manifold",
-      "metric": "strain_rms",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 406,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/viscosity_proxy",
-      "source": "manifold",
-      "metric": "viscosity_proxy",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 388,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/vorticity_rms",
-      "source": "manifold",
-      "metric": "vorticity_rms",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 403,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "manifold/wave_norm",
-      "source": "manifold",
-      "metric": "wave_norm",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 400,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4460,15 +2750,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4479,15 +2761,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4498,15 +2772,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4519,13 +2785,6 @@
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
@@ -4547,13 +2806,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -4571,15 +2823,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4590,15 +2834,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4609,15 +2845,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4630,13 +2858,6 @@
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:DenseNeutrality (github.com/theapemachine/symm/types)",
@@ -4658,13 +2879,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:DenseNeutrality (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -4682,15 +2896,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4701,15 +2907,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4720,15 +2918,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4739,15 +2929,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4758,15 +2940,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4777,15 +2951,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4796,15 +2962,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4815,15 +2973,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4834,15 +2984,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4853,15 +2995,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4872,15 +3006,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4891,15 +3017,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4910,15 +3028,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4929,15 +3039,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4948,15 +3050,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4967,15 +3061,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -4986,15 +3072,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5005,15 +3083,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5024,15 +3094,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5044,13 +3106,6 @@
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
@@ -5069,15 +3124,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5088,15 +3135,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5107,15 +3146,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5127,13 +3158,6 @@
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:OrganicTrend (github.com/theapemachine/symm/types)",
@@ -5154,13 +3178,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -5178,15 +3195,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5198,13 +3207,6 @@
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
@@ -5223,15 +3225,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5242,15 +3236,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5261,15 +3247,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5280,15 +3258,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5299,15 +3269,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5318,15 +3280,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5337,15 +3291,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5356,15 +3302,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5376,13 +3314,6 @@
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:CoiledCompression (github.com/theapemachine/symm/types)",
@@ -5403,13 +3334,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:CoiledCompression (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -5427,15 +3351,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5446,15 +3362,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5465,15 +3373,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5485,13 +3385,6 @@
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:CoiledCompression (github.com/theapemachine/symm/types)",
@@ -5510,15 +3403,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5529,15 +3414,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5548,15 +3425,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5568,13 +3437,6 @@
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:FadedExhaustion (github.com/theapemachine/symm/types)",
@@ -5595,13 +3457,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:FadedExhaustion (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -5619,15 +3474,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5638,15 +3485,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5658,13 +3497,6 @@
       "file": "signal/definitions/pumpdump_trade.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
@@ -5683,15 +3515,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5702,53 +3526,7 @@
       "package": "github.com/theapemachine/symm/tests/market",
       "file": "tests/market/training.go",
       "line": 47,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "resonance/energy",
-      "source": "resonance",
-      "metric": "energy",
-      "package": "github.com/theapemachine/symm/logic/resonance",
-      "file": "logic/resonance/solver.go",
-      "line": 288,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "resonance/surprise",
-      "source": "resonance",
-      "metric": "surprise",
-      "package": "github.com/theapemachine/symm/logic/resonance",
-      "file": "logic/resonance/solver.go",
-      "line": 291,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5759,15 +3537,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5778,15 +3548,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5797,15 +3559,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5816,15 +3570,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5836,13 +3582,6 @@
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
@@ -5861,15 +3600,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5880,15 +3611,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5899,15 +3622,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5918,15 +3633,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5937,15 +3644,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -5957,13 +3656,6 @@
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:SystemicBeta (github.com/theapemachine/symm/types)",
@@ -5984,13 +3676,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:RiskOnSurge (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -6010,13 +3695,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -6034,15 +3712,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6053,15 +3723,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6072,15 +3734,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6091,15 +3745,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6110,15 +3756,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6129,15 +3767,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6148,15 +3778,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6167,15 +3789,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6186,15 +3800,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6205,15 +3811,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6224,15 +3822,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6243,15 +3833,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6262,15 +3844,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6281,15 +3855,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6300,15 +3866,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6319,15 +3877,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6338,15 +3888,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6357,15 +3899,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6376,15 +3910,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6396,15 +3922,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6416,15 +3934,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6436,15 +3946,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6456,15 +3958,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6475,15 +3969,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6494,15 +3980,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6514,15 +3992,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6534,15 +4004,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6553,15 +4015,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6572,15 +4026,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6591,15 +4037,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6611,15 +4049,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6631,15 +4061,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6650,15 +4072,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6669,15 +4083,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6688,15 +4094,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6707,15 +4105,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6728,13 +4118,6 @@
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
       "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
         {
           "kind": "bound",
           "consumer": "category:LiquidityShock (github.com/theapemachine/symm/types)",
@@ -6756,13 +4139,6 @@
       "line": 1,
       "consumers": [
         {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        },
-        {
           "kind": "bound",
           "consumer": "category:LiquidityShock (github.com/theapemachine/symm/types)",
           "package": "github.com/theapemachine/symm/types",
@@ -6781,15 +4157,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6801,15 +4169,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6820,15 +4180,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6839,15 +4191,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6858,15 +4202,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6877,15 +4213,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6897,15 +4225,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6917,15 +4237,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6937,15 +4249,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     },
@@ -6957,110 +4261,7 @@
       "package": "github.com/theapemachine/symm/signal",
       "file": "signal/definitions/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "training/ambiguity",
-      "source": "training",
-      "metric": "ambiguity",
-      "package": "github.com/theapemachine/symm/hindsight/tables",
-      "file": "hindsight/tables/drain.go",
-      "line": 107,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "training/confidence",
-      "source": "training",
-      "metric": "confidence",
-      "package": "github.com/theapemachine/symm/hindsight/tables",
-      "file": "hindsight/tables/drain.go",
-      "line": 108,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "training/contrast",
-      "source": "training",
-      "metric": "contrast",
-      "package": "github.com/theapemachine/symm/hindsight/tables",
-      "file": "hindsight/tables/drain.go",
-      "line": 109,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "training/support",
-      "source": "training",
-      "metric": "support",
-      "package": "github.com/theapemachine/symm/hindsight/tables",
-      "file": "hindsight/tables/drain.go",
-      "line": 110,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "training/surprisal",
-      "source": "training",
-      "metric": "surprisal",
-      "package": "github.com/theapemachine/symm/hindsight/tables",
-      "file": "hindsight/tables/drain.go",
-      "line": 106,
-      "consumers": [
-        {
-          "kind": "learned",
-          "consumer": "strategy.Training associative metric learning",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/training.go",
-          "line": 80
-        }
-      ],
+      "consumers": [],
       "dead": true,
       "kernelOnly": false
     }
@@ -7764,38 +4965,17 @@
         "cvd/mean_trade_notional",
         "cvd/trade_rate"
       ]
-    },
-    {
-      "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
-      "kind": "catalog",
-      "package": "github.com/theapemachine/symm/logic/manifold",
-      "file": "logic/manifold/solver.go",
-      "line": 105,
-      "targets": [
-        "hawkes/excitation_fraction:buy",
-        "hawkes/excitation_fraction:sell"
-      ]
-    },
-    {
-      "consumer": "strategy.Training associative metric learning",
-      "kind": "learned",
-      "package": "github.com/theapemachine/symm/strategy",
-      "file": "strategy/training.go",
-      "line": 80,
-      "targets": [
-        "*"
-      ]
     }
   ],
   "unresolved": null,
   "summary": {
-    "totalProducers": 349,
-    "deadProducers": 292,
-    "referencedProducers": 57,
+    "totalProducers": 333,
+    "deadProducers": 262,
+    "referencedProducers": 71,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,
-    "catalogConsumerEdges": 2,
-    "learnedConsumerEdges": 1,
+    "catalogConsumerEdges": 0,
+    "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
     "unresolved": 0

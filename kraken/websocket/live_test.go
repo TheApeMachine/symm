@@ -1,21 +1,15 @@
 package websocket
 
 import (
-	"iter"
 	"testing"
-	"unsafe"
 
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/data/sequence"
-	"github.com/theapemachine/symm/nomagique/geometry"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func makeLiveEvent(raw []byte) *callback.Event[*sdk.WebSocketMessage] {
@@ -24,51 +18,24 @@ func makeLiveEvent(raw []byte) *callback.Event[*sdk.WebSocketMessage] {
 	}
 }
 
-type take struct {
-	*core.PrimitiveError
-	out float64
-}
-
-func (take *take) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		if in == nil {
-			if take.out != 0 {
-				yield(unsafe.Pointer(&take.out))
-			}
-			return
-		}
-
-		for arriving := range in {
-			input := (*core.Input[string, []string, any])(arriving)
-
-			if input == nil || input.Value == nil {
-				continue
-			}
-
-			value, ok := (*input.Value).(float64)
-
-			if !ok {
-				continue
-			}
-
-			take.out = value
-
-			if !yield(unsafe.Pointer(&take.out)) {
-				return
-			}
-		}
-	}
-}
-
 func TestLiveStepReadiness(t *testing.T) {
 	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
-		node := &Live{System: runtime.NewSystem(t.Context(), "readiness-test")}
-		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+		called := false
+		node := &Live{
+			System: runtime.NewSystem(t.Context(), "readiness-test"),
+			pipeline: func(in any) any {
+				called = true
+				return in
+			},
+		}
+
+		raw := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ETH/USD","last":101.5}]}`)
+
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
-			So(sequence.Read[*data.Measurement[float64]](node.Next(sequence.NewValue(measurement))), ShouldEqual, measurement)
+			node.onReceived(makeLiveEvent(raw))
+			So(called, ShouldBeFalse)
 			So(node.Status(), ShouldEqual, stage)
-			So(measurement.SeqIdx, ShouldEqual, 7)
 		}
 	})
 }
@@ -95,36 +62,34 @@ func TestLiveConnections(t *testing.T) {
 }
 
 func TestLiveWritesTickerToGrid(t *testing.T) {
-	Convey("A public ticker row is written to the grid through Query Write", t, func() {
-		grid := store.NewGrid[*geometry.Coordinate]()
-		held := store.NewRetained[float64]()
-		conn := transport.NewConn[*geometry.Coordinate](
-			nomagique.NewNumber(&take{PrimitiveError: core.NewPrimitiveError()}, held),
-		)
-		sequence.Read[core.Connectable[*geometry.Coordinate]](grid.Next(
-			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				conn, core.Identify,
-			).Next(sequence.NewValue([][]string{{"ticker", "data", "last"}})),
-		))
+	Convey("A public ticker row is written to the grid", t, func() {
+		keyA := store.NewKey[any]("ticker", "data", "last")
+		cellA := func(in any) float64 {
+			if val := keyA(in); val != nil {
+				return *val
+			}
+			return 0
+		}
 
-		pipeline := nomagique.NewNumber(
-			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](nil, core.Write),
-			grid,
-		)
+		grid := store.NewGrid[any, float64]()
+		var zero any
+		grid(transport.NewMessage[any, float64](transport.REGISTER, zero, types.Value[any, float64](cellA)))
+
 		live := &Live{
-			System:   runtime.NewSystem(t.Context(), "public"),
-			pipeline: pipeline,
+			System: runtime.NewSystem(t.Context(), "public"),
+			pipeline: func(in any) any {
+				grid(transport.NewMessage[any, float64](transport.POKE, in, nil))
+				return nil
+			},
 		}
 		live.Transition(runtime.READY)
 
 		raw := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ETH/USD","last":101.5}]}`)
 		live.onReceived(makeLiveEvent(raw))
 
-		reading := sequence.Read[float64](grid.Next(
-			core.NewQuery[*geometry.Coordinate, core.Connectable[*geometry.Coordinate]](
-				conn, core.Read,
-			).Next(nil),
-		))
-		So(reading, ShouldEqual, 101.5)
+		readings := grid(transport.NewMessage[any, float64](transport.PEEK, zero, nil))
+		So(readings, ShouldNotBeNil)
+		So(len(readings), ShouldEqual, 1)
+		So(readings[0], ShouldEqual, 101.5)
 	})
 }
