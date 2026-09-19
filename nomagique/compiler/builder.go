@@ -2,11 +2,9 @@ package compiler
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -75,112 +73,13 @@ func (b *Builder) Interests() [][]string {
 
 /*
 Compose dynamically wires the graph at runtime into a nomagique.Number pipeline.
-It returns an executable Number closure that runs the entire graph topologically.
+It delegates to Compile using the DefaultRegistry.
 */
 func (b *Builder) Compose() (nomagique.Number[any], error) {
-	instances := make(map[string]types.Value[any, any])
-	inDegree := make(map[string]int)
-	adjacency := make(map[string][]string)
-
-	// 1. Instantiate the nodes and build dependency graph
-	for id := range b.graph.Nodes {
-		inDegree[id] = 0 // Initialize
+	compiled, err := Compile[any](b.graph, DefaultRegistry())
+	if err != nil {
+		return nil, err
 	}
 
-	for id, node := range b.graph.Nodes {
-		if factory, exists := Registry[node.Type]; exists {
-			instances[id] = factory()
-		}
-
-		// Map outgoing edges for topological sort
-		for _, targets := range node.Connections.Outputs {
-			for _, target := range targets {
-				adjacency[id] = append(adjacency[id], target.NodeID)
-				inDegree[target.NodeID]++
-			}
-		}
-	}
-
-	// 2. Topological Sort (Kahn's Algorithm)
-	var queue []string
-	for id, degree := range inDegree {
-		if degree == 0 {
-			queue = append(queue, id)
-		}
-	}
-
-	var execOrder []string
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		execOrder = append(execOrder, current)
-
-		for _, neighbor := range adjacency[current] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
-				queue = append(queue, neighbor)
-			}
-		}
-	}
-
-	if len(execOrder) != len(b.graph.Nodes) {
-		return nil, fmt.Errorf("cycle detected in signal graph: %s", b.graph.Name)
-	}
-
-	// 3. Return the dynamic execution Number pipeline
-	execPipeline := nomagique.NewNumber[any](func(input any) any {
-		state := make(map[string]any)
-
-		for id, node := range b.graph.Nodes {
-			if node.Type == "source" || node.Type == "data.Source" || id == "source" || id == "src" {
-				state[id] = input
-			}
-		}
-
-		for _, nodeID := range execOrder {
-			node := b.graph.Nodes[nodeID]
-			closure, ok := instances[nodeID]
-
-			if !ok {
-				continue
-			}
-
-			var inputData any
-
-			for _, targets := range node.Connections.Inputs {
-				if len(targets) > 0 {
-					upstreamID := targets[0].NodeID
-					inputData = state[upstreamID]
-					break
-				}
-			}
-
-			if inputData == nil {
-				state[nodeID] = nil
-				continue
-			}
-
-			state[nodeID] = closure(inputData)
-		}
-
-		for id, node := range b.graph.Nodes {
-			if id != "sink" && node.Type != "sink" && node.Type != "data.Sink" {
-				continue
-			}
-
-			for _, targets := range node.Connections.Inputs {
-				if len(targets) == 0 {
-					continue
-				}
-
-				if value := state[targets[0].NodeID]; value != nil {
-					return value
-				}
-			}
-		}
-
-		return nil
-	})
-
-	return execPipeline, nil
+	return nomagique.Number[any](compiled), nil
 }

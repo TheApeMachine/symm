@@ -58,7 +58,7 @@ func NewGate() Gate {
 }
 
 /*
-Submit maps an action into an execution event fact.
+Submit maps an action into an execution intent fact.
 No structs, pure Value closure.
 */
 type Submit types.Value[string, map[string]any]
@@ -70,9 +70,8 @@ func NewSubmit() Submit {
 		}
 
 		return map[string]any{
-			"symbol":    "BTC/USD",
 			"action":    action,
-			"status":    "FILLED",
+			"status":    "SUBMITTED",
 			"timestamp": time.Now().UnixNano(),
 		}
 	}

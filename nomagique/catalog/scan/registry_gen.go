@@ -48,10 +48,10 @@ func GenerateRegistry(schemas map[string]catalog.Schema) error {
 	buf.WriteString(")\n\n")
 
 	buf.WriteString("/*\n")
-	buf.WriteString("Registry maps the string types from the JSON graph to factory functions\n")
-	buf.WriteString("that instantiate their `Value[any, any]` wrappers. \n")
+	buf.WriteString("DefaultPrimitiveFactories maps string types to factory functions\n")
+	buf.WriteString("that instantiate their `Value[any, any]` wrappers.\n")
 	buf.WriteString("*/\n")
-	buf.WriteString("var Registry = map[string]func() types.Value[any, any]{\n")
+	buf.WriteString("var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{\n")
 
 	for _, entry := range entries {
 		fmt.Fprintf(&buf, "\t\"%s\": func() types.Value[any, any] {\n", entry.Op)
@@ -78,26 +78,11 @@ func GenerateRegistry(schemas map[string]catalog.Schema) error {
 		fmt.Fprintf(&buf, "\t},\n")
 	}
 
-	buf.WriteString("}\n\n")
-	buf.WriteString("/*\n")
-	buf.WriteString("Primitives returns a UI-compatible definition list of available primitive nodes.\n")
-	buf.WriteString("*/\n")
-	buf.WriteString("func Primitives() (any, error) {\n")
-	buf.WriteString("\tres := make(map[string]map[string]any)\n")
-	buf.WriteString("\tfor k := range Registry {\n")
-	buf.WriteString("\t\tres[k] = map[string]any{\n")
-	buf.WriteString("\t\t\t\"type\":    k,\n")
-	buf.WriteString("\t\t\t\"label\":   k,\n")
-	buf.WriteString("\t\t\t\"inputs\":  []any{},\n")
-	buf.WriteString("\t\t\t\"outputs\": []any{},\n")
-	buf.WriteString("\t\t}\n")
-	buf.WriteString("\t}\n")
-	buf.WriteString("\treturn res, nil\n")
 	buf.WriteString("}\n")
 
 	content := buf.Bytes()
-	
-	dest := "nomagique/compiler/registry.go"
+
+	dest := "nomagique/compiler/registry_gen.go"
 	existing, err := os.ReadFile(dest)
 	if err == nil && bytes.Equal(existing, content) {
 		return nil

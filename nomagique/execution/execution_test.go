@@ -40,7 +40,7 @@ func TestExecutionPipeline(t *testing.T) {
 			event := submit(allowed)
 			So(event, ShouldNotBeNil)
 			So(event["action"], ShouldEqual, "enter")
-			So(event["status"], ShouldEqual, "FILLED")
+			So(event["status"], ShouldEqual, "SUBMITTED")
 		})
 	})
 }

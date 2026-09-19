@@ -76,12 +76,24 @@ func NewWSRead() types.Value[*WSConnection, *WSMessage] {
 }
 
 /*
-NewWSWrite creates a closure that writes a message to the WebSocket.
+NewWSWrite creates a closure that writes a message to the WebSocket connection.
 */
-func NewWSWrite() types.Value[*WSMessage, error] {
+func NewWSWrite(ws *WSConnection) types.Value[*WSMessage, error] {
 	return func(msg *WSMessage) error {
 		if msg == nil {
 			return nil
+		}
+
+		if ws == nil || ws.conn == nil {
+			return errnie.Error(errnie.Err(errnie.IO, "transport: websocket not connected", nil))
+		}
+
+		ws.mu.Lock()
+		defer ws.mu.Unlock()
+
+		err := ws.conn.WriteMessage(msg.Type, msg.Payload)
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.IO, "transport: websocket write failed", err))
 		}
 
 		return nil

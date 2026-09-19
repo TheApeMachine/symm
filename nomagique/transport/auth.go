@@ -65,10 +65,27 @@ func NewHMACSHA256(secret []byte) types.Value[[]byte, []byte] {
 }
 
 /*
-NewSigner creates an HTTPRequest signing closure using API Key and Secret.
-It attaches the API-Key and computed HMAC signature to the request headers.
+NewSigner creates an HTTPRequest signing closure using API Key, Secret, and optional custom header names.
+Optional headers are: keyHeader, signHeader, nonceHeader.
+Defaults to "API-Key", "API-Sign", "Nonce".
 */
-func NewSigner(apiKey, secretBase64 string) types.Value[*HTTPRequest, *HTTPRequest] {
+func NewSigner(apiKey, secretBase64 string, headers ...string) types.Value[*HTTPRequest, *HTTPRequest] {
+	keyHeader := "API-Key"
+	signHeader := "API-Sign"
+	nonceHeader := "Nonce"
+
+	if len(headers) > 0 && headers[0] != "" {
+		keyHeader = headers[0]
+	}
+
+	if len(headers) > 1 && headers[1] != "" {
+		signHeader = headers[1]
+	}
+
+	if len(headers) > 2 && headers[2] != "" {
+		nonceHeader = headers[2]
+	}
+
 	decodedSecret, _ := base64.StdEncoding.DecodeString(secretBase64)
 	if len(decodedSecret) == 0 {
 		decodedSecret = []byte(secretBase64)
@@ -89,9 +106,9 @@ func NewSigner(apiKey, secretBase64 string) types.Value[*HTTPRequest, *HTTPReque
 		payload := fmt.Sprintf("%d%s", nonce, string(req.Body))
 		signature := signer([]byte(payload))
 
-		req.Headers["API-Key"] = apiKey
-		req.Headers["API-Sign"] = base64.StdEncoding.EncodeToString(signature)
-		req.Headers["Nonce"] = fmt.Sprintf("%d", nonce)
+		req.Headers[keyHeader] = apiKey
+		req.Headers[signHeader] = base64.StdEncoding.EncodeToString(signature)
+		req.Headers[nonceHeader] = fmt.Sprintf("%d", nonce)
 
 		return req
 	}

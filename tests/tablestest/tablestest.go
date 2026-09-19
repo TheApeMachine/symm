@@ -16,7 +16,7 @@ import (
 
 	"github.com/apache/iceberg-go/catalog"
 	icesql "github.com/apache/iceberg-go/catalog/sql"
-	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/store/tables"
 
 	// modernc's driver is pure Go, so tests need no cgo toolchain.
 	_ "modernc.org/sqlite"

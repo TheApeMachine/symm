@@ -17,8 +17,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/generated"
-	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/definitions"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/catalog/scan"
+	"github.com/theapemachine/symm/nomagique/compiler"
+	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store/tables"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -98,18 +102,28 @@ var (
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
-			deps := generated.Dependencies{
-				Context: ctx,
-				Config:  system.Cfg,
-				Catalog: catalog,
-			}
-
-			sys, err := generated.NewTrainingSystem(deps)
+			schemas, err := scan.Tree("nomagique")
 			if err != nil {
 				return errnie.Error(err)
 			}
 
-			return sys.Run()
+			reg := compiler.NewRegistry(schemas)
+
+			systemGraph, err := definitions.Load("system")
+			if err != nil {
+				return errnie.Error(err)
+			}
+
+			systemPipeline, err := compiler.Compile[any](systemGraph, reg)
+			if err != nil {
+				return errnie.Error(err)
+			}
+
+			workspace := nomagiqueruntime.NewWorkspaceWithPipeline(ctx, "system", nomagique.Number[any](systemPipeline))
+			defer workspace.Close()
+
+			<-ctx.Done()
+			return nil
 		},
 	}
 )

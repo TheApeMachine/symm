@@ -11,36 +11,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-func init() {
-	Registry["pipeline.Signals"] = func() types.Value[any, any] {
-		signals := NewSignals()
-		return func(in any) any {
-			return signals(in)
-		}
-	}
-
-	Registry["pipeline.Logic"] = func() types.Value[any, any] {
-		logic := NewLogic()
-		return func(in any) any {
-			readings, ok := in.([]float64)
-			if !ok {
-				return nil
-			}
-			return logic(readings)
-		}
-	}
-
-	Registry["pipeline.Execution"] = func() types.Value[any, any] {
-		execution := NewExecution()
-		return func(in any) any {
-			eval, ok := in.(cognition.Evaluation)
-			if !ok {
-				return nil
-			}
-			return execution(eval)
-		}
-	}
-}
 
 func NewSignals() types.Value[any, []float64] {
 	dir := definitionsDir()

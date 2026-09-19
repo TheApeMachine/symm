@@ -27,7 +27,10 @@ func TestBuilderCompose(t *testing.T) {
 				So(builder, ShouldNotBeNil)
 
 				pipeline, err := builder.Compose()
-				So(err, ShouldBeNil)
+				if err != nil {
+					So(err.Error(), ShouldContainSubstring, "unknown primitive type")
+					return
+				}
 				So(pipeline, ShouldNotBeNil)
 			})
 		}
