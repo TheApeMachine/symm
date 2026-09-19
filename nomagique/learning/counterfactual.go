@@ -22,9 +22,9 @@ The resulting closure accepts a tuple `[HistoricalRows, FactualRow]`.
 It returns `[CounterfactualOutcome, Precision]`, where Precision is an inverse error weight.
 */
 type Counterfactual types.Value[[2][][]float64, [2]float64]
-func NewCounterfactual(tolerance float64, features []int, target int, treatment int, level float64) Counterfactual {
-	fitNode := NewLinearFit(tolerance, features, target)
-	predictNode := NewLinearPrediction(features)
+func NewCounterfactual(tolerance types.Float, target, treatment types.Integer, level types.Float, features ...types.Integer) Counterfactual {
+	fitNode := NewLinearFit(tolerance, target, features...)
+	predictNode := NewLinearPrediction(features...)
 
 	return func(in [2][][]float64) [2]float64 {
 		history := in[0]
@@ -38,11 +38,24 @@ func NewCounterfactual(tolerance float64, features []int, target int, treatment 
 			return undefined // Model undefined
 		}
 
-		if target < 0 || target >= len(factualRow) {
+		t := 0
+		if target != nil {
+			t = target(in)
+		}
+		treat := 0
+		if treatment != nil {
+			treat = treatment(in)
+		}
+		lev := 0.0
+		if level != nil {
+			lev = level(in)
+		}
+
+		if t < 0 || t >= len(factualRow) {
 			return undefined
 		}
 
-		factualOutcome := factualRow[target]
+		factualOutcome := factualRow[t]
 
 		// 2. Compute Factual Residual (Noise 'u')
 		factualPrediction := predictNode([2][]float64{coefficients, factualRow})
@@ -52,17 +65,17 @@ func NewCounterfactual(tolerance float64, features []int, target int, treatment 
 		intervened := make([]float64, len(factualRow))
 		copy(intervened, factualRow)
 
-		if treatment < 0 || treatment >= len(intervened) {
+		if treat < 0 || treat >= len(intervened) {
 			return undefined
 		}
-		intervened[treatment] = level
+		intervened[treat] = lev
 
 		// 4. Counterfactual Prediction (using identical noise 'u')
 		counterfactualPrediction := predictNode([2][]float64{coefficients, intervened})
 		counterfactualOutcome := counterfactualPrediction + noise
 
-		// Precision is a measure of audit weight: 1 / (1 + |noise|)
-		precision := core.Unit / (core.Unit + math.Abs(noise))
+		// 5. Precision
+		precision := core.Unit / (1.0 + math.Abs(noise))
 
 		return [2]float64{counterfactualOutcome, precision}
 	}

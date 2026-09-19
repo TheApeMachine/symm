@@ -18,6 +18,7 @@ import (
 	probability "github.com/theapemachine/symm/nomagique/probability"
 	statistic "github.com/theapemachine/symm/nomagique/statistic"
 	temporal "github.com/theapemachine/symm/nomagique/temporal"
+	transport "github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -428,7 +429,7 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 		}
 	},
 	"data.Extract": func() types.Value[any, any] {
-		closure := data.NewExtract("value")
+		closure := data.NewExtract(types.Const("value"))
 		return func(in any) any {
 			return closure(in.(map[string]any))
 		}
@@ -869,6 +870,60 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 		closure := temporal.NewVelocity()
 		return func(in any) any {
 			return closure(in.([2]float64))
+		}
+	},
+	"transport.Base64Decode": func() types.Value[any, any] {
+		closure := transport.NewBase64Decode()
+		return func(in any) any {
+			return closure(in.(string))
+		}
+	},
+	"transport.Base64Encode": func() types.Value[any, any] {
+		closure := transport.NewBase64Encode()
+		return func(in any) any {
+			return closure(in.([]byte))
+		}
+	},
+	"transport.DecodeJSON": func() types.Value[any, any] {
+		closure := transport.NewDecodeJSON()
+		return func(in any) any {
+			return closure(in.([]byte))
+		}
+	},
+	"transport.EncodeJSON": func() types.Value[any, any] {
+		closure := transport.NewEncodeJSON()
+		return func(in any) any {
+			return closure(in.(any))
+		}
+	},
+	"transport.Nonce": func() types.Value[any, any] {
+		closure := transport.NewNonce()
+		return func(in any) any {
+			return closure(in.(any))
+		}
+	},
+	"transport.SHA256": func() types.Value[any, any] {
+		closure := transport.NewSHA256()
+		return func(in any) any {
+			return closure(in.([]byte))
+		}
+	},
+	"transport.Timestamp": func() types.Value[any, any] {
+		closure := transport.NewTimestamp()
+		return func(in any) any {
+			return closure(in.(any))
+		}
+	},
+	"transport.WSClose": func() types.Value[any, any] {
+		closure := transport.NewWSClose()
+		return func(in any) any {
+			return closure(in.(*transport.WSConnection))
+		}
+	},
+	"transport.WSRead": func() types.Value[any, any] {
+		closure := transport.NewWSRead()
+		return func(in any) any {
+			return closure(in.(*transport.WSConnection))
 		}
 	},
 }

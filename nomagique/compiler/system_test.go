@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique/compiler"
 )
 
@@ -19,7 +20,7 @@ func TestSystemOrchestration(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(builder, ShouldNotBeNil)
 
-		systemPipeline, err := builder.Compose()
+		systemPipeline, err := builder.Compose(definitions.Default())
 		So(err, ShouldBeNil)
 		So(systemPipeline, ShouldNotBeNil)
 

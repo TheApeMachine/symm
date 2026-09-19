@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/types"
 	"golang.design/x/lockfree/wf"
 )
 
@@ -53,16 +54,19 @@ type AnomalyMonitor struct {
 	running atomic.Bool
 }
 
-func NewAnomalyMonitor(ctx context.Context, capacity int) *AnomalyMonitor {
-	if capacity <= 0 {
-		capacity = 4096
+func NewAnomalyMonitor(ctx context.Context, capacity types.Integer) *AnomalyMonitor {
+	capVal := 4096
+	if capacity != nil {
+		if c := capacity(nil); c > 0 {
+			capVal = c
+		}
 	}
 
 	monitorCtx, cancel := context.WithCancel(ctx)
 	monitor := &AnomalyMonitor{
 		ctx:    monitorCtx,
 		cancel: cancel,
-		ring:   wf.NewRingBuffer[MarketAnomaly](capacity),
+		ring:   wf.NewRingBuffer[MarketAnomaly](capVal),
 	}
 
 	monitor.running.Store(true)

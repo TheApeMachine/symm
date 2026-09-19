@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -13,9 +12,11 @@ import (
 )
 
 /*
-NewNonce creates a monotonic nonce generator closure.
+Nonce generates a monotonic int64 sequence.
 */
-func NewNonce() types.Value[any, int64] {
+type Nonce types.Value[any, int64]
+
+func NewNonce() Nonce {
 	var counter int64 = time.Now().UnixNano()
 
 	return func(any) int64 {
@@ -24,18 +25,22 @@ func NewNonce() types.Value[any, int64] {
 }
 
 /*
-NewTimestamp creates a timestamp generator closure returning current Unix epoch in milliseconds.
+Timestamp produces current Unix epoch in milliseconds.
 */
-func NewTimestamp() types.Value[any, int64] {
+type Timestamp types.Value[any, int64]
+
+func NewTimestamp() Timestamp {
 	return func(any) int64 {
 		return time.Now().UnixMilli()
 	}
 }
 
 /*
-NewSHA256 creates a SHA-256 hash closure over bytes.
+SHA256 computes a SHA-256 hash over bytes.
 */
-func NewSHA256() types.Value[[]byte, []byte] {
+type SHA256 types.Value[[]byte, []byte]
+
+func NewSHA256() SHA256 {
 	return func(data []byte) []byte {
 		h := sha256.Sum256(data)
 		return h[:]
@@ -43,109 +48,123 @@ func NewSHA256() types.Value[[]byte, []byte] {
 }
 
 /*
-NewHMACSHA512 creates an HMAC-SHA512 signing closure using the secret key.
+HMACSHA512 signs message bytes using the secret provided via the secret port.
 */
-func NewHMACSHA512(secret []byte) types.Value[[]byte, []byte] {
+type HMACSHA512 types.Value[[]byte, []byte]
+
+func NewHMACSHA512(secret types.Bytes) HMACSHA512 {
 	return func(message []byte) []byte {
-		mac := hmac.New(sha512.New, secret)
+		var sec []byte
+		if secret != nil {
+			sec = secret(message)
+		}
+		mac := hmac.New(sha512.New, sec)
 		mac.Write(message)
 		return mac.Sum(nil)
 	}
 }
 
 /*
-NewHMACSHA256 creates an HMAC-SHA256 signing closure using the secret key.
+HMACSHA256 signs message bytes using the secret provided via the secret port.
 */
-func NewHMACSHA256(secret []byte) types.Value[[]byte, []byte] {
+type HMACSHA256 types.Value[[]byte, []byte]
+
+func NewHMACSHA256(secret types.Bytes) HMACSHA256 {
 	return func(message []byte) []byte {
-		mac := hmac.New(sha256.New, secret)
+		var sec []byte
+		if secret != nil {
+			sec = secret(message)
+		}
+		mac := hmac.New(sha256.New, sec)
 		mac.Write(message)
 		return mac.Sum(nil)
 	}
 }
 
 /*
-NewSigner creates an HTTPRequest signing closure using API Key, Secret, and optional custom header names.
-Optional headers are: keyHeader, signHeader, nonceHeader.
-Defaults to "API-Key", "API-Sign", "Nonce".
+Base64Encode encodes bytes into a base64 string.
 */
-func NewSigner(apiKey, secretBase64 string, headers ...string) types.Value[*HTTPRequest, *HTTPRequest] {
-	keyHeader := "API-Key"
-	signHeader := "API-Sign"
-	nonceHeader := "Nonce"
+type Base64Encode types.Value[[]byte, string]
 
-	if len(headers) > 0 && headers[0] != "" {
-		keyHeader = headers[0]
-	}
-
-	if len(headers) > 1 && headers[1] != "" {
-		signHeader = headers[1]
-	}
-
-	if len(headers) > 2 && headers[2] != "" {
-		nonceHeader = headers[2]
-	}
-
-	decodedSecret, _ := base64.StdEncoding.DecodeString(secretBase64)
-	if len(decodedSecret) == 0 {
-		decodedSecret = []byte(secretBase64)
-	}
-
-	signer := NewHMACSHA512(decodedSecret)
-
-	return func(req *HTTPRequest) *HTTPRequest {
-		if req == nil {
-			return nil
-		}
-
-		if req.Headers == nil {
-			req.Headers = make(map[string]string)
-		}
-
-		nonce := time.Now().UnixNano()
-		payload := fmt.Sprintf("%d%s", nonce, string(req.Body))
-		signature := signer([]byte(payload))
-
-		req.Headers[keyHeader] = apiKey
-		req.Headers[signHeader] = base64.StdEncoding.EncodeToString(signature)
-		req.Headers[nonceHeader] = fmt.Sprintf("%d", nonce)
-
-		return req
+func NewBase64Encode() Base64Encode {
+	return func(data []byte) string {
+		return base64.StdEncoding.EncodeToString(data)
 	}
 }
 
 /*
-NewBearerAuth attaches a Bearer token authorization header to an HTTPRequest.
+Base64Decode decodes a base64 string into bytes.
 */
-func NewBearerAuth(token string) types.Value[*HTTPRequest, *HTTPRequest] {
-	return func(req *HTTPRequest) *HTTPRequest {
-		if req == nil {
-			return nil
-		}
+type Base64Decode types.Value[string, []byte]
 
-		if req.Headers == nil {
-			req.Headers = make(map[string]string)
-		}
-
-		req.Headers["Authorization"] = "Bearer " + token
-		return req
+func NewBase64Decode() Base64Decode {
+	return func(data string) []byte {
+		decoded, _ := base64.StdEncoding.DecodeString(data)
+		return decoded
 	}
 }
 
 /*
-NewHeaderAuth attaches a generic key-value header to an HTTPRequest.
+HeaderAuth attaches a key-value header to the data map using key and value ports.
 */
-func NewHeaderAuth(key, value string) types.Value[*HTTPRequest, *HTTPRequest] {
-	return func(req *HTTPRequest) *HTTPRequest {
-		if req == nil {
-			return nil
+type HeaderAuth types.Value[map[string]any, map[string]any]
+
+func NewHeaderAuth(key types.String, value types.String) HeaderAuth {
+	return func(in map[string]any) map[string]any {
+		if in == nil {
+			in = make(map[string]any)
 		}
 
-		if req.Headers == nil {
-			req.Headers = make(map[string]string)
+		k := ""
+		if key != nil {
+			k = key(in)
 		}
 
-		req.Headers[key] = value
-		return req
+		v := ""
+		if value != nil {
+			v = value(in)
+		}
+
+		headers, ok := in["headers"].(map[string]string)
+		if !ok || headers == nil {
+			headers = make(map[string]string)
+			in["headers"] = headers
+		}
+
+		if k != "" {
+			headers[k] = v
+		}
+
+		return in
+	}
+}
+
+/*
+BearerAuth attaches a Bearer authorization header using a token port.
+*/
+type BearerAuth types.Value[map[string]any, map[string]any]
+
+func NewBearerAuth(token types.String) BearerAuth {
+	return func(in map[string]any) map[string]any {
+		if in == nil {
+			in = make(map[string]any)
+		}
+
+		t := ""
+		if token != nil {
+			t = token(in)
+		}
+
+		headers, ok := in["headers"].(map[string]string)
+		if !ok || headers == nil {
+			headers = make(map[string]string)
+			in["headers"] = headers
+		}
+
+		if t != "" {
+			headers["Authorization"] = "Bearer " + t
+		}
+
+		return in
 	}
 }

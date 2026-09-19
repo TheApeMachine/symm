@@ -49,7 +49,11 @@ NewSeries creates fixed storage for each key observed by one owner.
 No structs, pure Value closure holding rings state.
 */
 type Series[Value any] types.Value[SeriesInput[Value], SeriesReading[Value]]
-func NewSeries[Value any](capacity int) Series[Value] {
+func NewSeries[Value any](capacity types.Integer) Series[Value] {
+	capVal := 100
+	if capacity != nil {
+		capVal = capacity(nil)
+	}
 	rings := make(map[string]*seriesRing[Value])
 
 	return func(input SeriesInput[Value]) SeriesReading[Value] {
@@ -60,14 +64,14 @@ func NewSeries[Value any](capacity int) Series[Value] {
 			Value: input.Value,
 		}
 
-		if capacity <= 0 {
+		if capVal <= 0 {
 			return reading
 		}
 
 		if input.Query {
 			reading.Value, reading.Found = asOf(rings, input.Key, input.Sec, input.Nsec)
 		} else {
-			reading.Found = observe(rings, capacity, input.Key, input.Sec, input.Nsec, input.Value)
+			reading.Found = observe(rings, capVal, input.Key, input.Sec, input.Nsec, input.Value)
 		}
 
 		return reading

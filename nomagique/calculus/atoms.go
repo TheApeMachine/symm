@@ -85,9 +85,17 @@ type Bound types.Value[float64, float64]
 /*
 NewBound creates a closure that clamps an incoming value within fixed min/max thresholds.
 */
-func NewBound(min, max float64) Bound {
+func NewBound(min, max types.Float) Bound {
 	return func(in float64) float64 {
-		return math.Max(min, math.Min(max, in))
+		mi := -math.MaxFloat64
+		if min != nil {
+			mi = min(in)
+		}
+		ma := math.MaxFloat64
+		if max != nil {
+			ma = max(in)
+		}
+		return math.Max(mi, math.Min(ma, in))
 	}
 }
 

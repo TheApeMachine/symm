@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestCausalLearning(t *testing.T) {
@@ -18,14 +19,14 @@ func TestCausalLearning(t *testing.T) {
 			{5, 11},
 		}
 
-		fit := NewLinearFit(1e-9, []int{0}, 1)
+		fit := NewLinearFit(types.Const(1e-9), types.Const(1), types.Const(0))
 		coeffs := fit(rows)
 
 		So(coeffs, ShouldNotBeNil)
 		So(coeffs[0], ShouldAlmostEqual, core.Unit, 1e-6) // Intercept = 1
 		So(coeffs[1], ShouldAlmostEqual, 2.0, 1e-6)       // Slope = 2
 
-		predict := NewLinearPrediction([]int{0})
+		predict := NewLinearPrediction(types.Const(0))
 		pred := predict([2][]float64{coeffs, {10.0, 0.0}})
 		So(pred, ShouldAlmostEqual, 21.0, 1e-6)
 	})
@@ -49,7 +50,7 @@ func TestCausalLearning(t *testing.T) {
 		// row 3: 2(10) + 3(3) + 1 = 30
 		// row 4: 2(10) + 3(5) + 1 = 36
 		// Mean = (27 + 24 + 33 + 30 + 36) / 5 = 150 / 5 = 30.0
-		backdoor := NewBackdoor(1e-9, []int{0, 1}, 2, 0, 10.0)
+		backdoor := NewBackdoor(types.Const(1e-9), types.Const(2), types.Const(0), types.Const(10.0), types.Const(0), types.Const(1))
 		expY := backdoor(rows)
 
 		So(expY, ShouldAlmostEqual, 30.0, 1e-6)
@@ -70,7 +71,7 @@ func TestCausalLearning(t *testing.T) {
 
 		// Counterfactual query: what would Y have been if X had been 1?
 		// Model counterfactual: 2(1) + 1 + u = 3 + 1.0 = 4.0
-		cf := NewCounterfactual(1e-9, []int{0}, 1, 0, 1.0)
+		cf := NewCounterfactual(types.Const(1e-9), types.Const(1), types.Const(0), types.Const(1.0), types.Const(0))
 		result := cf([2][][]float64{history, {factualRow}})
 
 		So(result[0], ShouldAlmostEqual, 4.0, 1e-6)

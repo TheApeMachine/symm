@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestAnomalyMonitor(t *testing.T) {
@@ -13,7 +14,7 @@ func TestAnomalyMonitor(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		monitor := NewAnomalyMonitor(ctx, 64)
+		monitor := NewAnomalyMonitor(ctx, types.Const(64))
 		defer monitor.Close()
 
 		Convey("Initial state has perfect health", func() {

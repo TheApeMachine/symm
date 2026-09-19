@@ -1,10 +1,7 @@
 package learning
 
 import (
-	"fmt"
-	"iter"
 	"math"
-	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
@@ -21,66 +18,38 @@ of canonical mathematical and statistical atoms.
 It takes an error magnitude and yields a bounded exponential moving average of an
 adapted learning rate, scaled by the empirical rank of the incoming error.
 */
-func Pace(rest, lower, upper, gain, band float64, window int) types.Value[float64, float64] {
+func Pace(rest, lower, upper, gain, band types.Float, window types.Integer) types.Value[float64, float64] {
+	restVal := rest(nil)
+	lowerVal := lower(nil)
+	upperVal := upper(nil)
+	gainVal := gain(nil)
+	bandVal := band(nil)
+	windowVal := window(nil)
+
 	return types.Value[float64, float64](nomagique.NewNumber(
 		// 1. Maintain history and map error magnitude to empirical rank
 		types.Value[float64, float64](probability.NewCalibrator(
-			types.Value[[]float64, []float64](sequence.NewTail[float64](window)),
+			types.Value[[]float64, []float64](sequence.NewTail[float64](types.Const(windowVal))),
 		)),
 
 		// 2. Map the rank to a target log-alpha based on the bands
-		types.Value[float64, float64](statistic.NewThreshold(band, math.Log(rest), math.Log(lower), math.Log(upper))),
+		types.Value[float64, float64](statistic.NewThreshold(
+			types.Const(bandVal),
+			types.Const(math.Log(restVal)),
+			types.Const(math.Log(lowerVal)),
+			types.Const(math.Log(upperVal)),
+		)),
 
 		// 3. Smooth the target log-alpha with an Exponential Moving Average
-		types.Value[float64, float64](statistic.NewEMA(gain)),
+		types.Value[float64, float64](statistic.NewEMA(types.Const(gainVal))),
 
 		// 4. Clamp the internal log-alpha to bounds
-		types.Value[float64, float64](arithmetic.NewClamp(math.Log(lower), math.Log(upper))),
+		types.Value[float64, float64](arithmetic.NewClamp(types.Const(math.Log(lowerVal)), types.Const(math.Log(upperVal)))),
 
 		// 5. Convert back from log-space to time-space
 		types.Value[float64, float64](arithmetic.NewExp()),
 
 		// 6. Clamp the final alpha to hard bounds
-		types.Value[float64, float64](arithmetic.NewClamp(lower, upper)),
+		types.Value[float64, float64](arithmetic.NewClamp(types.Const(lowerVal), types.Const(upperVal))),
 	))
-}
-
-// PacePrimitive wraps a Pace closure in the legacy core.Primitive interface.
-type PacePrimitive struct {
-	pipeline types.Value[float64, float64]
-	err      error
-}
-
-func NewPacePrimitive(rest, lower, upper, gain, band float64, window int) *PacePrimitive {
-	return &PacePrimitive{
-		pipeline: Pace(rest, lower, upper, gain, band, window),
-	}
-}
-
-func (p *PacePrimitive) Next(seq iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for v := range seq {
-			if v == nil {
-				continue
-			}
-
-			valPtr := (*float64)(v)
-			if valPtr == nil {
-				p.err = fmt.Errorf("pace: received nil value")
-				break
-			}
-
-			res := p.pipeline(*valPtr)
-			if !yield(unsafe.Pointer(&res)) {
-				return
-			}
-		}
-	}
-}
-
-func (p *PacePrimitive) Error(errs ...error) error {
-	if len(errs) > 0 {
-		p.err = errs[0]
-	}
-	return p.err
 }

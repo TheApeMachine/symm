@@ -16,19 +16,28 @@ NewUnaryEquation returns a Value closure that reads a left metric from a measure
 transforms its raw scalar via op, and writes the result into the output metric.
 No structs, pure Value closure.
 */
-func NewUnaryEquation(output, left string, op types.Value[float64, float64]) Equation {
+func NewUnaryEquation(output, left types.String, op types.Value[float64, float64]) Equation {
 	return func(m *Measurement[float64]) *Measurement[float64] {
 		if m == nil || m.Err != nil || op == nil {
 			return m
 		}
 
-		leftMetric, holds := m.Metrics[left]
+		outName := ""
+		if output != nil {
+			outName = output(m)
+		}
+		leftName := ""
+		if left != nil {
+			leftName = left(m)
+		}
+
+		leftMetric, holds := m.Metrics[leftName]
 		if !holds {
-			m.Err = fmt.Errorf("equations: %s is not a declared metric", left)
+			m.Err = fmt.Errorf("equations: %s is not a declared metric", leftName)
 			return m
 		}
 
-		m.Metrics[output] = m.Metrics[output].Write(op(leftMetric.Raw))
+		m.Metrics[outName] = m.Metrics[outName].Write(op(leftMetric.Raw))
 		return m
 	}
 }
@@ -38,25 +47,38 @@ NewBinaryEquation returns a Value closure that reads left and right metrics from
 transforms the [2]float64 pair via op, and writes the result into the output metric.
 No structs, pure Value closure.
 */
-func NewBinaryEquation(output, left, right string, op types.Value[[2]float64, float64]) Equation {
+func NewBinaryEquation(output, left, right types.String, op types.Value[[2]float64, float64]) Equation {
 	return func(m *Measurement[float64]) *Measurement[float64] {
 		if m == nil || m.Err != nil || op == nil {
 			return m
 		}
 
-		leftMetric, holds := m.Metrics[left]
+		outName := ""
+		if output != nil {
+			outName = output(m)
+		}
+		leftName := ""
+		if left != nil {
+			leftName = left(m)
+		}
+		rightName := ""
+		if right != nil {
+			rightName = right(m)
+		}
+
+		leftMetric, holds := m.Metrics[leftName]
 		if !holds {
-			m.Err = fmt.Errorf("equations: %s is not a declared metric", left)
+			m.Err = fmt.Errorf("equations: %s is not a declared metric", leftName)
 			return m
 		}
 
-		rightMetric, holds := m.Metrics[right]
+		rightMetric, holds := m.Metrics[rightName]
 		if !holds {
-			m.Err = fmt.Errorf("equations: %s is not a declared metric", right)
+			m.Err = fmt.Errorf("equations: %s is not a declared metric", rightName)
 			return m
 		}
 
-		m.Metrics[output] = m.Metrics[output].Write(op([2]float64{leftMetric.Raw, rightMetric.Raw}))
+		m.Metrics[outName] = m.Metrics[outName].Write(op([2]float64{leftMetric.Raw, rightMetric.Raw}))
 		return m
 	}
 }

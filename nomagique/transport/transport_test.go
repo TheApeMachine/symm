@@ -1,22 +1,15 @@
 package transport_test
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
 )
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
 
 func TestGenericPrimitives(t *testing.T) {
 	Convey("Given topology primitives", t, func() {
@@ -28,9 +21,9 @@ func TestGenericPrimitives(t *testing.T) {
 			branches := fork(5)
 			So(branches, ShouldResemble, []int{15, 10})
 
-			join := transport.NewJoin(func(vals []int) int {
+			join := transport.NewJoin(types.Value[[]int, int](func(vals []int) int {
 				return vals[0] + vals[1]
-			})
+			}))
 			combined := join(branches)
 			So(combined, ShouldEqual, 25)
 		})
@@ -40,17 +33,17 @@ func TestGenericPrimitives(t *testing.T) {
 				"even": func(x int) string { return "is_even" },
 				"odd":  func(x int) string { return "is_odd" },
 			}
-			router := transport.NewRoute(func(x int) string {
+			router := transport.NewRoute(types.Value[int, string](func(x int) string {
 				if x%2 == 0 {
 					return "even"
 				}
 				return "odd"
-			}, routes)
+			}), routes)
 
 			So(router(4), ShouldEqual, "is_even")
 			So(router(7), ShouldEqual, "is_odd")
 
-			gate := transport.NewGate(func(x int) bool { return x > 10 })
+			gate := transport.NewGate(types.Value[int, bool](func(x int) bool { return x > 10 }))
 			So(gate(5), ShouldBeNil)
 			val := gate(15)
 			So(val, ShouldNotBeNil)
@@ -71,45 +64,46 @@ func TestGenericPrimitives(t *testing.T) {
 		h := sha([]byte("test"))
 		So(len(h), ShouldEqual, 32)
 
-		hmac := transport.NewHMACSHA512([]byte("secret"))
+		hmac := transport.NewHMACSHA512(types.Const([]byte("secret")))
 		sig := hmac([]byte("payload"))
 		So(len(sig), ShouldEqual, 64)
 
-		signer := transport.NewSigner("my-key", "my-secret")
-		req := &transport.HTTPRequest{
-			Method: "POST",
-			URL:    "https://api.kraken.com/0/private/OpenOrders",
-			Body:   []byte(`{"nonce": 123}`),
-		}
-		signed := signer(req)
-		So(signed.Headers["API-Key"], ShouldEqual, "my-key")
-		So(signed.Headers["API-Sign"], ShouldNotBeBlank)
+		b64Enc := transport.NewBase64Encode()
+		b64Dec := transport.NewBase64Decode()
+		encoded := b64Enc([]byte("hello world"))
+		So(encoded, ShouldEqual, "aGVsbG8gd29ybGQ=")
+		decoded := b64Dec(encoded)
+		So(string(decoded), ShouldEqual, "hello world")
+
+		headerAuth := transport.NewHeaderAuth(types.Const("API-Key"), types.Const("my-key"))
+		data := headerAuth(map[string]any{"action": "ping"})
+		headers, ok := data["headers"].(map[string]string)
+		So(ok, ShouldBeTrue)
+		So(headers["API-Key"], ShouldEqual, "my-key")
+
+		bearerAuth := transport.NewBearerAuth(types.Const("my-token"))
+		data = bearerAuth(data)
+		headers = data["headers"].(map[string]string)
+		So(headers["Authorization"], ShouldEqual, "Bearer my-token")
 	})
 
 	Convey("Given HTTP execution primitives", t, func() {
-		client := &http.Client{
-			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     make(http.Header),
-					Body:       io.NopCloser(bytes.NewReader([]byte(`{"status":"ok"}`))),
-				}, nil
-			}),
-		}
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok","count":42}`))
+		}))
+		defer ts.Close()
 
-		reqBuilder := transport.NewHTTPRequest("GET", "http://example.com/api")
-		req := reqBuilder(nil)
-		paramSetter := transport.NewHTTPParam("pair", "BTCUSD")
-		req = paramSetter(req)
+		httpReq := transport.NewHTTPRequest(
+			types.Const("GET"),
+			types.Const(ts.URL),
+		)
 
-		executor := transport.NewHTTPExecute(client)
-		resp := executor(req)
-		So(resp, ShouldNotBeNil)
-		So(resp.StatusCode, ShouldEqual, http.StatusOK)
-
-		extractor := transport.NewResponseExtract()
-		body := extractor(resp)
-		So(string(body), ShouldEqual, `{"status":"ok"}`)
+		res := httpReq(nil)
+		So(res, ShouldNotBeNil)
+		So(res["status"], ShouldEqual, "ok")
+		So(res["status_code"], ShouldEqual, 200)
 	})
 
 	Convey("Given JSON encoding primitives", t, func() {
@@ -130,15 +124,26 @@ func TestGenericPrimitives(t *testing.T) {
 	})
 
 	Convey("Given WebSocket primitives", t, func() {
-		subGen := transport.NewSubscription("subscribe", "trade", "BTC/USD")
-		subMsg := subGen(nil)
-		So(subMsg["method"], ShouldEqual, "subscribe")
+		msgGen := transport.NewJSONMessage(types.Const[any](map[string]any{
+			"channel": "trade",
+			"symbol":  []string{"BTC/USD"},
+		}))
+		msg := msgGen(nil)
+		So(msg, ShouldNotBeNil)
 
-		pingPong := transport.NewPingPong()
-		pingMsg := &transport.WSMessage{Type: 9, Payload: []byte("ping")} // 9 is PingMessage
-		pongMsg := pingPong(pingMsg)
-		So(pongMsg.Type, ShouldEqual, 10) // 10 is PongMessage
+		batcher := transport.NewBatch[string](types.Const(2))
+		batches := batcher([]string{"A", "B", "C", "D", "E"})
+		So(len(batches), ShouldEqual, 3)
+		So(batches[0], ShouldResemble, []string{"A", "B"})
 
-		_ = transport.NewWSConnect("ws://invalid.test")(context.Background())
+		connect := transport.NewWSConnect(types.Const("ws://invalid.test.nowhere:9999"))
+		conn := connect(context.Background())
+		So(conn, ShouldBeNil)
+
+		proc := transport.NewProcess(types.Const("echo"))
+		out := proc([]string{`{"balances":{"USD":{"available":100}}}`})
+		decode := transport.NewDecodeJSON()
+		res := decode(out)
+		So(res, ShouldNotBeNil)
 	})
 }

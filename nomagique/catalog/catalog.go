@@ -2,8 +2,8 @@ package catalog
 
 import (
 	_ "embed"
-	"encoding/json"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
 
@@ -16,7 +16,7 @@ Load returns the map of all primitive schemas from the authoritative embedded ca
 func Load() (map[string]Schema, error) {
 	var schemas map[string]Schema
 
-	if err := json.Unmarshal(PrimitivesJSON, &schemas); err != nil {
+	if err := sonic.Unmarshal(PrimitivesJSON, &schemas); err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"catalog: failed to unmarshal embedded primitives.json",

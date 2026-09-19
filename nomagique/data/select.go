@@ -12,10 +12,14 @@ No structs, pure Value closure.
 */
 type Select types.Value[any, any]
 
-func NewSelect(path string) Select {
-	segments := strings.Split(path, ".")
-
+func NewSelect(path types.String) Select {
 	return func(in any) any {
+		p := ""
+		if path != nil {
+			p = path(in)
+		}
+		segments := strings.Split(p, ".")
+
 		curr := in
 
 		for _, segment := range segments {

@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestPhasePathNext(t *testing.T) {
@@ -95,7 +96,7 @@ func insertEntry(op Corpus[string], dial PhaseDial, outcome string, at time.Time
 
 func TestCorpusNext(t *testing.T) {
 	Convey("Given a corpus primitive", t, func() {
-		op := NewCorpus[string](3)
+		op := NewCorpus[string](types.Const(3))
 		base := time.Now()
 
 		Convey("Insertions are acknowledged and counted", func() {

@@ -12,7 +12,7 @@ The design matrix X must have dimensions (Observations x Parameters).
 The target vector Y must have dimensions (Observations).
 */
 type OLS types.Value[[2][][]float64, []float64]
-func NewOLS(tolerance float64) OLS {
+func NewOLS(tolerance types.Float) OLS {
 	solver := NewGaussJordan(tolerance)
 
 	return func(in [2][][]float64) []float64 {

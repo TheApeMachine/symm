@@ -14,13 +14,15 @@ func TestCompile(t *testing.T) {
 	Convey("Given the generic in-memory compiler", t, func() {
 		reg := compiler.DefaultRegistry()
 		So(reg, ShouldNotBeNil)
+		repo := definitions.Default()
+		reg.SetRepository(repo)
 
 		Convey("Compiling the master system graph", func() {
 			systemGraph, err := definitions.Load("system")
 			So(err, ShouldBeNil)
 			So(len(systemGraph.Nodes), ShouldBeGreaterThan, 0)
 
-			systemPipeline, err := compiler.Compile[any](systemGraph, reg)
+			systemPipeline, err := compiler.Compile[any, any](systemGraph, reg, repo)
 			So(err, ShouldBeNil)
 			So(systemPipeline, ShouldNotBeNil)
 
@@ -46,7 +48,7 @@ func TestCompile(t *testing.T) {
 			logicGraph, err := definitions.Load("logic")
 			So(err, ShouldBeNil)
 
-			logicPipeline, err := compiler.Compile[any](logicGraph, reg)
+			logicPipeline, err := compiler.Compile[any, any](logicGraph, reg, repo)
 			So(err, ShouldBeNil)
 			So(logicPipeline, ShouldNotBeNil)
 
@@ -59,7 +61,7 @@ func TestCompile(t *testing.T) {
 			derivGraph, err := definitions.Load("derivatives:trade")
 			So(err, ShouldBeNil)
 
-			derivPipeline, err := compiler.Compile[any](derivGraph, reg)
+			derivPipeline, err := compiler.Compile[any, any](derivGraph, reg, repo)
 			So(err, ShouldBeNil)
 			So(derivPipeline, ShouldNotBeNil)
 
@@ -80,7 +82,7 @@ func TestCompile(t *testing.T) {
 			cvdGraph, err := definitions.Load("cvd:trade")
 			So(err, ShouldBeNil)
 
-			cvdPipeline, err := compiler.Compile[any](cvdGraph, reg)
+			cvdPipeline, err := compiler.Compile[any, any](cvdGraph, reg, repo)
 			So(err, ShouldBeNil)
 			So(cvdPipeline, ShouldNotBeNil)
 
@@ -122,7 +124,7 @@ func TestCompile(t *testing.T) {
 				},
 			}
 
-			_, err := compiler.Compile[any](cycleGraph, reg)
+			_, err := compiler.Compile[any, any](cycleGraph, reg, repo)
 			So(err, ShouldNotBeNil)
 		})
 
@@ -131,7 +133,7 @@ func TestCompile(t *testing.T) {
 			repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 			systemPath := filepath.Join(repoRoot, "signal", "definitions", "system.json")
 
-			fn, err := compiler.CompileFile[any](systemPath, reg)
+			fn, err := compiler.CompileFile[any, any](systemPath, reg, repo)
 			So(err, ShouldBeNil)
 			So(fn, ShouldNotBeNil)
 		})

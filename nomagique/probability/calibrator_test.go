@@ -11,7 +11,7 @@ import (
 
 func TestCalibratorRetention(t *testing.T) {
 	Convey("Rank is computed against the prior window, then the sample is retained", t, func() {
-		checkCalibrator(types.Value[float64, float64](probability.NewCalibrator(types.Value[[]float64, []float64](sequence.NewTail[float64](4)))), 4)
+		checkCalibrator(types.Value[float64, float64](probability.NewCalibrator(types.Value[[]float64, []float64](sequence.NewTail[float64](types.Const(4))))), 4)
 		checkCalibrator(types.Value[float64, float64](probability.NewCalibrator(nil)), 0)
 	})
 }

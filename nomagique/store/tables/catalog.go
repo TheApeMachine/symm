@@ -26,7 +26,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/system"
 )
 
 const anonymousCredential = "anonymous"
@@ -35,11 +34,12 @@ const anonymousCredential = "anonymous"
 Catalog manages connections and schemas for canonical Iceberg tables.
 */
 type Catalog struct {
-	underlying   icecat.Catalog
-	awsConfig    *aws.Config
-	cacheMutex   sync.RWMutex
-	cachedEpochs []int64
-	epochsLoaded time.Time
+	underlying    icecat.Catalog
+	awsConfig     *aws.Config
+	storageConfig *StorageConfig
+	cacheMutex    sync.RWMutex
+	cachedEpochs  []int64
+	epochsLoaded  time.Time
 }
 
 /*
@@ -51,24 +51,17 @@ func Wrap(underlying icecat.Catalog) *Catalog {
 	}
 }
 
+func (catalog *Catalog) SetStorageConfig(cfg *StorageConfig) {
+	catalog.storageConfig = cfg
+}
+
 /*
-Open connects to the Iceberg REST catalog configured in system.Cfg.Storage.
+Open connects to the Iceberg REST catalog configured in StorageConfig.
 */
 func Open(ctx context.Context) *Catalog {
-	storageConfig := system.Cfg.Storage
-
-	if storageConfig == nil || storageConfig.Iceberg == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[iceberg] storage configuration required",
-			nil,
-		))
-
-		return nil
-	}
-
-	icebergConfig := storageConfig.Iceberg
-	s3Config := storageConfig.S3
+	storageConfig := DefaultStorageConfig()
+	icebergConfig := &storageConfig.Iceberg
+	s3Config := &storageConfig.S3
 
 	if icebergConfig.URI == "" || icebergConfig.Warehouse == "" {
 		errnie.Error(errnie.Err(
@@ -171,6 +164,7 @@ func Open(ctx context.Context) *Catalog {
 
 	cat := Wrap(connected)
 	cat.awsConfig = &awsCfg
+	cat.storageConfig = storageConfig
 
 	return cat
 }
@@ -185,8 +179,8 @@ func (catalog *Catalog) Ensure(ctx context.Context) error {
 
 	properties := iceberg.Properties{}
 
-	if system.Cfg.Storage != nil && system.Cfg.Storage.Iceberg != nil {
-		retries := system.Cfg.Storage.Iceberg.CommitRetries
+	if catalog.storageConfig != nil {
+		retries := catalog.storageConfig.Iceberg.CommitRetries
 
 		if retries > 0 {
 			properties[table.CommitNumRetriesKey] = strconv.Itoa(retries)
@@ -307,17 +301,17 @@ func (catalog *Catalog) ensureProperties(ctx context.Context, name string, prope
 }
 
 func (catalog *Catalog) ensureBuckets(ctx context.Context) error {
-	if system.Cfg.Storage == nil || system.Cfg.Storage.S3 == nil {
+	if catalog.storageConfig == nil {
 		return nil
 	}
 
-	return ensureStorageBuckets(ctx, system.Cfg.Storage.S3, system.Cfg.Storage.Iceberg)
+	return ensureStorageBuckets(ctx, &catalog.storageConfig.S3, &catalog.storageConfig.Iceberg)
 }
 
 func ensureStorageBuckets(
 	ctx context.Context,
-	s3Config *system.S3,
-	icebergConfig *system.Iceberg,
+	s3Config *S3Config,
+	icebergConfig *IcebergConfig,
 ) error {
 	if s3Config == nil || s3Config.Endpoint == "" {
 		return nil

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
@@ -63,7 +64,7 @@ func TestWebRTC(t *testing.T) {
 			t.Fatal("ICE gathering timed out")
 		}
 
-		body, err := json.Marshal(client.LocalDescription())
+		body, err := sonic.Marshal(client.LocalDescription())
 		So(err, ShouldBeNil)
 
 		req := httptest.NewRequest(

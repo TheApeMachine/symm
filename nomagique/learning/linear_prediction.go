@@ -11,7 +11,7 @@ It closes over the feature indices to extract from the raw row, prepending an im
 The returned closure takes a tuple of [Coefficients, RawRow] and returns the dot product (prediction).
 */
 type LinearPrediction types.Value[[2][]float64, float64]
-func NewLinearPrediction(features []int) LinearPrediction {
+func NewLinearPrediction(features ...types.Integer) LinearPrediction {
 	return func(in [2][]float64) float64 {
 		coefficients := in[0]
 		rawRow := in[1]
@@ -24,7 +24,11 @@ func NewLinearPrediction(features []int) LinearPrediction {
 		designRow := make([]float64, 1, len(features)+1)
 		designRow[0] = core.Unit
 
-		for _, featureIdx := range features {
+		for _, feat := range features {
+			featureIdx := 0
+			if feat != nil {
+				featureIdx = feat(in)
+			}
 			if featureIdx < 0 || featureIdx >= len(rawRow) {
 				return 0.0 // Feature out of bounds
 			}

@@ -19,7 +19,7 @@
     },
     "signals": {
       "id": "signals",
-      "type": "pipeline.Signals",
+      "type": "definition:signals",
       "connections": {
         "inputs": {
           "in": [

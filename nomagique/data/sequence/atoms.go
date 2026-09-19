@@ -13,10 +13,16 @@ NewWindow creates a stateful rolling window closure.
 It accumulates incoming items up to size, emitting the current window slice.
 No structs, pure Value closure.
 */
-func NewWindow[T any](size int) Window[T] {
-	buf := make([]T, 0, size)
+func NewWindow[T any](size types.Integer) Window[T] {
+	var buf []T
 	return func(in T) []T {
-		if len(buf) >= size {
+		s := 10
+		if size != nil {
+			if evaluated := size(in); evaluated > 0 {
+				s = evaluated
+			}
+		}
+		if len(buf) >= s {
 			buf = buf[1:]
 		}
 		buf = append(buf, in)
@@ -30,15 +36,21 @@ type Tail[T any] types.Value[[]T, []T]
 /*
 NewTail creates a closure returning the last N items of a slice.
 */
-func NewTail[T any](size int) Tail[T] {
+func NewTail[T any](size types.Integer) Tail[T] {
 	return func(in []T) []T {
-		if len(in) <= size {
+		s := 10
+		if size != nil {
+			if evaluated := size(in); evaluated > 0 {
+				s = evaluated
+			}
+		}
+		if len(in) <= s {
 			out := make([]T, len(in))
 			copy(out, in)
 			return out
 		}
-		out := make([]T, size)
-		copy(out, in[len(in)-size:])
+		out := make([]T, s)
+		copy(out, in[len(in)-s:])
 		return out
 	}
 }
@@ -47,24 +59,32 @@ type At[T any] types.Value[[]T, T]
 /*
 NewAt returns the item at index in the slice.
 */
-func NewAt[T any](index int) At[T] {
+func NewAt[T any](index types.Integer) At[T] {
 	return func(in []T) T {
 		var zero T
-		if index < 0 || index >= len(in) {
+		idx := 0
+		if index != nil {
+			idx = index(in)
+		}
+		if idx < 0 || idx >= len(in) {
 			return zero
 		}
-		return in[index]
+		return in[idx]
 	}
 }
 
-type Values[T any] types.Value[struct{}, []T]
+type Values[T any] types.Value[any, []T]
 /*
 NewValues returns a constant slice supplier.
 */
-func NewValues[T any](values ...T) Values[T] {
-	return func(struct{}) []T {
+func NewValues[T any](values ...types.Value[any, T]) Values[T] {
+	return func(in any) []T {
 		out := make([]T, len(values))
-		copy(out, values)
+		for i, v := range values {
+			if v != nil {
+				out[i] = v(in)
+			}
+		}
 		return out
 	}
 }
@@ -82,14 +102,26 @@ func NewOrder[T cmp.Ordered]() Order[T] {
 	}
 }
 
-type Append[T any] types.Value[[2]any, []T]
+type Append[T any] types.Value[any, []T]
 /*
 NewAppend returns a closure that appends an item to a slice.
 */
-func NewAppend[T any]() Append[T] {
-	return func(in [2]any) []T {
-		s, _ := in[0].([]T)
-		val, _ := in[1].(T)
+func NewAppend[T any](slice types.Value[any, []T], item types.Value[any, T]) Append[T] {
+	return func(in any) []T {
+		var s []T
+		if slice != nil {
+			s = slice(in)
+		} else if arr, ok := in.([]T); ok {
+			s = arr
+		} else if pair, ok := in.([2]any); ok {
+			s, _ = pair[0].([]T)
+			val, _ := pair[1].(T)
+			return append(s, val)
+		}
+		var val T
+		if item != nil {
+			val = item(in)
+		}
 		return append(s, val)
 	}
 }

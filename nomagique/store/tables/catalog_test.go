@@ -12,17 +12,15 @@ import (
 	"github.com/apache/iceberg-go/table"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/store/tables"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests/tablestest"
 )
 
 func TestCatalog_Ensure(t *testing.T) {
 	Convey("Configured commit retries also apply to tables created before that setting", t, func() {
-		savedConfig := system.Cfg
-		system.Cfg = &system.Config{}
-		Reset(func() { system.Cfg = savedConfig })
 		catalog := tablestest.New(t)
-		system.Cfg.Storage = &system.Storage{Iceberg: &system.Iceberg{CommitRetries: 4}}
+		catalog.SetStorageConfig(&tables.StorageConfig{
+			Iceberg: tables.IcebergConfig{CommitRetries: 4},
+		})
 		So(catalog.Ensure(t.Context()), ShouldBeNil)
 
 		for _, name := range []string{tables.SpotTicker, tables.SpotTrade, tables.SpotLevel3, tables.Measurements, tables.Runs, tables.Excursions} {
@@ -42,10 +40,8 @@ func TestCatalog_Ensure(t *testing.T) {
 		var s3BucketCreated atomic.Int32
 
 		savedTransport := http.DefaultTransport
-		savedCfg := system.Cfg
 
 		Reset(func() {
-			system.Cfg = savedCfg
 			http.DefaultTransport = savedTransport
 		})
 
@@ -72,17 +68,15 @@ func TestCatalog_Ensure(t *testing.T) {
 		catalog := tablestest.New(t)
 		ctx := context.Background()
 
-		system.Cfg = &system.Config{
-			Storage: &system.Storage{
-				Iceberg: &system.Iceberg{
-					Warehouse: "s3://symmtables/",
-				},
-				S3: &system.S3{
-					Endpoint: "http://mock-seaweedfs",
-					Bucket:   "symm",
-				},
+		catalog.SetStorageConfig(&tables.StorageConfig{
+			Iceberg: tables.IcebergConfig{
+				Warehouse: "s3://symmtables/",
 			},
-		}
+			S3: tables.S3Config{
+				Endpoint: "http://mock-seaweedfs",
+				Bucket:   "symm",
+			},
+		})
 
 		Convey("Ensure creates the missing table bucket and S3 bucket", func() {
 			err := catalog.Ensure(ctx)
@@ -183,10 +177,10 @@ func TestCatalog_ExcursionsRoundtrip(t *testing.T) {
 }
 
 func BenchmarkCatalog_Ensure(b *testing.B) {
-	savedConfig := system.Cfg
-	system.Cfg = &system.Config{Storage: &system.Storage{Iceberg: &system.Iceberg{CommitRetries: 4}}}
-	b.Cleanup(func() { system.Cfg = savedConfig })
 	catalog := tablestest.New(b)
+	catalog.SetStorageConfig(&tables.StorageConfig{
+		Iceberg: tables.IcebergConfig{CommitRetries: 4},
+	})
 	b.ReportAllocs()
 	
 

@@ -1,30 +1,54 @@
 package compiler
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
 Compile lowers a declarative JSON Graph into an in-memory executable nomagique composition.
-It instantiates primitives via the provided Registry, reduces topologies (sequences,
-forks/fans, joins) into nomagique composition primitives, and returns a types.Value[T, T] closure.
+Topologies are resolved once during compilation into nested nomagique primitives
+(NewNumber, NewFan, NewFork, NewJoin, NewTee).
 Zero map allocations or graph edge traversals occur on the execution hot path.
 */
-func Compile[T any](graph Graph, reg *Registry) (types.Value[T, T], error) {
+func Compile[In, Out any](
+	graph Graph,
+	reg *Registry,
+	repos ...DefinitionRepository,
+) (types.Value[In, Out], error) {
 	if reg == nil {
 		reg = DefaultRegistry()
 	}
 
+	var repo DefinitionRepository
+	if len(repos) > 0 {
+		repo = repos[0]
+		if reg.Repository() == nil {
+			reg.SetRepository(repo)
+		}
+	} else if reg.Repository() != nil {
+		repo = reg.Repository()
+	}
+
+	if len(graph.Nodes) == 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("compiler: graph %q contains no nodes", graph.Name),
+			nil,
+		))
+	}
+
 	errnie.Debug(fmt.Sprintf("[compiler.Compile] compiling graph %s (%d nodes)...", graph.Name, len(graph.Nodes)))
 
-	// 1. Build adjacency and in-degree maps
+	// 1. Build adjacency and in-degree maps for operational and source/sink nodes
 	inDegree := make(map[string]int)
 	adjacency := make(map[string][]string)
 	incoming := make(map[string][]string)
@@ -45,7 +69,7 @@ func Compile[T any](graph Graph, reg *Registry) (types.Value[T, T], error) {
 		}
 	}
 
-	// 2. Topological Sort (Kahn's Algorithm)
+	// 2. Topological Sort (Kahn's Algorithm) to guarantee acyclicity
 	queue := make([]string, 0)
 	for id, degree := range inDegree {
 		if degree == 0 {
@@ -75,10 +99,39 @@ func Compile[T any](graph Graph, reg *Registry) (types.Value[T, T], error) {
 		))
 	}
 
-	// 3. Instantiate operational nodes via registry
+	// 3. Instantiate operational nodes and recursively resolve definition references
 	instances := make(map[string]types.Value[any, any])
 	for id, node := range graph.Nodes {
-		if isSource(id, node) || isSink(id, node) {
+		if isSource(node) || isSink(node) {
+			continue
+		}
+
+		if strings.HasPrefix(node.Type, "definition:") {
+			defName := strings.TrimPrefix(node.Type, "definition:")
+			if repo == nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf("compiler: node %q references definition %q but no repository provided", id, defName),
+					nil,
+				))
+			}
+
+			childGraph, err := repo.Load(defName)
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.NotFound,
+					fmt.Sprintf("compiler: child definition %q not found for node %q", defName, id),
+					err,
+				))
+			}
+
+			childClosure, err := Compile[any, any](childGraph, reg, repo)
+			if err != nil {
+				return nil, errnie.Error(err)
+			}
+
+			instances[id] = childClosure
+			errnie.Debug(fmt.Sprintf("[compiler.Compile] recursively compiled definition %s for node %s", defName, id))
 			continue
 		}
 
@@ -99,29 +152,64 @@ func Compile[T any](graph Graph, reg *Registry) (types.Value[T, T], error) {
 		}
 	}
 
+	// If no operational nodes exist, verify if source connects directly to sink (explicit identity)
 	if len(opOrder) == 0 {
-		return func(in T) T { return in }, nil
-	}
-
-	// 4. Analyze topology for nomagique composition primitives
-	compiled := composeTopology(graph, opOrder, incoming, adjacency, instances)
-	errnie.Debug(fmt.Sprintf("[compiler.Compile] graph %s successfully compiled (%d op nodes)", graph.Name, len(opOrder)))
-
-	return func(in T) T {
-		res := compiled(in)
-		if typed, ok := res.(T); ok {
-			return typed
+		hasDirectPassThrough := false
+		for _, node := range graph.Nodes {
+			if isSource(node) {
+				for _, targets := range node.Connections.Outputs {
+					for _, target := range targets {
+						if sinkNode, exists := graph.Nodes[target.NodeID]; exists && isSink(sinkNode) {
+							hasDirectPassThrough = true
+							break
+						}
+					}
+				}
+			}
 		}
 
-		var zero T
-		return zero
+		if !hasDirectPassThrough {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("compiler: graph %s has no operational nodes and is not a direct pass-through", graph.Name),
+				nil,
+			))
+		}
+
+		return func(in In) Out {
+			return any(in).(Out)
+		}, nil
+	}
+
+	// 4. Lower graph topology directly into nested nomagique composition closures
+	composed, err := lowerTopology(graph, opOrder, incoming, adjacency, instances)
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	errnie.Debug(fmt.Sprintf("[compiler.Compile] graph %s successfully compiled (%d op nodes)", graph.Name, len(opOrder)))
+
+	return func(in In) Out {
+		res := composed(in)
+		if out, ok := res.(Out); ok {
+			return out
+		}
+		// If Out is any, interface conversion succeeds
+		if anyOut, ok := any(res).(Out); ok {
+			return anyOut
+		}
+		panic(fmt.Sprintf("compiler: boundary type mismatch for graph %s: expected %T, got %T", graph.Name, *new(Out), res))
 	}, nil
 }
 
 /*
 CompileFile reads a JSON graph from disk and compiles it into an executable closure.
 */
-func CompileFile[T any](jsonPath string, reg *Registry) (types.Value[T, T], error) {
+func CompileFile[In, Out any](
+	jsonPath string,
+	reg *Registry,
+	repos ...DefinitionRepository,
+) (types.Value[In, Out], error) {
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -132,7 +220,7 @@ func CompileFile[T any](jsonPath string, reg *Registry) (types.Value[T, T], erro
 	}
 
 	var graph Graph
-	if err := json.Unmarshal(data, &graph); err != nil {
+	if err := sonic.Unmarshal(data, &graph); err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("compiler: unmarshal %s", jsonPath),
@@ -140,25 +228,34 @@ func CompileFile[T any](jsonPath string, reg *Registry) (types.Value[T, T], erro
 		))
 	}
 
-	return Compile[T](graph, reg)
+	return Compile[In, Out](graph, reg, repos...)
 }
 
-func composeTopology(
+/*
+lowerTopology transforms DAG node instances into directly nested nomagique primitives
+without runtime slot allocation or interpretive loops.
+*/
+func lowerTopology(
 	graph Graph,
 	opOrder []string,
 	incoming map[string][]string,
 	adjacency map[string][]string,
 	instances map[string]types.Value[any, any],
-) types.Value[any, any] {
-	// Identify branch nodes (nodes whose only outgoing edges go to sinks)
-	// Case A: Pure Linear Pipeline (e.g. system.json, logic.json, execution.json)
-	// Every operational node must have at most 1 input and at most 1 operational child.
+) (types.Value[any, any], error) {
+	// Case 1: Pure linear pipeline (each node has <= 1 operational input and <= 1 operational child)
 	isLinear := true
 	for _, id := range opOrder {
-		if len(incoming[id]) > 1 {
+		opsInputs := 0
+		for _, parent := range incoming[id] {
+			if _, ok := instances[parent]; ok {
+				opsInputs++
+			}
+		}
+		if opsInputs > 1 {
 			isLinear = false
 			break
 		}
+
 		opsChildren := 0
 		for _, child := range adjacency[id] {
 			if _, ok := instances[child]; ok {
@@ -172,108 +269,142 @@ func composeTopology(
 	}
 
 	if isLinear {
-		stages := make([]types.Value[any, any], len(opOrder))
+		ingressIdx := -1
 		for i, id := range opOrder {
-			stages[i] = instances[id]
-		}
-		num := nomagique.NewNumber[any](stages...)
-		return types.Value[any, any](num)
-	}
-
-
-	// Case C: General DAG Composition (indexed flat slot array, zero map allocations)
-	slotIndex := make(map[string]int)
-	for i, id := range opOrder {
-		slotIndex[id] = i
-	}
-
-	n := len(opOrder)
-	inputSlots := make([][]int, n)
-	closures := make([]types.Value[any, any], n)
-
-	for i, id := range opOrder {
-		closures[i] = instances[id]
-		var upIndices []int
-
-		for _, upID := range incoming[id] {
-			upNode := graph.Nodes[upID]
-			if !isSource(upID, upNode) {
-				if idx, found := slotIndex[upID]; found {
-					upIndices = append(upIndices, idx)
-				}
-			}
-		}
-		inputSlots[i] = upIndices
-	}
-
-	// Identify terminal output slot indices
-	terminalSlots := make([]int, 0)
-	for _, id := range opOrder {
-		hasNonSinkChild := false
-		for _, child := range adjacency[id] {
-			childNode := graph.Nodes[child]
-			if !isSink(child, childNode) {
-				hasNonSinkChild = true
+			if graph.Nodes[id].Type == "transport.WSStream" {
+				ingressIdx = i
 				break
 			}
 		}
 
-		if !hasNonSinkChild {
-			terminalSlots = append(terminalSlots, slotIndex[id])
+		if ingressIdx >= 0 {
+			upstreamStages := make([]types.Value[any, any], ingressIdx)
+			for i := 0; i < ingressIdx; i++ {
+				upstreamStages[i] = instances[opOrder[i]]
+			}
+
+			downstreamStages := make([]types.Value[any, any], len(opOrder)-(ingressIdx+1))
+			for i := ingressIdx + 1; i < len(opOrder); i++ {
+				downstreamStages[i-(ingressIdx+1)] = instances[opOrder[i]]
+			}
+			downstreamPipeline := nomagique.NewNumber[any](downstreamStages...)
+			ingressClosure := instances[opOrder[ingressIdx]]
+
+			return func(in any) any {
+				if inCtx, ok := in.(context.Context); ok && inCtx != nil {
+					var subPayload any
+					if len(upstreamStages) > 0 {
+						subPayload = nomagique.NewNumber[any](upstreamStages...)(nil)
+					}
+					streamVal := ingressClosure(subPayload)
+					if stream, ok := streamVal.(transport.WSStream); ok {
+						return stream(types.Value[any, any](downstreamPipeline))
+					}
+					return nil
+				}
+				return downstreamPipeline(in)
+			}, nil
+		}
+
+		stages := make([]types.Value[any, any], len(opOrder))
+		for i, id := range opOrder {
+			stages[i] = instances[id]
+		}
+		return types.Value[any, any](nomagique.NewNumber[any](stages...)), nil
+	}
+
+	// Case 2: Fan-out from a common input/source across independent branches
+	// Check if all roots receive from source and do not rejoin
+	rootNodes := make([]string, 0)
+	for _, id := range opOrder {
+		opsInputs := 0
+		for _, parent := range incoming[id] {
+			if _, ok := instances[parent]; ok {
+				opsInputs++
+			}
+		}
+		if opsInputs == 0 {
+			rootNodes = append(rootNodes, id)
 		}
 	}
 
-	if len(terminalSlots) == 0 && n > 0 {
-		terminalSlots = append(terminalSlots, n-1)
+	// Build direct node evaluator map for composed DAG branches
+	// Each operational node computes its output from its immediate upstream dependencies
+	nodeClosures := make(map[string]types.Value[any, any])
+
+	for _, id := range opOrder {
+		instance := instances[id]
+		var upstreamOps []string
+
+		for _, upID := range incoming[id] {
+			if _, exists := instances[upID]; exists {
+				upstreamOps = append(upstreamOps, upID)
+			}
+		}
+
+		if len(upstreamOps) == 0 {
+			// Receives directly from graph input
+			nodeClosures[id] = instance
+		} else if len(upstreamOps) == 1 {
+			// Chained directly to upstream output closure
+			upClosure := nodeClosures[upstreamOps[0]]
+			nodeClosures[id] = func(in any) any {
+				return instance(upClosure(in))
+			}
+		} else {
+			// Explicit collection/join of upstream outputs
+			upClosures := make([]types.Value[any, any], len(upstreamOps))
+			for i, upID := range upstreamOps {
+				upClosures[i] = nodeClosures[upID]
+			}
+
+			fork := transport.NewFork[any, any](upClosures...)
+			nodeClosures[id] = func(in any) any {
+				branchOutputs := fork(in)
+				return instance(branchOutputs)
+			}
+		}
 	}
 
+	// Find terminal operational nodes (nodes with no operational children)
+	terminalNodes := make([]string, 0)
+	for _, id := range opOrder {
+		hasOpChild := false
+		for _, child := range adjacency[id] {
+			if _, exists := instances[child]; exists {
+				hasOpChild = true
+				break
+			}
+		}
+		if !hasOpChild {
+			terminalNodes = append(terminalNodes, id)
+		}
+	}
+
+	if len(terminalNodes) == 0 {
+		terminalNodes = append(terminalNodes, opOrder[len(opOrder)-1])
+	}
+
+	if len(terminalNodes) == 1 {
+		return nodeClosures[terminalNodes[0]], nil
+	}
+
+	// Multiple terminal nodes lower into transport.NewFork
+	terminalClosures := make([]types.Value[any, any], len(terminalNodes))
+	for i, termID := range terminalNodes {
+		terminalClosures[i] = nodeClosures[termID]
+	}
+
+	fork := transport.NewFork[any, any](terminalClosures...)
 	return func(in any) any {
-		slots := make([]any, n)
-
-		for i := 0; i < n; i++ {
-			var inVal any
-			ups := inputSlots[i]
-			if len(ups) == 0 {
-				inVal = in
-			} else if len(ups) == 1 {
-				inVal = slots[ups[0]]
-			} else if len(ups) == 2 {
-				f1, ok1 := slots[ups[0]].(float64)
-				f2, ok2 := slots[ups[1]].(float64)
-				if ok1 && ok2 {
-					inVal = [2]float64{f1, f2}
-				} else {
-					inVal = []any{slots[ups[0]], slots[ups[1]]}
-				}
-			} else {
-				vals := make([]any, len(ups))
-				for j, u := range ups {
-					vals[j] = slots[u]
-				}
-				inVal = vals
-			}
-
-			if closures[i] != nil {
-				slots[i] = closures[i](inVal)
-			}
-		}
-
-		if len(terminalSlots) == 1 {
-			return slots[terminalSlots[0]]
-		}
-
-		results := make([]any, len(terminalSlots))
-		for i, slot := range terminalSlots {
-			results[i] = slots[slot]
-		}
-		return results
-	}
+		return fork(in)
+	}, nil
 }
 
-func isSource(id string, node Node) bool {
-	return node.Type == "source" || node.Type == "data.Source" || id == "source" || id == "src"
+func isSource(node Node) bool {
+	return node.Type == "data.Source" || node.Type == "source"
 }
 
-func isSink(id string, node Node) bool {
-	return node.Type == "sink" || node.Type == "data.Sink" || strings.HasPrefix(id, "sink")
+func isSink(node Node) bool {
+	return node.Type == "data.Sink" || node.Type == "sink"
 }

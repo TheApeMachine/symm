@@ -158,7 +158,14 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 	}
 
 	if coder.pace == nil {
-		coder.pace = Pace(coder.alpha, 0.005, 0.150, 0.1, 0.2, 256)
+		coder.pace = Pace(
+			types.Const(coder.alpha),
+			types.Const(0.005),
+			types.Const(0.150),
+			types.Const(0.1),
+			types.Const(0.2),
+			types.Const(256),
+		)
 	}
 
 	if len(config.CustomArch) == 0 {

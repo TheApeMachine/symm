@@ -247,15 +247,19 @@ NewCorpus creates a corpus Value closure with maximum capacity; when full, the
 oldest entries are evicted to make room. State is encapsulated purely inside the closure.
 */
 type Corpus[Outcome any] types.Value[CorpusCommand[Outcome], CorpusResult[Outcome]]
-func NewCorpus[Outcome any](maxSize int) Corpus[Outcome] {
-	if maxSize <= 0 {
+func NewCorpus[Outcome any](maxSize types.Integer) Corpus[Outcome] {
+	capSize := 1000
+	if maxSize != nil {
+		capSize = maxSize(nil)
+	}
+	if capSize <= 0 {
 		return func(CorpusCommand[Outcome]) CorpusResult[Outcome] {
 			return CorpusResult[Outcome]{}
 		}
 	}
 
 	var mu sync.RWMutex
-	entries := make([]CorpusEntry[Outcome], 0, maxSize)
+	entries := make([]CorpusEntry[Outcome], 0, capSize)
 	dimensions := 0
 	next := 0
 
@@ -291,13 +295,13 @@ func NewCorpus[Outcome any](maxSize int) Corpus[Outcome] {
 				return CorpusResult[Outcome]{}
 			}
 
-			if len(entries) < maxSize {
+			if len(entries) < capSize {
 				entries = append(entries, entry)
 				return CorpusResult[Outcome]{Inserted: true}
 			}
 
 			entries[next] = entry
-			next = (next + 1) % maxSize
+			next = (next + 1) % capSize
 			return CorpusResult[Outcome]{Inserted: true}
 		}
 

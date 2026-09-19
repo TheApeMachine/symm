@@ -353,7 +353,6 @@ export const ImpulseView = ({
 		if (!ctx) return;
 
 		let animationFrameId: number;
-		let lastTapePulse = performance.now();
 		let contourAlpha = 0.0; // Smooth fade between grid and regions
 
 		const clusterFoci = [
@@ -363,7 +362,7 @@ export const ImpulseView = ({
 			{ x: 140, y: 90 },
 		];
 
-		const render = (time: number) => {
+		const render = (_time: number) => {
 			const width = wrapper.clientWidth;
 			const height = wrapper.clientHeight;
 			const dpr = window.devicePixelRatio || 1;

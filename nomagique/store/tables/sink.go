@@ -10,13 +10,18 @@ import (
 /*
 NewTableSink creates a streaming persistence closure that routes incoming measurements into the catalog table writer.
 */
-func NewTableSink(writer *Writer, channel string) types.Value[*data.Measurement[float64], *data.Measurement[float64]] {
+func NewTableSink(writer *Writer, channel types.String) types.Value[*data.Measurement[float64], *data.Measurement[float64]] {
 	return func(measurement *data.Measurement[float64]) *data.Measurement[float64] {
 		if writer == nil || measurement == nil {
 			return measurement
 		}
 
-		writer.Add(channel, measurement)
+		ch := ""
+		if channel != nil {
+			ch = channel(measurement)
+		}
+
+		writer.Add(ch, measurement)
 		return measurement
 	}
 }

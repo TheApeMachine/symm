@@ -57,7 +57,7 @@ func GenerateRegistry(schemas map[string]catalog.Schema) error {
 		fmt.Fprintf(&buf, "\t\"%s\": func() types.Value[any, any] {\n", entry.Op)
 
 		if entry.Op == "data.Extract" {
-			buf.WriteString("\t\tclosure := data.NewExtract(\"value\")\n")
+			buf.WriteString("\t\tclosure := data.NewExtract(types.Const(\"value\"))\n")
 			buf.WriteString("\t\treturn func(in any) any {\n")
 			buf.WriteString("\t\t\treturn closure(in.(map[string]any))\n")
 			buf.WriteString("\t\t}\n")

@@ -79,7 +79,7 @@ func (hub *Hub) getCash() string {
 	if c := hub.cash.Load(); c != nil && *c != "" {
 		return *c
 	}
-	return "200.00"
+	return "0.00"
 }
 
 func (hub *Hub) getUnrealized() string {
@@ -93,7 +93,7 @@ func (hub *Hub) getEquity() string {
 	if e := hub.equity.Load(); e != nil && *e != "" {
 		return *e
 	}
-	return "200.00"
+	return "0.00"
 }
 
 /*
@@ -124,12 +124,6 @@ func NewHub(
 	}
 
 	hub.System = runtime.NewSystem(ctx, "hub", hub)
-
-	hub.BroadcastEvaluation(func() (
-		[]byte, []byte, float64, float64, uint64, float64, bool, float64, iter.Seq2[[]byte, float64],
-	) {
-		return []byte("wait"), nil, 0.75, 1.2, 1, 0.05, false, 0.1, nil
-	})
 
 	hub.app.Use(cors.New(cors.Config{
 		AllowOrigins: []string{"*"},

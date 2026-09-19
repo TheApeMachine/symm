@@ -3,6 +3,7 @@ package execution
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -41,7 +42,7 @@ type Regulator types.Value[*Fill, *PositionState]
 /*
 NewRegulator constructs a stateful position regulator for the given symbol.
 */
-func NewRegulator(symbol string) Regulator {
+func NewRegulator(symbol types.String) Regulator {
 	quantity := decimal.NewFromInt64(0)
 	basis := decimal.NewFromInt64(0)
 	entryFee := decimal.NewFromInt64(0)
@@ -54,9 +55,13 @@ func NewRegulator(symbol string) Regulator {
 	var lastOrderID string
 
 	return func(report *Fill) *PositionState {
+		sym := ""
+		if symbol != nil {
+			sym = symbol(report)
+		}
 		if report == nil {
 			return &PositionState{
-				Symbol:   symbol,
+				Symbol:   sym,
 				Quantity: quantity,
 				Basis:    basis,
 				EntryFee: entryFee,
@@ -66,7 +71,7 @@ func NewRegulator(symbol string) Regulator {
 
 		if report.OrderID != "" && report.OrderID == lastOrderID && report.Status == "filled" {
 			return &PositionState{
-				Symbol:   symbol,
+				Symbol:   sym,
 				Quantity: quantity,
 				Basis:    basis,
 				EntryFee: entryFee,
@@ -131,13 +136,13 @@ func NewRegulator(symbol string) Regulator {
 		switch report.Status {
 		case "filled", "canceled", "expired", "rejected":
 			lastOrderID = report.OrderID
-			filled = decimal.NewFromInt64(0)
-			cost = decimal.NewFromInt64(0)
-			fee = decimal.NewFromInt64(0)
+			filled = core.ZeroDecimal.Copy()
+			cost = core.ZeroDecimal.Copy()
+			fee = core.ZeroDecimal.Copy()
 		}
 
 		return &PositionState{
-			Symbol:   symbol,
+			Symbol:   sym,
 			Quantity: quantity,
 			Basis:    basis,
 			EntryFee: entryFee,

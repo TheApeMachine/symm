@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique/compiler"
 	"github.com/theapemachine/symm/signal"
 )
@@ -26,7 +27,7 @@ func TestBuilderCompose(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(builder, ShouldNotBeNil)
 
-				pipeline, err := builder.Compose()
+				pipeline, err := builder.Compose(definitions.Default())
 				if err != nil {
 					So(err.Error(), ShouldContainSubstring, "unknown primitive type")
 					return

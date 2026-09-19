@@ -10,11 +10,15 @@ NewVectorEMA creates a stateful Exponential Moving Average closure for vectors.
 The smoothing factor (alpha) is permanently closed over.
 */
 type VectorEMA types.Value[[]float64, []float64]
-func NewVectorEMA(alpha float64) VectorEMA {
+func NewVectorEMA(alpha types.Float) VectorEMA {
 	var ema []float64
 	var initialized bool
 
 	return func(in []float64) []float64 {
+		a := 0.1
+		if alpha != nil {
+			a = alpha(in)
+		}
 		if !initialized {
 			ema = make([]float64, len(in))
 			copy(ema, in)
@@ -23,7 +27,7 @@ func NewVectorEMA(alpha float64) VectorEMA {
 		}
 		
 		for i := range in {
-			ema[i] = (in[i] * alpha) + (ema[i] * (core.Unit - alpha))
+			ema[i] = (in[i] * a) + (ema[i] * (core.Unit - a))
 		}
 		return ema
 	}

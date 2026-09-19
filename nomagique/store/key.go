@@ -15,12 +15,19 @@ It extracts numerical or temporal values and converts them to *float64.
 If not found or not a valid number, it returns nil.
 */
 type Key[T any] types.Value[T, *float64]
-func NewKey[T any](interest ...string) Key[T] {
+func NewKey[T any](interest ...types.String) Key[T] {
 	return func(in T) *float64 {
 		var current any = in
 
 		if current == nil || len(interest) == 0 {
 			return nil
+		}
+
+		segments := make([]string, len(interest))
+		for i, s := range interest {
+			if s != nil {
+				segments[i] = s(in)
+			}
 		}
 
 		if rawBytes, ok := current.([]byte); ok {
@@ -30,7 +37,7 @@ func NewKey[T any](interest ...string) Key[T] {
 			}
 		}
 
-		for _, segment := range interest {
+		for _, segment := range segments {
 			if current == nil {
 				return nil
 			}
@@ -76,7 +83,7 @@ func NewKey[T any](interest ...string) Key[T] {
 			return nil
 		}
 
-		lastSegment := interest[len(interest)-1]
+		lastSegment := segments[len(segments)-1]
 
 		if lastSegment == "timestamp" {
 			switch val := current.(type) {

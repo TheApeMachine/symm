@@ -12,8 +12,12 @@ It takes a tuple of [LeftMatrix, RightMatrix] and returns the reduced RightMatri
 If the system is singular or rank-deficient based on the given tolerance, it returns nil.
 */
 type GaussJordan types.Value[[2][][]float64, [][]float64]
-func NewGaussJordan(tolerance float64) GaussJordan {
+func NewGaussJordan(tolerance types.Float) GaussJordan {
 	return func(in [2][][]float64) [][]float64 {
+		tol := 1e-9
+		if tolerance != nil {
+			tol = tolerance(in)
+		}
 		left := in[0]
 		right := in[1]
 		rows := len(left)
@@ -66,7 +70,7 @@ func NewGaussJordan(tolerance float64) GaussJordan {
 				}
 			}
 
-			if maxVal <= tolerance {
+			if maxVal <= tol {
 				return nil // Rank deficient
 			}
 

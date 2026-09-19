@@ -23,16 +23,25 @@ The resulting closure accepts an observation matrix ([][]float64) representing t
 and returns the expected value of the target under the intervention.
 */
 type Backdoor types.Value[[][]float64, float64]
-func NewBackdoor(tolerance float64, features []int, target int, treatment int, level float64) Backdoor {
+func NewBackdoor(tolerance types.Float, target, treatment types.Integer, level types.Float, features ...types.Integer) Backdoor {
 	// Initialize the structural elements
-	fitNode := NewLinearFit(tolerance, features, target)
-	predictNode := NewLinearPrediction(features)
+	fitNode := NewLinearFit(tolerance, target, features...)
+	predictNode := NewLinearPrediction(features...)
 
 	return func(rows [][]float64) float64 {
 		// 1. Abduction / Fitting
 		coefficients := fitNode(rows)
 		if coefficients == nil {
 			return math.NaN() // Fit is rank-deficient or undefined
+		}
+
+		treat := 0
+		if treatment != nil {
+			treat = treatment(rows)
+		}
+		lev := 0.0
+		if level != nil {
+			lev = level(rows)
 		}
 
 		// 2. Intervention and Prediction
@@ -44,10 +53,10 @@ func NewBackdoor(tolerance float64, features []int, target int, treatment int, l
 			intervened := make([]float64, len(row))
 			copy(intervened, row)
 
-			if treatment < 0 || treatment >= len(intervened) {
+			if treat < 0 || treat >= len(intervened) {
 				return math.NaN()
 			}
-			intervened[treatment] = level
+			intervened[treat] = lev
 
 			// Predict the counterfactual outcome for this intervened row
 			prediction := predictNode([2][]float64{coefficients, intervened})

@@ -11,8 +11,8 @@ import (
 
 func TestGrid(t *testing.T) {
 	Convey("Given a virtual grid with distributed cells", t, func() {
-		keyA := store.NewKey[any]("ticker", "data", "last")
-		keyB := store.NewKey[any]("trade", "price")
+		keyA := store.NewKey[any](types.Const("ticker"), types.Const("data"), types.Const("last"))
+		keyB := store.NewKey[any](types.Const("trade"), types.Const("price"))
 
 		cellA := func(in any) float64 {
 			// Expecting an extracted []*float64

@@ -13,6 +13,19 @@ import (
 	"github.com/theapemachine/symm/signal"
 )
 
+type Repository struct{}
+
+/*
+Default returns the standard definition repository.
+*/
+func Default() compiler.DefinitionRepository {
+	return &Repository{}
+}
+
+func (r *Repository) Load(name string) (compiler.Graph, error) {
+	return Load(name)
+}
+
 /*
 Load retrieves a JSON graph definition by name and unmarshals it into a compiler.Graph.
 It looks up definitions via embedded assets first, then falls back to disk locations.

@@ -1,0 +1,79 @@
+{
+  "id": "signals:stage",
+  "name": "signals:stage",
+  "nodes": {
+    "source": {
+      "id": "source",
+      "type": "data.Source",
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "grid",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "grid": {
+      "id": "grid",
+      "type": "store.Grid",
+      "inputData": {
+        "_config": {
+          "metrics": [
+            "correlation_ticker",
+            "cvd_trade",
+            "depthflow_level3",
+            "derivatives_ticker",
+            "derivatives_trade",
+            "hawkes_trade",
+            "leadlag_ticker",
+            "liquidity_ticker",
+            "morphology_level3",
+            "pumpdump_level3",
+            "pumpdump_ticker",
+            "pumpdump_trade",
+            "sentiment_ticker",
+            "toxicity_level3",
+            "toxicity_trade"
+          ]
+        }
+      },
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "source",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sink",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "sink": {
+      "id": "sink",
+      "type": "data.Sink",
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "grid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    }
+  }
+}

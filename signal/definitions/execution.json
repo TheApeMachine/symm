@@ -76,6 +76,34 @@
         "outputs": {
           "out": [
             {
+              "nodeId": "shell",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "shell": {
+      "id": "shell",
+      "type": "transport.Process",
+      "inputData": {
+        "_config": {
+          "binary": "kraken",
+          "args": ["paper"]
+        }
+      },
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "submit",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
               "nodeId": "sink",
               "portName": "in"
             }
@@ -90,7 +118,7 @@
         "inputs": {
           "in": [
             {
-              "nodeId": "submit",
+              "nodeId": "shell",
               "portName": "out"
             }
           ]

@@ -10,7 +10,7 @@ import (
 
 func TestData(t *testing.T) {
 	Convey("Given Extract atom", t, func() {
-		extract := NewExtract("price")
+		extract := NewExtract(types.Const("price"))
 		So(extract(map[string]any{"price": 42.5}), ShouldEqual, 42.5)
 		So(extract(map[string]any{"other": 10.0}), ShouldEqual, 0.0)
 	})
@@ -47,8 +47,8 @@ func TestData(t *testing.T) {
 		So(measurement.Maturity, ShouldAlmostEqual, 0.9, 1e-6)
 	})
 
-	Convey("Given Series Value closure", t, func() {
-		series := NewSeries[float64](3)
+	Convey("Given Series storage closure", t, func() {
+		series := NewSeries[float64](types.Const(3))
 
 		// Observe key "btc"
 		r1 := series(SeriesInput[float64]{
@@ -90,10 +90,10 @@ func TestData(t *testing.T) {
 
 	Convey("Given Equations Value closure", t, func() {
 		eq := NewEquations(
-			NewUnaryEquation("double_bid", "bid", func(in float64) float64 {
+			NewUnaryEquation(types.Const("double_bid"), types.Const("bid"), func(in float64) float64 {
 				return in * 2.0
 			}),
-			NewBinaryEquation("spread", "ask", "bid", types.Value[[2]float64, float64](arithmetic.NewSubtract())),
+			NewBinaryEquation(types.Const("spread"), types.Const("ask"), types.Const("bid"), types.Value[[2]float64, float64](arithmetic.NewSubtract())),
 		)
 
 		m := NewMeasurement[float64]("quote", nil)

@@ -17,11 +17,23 @@ Input: A slice of float64 where the first N elements are the feature vector (X),
 and the last element is the target (y).
 Output: An array [prediction, predictive_variance].
 */
-func NewRLS(dimensions int, lambda float64) RLS {
-	beta := make([]float64, dimensions)
-	root := make([][]float64, dimensions)
+func NewRLS(dimensions types.Integer, lambda types.Float) RLS {
+	dim := 1
+	if dimensions != nil {
+		if d := dimensions(nil); d > 0 {
+			dim = d
+		}
+	}
+	lam := 0.99
+	if lambda != nil {
+		if l := lambda(nil); l > 0 {
+			lam = l
+		}
+	}
+	beta := make([]float64, dim)
+	root := make([][]float64, dim)
 	for i := range root {
-		root[i] = make([]float64, dimensions)
+		root[i] = make([]float64, dim)
 		root[i][i] = core.Unit // Identity matrix initialization
 	}
 
@@ -30,15 +42,15 @@ func NewRLS(dimensions int, lambda float64) RLS {
 	var observations float64
 
 	return func(in []float64) [2]float64 {
-		if len(in) != dimensions+1 {
+		if len(in) != dim+1 {
 			return [2]float64{math.NaN(), math.NaN()} // Invalid input shape
 		}
 
-		x := in[:dimensions]
-		y := in[dimensions]
+		x := in[:dim]
+		y := in[dim]
 
 		// 1. Prediction (Projection through design)
-		factor := make([]float64, dimensions)
+		factor := make([]float64, dim)
 		prediction := 0.0
 		for row, feature := range x {
 			prediction += beta[row] * feature
@@ -56,15 +68,15 @@ func NewRLS(dimensions int, lambda float64) RLS {
 
 		// 2. Symmetric Square-Root Rank-One Update
 		innovation := y - prediction
-		alpha := lambda + energy
+		alpha := lam + energy
 
 		if alpha <= 0 {
 			return [2]float64{math.NaN(), math.NaN()}
 		}
 
-		rootLambda := math.Sqrt(lambda)
+		rootLambda := math.Sqrt(lam)
 		denominator := alpha + rootLambda*math.Sqrt(alpha)
-		gain := make([]float64, dimensions)
+		gain := make([]float64, dim)
 
 		for row := range root {
 			for col, coeff := range root[row] {
@@ -79,8 +91,8 @@ func NewRLS(dimensions int, lambda float64) RLS {
 		}
 
 		observations++
-		noiseScale = lambda*noiseScale + 0.5*innovation*innovation/alpha
-		noiseShape = lambda*noiseShape + 0.5
+		noiseScale = lam*noiseScale + 0.5*innovation*innovation/alpha
+		noiseShape = lam*noiseShape + 0.5
 
 		return [2]float64{prediction, variance}
 	}

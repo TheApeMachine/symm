@@ -126,3 +126,43 @@ export function usePrimitives(): PrimitiveCatalog {
 
 	return state;
 }
+
+export const fetchDefinitions = async (): Promise<string[]> => {
+	const response = await fetch(`${hubBaseUrl()}/workbench/signals`);
+	if (!response.ok) {
+		throw new Error(`Failed to list definitions (${response.status})`);
+	}
+	return response.json();
+};
+
+export function useDefinitions(): {
+	data: string[];
+	isPending: boolean;
+	isError: boolean;
+} {
+	const [data, setData] = useState<string[]>([]);
+	const [isPending, setIsPending] = useState(true);
+	const [isError, setIsError] = useState(false);
+
+	useEffect(() => {
+		let live = true;
+		fetchDefinitions()
+			.then((defs) => {
+				if (live) {
+					setData(defs);
+					setIsPending(false);
+				}
+			})
+			.catch(() => {
+				if (live) {
+					setIsError(true);
+					setIsPending(false);
+				}
+			});
+		return () => {
+			live = false;
+		};
+	}, []);
+
+	return { data, isPending, isError };
+}

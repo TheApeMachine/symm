@@ -34,3 +34,11 @@ type ConnectionTarget struct {
 	NodeID   string `json:"nodeId"`
 	PortName string `json:"portName"`
 }
+
+/*
+DefinitionRepository resolves definition references (such as "definition:<name>")
+into child Graphs for recursive in-memory compilation.
+*/
+type DefinitionRepository interface {
+	Load(name string) (Graph, error)
+}

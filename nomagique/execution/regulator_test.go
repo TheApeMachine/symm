@@ -5,11 +5,12 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestRegulator(t *testing.T) {
 	Convey("Given a new Regulator for an asset", t, func() {
-		regulator := NewRegulator("ASSET/USD")
+		regulator := NewRegulator(types.Const("ASSET/USD"))
 
 		Convey("Initial state is zero", func() {
 			initial := regulator(nil)

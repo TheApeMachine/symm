@@ -1,5 +1,7 @@
 package core
 
+import "github.com/krakenfx/api-go/v2/pkg/decimal"
+
 /*
 Constants are the only values in nomagique that are not required
 to be derived, or adaptive. It is not allowed to make them arbitrary
@@ -18,3 +20,9 @@ const (
 	// representation boundary below which differences are non-distinguishable.
 	Epsilon = 2.220446049250313e-16
 )
+
+/*
+ZeroDecimal is the zero value for decimal.Decimal, used when needed to avoid
+initializing a new decimal.Decimal.
+*/
+var ZeroDecimal = decimal.NewFromInt64(0)

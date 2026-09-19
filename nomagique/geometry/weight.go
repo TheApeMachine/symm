@@ -7,8 +7,12 @@ NewWeight creates a Value closure that scales incoming values by configured stre
 No structs, pure Value closure.
 */
 type Weight types.Value[float64, float64]
-func NewWeight(strength, direction float64) Weight {
+func NewWeight(strength, direction types.Float) Weight {
 	return func(in float64) float64 {
-		return in * strength
+		s := 1.0
+		if strength != nil {
+			s = strength(in)
+		}
+		return in * s
 	}
 }

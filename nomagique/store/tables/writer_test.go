@@ -10,9 +10,8 @@ import (
 	"github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/store/tables"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/nomagique/store/tables"
 	"github.com/theapemachine/symm/tests/tablestest"
 )
 
@@ -67,14 +66,14 @@ func (catalog *competingCatalog) CommitTable(ctx context.Context, identifier tab
 
 func TestWriter_CommitReady(t *testing.T) {
 	Convey("A writer uses Iceberg's conflict recovery without losing concurrent appends", t, func() {
-		savedConfig := system.Cfg
-		system.Cfg = &system.Config{Storage: &system.Storage{Iceberg: &system.Iceberg{CommitRetries: 4}}}
-		Reset(func() { system.Cfg = savedConfig })
 		underlying := tablestest.Underlying(t)
 		peerCatalog := tables.Wrap(underlying)
+		peerCatalog.SetStorageConfig(&tables.StorageConfig{Iceberg: tables.IcebergConfig{CommitRetries: 4}})
 		So(peerCatalog.Ensure(t.Context()), ShouldBeNil)
 		adapter := &competingCatalog{Catalog: underlying}
-		writer := tables.NewWriter(tables.Wrap(adapter), 100)
+		writerCatalog := tables.Wrap(adapter)
+		writerCatalog.SetStorageConfig(&tables.StorageConfig{Iceberg: tables.IcebergConfig{CommitRetries: 4}})
+		writer := tables.NewWriter(writerCatalog, 100)
 		peer := tables.NewWriter(peerCatalog, 100)
 		add := func(target *tables.Writer, sequence int64) {
 			measurement := data.NewMeasurement(

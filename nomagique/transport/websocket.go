@@ -2,30 +2,19 @@ package transport
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"slices"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-WSMessage represents an incoming or outgoing WebSocket frame.
-*/
-type WSMessage struct {
-	Type      int
-	Payload   []byte
-	Channel   string
-	Timestamp int64
-}
-
-/*
-WSConnection manages a live WebSocket session with thread-safe read/write.
+WSConnection wraps an active WebSocket connection and protects write concurrency.
 */
 type WSConnection struct {
 	conn *websocket.Conn
@@ -33,43 +22,59 @@ type WSConnection struct {
 }
 
 /*
-NewWSConnect establishes a WebSocket connection to the given URL endpoint.
+WSMessage represents a typed WebSocket frame payload with timestamp metadata.
 */
-func NewWSConnect(endpoint string) types.Value[context.Context, *WSConnection] {
-	return func(ctx context.Context) *WSConnection {
-		dialer := websocket.DefaultDialer
+type WSMessage struct {
+	Type      int    `json:"type"`
+	Payload   []byte `json:"payload"`
+	Timestamp int64  `json:"timestamp"`
+}
 
-		conn, resp, err := dialer.DialContext(ctx, endpoint, http.Header{})
+/*
+WSConnect establishes a WebSocket connection to the configured endpoint URL.
+Pure types.Value closure with local dialer state.
+*/
+type WSConnect types.Value[context.Context, *WSConnection]
+
+func NewWSConnect(endpoint types.String) WSConnect {
+	dialer := websocket.DefaultDialer
+	return func(ctx context.Context) *WSConnection {
+		if endpoint == nil {
+			errnie.Error(errnie.Err(errnie.Validation, "transport: websocket endpoint is nil", nil))
+			return nil
+		}
+		ep := endpoint(ctx)
+		if ep == "" {
+			errnie.Error(errnie.Err(errnie.Validation, "transport: websocket endpoint is empty", nil))
+			return nil
+		}
+		conn, resp, err := dialer.DialContext(ctx, ep, http.Header{})
 		if err != nil {
 			errnie.Error(errnie.Err(errnie.IO, "transport: websocket dial failed", err))
 			return nil
 		}
-
 		if resp != nil && resp.Body != nil {
-			if closeErr := resp.Body.Close(); closeErr != nil {
-				errnie.Error(errnie.Err(errnie.IO, "transport: close response body", closeErr))
-			}
+			_ = resp.Body.Close()
 		}
-
 		return &WSConnection{conn: conn}
 	}
 }
 
 /*
-NewWSRead creates a closure that reads the next message from the WebSocket.
+WSRead reads the next frame payload from an active WebSocket connection.
+Pure types.Value closure.
 */
-func NewWSRead() types.Value[*WSConnection, *WSMessage] {
+type WSRead types.Value[*WSConnection, *WSMessage]
+
+func NewWSRead() WSRead {
 	return func(ws *WSConnection) *WSMessage {
 		if ws == nil || ws.conn == nil {
 			return nil
 		}
-
 		msgType, payload, err := ws.conn.ReadMessage()
 		if err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "transport: websocket read failed", err))
 			return nil
 		}
-
 		return &WSMessage{
 			Type:      msgType,
 			Payload:   payload,
@@ -79,216 +84,243 @@ func NewWSRead() types.Value[*WSConnection, *WSMessage] {
 }
 
 /*
-NewWSWrite creates a closure that writes a message to the WebSocket connection.
+WSWrite writes a message frame to an active WebSocket connection.
+Pure types.Value closure.
 */
-func NewWSWrite(ws *WSConnection) types.Value[*WSMessage, error] {
+type WSWrite types.Value[*WSMessage, error]
+
+func NewWSWrite(ws *WSConnection) WSWrite {
 	return func(msg *WSMessage) error {
 		if msg == nil {
 			return nil
 		}
-
 		if ws == nil || ws.conn == nil {
 			return errnie.Error(errnie.Err(errnie.IO, "transport: websocket not connected", nil))
 		}
-
 		ws.mu.Lock()
 		defer ws.mu.Unlock()
-
-		err := ws.conn.WriteMessage(msg.Type, msg.Payload)
-		if err != nil {
-			return errnie.Error(errnie.Err(errnie.IO, "transport: websocket write failed", err))
-		}
-
-		return nil
+		return ws.conn.WriteMessage(msg.Type, msg.Payload)
 	}
 }
 
 /*
-NewWSClose creates a closure that cleanly shuts down the WebSocket connection.
+WSClose cleanly closes an active WebSocket connection.
+Pure types.Value closure.
 */
-func NewWSClose() types.Value[*WSConnection, error] {
+type WSClose types.Value[*WSConnection, error]
+
+func NewWSClose() WSClose {
 	return func(ws *WSConnection) error {
 		if ws == nil || ws.conn == nil {
 			return nil
 		}
-
 		ws.mu.Lock()
 		defer ws.mu.Unlock()
-
-		err := ws.conn.WriteMessage(
+		_ = ws.conn.WriteMessage(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 		)
-		if err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "transport: write close message", err))
-		}
-
 		return ws.conn.Close()
 	}
 }
 
 /*
-NewSubscription constructs a standard subscription message structure.
+WSPingPong responds to WebSocket ping frames with a pong frame.
+Pure types.Value closure with local state.
 */
-func NewSubscription(method, channel string, symbols ...string) types.Value[any, map[string]any] {
-	return func(any) map[string]any {
-		return map[string]any{
-			"method": method,
-			"params": map[string]any{
-				"channel": channel,
-				"symbol":  symbols,
-			},
-		}
-	}
-}
+type WSPingPong types.Value[*WSMessage, *WSMessage]
 
-/*
-NewPingPong creates a closure that checks for ping frames and responds with pong.
-*/
-func NewPingPong() types.Value[*WSMessage, *WSMessage] {
+func NewWSPingPong(ws *WSConnection) WSPingPong {
 	return func(msg *WSMessage) *WSMessage {
 		if msg == nil {
 			return nil
 		}
-
-		if msg.Type == websocket.PingMessage {
-			return &WSMessage{
-				Type:      websocket.PongMessage,
-				Payload:   msg.Payload,
-				Timestamp: time.Now().UnixMilli(),
-			}
+		if msg.Type == websocket.PingMessage && ws != nil && ws.conn != nil {
+			ws.mu.Lock()
+			_ = ws.conn.WriteMessage(websocket.PongMessage, nil)
+			ws.mu.Unlock()
 		}
-
 		return msg
 	}
 }
 
 /*
-StartWSIngress establishes a persistent WebSocket session, subscribes to requested channels
-and symbols in paced batches, and pumps incoming market payloads into the onTick callback. It handles automatic
-reconnection on network drops until ctx is cancelled.
+JSONMessage is a pure Value closure that outputs its configured data payload.
 */
-func StartWSIngress(
+type JSONMessage types.Value[any, any]
+
+func NewJSONMessage(payload types.Any) JSONMessage {
+	return func(in any) any {
+		if in != nil {
+			return in
+		}
+		if payload != nil {
+			return payload(nil)
+		}
+		return nil
+	}
+}
+
+/*
+EncodeJSON serializes arbitrary data into JSON bytes.
+Pure types.Value closure.
+*/
+type EncodeJSON types.Value[any, []byte]
+
+func NewEncodeJSON() EncodeJSON {
+	return func(in any) []byte {
+		data, err := sonic.Marshal(in)
+		if err != nil {
+			return nil
+		}
+		return data
+	}
+}
+
+/*
+DecodeJSON deserializes JSON bytes into structured data.
+Pure types.Value closure.
+*/
+type DecodeJSON types.Value[[]byte, any]
+
+func NewDecodeJSON() DecodeJSON {
+	return func(data []byte) any {
+		var out any
+		if err := sonic.Unmarshal(data, &out); err != nil {
+			return nil
+		}
+		return out
+	}
+}
+
+/*
+Batch divides a slice of items into batches of the configured size.
+Pure types.Value closure.
+*/
+type Batch[T any] types.Value[[]T, [][]T]
+
+func NewBatch[T any](size types.Integer) Batch[T] {
+	return func(items []T) [][]T {
+		batchSize := 0
+		if size != nil {
+			batchSize = size(items)
+		}
+		if batchSize <= 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"batch: size must be positive",
+				nil,
+			))
+			return nil
+		}
+		var batches [][]T
+		for chunk := range slices.Chunk(items, batchSize) {
+			batches = append(batches, chunk)
+		}
+		return batches
+	}
+}
+
+/*
+WSStream continuously reads messages from an endpoint and forwards to a sink.
+Reconnections and pace are handled adaptively.
+*/
+type WSStream types.Value[types.Value[any, any], error]
+
+func NewWSStream(
 	ctx context.Context,
-	endpoint string,
-	channels []string,
-	symbols []string,
-	batchSize int,
-	pace time.Duration,
-	onTick func(any),
-) {
+	endpoint types.String,
+	messages []types.Any,
+	pace types.Integer,
+) WSStream {
 	connect := NewWSConnect(endpoint)
 	read := NewWSRead()
 	closeConn := NewWSClose()
-	pingPong := NewPingPong()
 
-	effectiveBatch := batchSize
-	if effectiveBatch <= 0 {
-		effectiveBatch = 200
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
+	return func(consumer types.Value[any, any]) error {
+		paceMs := 0
+		if pace != nil {
+			paceMs = pace(nil)
 		}
-
-		errnie.Info(fmt.Sprintf("[websocket] connecting to %s...", endpoint))
-		conn := connect(ctx)
-
-		if conn == nil {
-			errnie.Warn(fmt.Sprintf("[websocket] connect failed for %s, retrying in 3s...", endpoint))
-
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(3 * time.Second):
-				continue
-			}
-		}
-
-		write := NewWSWrite(conn)
-
-		for _, channel := range channels {
-			for batch := range slices.Chunk(symbols, effectiveBatch) {
-				subParams := map[string]any{
-					"channel": channel,
-					"symbol":  batch,
-				}
-
-				if channel == "book" {
-					subParams["depth"] = 10
-				}
-
-				subMsg := map[string]any{
-					"method": "subscribe",
-					"params": subParams,
-				}
-
-				payload, err := json.Marshal(subMsg)
-				if err != nil {
-					continue
-				}
-
-				if err := write(&WSMessage{
-					Type:    websocket.TextMessage,
-					Payload: payload,
-				}); err != nil {
-					errnie.Error(errnie.Err(errnie.IO, "[websocket] subscription write failed", err))
-					continue
-				}
-
-				errnie.Info(fmt.Sprintf("[websocket] subscribed to %s for %d symbols on %s", channel, len(batch), endpoint))
-
-				if pace > 0 {
-					select {
-					case <-ctx.Done():
-						closeConn(conn)
-						return
-					case <-time.After(pace):
-					}
-				}
-			}
-		}
+		delay := time.Duration(paceMs) * time.Millisecond
 
 		for {
 			select {
 			case <-ctx.Done():
-				closeConn(conn)
-				return
+				return nil
 			default:
 			}
 
-			msg := read(conn)
-
-			if msg == nil {
-				errnie.Warn(fmt.Sprintf("[websocket] disconnected from %s, reconnecting...", endpoint))
-				closeConn(conn)
-				break
-			}
-
-			if msg.Type == websocket.PingMessage {
-				if pong := pingPong(msg); pong != nil {
-					write(pong)
-				}
-
-				continue
-			}
-
-			if msg.Type == websocket.TextMessage && len(msg.Payload) > 0 {
-				var tick any
-
-				if err := json.Unmarshal(msg.Payload, &tick); err == nil && tick != nil {
-					onTick(tick)
+			ws := connect(ctx)
+			if ws == nil {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(3 * time.Second):
+					continue
 				}
 			}
-		}
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(1 * time.Second):
+			write := NewWSWrite(ws)
+			pingPong := NewWSPingPong(ws)
+
+			for _, msgFn := range messages {
+				if msgFn == nil {
+					continue
+				}
+				msg := msgFn(nil)
+				var payload []byte
+				switch m := msg.(type) {
+				case []byte:
+					payload = m
+				case string:
+					payload = []byte(m)
+				default:
+					data, err := sonic.Marshal(m)
+					if err == nil {
+						payload = data
+					}
+				}
+				if len(payload) > 0 {
+					_ = write(&WSMessage{
+						Type:      websocket.TextMessage,
+						Payload:   payload,
+						Timestamp: time.Now().UnixMilli(),
+					})
+				}
+				if delay > 0 {
+					time.Sleep(delay)
+				}
+			}
+
+			for {
+				select {
+				case <-ctx.Done():
+					_ = closeConn(ws)
+					return nil
+				default:
+				}
+
+				msg := read(ws)
+				if msg == nil {
+					_ = closeConn(ws)
+					break
+				}
+
+				msg = pingPong(msg)
+				if msg.Type == websocket.TextMessage && len(msg.Payload) > 0 {
+					var raw any
+					if err := sonic.Unmarshal(msg.Payload, &raw); err == nil && consumer != nil {
+						consumer(raw)
+					}
+				}
+			}
+
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(1 * time.Second):
+			}
 		}
 	}
 }

@@ -11,17 +11,28 @@ const PORT_PALETTE: Record<string, (typeof Colors)[keyof typeof Colors]> = {
 	trigger: Colors.red,
 };
 
-const normalizePortType = (raw: string): keyof typeof PORT_PALETTE => {
-	switch (raw) {
+const ALL_PORT_TYPES = Object.keys(PORT_PALETTE);
+
+export const normalizePortType = (raw: string): keyof typeof PORT_PALETTE => {
+	if (!raw) return "any";
+	switch (raw.toLowerCase()) {
 		case "tensor":
 		case "string":
-		case "bool":
-		case "number":
 		case "trigger":
 		case "any":
-			return raw;
+			return raw.toLowerCase() as keyof typeof PORT_PALETTE;
+		case "bool":
+		case "boolean":
+			return "bool";
+		case "number":
 		case "float":
+		case "float64":
+		case "float32":
 		case "int":
+		case "int64":
+		case "int32":
+		case "uint":
+		case "uint64":
 		case "scalar":
 			return "number";
 		case "primitive":
@@ -58,31 +69,195 @@ const registerPortTypes = (config: FlumeConfig) => {
 			name: portType,
 			label: portType,
 			color,
+			acceptTypes: ALL_PORT_TYPES,
 		});
 	}
 };
 
 const registerBuiltinNodeTypes = (config: FlumeConfig) => {
-	config
-		.addNodeType({
-			type: "source",
-			label: "Source",
-			category: "Built-in",
-			description: "Tensor source",
+	// Source nodes
+	const registerSource = (type: string, label: string) => {
+		config.addNodeType({
+			type,
+			label,
+			category: "Orchestration",
+			description: "Ingress data stream source",
 			initialWidth: 280,
 			inputs: [],
-			outputs: (ports) => [ports.tensor({ name: "value", label: "Value" })],
-		})
-		.addNodeType({
-			type: "sink",
-			label: "Sink",
-			category: "Built-in",
-			description: "Tensor sink",
+			outputs: (ports) => [
+				ports.any({ name: "out", label: "Out" }),
+				ports.any({ name: "value", label: "Value" }),
+			],
+		});
+	};
+	registerSource("data.Source", "Source");
+	registerSource("source", "Source");
+
+	// Sink nodes
+	const registerSink = (type: string, label: string) => {
+		config.addNodeType({
+			type,
+			label,
+			category: "Orchestration",
+			description: "Pipeline terminal data sink",
 			initialWidth: 280,
-			inputs: (ports) => [ports.tensor({ name: "value", label: "Value" })],
+			inputs: (ports) => [
+				ports.any({ name: "in", label: "In" }),
+				ports.any({ name: "value", label: "Value" }),
+			],
 			outputs: [],
-		})
-		.addNodeType({
+		});
+	};
+	registerSink("data.Sink", "Sink");
+	registerSink("sink", "Sink");
+
+	// Master pipeline orchestration stages
+	const stages: Array<{ type: string; label: string; desc: string }> = [
+		{
+			type: "pipeline.Signals",
+			label: "Signals",
+			desc: "Streaming signal extraction grid",
+		},
+		{
+			type: "signals",
+			label: "Signals",
+			desc: "Streaming signal extraction grid",
+		},
+		{
+			type: "pipeline.Logic",
+			label: "Logic",
+			desc: "Associative cognition & attractor basin logic",
+		},
+		{
+			type: "logic",
+			label: "Logic",
+			desc: "Associative cognition & attractor basin logic",
+		},
+		{
+			type: "ui.Broadcast",
+			label: "UI Broadcast",
+			desc: "Telemetry binary frame broadcast to UI hub",
+		},
+		{
+			type: "ui",
+			label: "UI Broadcast",
+			desc: "Telemetry binary frame broadcast to UI hub",
+		},
+		{
+			type: "pipeline.Execution",
+			label: "Execution",
+			desc: "Execution policy and paper/live order submission",
+		},
+		{
+			type: "execution",
+			label: "Execution",
+			desc: "Execution policy and paper/live order submission",
+		},
+		{
+			type: "data.Extract",
+			label: "Extract",
+			desc: "Extracts a scalar path from structured data",
+		},
+		{
+			type: "data.Select",
+			label: "Select",
+			desc: "Selects nested data properties",
+		},
+		{
+			type: "associative.Grid",
+			label: "Associative Grid",
+			desc: "Associative memory grid",
+		},
+		{
+			type: "temporal.Transition",
+			label: "Transition",
+			desc: "Temporal transition operator",
+		},
+		{
+			type: "cognition.Associate",
+			label: "Associate",
+			desc: "Associative feature mapping",
+		},
+		{
+			type: "cognition.Reinforce",
+			label: "Reinforce",
+			desc: "Cognitive reward reinforcement",
+		},
+		{
+			type: "cognition.Attractor",
+			label: "Attractor",
+			desc: "Attractor basin dynamics",
+		},
+		{
+			type: "cognition.Classification",
+			label: "Classification",
+			desc: "Attractor state classification",
+		},
+		{
+			type: "execution.Decide",
+			label: "Decide",
+			desc: "Execution decision logic",
+		},
+		{
+			type: "execution.Gate",
+			label: "Gate",
+			desc: "Risk and threshold gating",
+		},
+		{
+			type: "execution.Submit",
+			label: "Submit",
+			desc: "Order execution submission",
+		},
+		{
+			type: "transport.Collect",
+			label: "Collect",
+			desc: "Collects items into batches",
+		},
+		{
+			type: "transport.Discard",
+			label: "Discard",
+			desc: "Discards stream data",
+		},
+		{
+			type: "transport.Pace",
+			label: "Pace",
+			desc: "Rate limits stream throughput",
+		},
+		{
+			type: "transport.Process",
+			label: "Process",
+			desc: "External subprocess execution",
+		},
+		{
+			type: "temporal.Delay",
+			label: "Delay",
+			desc: "Temporal lookback delay buffer",
+		},
+	];
+
+	for (const s of stages) {
+		if (!config.nodeTypes[s.type]) {
+			config.addNodeType({
+				type: s.type,
+				label: s.label,
+				category: "Architecture",
+				description: s.desc,
+				initialWidth: 280,
+				inputs: (ports) => [
+					ports.any({ name: "in", label: "In" }),
+					ports.any({ name: "value", label: "Value" }),
+				],
+				outputs: (ports) => [
+					ports.any({ name: "out", label: "Out" }),
+					ports.any({ name: "value", label: "Value" }),
+				],
+			});
+		}
+	}
+
+	// Legacy gate and scalar
+	if (!config.nodeTypes.gate) {
+		config.addNodeType({
 			type: "gate",
 			label: "Gate",
 			category: "Built-in",
@@ -103,8 +278,11 @@ const registerBuiltinNodeTypes = (config: FlumeConfig) => {
 				}),
 			],
 			outputs: (ports) => [ports.tensor({ name: "out", label: "Out" })],
-		})
-		.addNodeType({
+		});
+	}
+
+	if (!config.nodeTypes.scalar) {
+		config.addNodeType({
 			type: "scalar",
 			label: "Scalar",
 			category: "Built-in",
@@ -131,6 +309,7 @@ const registerBuiltinNodeTypes = (config: FlumeConfig) => {
 				ports.number({ name: "diff", label: "Diff" }),
 			],
 		});
+	}
 };
 
 const schemaToNodeType = (config: FlumeConfig, schema: Schema) => {
@@ -189,8 +368,38 @@ const schemaToNodeType = (config: FlumeConfig, schema: Schema) => {
 };
 
 /*
-buildFlumeConfigFromSchemas registers port types, built-in nodes, and one
-Flume node type per backend operation schema.
+Ensures any unknown node type found in an imported graph is dynamically registered
+so it is never dropped during reconciliation.
+*/
+export const ensureNodeType = (
+	config: FlumeConfig,
+	typeName: string,
+	category = "Custom",
+) => {
+	if (!typeName || config.nodeTypes[typeName]) {
+		return;
+	}
+
+	const ports = getPortBuilders(config.portTypes);
+	config.addNodeType({
+		type: typeName,
+		label: typeName,
+		category,
+		initialWidth: 280,
+		inputs: [
+			ports.any({ name: "in", label: "In" }),
+			ports.any({ name: "value", label: "Value" }),
+		],
+		outputs: [
+			ports.any({ name: "out", label: "Out" }),
+			ports.any({ name: "value", label: "Value" }),
+		],
+	});
+};
+
+/*
+buildFlumeConfigFromSchemas registers port types, built-in architecture nodes,
+and one Flume node type per backend operation schema.
 */
 export const buildFlumeConfigFromSchemas = (
 	schemas: Record<string, Schema>,

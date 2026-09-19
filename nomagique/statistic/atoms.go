@@ -45,17 +45,21 @@ type EMA types.Value[float64, float64]
 NewEMA creates a stateful Exponential Moving Average closure.
 The smoothing factor (alpha) is permanently closed over.
 */
-func NewEMA(alpha float64) EMA {
+func NewEMA(alpha types.Float) EMA {
 	var ema float64
 	var initialized bool
 
 	return func(in float64) float64 {
+		a := 0.1
+		if alpha != nil {
+			a = alpha(in)
+		}
 		if !initialized {
 			ema = in
 			initialized = true
 			return ema
 		}
-		ema = (in * alpha) + (ema * (core.Unit - alpha))
+		ema = (in * a) + (ema * (core.Unit - a))
 		return ema
 	}
 }
@@ -153,13 +157,30 @@ type Threshold types.Value[float64, float64]
 NewThreshold creates a state-free closure that maps a rank (0.0 to 1.0) to a target value.
 It uses a threshold band to decide whether to output the min, max, or rest value.
 */
-func NewThreshold(band, rest, lower, upper float64) Threshold {
+func NewThreshold(band, rest, lower, upper types.Float) Threshold {
 	return func(rank float64) float64 {
-		if rank < band {
-			return upper
-		} else if rank > 1.0-band {
-			return lower
+		b := 0.05
+		if band != nil {
+			b = band(rank)
 		}
-		return rest
+		r := 0.0
+		if rest != nil {
+			r = rest(rank)
+		}
+		l := -1.0
+		if lower != nil {
+			l = lower(rank)
+		}
+		u := 1.0
+		if upper != nil {
+			u = upper(rank)
+		}
+
+		if rank < b {
+			return u
+		} else if rank > 1.0-b {
+			return l
+		}
+		return r
 	}
 }

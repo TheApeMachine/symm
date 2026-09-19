@@ -12,7 +12,7 @@ import (
 
 func TestAssociativeGrid(t *testing.T) {
 	Convey("Given an Associative Grid Sympathy closure", t, func() {
-		keyA := store.NewKey[any]("ticker", "data", "last")
+		keyA := store.NewKey[any](types.Const("ticker"), types.Const("data"), types.Const("last"))
 
 		cellA := func(in any) float64 {
 			if val := keyA(in); val != nil {

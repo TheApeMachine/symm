@@ -2,11 +2,51 @@
   "id": "system:orchestration",
   "name": "system:orchestration",
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "sub_message": {
+      "id": "sub_message",
+      "type": "transport.Message",
+      "inputData": {
+        "message": {
+          "method": "subscribe",
+          "params": {
+            "channel": "trade",
+            "symbol": [
+              "BTC/USD",
+              "ETH/USD"
+            ]
+          }
+        }
+      },
       "connections": {
         "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "ingress",
+              "portName": "in"
+            }
+          ]
+        }
+      }
+    },
+    "ingress": {
+      "id": "ingress",
+      "type": "transport.WSStream",
+      "inputData": {
+        "_config": {
+          "endpoint": "wss://ws.kraken.com/v2",
+          "pace": "500ms"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "in": [
+            {
+              "nodeId": "sub_message",
+              "portName": "out"
+            }
+          ]
+        },
         "outputs": {
           "out": [
             {
@@ -19,12 +59,12 @@
     },
     "signals": {
       "id": "signals",
-      "type": "pipeline.Signals",
+      "type": "definition:signals",
       "connections": {
         "inputs": {
           "in": [
             {
-              "nodeId": "source",
+              "nodeId": "ingress",
               "portName": "out"
             }
           ]
@@ -41,7 +81,7 @@
     },
     "logic": {
       "id": "logic",
-      "type": "pipeline.Logic",
+      "type": "definition:logic",
       "connections": {
         "inputs": {
           "in": [
@@ -85,7 +125,7 @@
     },
     "execution": {
       "id": "execution",
-      "type": "pipeline.Execution",
+      "type": "definition:execution",
       "connections": {
         "inputs": {
           "in": [

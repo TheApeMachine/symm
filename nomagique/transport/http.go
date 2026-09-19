@@ -1,163 +1,102 @@
 package transport
 
 import (
-	"bytes"
 	"context"
-	"io"
-	"net/http"
-	"net/url"
+	"strings"
 
+	"github.com/bytedance/sonic"
+	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-HTTPRequest holds parameters for constructing and executing an HTTP request.
+HTTPRequest performs an HTTP request using the configured method and URL ports,
+processing input data and returning the parsed JSON response map.
 */
-type HTTPRequest struct {
-	Method      string
-	URL         string
-	Headers     map[string]string
-	QueryParams map[string]string
-	Body        []byte
-}
+type HTTPRequest types.Value[map[string]any, map[string]any]
 
 /*
-HTTPResponse holds the result of an HTTP execution.
+NewHTTPRequest constructs a closure that executes an HTTP request.
+method and rawURL are types.String port closures (either static constants or dynamic wires).
 */
-type HTTPResponse struct {
-	StatusCode int
-	Headers    map[string][]string
-	Body       []byte
-}
+func NewHTTPRequest(method types.String, rawURL types.String) HTTPRequest {
+	cc := client.New()
 
-/*
-NewHTTPRequest constructs a closure that produces an HTTPRequest template.
-*/
-func NewHTTPRequest(method, rawURL string) types.Value[[]byte, *HTTPRequest] {
-	return func(body []byte) *HTTPRequest {
-		return &HTTPRequest{
-			Method:      method,
-			URL:         rawURL,
-			Headers:     make(map[string]string),
-			QueryParams: make(map[string]string),
-			Body:        body,
-		}
-	}
-}
-
-/*
-NewHTTPHeader attaches a key-value header to the HTTPRequest.
-*/
-func NewHTTPHeader(key, value string) types.Value[*HTTPRequest, *HTTPRequest] {
-	return func(req *HTTPRequest) *HTTPRequest {
-		if req == nil {
-			return nil
-		}
-
-		if req.Headers == nil {
-			req.Headers = make(map[string]string)
-		}
-
-		req.Headers[key] = value
-		return req
-	}
-}
-
-/*
-NewHTTPParam attaches a query parameter to the HTTPRequest.
-*/
-func NewHTTPParam(key, value string) types.Value[*HTTPRequest, *HTTPRequest] {
-	return func(req *HTTPRequest) *HTTPRequest {
-		if req == nil {
-			return nil
-		}
-
-		if req.QueryParams == nil {
-			req.QueryParams = make(map[string]string)
-		}
-
-		req.QueryParams[key] = value
-		return req
-	}
-}
-
-/*
-NewHTTPExecute performs the HTTP request using the provided http.Client.
-*/
-func NewHTTPExecute(client *http.Client) types.Value[*HTTPRequest, *HTTPResponse] {
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	return func(req *HTTPRequest) *HTTPResponse {
-		if req == nil {
-			return nil
-		}
-
-		reqURL, err := url.Parse(req.URL)
-		if err != nil {
-			errnie.Error(errnie.Err(errnie.Validation, "transport: invalid request URL", err))
-			return nil
-		}
-
-		if len(req.QueryParams) > 0 {
-			q := reqURL.Query()
-			for k, v := range req.QueryParams {
-				q.Set(k, v)
+	return func(body map[string]any) map[string]any {
+		m := "GET"
+		if method != nil {
+			if evaluated := method(body); evaluated != "" {
+				m = strings.ToUpper(evaluated)
 			}
-			reqURL.RawQuery = q.Encode()
 		}
 
-		var bodyReader io.Reader
-		if len(req.Body) > 0 {
-			bodyReader = bytes.NewReader(req.Body)
+		u := ""
+		if rawURL != nil {
+			u = rawURL(body)
 		}
 
-		httpReq, err := http.NewRequestWithContext(context.Background(), req.Method, reqURL.String(), bodyReader)
-		if err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "transport: failed to create http request", err))
-			return nil
+		cfg := client.Config{
+			Ctx: context.Background(),
+			Header: map[string]string{
+				"Content-Type": "application/json",
+				"Accept":       "application/json",
+			},
 		}
 
-		for k, v := range req.Headers {
-			httpReq.Header.Set(k, v)
-		}
-
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "transport: http execution failed", err))
-			return nil
-		}
-		defer func() {
-			if closeErr := resp.Body.Close(); closeErr != nil {
-				errnie.Error(errnie.Err(errnie.IO, "transport: close response body", closeErr))
+		if headers, ok := body["headers"].(map[string]string); ok {
+			for k, v := range headers {
+				cfg.Header[k] = v
 			}
-		}()
+		}
 
-		respBytes, err := io.ReadAll(resp.Body)
+		if params, ok := body["params"].(map[string]string); ok {
+			cfg.Param = params
+		}
+
+		if bodyPayload, ok := body["body"]; ok {
+			cfg.Body = bodyPayload
+		} else if len(body) > 0 && m != "GET" && m != "HEAD" {
+			cfg.Body = body
+		}
+
+		var resp *client.Response
+		var err error
+
+		switch m {
+		case "POST":
+			resp, err = cc.Post(u, cfg)
+		case "PUT":
+			resp, err = cc.Put(u, cfg)
+		case "PATCH":
+			resp, err = cc.Patch(u, cfg)
+		case "DELETE":
+			resp, err = cc.Delete(u, cfg)
+		case "HEAD":
+			resp, err = cc.Head(u, cfg)
+		case "GET":
+			fallthrough
+		default:
+			resp, err = cc.Get(u, cfg)
+		}
+
 		if err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "transport: read response body", err))
-			return nil
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[transport] HTTP request execution failed",
+				err,
+			))
+			return map[string]any{"error": err.Error()}
 		}
 
-		return &HTTPResponse{
-			StatusCode: resp.StatusCode,
-			Headers:    resp.Header,
-			Body:       respBytes,
+		out := make(map[string]any)
+		if len(resp.Body()) > 0 {
+			if unmarshalErr := sonic.Unmarshal(resp.Body(), &out); unmarshalErr != nil {
+				out["raw"] = string(resp.Body())
+			}
 		}
-	}
-}
+		out["status_code"] = resp.StatusCode()
 
-/*
-NewResponseExtract returns the byte slice body from an HTTPResponse.
-*/
-func NewResponseExtract() types.Value[*HTTPResponse, []byte] {
-	return func(resp *HTTPResponse) []byte {
-		if resp == nil {
-			return nil
-		}
-
-		return resp.Body
+		return out
 	}
 }

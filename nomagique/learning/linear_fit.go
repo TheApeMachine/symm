@@ -14,24 +14,36 @@ The returned closure takes a slice of rows ([][]float64) and returns the OLS coe
 The feature matrix is augmented with an implicit intercept (core.Unit) at index 0.
 */
 type LinearFit types.Value[[][]float64, []float64]
-func NewLinearFit(tolerance float64, features []int, target int) LinearFit {
+func NewLinearFit(tolerance types.Float, target types.Integer, features ...types.Integer) LinearFit {
 	ols := algo.NewOLS(tolerance)
 
 	return func(rows [][]float64) []float64 {
 		x := make([][]float64, 0, len(rows))
 		y := make([][]float64, 0, len(rows))
 
+		t := 0
+		if target != nil {
+			t = target(rows)
+		}
+
+		resolvedFeatures := make([]int, len(features))
+		for i, feat := range features {
+			if feat != nil {
+				resolvedFeatures[i] = feat(rows)
+			}
+		}
+
 		for _, row := range rows {
-			if target < 0 || target >= len(row) {
+			if t < 0 || t >= len(row) {
 				return nil // Target out of bounds
 			}
 
 			// Prepend intercept
-			designRow := make([]float64, 1, len(features)+1)
+			designRow := make([]float64, 1, len(resolvedFeatures)+1)
 			designRow[0] = core.Unit
 
 			// Append selected features
-			for _, featureIdx := range features {
+			for _, featureIdx := range resolvedFeatures {
 				if featureIdx < 0 || featureIdx >= len(row) {
 					return nil // Feature out of bounds
 				}
@@ -39,7 +51,7 @@ func NewLinearFit(tolerance float64, features []int, target int) LinearFit {
 			}
 
 			x = append(x, designRow)
-			y = append(y, []float64{row[target]})
+			y = append(y, []float64{row[t]})
 		}
 
 		return ols([2][][]float64{x, y})

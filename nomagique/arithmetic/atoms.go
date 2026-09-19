@@ -171,13 +171,21 @@ type Clamp types.Value[float64, float64]
 /*
 NewClamp creates a state-free closure that restricts input to the specified bounds.
 */
-func NewClamp(lower, upper float64) Clamp {
+func NewClamp(lower, upper types.Float) Clamp {
 	return func(in float64) float64 {
-		if in < lower {
-			return lower
+		l := in
+		if lower != nil {
+			l = lower(in)
 		}
-		if in > upper {
-			return upper
+		u := in
+		if upper != nil {
+			u = upper(in)
+		}
+		if in < l {
+			return l
+		}
+		if in > u {
+			return u
 		}
 		return in
 	}

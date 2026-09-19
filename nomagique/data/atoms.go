@@ -8,9 +8,16 @@ type Extract types.Value[any, float64]
 NewExtract creates a pure closure that pulls a scalar value from structured data by key.
 It recursively inspects maps, slices, and extracted pointers to locate the target numeric value.
 */
-func NewExtract(path string) Extract {
+func NewExtract(path types.String) Extract {
 	return func(in any) float64 {
-		return extractFrom(in, path)
+		p := ""
+		if path != nil {
+			p = path(in)
+		}
+		if p == "" {
+			return 0
+		}
+		return extractFrom(in, p)
 	}
 }
 

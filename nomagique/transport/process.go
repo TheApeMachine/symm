@@ -22,18 +22,37 @@ type Process types.Value[[]string, []byte]
 /*
 NewProcess constructs a Process closure that executes binary with defaultArgs and input args.
 */
-func NewProcess(binary string, defaultArgs ...string) Process {
+func NewProcess(binary types.String, defaultArgs ...types.String) Process {
 	var mu sync.Mutex
 
 	return func(args []string) []byte {
 		mu.Lock()
 		defer mu.Unlock()
 
+		bin := ""
+		if binary != nil {
+			bin = binary(args)
+		}
+		if bin == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"process: binary command is not specified",
+				nil,
+			))
+			return nil
+		}
+
 		fullArgs := make([]string, 0, len(defaultArgs)+len(args))
-		fullArgs = append(fullArgs, defaultArgs...)
+		for _, da := range defaultArgs {
+			if da != nil {
+				if val := da(args); val != "" {
+					fullArgs = append(fullArgs, val)
+				}
+			}
+		}
 		fullArgs = append(fullArgs, args...)
 
-		cmd := exec.Command(binary, fullArgs...)
+		cmd := exec.Command(bin, fullArgs...)
 		if errors.Is(cmd.Err, exec.ErrDot) {
 			cmd.Err = nil
 		}
@@ -67,7 +86,7 @@ func NewProcess(binary string, defaultArgs ...string) Process {
 /*
 NewProcessWithContext creates a Process closure bound to a cancellation context.
 */
-func NewProcessWithContext(ctx context.Context, binary string, defaultArgs ...string) Process {
+func NewProcessWithContext(ctx context.Context, binary types.String, defaultArgs ...types.String) Process {
 	var mu sync.Mutex
 
 	return func(args []string) []byte {
@@ -85,11 +104,30 @@ func NewProcessWithContext(ctx context.Context, binary string, defaultArgs ...st
 		default:
 		}
 
+		bin := ""
+		if binary != nil {
+			bin = binary(args)
+		}
+		if bin == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"process: binary command is not specified",
+				nil,
+			))
+			return nil
+		}
+
 		fullArgs := make([]string, 0, len(defaultArgs)+len(args))
-		fullArgs = append(fullArgs, defaultArgs...)
+		for _, da := range defaultArgs {
+			if da != nil {
+				if val := da(args); val != "" {
+					fullArgs = append(fullArgs, val)
+				}
+			}
+		}
 		fullArgs = append(fullArgs, args...)
 
-		cmd := exec.CommandContext(ctx, binary, fullArgs...)
+		cmd := exec.CommandContext(ctx, bin, fullArgs...)
 		if errors.Is(cmd.Err, exec.ErrDot) {
 			cmd.Err = nil
 		}
