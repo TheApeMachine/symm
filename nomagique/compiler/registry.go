@@ -9,7 +9,9 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/catalog"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/execution"
 	"github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
@@ -629,6 +631,66 @@ func NewRegistry(schemas map[string]catalog.Schema) (*Registry, error) {
 			}
 
 			return impulse
+		}, nil
+	}
+
+	registry.factories["execution.Decide"] = func(node Node) (types.Value[any, any], error) {
+		minContrast := 0.0
+		if node.InputData != nil {
+			if c, ok := node.InputData["minContrast"].(float64); ok {
+				minContrast = c
+			} else if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if c, ok := cfg["minContrast"].(float64); ok {
+					minContrast = c
+				}
+			}
+		}
+		closure := execution.NewDecide(types.Const(minContrast))
+		return func(in any) any {
+			if eval, ok := in.(cognition.Evaluation); ok {
+				return closure(eval)
+			}
+			return "wait"
+		}, nil
+	}
+
+	registry.factories["execution.Gate"] = func(node Node) (types.Value[any, any], error) {
+		initialHolding := false
+		if node.InputData != nil {
+			if h, ok := node.InputData["holding"].(bool); ok {
+				initialHolding = h
+			} else if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if h, ok := cfg["holding"].(bool); ok {
+					initialHolding = h
+				}
+			}
+		}
+		closure := execution.NewGate(types.Const(initialHolding))
+		return func(in any) any {
+			if act, ok := in.(string); ok {
+				return closure(act)
+			}
+			return "wait"
+		}, nil
+	}
+
+	registry.factories["execution.Submit"] = func(node Node) (types.Value[any, any], error) {
+		symbol := ""
+		if node.InputData != nil {
+			if s, ok := node.InputData["symbol"].(string); ok {
+				symbol = s
+			} else if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if s, ok := cfg["symbol"].(string); ok {
+					symbol = s
+				}
+			}
+		}
+		closure := execution.NewSubmit(types.Const(symbol))
+		return func(in any) any {
+			if act, ok := in.(string); ok {
+				return closure(act)
+			}
+			return nil
 		}, nil
 	}
 

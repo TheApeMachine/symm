@@ -11,22 +11,33 @@ NewSoftmax owns shifted exponential normalization of logits.
 No structs, pure Value closure.
 */
 type Softmax types.Value[[]float64, []float64]
-func NewSoftmax() Softmax {
-	return func(logits []float64) []float64 {
-		if len(logits) == 0 {
+
+func NewSoftmax(logits ...types.Float) Softmax {
+	return func(in []float64) []float64 {
+		l := in
+		if len(logits) > 0 {
+			l = make([]float64, len(logits))
+			for i, lg := range logits {
+				if lg != nil {
+					l[i] = lg(in)
+				}
+			}
+		}
+
+		if len(l) == 0 {
 			return nil
 		}
 
-		shift := logits[0]
-		for _, logit := range logits[1:] {
+		shift := l[0]
+		for _, logit := range l[1:] {
 			if logit > shift {
 				shift = logit
 			}
 		}
 
 		var total float64
-		shifted := make([]float64, len(logits))
-		for index, logit := range logits {
+		shifted := make([]float64, len(l))
+		for index, logit := range l {
 			shifted[index] = math.Exp(logit - shift)
 			total += shifted[index]
 		}

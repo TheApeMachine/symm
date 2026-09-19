@@ -64,12 +64,40 @@ const settingToControl = (param: Setting): Control => {
 
 const registerPortTypes = (config: FlumeConfig) => {
 	for (const [portType, color] of Object.entries(PORT_PALETTE)) {
+		let controls: Control[] | undefined;
+		if (portType === "string") {
+			controls = [
+				Controls.text({
+					name: "string",
+					label: "Text",
+					defaultValue: "",
+				}),
+			];
+		} else if (portType === "number") {
+			controls = [
+				Controls.number({
+					name: "number",
+					label: "Number",
+					defaultValue: 0,
+				}),
+			];
+		} else if (portType === "bool") {
+			controls = [
+				Controls.checkbox({
+					name: "bool",
+					label: "Boolean",
+					defaultValue: false,
+				}),
+			];
+		}
+
 		config.addPortType({
 			type: portType,
 			name: portType,
 			label: portType,
 			color,
 			acceptTypes: ALL_PORT_TYPES,
+			controls,
 		});
 	}
 };

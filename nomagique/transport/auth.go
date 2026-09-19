@@ -40,9 +40,13 @@ SHA256 computes a SHA-256 hash over bytes.
 */
 type SHA256 types.Value[[]byte, []byte]
 
-func NewSHA256() SHA256 {
+func NewSHA256(operands ...types.Bytes) SHA256 {
 	return func(data []byte) []byte {
-		h := sha256.Sum256(data)
+		d := data
+		if len(operands) > 0 && operands[0] != nil {
+			d = operands[0](data)
+		}
+		h := sha256.Sum256(d)
 		return h[:]
 	}
 }
@@ -86,9 +90,13 @@ Base64Encode encodes bytes into a base64 string.
 */
 type Base64Encode types.Value[[]byte, string]
 
-func NewBase64Encode() Base64Encode {
+func NewBase64Encode(operands ...types.Bytes) Base64Encode {
 	return func(data []byte) string {
-		return base64.StdEncoding.EncodeToString(data)
+		d := data
+		if len(operands) > 0 && operands[0] != nil {
+			d = operands[0](data)
+		}
+		return base64.StdEncoding.EncodeToString(d)
 	}
 }
 
@@ -97,9 +105,16 @@ Base64Decode decodes a base64 string into bytes.
 */
 type Base64Decode types.Value[string, []byte]
 
-func NewBase64Decode() Base64Decode {
+func NewBase64Decode(operands ...types.String) Base64Decode {
 	return func(data string) []byte {
-		decoded, _ := base64.StdEncoding.DecodeString(data)
+		str := data
+		if len(operands) > 0 && operands[0] != nil {
+			str = operands[0](data)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(str)
+		if err != nil {
+			return nil
+		}
 		return decoded
 	}
 }

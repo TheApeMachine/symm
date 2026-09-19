@@ -16,11 +16,12 @@ No structs, pure Value closure.
 func NewWindow[T any](size types.Integer) Window[T] {
 	var buf []T
 	return func(in T) []T {
-		s := 10
+		s := 0
 		if size != nil {
-			if evaluated := size(in); evaluated > 0 {
-				s = evaluated
-			}
+			s = size(in)
+		}
+		if s <= 0 {
+			return nil
 		}
 		if len(buf) >= s {
 			buf = buf[1:]
@@ -38,11 +39,12 @@ NewTail creates a closure returning the last N items of a slice.
 */
 func NewTail[T any](size types.Integer) Tail[T] {
 	return func(in []T) []T {
-		s := 10
+		s := 0
 		if size != nil {
-			if evaluated := size(in); evaluated > 0 {
-				s = evaluated
-			}
+			s = size(in)
+		}
+		if s <= 0 {
+			return nil
 		}
 		if len(in) <= s {
 			out := make([]T, len(in))
@@ -111,12 +113,16 @@ func NewAppend[T any](slice types.Value[any, []T], item types.Value[any, T]) App
 		var s []T
 		if slice != nil {
 			s = slice(in)
-		} else if arr, ok := in.([]T); ok {
-			s = arr
-		} else if pair, ok := in.([2]any); ok {
-			s, _ = pair[0].([]T)
-			val, _ := pair[1].(T)
-			return append(s, val)
+		}
+		if slice == nil {
+			if arr, ok := in.([]T); ok {
+				s = arr
+			}
+			if pair, ok := in.([2]any); ok {
+				s, _ = pair[0].([]T)
+				val, _ := pair[1].(T)
+				return append(s, val)
+			}
 		}
 		var val T
 		if item != nil {

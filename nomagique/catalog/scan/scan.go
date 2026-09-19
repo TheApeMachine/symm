@@ -235,6 +235,57 @@ func describe(
 		thing = after
 	}
 
+	inputs := []catalog.Port{{
+		Name:        "in",
+		Type:        inType,
+		Description: "The run this primitive reads",
+	}}
+
+	for _, p := range params {
+		if strings.Contains(p.Type, "context.Context") || strings.Contains(p.Type, "Config") {
+			continue
+		}
+
+		portType := p.Type
+		if p.Variadic && strings.HasPrefix(portType, "[]") {
+			portType = portType[2:]
+		}
+
+		if strings.HasPrefix(portType, "types.String") || strings.Contains(portType, "Value[any, string]") {
+			portType = "string"
+		}
+
+		if strings.HasPrefix(portType, "types.Integer") || strings.Contains(portType, "Value[any, int]") {
+			portType = "int"
+		}
+
+		if strings.HasPrefix(portType, "types.Float") || strings.Contains(portType, "Value[any, float64]") {
+			portType = "float64"
+		}
+
+		if strings.HasPrefix(portType, "types.Boolean") || strings.Contains(portType, "Value[any, bool]") {
+			portType = "bool"
+		}
+
+		if strings.HasPrefix(portType, "types.Bytes") || strings.Contains(portType, "Value[any, []byte]") {
+			portType = "[]byte"
+		}
+
+		if strings.HasPrefix(portType, "types.Map") || strings.Contains(portType, "Value[any, map[string]any]") {
+			portType = "map[string]any"
+		}
+
+		if strings.HasPrefix(portType, "types.Any") || strings.Contains(portType, "Value[any, any]") {
+			portType = "any"
+		}
+
+		inputs = append(inputs, catalog.Port{
+			Name:        p.Name,
+			Type:        portType,
+			Description: fmt.Sprintf("Port for %s", p.Name),
+		})
+	}
+
 	schema := catalog.Schema{
 		Kind:              "primitive",
 		Category:          category,
@@ -249,11 +300,7 @@ func describe(
 		ConstructorParams: params,
 		Stateful:          stateful,
 		InjectedDeps:      injected,
-		Inputs: []catalog.Port{{
-			Name:        "in",
-			Type:        inType,
-			Description: "The run this primitive reads",
-		}},
+		Inputs:            inputs,
 		Outputs: []catalog.Port{{
 			Name:        "out",
 			Type:        outType,

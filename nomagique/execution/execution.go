@@ -13,14 +13,19 @@ No structs, pure Value closure.
 */
 type Decide types.Value[cognition.Evaluation, string]
 
-func NewDecide() Decide {
+func NewDecide(minContrast types.Float) Decide {
 	return func(eval cognition.Evaluation) string {
 		if eval == nil {
 			return "wait"
 		}
 
+		minC := 0.0
+		if minContrast != nil {
+			minC = minContrast(eval)
+		}
+
 		winner, _, _, contrast, _, _, isBreak, _, _ := eval()
-		if isBreak || contrast <= 0 || len(winner) == 0 {
+		if isBreak || contrast <= minC || len(winner) == 0 {
 			return "wait"
 		}
 
@@ -34,26 +39,30 @@ No structs, pure Value closure.
 */
 type Gate types.Value[string, string]
 
-func NewGate() Gate {
+func NewGate(initialHolding types.Boolean) Gate {
 	holding := false
+	if initialHolding != nil {
+		holding = initialHolding(nil)
+	}
 
 	return func(action string) string {
-		switch action {
-		case "enter":
+		if action == "enter" {
 			if !holding {
 				holding = true
 				return "enter"
 			}
 			return "wait"
-		case "exit":
+		}
+
+		if action == "exit" {
 			if holding {
 				holding = false
 				return "exit"
 			}
 			return "wait"
-		default:
-			return "wait"
 		}
+
+		return "wait"
 	}
 }
 
@@ -63,13 +72,19 @@ No structs, pure Value closure.
 */
 type Submit types.Value[string, map[string]any]
 
-func NewSubmit() Submit {
+func NewSubmit(symbol types.String) Submit {
 	return func(action string) map[string]any {
 		if action != "enter" && action != "exit" {
 			return nil
 		}
 
+		sym := ""
+		if symbol != nil {
+			sym = symbol(action)
+		}
+
 		return map[string]any{
+			"symbol":    sym,
 			"action":    action,
 			"status":    "SUBMITTED",
 			"timestamp": time.Now().UnixNano(),

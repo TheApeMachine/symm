@@ -7,13 +7,14 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/execution"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestExecutionPipeline(t *testing.T) {
 	Convey("Given execution zero-struct Value closures", t, func() {
-		decide := execution.NewDecide()
-		gate := execution.NewGate()
-		submit := execution.NewSubmit()
+		decide := execution.NewDecide(types.Const(0.0))
+		gate := execution.NewGate(types.Const(false))
+		submit := execution.NewSubmit(types.Const("ETH/USD"))
 
 		Convey("Nil evaluation returns wait", func() {
 			action := decide(nil)
@@ -39,6 +40,7 @@ func TestExecutionPipeline(t *testing.T) {
 
 			event := submit(allowed)
 			So(event, ShouldNotBeNil)
+			So(event["symbol"], ShouldEqual, "ETH/USD")
 			So(event["action"], ShouldEqual, "enter")
 			So(event["status"], ShouldEqual, "SUBMITTED")
 		})

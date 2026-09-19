@@ -11,11 +11,15 @@ type Mean types.Value[float64, float64]
 /*
 NewMean creates a stateful closure that tracks the running average.
 */
-func NewMean() Mean {
+func NewMean(values ...types.Float) Mean {
 	var count, sum float64
 	return func(in float64) float64 {
+		val := in
+		if len(values) > 0 && values[0] != nil {
+			val = values[0](in)
+		}
 		count++
-		sum += in
+		sum += val
 		return sum / count
 	}
 }
@@ -24,13 +28,17 @@ type Variance types.Value[float64, float64]
 /*
 NewVariance creates a stateful closure calculating running sample variance using Welford's algorithm.
 */
-func NewVariance() Variance {
+func NewVariance(values ...types.Float) Variance {
 	var count, mean, m2 float64
 	return func(in float64) float64 {
+		val := in
+		if len(values) > 0 && values[0] != nil {
+			val = values[0](in)
+		}
 		count++
-		delta := in - mean
+		delta := val - mean
 		mean += delta / count
-		delta2 := in - mean
+		delta2 := val - mean
 		m2 += delta * delta2
 
 		if count > core.Unit {
@@ -50,9 +58,12 @@ func NewEMA(alpha types.Float) EMA {
 	var initialized bool
 
 	return func(in float64) float64 {
-		a := 0.1
+		a := 0.0
 		if alpha != nil {
 			a = alpha(in)
+		}
+		if a <= 0 {
+			return in
 		}
 		if !initialized {
 			ema = in
@@ -69,16 +80,20 @@ type CausalMean types.Value[float64, float64]
 NewCausalMean creates a stateful running average that yields the PRIOR mean
 before incorporating the current value.
 */
-func NewCausalMean() CausalMean {
+func NewCausalMean(values ...types.Float) CausalMean {
 	var count, sum, prevMean float64
 	return func(in float64) float64 {
+		val := in
+		if len(values) > 0 && values[0] != nil {
+			val = values[0](in)
+		}
 		ret := prevMean
 		count++
-		sum += in
+		sum += val
 		prevMean = sum / count
 
 		if count == core.Unit {
-			return in // First observation baseline is itself
+			return val
 		}
 
 		return ret
@@ -89,14 +104,18 @@ type CausalVariance types.Value[float64, float64]
 /*
 NewCausalVariance creates a stateful running variance that yields the PRIOR variance.
 */
-func NewCausalVariance() CausalVariance {
+func NewCausalVariance(values ...types.Float) CausalVariance {
 	var count, mean, m2, prevVar float64
 	return func(in float64) float64 {
+		val := in
+		if len(values) > 0 && values[0] != nil {
+			val = values[0](in)
+		}
 		ret := prevVar
 		count++
-		delta := in - mean
+		delta := val - mean
 		mean += delta / count
-		delta2 := in - mean
+		delta2 := val - mean
 		m2 += delta * delta2
 
 		if count > core.Unit {
@@ -114,8 +133,8 @@ type ResidualBaseline types.Value[float64, float64]
 /*
 NewResidualBaseline satisfies the JSON graph by returning a causal mean.
 */
-func NewResidualBaseline() ResidualBaseline {
-	causalMean := NewCausalMean()
+func NewResidualBaseline(values ...types.Float) ResidualBaseline {
+	causalMean := NewCausalMean(values...)
 	return func(in float64) float64 { return causalMean(in) }
 }
 
@@ -124,10 +143,14 @@ type ResidualDivergence types.Value[float64, float64]
 NewResidualDivergence creates a stateful closure returning the difference
 between the current value and the causal baseline.
 */
-func NewResidualDivergence() ResidualDivergence {
-	causalMean := NewCausalMean()
+func NewResidualDivergence(values ...types.Float) ResidualDivergence {
+	causalMean := NewCausalMean(values...)
 	return func(in float64) float64 {
-		return in - causalMean(in)
+		val := in
+		if len(values) > 0 && values[0] != nil {
+			val = values[0](in)
+		}
+		return val - causalMean(in)
 	}
 }
 
@@ -136,11 +159,15 @@ type ZScore types.Value[float64, float64]
 NewZScore creates a stateful closure that calculates the Z-Score of an incoming stream.
 It encapsulates its own causal mean and variance, completely eliminating the need for DTOs.
 */
-func NewZScore() ZScore {
-	causalMean := NewCausalMean()
-	causalVar := NewCausalVariance()
+func NewZScore(values ...types.Float) ZScore {
+	causalMean := NewCausalMean(values...)
+	causalVar := NewCausalVariance(values...)
 
 	return func(in float64) float64 {
+		val := in
+		if len(values) > 0 && values[0] != nil {
+			val = values[0](in)
+		}
 		baseline := causalMean(in)
 		variance := causalVar(in)
 
@@ -148,7 +175,7 @@ func NewZScore() ZScore {
 			return 0
 		}
 
-		return (in - baseline) / math.Sqrt(variance)
+		return (val - baseline) / math.Sqrt(variance)
 	}
 }
 
@@ -159,7 +186,7 @@ It uses a threshold band to decide whether to output the min, max, or rest value
 */
 func NewThreshold(band, rest, lower, upper types.Float) Threshold {
 	return func(rank float64) float64 {
-		b := 0.05
+		b := 0.0
 		if band != nil {
 			b = band(rank)
 		}
@@ -167,20 +194,23 @@ func NewThreshold(band, rest, lower, upper types.Float) Threshold {
 		if rest != nil {
 			r = rest(rank)
 		}
-		l := -1.0
+		l := 0.0
 		if lower != nil {
 			l = lower(rank)
 		}
-		u := 1.0
+		u := 0.0
 		if upper != nil {
 			u = upper(rank)
 		}
 
 		if rank < b {
 			return u
-		} else if rank > 1.0-b {
+		}
+
+		if rank > 1.0-b {
 			return l
 		}
+
 		return r
 	}
 }

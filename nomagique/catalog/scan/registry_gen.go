@@ -14,8 +14,12 @@ func GenerateRegistry(schemas map[string]catalog.Schema) error {
 	packagesUsed := make(map[string]string)
 
 	for _, schema := range schemas {
-		if schema.ParamCount > 0 || schema.TypeParamCount > 0 {
-			if schema.Op != "data.Extract" {
+		if schema.TypeParamCount > 0 {
+			continue
+		}
+		if schema.ParamCount > 0 {
+			isVariadicOnly := schema.ParamCount == 1 && len(schema.ConstructorParams) == 1 && schema.ConstructorParams[0].Variadic
+			if !isVariadicOnly && schema.Op != "data.Extract" {
 				continue
 			}
 		}

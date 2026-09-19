@@ -17,16 +17,27 @@ NewArgmax preserves a winning value's ordinal through comparison.
 No structs, pure Value closure.
 */
 type Argmax types.Value[[]float64, ArgmaxResult]
-func NewArgmax() Argmax {
-	return func(values []float64) ArgmaxResult {
-		if len(values) == 0 {
+
+func NewArgmax(values ...types.Float) Argmax {
+	return func(in []float64) ArgmaxResult {
+		vals := in
+		if len(values) > 0 {
+			vals = make([]float64, len(values))
+			for i, v := range values {
+				if v != nil {
+					vals[i] = v(in)
+				}
+			}
+		}
+
+		if len(vals) == 0 {
 			return ArgmaxResult{}
 		}
 
-		best := ArgmaxResult{Index: 0, Value: values[0]}
-		for index := 1; index < len(values); index++ {
-			if values[index] > best.Value {
-				best = ArgmaxResult{Index: index, Value: values[index]}
+		best := ArgmaxResult{Index: 0, Value: vals[0]}
+		for index := 1; index < len(vals); index++ {
+			if vals[index] > best.Value {
+				best = ArgmaxResult{Index: index, Value: vals[index]}
 			}
 		}
 

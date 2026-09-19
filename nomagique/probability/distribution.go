@@ -20,13 +20,14 @@ NewDistribution composes softmax, argmax, and ambiguity.
 No structs, pure Value closure composition.
 */
 type Distribution types.Value[[]float64, Reading]
-func NewDistribution() Distribution {
-	softmax := NewSoftmax()
-	argmax := NewArgmax()
-	ambiguity := NewAmbiguity()
 
-	return func(logits []float64) Reading {
-		probabilities := softmax(logits)
+func NewDistribution(logits ...types.Float) Distribution {
+	softmax := NewSoftmax(logits...)
+	argmax := NewArgmax(logits...)
+	ambiguity := NewAmbiguity(logits...)
+
+	return func(in []float64) Reading {
+		probabilities := softmax(in)
 		if len(probabilities) == 0 {
 			return Reading{}
 		}

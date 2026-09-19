@@ -9,10 +9,21 @@ NewNormalize divides each arrival by the total.
 No structs, pure Value closure.
 */
 type Normalize types.Value[[]float64, []float64]
-func NewNormalize() Normalize {
-	return func(values []float64) []float64 {
+
+func NewNormalize(values ...types.Float) Normalize {
+	return func(in []float64) []float64 {
+		vals := in
+		if len(values) > 0 {
+			vals = make([]float64, len(values))
+			for i, v := range values {
+				if v != nil {
+					vals[i] = v(in)
+				}
+			}
+		}
+
 		var total float64
-		for _, val := range values {
+		for _, val := range vals {
 			total += val
 		}
 
@@ -20,8 +31,8 @@ func NewNormalize() Normalize {
 			return nil
 		}
 
-		out := make([]float64, len(values))
-		for index, val := range values {
+		out := make([]float64, len(vals))
+		for index, val := range vals {
 			out[index] = val / total
 		}
 

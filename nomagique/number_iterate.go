@@ -8,11 +8,17 @@ import (
 Iterate wraps a Value closure and executes it repeatedly for a given number of steps,
 feeding the output back as the next input.
 */
-func Iterate[T any](steps int, stage types.Value[T, T]) types.Value[T, T] {
+func Iterate[T any](steps types.Integer, stage types.Value[T, T]) types.Value[T, T] {
 	return func(in T) T {
 		curr := in
-		for range steps {
-			curr = stage(curr)
+		n := 0
+		if steps != nil {
+			n = steps(in)
+		}
+		for range n {
+			if stage != nil {
+				curr = stage(curr)
+			}
 		}
 		return curr
 	}
@@ -22,12 +28,18 @@ func Iterate[T any](steps int, stage types.Value[T, T]) types.Value[T, T] {
 IterateUntil executes a closure repeatedly up to maxSteps, but stops early
 if the condition evaluates to true.
 */
-func IterateUntil[T any](maxSteps int, condition func(T) bool, stage types.Value[T, T]) types.Value[T, T] {
+func IterateUntil[T any](maxSteps types.Integer, condition types.Value[T, bool], stage types.Value[T, T]) types.Value[T, T] {
 	return func(in T) T {
 		curr := in
-		for range maxSteps {
-			curr = stage(curr)
-			if condition(curr) {
+		n := 0
+		if maxSteps != nil {
+			n = maxSteps(in)
+		}
+		for range n {
+			if stage != nil {
+				curr = stage(curr)
+			}
+			if condition != nil && condition(curr) {
 				break
 			}
 		}

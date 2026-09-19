@@ -139,15 +139,19 @@ NewPhasePath creates a PhasePath Value closure.
 A non-positive count yields an empty reading.
 */
 type PhasePath types.Value[int, PhasePathReading]
-func NewPhasePath() PhasePath {
-	return func(samples int) PhasePathReading {
-		if samples <= 0 {
+func NewPhasePath(samples ...types.Integer) PhasePath {
+	return func(in int) PhasePathReading {
+		s := in
+		if len(samples) > 0 && samples[0] != nil {
+			s = samples[0](in)
+		}
+		if s <= 0 {
 			return PhasePathReading{}
 		}
 
-		angles := make([]float64, samples)
+		angles := make([]float64, s)
 		for index := range angles {
-			angles[index] = 2 * math.Pi * float64(index) / float64(samples)
+			angles[index] = 2 * math.Pi * float64(index) / float64(s)
 		}
 
 		return PhasePathReading{Angles: angles}

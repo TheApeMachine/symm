@@ -12,9 +12,9 @@ import (
 	cvd "github.com/theapemachine/symm/nomagique/statistic/cvd"
 	data "github.com/theapemachine/symm/nomagique/data"
 	derivatives "github.com/theapemachine/symm/nomagique/statistic/derivatives"
-	execution "github.com/theapemachine/symm/nomagique/execution"
 	geometry "github.com/theapemachine/symm/nomagique/geometry"
 	hawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
+	learning "github.com/theapemachine/symm/nomagique/learning"
 	probability "github.com/theapemachine/symm/nomagique/probability"
 	statistic "github.com/theapemachine/symm/nomagique/statistic"
 	temporal "github.com/theapemachine/symm/nomagique/temporal"
@@ -566,24 +566,6 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 			return closure(in.(map[string]any))
 		}
 	},
-	"execution.Decide": func() types.Value[any, any] {
-		closure := execution.NewDecide()
-		return func(in any) any {
-			return closure(in.(cognition.Evaluation))
-		}
-	},
-	"execution.Gate": func() types.Value[any, any] {
-		closure := execution.NewGate()
-		return func(in any) any {
-			return closure(in.(string))
-		}
-	},
-	"execution.Submit": func() types.Value[any, any] {
-		closure := execution.NewSubmit()
-		return func(in any) any {
-			return closure(in.(string))
-		}
-	},
 	"geometry.Intersection": func() types.Value[any, any] {
 		closure := geometry.NewIntersection()
 		return func(in any) any {
@@ -690,6 +672,12 @@ var DefaultPrimitiveFactories = map[string]func() types.Value[any, any]{
 		closure := hawkes.NewSpectralRadius()
 		return func(in any) any {
 			return closure(in.(hawkes.Reading))
+		}
+	},
+	"learning.LinearPrediction": func() types.Value[any, any] {
+		closure := learning.NewLinearPrediction()
+		return func(in any) any {
+			return closure(in.([2][]float64))
 		}
 	},
 	"probability.Ambiguity": func() types.Value[any, any] {

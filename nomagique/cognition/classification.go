@@ -13,10 +13,15 @@ the winning class via argmax, finds the runner-up, and computes confidence and e
 No structs, pure Value closure.
 */
 type Classification types.Value[func(func([]byte, float64, uint64) bool), Evaluation]
-func NewClassification() Classification {
+func NewClassification(minContrast ...types.Float) Classification {
 	return func(candidates func(func([]byte, float64, uint64) bool)) Evaluation {
 		if candidates == nil {
 			return nil
+		}
+
+		minCont := 0.0
+		if len(minContrast) > 0 && minContrast[0] != nil {
+			minCont = minContrast[0](nil)
 		}
 
 		var totalMass float64
@@ -67,10 +72,15 @@ func NewClassification() Classification {
 			contrast = math.Log2(winner.prob / highestOther)
 		}
 
+		passed := true
+		if minCont > 0 && contrast < minCont {
+			passed = false
+		}
+
 		return func() (
 			[]byte, []byte, float64, float64, uint64, float64, bool, float64, iter.Seq2[[]byte, float64],
 		) {
-			return winner.name, runnerUp, winner.prob, contrast, winner.support, 0, false, 0, nil
+			return winner.name, runnerUp, winner.prob, contrast, winner.support, 0, passed, 0, nil
 		}
 	}
 }

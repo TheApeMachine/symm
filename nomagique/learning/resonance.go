@@ -1460,11 +1460,11 @@ func (resonanceManifold *ResonanceManifold) buildSettlePipeline() types.Value[*R
 		return lineSearch(m)
 	}
 
-	condition := func(m *ResonanceManifold) bool {
+	condition := types.Value[*ResonanceManifold, bool](func(m *ResonanceManifold) bool {
 		return stableSteps >= m.cfg.EarlyStopPatience
-	}
+	})
 
-	iterate := nomagique.IterateUntil(resonanceManifold.cfg.MaxInferenceSteps, condition, stepPipeline)
+	iterate := nomagique.IterateUntil(types.Const(resonanceManifold.cfg.MaxInferenceSteps), condition, stepPipeline)
 
 	return func(m *ResonanceManifold) *ResonanceManifold {
 		settledEnergy = m.energy()

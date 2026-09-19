@@ -13,12 +13,16 @@ NewVelocity creates a stateful closure that tracks previous values and timestamp
 to calculate the finite-difference rate of change (Velocity/Rate).
 It expects an input array of [value, timestamp_seconds].
 */
-func NewVelocity() Velocity {
+func NewVelocity(operands ...types.Value[any, [2]float64]) Velocity {
 	var prevValue, prevTime float64
 	var hasPrior bool
 
 	return func(in [2]float64) float64 {
-		currentValue, currentTime := in[0], in[1]
+		input := in
+		if len(operands) > 0 && operands[0] != nil {
+			input = operands[0](in)
+		}
+		currentValue, currentTime := input[0], input[1]
 
 		if !hasPrior {
 			prevValue = currentValue
@@ -47,17 +51,21 @@ type LogReturns types.Value[float64, float64]
 NewLogReturns creates a stateful closure that tracks the previous value
 and calculates the natural log of the ratio (Current/Previous).
 */
-func NewLogReturns() LogReturns {
+func NewLogReturns(operands ...types.Float) LogReturns {
 	var previous float64
 	var initialized bool
 	return func(in float64) float64 {
-		if !initialized || previous <= 0 || in <= 0 {
-			previous = in
+		val := in
+		if len(operands) > 0 && operands[0] != nil {
+			val = operands[0](in)
+		}
+		if !initialized || previous <= 0 || val <= 0 {
+			previous = val
 			initialized = true
 			return 0
 		}
-		ret := math.Log(in / previous)
-		previous = in
+		ret := math.Log(val / previous)
+		previous = val
 		return ret
 	}
 }
@@ -68,17 +76,21 @@ type Elapsed types.Value[int64, float64]
 NewElapsed creates a stateful closure that tracks the previous timestamp (in nanoseconds)
 and returns the elapsed time in seconds.
 */
-func NewElapsed() Elapsed {
+func NewElapsed(operands ...types.Value[any, int64]) Elapsed {
 	var previous int64
 	var initialized bool
 	return func(in int64) float64 {
+		val := in
+		if len(operands) > 0 && operands[0] != nil {
+			val = operands[0](in)
+		}
 		if !initialized {
-			previous = in
+			previous = val
 			initialized = true
 			return 0
 		}
-		ret := float64(in-previous) / 1e9 // nanoseconds to seconds
-		previous = in
+		ret := float64(val-previous) / 1e9 // nanoseconds to seconds
+		previous = val
 		return ret
 	}
 }
@@ -91,28 +103,32 @@ On the initial observation, it retains previous without emitting.
 On each subsequent observation, it emits (previous, current) encoded as "previous->current".
 No structs, pure Value closure.
 */
-func NewTransition() Transition {
+func NewTransition(operands ...types.Bytes) Transition {
 	var previous []byte
 
 	return func(current []byte) []byte {
-		if len(current) == 0 {
+		cur := current
+		if len(operands) > 0 && operands[0] != nil {
+			cur = operands[0](current)
+		}
+		if len(cur) == 0 {
 			return nil
 		}
 
 		if len(previous) == 0 {
-			previous = make([]byte, len(current))
-			copy(previous, current)
+			previous = make([]byte, len(cur))
+			copy(previous, cur)
 			return nil
 		}
 
-		out := make([]byte, len(previous)+2+len(current))
+		out := make([]byte, len(previous)+2+len(cur))
 		copy(out, previous)
 		out[len(previous)] = '-'
 		out[len(previous)+1] = '>'
-		copy(out[len(previous)+2:], current)
+		copy(out[len(previous)+2:], cur)
 
-		previous = make([]byte, len(current))
-		copy(previous, current)
+		previous = make([]byte, len(cur))
+		copy(previous, cur)
 		return out
 	}
 }

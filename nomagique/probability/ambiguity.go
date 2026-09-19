@@ -12,14 +12,25 @@ A one-member distribution has zero ambiguity by definition.
 No structs, pure Value closure.
 */
 type Ambiguity types.Value[[]float64, float64]
-func NewAmbiguity() Ambiguity {
-	return func(values []float64) float64 {
-		if len(values) <= 1 {
+
+func NewAmbiguity(values ...types.Float) Ambiguity {
+	return func(in []float64) float64 {
+		vals := in
+		if len(values) > 0 {
+			vals = make([]float64, len(values))
+			for i, v := range values {
+				if v != nil {
+					vals[i] = v(in)
+				}
+			}
+		}
+
+		if len(vals) <= 1 {
 			return 0
 		}
 
 		var total float64
-		for _, val := range values {
+		for _, val := range vals {
 			total += val
 		}
 
@@ -28,13 +39,13 @@ func NewAmbiguity() Ambiguity {
 		}
 
 		entropy := 0.0
-		for _, val := range values {
+		for _, val := range vals {
 			p := val / total
 			if p > 0 {
 				entropy -= p * math.Log(p)
 			}
 		}
 
-		return entropy / math.Log(float64(len(values)))
+		return entropy / math.Log(float64(len(vals)))
 	}
 }

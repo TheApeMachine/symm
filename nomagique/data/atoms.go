@@ -50,7 +50,8 @@ func extractFrom(current any, key string) float64 {
 				if res := extractFrom(childMap, key); res != 0 {
 					return res
 				}
-			} else if childSlice, ok := child.([]any); ok {
+			}
+			if childSlice, ok := child.([]any); ok {
 				if res := extractFrom(childSlice, key); res != 0 {
 					return res
 				}
