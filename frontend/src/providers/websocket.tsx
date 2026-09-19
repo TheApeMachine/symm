@@ -15,6 +15,7 @@ import {
 	symbolsAtom,
 	tickCountAtom,
 	updateClock,
+	updateEquity,
 } from "#/collections/app";
 
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
@@ -113,6 +114,23 @@ function dispatchMeasurements(frame: MeasurementsFrame) {
 					reason,
 				}],
 			}]);
+			continue;
+		}
+
+		if (source === "equity" || source === "balance") {
+			let cashVal = "";
+			let unrealizedVal = "";
+			let equityVal = "";
+			const metricCount = row.metricsLength();
+			for (let mi = 0; mi < metricCount; mi++) {
+				const met = row.metrics(mi);
+				if (!met) continue;
+				const name = met.name();
+				if (name === "cash") cashVal = met.unit() || String(met.raw());
+				if (name === "unrealized") unrealizedVal = met.unit() || String(met.raw());
+				if (name === "equity") equityVal = met.unit() || String(met.raw());
+			}
+			updateEquity(cashVal, unrealizedVal, equityVal);
 			continue;
 		}
 

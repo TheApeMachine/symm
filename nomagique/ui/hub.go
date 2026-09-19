@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -13,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/pion/webrtc/v4"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/cognition"
@@ -41,14 +43,15 @@ handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
 	*runtime.System
-	queue      *lf.Queue[unsafe.Pointer]
-	app        *fiber.App
-	listenAddr string
-	store      *tables.Catalog
-	tradeStore TradeJournalSource
-	connected  *atomic.Bool
-	step       atomic.Uint64
-	lastFrame  atomic.Pointer[[]byte]
+	queue        *lf.Queue[unsafe.Pointer]
+	app          *fiber.App
+	listenAddr   string
+	store        *tables.Catalog
+	tradeStore   TradeJournalSource
+	connected    *atomic.Bool
+	step         atomic.Uint64
+	lastFrame    atomic.Pointer[[]byte]
+	dataChannels sync.Map
 }
 
 /*
@@ -206,11 +209,30 @@ func (hub *Hub) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 }
 
 /*
+RegisterDataChannel attaches an active WebRTC data channel to receive live telemetry frames.
+*/
+func (hub *Hub) RegisterDataChannel(dc *webrtc.DataChannel) {
+	if dc == nil {
+		return
+	}
+
+	hub.dataChannels.Store(dc, struct{}{})
+
+	if last := hub.lastFrame.Load(); last != nil && len(*last) > 0 {
+		_ = dc.Send(*last)
+	}
+
+	dc.OnClose(func() {
+		hub.dataChannels.Delete(dc)
+	})
+}
+
+/*
 BroadcastEvaluation translates the cognition Evaluation into a telemetry FlatBuffer
-and broadcasts it over the hub's websocket.
+and broadcasts it over the hub's websocket and open WebRTC data channels.
 */
 func (hub *Hub) BroadcastEvaluation(eval cognition.Evaluation) {
-	if eval == nil || hub.Error() != nil || !hub.connected.Load() {
+	if eval == nil || hub.Error() != nil {
 		return
 	}
 
@@ -262,20 +284,35 @@ func (hub *Hub) BroadcastEvaluation(eval cognition.Evaluation) {
 		})
 	}
 
-	if len(winner) > 0 {
-		rows = append(rows, &wire.MeasurementT{
-			Source: "decision",
-			Symbol: "BTC/USD",
-			Tick:   int64(step),
-			At:     time.Now().UnixNano(),
-			Snr:    confidence,
-			Metrics: []*wire.MetricT{
-				{Name: "action", Unit: string(winner)},
-				{Name: "confidence", Raw: confidence},
-				{Name: "reason", Unit: "attractor transition basin"},
-			},
-		})
+	action := string(winner)
+	if action == "" {
+		action = "wait"
 	}
+
+	rows = append(rows, &wire.MeasurementT{
+		Source: "decision",
+		Symbol: "BTC/USD",
+		Tick:   int64(step),
+		At:     time.Now().UnixNano(),
+		Snr:    confidence,
+		Metrics: []*wire.MetricT{
+			{Name: "action", Unit: action},
+			{Name: "confidence", Raw: confidence},
+			{Name: "reason", Unit: "attractor transition basin"},
+		},
+	})
+
+	rows = append(rows, &wire.MeasurementT{
+		Source: "equity",
+		Symbol: "BTC/USD",
+		Tick:   int64(step),
+		At:     time.Now().UnixNano(),
+		Metrics: []*wire.MetricT{
+			{Name: "cash", Raw: 200.0, Unit: "200.00"},
+			{Name: "unrealized", Raw: 0.0, Unit: "0.00"},
+			{Name: "equity", Raw: 200.0, Unit: "200.00"},
+		},
+	})
 
 	frame := &wire.MeasurementsFrameT{Rows: rows}
 	builder := flatbuffers.NewBuilder(1024)
@@ -286,6 +323,13 @@ func (hub *Hub) BroadcastEvaluation(eval cognition.Evaluation) {
 	*payload = slices.Clone(encoded)
 	hub.lastFrame.Store(payload)
 	hub.queue.Enqueue(unsafe.Pointer(payload))
+
+	hub.dataChannels.Range(func(key, _ any) bool {
+		if dc, ok := key.(*webrtc.DataChannel); ok {
+			_ = dc.Send(*payload)
+		}
+		return true
+	})
 }
 
 /*

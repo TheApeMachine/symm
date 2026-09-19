@@ -1,20 +1,22 @@
 package compiler
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-
 func NewSignals() types.Value[any, []float64] {
 	dir := definitionsDir()
 	grid := store.NewGrid[any, any]()
+	errnie.Debug(fmt.Sprintf("[NewSignals] loading metric definitions from %s...", dir))
 
 	if files, err := os.ReadDir(dir); err == nil {
 		for _, file := range files {
@@ -39,8 +41,11 @@ func NewSignals() types.Value[any, []float64] {
 
 			metric := metricPipeline
 			grid(transport.NewMessage[any, any](transport.REGISTER, nil, types.Value[any, any](metric)))
+			errnie.Debug(fmt.Sprintf("[NewSignals] registered metric %s on store.Grid", name))
 		}
 	}
+
+	errnie.Debug("[NewSignals] all metric pipelines registered on store.Grid")
 
 	return func(tick any) []float64 {
 		if tick == nil {
@@ -75,6 +80,7 @@ func NewSignals() types.Value[any, []float64] {
 func NewLogic() types.Value[[]float64, cognition.Evaluation] {
 	dir := definitionsDir()
 	path := filepath.Join(dir, "logic.json")
+	errnie.Debug(fmt.Sprintf("[NewLogic] loading logic definition from %s...", path))
 
 	builder, err := NewBuilder(path)
 	if err != nil {
@@ -90,6 +96,8 @@ func NewLogic() types.Value[[]float64, cognition.Evaluation] {
 	if err != nil {
 		return func([]float64) cognition.Evaluation { return nil }
 	}
+
+	errnie.Debug("[NewLogic] logic pipeline composed successfully")
 
 	return func(readings []float64) cognition.Evaluation {
 		if len(readings) == 0 {
@@ -108,6 +116,7 @@ func NewLogic() types.Value[[]float64, cognition.Evaluation] {
 func NewExecution() types.Value[cognition.Evaluation, any] {
 	dir := definitionsDir()
 	path := filepath.Join(dir, "execution.json")
+	errnie.Debug(fmt.Sprintf("[NewExecution] loading execution definition from %s...", path))
 
 	builder, err := NewBuilder(path)
 	if err != nil {
@@ -118,6 +127,8 @@ func NewExecution() types.Value[cognition.Evaluation, any] {
 	if err != nil {
 		return func(cognition.Evaluation) any { return nil }
 	}
+
+	errnie.Debug("[NewExecution] execution pipeline composed successfully")
 
 	return func(eval cognition.Evaluation) any {
 		if eval == nil {

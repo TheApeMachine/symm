@@ -129,6 +129,12 @@ func NewRegistry(schemas map[string]catalog.Schema) *Registry {
 			if h, ok := node.InputData["horizon"].(float64); ok && h > 0 {
 				horizon = int(h)
 			}
+
+			if cfg, ok := node.InputData["_config"].(map[string]any); ok {
+				if h, ok := cfg["horizon"].(float64); ok && h > 0 {
+					horizon = int(h)
+				}
+			}
 		}
 
 		closure := temporal.NewDelay[float64](horizon)

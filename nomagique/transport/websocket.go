@@ -2,7 +2,10 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -157,5 +160,135 @@ func NewPingPong() types.Value[*WSMessage, *WSMessage] {
 		}
 
 		return msg
+	}
+}
+
+/*
+StartWSIngress establishes a persistent WebSocket session, subscribes to requested channels
+and symbols in paced batches, and pumps incoming market payloads into the onTick callback. It handles automatic
+reconnection on network drops until ctx is cancelled.
+*/
+func StartWSIngress(
+	ctx context.Context,
+	endpoint string,
+	channels []string,
+	symbols []string,
+	batchSize int,
+	pace time.Duration,
+	onTick func(any),
+) {
+	connect := NewWSConnect(endpoint)
+	read := NewWSRead()
+	closeConn := NewWSClose()
+	pingPong := NewPingPong()
+
+	effectiveBatch := batchSize
+	if effectiveBatch <= 0 {
+		effectiveBatch = 200
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		errnie.Info(fmt.Sprintf("[websocket] connecting to %s...", endpoint))
+		conn := connect(ctx)
+
+		if conn == nil {
+			errnie.Warn(fmt.Sprintf("[websocket] connect failed for %s, retrying in 3s...", endpoint))
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+				continue
+			}
+		}
+
+		write := NewWSWrite(conn)
+
+		for _, channel := range channels {
+			for batch := range slices.Chunk(symbols, effectiveBatch) {
+				subParams := map[string]any{
+					"channel": channel,
+					"symbol":  batch,
+				}
+
+				if channel == "book" {
+					subParams["depth"] = 10
+				}
+
+				subMsg := map[string]any{
+					"method": "subscribe",
+					"params": subParams,
+				}
+
+				payload, err := json.Marshal(subMsg)
+				if err != nil {
+					continue
+				}
+
+				if err := write(&WSMessage{
+					Type:    websocket.TextMessage,
+					Payload: payload,
+				}); err != nil {
+					errnie.Error(errnie.Err(errnie.IO, "[websocket] subscription write failed", err))
+					continue
+				}
+
+				errnie.Info(fmt.Sprintf("[websocket] subscribed to %s for %d symbols on %s", channel, len(batch), endpoint))
+
+				if pace > 0 {
+					select {
+					case <-ctx.Done():
+						closeConn(conn)
+						return
+					case <-time.After(pace):
+					}
+				}
+			}
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				closeConn(conn)
+				return
+			default:
+			}
+
+			msg := read(conn)
+
+			if msg == nil {
+				errnie.Warn(fmt.Sprintf("[websocket] disconnected from %s, reconnecting...", endpoint))
+				closeConn(conn)
+				break
+			}
+
+			if msg.Type == websocket.PingMessage {
+				if pong := pingPong(msg); pong != nil {
+					write(pong)
+				}
+
+				continue
+			}
+
+			if msg.Type == websocket.TextMessage && len(msg.Payload) > 0 {
+				var tick any
+
+				if err := json.Unmarshal(msg.Payload, &tick); err == nil && tick != nil {
+					onTick(tick)
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1 * time.Second):
+		}
 	}
 }

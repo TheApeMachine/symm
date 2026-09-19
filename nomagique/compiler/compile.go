@@ -22,6 +22,8 @@ func Compile[T any](graph Graph, reg *Registry) (types.Value[T, T], error) {
 		reg = DefaultRegistry()
 	}
 
+	errnie.Debug(fmt.Sprintf("[compiler.Compile] compiling graph %s (%d nodes)...", graph.Name, len(graph.Nodes)))
+
 	// 1. Build adjacency and in-degree maps
 	inDegree := make(map[string]int)
 	adjacency := make(map[string][]string)
@@ -85,6 +87,7 @@ func Compile[T any](graph Graph, reg *Registry) (types.Value[T, T], error) {
 			return nil, errnie.Error(err)
 		}
 
+		errnie.Debug(fmt.Sprintf("[compiler.Compile] resolved node %s (%s)", id, node.Type))
 		instances[id] = closure
 	}
 
@@ -102,6 +105,7 @@ func Compile[T any](graph Graph, reg *Registry) (types.Value[T, T], error) {
 
 	// 4. Analyze topology for nomagique composition primitives
 	compiled := composeTopology(graph, opOrder, incoming, adjacency, instances)
+	errnie.Debug(fmt.Sprintf("[compiler.Compile] graph %s successfully compiled (%d op nodes)", graph.Name, len(opOrder)))
 
 	return func(in T) T {
 		res := compiled(in)

@@ -735,14 +735,7 @@
       ]
     }
   ],
-  "unresolved": [
-    {
-      "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/leadlag_ticker.json",
-      "line": 1,
-      "reason": "failed to parse flume json: json: cannot unmarshal number into Go struct field .nodes.inputData of type map[string]interface {}"
-    }
-  ],
+  "unresolved": null,
   "summary": {
     "totalProducers": 3,
     "deadProducers": 3,
@@ -753,6 +746,6 @@
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
-    "unresolved": 1
+    "unresolved": 0
   }
 }

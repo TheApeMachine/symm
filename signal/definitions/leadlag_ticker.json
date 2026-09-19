@@ -138,7 +138,9 @@
       "id": "delay",
       "type": "temporal.Delay",
       "inputData": {
-        "horizon": 1
+        "_config": {
+          "horizon": 1
+        }
       },
       "connections": {
         "inputs": {

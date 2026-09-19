@@ -104,6 +104,7 @@ func setupDataChannelHandler(rtc *WebRTC, peerConn *webrtc.PeerConnection) {
 	peerConn.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
 		dataChannel.OnOpen(func() {
 			errnie.Info("[webrtc] data channel opened")
+			rtc.hub.RegisterDataChannel(dataChannel)
 
 			if sendErr := dataChannel.SendText("Hello from Go server 👋"); sendErr != nil {
 				rtc.Error(errnie.Err(

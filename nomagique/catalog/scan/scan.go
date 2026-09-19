@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"fmt"
 	"go/ast"
 	"go/types"
 	"strings"
@@ -23,6 +24,7 @@ var skipped = map[string]struct{}{
 }
 
 func Tree(directory string) (map[string]catalog.Schema, error) {
+	errnie.Debug(fmt.Sprintf("[scan.Tree] scanning directory %s with packages.Load...", directory))
 	loaded, err := packages.Load(&packages.Config{
 		Mode: packages.NeedName | packages.NeedTypes | packages.NeedSyntax |
 			packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
@@ -37,6 +39,7 @@ func Tree(directory string) (map[string]catalog.Schema, error) {
 		))
 	}
 
+	errnie.Debug(fmt.Sprintf("[scan.Tree] loaded %d packages, extracting schemas...", len(loaded)))
 	schemas := make(map[string]catalog.Schema)
 
 	for _, loadedPackage := range loaded {
@@ -63,6 +66,7 @@ func Tree(directory string) (map[string]catalog.Schema, error) {
 		))
 	}
 
+	errnie.Debug(fmt.Sprintf("[scan.Tree] successfully collected %d primitive schemas", len(schemas)))
 	return schemas, nil
 }
 

@@ -20,9 +20,12 @@ import (
 	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/catalog/scan"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/compiler"
 	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store/tables"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/ui"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -57,12 +60,22 @@ var (
 				log.Fatalf("error starting pyroscope profiler: %v", err)
 			}
 
+			logLevel := viper.GetString("system.log.level")
+
+			if envLevel := os.Getenv("SYMM_LOG_LEVEL"); envLevel != "" {
+				logLevel = envLevel
+			}
+
+			if logLevel == "" {
+				logLevel = "debug"
+			}
+
 			errnie.Apply(&errnie.Config{
-				Level: viper.GetString("system.log.level"),
+				Level: logLevel,
 			})
 
 			errnie.Info(fmt.Sprintf(
-				"symm started with %d CPUs", runtime.NumCPU(),
+				"symm started with %d CPUs (log level: %s)", runtime.NumCPU(), logLevel,
 			))
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -78,6 +91,7 @@ var (
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
 			// them; everything a reader queries lives in the catalog.
+			errnie.Debug("[root] connecting to Iceberg catalog...")
 			catalog := tables.Open(ctx)
 
 			if catalog == nil {
@@ -86,42 +100,191 @@ var (
 				))
 			}
 
+			errnie.Debug("[root] ensuring Iceberg catalog tables...")
 			if err := catalog.Ensure(ctx); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.IO, "[root] catalog initialization failed", err,
 				))
 			}
 
+			errnie.Debug("[root] recording training run...")
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:        epoch,
 				StartedAt:    processStartedAt,
 				BuildID:      "training",
-				ConfigDigest: viper.GetString("system.log.level"),
+				ConfigDigest: logLevel,
 				Status:       "ACTIVE",
 			}); err != nil {
 				return errnie.Error(errnie.Err(errnie.IO, "cmd: record training run", err))
 			}
 
+			errnie.Debug("[root] scanning nomagique primitive tree...")
 			schemas, err := scan.Tree("nomagique")
+
 			if err != nil {
 				return errnie.Error(err)
 			}
 
+			errnie.Debug(fmt.Sprintf("[root] scanned %d schemas, building compiler registry...", len(schemas)))
 			reg := compiler.NewRegistry(schemas)
 
+			errnie.Debug("[root] loading system graph definition...")
 			systemGraph, err := definitions.Load("system")
+
 			if err != nil {
 				return errnie.Error(err)
 			}
 
+			errnie.Debug(fmt.Sprintf("[root] system graph loaded (%d nodes), compiling...", len(systemGraph.Nodes)))
 			systemPipeline, err := compiler.Compile[any](systemGraph, reg)
+
 			if err != nil {
 				return errnie.Error(err)
 			}
 
+			errnie.Debug("[root] system pipeline compiled successfully, initializing workspace...")
 			workspace := nomagiqueruntime.NewWorkspaceWithPipeline(ctx, "system", nomagique.Number[any](systemPipeline))
 			defer workspace.Close()
 
+			// 1. Initialize UI Hub and WebRTC server
+			errnie.Debug("[root] initializing UI hub and WebRTC server...")
+			hub := ui.NewHub(ctx, nil, catalog)
+			ui.NewWebRTC(ctx, hub, nil, nil)
+
+			go func() {
+				uiAddr := viper.GetString("ui.addr")
+
+				if uiAddr == "" {
+					uiAddr = "127.0.0.1:8765"
+				}
+
+				errnie.Info(fmt.Sprintf("[root] UI server listening on %s (/ws, /webrtc/manifold)", uiAddr))
+
+				if err := hub.Run(); err != nil {
+					errnie.Error(err)
+				}
+			}()
+
+			// 2. Forward pipeline evaluations to UI Hub
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case result, ok := <-workspace.Sink():
+						if !ok {
+							return
+						}
+
+						if eval, ok := result.(cognition.Evaluation); ok && hub != nil {
+							hub.BroadcastEvaluation(eval)
+						}
+					}
+				}
+			}()
+
+			// 3. Discover Kraken Universe for Quote Currency
+			publicEndpoint := viper.GetString("system.websocket.endpoints.public")
+			if publicEndpoint == "" {
+				publicEndpoint = "wss://ws.kraken.com/v2"
+			}
+
+			l3Endpoint := viper.GetString("system.websocket.endpoints.level3")
+			if l3Endpoint == "" {
+				l3Endpoint = "wss://ws-l3.kraken.com/v2"
+			}
+
+			quoteCurrency := viper.GetString("market.quote_currency")
+			if quoteCurrency == "" {
+				quoteCurrency = "USD"
+			}
+
+			excludedBases := viper.GetStringSlice("market.instrument.excluded")
+			errnie.Info(fmt.Sprintf("[root] discovering %s universe from %s (excluding %d bases)...", quoteCurrency, publicEndpoint, len(excludedBases)))
+
+			symbols, err := transport.DiscoverUniverse(ctx, publicEndpoint, quoteCurrency, excludedBases)
+			if err != nil {
+				errnie.Warn(fmt.Sprintf("[root] dynamic universe discovery failed: %v", err))
+				symbols = viper.GetStringSlice("market.symbols")
+				if len(symbols) == 0 {
+					symbols = []string{"BTC/USD", "ETH/USD"}
+				}
+			}
+
+			if len(symbols) == 0 {
+				return errnie.Error(errnie.Err(
+					errnie.NotFound,
+					"[root] no tradeable symbols found in market universe",
+					nil,
+				))
+			}
+
+			batchSize := viper.GetInt("market.subscribe.batch")
+			if batchSize <= 0 {
+				batchSize = 200
+			}
+
+			paceDuration := viper.GetDuration("market.subscribe.pace")
+			if paceDuration <= 0 {
+				paceDuration = 1 * time.Second
+			}
+
+			errnie.Info(fmt.Sprintf("[root] discovered %d online %s pairs; subscribing in batches of %d (pace: %s)...", len(symbols), quoteCurrency, batchSize, paceDuration))
+
+			// 4. Initialize Paper Trading / Execution Runner
+			model := viper.GetString("market.model")
+			if model == "paper" {
+				errnie.Info("[root] initializing paper trading runner...")
+				paperRunner := transport.NewPaper(
+					ctx,
+					func(balance map[string]any) {
+						errnie.Debug(fmt.Sprintf("[paper] balance update: %v", balance))
+					},
+					func(execution map[string]any) {
+						errnie.Info(fmt.Sprintf("[paper] execution update: %v", execution))
+					},
+				)
+
+				bal, err := paperRunner.Balance()
+				if err != nil {
+					errnie.Warn(fmt.Sprintf("[root] initial paper balance check: %v", err))
+				}
+
+				if bal != nil {
+					errnie.Info(fmt.Sprintf("[root] paper trading initial balance: %v", bal["balances"]))
+				}
+
+				paperRunner.StartPoll(10 * time.Second)
+			}
+
+			// 5. Start Kraken WebSocket Ingress
+			errnie.Info(fmt.Sprintf("[root] connecting to Kraken public WebSocket (%s) for %d symbols...", publicEndpoint, len(symbols)))
+			go transport.StartWSIngress(
+				ctx,
+				publicEndpoint,
+				[]string{"ticker", "trade", "book"},
+				symbols,
+				batchSize,
+				paceDuration,
+				func(tick any) {
+					workspace.Next(tick)
+				},
+			)
+
+			errnie.Info(fmt.Sprintf("[root] connecting to Kraken Level3 WebSocket (%s) for %d symbols...", l3Endpoint, len(symbols)))
+			go transport.StartWSIngress(
+				ctx,
+				l3Endpoint,
+				[]string{"level3"},
+				symbols,
+				batchSize,
+				paceDuration,
+				func(tick any) {
+					workspace.Next(tick)
+				},
+			)
+
+			errnie.Info("[root] system ready; listening on context")
 			<-ctx.Done()
 			return nil
 		},
