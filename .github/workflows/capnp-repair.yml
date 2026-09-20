@@ -1,4 +1,4 @@
-name: capnp-repair
+name: capnp-dependency-check
 on:
   push:
     branches: [repair/capnp-live-graph]
@@ -8,14 +8,13 @@ on:
       - scripts/check-capnp-frame.go
 permissions:
   contents: read
-  actions: read
 concurrency:
   group: capnp-repair-probe
   cancel-in-progress: true
 jobs:
   dependency-probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -25,81 +24,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Recover original baseline inputs
-        uses: actions/download-artifact@v4
-        with:
-          name: capnp-repair-build-inputs
-          run-id: 35492375774
-          github-token: ${{ github.token }}
-          path: repair-artifacts
-      - name: Split build cache without changing project dependencies
+      - name: Prepare exact dependency versions without changing SYMM
         shell: bash
         run: |
-          mkdir -p repair-parts
-          split -b 250m repair-artifacts/go-modules.tar.gz repair-parts/modules-
-          mv repair-artifacts/go-toolchain.tar.gz repair-parts/toolchain.tar.gz
-          rm repair-artifacts/go-modules.tar.gz
-      - name: Install pinned proposed TypeScript dependency
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/capnp-probe" repair-artifacts/dependency-probe
+          mkdir -p "$RUNNER_TEMP/capnp-probe" "$RUNNER_TEMP/go-capnp-probe" repair-artifacts
           npm install --prefix "$RUNNER_TEMP/capnp-probe" --ignore-scripts --no-audit --no-fund @naeemo/capnp@0.9.3
-          tar -C "$RUNNER_TEMP/capnp-probe" -czf repair-artifacts/naeemo-runtime.tar.gz node_modules package-lock.json
-      - name: Exercise actual library TCP framing
-        shell: bash
-        run: |
           cp scripts/check-capnp-transport.mjs "$RUNNER_TEMP/capnp-probe/probe.mjs"
-          cd "$RUNNER_TEMP/capnp-probe"
-          node probe.mjs "$GITHUB_WORKSPACE/repair-artifacts/dependency-probe"
-      - name: Validate test messages independently with Go Capnp
-        if: always()
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/go-capnp-probe"
+          cp scripts/check-capnp-frame.go "$RUNNER_TEMP/go-capnp-probe/main.go"
+          cp "$RUNNER_TEMP/capnp-probe/package-lock.json" repair-artifacts/npm-lock.json
           cd "$RUNNER_TEMP/go-capnp-probe"
           go mod init probe
           go get capnproto.org/go/capnp/v3@v3.1.0-alpha.2
-          cp "$GITHUB_WORKSPACE/scripts/check-capnp-frame.go" main.go
-          go run main.go "$GITHUB_WORKSPACE/repair-artifacts/dependency-probe" | tee "$GITHUB_WORKSPACE/repair-artifacts/dependency-probe/go-frames.txt"
-      - uses: actions/upload-artifact@v4
+          go build -o "$RUNNER_TEMP/check-capnp-frame" main.go
+          "$RUNNER_TEMP/check-capnp-frame" --write "$GITHUB_WORKSPACE/repair-artifacts"
+      - name: Exercise installed TypeScript dependency and native Go fixture
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/capnp-probe"
+          node probe.mjs "$GITHUB_WORKSPACE/repair-artifacts" 2>&1 | tee "$GITHUB_WORKSPACE/repair-artifacts/typescript-log.txt"
+      - name: Independently decode all fixtures with Go Capnp
         if: always()
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/check-capnp-frame" "$GITHUB_WORKSPACE/repair-artifacts" 2>&1 | tee "$GITHUB_WORKSPACE/repair-artifacts/go-log.txt"
+      - name: Preserve wire fixtures and actual assertions
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: capnp-source-evidence
+          name: capnp-interop-results
           path: repair-artifacts/
-          retention-days: 1
-          compression-level: 0
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: capnp-toolchain
-          path: repair-parts/toolchain.tar.gz
-          retention-days: 1
-          compression-level: 0
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: capnp-modules-a
-          path: repair-parts/modules-aa
-          retention-days: 1
-          compression-level: 0
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: capnp-modules-b
-          path: repair-parts/modules-ab
-          retention-days: 1
-          compression-level: 0
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: capnp-modules-c
-          path: repair-parts/modules-ac
-          retention-days: 1
-          compression-level: 0
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: capnp-modules-d
-          path: repair-parts/modules-ad
-          retention-days: 1
-          compression-level: 0
+          retention-days: 7
