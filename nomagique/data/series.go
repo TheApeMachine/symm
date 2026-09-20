@@ -1,160 +1,188 @@
-/*
-Package data retains bounded event-time observations and answers causal
-retrieval over them.
-*/
 package data
 
 import (
+	"context"
+
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-SeriesInput is one observation or one as-of query. A query input reads the
-newest retained value observed no later than its event time; an observation
-input retains its timestamped value without imposing arrival-time order.
-
-The clock is any normalized (seconds, nanoseconds) coordinate pair. Retention
-is a ring: the oldest observation is evicted when a key's ring is full.
-*/
-type SeriesInput[Value any] struct {
-	Key   string
-	Sec   float64
-	Nsec  float64
-	Value Value
-	Query bool
+type SeriesInput struct {
+	Key   string  `json:"key"`
+	Sec   float64 `json:"sec"`
+	Nsec  float64 `json:"nsec"`
+	Value any     `json:"value"`
+	Query bool    `json:"query"`
 }
 
-/*
-SeriesReading is the retained or retrieved value for one key, with Found
-reporting whether the input was admissible and the ring answered.
-*/
-type SeriesReading[Value any] struct {
-	Key   string
-	Sec   float64
-	Nsec  float64
-	Value Value
-	Found bool
+type SeriesReading struct {
+	Key   string  `json:"key"`
+	Sec   float64 `json:"sec"`
+	Nsec  float64 `json:"nsec"`
+	Value any     `json:"value"`
+	Found bool    `json:"found"`
 }
 
-type seriesRing[Value any] struct {
+type seriesRing struct {
 	sec    []float64
 	nsec   []float64
-	values []Value
+	values []any
 	next   int
 	count  int
 }
 
-/*
-NewSeries creates fixed storage for each key observed by one owner.
-No structs, pure Value closure holding rings state.
-*/
-type Series[Value any] types.Value[SeriesInput[Value], SeriesReading[Value]]
-func NewSeries[Value any](capacity types.Integer) Series[Value] {
-	capVal := 100
-	if capacity != nil {
-		capVal = capacity(nil)
+type SeriesServer struct {
+	capacity int
+	rings    map[string]*seriesRing
+	Downstream func(context.Context, SeriesReading) error
+}
+
+func NewSeriesServer(capacity int) *SeriesServer {
+	if capacity <= 0 {
+		capacity = 100
 	}
-	rings := make(map[string]*seriesRing[Value])
-
-	return func(input SeriesInput[Value]) SeriesReading[Value] {
-		reading := SeriesReading[Value]{
-			Key:   input.Key,
-			Sec:   input.Sec,
-			Nsec:  input.Nsec,
-			Value: input.Value,
-		}
-
-		if capVal <= 0 {
-			return reading
-		}
-
-		if input.Query {
-			reading.Value, reading.Found = asOf(rings, input.Key, input.Sec, input.Nsec)
-		} else {
-			reading.Found = observe(rings, capVal, input.Key, input.Sec, input.Nsec, input.Value)
-		}
-
-		return reading
+	return &SeriesServer{
+		capacity: capacity,
+		rings:    make(map[string]*seriesRing),
 	}
 }
 
-func observe[Value any](
-	rings map[string]*seriesRing[Value],
-	capacity int,
+func (s *SeriesServer) Evaluate(ctx context.Context, input SeriesInput) (SeriesReading, error) {
+	reading := SeriesReading{
+		Key:   input.Key,
+		Sec:   input.Sec,
+		Nsec:  input.Nsec,
+		Value: input.Value,
+	}
+
+	if s.capacity <= 0 {
+		if s.Downstream != nil {
+			return reading, s.Downstream(ctx, reading)
+		}
+		return reading, nil
+	}
+
+	if input.Query {
+		reading.Value, reading.Found = s.asOf(input.Key, input.Sec, input.Nsec)
+	} else {
+		reading.Found = s.observe(input.Key, input.Sec, input.Nsec, input.Value)
+	}
+
+	if s.Downstream != nil {
+		return reading, s.Downstream(ctx, reading)
+	}
+	return reading, nil
+}
+
+func (s *SeriesServer) Write(ctx context.Context, call Series_write) error {
+	args, err := call.Args().Series()
+	if err != nil {
+		return err
+	}
+	
+	payloadPtr, err := args.Payload()
+	if err != nil {
+		return err
+	}
+	
+	var input SeriesInput
+	if payloadPtr.IsValid() {
+		data := payloadPtr.Data()
+		if len(data) > 0 {
+			_ = sonic.Unmarshal(data, &input)
+		}
+	}
+	
+	_, err = s.Evaluate(ctx, input)
+	return err
+}
+
+func (s *SeriesServer) Done(ctx context.Context, call Series_done) error {
+	return nil
+}
+
+func (s *SeriesServer) observe(
 	key string,
 	sec float64,
 	nsec float64,
-	value Value,
+	value any,
 ) bool {
-	if capacity <= 0 || key == "" || nsec < 0 || nsec >= 1e9 {
-		return false
-	}
-
-	ring := rings[key]
-	if ring == nil {
-		ring = &seriesRing[Value]{
-			sec:    make([]float64, capacity),
-			nsec:   make([]float64, capacity),
-			values: make([]Value, capacity),
+	ring, exists := s.rings[key]
+	if !exists {
+		ring = &seriesRing{
+			sec:    make([]float64, s.capacity),
+			nsec:   make([]float64, s.capacity),
+			values: make([]any, s.capacity),
 		}
-		rings[key] = ring
+		s.rings[key] = ring
 	}
 
-	for index := range ring.count {
-		if ring.sec[index] == sec && ring.nsec[index] == nsec {
-			ring.values[index] = value
-			return true
+	if ring.count > 0 {
+		lastIdx := (ring.next - 1 + s.capacity) % s.capacity
+		if sec < ring.sec[lastIdx] || (sec == ring.sec[lastIdx] && nsec <= ring.nsec[lastIdx]) {
+			return false
 		}
 	}
 
 	ring.sec[ring.next] = sec
 	ring.nsec[ring.next] = nsec
 	ring.values[ring.next] = value
-	ring.next = (ring.next + 1) % capacity
-
-	if ring.count < capacity {
+	ring.next = (ring.next + 1) % s.capacity
+	if ring.count < s.capacity {
 		ring.count++
 	}
 
 	return true
 }
 
-func asOf[Value any](
-	rings map[string]*seriesRing[Value],
+func (s *SeriesServer) asOf(
 	key string,
 	sec float64,
 	nsec float64,
-) (Value, bool) {
-	var missing Value
-
-	if key == "" {
-		return missing, false
+) (any, bool) {
+	ring, exists := s.rings[key]
+	if !exists || ring.count == 0 {
+		return nil, false
 	}
 
-	ring := rings[key]
-	if ring == nil {
-		return missing, false
-	}
+	var best any
+	found := false
+	maxSec := -1.0
+	maxNsec := -1.0
 
-	bestIndex := -1
-	bestSec, bestNsec := 0.0, 0.0
+	for i := 0; i < ring.count; i++ {
+		idx := (ring.next - 1 - i + s.capacity) % s.capacity
+		rSec := ring.sec[idx]
+		rNsec := ring.nsec[idx]
 
-	for index := range ring.count {
-		if ring.sec[index] > sec ||
-			ring.sec[index] == sec && ring.nsec[index] > nsec {
-			continue
-		}
-
-		if bestIndex < 0 || ring.sec[index] > bestSec ||
-			ring.sec[index] == bestSec && ring.nsec[index] > bestNsec {
-			bestIndex = index
-			bestSec, bestNsec = ring.sec[index], ring.nsec[index]
+		if rSec < sec || (rSec == sec && rNsec <= nsec) {
+			if rSec > maxSec || (rSec == maxSec && rNsec > maxNsec) {
+				maxSec = rSec
+				maxNsec = rNsec
+				best = ring.values[idx]
+				found = true
+			}
 		}
 	}
 
-	if bestIndex < 0 {
-		return missing, false
-	}
+	return best, found
+}
 
-	return ring.values[bestIndex], true
+type SeriesNode types.StreamNode[SeriesInput, SeriesReading]
+
+func NewSeriesNode(capacity types.Integer) SeriesNode {
+	c := 100
+	if capacity != nil {
+		c = capacity(0)
+	}
+	server := NewSeriesServer(c)
+	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
+		input := in.(SeriesInput)
+		_, err := server.Evaluate(ctx, input)
+		return err
+	}, func(next func(context.Context, any) error) {
+		server.Downstream = func(ctx context.Context, res SeriesReading) error {
+			return next(ctx, res)
+		}
+	})
 }

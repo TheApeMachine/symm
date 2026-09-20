@@ -1,0 +1,22 @@
+package calculus
+
+import (
+	"context"
+	"math"
+)
+
+type BoundServer struct {
+	Downstream func(context.Context, float64) error
+	Min        float64
+	Max        float64
+}
+
+func (s *BoundServer) Write(ctx context.Context, call Bound_write) error {
+	a := call.Args().A()
+	result := math.Max(s.Min, math.Min(s.Max, a))
+	return s.Downstream(ctx, result)
+}
+
+func (s *BoundServer) Done(ctx context.Context, call Bound_done) error {
+	return nil
+}

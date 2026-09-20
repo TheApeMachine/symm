@@ -152,7 +152,7 @@ func adaptiveResonanceConfig(alpha float64, arch []int) resonanceConfig {
 ResonanceManifold is a multi-timescale predictive coder implementing the
 variational free energy principle over a generative neural architecture.
 */
-type ResonanceManifold struct {
+type ResonanceManifoldServer struct {
 	cfg        resonanceConfig
 	arch       []int
 	targetDim  int
@@ -161,7 +161,7 @@ type ResonanceManifold struct {
 
 	taskWeights      *mat.Dense
 	taskBias         *mat.VecDense
-	taskLearners     []TaskLearner
+	taskLearners     []*TaskLearnerServer
 	taskVar          *mat.VecDense
 	taskScale        *mat.VecDense
 	taskPrecision    *mat.VecDense
@@ -188,8 +188,8 @@ type ResonanceManifold struct {
 	settleAdvancedTemporal bool
 	lastInferenceSteps     int
 
-	settlePipeline types.Value[*ResonanceManifold, *ResonanceManifold]
-	learnPipeline  types.Value[*ResonanceManifold, *ResonanceManifold]
+	settlePipeline types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer]
+	learnPipeline  types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer]
 	err            error
 }
 
@@ -289,14 +289,14 @@ type ForecastIntent struct {
 	Steps int
 }
 
-// NewResonanceManifold constructs a multi-layer predictive coder pipeline.
-func NewResonanceManifold(
+// NewResonanceManifoldServer constructs a multi-layer predictive coder pipeline.
+func NewResonanceManifoldServer(
 	arch []int,
 	taskRows int,
 	targetDim int,
 	alpha float64,
 	readoutMode ReadoutMode,
-) *ResonanceManifold {
+) *ResonanceManifoldServer {
 	cfg := adaptiveResonanceConfig(alpha, arch)
 	cfg.ReadoutMode = readoutMode
 
@@ -324,7 +324,7 @@ func NewResonanceManifold(
 
 	workspace := newResonanceWorkspace(arch, taskRows, cfg.ReadoutMode)
 
-	m := &ResonanceManifold{
+	m := &ResonanceManifoldServer{
 		cfg:                cfg,
 		arch:               arch,
 		targetDim:          targetDim,
@@ -387,9 +387,9 @@ func NewResonanceManifold(
 		denseFill(m.taskPrecision, 1.0)
 		denseFill(m.taskSkill, 1.0)
 
-		m.taskLearners = make([]TaskLearner, taskRows)
+		m.taskLearners = make([]*TaskLearnerServer, taskRows)
 		for i := range taskRows {
-			m.taskLearners[i] = newRLSTaskLearner(readoutDim, cfg.LambdaRLS)
+			m.taskLearners[i] = NewTaskLearnerServer(readoutDim, cfg.LambdaRLS)
 		}
 	}
 
@@ -400,7 +400,7 @@ func NewResonanceManifold(
 }
 
 // Execute processes a single ManifoldCommand and returns the resulting ManifoldReading.
-func (m *ResonanceManifold) Execute(cmd ManifoldCommand) (ManifoldReading, error) {
+func (m *ResonanceManifoldServer) Execute(cmd ManifoldCommand) (ManifoldReading, error) {
 	if cmd.Settle != nil {
 		if len(cmd.Settle.Features) != m.arch[0] {
 			m.err = fmt.Errorf("resonance: input dimension mismatch")
@@ -506,7 +506,7 @@ func (m *ResonanceManifold) Execute(cmd ManifoldCommand) (ManifoldReading, error
 }
 
 // AsValue returns a types.Value closure for executing commands.
-func (m *ResonanceManifold) AsValue() types.Value[ManifoldCommand, ManifoldReading] {
+func (m *ResonanceManifoldServer) AsValue() types.Value[ManifoldCommand, ManifoldReading] {
 	return func(cmd ManifoldCommand) ManifoldReading {
 		reading, _ := m.Execute(cmd)
 		return reading
@@ -514,7 +514,7 @@ func (m *ResonanceManifold) AsValue() types.Value[ManifoldCommand, ManifoldReadi
 }
 
 // Error returns any errors encountered during processing.
-func (m *ResonanceManifold) Error() error {
+func (m *ResonanceManifoldServer) Error() error {
 	return m.err
 }
 
@@ -523,7 +523,7 @@ snapshot assembles the manifold's full reading: settled dynamics, harvested
 readout, latent state, supervised head predictions, wire layers, and the
 per-row and averaged reliability of the task head.
 */
-func (resonanceManifold *ResonanceManifold) snapshot() ManifoldReading {
+func (resonanceManifold *ResonanceManifoldServer) snapshot() ManifoldReading {
 	reading := ManifoldReading{
 		Reconstruction:      resonanceManifold.output,
 		ReconstructionError: resonanceManifold.reconstructionError(),
@@ -551,11 +551,11 @@ func (resonanceManifold *ResonanceManifold) snapshot() ManifoldReading {
 	return reading
 }
 
-func (resonanceManifold *ResonanceManifold) retentionVector() []float64 {
+func (resonanceManifold *ResonanceManifoldServer) retentionVector() []float64 {
 	return nil
 }
 
-func (resonanceManifold *ResonanceManifold) resetState(resetPrecision bool) {
+func (resonanceManifold *ResonanceManifoldServer) resetState(resetPrecision bool) {
 	for _, latent := range resonanceManifold.latentStates {
 		latent.Zero()
 	}
@@ -592,7 +592,7 @@ func (resonanceManifold *ResonanceManifold) resetState(resetPrecision bool) {
 energy is the variational free energy combining precision-weighted error,
 multi-timescale temporal priors, $L_2$ decay, and $L_1$ dictionary sparsity.
 */
-func (resonanceManifold *ResonanceManifold) energy() float64 {
+func (resonanceManifold *ResonanceManifoldServer) energy() float64 {
 	energy := resonanceManifold.predictionEnergy()
 
 	for latentIndex := range resonanceManifold.temporalOperators {
@@ -614,7 +614,7 @@ func (resonanceManifold *ResonanceManifold) energy() float64 {
 predictionEnergy computes total precision-weighted prediction error across all
 generative links and multi-timescale temporal links.
 */
-func (resonanceManifold *ResonanceManifold) predictionEnergy() float64 {
+func (resonanceManifold *ResonanceManifoldServer) predictionEnergy() float64 {
 	_, layerErrors := resonanceManifold.predictAdjacentLayers()
 	energy := 0.0
 
@@ -648,7 +648,7 @@ func (resonanceManifold *ResonanceManifold) predictionEnergy() float64 {
 	return energy
 }
 
-func (resonanceManifold *ResonanceManifold) reconstructionError() float64 {
+func (resonanceManifold *ResonanceManifoldServer) reconstructionError() float64 {
 	reconstruction := resonanceManifold.workspace.reconPred
 	reconstruction.MulVec(resonanceManifold.generativeWeights[0], resonanceManifold.latentStates[1])
 	// Layer 0 is linear (continuous unbounded z-scores)
@@ -659,7 +659,7 @@ func (resonanceManifold *ResonanceManifold) reconstructionError() float64 {
 	return denseColNorm(diff)
 }
 
-func (resonanceManifold *ResonanceManifold) taskPredictionInto(dst *mat.VecDense) {
+func (resonanceManifold *ResonanceManifoldServer) taskPredictionInto(dst *mat.VecDense) {
 	readoutData := resonanceManifold.workspace.readoutBuf.RawVector().Data
 	resonanceManifold.readoutVectorInto(readoutData)
 
@@ -667,7 +667,7 @@ func (resonanceManifold *ResonanceManifold) taskPredictionInto(dst *mat.VecDense
 	dst.AddVec(dst, resonanceManifold.taskBias)
 }
 
-func (resonanceManifold *ResonanceManifold) taskPrediction() []float64 {
+func (resonanceManifold *ResonanceManifoldServer) taskPrediction() []float64 {
 	if resonanceManifold.taskWeights == nil || resonanceManifold.taskRows <= 0 {
 		return nil
 	}
@@ -681,7 +681,7 @@ func (resonanceManifold *ResonanceManifold) taskPrediction() []float64 {
 taskReading drives one task-head row's learner with one labeled sample and
 returns its posterior reading.
 */
-func (resonanceManifold *ResonanceManifold) taskReading(
+func (resonanceManifold *ResonanceManifoldServer) taskReading(
 	rowIndex int,
 	features []float64,
 	target float64,
@@ -690,11 +690,7 @@ func (resonanceManifold *ResonanceManifold) taskReading(
 		return algo.RLSPosterior{}, fmt.Errorf("resonance: invalid task row %d", rowIndex)
 	}
 	evaluation := resonanceManifold.taskLearners[rowIndex]
-	reading := evaluation(Sample{
-		Features: features,
-		Target:   target,
-		Observed: true,
-	})
+	reading := evaluation.Evaluate(features, target, true)
 	return reading, nil
 }
 
@@ -703,7 +699,7 @@ observeTask updates one task-head row from one labeled sample. The row is
 addressed by its forward horizon, one-based: horizon h supervises the
 cumulative move over the next h ticks.
 */
-func (resonanceManifold *ResonanceManifold) observeTask(
+func (resonanceManifold *ResonanceManifoldServer) observeTask(
 	horizon int,
 	features []float64,
 	prediction float64,
@@ -742,7 +738,7 @@ func (resonanceManifold *ResonanceManifold) observeTask(
 	return nil
 }
 
-func (resonanceManifold *ResonanceManifold) latentState() []float64 {
+func (resonanceManifold *ResonanceManifoldServer) latentState() []float64 {
 	if len(resonanceManifold.latentStates) == 0 {
 		return nil
 	}
@@ -750,7 +746,7 @@ func (resonanceManifold *ResonanceManifold) latentState() []float64 {
 	return append([]float64(nil), resonanceManifold.latentStates[len(resonanceManifold.latentStates)-1].RawVector().Data...)
 }
 
-func (resonanceManifold *ResonanceManifold) temporalError() (float64, bool) {
+func (resonanceManifold *ResonanceManifoldServer) temporalError() (float64, bool) {
 	if !resonanceManifold.temporalPriorsReady || len(resonanceManifold.temporalOperators) == 0 {
 		return 0, false
 	}
@@ -760,7 +756,7 @@ func (resonanceManifold *ResonanceManifold) temporalError() (float64, bool) {
 	return denseColNorm(temporalError), true
 }
 
-func (resonanceManifold *ResonanceManifold) wireSnapshot() (
+func (resonanceManifold *ResonanceManifoldServer) wireSnapshot() (
 	layers []ResonanceLayerWire,
 	surprise float64,
 	energyDensity float64,
@@ -819,7 +815,7 @@ func (resonanceManifold *ResonanceManifold) wireSnapshot() (
 		resonanceManifold.predictionEnergy() / float64(predictionDimensions)
 }
 
-func (resonanceManifold *ResonanceManifold) taskPrecisionAverage() (float64, bool) {
+func (resonanceManifold *ResonanceManifoldServer) taskPrecisionAverage() (float64, bool) {
 	if resonanceManifold.taskWeights == nil || resonanceManifold.taskRows <= 0 {
 		return 0, false
 	}
@@ -841,7 +837,7 @@ func (resonanceManifold *ResonanceManifold) taskPrecisionAverage() (float64, boo
 	return sum / float64(readyCount), true
 }
 
-func (resonanceManifold *ResonanceManifold) taskSkillAverage() (float64, bool) {
+func (resonanceManifold *ResonanceManifoldServer) taskSkillAverage() (float64, bool) {
 	if resonanceManifold.taskWeights == nil || resonanceManifold.taskRows <= 0 {
 		return 0, false
 	}
@@ -863,7 +859,7 @@ func (resonanceManifold *ResonanceManifold) taskSkillAverage() (float64, bool) {
 	return sum / float64(readyCount), true
 }
 
-func (resonanceManifold *ResonanceManifold) taskScaleAverage() (float64, bool) {
+func (resonanceManifold *ResonanceManifoldServer) taskScaleAverage() (float64, bool) {
 	if resonanceManifold.taskWeights == nil || resonanceManifold.taskRows <= 0 {
 		return 0, false
 	}
@@ -885,7 +881,7 @@ func (resonanceManifold *ResonanceManifold) taskScaleAverage() (float64, bool) {
 	return sum / float64(readyCount), true
 }
 
-func (resonanceManifold *ResonanceManifold) stateGradients(
+func (resonanceManifold *ResonanceManifoldServer) stateGradients(
 	predictions []*mat.VecDense,
 	layerErrors []*mat.VecDense,
 ) []*mat.VecDense {
@@ -970,7 +966,7 @@ func (resonanceManifold *ResonanceManifold) stateGradients(
 	return resonanceManifold.workspace.grads
 }
 
-func (resonanceManifold *ResonanceManifold) initializeLatents(xCol *mat.VecDense) {
+func (resonanceManifold *ResonanceManifoldServer) initializeLatents(xCol *mat.VecDense) {
 	bottomUp := resonanceManifold.workspace.bottomUp
 	bottomUp[0].CopyVec(xCol)
 
@@ -1010,7 +1006,7 @@ func (resonanceManifold *ResonanceManifold) initializeLatents(xCol *mat.VecDense
 	}
 }
 
-func (resonanceManifold *ResonanceManifold) advanceTemporalState() {
+func (resonanceManifold *ResonanceManifoldServer) advanceTemporalState() {
 	for latentIndex := range resonanceManifold.temporalOperators {
 		layerIndex := latentIndex + 1
 		resonanceManifold.workspace.prevLatents[latentIndex].CopyVec(resonanceManifold.latentStates[layerIndex])
@@ -1018,11 +1014,11 @@ func (resonanceManifold *ResonanceManifold) advanceTemporalState() {
 	resonanceManifold.temporalPriorsReady = true
 }
 
-func (resonanceManifold *ResonanceManifold) precisionFor(layerIndex int) *mat.VecDense {
+func (resonanceManifold *ResonanceManifoldServer) precisionFor(layerIndex int) *mat.VecDense {
 	return resonanceManifold.precision[layerIndex]
 }
 
-func (resonanceManifold *ResonanceManifold) projectTemporalOperatorNorm(latentIndex int) error {
+func (resonanceManifold *ResonanceManifoldServer) projectTemporalOperatorNorm(latentIndex int) error {
 	if !(resonanceManifold.cfg.TemporalNormMax > 0) || resonanceManifold.cfg.TemporalNormMax >= 1 {
 		return errors.New("resonance: temporal operator-norm limit must be in (0, 1)")
 	}
@@ -1048,19 +1044,19 @@ func (resonanceManifold *ResonanceManifold) projectTemporalOperatorNorm(latentIn
 	return nil
 }
 
-func (resonanceManifold *ResonanceManifold) saveStates() {
+func (resonanceManifold *ResonanceManifoldServer) saveStates() {
 	for layerIndex, latent := range resonanceManifold.latentStates {
 		resonanceManifold.workspace.savedStates[layerIndex].CopyVec(latent)
 	}
 }
 
-func (resonanceManifold *ResonanceManifold) restoreStates() {
+func (resonanceManifold *ResonanceManifoldServer) restoreStates() {
 	for layerIndex, latent := range resonanceManifold.latentStates {
 		latent.CopyVec(resonanceManifold.workspace.savedStates[layerIndex])
 	}
 }
 
-func (resonanceManifold *ResonanceManifold) tryStateUpdate(gradients []*mat.VecDense, stepSize float64) {
+func (resonanceManifold *ResonanceManifoldServer) tryStateUpdate(gradients []*mat.VecDense, stepSize float64) {
 	for layerIndex := 1; layerIndex < len(resonanceManifold.latentStates); layerIndex++ {
 		step := resonanceManifold.workspace.stepBuf[layerIndex]
 		step.ScaleVec(stepSize, gradients[layerIndex])
@@ -1070,7 +1066,7 @@ func (resonanceManifold *ResonanceManifold) tryStateUpdate(gradients []*mat.VecD
 	}
 }
 
-func (resonanceManifold *ResonanceManifold) updatePrecision(
+func (resonanceManifold *ResonanceManifoldServer) updatePrecision(
 	layerErrors []*mat.VecDense,
 	temporalErrors []*mat.VecDense,
 	targetCol *mat.VecDense,
@@ -1115,7 +1111,7 @@ updateTaskReliability folds one resolved sample into one task row's variance,
 scale, precision, and skill readouts. Each row owns its moments, so the nested
 multi-horizon head scores each horizon against its own prediction error.
 */
-func (resonanceManifold *ResonanceManifold) updateTaskReliability(
+func (resonanceManifold *ResonanceManifoldServer) updateTaskReliability(
 	rowIndex int,
 	target float64,
 	taskError float64,
@@ -1166,7 +1162,7 @@ updateTaskSkill maintains one row's exponential moving average of model loss
 versus the zero-prediction baseline. Skill above one means the row's forecasts
 beat predicting no move, which is the evidence the horizon selector contracts on.
 */
-func (resonanceManifold *ResonanceManifold) updateTaskSkill(
+func (resonanceManifold *ResonanceManifoldServer) updateTaskSkill(
 	rowIndex int,
 	target float64,
 	modelSquaredError float64,
@@ -1208,7 +1204,7 @@ func (resonanceManifold *ResonanceManifold) updateTaskSkill(
 	resonanceManifold.taskSkill.RawVector().Data[rowIndex] = skill
 }
 
-func (resonanceManifold *ResonanceManifold) predictAdjacentLayers() ([]*mat.VecDense, []*mat.VecDense) {
+func (resonanceManifold *ResonanceManifoldServer) predictAdjacentLayers() ([]*mat.VecDense, []*mat.VecDense) {
 	for layerIndex := 0; layerIndex < len(resonanceManifold.generativeWeights); layerIndex++ {
 		prediction := resonanceManifold.workspace.predictions[layerIndex]
 		prediction.MulVec(resonanceManifold.generativeWeights[layerIndex], resonanceManifold.latentStates[layerIndex+1])
@@ -1223,7 +1219,7 @@ func (resonanceManifold *ResonanceManifold) predictAdjacentLayers() ([]*mat.VecD
 	return resonanceManifold.workspace.predictions, resonanceManifold.workspace.errors
 }
 
-func (resonanceManifold *ResonanceManifold) setAlpha(alpha float64) error {
+func (resonanceManifold *ResonanceManifoldServer) setAlpha(alpha float64) error {
 	if alpha <= 0 || alpha > 1 {
 		return fmt.Errorf("resonance: alpha must be finite and in (0, 1] (domain mismatch)")
 	}
@@ -1246,7 +1242,7 @@ func (resonanceManifold *ResonanceManifold) setAlpha(alpha float64) error {
 readoutVectorInto writes the multi-layer readout [z_1..z_L, e_0..e_{L-1}]
 directly into dst without heap allocation.
 */
-func (resonanceManifold *ResonanceManifold) readoutVectorInto(dst []float64) int {
+func (resonanceManifold *ResonanceManifoldServer) readoutVectorInto(dst []float64) int {
 	_, layerErrors := resonanceManifold.predictAdjacentLayers()
 	offset := 0
 
@@ -1269,13 +1265,13 @@ func (resonanceManifold *ResonanceManifold) readoutVectorInto(dst []float64) int
 	return offset
 }
 
-func (resonanceManifold *ResonanceManifold) readoutVector() []float64 {
+func (resonanceManifold *ResonanceManifoldServer) readoutVector() []float64 {
 	vector := make([]float64, resonanceManifold.readoutDim)
 	resonanceManifold.readoutVectorInto(vector)
 	return vector
 }
 
-func (resonanceManifold *ResonanceManifold) rolloutRetention(steps int) []float64 {
+func (resonanceManifold *ResonanceManifoldServer) rolloutRetention(steps int) []float64 {
 	if len(resonanceManifold.temporalOperators) == 0 || steps < 1 {
 		return nil
 	}
@@ -1329,7 +1325,7 @@ supervised head for its own horizon, so the curve is a genuine multi-horizon
 forecast rather than a trajectory through imagined states. A request beyond
 the head's rows yields the head's rows.
 */
-func (resonanceManifold *ResonanceManifold) rolloutTaskForecast(steps int) ([]RLSOutput, error) {
+func (resonanceManifold *ResonanceManifoldServer) rolloutTaskForecast(steps int) ([]RLSOutput, error) {
 	if resonanceManifold.taskWeights == nil || resonanceManifold.taskRows <= 0 || steps < 1 {
 		return nil, nil
 	}
@@ -1360,13 +1356,11 @@ func (resonanceManifold *ResonanceManifold) rolloutTaskForecast(steps int) ([]RL
 taskForecast evaluates one task-head row's learner on a feature vector without
 updating its weights.
 */
-func taskForecast(learner TaskLearner, features []float64) (RLSOutput, error) {
+func taskForecast(learner *TaskLearnerServer, features []float64) (RLSOutput, error) {
 	if learner == nil {
 		return RLSOutput{}, fmt.Errorf("resonance: learner is nil")
 	}
-	reading := learner(Sample{
-		Features: features,
-	})
+	reading := learner.Evaluate(features, 0.0, false)
 
 	return RLSOutput{
 		Value:            reading.Prediction,
@@ -1398,17 +1392,17 @@ buildSettlePipeline constructs the pure algebraic pipeline for settling the mani
 It leverages nomagique.IterateUntil to replace manual for loops, preserving the
 zero-allocation Gonum workspace performance.
 */
-func (resonanceManifold *ResonanceManifold) buildSettlePipeline() types.Value[*ResonanceManifold, *ResonanceManifold] {
+func (resonanceManifold *ResonanceManifoldServer) buildSettlePipeline() types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer] {
 	var settledEnergy float64
 	var stableSteps int
 
-	calcGradients := func(m *ResonanceManifold) *ResonanceManifold {
+	calcGradients := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		predictions, layerErrors := m.predictAdjacentLayers()
 		m.stateGradients(predictions, layerErrors)
 		return m
 	}
 
-	lineSearch := func(m *ResonanceManifold) *ResonanceManifold {
+	lineSearch := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		m.saveStates()
 		accepted := false
 		candidateEnergy := settledEnergy
@@ -1453,19 +1447,19 @@ func (resonanceManifold *ResonanceManifold) buildSettlePipeline() types.Value[*R
 		return m
 	}
 
-	stepPipeline := func(m *ResonanceManifold) *ResonanceManifold {
+	stepPipeline := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		m.lastInferenceSteps++
 		m = calcGradients(m)
 		return lineSearch(m)
 	}
 
-	condition := types.Value[*ResonanceManifold, bool](func(m *ResonanceManifold) bool {
+	condition := types.Value[*ResonanceManifoldServer, bool](func(m *ResonanceManifoldServer) bool {
 		return stableSteps >= m.cfg.EarlyStopPatience
 	})
 
-	iterate := nomagique.IterateUntil(types.Const(resonanceManifold.cfg.MaxInferenceSteps), condition, stepPipeline)
+	iterate := nomagique.IterateUntil(resonanceManifold.cfg.MaxInferenceSteps, condition, stepPipeline)
 
-	return func(m *ResonanceManifold) *ResonanceManifold {
+	return func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		settledEnergy = m.energy()
 		stableSteps = 0
 		m.lastInferenceSteps = 0
@@ -1476,15 +1470,15 @@ func (resonanceManifold *ResonanceManifold) buildSettlePipeline() types.Value[*R
 /*
 buildLearnPipeline constructs the pure algebraic pipeline for weight updates.
 */
-func (resonanceManifold *ResonanceManifold) buildLearnPipeline() types.Value[*ResonanceManifold, *ResonanceManifold] {
+func (resonanceManifold *ResonanceManifoldServer) buildLearnPipeline() types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer] {
 	var predictions, layerErrors []*mat.VecDense
 
-	predict := func(m *ResonanceManifold) *ResonanceManifold {
+	predict := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		predictions, layerErrors = m.predictAdjacentLayers()
 		return m
 	}
 
-	generativeUpdate := func(m *ResonanceManifold) *ResonanceManifold {
+	generativeUpdate := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		for layerIndex, weightMatrix := range m.generativeWeights {
 			localSignal := m.workspace.localSignal[layerIndex]
 			if layerIndex == 0 {
@@ -1517,7 +1511,7 @@ func (resonanceManifold *ResonanceManifold) buildLearnPipeline() types.Value[*Re
 		return m
 	}
 
-	recognitionUpdate := func(m *ResonanceManifold) *ResonanceManifold {
+	recognitionUpdate := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		for layerIndex, recognitionMatrix := range m.recognitionWeights {
 			proposal := m.workspace.recProposal[layerIndex]
 			proposal.MulVec(recognitionMatrix, m.latentStates[layerIndex])
@@ -1548,7 +1542,7 @@ func (resonanceManifold *ResonanceManifold) buildLearnPipeline() types.Value[*Re
 		return m
 	}
 
-	temporalUpdate := func(m *ResonanceManifold) *ResonanceManifold {
+	temporalUpdate := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		if m.temporalPriorsReady {
 			for latentIndex, operator := range m.temporalOperators {
 				layerIndex := latentIndex + 1
@@ -1582,7 +1576,7 @@ func (resonanceManifold *ResonanceManifold) buildLearnPipeline() types.Value[*Re
 		return m
 	}
 
-	taskUpdate := func(m *ResonanceManifold) *ResonanceManifold {
+	taskUpdate := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		targetCol := m.workspace.yCol
 		trainedRows := 0
 		if m.taskWeights != nil {
@@ -1611,7 +1605,7 @@ func (resonanceManifold *ResonanceManifold) buildLearnPipeline() types.Value[*Re
 		return m
 	}
 
-	precisionUpdate := func(m *ResonanceManifold) *ResonanceManifold {
+	precisionUpdate := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		targetCol := m.workspace.yCol
 		taskError := m.workspace.taskError
 		trainedRows := targetCol.Len()
@@ -1619,18 +1613,18 @@ func (resonanceManifold *ResonanceManifold) buildLearnPipeline() types.Value[*Re
 		return m
 	}
 
-	advance := func(m *ResonanceManifold) *ResonanceManifold {
+	advance := func(m *ResonanceManifoldServer) *ResonanceManifoldServer {
 		m.advanceTemporalState()
 		return m
 	}
 
-	return types.Value[*ResonanceManifold, *ResonanceManifold](nomagique.NewNumber(
-		types.Value[*ResonanceManifold, *ResonanceManifold](predict),
-		types.Value[*ResonanceManifold, *ResonanceManifold](generativeUpdate),
-		types.Value[*ResonanceManifold, *ResonanceManifold](recognitionUpdate),
-		types.Value[*ResonanceManifold, *ResonanceManifold](temporalUpdate),
-		types.Value[*ResonanceManifold, *ResonanceManifold](taskUpdate),
-		types.Value[*ResonanceManifold, *ResonanceManifold](precisionUpdate),
-		types.Value[*ResonanceManifold, *ResonanceManifold](advance),
+	return types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](nomagique.NewNumber(
+		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](predict),
+		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](generativeUpdate),
+		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](recognitionUpdate),
+		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](temporalUpdate),
+		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](taskUpdate),
+		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](precisionUpdate),
+		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](advance),
 	))
 }

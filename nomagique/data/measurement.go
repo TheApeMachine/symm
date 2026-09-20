@@ -1,10 +1,11 @@
 package data
 
 import (
+	"context"
 	"maps"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	capnp "capnproto.org/go/capnp/v3"
 )
 
 /*
@@ -243,18 +244,38 @@ func (measurement *Measurement[Value]) Finalize() {
 NewFinalizer creates the measurement quality derivation Value closure.
 No structs, pure Value closure.
 */
-type Finalizer[Value any] types.Value[*Measurement[Value], *Measurement[Value]]
+type Finalizer[Value any] func(*Measurement[Value]) *Measurement[Value]
 func NewFinalizer[Value any]() Finalizer[Value] {
-	quality := NewQuality()
+	server := NewQualityServer()
 
 	return func(measurement *Measurement[Value]) *Measurement[Value] {
 		if measurement != nil {
-			reading := quality(factsFromMetadata(measurement.Metadata))
-
-			measurement.Maturity = reading.Maturity
-			measurement.SNR = reading.SNR
-			measurement.SNRDefined = reading.SNRDefined
-			measurement.Estimated = reading.Estimated
+			var facts WireQualityFacts
+			_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+			if err == nil {
+				facts, err = NewWireQualityFacts(seg)
+				if err == nil {
+					FactsFromMetadata(measurement.Metadata, facts)
+					
+					// Evaluate quality via the capnp server interface locally
+					call, release := Quality_ServerToClient(server).Evaluate(context.Background(), func(p Quality_evaluate_Params) error {
+						p.SetFacts(facts)
+						return nil
+					})
+					defer release()
+					
+					res, err := call.Struct()
+					if err == nil {
+						reading, err := res.Reading()
+						if err == nil {
+							measurement.Maturity = reading.Maturity()
+							measurement.SNR = reading.Snr()
+							measurement.SNRDefined = reading.SnrDefined()
+							measurement.Estimated = reading.Estimated()
+						}
+					}
+				}
+			}
 		}
 
 		return measurement

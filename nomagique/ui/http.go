@@ -1,275 +1,123 @@
 package ui
 
 import (
-	"io"
+	"context"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
-
-	"github.com/bytedance/sonic"
-	"github.com/gorilla/websocket"
-	"github.com/pion/webrtc/v4"
+	"text/template"
+	"time"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/catalog"
-	"github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/signal"
+	"capnproto.org/go/capnp/v3"
 )
 
-/*
-HTTPServer provides a unified HTTP REST, WebSocket, and WebRTC streaming server node.
-It serves the frontend endpoints for workbench, hindsight, and real-time execution broadcast.
-Pure types.Value closure with internal mux and connection state.
-*/
-type HTTPServer types.Value[any, any]
-
-func NewHTTPServer(addr types.String) HTTPServer {
-	var (
-		once         sync.Once
-		wsClients    sync.Map
-		dataChannels sync.Map
-		upgrader     = websocket.Upgrader{
-			CheckOrigin: func(request *http.Request) bool { return true },
-		}
-	)
-
-	webrtcAPI := webrtc.NewAPI()
-	webrtcCfg := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{URLs: []string{"stun:stun.l.google.com:19302"}},
-		},
-		BundlePolicy:  webrtc.BundlePolicyBalanced,
-		RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
-	}
-
-	return func(in any) any {
-		once.Do(func() {
-			address := ":8765"
-			if addr != nil {
-				if evaluated := addr(in); evaluated != "" {
-					address = evaluated
-				}
-			}
-
-			handler := buildHTTPHandler(&wsClients, &dataChannels, &upgrader, webrtcAPI, webrtcCfg)
-			server := &http.Server{Addr: address, Handler: handler}
-
-			go func() {
-				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed && !strings.Contains(err.Error(), "address already in use") {
-					errnie.Error(errnie.Err(errnie.IO, "[ui] http server failed", err))
-				}
-			}()
-		})
-
-		if in != nil {
-			var payload []byte
-			switch val := in.(type) {
-			case []byte:
-				payload = val
-			case string:
-				payload = []byte(val)
-			default:
-				data, err := sonic.Marshal(val)
-				if err == nil {
-					payload = data
-				}
-			}
-
-			if len(payload) > 0 {
-				wsClients.Range(func(key, _ any) bool {
-					if conn, ok := key.(*websocket.Conn); ok {
-						_ = conn.WriteMessage(websocket.TextMessage, payload)
-					}
-					return true
-				})
-
-				dataChannels.Range(func(key, _ any) bool {
-					if channel, ok := key.(*webrtc.DataChannel); ok {
-						_ = channel.Send(payload)
-					}
-					return true
-				})
-			}
-		}
-
-		return in
-	}
+type HTTPServerImpl struct {
+	once sync.Once
+	Downstream func(context.Context, capnp.Ptr) error
 }
 
-func buildHTTPHandler(
-	wsClients *sync.Map,
-	dataChannels *sync.Map,
-	upgrader *websocket.Upgrader,
-	webrtcAPI *webrtc.API,
-	webrtcCfg webrtc.Configuration,
-) http.Handler {
-	mux := http.NewServeMux()
+func NewHTTPServerImpl() *HTTPServerImpl {
+	return &HTTPServerImpl{}
+}
 
-	// 1. /workbench/primitives
-	mux.HandleFunc("GET /workbench/primitives", func(writer http.ResponseWriter, request *http.Request) {
-		primitives, err := catalog.Load()
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		writer.Header().Set("Content-Type", "application/json")
-		_ = sonic.ConfigDefault.NewEncoder(writer).Encode(primitives)
-	})
-
-	// 2. /workbench/signals
-	mux.HandleFunc("GET /workbench/signals", func(writer http.ResponseWriter, request *http.Request) {
-		ids, err := signal.ListDefinitions()
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		writer.Header().Set("Content-Type", "application/json")
-		_ = sonic.ConfigDefault.NewEncoder(writer).Encode(ids)
-	})
-
-	// 3. /workbench/signals/{id}
-	mux.HandleFunc("GET /workbench/signals/{id}", func(writer http.ResponseWriter, request *http.Request) {
-		id := request.PathValue("id")
-		rawJSON, err := signal.GetDefinition(id)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusNotFound)
-			return
-		}
-
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write(rawJSON)
-	})
-
-	mux.HandleFunc("POST /workbench/signals/{id}", func(writer http.ResponseWriter, request *http.Request) {
-		id := request.PathValue("id")
-		body, err := io.ReadAll(request.Body)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if err := signal.SaveDefinition(id, body); err != nil {
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		writer.WriteHeader(http.StatusOK)
-	})
-
-	// 4. /workbench/query
-	mux.HandleFunc("POST /workbench/query", func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"results":[]}`))
-	})
-
-	// 5. /hindsight/metric-map
-	mux.HandleFunc("GET /hindsight/metric-map", func(writer http.ResponseWriter, request *http.Request) {
-		semantics := signal.Semantics()
-		writer.Header().Set("Content-Type", "application/json")
-		_ = sonic.ConfigDefault.NewEncoder(writer).Encode(semantics)
-	})
-
-	// 6. /hindsight metadata reads
-	mux.HandleFunc("GET /hindsight/runs", func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
-
-	mux.HandleFunc("GET /hindsight/symbols", func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
-
-	mux.HandleFunc("GET /hindsight/excursions", func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
-
-	mux.HandleFunc("GET /trades", func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`[]`))
-	})
-
-	// 7. /fluid/webrtc/offer
-	mux.HandleFunc("POST /fluid/webrtc/offer", func(writer http.ResponseWriter, request *http.Request) {
-		var offer webrtc.SessionDescription
-		if err := sonic.ConfigDefault.NewDecoder(request.Body).Decode(&offer); err != nil {
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		peerConn, err := webrtcAPI.NewPeerConnection(webrtcCfg)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		peerConn.OnDataChannel(func(channel *webrtc.DataChannel) {
-			dataChannels.Store(channel, struct{}{})
-			channel.OnClose(func() {
-				dataChannels.Delete(channel)
-			})
-		})
-
-		if err := peerConn.SetRemoteDescription(offer); err != nil {
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		answer, err := peerConn.CreateAnswer(nil)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		gatherComplete := webrtc.GatheringCompletePromise(peerConn)
-		if err := peerConn.SetLocalDescription(answer); err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		<-gatherComplete
-
-		writer.Header().Set("Content-Type", "application/json")
-		_ = sonic.ConfigDefault.NewEncoder(writer).Encode(peerConn.LocalDescription())
-	})
-
-	// 8. /ws & /hindsight/timeline websocket upgrade
-	wsHandler := func(writer http.ResponseWriter, request *http.Request) {
-		conn, err := upgrader.Upgrade(writer, request, nil)
-		if err != nil {
-			return
-		}
-
-		wsClients.Store(conn, struct{}{})
-
-		go func() {
-			defer func() {
-				wsClients.Delete(conn)
-				_ = conn.Close()
-			}()
-
-			for {
-				if _, _, err := conn.ReadMessage(); err != nil {
-					break
-				}
-			}
-		}()
+func (s *HTTPServerImpl) Write(ctx context.Context, call HTTPServer_write) error {
+	args, err := call.Args().Server()
+	if err != nil {
+		// fallback to see if it's named something else
+		return err
+	}
+	
+	payloadPtr, err := args.Payload()
+	if err != nil {
+		return err
+	}
+	
+	addrStr, err := args.Addr()
+	if err != nil {
+		return err
+	}
+	
+	pathStr, err := args.Path()
+	if err != nil {
+		return err
+	}
+	
+	templatePathStr, err := args.TemplatePath()
+	if err != nil {
+		return err
+	}
+	
+	fsRootStr, err := args.FsRoot()
+	if err != nil {
+		return err
 	}
 
-	mux.HandleFunc("GET /ws", wsHandler)
-	mux.HandleFunc("GET /hindsight/timeline", wsHandler)
-
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Access-Control-Allow-Origin", "*")
-		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-
-		if request.Method == http.MethodOptions {
-			writer.WriteHeader(http.StatusOK)
-			return
+	s.once.Do(func() {
+		a := ":8080"
+		if addrStr != "" {
+			a = addrStr
+		}
+		p := "/"
+		if pathStr != "" {
+			p = pathStr
+		}
+		tmplPath := ""
+		if templatePathStr != "" {
+			tmplPath = templatePathStr
+		}
+		fsRoot := ""
+		if fsRootStr != "" {
+			fsRoot = fsRootStr
 		}
 
-		mux.ServeHTTP(writer, request)
+		mux := http.NewServeMux()
+		
+		if fsRoot != "" {
+			if info, err := os.Stat(fsRoot); err == nil && info.IsDir() {
+				fs := http.FileServer(http.Dir(fsRoot))
+				mux.Handle(p+"static/", http.StripPrefix(p+"static/", fs))
+			}
+		}
+
+		var tmpl *template.Template
+		if tmplPath != "" {
+			t, err := template.ParseFiles(tmplPath)
+			if err == nil {
+				tmpl = t
+			} else {
+				errnie.Error(errnie.Err(errnie.IO, "[ui] failed to parse template", err))
+			}
+		}
+
+		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
+			if tmpl != nil {
+				err := tmpl.Execute(w, map[string]any{
+					"Time": time.Now().Format(time.RFC3339),
+				})
+				if err != nil {
+					http.Error(w, "Template execution failed", http.StatusInternalServerError)
+				}
+			} else {
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = w.Write([]byte("<html><body>OK</body></html>"))
+			}
+		})
+
+		server := &http.Server{Addr: a, Handler: mux}
+		go func() {
+			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed && !strings.Contains(err.Error(), "address already in use") {
+				errnie.Error(errnie.Err(errnie.IO, "[ui] http server failed", err))
+			}
+		}()
 	})
+
+	if s.Downstream != nil {
+		return s.Downstream(ctx, payloadPtr)
+	}
+	return nil
+}
+
+func (s *HTTPServerImpl) Done(ctx context.Context, call HTTPServer_done) error {
+	return nil
 }

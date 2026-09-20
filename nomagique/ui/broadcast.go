@@ -1,23 +1,40 @@
 package ui
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
+	"context"
+	"capnproto.org/go/capnp/v3"
 )
 
-/*
-Broadcast provides an execution offramp that broadcasts incoming frames or evaluations
-via the configured WebSocketServer, WebRTCServer, or downstream consumers.
-No hub application hack, pure Value closure.
-*/
-type Broadcast types.Value[any, any]
+type BroadcastServer struct {
+	Downstream func(context.Context, capnp.Ptr) error
+}
 
-func NewBroadcast(server types.Value[any, any]) Broadcast {
-	return func(in any) any {
-		if server != nil && in != nil {
-			if res := server(in); res != nil {
-				return res
-			}
-		}
-		return in
+func NewBroadcastServer() *BroadcastServer {
+	return &BroadcastServer{}
+}
+
+func (s *BroadcastServer) Write(ctx context.Context, call Broadcast_write) error {
+	args, err := call.Args().Broadcast()
+	if err != nil {
+		// fallback to see if it's named something else
+		return err
 	}
+	
+	payloadPtr, err := args.Payload()
+	if err != nil {
+		return err
+	}
+	
+	var out capnp.Ptr
+	if payloadPtr.IsValid() {
+		out = payloadPtr
+	}
+	if s.Downstream != nil {
+		return s.Downstream(ctx, out)
+	}
+	return nil
+}
+
+func (s *BroadcastServer) Done(ctx context.Context, call Broadcast_done) error {
+	return nil
 }

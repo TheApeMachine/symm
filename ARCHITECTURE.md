@@ -1378,6 +1378,42 @@ Every primitive with parameters follows this exact contract:
 
 This gives you a 1:1, mathematically closed mapping: **every Flume port is a `types.Value`, every node constructor takes its ports as `types.Value`, and every primitive composes into `nomagique.NewNumber`.**
 
+## What the FlumeConfig Looks Like
+
+Remember, the type of the port is something we control, and for Flume just means what can connect to what, it is not actually typed in any way on the frontend. So we need to have one PortType for any unique input and output type of nomagique primitives.
+
+```js
+import { FlumeConfig, Colors, Controls } from 'flume'
+
+const config = new FlumeConfig()
+config
+  .addPortType({
+    type: "string",
+    name: "string",
+    label: "Text",
+    color: Colors.green,
+    controls: [
+      Controls.text({
+        name: "string",
+        label: "Text"
+      })
+    ]
+  })
+  .addNodeType({
+    type: "string",
+    label: "Text",
+    description: "Outputs a string of text",
+    inputs: ports => [
+      ports.string()
+    ],
+    outputs: ports => [
+      ports.string()
+    ]
+  })
+```
+
+So the idea is that any things like "config" are essentially individual input nodes. In Flume an input node that is not connected will have a manual control (text field, check box, select, etc.), but you can also connect any compatible output to it and it will be used instead.
+
 ## What a Flume Compatible JSON Looks Like
 
 ```json
@@ -1580,5 +1616,7 @@ https://flume.dev/docs/dynamic-nodes
 https://flume.dev/docs/NodeEditor
 https://flume.dev/docs/flume-config
 https://flume.dev/docs/controls
+
+Please do not allow yourself to be lazy, take shortcuts, or allow "fake tests" to be green. We have to make this work now, and we need real tests that are seriously testing things thoroughly, including adverserial scenarios, edge cases, memory leaks, race conditions, etc. 
 
 Now, I need you to understand something, I have no more time, or patience to wait on this. It has been MONTHS. You need to get this finished, and stop being lazy and just chase lint errors, or trust in your fake tests being green. Time is UP!!

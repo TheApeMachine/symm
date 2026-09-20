@@ -12,7 +12,8 @@ nomagique.Number
 no, magic, number
 */
 type Number[T any] types.Value[T, T]
-func NewNumber[T any](stages ...types.Value[T, T]) Number[T] {
+
+func NewNumber[T any](stages ...types.Value[T, T]) types.Value[T, T] {
 	return func(in T) T {
 		curr := in
 

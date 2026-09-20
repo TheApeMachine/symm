@@ -1,46 +1,49 @@
 package learning
 
 import (
+	"context"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-NewLinearPrediction creates a closure that evaluates a feature row against a fitted affine model.
-It closes over the feature indices to extract from the raw row, prepending an implicit core.Unit intercept.
-The returned closure takes a tuple of [Coefficients, RawRow] and returns the dot product (prediction).
-*/
-type LinearPrediction types.Value[[2][]float64, float64]
-func NewLinearPrediction(features ...types.Integer) LinearPrediction {
-	return func(in [2][]float64) float64 {
-		coefficients := in[0]
-		rawRow := in[1]
+type LinearPredictionServer struct {
+	DownstreamLinearPrediction func(context.Context, float64) error
+	Features                   []int
+}
 
-		if len(coefficients) != len(features)+1 {
-			return 0.0 // Coefficient length mismatch (needs features + intercept)
-		}
+func (s *LinearPredictionServer) Write(ctx context.Context, call LinearPrediction_write) error {
+	return s.WriteParams(ctx, call.Args())
+}
 
-		// Prepend intercept
-		designRow := make([]float64, 1, len(features)+1)
-		designRow[0] = core.Unit
+func (s *LinearPredictionServer) WriteParams(ctx context.Context, callArgs LinearPrediction_write_Params) error {
+	coeffs, _ := callArgs.Coefficients()
+	raw, _ := callArgs.RawRow()
 
-		for _, feat := range features {
-			featureIdx := 0
-			if feat != nil {
-				featureIdx = feat(in)
-			}
-			if featureIdx < 0 || featureIdx >= len(rawRow) {
-				return 0.0 // Feature out of bounds
-			}
-			designRow = append(designRow, rawRow[featureIdx])
-		}
-
-		// Dot product
-		sum := 0.0
-		for i := 0; i < len(coefficients); i++ {
-			sum += coefficients[i] * designRow[i]
-		}
-
-		return sum
+	if coeffs.Len() != len(s.Features)+1 {
+		return nil // Coefficient length mismatch
 	}
+
+	designRow := make([]float64, 1, len(s.Features)+1)
+	designRow[0] = core.Unit
+
+	for _, feat := range s.Features {
+		if feat < 0 || feat >= raw.Len() {
+			return nil // Feature out of bounds
+		}
+		designRow = append(designRow, raw.At(feat))
+	}
+
+	sum := 0.0
+	for i := 0; i < coeffs.Len(); i++ {
+		sum += coeffs.At(i) * designRow[i]
+	}
+
+	if s.DownstreamLinearPrediction != nil {
+		return s.DownstreamLinearPrediction(ctx, sum)
+	}
+	return nil
+}
+
+func (s *LinearPredictionServer) Done(ctx context.Context, call LinearPrediction_done) error {
+	return nil
 }

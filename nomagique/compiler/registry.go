@@ -10,27 +10,11 @@ import (
 	"github.com/theapemachine/symm/nomagique/catalog"
 	"github.com/theapemachine/symm/nomagique/types"
 	algo "github.com/theapemachine/symm/nomagique/algo"
-	arithmetic "github.com/theapemachine/symm/nomagique/arithmetic"
-	associative "github.com/theapemachine/symm/nomagique/learning/associative"
-	calculus "github.com/theapemachine/symm/nomagique/calculus"
-	cognition "github.com/theapemachine/symm/nomagique/cognition"
 	data "github.com/theapemachine/symm/nomagique/data"
-	execution "github.com/theapemachine/symm/nomagique/execution"
-	geometry "github.com/theapemachine/symm/nomagique/geometry"
-	hawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
-	learning "github.com/theapemachine/symm/nomagique/learning"
-	physics "github.com/theapemachine/symm/nomagique/physics"
-	probability "github.com/theapemachine/symm/nomagique/probability"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
-	statistic "github.com/theapemachine/symm/nomagique/statistic"
-	store "github.com/theapemachine/symm/nomagique/store"
-	tables "github.com/theapemachine/symm/nomagique/store/tables"
-	temporal "github.com/theapemachine/symm/nomagique/temporal"
-	transport "github.com/theapemachine/symm/nomagique/transport"
-	ui "github.com/theapemachine/symm/nomagique/ui"
 )
 
-type Factory func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error)
+type Factory func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error)
 
 type Registry struct {
 	mu           sync.RWMutex
@@ -117,13 +101,25 @@ func (r *Registry) Register(op string, f Factory) {
 	r.factories[op] = f
 }
 
-func (r *Registry) Resolve(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+func passThroughNode() types.StreamNode[any, any] {
+	var downstream func(context.Context, any) error
+	return types.NewStreamNode(nil, func(ctx context.Context, in any) error {
+		if downstream != nil {
+			return downstream(ctx, in)
+		}
+		return nil
+	}, func(next func(context.Context, any) error) {
+		downstream = next
+	})
+}
+
+func (r *Registry) Resolve(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 	if node.Type == "data.Source" || node.Type == "source" {
-		return func(in any) any { return in }, nil
+		return passThroughNode(), nil
 	}
 
 	if node.Type == "data.Sink" || node.Type == "sink" {
-		return func(in any) any { return in }, nil
+		return passThroughNode(), nil
 	}
 
 	factory, ok := r.factories[node.Type]
@@ -210,17 +206,7 @@ func extractString(data any) string {
 	return ""
 }
 
-func resolveStringPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.String, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) string {
-			return fmt.Sprint(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveStringPort(node Node, portName string) (types.String, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractString(controlData)), nil
 	}
@@ -233,17 +219,7 @@ func resolveStringPort(node Node, portName string, instances map[string]types.Va
 	return func(any) string { return "" }, nil
 }
 
-func resolveIntegerPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Integer, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) int {
-			return extractInt(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveIntegerPort(node Node, portName string) (types.Integer, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractInt(controlData)), nil
 	}
@@ -256,17 +232,7 @@ func resolveIntegerPort(node Node, portName string, instances map[string]types.V
 	return func(any) int { return 0 }, nil
 }
 
-func resolveInt64Port(node Node, portName string, instances map[string]types.Value[any, any]) (types.Value[any, int64], error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) int64 {
-			return int64(extractInt(upstreamClosure(in)))
-		}, nil
-	}
-
+func resolveInt64Port(node Node, portName string) (types.Value[any, int64], error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(int64(extractInt(controlData))), nil
 	}
@@ -279,17 +245,7 @@ func resolveInt64Port(node Node, portName string, instances map[string]types.Val
 	return func(any) int64 { return 0 }, nil
 }
 
-func resolveFloatPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Float, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) float64 {
-			return extractFloat(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveFloatPort(node Node, portName string) (types.Float, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractFloat(controlData)), nil
 	}
@@ -302,17 +258,7 @@ func resolveFloatPort(node Node, portName string, instances map[string]types.Val
 	return func(any) float64 { return 0 }, nil
 }
 
-func resolveBooleanPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Boolean, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) bool {
-			return extractBool(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveBooleanPort(node Node, portName string) (types.Boolean, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractBool(controlData)), nil
 	}
@@ -325,17 +271,7 @@ func resolveBooleanPort(node Node, portName string, instances map[string]types.V
 	return func(any) bool { return false }, nil
 }
 
-func resolveAnyPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Any, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) any {
-			return extractAny(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveAnyPort(node Node, portName string) (types.Any, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractAny(controlData)), nil
 	}
@@ -348,42 +284,11 @@ func resolveAnyPort(node Node, portName string, instances map[string]types.Value
 	return nil, nil
 }
 
-func resolveMapPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Map, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) map[string]any {
-			val := extractAny(upstreamClosure(in))
-			if m, ok := val.(map[string]any); ok {
-				return m
-			}
-			return nil
-		}, nil
-	}
-
+func resolveMapPort(node Node, portName string) (types.Map, error) {
 	return func(any) map[string]any { return nil }, nil
 }
 
-func resolveBytesPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Bytes, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) []byte {
-			val := extractAny(upstreamClosure(in))
-			if b, ok := val.([]byte); ok {
-				return b
-			}
-			if s, ok := val.(string); ok {
-				return []byte(s)
-			}
-			return nil
-		}, nil
-	}
-
+func resolveBytesPort(node Node, portName string) (types.Bytes, error) {
 	return func(any) []byte { return nil }, nil
 }
 /*
@@ -391,1550 +296,84 @@ DefaultPrimitiveFactories maps string types to factory functions
 that instantiate their `Value[any, any]` wrappers.
 */
 var DefaultPrimitiveFactories = map[string]Factory{
-	"algo.GaussJordan": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+	"algo.GaussJordanNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_tolerance types.Float
-		port_tolerance, err = resolveFloatPort(node, "tolerance", instances)
+		port_tolerance, err = resolveFloatPort(node, "tolerance")
 		if err != nil { return nil, err }
-		closure := algo.NewGaussJordan(port_tolerance)
-		return func(in any) any {
-			return closure(in.([2][][]float64))
-		}, nil
+		return algo.NewGaussJordanNode(port_tolerance), nil
 	},
-	"algo.HayashiYoshida": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := algo.NewHayashiYoshida()
-		return func(in any) any {
-			return closure(in.([2][2]int64))
-		}, nil
+	"algo.HayashiYoshidaNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return algo.NewHayashiYoshidaNode(), nil
 	},
-	"algo.OLS": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+	"algo.OLSNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_tolerance types.Float
-		port_tolerance, err = resolveFloatPort(node, "tolerance", instances)
+		port_tolerance, err = resolveFloatPort(node, "tolerance")
 		if err != nil { return nil, err }
-		closure := algo.NewOLS(port_tolerance)
-		return func(in any) any {
-			return closure(in.([2][][]float64))
-		}, nil
+		return algo.NewOLSNode(port_tolerance), nil
 	},
-	"algo.RLS": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_dimensions types.Integer
-		port_dimensions, err = resolveIntegerPort(node, "dimensions", instances)
-		if err != nil { return nil, err }
-		var port_lambda types.Float
-		port_lambda, err = resolveFloatPort(node, "lambda", instances)
-		if err != nil { return nil, err }
-		closure := algo.NewRLS(port_dimensions, port_lambda)
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
+	"algo.RLSPrediction": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return algo.NewRLSPrediction(), nil
 	},
-	"algo.RLSPrediction": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := algo.NewRLSPrediction()
-		return func(in any) any {
-			return closure(in.(algo.RLSState))
-		}, nil
+	"algo.RLSUpdate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return algo.NewRLSUpdate(), nil
 	},
-	"algo.RLSUpdate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := algo.NewRLSUpdate()
-		return func(in any) any {
-			return closure(in.(algo.RLSObservation))
-		}, nil
+	"data.EquationNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return data.NewEquationNode(), nil
 	},
-	"arithmetic.Add": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := arithmetic.NewAdd(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
+	"data.ExtractNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return data.NewExtractNode(), nil
 	},
-	"arithmetic.Clamp": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_lower types.Float
-		port_lower, err = resolveFloatPort(node, "lower", instances)
-		if err != nil { return nil, err }
-		var port_upper types.Float
-		port_upper, err = resolveFloatPort(node, "upper", instances)
-		if err != nil { return nil, err }
-		closure := arithmetic.NewClamp(port_lower, port_upper)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"arithmetic.Divide": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := arithmetic.NewDivide(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
-	},
-	"arithmetic.Exp": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := arithmetic.NewExp(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"arithmetic.Identity": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_n []types.Integer
-		if p, err := resolveIntegerPort(node, "n", instances); err == nil {
-			port_n = append(port_n, p)
-		} else if p, err := resolveIntegerPort(node, "in", instances); err == nil {
-			port_n = append(port_n, p)
-		}
-		closure := arithmetic.NewIdentity(port_n...)
-		return func(in any) any {
-			return closure(in.(int))
-		}, nil
-	},
-	"arithmetic.MatVecMul": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Any
-		if p, err := resolveAnyPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveAnyPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := arithmetic.NewMatVecMul(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]any))
-		}, nil
-	},
-	"arithmetic.Multiply": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := arithmetic.NewMultiply(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
-	},
-	"arithmetic.SquareRoot": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := arithmetic.NewSquareRoot(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"arithmetic.Subtract": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := arithmetic.NewSubtract(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
-	},
-	"arithmetic.Sum": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := arithmetic.NewSum(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"associative.Grid": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := associative.NewGrid()
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
-	},
-	"calculus.Absolute": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewAbsolute(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Atanh": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewAtanh(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Bound": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_min types.Float
-		port_min, err = resolveFloatPort(node, "min", instances)
-		if err != nil { return nil, err }
-		var port_max types.Float
-		port_max, err = resolveFloatPort(node, "max", instances)
-		if err != nil { return nil, err }
-		closure := calculus.NewBound(port_min, port_max)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Erfc": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewErfc(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Exp": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewExp(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Floor": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewFloor(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Log": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewLog(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Maximum": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewMaximum(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
-	},
-	"calculus.Minimum": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewMinimum(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
-	},
-	"calculus.Negate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewNegate(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Polarize": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewPolarize(port_operands...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
-	},
-	"calculus.Reciprocal": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewReciprocal(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.RelativeChange": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewRelativeChange(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.SecondDifference": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewSecondDifference(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Sign": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewSign(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Sqrt": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewSqrt(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Square": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewSquare(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"calculus.Tanh": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := calculus.NewTanh(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"cognition.Associate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_precursor []types.Bytes
-		if p, err := resolveBytesPort(node, "precursor", instances); err == nil {
-			port_precursor = append(port_precursor, p)
-		} else if p, err := resolveBytesPort(node, "in", instances); err == nil {
-			port_precursor = append(port_precursor, p)
-		}
-		closure := cognition.NewAssociate(port_precursor...)
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"cognition.Attractor": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := cognition.NewAttractor()
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"cognition.Classification": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_minContrast []types.Float
-		if p, err := resolveFloatPort(node, "minContrast", instances); err == nil {
-			port_minContrast = append(port_minContrast, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_minContrast = append(port_minContrast, p)
-		}
-		closure := cognition.NewClassification(port_minContrast...)
-		return func(in any) any {
-			return closure(in.(func(func([]byte, float64, uint64) bool)))
-		}, nil
-	},
-	"cognition.Lookahead": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := cognition.NewLookahead()
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"cognition.Pack": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := cognition.NewPack()
-		return func(in any) any {
-			return closure(in.([3]uint64))
-		}, nil
-	},
-	"cognition.Reinforce": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := cognition.NewReinforce()
-		return func(in any) any {
-			return closure(in.([2][]byte))
-		}, nil
-	},
-	"cognition.Surprisal": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := cognition.NewSurprisal()
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"cognition.Weight": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := cognition.NewWeight()
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"data.Extract": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+	"data.SelectNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_path types.String
-		port_path, err = resolveStringPort(node, "path", instances)
+		port_path, err = resolveStringPort(node, "path")
 		if err != nil { return nil, err }
-		closure := data.NewExtract(port_path)
-		return func(in any) any {
-			return closure(in)
-		}, nil
+		return data.NewSelectNode(port_path), nil
 	},
-	"data.Finalizer": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := data.NewFinalizer[any]()
-		return func(in any) any {
-			return closure(in.(*data.Measurement[any]))
-		}, nil
-	},
-	"data.Quality": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := data.NewQuality()
-		return func(in any) any {
-			return closure(in.(data.QualityFacts))
-		}, nil
-	},
-	"data.Select": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_path types.String
-		port_path, err = resolveStringPort(node, "path", instances)
-		if err != nil { return nil, err }
-		closure := data.NewSelect(port_path)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"data.Series": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+	"data.SeriesNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_capacity types.Integer
-		port_capacity, err = resolveIntegerPort(node, "capacity", instances)
+		port_capacity, err = resolveIntegerPort(node, "capacity")
 		if err != nil { return nil, err }
-		closure := data.NewSeries[any](port_capacity)
-		return func(in any) any {
-			return closure(in.(data.SeriesInput[any]))
-		}, nil
+		return data.NewSeriesNode(port_capacity), nil
 	},
-	"execution.Decide": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_minContrast types.Float
-		port_minContrast, err = resolveFloatPort(node, "minContrast", instances)
-		if err != nil { return nil, err }
-		closure := execution.NewDecide(port_minContrast)
-		return func(in any) any {
-			return closure(in.(cognition.Evaluation))
-		}, nil
+	"sequence.AppendNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return sequence.NewAppendNode(), nil
 	},
-	"execution.Gate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_initialHolding types.Boolean
-		port_initialHolding, err = resolveBooleanPort(node, "initialHolding", instances)
-		if err != nil { return nil, err }
-		closure := execution.NewGate(port_initialHolding)
-		return func(in any) any {
-			return closure(in.(string))
-		}, nil
-	},
-	"execution.Regulator": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_symbol types.String
-		port_symbol, err = resolveStringPort(node, "symbol", instances)
-		if err != nil { return nil, err }
-		closure := execution.NewRegulator(port_symbol)
-		return func(in any) any {
-			return closure(in.(*execution.Fill))
-		}, nil
-	},
-	"execution.Submit": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_symbol types.String
-		port_symbol, err = resolveStringPort(node, "symbol", instances)
-		if err != nil { return nil, err }
-		closure := execution.NewSubmit(port_symbol)
-		return func(in any) any {
-			return closure(in.(string))
-		}, nil
-	},
-	"geometry.Coordinate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_x types.Integer
-		port_x, err = resolveIntegerPort(node, "x", instances)
-		if err != nil { return nil, err }
-		var port_y types.Integer
-		port_y, err = resolveIntegerPort(node, "y", instances)
-		if err != nil { return nil, err }
-		closure := geometry.NewCoordinate(port_x, port_y)
-		return func(in any) any {
-			return closure(in.([2]int))
-		}, nil
-	},
-	"geometry.Corpus": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_maxSize types.Integer
-		port_maxSize, err = resolveIntegerPort(node, "maxSize", instances)
-		if err != nil { return nil, err }
-		closure := geometry.NewCorpus[any](port_maxSize)
-		return func(in any) any {
-			return closure(in.(geometry.CorpusCommand[any]))
-		}, nil
-	},
-	"geometry.Intersection": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := geometry.NewIntersection()
-		return func(in any) any {
-			return closure(in.([2][2]int64))
-		}, nil
-	},
-	"geometry.Normalize": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := geometry.NewNormalize()
-		return func(in any) any {
-			return closure(in.(geometry.PhaseDial))
-		}, nil
-	},
-	"geometry.Overlap": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := geometry.NewOverlap()
-		return func(in any) any {
-			return closure(in.(geometry.OverlapPair))
-		}, nil
-	},
-	"geometry.PhasePath": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_samples []types.Integer
-		if p, err := resolveIntegerPort(node, "samples", instances); err == nil {
-			port_samples = append(port_samples, p)
-		} else if p, err := resolveIntegerPort(node, "in", instances); err == nil {
-			port_samples = append(port_samples, p)
-		}
-		closure := geometry.NewPhasePath(port_samples...)
-		return func(in any) any {
-			return closure(in.(int))
-		}, nil
-	},
-	"geometry.Weight": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_strength types.Float
-		port_strength, err = resolveFloatPort(node, "strength", instances)
-		if err != nil { return nil, err }
-		var port_direction types.Float
-		port_direction, err = resolveFloatPort(node, "direction", instances)
-		if err != nil { return nil, err }
-		closure := geometry.NewWeight(port_strength, port_direction)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"hawkes.ArrivalRate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewArrivalRate()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.Assemble": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_timestamp types.Any
-		port_timestamp, err = resolveAnyPort(node, "timestamp", instances)
-		if err != nil { return nil, err }
-		var port_side types.String
-		port_side, err = resolveStringPort(node, "side", instances)
-		if err != nil { return nil, err }
-		var port_symbol types.String
-		port_symbol, err = resolveStringPort(node, "symbol", instances)
-		if err != nil { return nil, err }
-		closure := hawkes.NewAssemble(port_timestamp, port_side, port_symbol)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"hawkes.BuyCount": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewBuyCount()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.BuyFraction": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewBuyFraction()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.BuyIntensity": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewBuyIntensity()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.BuyRate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewBuyRate()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.ConditionalIntensity": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewConditionalIntensity()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.EventCount": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewEventCount()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.Process": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_params []types.Float
-		if p, err := resolveFloatPort(node, "params", instances); err == nil {
-			port_params = append(port_params, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_params = append(port_params, p)
-		}
-		closure := hawkes.NewProcess(port_params...)
-		return func(in any) any {
-			return closure(in.([2]float64))
-		}, nil
-	},
-	"hawkes.SellCount": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewSellCount()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.SellFraction": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewSellFraction()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.SellIntensity": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewSellIntensity()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.SellRate": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewSellRate()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"hawkes.SpectralRadius": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := hawkes.NewSpectralRadius()
-		return func(in any) any {
-			return closure(in.(hawkes.Reading))
-		}, nil
-	},
-	"learning.Backdoor": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_tolerance types.Float
-		port_tolerance, err = resolveFloatPort(node, "tolerance", instances)
-		if err != nil { return nil, err }
-		var port_target types.Integer
-		port_target, err = resolveIntegerPort(node, "target", instances)
-		if err != nil { return nil, err }
-		var port_treatment types.Integer
-		port_treatment, err = resolveIntegerPort(node, "treatment", instances)
-		if err != nil { return nil, err }
-		var port_level types.Float
-		port_level, err = resolveFloatPort(node, "level", instances)
-		if err != nil { return nil, err }
-		var port_features []types.Integer
-		if p, err := resolveIntegerPort(node, "features", instances); err == nil {
-			port_features = append(port_features, p)
-		} else if p, err := resolveIntegerPort(node, "in", instances); err == nil {
-			port_features = append(port_features, p)
-		}
-		closure := learning.NewBackdoor(port_tolerance, port_target, port_treatment, port_level, port_features...)
-		return func(in any) any {
-			return closure(in.([][]float64))
-		}, nil
-	},
-	"learning.Counterfactual": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_tolerance types.Float
-		port_tolerance, err = resolveFloatPort(node, "tolerance", instances)
-		if err != nil { return nil, err }
-		var port_target types.Integer
-		port_target, err = resolveIntegerPort(node, "target", instances)
-		if err != nil { return nil, err }
-		var port_treatment types.Integer
-		port_treatment, err = resolveIntegerPort(node, "treatment", instances)
-		if err != nil { return nil, err }
-		var port_level types.Float
-		port_level, err = resolveFloatPort(node, "level", instances)
-		if err != nil { return nil, err }
-		var port_features []types.Integer
-		if p, err := resolveIntegerPort(node, "features", instances); err == nil {
-			port_features = append(port_features, p)
-		} else if p, err := resolveIntegerPort(node, "in", instances); err == nil {
-			port_features = append(port_features, p)
-		}
-		closure := learning.NewCounterfactual(port_tolerance, port_target, port_treatment, port_level, port_features...)
-		return func(in any) any {
-			return closure(in.([2][][]float64))
-		}, nil
-	},
-	"learning.LinearFit": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_tolerance types.Float
-		port_tolerance, err = resolveFloatPort(node, "tolerance", instances)
-		if err != nil { return nil, err }
-		var port_target types.Integer
-		port_target, err = resolveIntegerPort(node, "target", instances)
-		if err != nil { return nil, err }
-		var port_features []types.Integer
-		if p, err := resolveIntegerPort(node, "features", instances); err == nil {
-			port_features = append(port_features, p)
-		} else if p, err := resolveIntegerPort(node, "in", instances); err == nil {
-			port_features = append(port_features, p)
-		}
-		closure := learning.NewLinearFit(port_tolerance, port_target, port_features...)
-		return func(in any) any {
-			return closure(in.([][]float64))
-		}, nil
-	},
-	"learning.LinearPrediction": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_features []types.Integer
-		if p, err := resolveIntegerPort(node, "features", instances); err == nil {
-			port_features = append(port_features, p)
-		} else if p, err := resolveIntegerPort(node, "in", instances); err == nil {
-			port_features = append(port_features, p)
-		}
-		closure := learning.NewLinearPrediction(port_features...)
-		return func(in any) any {
-			return closure(in.([2][]float64))
-		}, nil
-	},
-	"physics.Simulation": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_gx types.Integer
-		port_gx, err = resolveIntegerPort(node, "gx", instances)
-		if err != nil { return nil, err }
-		var port_gy types.Integer
-		port_gy, err = resolveIntegerPort(node, "gy", instances)
-		if err != nil { return nil, err }
-		var port_gz types.Integer
-		port_gz, err = resolveIntegerPort(node, "gz", instances)
-		if err != nil { return nil, err }
-		var port_spacing types.Float
-		port_spacing, err = resolveFloatPort(node, "spacing", instances)
-		if err != nil { return nil, err }
-		closure := physics.NewSimulation(port_gx, port_gy, port_gz, port_spacing)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"probability.Ambiguity": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := probability.NewAmbiguity(port_values...)
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
-	},
-	"probability.Argmax": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := probability.NewArgmax(port_values...)
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
-	},
-	"probability.Distribution": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_logits []types.Float
-		if p, err := resolveFloatPort(node, "logits", instances); err == nil {
-			port_logits = append(port_logits, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_logits = append(port_logits, p)
-		}
-		closure := probability.NewDistribution(port_logits...)
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
-	},
-	"probability.Entropy": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_masses []types.Float
-		if p, err := resolveFloatPort(node, "masses", instances); err == nil {
-			port_masses = append(port_masses, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_masses = append(port_masses, p)
-		}
-		closure := probability.NewEntropy(port_masses...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"probability.Geomean": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := probability.NewGeomean(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"probability.GeometricMean": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := probability.NewGeometricMean(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"probability.Normalize": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := probability.NewNormalize(port_values...)
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
-	},
-	"probability.ShannonAmbiguity": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := probability.NewShannonAmbiguity(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"probability.Softmax": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_logits []types.Float
-		if p, err := resolveFloatPort(node, "logits", instances); err == nil {
-			port_logits = append(port_logits, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_logits = append(port_logits, p)
-		}
-		closure := probability.NewSoftmax(port_logits...)
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
-	},
-	"sequence.At": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+	"sequence.AtNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_index types.Integer
-		port_index, err = resolveIntegerPort(node, "index", instances)
+		port_index, err = resolveIntegerPort(node, "index")
 		if err != nil { return nil, err }
-		closure := sequence.NewAt[any](port_index)
-		return func(in any) any {
-			return closure(in.([]any))
-		}, nil
+		return sequence.NewAtNode(port_index), nil
 	},
-	"sequence.Tail": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+	"sequence.OrderNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return sequence.NewOrderNode(), nil
+	},
+	"sequence.TailNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_size types.Integer
-		port_size, err = resolveIntegerPort(node, "size", instances)
+		port_size, err = resolveIntegerPort(node, "size")
 		if err != nil { return nil, err }
-		closure := sequence.NewTail[any](port_size)
-		return func(in any) any {
-			return closure(in.([]any))
-		}, nil
+		return sequence.NewTailNode(port_size), nil
 	},
-	"sequence.Window": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+	"sequence.ValuesNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return sequence.NewValuesNode(), nil
+	},
+	"sequence.WindowNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_size types.Integer
-		port_size, err = resolveIntegerPort(node, "size", instances)
+		port_size, err = resolveIntegerPort(node, "size")
 		if err != nil { return nil, err }
-		closure := sequence.NewWindow[any](port_size)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"statistic.CausalMean": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := statistic.NewCausalMean(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.CausalVariance": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := statistic.NewCausalVariance(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.EMA": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_alpha types.Float
-		port_alpha, err = resolveFloatPort(node, "alpha", instances)
-		if err != nil { return nil, err }
-		closure := statistic.NewEMA(port_alpha)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.Mean": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := statistic.NewMean(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.ResidualBaseline": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := statistic.NewResidualBaseline(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.ResidualDivergence": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := statistic.NewResidualDivergence(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.Threshold": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_band types.Float
-		port_band, err = resolveFloatPort(node, "band", instances)
-		if err != nil { return nil, err }
-		var port_rest types.Float
-		port_rest, err = resolveFloatPort(node, "rest", instances)
-		if err != nil { return nil, err }
-		var port_lower types.Float
-		port_lower, err = resolveFloatPort(node, "lower", instances)
-		if err != nil { return nil, err }
-		var port_upper types.Float
-		port_upper, err = resolveFloatPort(node, "upper", instances)
-		if err != nil { return nil, err }
-		closure := statistic.NewThreshold(port_band, port_rest, port_lower, port_upper)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.Variance": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := statistic.NewVariance(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"statistic.VectorEMA": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_alpha types.Float
-		port_alpha, err = resolveFloatPort(node, "alpha", instances)
-		if err != nil { return nil, err }
-		closure := statistic.NewVectorEMA(port_alpha)
-		return func(in any) any {
-			return closure(in.([]float64))
-		}, nil
-	},
-	"statistic.ZScore": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_values []types.Float
-		if p, err := resolveFloatPort(node, "values", instances); err == nil {
-			port_values = append(port_values, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_values = append(port_values, p)
-		}
-		closure := statistic.NewZScore(port_values...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"store.Key": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_interest []types.String
-		if p, err := resolveStringPort(node, "interest", instances); err == nil {
-			port_interest = append(port_interest, p)
-		} else if p, err := resolveStringPort(node, "in", instances); err == nil {
-			port_interest = append(port_interest, p)
-		}
-		closure := store.NewKey[any](port_interest...)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"store.Radix": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := store.NewRadix[any]()
-		return func(in any) any {
-			return closure(in.(store.RadixCommandData[any]))
-		}, nil
-	},
-	"tables.IcebergScan": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_config types.String
-		port_config, err = resolveStringPort(node, "config", instances)
-		if err != nil { return nil, err }
-		closure := tables.NewIcebergScan(port_config)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"tables.IcebergTable": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_config types.String
-		port_config, err = resolveStringPort(node, "config", instances)
-		if err != nil { return nil, err }
-		closure := tables.NewIcebergTable(port_config)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"temporal.Delay": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_horizon types.Integer
-		port_horizon, err = resolveIntegerPort(node, "horizon", instances)
-		if err != nil { return nil, err }
-		closure := temporal.NewDelay[any](port_horizon)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"temporal.Elapsed": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Value[any, int64]
-		if p, err := resolveInt64Port(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveInt64Port(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := temporal.NewElapsed(port_operands...)
-		return func(in any) any {
-			return closure(in.(int64))
-		}, nil
-	},
-	"temporal.LogReturns": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Float
-		if p, err := resolveFloatPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveFloatPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := temporal.NewLogReturns(port_operands...)
-		return func(in any) any {
-			return closure(in.(float64))
-		}, nil
-	},
-	"temporal.Transition": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Bytes
-		if p, err := resolveBytesPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveBytesPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := temporal.NewTransition(port_operands...)
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"transport.Base64Decode": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.String
-		if p, err := resolveStringPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveStringPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := transport.NewBase64Decode(port_operands...)
-		return func(in any) any {
-			return closure(in.(string))
-		}, nil
-	},
-	"transport.Base64Encode": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Bytes
-		if p, err := resolveBytesPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveBytesPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := transport.NewBase64Encode(port_operands...)
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"transport.Batch": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_size types.Integer
-		port_size, err = resolveIntegerPort(node, "size", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewBatch[any](port_size)
-		return func(in any) any {
-			return closure(in.([]any))
-		}, nil
-	},
-	"transport.BearerAuth": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_token types.String
-		port_token, err = resolveStringPort(node, "token", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewBearerAuth(port_token)
-		return func(in any) any {
-			return closure(in.(map[string]any))
-		}, nil
-	},
-	"transport.Collect": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_batchSize types.Integer
-		port_batchSize, err = resolveIntegerPort(node, "batchSize", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewCollect[any](port_batchSize)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"transport.DecodeJSON": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := transport.NewDecodeJSON()
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"transport.Discard": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := transport.NewDiscard[any]()
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"transport.EncodeJSON": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := transport.NewEncodeJSON()
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"transport.HMACSHA256": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_secret types.Bytes
-		port_secret, err = resolveBytesPort(node, "secret", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewHMACSHA256(port_secret)
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"transport.HMACSHA512": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_secret types.Bytes
-		port_secret, err = resolveBytesPort(node, "secret", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewHMACSHA512(port_secret)
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"transport.HTTPRequest": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_method types.String
-		port_method, err = resolveStringPort(node, "method", instances)
-		if err != nil { return nil, err }
-		var port_rawURL types.String
-		port_rawURL, err = resolveStringPort(node, "rawURL", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewHTTPRequest(port_method, port_rawURL)
-		return func(in any) any {
-			return closure(in.(map[string]any))
-		}, nil
-	},
-	"transport.HeaderAuth": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_key types.String
-		port_key, err = resolveStringPort(node, "key", instances)
-		if err != nil { return nil, err }
-		var port_value types.String
-		port_value, err = resolveStringPort(node, "value", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewHeaderAuth(port_key, port_value)
-		return func(in any) any {
-			return closure(in.(map[string]any))
-		}, nil
-	},
-	"transport.JSONMessage": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_payload types.Any
-		port_payload, err = resolveAnyPort(node, "payload", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewJSONMessage(port_payload)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"transport.Nonce": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := transport.NewNonce()
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"transport.Pace": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_delay types.Integer
-		port_delay, err = resolveIntegerPort(node, "delay", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewPace[any](port_delay)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"transport.Process": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_binary types.String
-		port_binary, err = resolveStringPort(node, "binary", instances)
-		if err != nil { return nil, err }
-		var port_defaultArgs []types.String
-		if p, err := resolveStringPort(node, "defaultArgs", instances); err == nil {
-			port_defaultArgs = append(port_defaultArgs, p)
-		} else if p, err := resolveStringPort(node, "in", instances); err == nil {
-			port_defaultArgs = append(port_defaultArgs, p)
-		}
-		closure := transport.NewProcess(port_binary, port_defaultArgs...)
-		return func(in any) any {
-			return closure(in.([]string))
-		}, nil
-	},
-	"transport.SHA256": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_operands []types.Bytes
-		if p, err := resolveBytesPort(node, "operands", instances); err == nil {
-			port_operands = append(port_operands, p)
-		} else if p, err := resolveBytesPort(node, "in", instances); err == nil {
-			port_operands = append(port_operands, p)
-		}
-		closure := transport.NewSHA256(port_operands...)
-		return func(in any) any {
-			return closure(in.([]byte))
-		}, nil
-	},
-	"transport.Timestamp": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := transport.NewTimestamp()
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"transport.WSClose": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := transport.NewWSClose()
-		return func(in any) any {
-			return closure(in.(*transport.WSConnection))
-		}, nil
-	},
-	"transport.WSConnect": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_endpoint types.String
-		port_endpoint, err = resolveStringPort(node, "endpoint", instances)
-		if err != nil { return nil, err }
-		closure := transport.NewWSConnect(port_endpoint)
-		return func(in any) any {
-			return closure(in.(context.Context))
-		}, nil
-	},
-	"transport.WSRead": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		closure := transport.NewWSRead()
-		return func(in any) any {
-			return closure(in.(*transport.WSConnection))
-		}, nil
-	},
-	"ui.Broadcast": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_server types.Any
-		port_server, err = resolveAnyPort(node, "server", instances)
-		if err != nil { return nil, err }
-		closure := ui.NewBroadcast(port_server)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"ui.HTTPServer": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_addr types.String
-		port_addr, err = resolveStringPort(node, "addr", instances)
-		if err != nil { return nil, err }
-		closure := ui.NewHTTPServer(port_addr)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"ui.WebRTCServer": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_addr types.String
-		port_addr, err = resolveStringPort(node, "addr", instances)
-		if err != nil { return nil, err }
-		var port_path types.String
-		port_path, err = resolveStringPort(node, "path", instances)
-		if err != nil { return nil, err }
-		closure := ui.NewWebRTCServer(port_addr, port_path)
-		return func(in any) any {
-			return closure(in)
-		}, nil
-	},
-	"ui.WebSocketServer": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
-		var err error
-		_ = err
-		var port_addr types.String
-		port_addr, err = resolveStringPort(node, "addr", instances)
-		if err != nil { return nil, err }
-		var port_path types.String
-		port_path, err = resolveStringPort(node, "path", instances)
-		if err != nil { return nil, err }
-		closure := ui.NewWebSocketServer(port_addr, port_path)
-		return func(in any) any {
-			return closure(in)
-		}, nil
+		return sequence.NewWindowNode(port_size), nil
 	},
 }

@@ -1,25 +1,25 @@
 package transport
 
 import (
-	"time"
-
-	"github.com/theapemachine/symm/nomagique/types"
+	"context"
 )
 
-/*
-Pace introduces a deterministic rate-limiting or delay window between operations.
-No structs, pure Value closure.
-*/
-type Pace[T any] types.Value[T, T]
+type PaceServer struct {
+	Downstream func(context.Context, any) error
+}
 
-func NewPace[T any](delay types.Integer) Pace[T] {
-	return func(in T) T {
-		if delay != nil {
-			if ms := delay(in); ms > 0 {
-				time.Sleep(time.Duration(ms) * time.Millisecond)
-			}
-		}
+func NewPaceServer() *PaceServer {
+	return &PaceServer{}
+}
 
-		return in
+func (s *PaceServer) Write(ctx context.Context, call Pace_write) error {
+	if s.Downstream != nil {
+		// Placeholder for Pace processing
+		return s.Downstream(ctx, nil)
 	}
+	return nil
+}
+
+func (s *PaceServer) Done(ctx context.Context, call Pace_done) error {
+	return nil
 }

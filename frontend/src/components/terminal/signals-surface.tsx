@@ -1,4 +1,4 @@
-import { DEFAULT_KERNELS } from "#/collections/app";
+import { SIGNALS } from "#/collections/app";
 import { SignalDetail } from "#/components/kernel/detail";
 import { CrossSectionPanel } from "#/components/terminal/cross-section-panel";
 import { HealthPanel } from "#/components/terminal/health";
@@ -25,7 +25,7 @@ kernels; DRAW paints live readouts. Health and radar derive sources from each
 measurements batch — no React state for DRAW discovery.
 */
 export const SignalsSurface = () => {
-	const kernels = DEFAULT_KERNELS;
+	const kernels = SIGNALS;
 
 	return (
 		<Grid

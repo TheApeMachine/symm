@@ -1,19 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_KERNELS } from "#/collections/app";
+import { SIGNALS } from "#/collections/app";
 import { KernelList } from "./kernel-list";
 
 describe("KernelList", () => {
 	it("binds every kernel row to its source and renders the mockup row anatomy", () => {
-		const markup = renderToStaticMarkup(
-			<KernelList sources={DEFAULT_KERNELS} />,
-		);
+		const markup = renderToStaticMarkup(<KernelList sources={SIGNALS} />);
 		const rows = [...markup.matchAll(/data-kernel="([^"]+)"/g)].map(
 			(m) => m[1],
 		);
 
-		expect(rows).toHaveLength(DEFAULT_KERNELS.length);
-		expect(new Set(rows)).toEqual(new Set(DEFAULT_KERNELS));
+		expect(rows).toHaveLength(SIGNALS.length);
+		expect(new Set(rows)).toEqual(new Set(SIGNALS));
 		// Each row names the kernel, carries a status badge, a sub line, a
 		// sparkline with area fill, and a confidence bar with a reading.
 		expect(markup).toContain("HAWKES");

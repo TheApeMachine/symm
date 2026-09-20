@@ -1,9 +1,10 @@
 package learning
 
 import (
+	context "context"
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	capnp "capnproto.org/go/capnp/v3"
 )
 
 /*
@@ -87,44 +88,45 @@ the cumulative move from its issue reference to the reference h steps later.
 That nested supervision is what makes each task row an honest forecast for its
 own horizon rather than a blend of several.
 */
-type TemporalLedger struct {
-	maxHorizon int
-	manifold   *ResonanceManifold
-	target     types.Value[[2]float64, float64]
-	pending    map[int64]*PendingReference
-	references map[int64]float64
-	seq        int64
-	oldest     int64
-	resolved   int
-	total      int
-	last       *ResolutionOutcome
-	out        LedgerReading
-	err        error
+type TemporalLedgerServer struct {
+	DownstreamTemporalLedger func(context.Context, LedgerReading) error
+	maxHorizon               int
+	manifold                 *ResonanceManifoldServer
+	coder                    *PredictiveCoderServer
+	pending                  map[int64]*PendingReference
+	references               map[int64]float64
+	seq                      int64
+	oldest                   int64
+	resolved                 int
+	total                    int
+	last                     *ResolutionOutcome
+	out                      LedgerReading
+	err                      error
 }
 
 /*
-NewTemporalLedger constructs a temporal ledger primitive over the manifold it
+NewTemporalLedgerServer constructs a temporal ledger primitive over the manifold it
 supervises and the target primitive that maps reference pairs into supervised
 targets. The manifold and the target must be supplied: an absent owner is a
 shape failure, not a defaulted one.
 */
-func NewTemporalLedger(
+func NewTemporalLedgerServer(
 	maxHorizon int,
-	manifold *ResonanceManifold,
-	target types.Value[[2]float64, float64],
-) *TemporalLedger {
+	manifold *ResonanceManifoldServer,
+	coder *PredictiveCoderServer,
+) *TemporalLedgerServer {
 	if maxHorizon <= 0 {
-		return &TemporalLedger{err: fmt.Errorf("ledger: horizon must be positive")}
+		return &TemporalLedgerServer{err: fmt.Errorf("ledger: horizon must be positive")}
 	}
 
-	if manifold == nil || target == nil {
-		return &TemporalLedger{err: fmt.Errorf("ledger: requires a manifold and a target transform")}
+	if manifold == nil || coder == nil {
+		return &TemporalLedgerServer{err: fmt.Errorf("ledger: requires a manifold and a coder")}
 	}
 
-	return &TemporalLedger{
+	return &TemporalLedgerServer{
 		maxHorizon: maxHorizon,
 		manifold:   manifold,
-		target:     target,
+		coder:      coder,
 		pending:    make(map[int64]*PendingReference),
 		references: make(map[int64]float64),
 		oldest:     1,
@@ -132,9 +134,64 @@ func NewTemporalLedger(
 }
 
 /*
-Execute receives a LedgerCommand and returns the resulting LedgerReading.
+Write receives a LedgerCommand via Cap'n Proto and returns the resulting reading.
 */
-func (temporalLedger *TemporalLedger) Execute(command LedgerCommand) (LedgerReading, error) {
+func (temporalLedger *TemporalLedgerServer) Write(ctx context.Context, call TemporalLedger_write) error {
+	if temporalLedger.err != nil {
+		return temporalLedger.err
+	}
+
+	args := call.Args()
+
+	var cmd LedgerCommand
+	if args.HasIssue() {
+		issueArg, err := args.Issue()
+		if err == nil {
+			featuresList, _ := issueArg.Features()
+			features := make([]float64, featuresList.Len())
+			for i := 0; i < featuresList.Len(); i++ {
+				features[i] = featuresList.At(i)
+			}
+			predictionsList, _ := issueArg.Predictions()
+			predictions := make([]float64, predictionsList.Len())
+			for i := 0; i < predictionsList.Len(); i++ {
+				predictions[i] = predictionsList.At(i)
+			}
+			cmd.Issue = &IssueIntent{
+				Step:        issueArg.Step(),
+				Reference:   issueArg.Reference(),
+				Features:    features,
+				Predictions: predictions,
+				Horizon:     int(issueArg.Horizon()),
+			}
+		}
+	} else if args.HasResolve() {
+		resolveArg, err := args.Resolve()
+		if err == nil {
+			cmd.Resolve = &ResolveIntent{
+				Step:      resolveArg.Step(),
+				Reference: resolveArg.Reference(),
+			}
+		}
+	}
+
+	reading, err := temporalLedger.Execute(cmd)
+	if err != nil {
+		return err
+	}
+
+	if temporalLedger.DownstreamTemporalLedger != nil {
+		return temporalLedger.DownstreamTemporalLedger(ctx, reading)
+	}
+
+	return nil
+}
+
+func (temporalLedger *TemporalLedgerServer) Done(ctx context.Context, call TemporalLedger_done) error {
+	return nil
+}
+
+func (temporalLedger *TemporalLedgerServer) Execute(command LedgerCommand) (LedgerReading, error) {
 	if temporalLedger.err != nil {
 		return LedgerReading{}, temporalLedger.err
 	}
@@ -163,14 +220,14 @@ func (temporalLedger *TemporalLedger) Execute(command LedgerCommand) (LedgerRead
 	return temporalLedger.out, nil
 }
 
-func (temporalLedger *TemporalLedger) AsValue() types.Value[LedgerCommand, LedgerReading] {
+func (temporalLedger *TemporalLedgerServer) AsValue() func(LedgerCommand) LedgerReading {
 	return func(cmd LedgerCommand) LedgerReading {
 		reading, _ := temporalLedger.Execute(cmd)
 		return reading
 	}
 }
 
-func (temporalLedger *TemporalLedger) Error() error {
+func (temporalLedger *TemporalLedgerServer) Error() error {
 	return temporalLedger.err
 }
 
@@ -179,7 +236,7 @@ issue records predictions and feature state for delayed evaluation. The ledger
 assigns its own strictly increasing sequence so resolution order is
 unambiguous.
 */
-func (temporalLedger *TemporalLedger) issue(intent *IssueIntent) {
+func (temporalLedger *TemporalLedgerServer) issue(intent *IssueIntent) {
 	if intent.Reference <= 0 || len(intent.Features) == 0 {
 		return
 	}
@@ -215,7 +272,7 @@ so one sample per horizon is generated per step regardless of how the external
 step numbers jump or repeat. The outcome reports the row's own chosen horizon
 once its delayed target arrives.
 */
-func (temporalLedger *TemporalLedger) resolve(intent *ResolveIntent) error {
+func (temporalLedger *TemporalLedgerServer) resolve(intent *ResolveIntent) error {
 	if intent.Reference <= 0 || temporalLedger.seq == 0 || temporalLedger.maxHorizon < 1 {
 		return nil
 	}
@@ -301,17 +358,71 @@ func (temporalLedger *TemporalLedger) resolve(intent *ResolveIntent) error {
 transform maps one resolved reference pair into its supervised target through
 the configured target primitive.
 */
-func (temporalLedger *TemporalLedger) transform(current, past float64) (float64, error) {
-	if temporalLedger.target == nil {
-		return 0, fmt.Errorf("ledger: target is nil")
+func (temporalLedger *TemporalLedgerServer) transform(current, past float64) (float64, error) {
+	if temporalLedger.coder == nil {
+		return 0, fmt.Errorf("ledger: coder is nil")
 	}
-	return temporalLedger.target([2]float64{current, past}), nil
+
+	var val float64
+	_, seg, _ := capnp.NewMessage(capnp.SingleSegment(nil))
+
+	switch temporalLedger.coder.targetName {
+	case "Directional":
+		if temporalLedger.coder.directionalTarget == nil {
+			return 0, fmt.Errorf("ledger: directional target nil")
+		}
+		temporalLedger.coder.directionalTarget.DownstreamDirectionalTarget = func(ctx context.Context, v float64) error { val = v; return nil }
+		args, _ := NewDirectionalTarget_write_Params(seg)
+		args.SetPast(past)
+		args.SetCurrent(current)
+		temporalLedger.coder.directionalTarget.WriteParams(context.Background(), args)
+	case "Binary":
+		if temporalLedger.coder.binaryTarget == nil {
+			return 0, fmt.Errorf("ledger: binary target nil")
+		}
+		temporalLedger.coder.binaryTarget.DownstreamBinaryTarget = func(ctx context.Context, v float64) error { val = v; return nil }
+		args, _ := NewBinaryTarget_write_Params(seg)
+		args.SetPast(past)
+		args.SetCurrent(current)
+		temporalLedger.coder.binaryTarget.WriteParams(context.Background(), args)
+	case "Identity":
+		if temporalLedger.coder.identityTarget == nil {
+			return 0, fmt.Errorf("ledger: identity target nil")
+		}
+		temporalLedger.coder.identityTarget.DownstreamIdentityTarget = func(ctx context.Context, v float64) error { val = v; return nil }
+		args, _ := NewIdentityTarget_write_Params(seg)
+		args.SetPast(past)
+		args.SetCurrent(current)
+		temporalLedger.coder.identityTarget.WriteParams(context.Background(), args)
+	case "Delta":
+		if temporalLedger.coder.deltaTarget == nil {
+			return 0, fmt.Errorf("ledger: delta target nil")
+		}
+		temporalLedger.coder.deltaTarget.DownstreamDeltaTarget = func(ctx context.Context, v float64) error { val = v; return nil }
+		args, _ := NewDeltaTarget_write_Params(seg)
+		args.SetPast(past)
+		args.SetCurrent(current)
+		temporalLedger.coder.deltaTarget.WriteParams(context.Background(), args)
+	case "Ratio":
+		if temporalLedger.coder.ratioTarget == nil {
+			return 0, fmt.Errorf("ledger: ratio target nil")
+		}
+		temporalLedger.coder.ratioTarget.DownstreamRatioTarget = func(ctx context.Context, v float64) error { val = v; return nil }
+		args, _ := NewRatioTarget_write_Params(seg)
+		args.SetPast(past)
+		args.SetCurrent(current)
+		temporalLedger.coder.ratioTarget.WriteParams(context.Background(), args)
+	default:
+		return 0, fmt.Errorf("ledger: unknown target name")
+	}
+
+	return val, nil
 }
 
 /*
 observeTask forwards one supervised sample to the manifold's task head.
 */
-func (temporalLedger *TemporalLedger) observeTask(
+func (temporalLedger *TemporalLedgerServer) observeTask(
 	horizon int,
 	features []float64,
 	prediction float64,
@@ -323,7 +434,7 @@ func (temporalLedger *TemporalLedger) observeTask(
 	return temporalLedger.manifold.observeTask(horizon, features, prediction, target)
 }
 
-func (temporalLedger *TemporalLedger) prune() {
+func (temporalLedger *TemporalLedgerServer) prune() {
 	if temporalLedger.seq <= int64(temporalLedger.maxHorizon) {
 		return
 	}

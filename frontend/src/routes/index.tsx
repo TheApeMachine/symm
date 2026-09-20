@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { DEFAULT_KERNELS } from "#/collections/app";
+import { SIGNALS } from "#/collections/app";
 import { Decisions } from "#/components/dashboard/decisions";
 import { Positions } from "#/components/dashboard/positions";
 import { KernelInspector } from "#/components/kernel/inspector";
@@ -14,7 +14,7 @@ import { Grid } from "@/components/ui/grid";
 import { Section } from "@/components/ui/section";
 
 const RouteComponent = () => {
-	const kernels = DEFAULT_KERNELS;
+	const kernels = SIGNALS;
 
 	return (
 		<Flex.Column fullWidth className="h-full min-w-280">

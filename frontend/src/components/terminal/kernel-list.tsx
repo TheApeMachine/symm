@@ -1,10 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import {
-	DEFAULT_KERNELS,
 	focusMetric,
 	focusStore,
 	type RingBuffer,
+	SIGNALS,
 	signals,
 } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
@@ -155,7 +155,7 @@ export type KernelListProps = {
 };
 
 export const KernelList = ({
-	sources = DEFAULT_KERNELS,
+	sources = SIGNALS,
 	compact = false,
 }: KernelListProps = {}) => {
 	return (

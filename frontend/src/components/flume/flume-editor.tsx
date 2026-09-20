@@ -267,7 +267,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 
 	return (
 		<div className="flex min-h-[75vh] flex-1 flex-col gap-3">
-			<Flex.Row className="shrink-0 items-center justify-between gap-3 rounded-[4px] border bg-(--raised)/48 px-3 py-2">
+			<Flex.Row className="shrink-0 items-center justify-between gap-3 rounded-sm border bg-(--raised)/48 px-3 py-2">
 				<Flex.Row className="items-center gap-3">
 					<div className="flex items-center gap-2">
 						<Typography.Label size="s" tone="f4">

@@ -1,9 +1,10 @@
 package learning
 
 import (
+	context "context"
 	"errors"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	capnp "capnproto.org/go/capnp/v3"
 )
 
 /*
@@ -17,12 +18,19 @@ adaptive learning rate; when absent the coder runs at the manifold's own.
 type PredictiveCoderConfig struct {
 	CustomArch   []int
 	MaxHorizon   int
-	Target       types.Value[[2]float64, float64]
-	Pace         types.Value[float64, float64]
+	TargetName   string
+	Deadband     float64
+	UsePace      bool
+	Rest         float64
+	Lower        float64
+	Upper        float64
+	Gain         float64
+	Band         float64
+	Window       int
 	InitialAlpha float64
 	Learn        bool
 
-	// Readout selects what the task head harvests as its features. Every
+	// elects what the task head harvests as its features. Every
 	// horizon holds a covariance matrix quadratic in this width, so at high
 	// MaxHorizon the choice dominates the coder's memory: ReadoutAll is twice
 	// as wide as ReadoutLatents and therefore four times the footprint per
@@ -108,15 +116,24 @@ Predictions are resolved causally: the forecast issued at one step is scored
 only once the outcome arrives, so the head is never trained against a target
 it was allowed to see.
 */
-type PredictiveCoder struct {
-	manifold *ResonanceManifold
-	target   types.Value[[2]float64, float64]
-	pace     types.Value[float64, float64]
-	alpha    float64
-	learn    bool
+type PredictiveCoderServer struct {
+	DownstreamPredictiveCoder func(context.Context, PredictiveOutput) error
+	manifold                  *ResonanceManifoldServer
+
+	// Embedded atoms for math
+	directionalTarget *DirectionalTargetServer
+	binaryTarget      *BinaryTargetServer
+	identityTarget    *IdentityTargetServer
+	deltaTarget       *DeltaTargetServer
+	ratioTarget       *RatioTargetServer
+	targetName        string
+
+	pace  *PaceServer
+	alpha float64
+	learn bool
 
 	horizon  int
-	ledger   *TemporalLedger
+	ledger   *TemporalLedgerServer
 	last     *Resolution
 	pending  int
 	resolved int
@@ -137,13 +154,12 @@ Primitive pace graph, which derives it from how badly the manifold is
 reconstructing its own input. A config supplying none gets a default
 controller rather than a fabricated constant.
 */
-func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
-	coder := &PredictiveCoder{
-		target:  config.Target,
-		pace:    config.Pace,
-		alpha:   config.InitialAlpha,
-		learn:   config.Learn,
-		horizon: config.MaxHorizon,
+func NewPredictiveCoderServer(config PredictiveCoderConfig) *PredictiveCoderServer {
+	coder := &PredictiveCoderServer{
+		targetName: config.TargetName,
+		alpha:      config.InitialAlpha,
+		learn:      config.Learn,
+		horizon:    config.MaxHorizon,
 	}
 
 	if coder.horizon < 1 {
@@ -154,22 +170,51 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		coder.alpha = 0.03
 	}
 
-	if coder.pace == nil {
-		coder.pace = Pace(
-			types.Const(coder.alpha),
-			types.Const(0.005),
-			types.Const(0.150),
-			types.Const(0.1),
-			types.Const(0.2),
-			types.Const(256),
-		)
+	if config.UsePace {
+		coder.pace = &PaceServer{
+			Rest:   config.Rest,
+			Lower:  config.Lower,
+			Upper:  config.Upper,
+			Gain:   config.Gain,
+			Band:   config.Band,
+			Window: config.Window,
+		}
+	} else {
+		// Default pace controller if not explicitly skipped but UsePace is false?
+		// We'll assume the caller passes UsePace=true if they want it.
+		// For backward compatibility with the old types.Value stub:
+		coder.pace = &PaceServer{
+			Rest:   coder.alpha,
+			Lower:  0.005,
+			Upper:  0.150,
+			Gain:   0.1,
+			Band:   0.2,
+			Window: 256,
+		}
+	}
+
+	switch config.TargetName {
+	case "Directional":
+		coder.directionalTarget = &DirectionalTargetServer{Deadband: config.Deadband}
+	case "Binary":
+		coder.binaryTarget = &BinaryTargetServer{}
+	case "Identity":
+		coder.identityTarget = &IdentityTargetServer{}
+	case "Delta":
+		coder.deltaTarget = &DeltaTargetServer{}
+	case "Ratio":
+		coder.ratioTarget = &RatioTargetServer{}
+	default:
+		// Default to Directional with 0 deadband for safety
+		coder.directionalTarget = &DirectionalTargetServer{Deadband: 0}
+		coder.targetName = "Directional"
 	}
 
 	if len(config.CustomArch) == 0 {
 		return coder
 	}
 
-	coder.manifold = NewResonanceManifold(
+	coder.manifold = NewResonanceManifoldServer(
 		config.CustomArch,
 		1,
 		coder.horizon,
@@ -177,7 +222,7 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		config.Readout,
 	)
 
-	coder.ledger = NewTemporalLedger(coder.horizon, coder.manifold, coder.target)
+	coder.ledger = NewTemporalLedgerServer(coder.horizon, coder.manifold, coder)
 
 	return coder
 }
@@ -186,22 +231,37 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 Step receives a PredictiveInput, settles the manifold, resolves pending predictions,
 issues a fresh forecast, and yields the PredictiveOutput.
 */
-func (predictiveCoder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error) {
-	return predictiveCoder.step(input)
-}
-
-func (predictiveCoder *PredictiveCoder) AsValue() types.Value[PredictiveInput, PredictiveOutput] {
-	return func(in PredictiveInput) PredictiveOutput {
-		out, err := predictiveCoder.step(in)
-		if err != nil {
-			predictiveCoder.err = err
-			return PredictiveOutput{}
-		}
-		return out
+func (predictiveCoder *PredictiveCoderServer) Write(ctx context.Context, call PredictiveCoder_write) error {
+	args := call.Args()
+	featuresList, _ := args.Features()
+	features := make([]float64, featuresList.Len())
+	for i := 0; i < featuresList.Len(); i++ {
+		features[i] = featuresList.At(i)
 	}
+
+	input := PredictiveInput{
+		Features:     features,
+		Reference:    args.Reference(),
+		HasReference: args.HasReference(),
+		Step:         args.Step(),
+		Time:         args.Time(),
+	}
+	out, err := predictiveCoder.step(input)
+	if err != nil {
+		predictiveCoder.err = err
+		return err
+	}
+	if predictiveCoder.DownstreamPredictiveCoder != nil {
+		return predictiveCoder.DownstreamPredictiveCoder(ctx, out)
+	}
+	return nil
 }
 
-func (predictiveCoder *PredictiveCoder) Error() error {
+func (predictiveCoder *PredictiveCoderServer) Done(ctx context.Context, call PredictiveCoder_done) error {
+	return nil
+}
+
+func (predictiveCoder *PredictiveCoderServer) Error() error {
 	return predictiveCoder.err
 }
 
@@ -209,7 +269,7 @@ func (predictiveCoder *PredictiveCoder) Error() error {
 step settles the manifold over one observation, resolves whatever predictions
 the new outcome has made scorable, and issues a fresh forecast.
 */
-func (predictiveCoder *PredictiveCoder) step(input PredictiveInput) (PredictiveOutput, error) {
+func (predictiveCoder *PredictiveCoderServer) step(input PredictiveInput) (PredictiveOutput, error) {
 	// The manifold refuses an architecture it cannot build, so a nil here is a
 	// rejected configuration surfacing at its first use rather than a panic.
 	if predictiveCoder.manifold == nil {
@@ -240,7 +300,18 @@ func (predictiveCoder *PredictiveCoder) step(input PredictiveInput) (PredictiveO
 	// own input and sets the learning rate from it, so the rate is derived
 	// rather than configured.
 	if predictiveCoder.pace != nil {
-		predictiveCoder.alpha = predictiveCoder.pace(settled.ReconstructionError)
+		var alpha float64
+		predictiveCoder.pace.DownstreamPace = func(c context.Context, v float64) error {
+			alpha = v
+			return nil
+		}
+
+		_, seg, _ := capnp.NewMessage(capnp.SingleSegment(nil))
+		args, _ := NewPace_write_Params(seg)
+		args.SetErrorMagnitude(settled.ReconstructionError)
+		predictiveCoder.pace.WriteParams(context.Background(), args)
+
+		predictiveCoder.alpha = alpha
 
 		settled, err = predictiveCoder.manifoldExecute(ManifoldCommand{
 			Alpha: &AlphaIntent{Alpha: predictiveCoder.alpha},
@@ -313,7 +384,7 @@ read assembles the coder's reading from the manifold's settled snapshot: the
 forward forecast curve, how far ahead it is actually supported, and the
 manifold's own dynamics.
 */
-func (predictiveCoder *PredictiveCoder) read(settled ManifoldReading) PredictiveOutput {
+func (predictiveCoder *PredictiveCoderServer) read(settled ManifoldReading) PredictiveOutput {
 	output := PredictiveOutput{
 		Reading:        &settled,
 		Readout:        settled.Readout,
@@ -393,19 +464,20 @@ func (predictiveCoder *PredictiveCoder) read(settled ManifoldReading) Predictive
 /*
 manifoldExecute drives one manifold command and returns its reading.
 */
-func (predictiveCoder *PredictiveCoder) manifoldExecute(
+func (predictiveCoder *PredictiveCoderServer) manifoldExecute(
 	command ManifoldCommand,
 ) (ManifoldReading, error) {
 	if predictiveCoder.manifold == nil {
 		return ManifoldReading{}, errors.New("learning: predictive coder has no manifold")
 	}
+
 	return predictiveCoder.manifold.Execute(command)
 }
 
 /*
 ledgerExecute drives one ledger command and returns its reading.
 */
-func (predictiveCoder *PredictiveCoder) ledgerExecute(
+func (predictiveCoder *PredictiveCoderServer) ledgerExecute(
 	command LedgerCommand,
 ) (LedgerReading, error) {
 	if predictiveCoder.ledger == nil {

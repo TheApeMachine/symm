@@ -81,7 +81,7 @@ func GenerateRegistry(schemas map[string]catalog.Schema) error {
 	buf.WriteString(")\n\n")
 
 	// Standard Registry types and methods
-	buf.WriteString(`type Factory func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error)
+	buf.WriteString(`type Factory func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error)
 
 type Registry struct {
 	mu           sync.RWMutex
@@ -168,13 +168,25 @@ func (r *Registry) Register(op string, f Factory) {
 	r.factories[op] = f
 }
 
-func (r *Registry) Resolve(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {
+func passThroughNode() types.StreamNode[any, any] {
+	var downstream func(context.Context, any) error
+	return types.NewStreamNode(nil, func(ctx context.Context, in any) error {
+		if downstream != nil {
+			return downstream(ctx, in)
+		}
+		return nil
+	}, func(next func(context.Context, any) error) {
+		downstream = next
+	})
+}
+
+func (r *Registry) Resolve(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 	if node.Type == "data.Source" || node.Type == "source" {
-		return func(in any) any { return in }, nil
+		return passThroughNode(), nil
 	}
 
 	if node.Type == "data.Sink" || node.Type == "sink" {
-		return func(in any) any { return in }, nil
+		return passThroughNode(), nil
 	}
 
 	factory, ok := r.factories[node.Type]
@@ -261,17 +273,7 @@ func extractString(data any) string {
 	return ""
 }
 
-func resolveStringPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.String, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) string {
-			return fmt.Sprint(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveStringPort(node Node, portName string) (types.String, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractString(controlData)), nil
 	}
@@ -284,17 +286,7 @@ func resolveStringPort(node Node, portName string, instances map[string]types.Va
 	return func(any) string { return "" }, nil
 }
 
-func resolveIntegerPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Integer, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) int {
-			return extractInt(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveIntegerPort(node Node, portName string) (types.Integer, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractInt(controlData)), nil
 	}
@@ -307,17 +299,7 @@ func resolveIntegerPort(node Node, portName string, instances map[string]types.V
 	return func(any) int { return 0 }, nil
 }
 
-func resolveInt64Port(node Node, portName string, instances map[string]types.Value[any, any]) (types.Value[any, int64], error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) int64 {
-			return int64(extractInt(upstreamClosure(in)))
-		}, nil
-	}
-
+func resolveInt64Port(node Node, portName string) (types.Value[any, int64], error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(int64(extractInt(controlData))), nil
 	}
@@ -330,17 +312,7 @@ func resolveInt64Port(node Node, portName string, instances map[string]types.Val
 	return func(any) int64 { return 0 }, nil
 }
 
-func resolveFloatPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Float, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) float64 {
-			return extractFloat(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveFloatPort(node Node, portName string) (types.Float, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractFloat(controlData)), nil
 	}
@@ -353,17 +325,7 @@ func resolveFloatPort(node Node, portName string, instances map[string]types.Val
 	return func(any) float64 { return 0 }, nil
 }
 
-func resolveBooleanPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Boolean, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) bool {
-			return extractBool(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveBooleanPort(node Node, portName string) (types.Boolean, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractBool(controlData)), nil
 	}
@@ -376,17 +338,7 @@ func resolveBooleanPort(node Node, portName string, instances map[string]types.V
 	return func(any) bool { return false }, nil
 }
 
-func resolveAnyPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Any, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) any {
-			return extractAny(upstreamClosure(in))
-		}, nil
-	}
-
+func resolveAnyPort(node Node, portName string) (types.Any, error) {
 	if controlData, ok := node.InputData[portName]; ok {
 		return types.Const(extractAny(controlData)), nil
 	}
@@ -399,42 +351,11 @@ func resolveAnyPort(node Node, portName string, instances map[string]types.Value
 	return nil, nil
 }
 
-func resolveMapPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Map, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) map[string]any {
-			val := extractAny(upstreamClosure(in))
-			if m, ok := val.(map[string]any); ok {
-				return m
-			}
-			return nil
-		}, nil
-	}
-
+func resolveMapPort(node Node, portName string) (types.Map, error) {
 	return func(any) map[string]any { return nil }, nil
 }
 
-func resolveBytesPort(node Node, portName string, instances map[string]types.Value[any, any]) (types.Bytes, error) {
-	if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-		upstreamClosure, ok := instances[wires[0].NodeID]
-		if !ok {
-			return nil, fmt.Errorf("upstream node %s not found in instances", wires[0].NodeID)
-		}
-		return func(in any) []byte {
-			val := extractAny(upstreamClosure(in))
-			if b, ok := val.([]byte); ok {
-				return b
-			}
-			if s, ok := val.(string); ok {
-				return []byte(s)
-			}
-			return nil
-		}, nil
-	}
-
+func resolveBytesPort(node Node, portName string) (types.Bytes, error) {
 	return func(any) []byte { return nil }, nil
 }
 `)
@@ -470,7 +391,7 @@ func resolveBytesPort(node Node, portName string, instances map[string]types.Val
 			continue
 		}
 
-		fmt.Fprintf(&buf, "\t\"%s\": func(node Node, instances map[string]types.Value[any, any]) (types.Value[any, any], error) {\n", entry.Op)
+		fmt.Fprintf(&buf, "\t\"%s\": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {\n", entry.Op)
 
 		var typeParam string
 		if entry.TypeParamCount > 0 {
@@ -511,9 +432,9 @@ func resolveBytesPort(node Node, portName string, instances map[string]types.Val
 						resolvedFunc = "resolveMapPort"
 					}
 					fmt.Fprintf(&buf, "\t\tvar port_%s []%s\n", param.Name, resolvedType)
-					fmt.Fprintf(&buf, "\t\tif p, err := %s(node, %q, instances); err == nil {\n", resolvedFunc, param.Name)
+					fmt.Fprintf(&buf, "\t\tif p, err := %s(node, %q); err == nil {\n", resolvedFunc, param.Name)
 					fmt.Fprintf(&buf, "\t\t\tport_%s = append(port_%s, p)\n", param.Name, param.Name)
-					fmt.Fprintf(&buf, "\t\t} else if p, err := %s(node, \"in\", instances); err == nil {\n", resolvedFunc)
+					fmt.Fprintf(&buf, "\t\t} else if p, err := %s(node, \"in\"); err == nil {\n", resolvedFunc)
 					fmt.Fprintf(&buf, "\t\t\tport_%s = append(port_%s, p)\n", param.Name, param.Name)
 					fmt.Fprintf(&buf, "\t\t}\n")
 					continue
@@ -545,11 +466,11 @@ func resolveBytesPort(node Node, portName string, instances map[string]types.Val
 				}
 
 				fmt.Fprintf(&buf, "\t\tvar port_%s %s\n", param.Name, resolvedType)
-				fmt.Fprintf(&buf, "\t\tport_%s, err = %s(node, %q, instances)\n", param.Name, resolvedFunc, param.Name)
+				fmt.Fprintf(&buf, "\t\tport_%s, err = %s(node, %q)\n", param.Name, resolvedFunc, param.Name)
 				fmt.Fprintf(&buf, "\t\tif err != nil { return nil, err }\n")
 			}
 
-			buf.WriteString("\t\tclosure := ")
+			buf.WriteString("\t\treturn ")
 			fmt.Fprintf(&buf, "%s.%s%s(", entry.Category, entry.Builder, typeParam)
 			firstArg := true
 			for _, param := range entry.ConstructorParams {
@@ -563,29 +484,9 @@ func resolveBytesPort(node Node, portName string, instances map[string]types.Val
 				}
 				firstArg = false
 			}
-			buf.WriteString(")\n")
+			buf.WriteString("), nil\n")
 		} else {
-			fmt.Fprintf(&buf, "\t\tclosure := %s.%s%s()\n", entry.Category, entry.Builder, typeParam)
-		}
-
-		if len(entry.Inputs) > 0 {
-			inType := entry.Inputs[0].Type
-			if entry.TypeParamCount > 0 {
-				inType = strings.ReplaceAll(inType, "Value", "any")
-				inType = strings.ReplaceAll(inType, "Outcome", "any")
-				inType = strings.ReplaceAll(inType, "T", "any")
-			}
-			fmt.Fprintf(&buf, "\t\treturn func(in any) any {\n")
-			if inType == "any" {
-				fmt.Fprintf(&buf, "\t\t\treturn closure(in)\n")
-			} else {
-				fmt.Fprintf(&buf, "\t\t\treturn closure(in.(%s))\n", inType)
-			}
-			fmt.Fprintf(&buf, "\t\t}, nil\n")
-		} else {
-			fmt.Fprintf(&buf, "\t\treturn func(in any) any {\n")
-			fmt.Fprintf(&buf, "\t\t\treturn closure(in)\n")
-			fmt.Fprintf(&buf, "\t\t}, nil\n")
+			fmt.Fprintf(&buf, "\t\treturn %s.%s%s(), nil\n", entry.Category, entry.Builder, typeParam)
 		}
 		fmt.Fprintf(&buf, "\t},\n")
 	}

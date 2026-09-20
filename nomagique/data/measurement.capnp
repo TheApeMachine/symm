@@ -3,9 +3,9 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("nomagique/data");
 
-using import "metric.capnp".Metric;
+using import "metric.capnp".WireMetric;
 
-struct Map(Key, Value) {
+struct WireMap(Key, Value) {
     entries @0 :List(Entry);
 
     struct Entry {
@@ -24,7 +24,7 @@ struct MetadataValue {
     }
 }
 
-struct Measurement  {
+struct WireMeasurement  {
     id         @0  :Data;
     epoch      @1  :Int64;
     tick       @2  :Int64;
@@ -35,8 +35,8 @@ struct Measurement  {
     snr        @7  :Float64;
     maturity   @8  :Float64;
     separation @9  :Float64;
-    metrics    @10 :List(Metric);
-    metadata   @11 :Map(Text, MetadataValue);
+    metrics    @10 :List(WireMetric);
+    metadata   @11 :WireMap(Text, MetadataValue);
 
     enum EntityType {
         ticker       @0;

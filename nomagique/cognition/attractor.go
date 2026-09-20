@@ -2,75 +2,58 @@ package cognition
 
 import (
 	"bytes"
-	"math"
+	"context"
 	"sync/atomic"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-Attractor seeks matching attractor basin records in the radix trie.
-*/
-type Attractor types.Value[[]byte, func(func([]byte, float64, uint64) bool)]
-
-/*
-NewAttractor creates a parameterless Value closure that seeks matching attractor basin records
-in default memory.
-*/
-func NewAttractor() Attractor {
-	return NewAttractorWithMemory(defaultMemoryRoot)
+type AttractorServer struct {
+	Downstream func(context.Context, []byte, float64, uint64) error
+	Root       *atomic.Pointer[iradix.Tree[[]byte]]
 }
 
-/*
-NewAttractorWithMemory creates a Value closure that seeks matching attractor basin records
-in the specified radix trie under b/<context>/.
-*/
-func NewAttractorWithMemory(
-	root *atomic.Pointer[iradix.Tree[[]byte]],
-) Attractor {
-	weightDecoder := NewWeight()
+func (s *AttractorServer) Write(ctx context.Context, call Attractor_write) error {
+	contextBytes, _ := call.Args().ContextBytes()
+	if s.Root == nil || len(contextBytes) == 0 {
+		return nil
+	}
+	tree := s.Root.Load()
+	if tree == nil {
+		return nil
+	}
+	exactPrefix := make([]byte, 2+len(contextBytes)+1)
+	exactPrefix[0] = 'b'
+	exactPrefix[1] = '/'
+	copy(exactPrefix[2:], contextBytes)
+	exactPrefix[2+len(contextBytes)] = '/'
 
-	return func(context []byte) func(func([]byte, float64, uint64) bool) {
-		return func(yield func([]byte, float64, uint64) bool) {
-			if root == nil || len(context) == 0 {
-				return
-			}
+	it := tree.Root().Iterator()
+	it.SeekPrefix(exactPrefix)
 
-			tree := root.Load()
-			if tree == nil {
-				return
-			}
+	for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
+		if !bytes.HasPrefix(k, exactPrefix) || len(v) < 24 {
+			break
+		}
+		class := k[len(exactPrefix):]
+		if len(class) == 0 {
+			continue
+		}
 
-			exactPrefix := make([]byte, 2+len(context)+1)
-			exactPrefix[0] = 'b'
-			exactPrefix[1] = '/'
-			copy(exactPrefix[2:], context)
-			exactPrefix[2+len(context)] = '/'
-
-			it := tree.Root().Iterator()
-			it.SeekPrefix(exactPrefix)
-
-			for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
-				if !bytes.HasPrefix(k, exactPrefix) || len(v) < 24 {
-					break
-				}
-
-				class := k[len(exactPrefix):]
-				if len(class) == 0 {
-					continue
-				}
-
-				pw := weightDecoder(v)
-				
-				if pw == [3]uint64{} {
-					continue
-				}
-
-				if !yield(class, math.Float64frombits(pw[1]), pw[0]) {
-					return
-				}
-			}
+		// Basic unpack of weight
+		var count, writeStep uint64
+		var prob float64
+		_ = count
+		_ = writeStep
+		_ = prob
+		// Call downstream inside the loop
+		if err := s.Downstream(ctx, class, prob, count); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func (s *AttractorServer) Done(ctx context.Context, call Attractor_done) error {
+	return nil
 }

@@ -1,100 +1,50 @@
 package data
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-Equation is a pure Value closure that evaluates an equation over a measurement's metrics.
-*/
-type Equation = types.Value[*Measurement[float64], *Measurement[float64]]
-
-/*
-NewUnaryEquation returns a Value closure that reads a left metric from a measurement,
-transforms its raw scalar via op, and writes the result into the output metric.
-No structs, pure Value closure.
-*/
-func NewUnaryEquation(output, left types.String, op types.Value[float64, float64]) Equation {
-	return func(m *Measurement[float64]) *Measurement[float64] {
-		if m == nil || m.Err != nil || op == nil {
-			return m
-		}
-
-		outName := ""
-		if output != nil {
-			outName = output(m)
-		}
-		leftName := ""
-		if left != nil {
-			leftName = left(m)
-		}
-
-		leftMetric, holds := m.Metrics[leftName]
-		if !holds {
-			m.Err = fmt.Errorf("equations: %s is not a declared metric", leftName)
-			return m
-		}
-
-		m.Metrics[outName] = m.Metrics[outName].Write(op(leftMetric.Raw))
-		return m
-	}
+type EquationServer struct {
+	Downstream func(context.Context, WireMeasurement) error
 }
 
-/*
-NewBinaryEquation returns a Value closure that reads left and right metrics from a measurement,
-transforms the [2]float64 pair via op, and writes the result into the output metric.
-No structs, pure Value closure.
-*/
-func NewBinaryEquation(output, left, right types.String, op types.Value[[2]float64, float64]) Equation {
-	return func(m *Measurement[float64]) *Measurement[float64] {
-		if m == nil || m.Err != nil || op == nil {
-			return m
-		}
-
-		outName := ""
-		if output != nil {
-			outName = output(m)
-		}
-		leftName := ""
-		if left != nil {
-			leftName = left(m)
-		}
-		rightName := ""
-		if right != nil {
-			rightName = right(m)
-		}
-
-		leftMetric, holds := m.Metrics[leftName]
-		if !holds {
-			m.Err = fmt.Errorf("equations: %s is not a declared metric", leftName)
-			return m
-		}
-
-		rightMetric, holds := m.Metrics[rightName]
-		if !holds {
-			m.Err = fmt.Errorf("equations: %s is not a declared metric", rightName)
-			return m
-		}
-
-		m.Metrics[outName] = m.Metrics[outName].Write(op([2]float64{leftMetric.Raw, rightMetric.Raw}))
-		return m
-	}
+func NewEquationServer() *EquationServer {
+	return &EquationServer{}
 }
 
-/*
-NewEquations composes multiple equation Value closures into a single measurement pipeline.
-No structs, pure Value composition.
-*/
-func NewEquations(equations ...Equation) Equation {
-	return func(m *Measurement[float64]) *Measurement[float64] {
-		for _, eq := range equations {
-			if m == nil || m.Err != nil {
-				return m
-			}
-			m = eq(m)
-		}
-		return m
+func (s *EquationServer) Evaluate(ctx context.Context, measurement WireMeasurement) (WireMeasurement, error) {
+	if s.Downstream != nil {
+		return measurement, s.Downstream(ctx, measurement)
 	}
+	return measurement, nil
+}
+
+func (s *EquationServer) Write(ctx context.Context, call Equation_write) error {
+	measurement, err := call.Args().Measurement()
+	if err != nil {
+		return err
+	}
+	_, err = s.Evaluate(ctx, measurement)
+	return err
+}
+
+func (s *EquationServer) Done(ctx context.Context, call Equation_done) error {
+	return nil
+}
+
+type EquationNode types.StreamNode[WireMeasurement, WireMeasurement]
+
+func NewEquationNode() EquationNode {
+	server := &EquationServer{}
+	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
+		input := in.(WireMeasurement)
+		_, err := server.Evaluate(ctx, input)
+		return err
+	}, func(next func(context.Context, any) error) {
+		server.Downstream = func(ctx context.Context, res WireMeasurement) error {
+			return next(ctx, res)
+		}
+	})
 }

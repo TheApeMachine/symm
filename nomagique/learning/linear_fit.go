@@ -1,59 +1,117 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/algo"
+	"context"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-NewLinearFit creates a stateful closure for fitting an Ordinary Least Squares (OLS) model.
-It closes over the tolerance, the feature column indices, and the target column index.
-The returned closure takes a slice of rows ([][]float64) and returns the OLS coefficients ([]float64).
+type LinearFitServer struct {
+	DownstreamLinearFit func(context.Context, []float64) error
+	Tolerance           float64
+	Target              int
+	Features            []int
+}
 
-The feature matrix is augmented with an implicit intercept (core.Unit) at index 0.
-*/
-type LinearFit types.Value[[][]float64, []float64]
-func NewLinearFit(tolerance types.Float, target types.Integer, features ...types.Integer) LinearFit {
-	ols := algo.NewOLS(tolerance)
+func (s *LinearFitServer) Write(ctx context.Context, call LinearFit_write) error {
+	return s.WriteParams(ctx, call.Args())
+}
 
-	return func(rows [][]float64) []float64 {
-		x := make([][]float64, 0, len(rows))
-		y := make([][]float64, 0, len(rows))
-
-		t := 0
-		if target != nil {
-			t = target(rows)
-		}
-
-		resolvedFeatures := make([]int, len(features))
-		for i, feat := range features {
-			if feat != nil {
-				resolvedFeatures[i] = feat(rows)
-			}
-		}
-
-		for _, row := range rows {
-			if t < 0 || t >= len(row) {
-				return nil // Target out of bounds
-			}
-
-			// Prepend intercept
-			designRow := make([]float64, 1, len(resolvedFeatures)+1)
-			designRow[0] = core.Unit
-
-			// Append selected features
-			for _, featureIdx := range resolvedFeatures {
-				if featureIdx < 0 || featureIdx >= len(row) {
-					return nil // Feature out of bounds
-				}
-				designRow = append(designRow, row[featureIdx])
-			}
-
-			x = append(x, designRow)
-			y = append(y, []float64{row[t]})
-		}
-
-		return ols([2][][]float64{x, y})
+func (s *LinearFitServer) WriteParams(ctx context.Context, callArgs LinearFit_write_Params) error {
+	rowsList, _ := callArgs.Rows()
+	rowCount := rowsList.Len()
+	if rowCount == 0 {
+		return nil
 	}
+
+	x := make([][]float64, 0, rowCount)
+	y := make([][]float64, 0, rowCount)
+
+	for r := 0; r < rowCount; r++ {
+		rowItem := rowsList.At(r)
+		rowListVals, _ := rowItem.Values()
+		if s.Target < 0 || s.Target >= rowListVals.Len() {
+			return nil
+		}
+
+		designRow := make([]float64, 1, len(s.Features)+1)
+		designRow[0] = core.Unit
+
+		for _, featureIdx := range s.Features {
+			if featureIdx < 0 || featureIdx >= rowListVals.Len() {
+				return nil
+			}
+			designRow = append(designRow, rowListVals.At(featureIdx))
+		}
+		x = append(x, designRow)
+		y = append(y, []float64{rowListVals.At(s.Target)})
+	}
+
+	// OLS implementation inline to avoid circular deps
+	cols := len(x[0])
+	xtx := make([][]float64, cols)
+	xty := make([][]float64, cols)
+	for i := range xtx {
+		xtx[i] = make([]float64, cols)
+		xty[i] = make([]float64, 1)
+	}
+	for r := 0; r < len(x); r++ {
+		for i := 0; i < cols; i++ {
+			xi := x[r][i]
+			for j := 0; j < cols; j++ {
+				xtx[i][j] += xi * x[r][j]
+			}
+			xty[i][0] += xi * y[r][0]
+		}
+	}
+	tol := s.Tolerance
+	if tol <= 0 {
+		tol = 1e-9
+	}
+	for col := 0; col < cols; col++ {
+		pivotRow := col
+		maxVal := math.Abs(xtx[col][col])
+		for r := col + 1; r < cols; r++ {
+			val := math.Abs(xtx[r][col])
+			if val > maxVal {
+				maxVal = val
+				pivotRow = r
+			}
+		}
+		if maxVal <= tol {
+			return nil
+		}
+		if pivotRow != col {
+			xtx[col], xtx[pivotRow] = xtx[pivotRow], xtx[col]
+			xty[col], xty[pivotRow] = xty[pivotRow], xty[col]
+		}
+		pivot := xtx[col][col]
+		for c := col; c < cols; c++ {
+			xtx[col][c] /= pivot
+		}
+		xty[col][0] /= pivot
+		for r := 0; r < cols; r++ {
+			if r != col {
+				factor := xtx[r][col]
+				for c := col; c < cols; c++ {
+					xtx[r][c] -= factor * xtx[col][c]
+				}
+				xty[r][0] -= factor * xty[col][0]
+			}
+		}
+	}
+	coeffs := make([]float64, cols)
+	for i := 0; i < cols; i++ {
+		coeffs[i] = xty[i][0]
+	}
+
+	if s.DownstreamLinearFit != nil {
+		return s.DownstreamLinearFit(ctx, coeffs)
+	}
+	return nil
+}
+
+func (s *LinearFitServer) Done(ctx context.Context, call LinearFit_done) error {
+	return nil
 }

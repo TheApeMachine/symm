@@ -1,17 +1,24 @@
 package learning
 
 import (
+	"context"
+
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-TaskLearner is a Value closure that forecasts or updates a task-head RLS model.
-No structs, pure Value closure.
+TaskLearnerServer forecasts or updates a task-head RLS model using the streaming pattern.
 */
-type TaskLearner types.Value[Sample, algo.RLSPosterior]
+type TaskLearnerServer struct {
+	Downstream func(context.Context, algo.RLSPosterior) error
+	
+	state   algo.RLSState
+	predict func(algo.RLSState) algo.RLSForecast
+	update  func(algo.RLSObservation) algo.RLSPosterior
+	lambda  float64
+}
 
-func newRLSTaskLearner(dim int, lambda float64) TaskLearner {
+func NewTaskLearnerServer(dim int, lambda float64) *TaskLearnerServer {
 	state := algo.RLSState{
 		Beta:         make([]float64, dim),
 		Design:       make([]float64, dim),
@@ -25,33 +32,69 @@ func newRLSTaskLearner(dim int, lambda float64) TaskLearner {
 		state.Root[i][i] = 100.0 // Identity scaled by ridge
 	}
 
-	predict := algo.NewRLSPrediction()
-	update := algo.NewRLSUpdate()
+	return &TaskLearnerServer{
+		state:   state,
+		predict: algo.NewRLSPrediction(),
+		update:  algo.NewRLSUpdate(),
+		lambda:  lambda,
+	}
+}
 
-	return func(sample Sample) algo.RLSPosterior {
-		// Prepare state design
-		if len(state.Design) == len(sample.Features)+1 {
-			copy(state.Design, sample.Features)
-			state.Design[len(sample.Features)] = 1.0 // Bias
-		}
-		if len(state.Design) != len(sample.Features)+1 {
-			copy(state.Design, sample.Features)
-		}
+func (s *TaskLearnerServer) Evaluate(features []float64, target float64, observed bool) algo.RLSPosterior {
+	// Prepare state design
+	if len(s.state.Design) == len(features)+1 {
+		copy(s.state.Design, features)
+		s.state.Design[len(features)] = 1.0 // Bias
+	} else if len(s.state.Design) == len(features) {
+		copy(s.state.Design, features)
+	}
 
-		forecast := predict(state)
-
-		if !sample.Observed {
-			return algo.RLSPosterior{RLSForecast: forecast}
-		}
-
+	forecast := s.predict(s.state)
+	
+	var posterior algo.RLSPosterior
+	if !observed {
+		posterior = algo.RLSPosterior{RLSForecast: forecast}
+	} else {
 		obs := algo.RLSObservation{
 			RLSForecast: forecast,
-			Lambda:      lambda,
-			Target:      sample.Target,
+			Lambda:      s.lambda,
+			Target:      target,
 		}
 
-		posterior := update(obs)
-		state = posterior.RLSForecast.RLSState
-		return posterior
+		posterior = s.update(obs)
+		s.state = posterior.RLSForecast.RLSState
 	}
+	return posterior
+}
+
+func (s *TaskLearnerServer) Write(ctx context.Context, call TaskLearner_write) error {
+	args, err := call.Args().Input()
+	if err != nil {
+		return err
+	}
+	
+	featuresList, err := args.Features()
+	if err != nil {
+		return err
+	}
+	
+	n := featuresList.Len()
+	features := make([]float64, n)
+	for i := 0; i < n; i++ {
+		features[i] = featuresList.At(i)
+	}
+	
+	target := args.Target()
+	observed := args.Observed()
+
+	posterior := s.Evaluate(features, target, observed)
+
+	if s.Downstream != nil {
+		return s.Downstream(ctx, posterior)
+	}
+	return nil
+}
+
+func (s *TaskLearnerServer) Done(ctx context.Context, call TaskLearner_done) error {
+	return nil
 }

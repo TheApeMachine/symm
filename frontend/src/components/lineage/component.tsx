@@ -453,7 +453,7 @@ export const MetricLineage = () => {
 					return (
 						<div
 							key={`label-${c.id}`}
-							className="pointer-events-none absolute font-mono text-[10px] text-(--f3) leading-tight break-words"
+							className="pointer-events-none absolute font-mono text-[10px] text-(--f3) leading-tight wrap-break-word"
 							style={{
 								left: `${c.x + 12}px`,
 								top: `${c.y - 6}px`,

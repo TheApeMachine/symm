@@ -5,12 +5,11 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestGaussJordan(t *testing.T) {
 	Convey("Given GaussJordan solver", t, func() {
-		solver := NewGaussJordan(types.Const(1e-9))
+		solver := NewGaussJordan(1e-9)
 
 		Convey("Inverting a 2x2 identity matrix", func() {
 			a := [][]float64{
@@ -64,7 +63,7 @@ func TestGaussJordan(t *testing.T) {
 
 func TestOLS(t *testing.T) {
 	Convey("Given OLS solver", t, func() {
-		ols := NewOLS(types.Const(1e-9))
+		ols := NewOLS(1e-9)
 
 		Convey("Estimating y = 2x + 1", func() {
 			x := [][]float64{
@@ -111,7 +110,7 @@ func TestHayashiYoshida(t *testing.T) {
 
 func TestRLSAtoms(t *testing.T) {
 	Convey("Given NewRLS atom closure", t, func() {
-		rls := NewRLS(types.Const(2), types.Const(0.99))
+		rls := NewRLS(2, 0.99)
 
 		Convey("Steps adaptively on incoming feature vector and target", func() {
 			res1 := rls([]float64{1.0, 2.0, 5.0})

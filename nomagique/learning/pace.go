@@ -1,55 +1,106 @@
 package learning
 
 import (
+	"context"
 	"math"
-
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/data/sequence"
-	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/types"
+	"sort"
 )
 
-/*
-Pace is the adaptive learning rate controller, built entirely via functional composition
-of canonical mathematical and statistical atoms.
+type PaceServer struct {
+	DownstreamPace func(context.Context, float64) error
+	Rest           float64
+	Lower          float64
+	Upper          float64
+	Gain           float64
+	Band           float64
+	Window         int
+	// state
+	history []float64
+	ema     float64
+	count   int
+}
 
-It takes an error magnitude and yields a bounded exponential moving average of an
-adapted learning rate, scaled by the empirical rank of the incoming error.
-*/
-func Pace(rest, lower, upper, gain, band types.Float, window types.Integer) types.Value[float64, float64] {
-	restVal := rest(nil)
-	lowerVal := lower(nil)
-	upperVal := upper(nil)
-	gainVal := gain(nil)
-	bandVal := band(nil)
-	windowVal := window(nil)
+func (s *PaceServer) Write(ctx context.Context, call Pace_write) error {
+	return s.WriteParams(ctx, call.Args())
+}
 
-	return types.Value[float64, float64](nomagique.NewNumber(
-		// 1. Maintain history and map error magnitude to empirical rank
-		types.Value[float64, float64](probability.NewCalibrator(
-			types.Value[[]float64, []float64](sequence.NewTail[float64](types.Const(windowVal))),
-		)),
+func (s *PaceServer) WriteParams(ctx context.Context, callArgs Pace_write_Params) error {
+	errorMag := callArgs.ErrorMagnitude()
 
-		// 2. Map the rank to a target log-alpha based on the bands
-		types.Value[float64, float64](statistic.NewThreshold(
-			types.Const(bandVal),
-			types.Const(math.Log(restVal)),
-			types.Const(math.Log(lowerVal)),
-			types.Const(math.Log(upperVal)),
-		)),
+	// 1. Maintain history and map error magnitude to empirical rank (Calibrator)
+	if s.history == nil {
+		s.history = make([]float64, 0, s.Window)
+	}
 
-		// 3. Smooth the target log-alpha with an Exponential Moving Average
-		types.Value[float64, float64](statistic.NewEMA(types.Const(gainVal))),
+	if len(s.history) >= s.Window {
+		s.history = s.history[1:] // pop first
+	}
+	s.history = append(s.history, errorMag)
 
-		// 4. Clamp the internal log-alpha to bounds
-		types.Value[float64, float64](arithmetic.NewClamp(types.Const(math.Log(lowerVal)), types.Const(math.Log(upperVal)))),
+	// Compute empirical rank
+	sorted := make([]float64, len(s.history))
+	copy(sorted, s.history)
+	sort.Float64s(sorted)
 
-		// 5. Convert back from log-space to time-space
-		types.Value[float64, float64](arithmetic.NewExp()),
+	rank := 0.0
+	for i, v := range sorted {
+		if errorMag <= v {
+			rank = float64(i) / float64(len(sorted)-1)
+			break
+		}
+		if i == len(sorted)-1 {
+			rank = 1.0
+		}
+	}
+	if len(sorted) <= 1 {
+		rank = 0.5
+	}
 
-		// 6. Clamp the final alpha to hard bounds
-		types.Value[float64, float64](arithmetic.NewClamp(types.Const(lowerVal), types.Const(upperVal))),
-	))
+	// 2. Map rank to target log-alpha based on bands (Threshold)
+	restLog := math.Log(s.Rest)
+	lowerLog := math.Log(s.Lower)
+	upperLog := math.Log(s.Upper)
+
+	targetLog := restLog
+	if rank < s.Band {
+		targetLog = lowerLog
+	} else if rank > 1.0-s.Band {
+		targetLog = upperLog
+	}
+
+	// 3. Smooth target log-alpha with EMA
+	if s.count == 0 {
+		s.ema = targetLog
+	} else {
+		s.ema = s.Gain*targetLog + (1.0-s.Gain)*s.ema
+	}
+	s.count++
+
+	// 4. Clamp log space
+	if s.ema < lowerLog {
+		s.ema = lowerLog
+	}
+	if s.ema > upperLog {
+		s.ema = upperLog
+	}
+
+	// 5. Exp
+	alpha := math.Exp(s.ema)
+
+	// 6. Clamp hard bounds
+	if alpha < s.Lower {
+		alpha = s.Lower
+	}
+	if alpha > s.Upper {
+		alpha = s.Upper
+	}
+
+	if s.DownstreamPace != nil {
+		return s.DownstreamPace(ctx, alpha)
+	}
+	return nil
+}
+
+func (s *PaceServer) Done(ctx context.Context, call Pace_done) error {
+	return nil
 }

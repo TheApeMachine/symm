@@ -1,18 +1,46 @@
 package store
 
-import "github.com/theapemachine/symm/nomagique/types"
+import (
+	"context"
 
-/*
-NewConstant replaces each arrival with a configured value.
-No structs, pure Value closure.
-*/
-type Constant[T, Any any] types.Value[Any, T]
-func NewConstant[T, Any any](current types.Value[Any, T]) Constant[T, Any] {
-	return func(in Any) T {
-		if current != nil {
-			return current(in)
+	capnp "capnproto.org/go/capnp/v3"
+)
+
+// ConstantServer implements Constant_Server from the capnp schema.
+type ConstantServer struct {
+	value []byte
+}
+
+func NewConstantServer(val capnp.Ptr) *ConstantServer {
+	s := &ConstantServer{}
+	if val.IsValid() {
+		msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+		if err == nil {
+			if msg.SetRoot(val) == nil {
+				if bytes, err := seg.Message().Marshal(); err == nil {
+					s.value = bytes
+				}
+			}
 		}
-		var zero T
-		return zero
 	}
+	return s
+}
+
+func (s *ConstantServer) Evaluate(ctx context.Context, call Constant_evaluate) error {
+	res, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+
+	if len(s.value) > 0 {
+		msg, err := capnp.Unmarshal(s.value)
+		if err == nil {
+			rootPtr, err := msg.Root()
+			if err == nil {
+				res.SetValue(rootPtr)
+			}
+		}
+	}
+
+	return nil
 }

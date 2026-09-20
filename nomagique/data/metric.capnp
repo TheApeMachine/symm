@@ -3,7 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("nomagique/data");
 
-struct Metric {
+struct WireMetric {
     raw          @0 :Float64;
     normalized   @1 :Float64;
     standardized @2 :Float64;

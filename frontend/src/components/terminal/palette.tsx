@@ -1,10 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import {
-	DEFAULT_KERNELS,
-	focusAtom,
-	symbolsAtom,
-} from "#/collections/app";
+import { focusAtom, SIGNALS, symbolsAtom } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
@@ -127,7 +123,7 @@ export const CommandPalette = ({
 				active: surface.id === activeSurface,
 			}),
 		),
-		...DEFAULT_KERNELS.map(
+		...SIGNALS.map(
 			(kernel): PaletteCommand => ({
 				key: `kernel:${kernel}`,
 				label: `Inspect · ${kernel}`,

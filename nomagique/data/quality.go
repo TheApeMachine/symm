@@ -1,119 +1,102 @@
 package data
 
 import (
+	"context"
 	"strconv"
-
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-QualityFacts are the optional estimator fields Finalize reads. Absence is not
-zero: a missing support is a direct measurement, not N=0.
-*/
-type QualityFacts struct {
-	Support        float64
-	Divergence     float64
-	NoiseVariance  float64
-	MahalanobisSNR float64
-	Maturity       float64
-	HasSupport     bool
-	HasDivergence  bool
-	HasNoise       bool
-	HasMahalanobis bool
-	HasMaturity    bool
+// QualityServer implements Quality_Server from the capnp schema.
+type QualityServer struct{}
+
+func NewQualityServer() *QualityServer {
+	return &QualityServer{}
 }
 
-/*
-QualityReading is derived maturity/SNR. SNRDefined distinguishes a measured
-zero from an unestimable noise model.
-*/
-type QualityReading struct {
-	SNR        float64
-	SNRDefined bool
-	Estimated  bool
-	Maturity   float64
-}
+func (s *QualityServer) Evaluate(ctx context.Context, call Quality_evaluate) error {
+	facts, err := call.Args().Facts()
+	if err != nil {
+		return err
+	}
 
-/*
-NewQuality owns quality derivation. Support>1 is required before Mahalanobis
-overrides scalar SNR.
-No structs, pure Value closure.
-*/
-type Quality types.Value[QualityFacts, QualityReading]
-func NewQuality() Quality {
-	return func(facts QualityFacts) QualityReading {
-		reading := QualityReading{
-			Estimated: facts.HasSupport || facts.HasDivergence || facts.HasMahalanobis,
-			Maturity:  1,
-		}
+	res, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
 
-		if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
-			reading.SNR = facts.Divergence * facts.Divergence / facts.NoiseVariance
-			reading.SNRDefined = true
-		}
+	reading, err := res.NewReading()
+	if err != nil {
+		return err
+	}
 
-		if facts.HasSupport {
-			reading.Maturity = 0
+	reading.SetEstimated(facts.HasSupport() || facts.HasDivergence() || facts.HasMahalanobis())
+	reading.SetMaturity(1.0)
 
-			if facts.Support > 1 {
-				reading.Maturity = 1 - 1/facts.Support
+	if facts.HasDivergence() && facts.HasNoise() && facts.NoiseVariance() > 0 {
+		reading.SetSnr(facts.Divergence() * facts.Divergence() / facts.NoiseVariance())
+		reading.SetSnrDefined(true)
+	}
 
-				if facts.HasMahalanobis && facts.MahalanobisSNR >= 0 {
-					reading.SNR = facts.MahalanobisSNR
-					reading.SNRDefined = true
-				}
+	if facts.HasSupport() {
+		reading.SetMaturity(0.0)
+
+		if facts.Support() > 1 {
+			reading.SetMaturity(1.0 - 1.0/facts.Support())
+
+			if facts.HasMahalanobis() && facts.MahalanobisSNR() >= 0 {
+				reading.SetSnr(facts.MahalanobisSNR())
+				reading.SetSnrDefined(true)
 			}
 		}
-
-		if !facts.HasSupport && facts.HasMaturity {
-			reading.Maturity = facts.Maturity
-		}
-
-		return reading
 	}
+
+	if !facts.HasSupport() && facts.HasMaturity() {
+		reading.SetMaturity(facts.Maturity())
+	}
+
+	return nil
 }
 
-func factsFromMetadata(metadata map[string]string) QualityFacts {
-	facts := QualityFacts{}
-
+// FactsFromMetadata constructs WireQualityFacts from a string metadata map.
+// This is typically called prior to dispatching to the QualityServer.
+func FactsFromMetadata(metadata map[string]string, facts WireQualityFacts) error {
 	if metadata == nil {
-		return facts
+		return nil
 	}
 
-	if val, ok := metadata[MetadataSupport]; ok {
+	if val, ok := metadata["support"]; ok {
 		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.Support = parsed
-			facts.HasSupport = true
+			facts.SetSupport(parsed)
+			facts.SetHasSupport(true)
 		}
 	}
 
-	if val, ok := metadata[MetadataDivergence]; ok {
+	if val, ok := metadata["divergence"]; ok {
 		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.Divergence = parsed
-			facts.HasDivergence = true
+			facts.SetDivergence(parsed)
+			facts.SetHasDivergence(true)
 		}
 	}
 
-	if val, ok := metadata[MetadataNoiseVariance]; ok {
+	if val, ok := metadata["noise_variance"]; ok {
 		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.NoiseVariance = parsed
-			facts.HasNoise = true
+			facts.SetNoiseVariance(parsed)
+			facts.SetHasNoise(true)
 		}
 	}
 
-	if val, ok := metadata[MetadataMahalanobisSNR]; ok {
+	if val, ok := metadata["mahalanobis_snr"]; ok {
 		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.MahalanobisSNR = parsed
-			facts.HasMahalanobis = true
+			facts.SetMahalanobisSNR(parsed)
+			facts.SetHasMahalanobis(true)
 		}
 	}
 
-	if val, ok := metadata[MetadataMaturity]; ok {
+	if val, ok := metadata["maturity"]; ok {
 		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.Maturity = parsed
-			facts.HasMaturity = true
+			facts.SetMaturity(parsed)
+			facts.SetHasMaturity(true)
 		}
 	}
 
-	return facts
+	return nil
 }

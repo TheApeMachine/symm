@@ -80,8 +80,8 @@ func collect(
 	loadedPackage *packages.Package,
 	into map[string]catalog.Schema,
 ) {
-	customTypes := make(map[string]primitiveType)
-	
+	// Collect Server structs
+	serverTypes := make(map[string]primitiveType)
 	for _, file := range loadedPackage.Syntax {
 		for _, declaration := range file.Decls {
 			genDecl, ok := declaration.(*ast.GenDecl)
@@ -105,7 +105,7 @@ func collect(
 				}
 				
 				ident, ok := selExpr.X.(*ast.Ident)
-				if !ok || ident.Name != "types" || selExpr.Sel.Name != "Value" {
+				if !ok || ident.Name != "types" || (selExpr.Sel.Name != "StreamNode" && selExpr.Sel.Name != "Value") {
 					continue
 				}
 				
@@ -114,7 +114,7 @@ func collect(
 					uType := loadedPackage.TypesInfo.TypeOf(indexExpr.Indices[1])
 					
 					if tType != nil && uType != nil {
-						customTypes[typeSpec.Name.Name] = primitiveType{
+						serverTypes[typeSpec.Name.Name] = primitiveType{
 							Name: typeSpec.Name.Name,
 							T:    simplifyType(tType.String()),
 							U:    simplifyType(uType.String()),
@@ -146,7 +146,7 @@ func collect(
 			
 			retTypeName := namedType.Obj().Name()
 			
-			if primType, found := customTypes[retTypeName]; found {
+			if primType, found := serverTypes[retTypeName]; found {
 				params := make([]catalog.Param, signature.Params().Len())
 				injected := make([]string, 0)
 				for i := 0; i < signature.Params().Len(); i++ {

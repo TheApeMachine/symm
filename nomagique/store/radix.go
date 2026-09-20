@@ -1,95 +1,129 @@
 package store
 
 import (
-	"bytes"
+	"context"
 	"sync/atomic"
 
+	capnp "capnproto.org/go/capnp/v3"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-Action specifies the operation performed on an addressable store.
-*/
-type Action int
-
-const (
-	Read Action = iota
-	Write
-	Identify
-)
-
-/*
-RadixCommandData carries the address, payload, and operation for Radix storage.
-*/
-type RadixCommandData[T any] struct {
-	Key    []byte
-	Value  T
-	Action Action
+// RadixServer implements Radix_Server from the capnp schema.
+type RadixServer struct {
+	root atomic.Pointer[iradix.Tree[[]byte]]
 }
 
-/*
-NewRadixCommand builds a command carrier closure for pipelines.
-No structs, pure Value closure.
-*/
-type RadixCommand[T any] types.Value[T, RadixCommandData[T]]
-func NewRadixCommand[T any](key []byte, action Action) RadixCommand[T] {
-	return func(val T) RadixCommandData[T] {
-		return RadixCommandData[T]{
-			Key:    key,
-			Value:  val,
-			Action: action,
-		}
-	}
+func NewRadixServer() *RadixServer {
+	s := &RadixServer{}
+	s.root.Store(iradix.New[[]byte]())
+	return s
 }
 
-/*
-NewRadix owns immutable addressed values. One writer publishes new roots; readers
-borrow values from the root they loaded. Read misses yield nil. Identify
-inserts its explicit initial payload only when the key is absent. Payloads must
-be values without mutable aliases: the store copies T, not an object graph.
-Writes retain their own key bytes; reads borrow the caller's address.
-No structs, pure Value closure.
-*/
-type Radix[T any] types.Value[RadixCommandData[T], *T]
-func NewRadix[T any]() Radix[T] {
-	var root atomic.Pointer[iradix.Tree[T]]
-	root.Store(iradix.New[T]())
+func (s *RadixServer) Read(ctx context.Context, call Radix_read) error {
+	key, err := call.Args().Key()
+	if err != nil {
+		return err
+	}
 
-	return func(cmd RadixCommandData[T]) *T {
-		if len(cmd.Key) == 0 {
-			return nil
-		}
+	current := s.root.Load()
+	val, found := current.Get(key)
 
-		current := root.Load()
-		val, found := current.Get(cmd.Key)
+	res, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+	res.SetFound(found)
 
-		switch cmd.Action {
-		case Read:
-			if !found {
-				return nil
+	if found {
+		// val is []byte containing a Cap'n Proto serialized message
+		msg, err := capnp.Unmarshal(val)
+		if err == nil {
+			rootPtr, err := msg.Root()
+			if err == nil {
+				res.SetValue(rootPtr)
 			}
-			out := val
-			return &out
-
-		case Identify:
-			if found {
-				out := val
-				return &out
-			}
-			updated, _, _ := current.Insert(bytes.Clone(cmd.Key), cmd.Value)
-			root.Store(updated)
-			res, _ := updated.Get(cmd.Key)
-			return &res
-
-		case Write:
-			updated, _, _ := current.Insert(bytes.Clone(cmd.Key), cmd.Value)
-			root.Store(updated)
-			res, _ := updated.Get(cmd.Key)
-			return &res
-
-		default:
-			return nil
 		}
 	}
+
+	return nil
+}
+
+func (s *RadixServer) Write(ctx context.Context, call Radix_write) error {
+	key, err := call.Args().Key()
+	if err != nil {
+		return err
+	}
+	
+	valPtr, err := call.Args().Value()
+	if err != nil {
+		return err
+	}
+	
+	// Serialize valPtr into []byte to store safely
+	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err == nil {
+		err = msg.SetRoot(valPtr)
+		if err == nil {
+			bytes, err := seg.Message().Marshal()
+			if err == nil {
+				current := s.root.Load()
+				updated, _, _ := current.Insert(key, bytes)
+				s.root.Store(updated)
+				
+				res, err := call.AllocResults()
+				if err == nil {
+					res.SetValue(valPtr)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *RadixServer) Identify(ctx context.Context, call Radix_identify) error {
+	key, err := call.Args().Key()
+	if err != nil {
+		return err
+	}
+	
+	valPtr, err := call.Args().Value()
+	if err != nil {
+		return err
+	}
+
+	current := s.root.Load()
+	val, found := current.Get(key)
+
+	res, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+
+	if found {
+		msg, err := capnp.Unmarshal(val)
+		if err == nil {
+			rootPtr, err := msg.Root()
+			if err == nil {
+				res.SetValue(rootPtr)
+			}
+		}
+		return nil
+	}
+
+	// Insert if not found
+	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err == nil {
+		err = msg.SetRoot(valPtr)
+		if err == nil {
+			bytes, err := seg.Message().Marshal()
+			if err == nil {
+				updated, _, _ := current.Insert(key, bytes)
+				s.root.Store(updated)
+				res.SetValue(valPtr)
+			}
+		}
+	}
+
+	return nil
 }

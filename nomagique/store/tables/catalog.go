@@ -5,11 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,15 +28,14 @@ import (
 const anonymousCredential = "anonymous"
 
 /*
-Catalog manages connections and schemas for canonical Iceberg tables.
+Catalog manages connections and tables for generic Iceberg operations.
+Zero domain logic, pure generic Iceberg catalog interface.
 */
 type Catalog struct {
 	underlying    icecat.Catalog
 	awsConfig     *aws.Config
 	storageConfig *StorageConfig
-	cacheMutex    sync.RWMutex
-	cachedEpochs  []int64
-	epochsLoaded  time.Time
+	mu            sync.RWMutex
 }
 
 /*
@@ -52,6 +48,8 @@ func Wrap(underlying icecat.Catalog) *Catalog {
 }
 
 func (catalog *Catalog) SetStorageConfig(cfg *StorageConfig) {
+	catalog.mu.Lock()
+	defer catalog.mu.Unlock()
 	catalog.storageConfig = cfg
 }
 
@@ -69,7 +67,6 @@ func Open(ctx context.Context) *Catalog {
 			"[iceberg] storage.iceberg.uri and storage.iceberg.warehouse are both required",
 			nil,
 		))
-
 		return nil
 	}
 
@@ -127,7 +124,6 @@ func Open(ctx context.Context) *Catalog {
 	}
 
 	awsCfg, err := config.LoadDefaultConfig(ctx, awsOpts...)
-
 	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -150,15 +146,13 @@ func Open(ctx context.Context) *Catalog {
 		errnie.Error(err)
 	}
 
-	connected, err := rest.NewCatalog(ctx, "seaweed", icebergConfig.URI, restOpts...)
-
+	connected, err := rest.NewCatalog(ctx, "default", icebergConfig.URI, restOpts...)
 	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to connect to catalog "+icebergConfig.URI,
 			err,
 		))
-
 		return nil
 	}
 
@@ -169,142 +163,10 @@ func Open(ctx context.Context) *Catalog {
 	return cat
 }
 
-/*
-Ensure creates missing canonical tables and applies configured properties to existing tables.
-*/
-func (catalog *Catalog) Ensure(ctx context.Context) error {
-	if err := catalog.ensureBuckets(ctx); err != nil {
-		return err
-	}
-
-	properties := iceberg.Properties{}
-
-	if catalog.storageConfig != nil {
-		retries := catalog.storageConfig.Iceberg.CommitRetries
-
-		if retries > 0 {
-			properties[table.CommitNumRetriesKey] = strconv.Itoa(retries)
-		}
-	}
-
-	namespace := table.Identifier{Namespace}
-
-	if err := catalog.underlying.CreateNamespace(ctx, namespace, nil); err != nil {
-		if !errors.Is(err, icecat.ErrNamespaceAlreadyExists) {
-			return errnie.Error(errnie.Err(
-				errnie.BadGateway,
-				"[iceberg] failed to create namespace "+Namespace,
-				err,
-			))
-		}
-	}
-
-	families := []struct {
-		name         string
-		schema       *iceberg.Schema
-		partitioning iceberg.PartitionSpec
-	}{
-		{SpotTicker, MeasurementSchema(), MeasurementPartitioning()},
-		{SpotTrade, MeasurementSchema(), MeasurementPartitioning()},
-		{SpotLevel3, MeasurementSchema(), MeasurementPartitioning()},
-		{Measurements, MeasurementSchema(), MeasurementPartitioning()},
-		{Runs, RunsSchema(), RunsPartitioning()},
-		{Excursions, ExcursionsSchema(), ExcursionsPartitioning()},
-	}
-
-	for _, family := range families {
-		if err := catalog.ensureTable(
-			ctx, family.name, family.schema, family.partitioning, properties,
-		); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (catalog *Catalog) ensureTable(
-	ctx context.Context,
-	name string,
-	schema *iceberg.Schema,
-	partitioning iceberg.PartitionSpec,
-	properties iceberg.Properties,
-) error {
-	ctx = catalog.context(ctx)
-	identifier := table.Identifier{Namespace, name}
-	exists, err := catalog.underlying.CheckTableExists(ctx, identifier)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to check table "+name,
-			err,
-		))
-	}
-
-	if exists {
-		return catalog.ensureProperties(ctx, name, properties)
-	}
-
-	if _, err := catalog.underlying.CreateTable(
-		ctx, identifier, schema,
-		icecat.WithPartitionSpec(&partitioning), icecat.WithProperties(properties),
-	); err != nil {
-		if errors.Is(err, icecat.ErrTableAlreadyExists) {
-			return catalog.ensureProperties(ctx, name, properties)
-		}
-
-		return errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to create table "+name,
-			err,
-		))
-	}
-
-	return nil
-}
-
-func (catalog *Catalog) ensureProperties(ctx context.Context, name string, properties iceberg.Properties) error {
-	if len(properties) == 0 {
-		return nil
-	}
-
-	loaded, err := catalog.Load(ctx, name)
-
-	if err != nil {
-		return err
-	}
-
-	changed := iceberg.Properties{}
-
-	for key, value := range properties {
-		if loaded.Properties()[key] != value {
-			changed[key] = value
-		}
-	}
-
-	if len(changed) == 0 {
-		return nil
-	}
-
-	transaction := loaded.NewTransaction()
-
-	if err := transaction.SetProperties(changed); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "[iceberg] invalid properties for "+name, err))
-	}
-
-	if _, err := transaction.Commit(ctx); err != nil {
-		return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] failed to configure "+name, err))
-	}
-
-	return nil
-}
-
 func (catalog *Catalog) ensureBuckets(ctx context.Context) error {
 	if catalog.storageConfig == nil {
 		return nil
 	}
-
 	return ensureStorageBuckets(ctx, &catalog.storageConfig.S3, &catalog.storageConfig.Iceberg)
 }
 
@@ -324,7 +186,6 @@ func ensureStorageBuckets(
 
 	if icebergConfig != nil && icebergConfig.Warehouse != "" {
 		tableBucket := parseBucketName(icebergConfig.Warehouse)
-
 		if tableBucket != "" {
 			if err := ensureTableBucket(ctx, client, s3Config.Endpoint, tableBucket); err != nil {
 				return err
@@ -351,7 +212,6 @@ func ensureTableBucket(
 	payload := fmt.Appendf(nil, `{"name":"%s","format":"ICEBERG"}`, name)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
-
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
@@ -360,42 +220,27 @@ func ensureTableBucket(
 		))
 	}
 
-	req.Header.Set("X-Amz-Target", "S3Tables.CreateTableBucket")
 	req.Header.Set("Content-Type", "application/json")
-
 	res, err := client.Do(req)
-
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
-			"[iceberg] failed to create table bucket "+name,
+			"[iceberg] failed to execute table bucket request for "+name,
 			err,
 		))
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusConflict {
 		return nil
 	}
 
-	body, readErr := io.ReadAll(res.Body)
-
-	if readErr != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to read response body for table bucket "+name,
-			readErr,
-		))
-	}
-
-	if strings.Contains(string(body), "BucketAlreadyExists") {
-		return nil
-	}
-
 	return errnie.Error(errnie.Err(
 		errnie.BadGateway,
-		fmt.Sprintf("[iceberg] unexpected response creating table bucket %s: %d %s", name, res.StatusCode, string(body)),
+		fmt.Sprintf("[iceberg] unexpected response creating table bucket %s: %d", name, res.StatusCode),
 		nil,
 	))
 }
@@ -407,9 +252,7 @@ func ensureS3Bucket(
 	name string,
 ) error {
 	target := strings.TrimRight(endpoint, "/") + "/" + name
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, nil)
-
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
@@ -419,248 +262,86 @@ func ensureS3Bucket(
 	}
 
 	res, err := client.Do(req)
-
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
-			"[iceberg] failed to create bucket "+name,
+			"[iceberg] failed to execute bucket request for "+name,
 			err,
 		))
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
-	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusNoContent || res.StatusCode == http.StatusConflict {
-		return nil
-	}
-
-	body, readErr := io.ReadAll(res.Body)
-
-	if readErr != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to read response body for bucket "+name,
-			readErr,
-		))
-	}
-
-	if strings.Contains(string(body), "BucketAlreadyOwnedByYou") || strings.Contains(string(body), "BucketAlreadyExists") {
+	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusConflict {
 		return nil
 	}
 
 	return errnie.Error(errnie.Err(
 		errnie.BadGateway,
-		fmt.Sprintf("[iceberg] unexpected response creating bucket %s: %d %s", name, res.StatusCode, string(body)),
+		fmt.Sprintf("[iceberg] unexpected response creating bucket %s: %d", name, res.StatusCode),
 		nil,
 	))
 }
 
 func parseBucketName(location string) string {
 	trimmed := strings.Trim(strings.TrimPrefix(location, "s3://"), "/")
-
 	if bucket, _, found := strings.Cut(trimmed, "/"); found {
 		return bucket
 	}
-
 	return trimmed
 }
 
 /*
-Load returns one of the canonical Hindsight tables.
+Load loads an Iceberg table by namespace and table name.
 */
-func (catalog *Catalog) Load(ctx context.Context, name string) (*table.Table, error) {
-	loaded, err := catalog.underlying.LoadTable(catalog.context(ctx), table.Identifier{Namespace, name})
-
+func (catalog *Catalog) Load(ctx context.Context, namespace, name string) (*table.Table, error) {
+	loaded, err := catalog.underlying.LoadTable(catalog.context(ctx), table.Identifier{namespace, name})
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.BadGateway,
-			"[iceberg] failed to load table "+name,
+			fmt.Sprintf("[iceberg] failed to load table %s.%s", namespace, name),
+			err,
+		))
+	}
+	return loaded, nil
+}
+
+/*
+CreateTable creates or loads an Iceberg table generically.
+*/
+func (catalog *Catalog) CreateTable(
+	ctx context.Context,
+	namespace, name string,
+	schema *iceberg.Schema,
+) (*table.Table, error) {
+	ctx = catalog.context(ctx)
+	ident := table.Identifier{namespace, name}
+
+	exists, err := catalog.underlying.CheckTableExists(ctx, ident)
+	if err == nil && exists {
+		return catalog.Load(ctx, namespace, name)
+	}
+
+	tbl, err := catalog.underlying.CreateTable(ctx, ident, schema, nil)
+	if err != nil {
+		if errors.Is(err, icecat.ErrTableAlreadyExists) {
+			return catalog.Load(ctx, namespace, name)
+		}
+		return nil, errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			fmt.Sprintf("[iceberg] failed to create table %s.%s", namespace, name),
 			err,
 		))
 	}
 
-	return loaded, nil
+	return tbl, nil
 }
 
 func (catalog *Catalog) context(ctx context.Context) context.Context {
 	if catalog.awsConfig == nil {
 		return ctx
 	}
-
 	return utils.WithAwsConfig(ctx, catalog.awsConfig)
-}
-
-/*
-RecordRun appends one process run fact to the canonical runs metadata table.
-*/
-func (catalog *Catalog) RecordRun(ctx context.Context, run Run) error {
-	tbl, err := catalog.Load(ctx, Runs)
-
-	if err != nil {
-		return err
-	}
-
-	reader, err := runRecords(tbl.Schema(), []Run{run})
-
-	if err != nil {
-		return err
-	}
-
-	defer reader.Release()
-
-	_, appendErr := tbl.Append(ctx, reader, nil)
-
-	if appendErr != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to record run",
-			appendErr,
-		))
-	}
-
-	return nil
-}
-
-/*
-Runs reads all runs from the runs metadata table, ordered newest first.
-*/
-func (catalog *Catalog) Runs(ctx context.Context) ([]Run, error) {
-	tbl, err := catalog.Load(ctx, Runs)
-
-	if err != nil {
-		return nil, err
-	}
-
-	tasks, err := tbl.Scan().PlanFiles(ctx)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to plan runs scan",
-			err,
-		))
-	}
-
-	_, batches, err := tbl.Scan().ReadTasks(ctx, tasks)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to read runs tasks",
-			err,
-		))
-	}
-
-	var allRuns []Run
-
-	for batch, batchErr := range batches {
-		if batchErr != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.BadGateway,
-				"[iceberg] runs batch decode failure",
-				batchErr,
-			))
-		}
-
-		if batch != nil {
-			allRuns = append(allRuns, readRuns(batch)...)
-			batch.Release()
-		}
-	}
-
-	sort.Slice(allRuns, func(leftIndex, rightIndex int) bool {
-		return allRuns[leftIndex].Epoch > allRuns[rightIndex].Epoch
-	})
-
-	seen := make(map[int64]struct{}, len(allRuns))
-	runs := make([]Run, 0, len(allRuns))
-
-	for _, run := range allRuns {
-		if _, exists := seen[run.Epoch]; exists {
-			continue
-		}
-
-		seen[run.Epoch] = struct{}{}
-		runs = append(runs, run)
-	}
-
-	return runs, nil
-}
-
-/*
-Excursions reads all excursions for a given epoch matching an optional filter expression.
-*/
-func (catalog *Catalog) Excursions(
-	ctx context.Context,
-	epoch int64,
-	filter iceberg.BooleanExpression,
-) ([]ExcursionRecord, error) {
-	tbl, err := catalog.Load(ctx, Excursions)
-
-	if err != nil {
-		return nil, err
-	}
-
-	expression := filter
-
-	if epoch > 0 {
-		epochExpr := iceberg.EqualTo(iceberg.Reference("epoch"), epoch)
-
-		if expression != nil {
-			expression = iceberg.NewAnd(epochExpr, expression)
-		}
-
-		if expression == nil {
-			expression = epochExpr
-		}
-	}
-
-	var options []table.ScanOption
-
-	if expression != nil {
-		options = append(options, table.WithRowFilter(expression))
-	}
-
-	tasks, err := tbl.Scan(options...).PlanFiles(ctx)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to plan excursions scan",
-			err,
-		))
-	}
-
-	_, batches, err := tbl.Scan(options...).ReadTasks(ctx, tasks)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.BadGateway,
-			"[iceberg] failed to read excursions tasks",
-			err,
-		))
-	}
-
-	var allExcursions []ExcursionRecord
-
-	for batch, batchErr := range batches {
-		if batchErr != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.BadGateway,
-				"[iceberg] excursions batch decode failure",
-				batchErr,
-			))
-		}
-
-		if batch != nil {
-			allExcursions = append(allExcursions, readExcursions(batch)...)
-			batch.Release()
-		}
-	}
-
-	sort.Slice(allExcursions, func(leftIndex, rightIndex int) bool {
-		return allExcursions[leftIndex].AnchorTick < allExcursions[rightIndex].AnchorTick
-	})
-
-	return allExcursions, nil
 }
