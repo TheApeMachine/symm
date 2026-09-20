@@ -60,7 +60,7 @@ jobs:
           go mod init probe
           go get capnproto.org/go/capnp/v3@v3.1.0-alpha.2
           cp "$GITHUB_WORKSPACE/scripts/check-capnp-frame.go" main.go
-          go run . "$GITHUB_WORKSPACE/repair-artifacts/dependency-probe" | tee "$GITHUB_WORKSPACE/repair-artifacts/dependency-probe/go-frames.txt"
+          go run main.go "$GITHUB_WORKSPACE/repair-artifacts/dependency-probe" | tee "$GITHUB_WORKSPACE/repair-artifacts/dependency-probe/go-frames.txt"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
