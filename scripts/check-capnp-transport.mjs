@@ -1,7 +1,7 @@
 // Dependency acceptance probe, not a SYMM correctness or migration test.
 // Exercises the installed library over a real TCP socket without changing it.
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -16,9 +16,7 @@ function bootstrap(questionId) {
   return Buffer.from(serializeRpcMessage({ type: 'bootstrap', bootstrap: { questionId } }));
 }
 
-// A valid Capnp stream frame with an extra unreferenced segment. Existing
-// segment-relative pointers retain their offsets. The segment table is padded
-// to an eight-byte boundary as required by the standard framing.
+// Add a valid unreferenced segment; no schema-level payload is rewritten.
 function twoSegments(single) {
   assert.equal(single.readUInt32LE(0), 0, 'fixture must start as a single segment');
   const frame = Buffer.alloc(single.length + 16);
@@ -54,13 +52,14 @@ async function probe(name, frames, fragmented = false) {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
   });
-  const port = server.address().port;
-  const transport = await EzRpcTransport.connect('127.0.0.1', port);
+  const transport = await EzRpcTransport.connect('127.0.0.1', server.address().port);
   transport.onError = (error) => errors.push(error.message);
   const received = [];
   let failure = null;
   try {
     for (const frame of frames) {
+      // This is only the transport control. Cross-implementation assertions
+      // below and in check-capnp-frame.go use independent expected values.
       const expected = deserializeRpcMessage(new Uint8Array(frame));
       const deadline = new AbortController();
       let actual;
@@ -98,8 +97,21 @@ await writeFile(path.join(output, 'multi.capnp'), multi);
 await probe('single-segment control', [single]);
 await probe('fragmented single-segment control', [fragmented], true);
 await probe('two complete messages in one socket write', [single, fragmented]);
-await probe('valid two-segment message', [multi]);
-await probe('two-segment message followed by single-segment message', [multi, single]);
+await probe('valid two-segment frame', [multi]);
+await probe('two-segment frame followed by single-segment frame', [multi, single]);
+const cross = { name: 'native Go bootstrap decoded by TypeScript', expected: 41, actual: null, passed: false, failure: null };
+try {
+  const bytes = await readFile(path.join(output, 'go-bootstrap.capnp'));
+  const decoded = deserializeRpcMessage(new Uint8Array(bytes));
+  assert.equal(decoded.type, 'bootstrap');
+  cross.actual = decoded.bootstrap.questionId;
+  assert.equal(cross.actual, cross.expected, 'question ID must survive crossing implementations');
+  cross.passed = true;
+} catch (error) {
+  cross.failure = error.stack ?? String(error);
+}
+observations.push(cross);
+console.log(JSON.stringify(cross));
 await writeFile(path.join(output, 'typescript-results.json'), JSON.stringify({
   dependency: '@naeemo/capnp@0.9.3',
   node: process.version,
