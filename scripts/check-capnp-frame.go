@@ -1,10 +1,10 @@
 //go:build ignore
 
-// This is run in an isolated test module by capnp-repair.yml. It deliberately
-// uses the project's Capnp version, not a replacement serialization library.
+// Standalone dependency check: use the actual Capnp RPC schema, not a replica.
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,40 +13,76 @@ import (
 	protocol "capnproto.org/go/capnp/v3/std/capnp/rpc"
 )
 
-func verify(filename string, expected uint32) error {
+type result struct {
+	File string `json:"file"`
+	Expected uint32 `json:"expected"`
+	Actual uint32 `json:"actual"`
+	Passed bool `json:"passed"`
+	Failure string `json:"failure,omitempty"`
+}
+
+func readQuestion(filename string) (uint32, error) {
 	encoded, err := os.ReadFile(filename)
-	if err != nil {
-		return err
-	}
+	if err != nil { return 0, err }
 	message, err := capnp.Unmarshal(encoded)
-	if err != nil {
-		return err
-	}
+	if err != nil { return 0, err }
 	defer message.Release()
 	root, err := protocol.ReadRootMessage(message)
-	if err != nil {
-		return err
+	if err != nil { return 0, err }
+	if root.Which() != protocol.Message_Which_bootstrap {
+		return 0, fmt.Errorf("expected bootstrap, got %v", root.Which())
 	}
 	bootstrap, err := root.Bootstrap()
-	if err != nil {
-		return err
+	if err != nil { return 0, err }
+	return bootstrap.QuestionId(), nil
+}
+
+func writeFixture(directory string) error {
+	message, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil { return err }
+	defer message.Release()
+	root, err := protocol.NewRootMessage(segment)
+	if err != nil { return err }
+	bootstrap, err := root.NewBootstrap()
+	if err != nil { return err }
+	bootstrap.SetQuestionId(41)
+	encoded, err := message.Marshal()
+	if err != nil { return err }
+	return os.WriteFile(filepath.Join(directory, "go-bootstrap.capnp"), encoded, 0644)
+}
+
+func run() error {
+	if len(os.Args) == 3 && os.Args[1] == "--write" {
+		return writeFixture(os.Args[2])
 	}
-	if bootstrap.QuestionId() != expected {
-		return fmt.Errorf("%s: question ID %d, expected %d", filename, bootstrap.QuestionId(), expected)
+	if len(os.Args) != 2 { return fmt.Errorf("usage: check-capnp-frame [--write] DIRECTORY") }
+	directory := os.Args[1]
+	results := []result{
+		{File: "go-bootstrap.capnp", Expected: 41},
+		{File: "single.capnp", Expected: 41},
+		{File: "multi.capnp", Expected: 43},
 	}
-	fmt.Printf("PASS %s: Go Capnp decoded question ID %d across %d segments\n", filepath.Base(filename), expected, message.NumSegments())
+	failed := false
+	for index := range results {
+		entry := &results[index]
+		actual, err := readQuestion(filepath.Join(directory, entry.File))
+		entry.Actual = actual
+		entry.Passed = err == nil && actual == entry.Expected
+		if err != nil { entry.Failure = err.Error() }
+		if err == nil && !entry.Passed { entry.Failure = "question ID changed across implementations" }
+		if !entry.Passed { failed = true }
+	}
+	encoded, err := json.MarshalIndent(results, "", "  ")
+	if err != nil { return err }
+	if err := os.WriteFile(filepath.Join(directory, "go-results.json"), append(encoded, '\n'), 0644); err != nil { return err }
+	fmt.Println(string(encoded))
+	if failed { return fmt.Errorf("Capnp interoperability assertions failed; see go-results.json") }
 	return nil
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: check-capnp-frame DIRECTORY")
-		os.Exit(2)
-	}
-	for filename, expected := range map[string]uint32{"single.capnp": 41, "multi.capnp": 43} {
-		if err := verify(filepath.Join(os.Args[1], filename), expected); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
