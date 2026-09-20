@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 	"sort"
@@ -65,16 +64,20 @@ func (s *PaceServer) WriteParams(ctx context.Context, callArgs Pace_write_Params
 	targetLog := restLog
 	if rank < s.Band {
 		targetLog = lowerLog
-	} else if rank > 1.0-s.Band {
+	}
+
+	if rank > 1.0-s.Band {
 		targetLog = upperLog
 	}
 
 	// 3. Smooth target log-alpha with EMA
+	prevEma := s.ema
+	s.ema = s.Gain*targetLog + (1.0-s.Gain)*prevEma
+
 	if s.count == 0 {
 		s.ema = targetLog
-	} else {
-		s.ema = s.Gain*targetLog + (1.0-s.Gain)*s.ema
 	}
+
 	s.count++
 
 	// 4. Clamp log space
@@ -106,17 +109,6 @@ func (s *PaceServer) Done(ctx context.Context, call Pace_done) error {
 	return nil
 }
 
-
-
-type PaceNode types.StreamNode[any, any]
-
-func NewPace() PaceNode {
-	server := &PaceServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewPace() *PaceServer {
+	return &PaceServer{}
 }

@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/theapemachine/symm/nomagique/algo"
@@ -12,10 +11,10 @@ TaskLearnerServer forecasts or updates a task-head RLS model using the streaming
 */
 type TaskLearnerServer struct {
 	Downstream func(context.Context, algo.RLSPosterior) error
-	
+
 	state   algo.RLSState
-	predict types.StreamNode[any, any]
-	update  types.StreamNode[any, any]
+	predict *algo.RLSPredictionServer
+	update  *algo.RLSUpdateServer
 	lambda  float64
 }
 
@@ -41,36 +40,33 @@ func NewTaskLearnerServer(dim int, lambda float64) *TaskLearnerServer {
 	}
 }
 
+func NewTaskLearner() *TaskLearnerServer {
+	return NewTaskLearnerServer(1, 0.99)
+}
+
 func (s *TaskLearnerServer) Evaluate(features []float64, target float64, observed bool) algo.RLSPosterior {
 	// Prepare state design
 	if len(s.state.Design) == len(features)+1 {
 		copy(s.state.Design, features)
 		s.state.Design[len(features)] = 1.0 // Bias
-	} else if len(s.state.Design) == len(features) {
+	}
+	if len(s.state.Design) == len(features) {
 		copy(s.state.Design, features)
 	}
 
-	var forecast algo.RLSForecast
-	s.predict.SetDownstreamAny(func(ctx context.Context, in any) error {
-		forecast = in.(algo.RLSForecast)
-		return nil
-	})
-	_ = s.predict.WriteAny(context.Background(), s.state)
-	
+	forecast := s.predict.Forecast(s.state)
+
 	var posterior algo.RLSPosterior
 	if !observed {
 		posterior = algo.RLSPosterior{RLSForecast: forecast}
-	} else {
+	}
+	if observed {
 		obs := algo.RLSObservation{
 			RLSForecast: forecast,
 			Lambda:      s.lambda,
 			Target:      target,
 		}
-		s.update.SetDownstreamAny(func(ctx context.Context, in any) error {
-			posterior = in.(algo.RLSPosterior)
-			return nil
-		})
-		_ = s.update.WriteAny(context.Background(), obs)
+		posterior = s.update.Update(obs)
 	}
 
 	s.state = posterior.RLSForecast.RLSState
@@ -82,18 +78,18 @@ func (s *TaskLearnerServer) Write(ctx context.Context, call TaskLearner_write) e
 	if err != nil {
 		return err
 	}
-	
+
 	featuresList, err := args.Features()
 	if err != nil {
 		return err
 	}
-	
+
 	n := featuresList.Len()
 	features := make([]float64, n)
 	for i := 0; i < n; i++ {
 		features[i] = featuresList.At(i)
 	}
-	
+
 	target := args.Target()
 	observed := args.Observed()
 
@@ -102,24 +98,10 @@ func (s *TaskLearnerServer) Write(ctx context.Context, call TaskLearner_write) e
 	if s.Downstream != nil {
 		return s.Downstream(ctx, posterior)
 	}
+
 	return nil
 }
 
 func (s *TaskLearnerServer) Done(ctx context.Context, call TaskLearner_done) error {
 	return nil
-}
-
-
-
-type TaskLearnerNode types.StreamNode[any, any]
-
-func NewTaskLearner() TaskLearnerNode {
-	server := &TaskLearnerServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
 }

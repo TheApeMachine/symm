@@ -1,22 +1,17 @@
 package associative
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"math"
 )
 
 type GridServer struct {
-	prev  []float64
-	mean  []float64
-	m2    []float64
-	count float64
+	prev       []float64
+	mean       []float64
+	m2         []float64
+	count      float64
 	Downstream func(context.Context, []byte) error
-}
-
-func NewGridServer() *GridServer {
-	return &GridServer{}
 }
 
 func (s *GridServer) Write(ctx context.Context, call Grid_write) error {
@@ -24,17 +19,17 @@ func (s *GridServer) Write(ctx context.Context, call Grid_write) error {
 	if err != nil {
 		return err
 	}
-	
+
 	list, err := args.Impulse()
 	if err != nil {
 		return err
 	}
-	
+
 	n := list.Len()
 	if n == 0 {
 		return nil
 	}
-	
+
 	impulse := make([]float64, n)
 	for i := 0; i < n; i++ {
 		impulse[i] = list.At(i)
@@ -51,7 +46,7 @@ func (s *GridServer) Write(ctx context.Context, call Grid_write) error {
 		copy(s.prev, impulse)
 		copy(s.mean, impulse)
 		s.count = 1
-		
+
 		return s.Downstream(ctx, make([]byte, 32))
 	}
 
@@ -79,7 +74,7 @@ func (s *GridServer) Write(ctx context.Context, call Grid_write) error {
 	if n > 2 {
 		threshold += globalStdDev
 	}
-	
+
 	bestCell := -1
 	maxPull := -1.0
 
@@ -116,17 +111,6 @@ func (s *GridServer) Done(ctx context.Context, call Grid_done) error {
 	return nil
 }
 
-
-
-type GridNode types.StreamNode[any, any]
-
-func NewGrid() GridNode {
-	server := &GridServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewGrid() *GridServer {
+	return &GridServer{}
 }

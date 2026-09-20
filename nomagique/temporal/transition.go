@@ -1,12 +1,14 @@
 package temporal
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type TransitionServer struct {
-	Downstream func(context.Context, []byte) error
+	Downstream types.DataSink
 	previous   []byte
 }
 
@@ -17,7 +19,9 @@ func (s *TransitionServer) Write(ctx context.Context, call Transition_write) err
 		if len(s.previous) == 0 {
 			s.previous = make([]byte, len(a))
 			copy(s.previous, a)
-		} else {
+		}
+
+		if len(s.previous) > 0 && (len(s.previous) != len(a) || string(s.previous) != string(a)) {
 			result = make([]byte, len(s.previous)+2+len(a))
 			copy(result, s.previous)
 			result[len(s.previous)] = '-'
@@ -27,24 +31,24 @@ func (s *TransitionServer) Write(ctx context.Context, call Transition_write) err
 			copy(s.previous, a)
 		}
 	}
-	return s.Downstream(ctx, result)
-}
 
-func (s *TransitionServer) Done(ctx context.Context, call Transition_done) error {
+	if len(result) > 0 && capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.DataSink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *TransitionServer) Done(ctx context.Context, call Transition_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type TransitionNode types.StreamNode[any, any]
-
-func NewTransition() TransitionNode {
-	server := &TransitionServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewTransition() *TransitionServer {
+	return &TransitionServer{}
 }

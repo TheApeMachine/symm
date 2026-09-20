@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	context "context"
 	"fmt"
 
@@ -166,7 +165,9 @@ func (temporalLedger *TemporalLedgerServer) Write(ctx context.Context, call Temp
 				Horizon:     int(issueArg.Horizon()),
 			}
 		}
-	} else if args.HasResolve() {
+	}
+
+	if args.HasResolve() {
 		resolveArg, err := args.Resolve()
 		if err == nil {
 			cmd.Resolve = &ResolveIntent{
@@ -448,17 +449,6 @@ func (temporalLedger *TemporalLedgerServer) prune() {
 	}
 }
 
-
-
-type TemporalLedgerNode types.StreamNode[any, any]
-
-func NewTemporalLedger() TemporalLedgerNode {
-	server := &TemporalLedgerServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewTemporalLedger() *TemporalLedgerServer {
+	return &TemporalLedgerServer{}
 }

@@ -1,7 +1,6 @@
 package cognition
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -25,17 +24,6 @@ func (s *BasinKeyServer) Done(ctx context.Context, call BasinKey_done) error {
 	return nil
 }
 
-
-
-type BasinKeyNode types.StreamNode[any, any]
-
-func NewBasinKey() BasinKeyNode {
-	server := &BasinKeyServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewBasinKey() *BasinKeyServer {
+	return &BasinKeyServer{}
 }

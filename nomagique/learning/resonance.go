@@ -18,7 +18,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"context"
 	"github.com/theapemachine/symm/nomagique/types"
 
 	"gonum.org/v1/gonum/floats"
@@ -242,12 +241,12 @@ type ManifoldReading struct {
 
 // ManifoldCommand orchestrates manifold execution.
 type ManifoldCommand struct {
-	Settle   *SettleIntent
-	Forecast *ForecastIntent
-	Batch    *BatchIntent
-	Alpha    *AlphaIntent
-	Reading  *ReadingIntent
-	Retention *RetentionIntent
+	Settle      *SettleIntent
+	Forecast    *ForecastIntent
+	Batch       *BatchIntent
+	Alpha       *AlphaIntent
+	Reading     *ReadingIntent
+	Retention   *RetentionIntent
 	ObserveTask *TaskIntent
 }
 
@@ -1630,17 +1629,6 @@ func (resonanceManifold *ResonanceManifoldServer) buildLearnPipeline() types.Val
 	))
 }
 
-
-
-type ResonanceManifoldNode types.StreamNode[any, any]
-
-func NewResonanceManifold() ResonanceManifoldNode {
-	server := &ResonanceManifoldServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewResonanceManifold() *ResonanceManifoldServer {
+	return &ResonanceManifoldServer{}
 }

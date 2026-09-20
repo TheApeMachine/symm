@@ -2,12 +2,14 @@ package probability
 
 import (
 	"context"
-	"github.com/theapemachine/symm/nomagique/types"
 	"math"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type ShannonAmbiguityServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	vals       []float64
 	total      float64
 }
@@ -28,22 +30,23 @@ func (s *ShannonAmbiguityServer) Write(ctx context.Context, call ShannonAmbiguit
 		result = entropy / math.Log(float64(len(s.vals)))
 	}
 
-	return s.Downstream(ctx, result)
-}
-
-func (s *ShannonAmbiguityServer) Done(ctx context.Context, call ShannonAmbiguity_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
-type ShannonAmbiguityNode types.StreamNode[any, any]
+func (s *ShannonAmbiguityServer) Done(ctx context.Context, call ShannonAmbiguity_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-func NewShannonAmbiguity() ShannonAmbiguityNode {
-	server := &ShannonAmbiguityServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewShannonAmbiguity() *ShannonAmbiguityServer {
+	return &ShannonAmbiguityServer{}
 }

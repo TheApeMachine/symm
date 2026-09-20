@@ -1,7 +1,6 @@
 package cognition
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,17 +21,6 @@ func (s *SensoryKeyServer) Done(ctx context.Context, call SensoryKey_done) error
 	return nil
 }
 
-
-
-type SensoryKeyNode types.StreamNode[any, any]
-
-func NewSensoryKey() SensoryKeyNode {
-	server := &SensoryKeyServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewSensoryKey() *SensoryKeyServer {
+	return &SensoryKeyServer{}
 }

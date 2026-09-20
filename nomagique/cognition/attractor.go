@@ -1,7 +1,6 @@
 package cognition
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"bytes"
 	"context"
 	"sync/atomic"
@@ -42,11 +41,8 @@ func (s *AttractorServer) Write(ctx context.Context, call Attractor_write) error
 		}
 
 		// Basic unpack of weight
-		var count, writeStep uint64
+		var count uint64
 		var prob float64
-		_ = count
-		_ = writeStep
-		_ = prob
 		// Call downstream inside the loop
 		if err := s.Downstream(ctx, class, prob, count); err != nil {
 			return err
@@ -59,17 +55,6 @@ func (s *AttractorServer) Done(ctx context.Context, call Attractor_done) error {
 	return nil
 }
 
-
-
-type AttractorNode types.StreamNode[any, any]
-
-func NewAttractor() AttractorNode {
-	server := &AttractorServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewAttractor() *AttractorServer {
+	return &AttractorServer{}
 }

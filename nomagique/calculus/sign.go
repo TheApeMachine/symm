@@ -1,12 +1,14 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type SignServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
 func (s *SignServer) Write(ctx context.Context, call Sign_write) error {
@@ -14,28 +16,29 @@ func (s *SignServer) Write(ctx context.Context, call Sign_write) error {
 	result := float64(0)
 	if a < 0 {
 		result = -1
-	} else if a > 0 {
+	}
+
+	if a > 0 {
 		result = 1
 	}
 
-	return s.Downstream(ctx, result)
-}
-
-func (s *SignServer) Done(ctx context.Context, call Sign_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *SignServer) Done(ctx context.Context, call Sign_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type SignNode types.StreamNode[any, any]
-
-func NewSign() SignNode {
-	server := &SignServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewSign() *SignServer {
+	return &SignServer{}
 }

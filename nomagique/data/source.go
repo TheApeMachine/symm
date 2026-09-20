@@ -11,10 +11,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/types"
 )
-
-type SourceNode types.StreamNode[any, any]
 
 type SourceImpl struct {
 	Downstream func(context.Context, capnp.Ptr) error
@@ -30,25 +27,18 @@ type WSMessage struct {
 	} `json:"subscription,omitempty"`
 }
 
-func NewSource() SourceNode {
-	impl := &SourceImpl{}
+func NewSource() *SourceImpl {
+	return &SourceImpl{
+		focusChan: make(chan string, 16),
+	}
+}
 
-	return types.NewStreamNode(
-		impl,
-		func(ctx context.Context, payload any) error {
-			if ch, ok := ctx.Value("focusChan").(chan string); ok {
-				impl.focusChan = ch
-			}
-			// Trigger initialization of the websocket when the pipeline starts
-			go impl.startKrakenFeed(ctx)
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			impl.Downstream = func(c context.Context, ptr capnp.Ptr) error {
-				return next(c, ptr)
-			}
-		},
-	)
+func (s *SourceImpl) Start(ctx context.Context) {
+	if ch, ok := ctx.Value("focusChan").(chan string); ok {
+		s.focusChan = ch
+	}
+
+	go s.startKrakenFeed(ctx)
 }
 
 func (s *SourceImpl) startKrakenFeed(ctx context.Context) {
@@ -64,8 +54,8 @@ func (s *SourceImpl) startKrakenFeed(ctx context.Context) {
 		errnie.Error(errnie.Err(errnie.IO, "[source] failed to connect to kraken", err))
 		return
 	}
-	s.conn = conn
 
+	s.conn = conn
 	errnie.Info("[source] connected to Kraken WS")
 
 	go s.readLoop(ctx)
@@ -74,6 +64,7 @@ func (s *SourceImpl) startKrakenFeed(ctx context.Context) {
 
 func (s *SourceImpl) readLoop(ctx context.Context) {
 	defer s.conn.Close()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -83,10 +74,11 @@ func (s *SourceImpl) readLoop(ctx context.Context) {
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					errnie.Error(errnie.Err(errnie.IO, "[source] unexpected close error", err))
-				} else {
+				}
+				if !websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					errnie.Warn("[source] connection closed")
 				}
-				// Attempt to reconnect after a delay, or just return for now
+
 				return
 			}
 
@@ -141,6 +133,7 @@ func (s *SourceImpl) subscribeLoop(ctx context.Context) {
 			}
 			sub.Subscription.Name = "trade"
 			b, _ := sonic.Marshal(sub)
+
 			if s.conn != nil {
 				_ = s.conn.WriteMessage(websocket.TextMessage, b)
 			}

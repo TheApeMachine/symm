@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -49,17 +48,6 @@ func (s *LinearPredictionServer) Done(ctx context.Context, call LinearPrediction
 	return nil
 }
 
-
-
-type LinearPredictionNode types.StreamNode[any, any]
-
-func NewLinearPrediction() LinearPredictionNode {
-	server := &LinearPredictionServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewLinearPrediction() *LinearPredictionServer {
+	return &LinearPredictionServer{}
 }

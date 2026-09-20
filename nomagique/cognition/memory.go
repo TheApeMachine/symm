@@ -1,7 +1,6 @@
 package cognition
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"sync/atomic"
 
@@ -112,17 +111,6 @@ func (s *MemoryServer) Done(ctx context.Context, call Memory_done) error {
 	return nil
 }
 
-
-
-type MemoryNode types.StreamNode[any, any]
-
-func NewMemory() MemoryNode {
-	server := &MemoryServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewMemory() *MemoryServer {
+	return &MemoryServer{}
 }

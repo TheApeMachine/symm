@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 
@@ -117,17 +116,6 @@ func (s *LinearFitServer) Done(ctx context.Context, call LinearFit_done) error {
 	return nil
 }
 
-
-
-type LinearFitNode types.StreamNode[any, any]
-
-func NewLinearFit() LinearFitNode {
-	server := &LinearFitServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewLinearFit() *LinearFitServer {
+	return &LinearFitServer{}
 }

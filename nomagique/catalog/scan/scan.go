@@ -97,6 +97,15 @@ func collect(
 					continue
 				}
 
+				if strings.HasSuffix(typeSpec.Name.Name, "Server") {
+					serverTypes[typeSpec.Name.Name] = primitiveType{
+						Name: typeSpec.Name.Name,
+						T:    "Float64",
+						U:    "Float64",
+					}
+					continue
+				}
+
 				indexExpr, ok := typeSpec.Type.(*ast.IndexListExpr)
 				if !ok {
 					continue
@@ -108,7 +117,7 @@ func collect(
 				}
 
 				ident, ok := selExpr.X.(*ast.Ident)
-				if !ok || ident.Name != "types" || (selExpr.Sel.Name != "StreamNode" && selExpr.Sel.Name != "Value") {
+				if !ok || ident.Name != "types" || selExpr.Sel.Name != "Value" {
 					continue
 				}
 
@@ -142,6 +151,9 @@ func collect(
 			}
 
 			firstResult := signature.Results().At(0).Type()
+			if ptr, ok := firstResult.(*types.Pointer); ok {
+				firstResult = ptr.Elem()
+			}
 			namedType, ok := firstResult.(*types.Named)
 			if !ok {
 				continue
@@ -281,10 +293,14 @@ func describe(
 					}
 					name := strings.Split(part, ":")[0]
 					name = strings.TrimSpace(name)
+					portType := inType
+					if strings.Contains(part, ":") {
+						portType = strings.TrimSpace(strings.Split(part, ":")[1])
+					}
 
 					inputs = append(inputs, catalog.Port{
 						Name:        name,
-						Type:        inType,
+						Type:        portType,
 						Description: "The " + name + " stream this primitive reads",
 					})
 				}

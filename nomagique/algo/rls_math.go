@@ -1,8 +1,6 @@
 package algo
 
 import (
-	"context"
-	"github.com/theapemachine/symm/nomagique/types"
 	"math"
 )
 
@@ -56,14 +54,11 @@ type RLSPosterior struct {
 NewRLSPrediction creates a Value closure forecasting from the supplied posterior before any model update.
 No structs, pure Value closure.
 */
-type rlsPredictionServer struct {
-	Downstream func(context.Context, any) error
-}
+type RLSPredictionServer struct{}
 
-func (s *rlsPredictionServer) WriteAny(ctx context.Context, in any) error {
-	state := in.(RLSState)
+func (s *RLSPredictionServer) Forecast(state RLSState) RLSForecast {
 	if len(state.Beta) != len(state.Design) || len(state.Root) != len(state.Design) {
-		return s.Downstream(ctx, RLSForecast{RLSState: state})
+		return RLSForecast{RLSState: state}
 	}
 
 	factor := make([]float64, len(state.Design))
@@ -71,7 +66,7 @@ func (s *rlsPredictionServer) WriteAny(ctx context.Context, in any) error {
 
 	for row, feature := range state.Design {
 		if len(state.Root[row]) != len(state.Design) {
-			return s.Downstream(ctx, RLSForecast{RLSState: state})
+			return RLSForecast{RLSState: state}
 		}
 
 		value += state.Beta[row] * feature
@@ -102,30 +97,20 @@ func (s *rlsPredictionServer) WriteAny(ctx context.Context, in any) error {
 		}
 	}
 
-	return s.Downstream(ctx, forecast)
+	return forecast
 }
-func (s *rlsPredictionServer) SetDownstreamAny(next func(context.Context, any) error) { s.Downstream = next }
 
-
-type RLSPredictionNode types.StreamNode[any, any]
-
-func NewRLSPrediction() RLSPredictionNode {
-	server := &rlsPredictionServer{
-		Downstream: func(ctx context.Context, in any) error { return nil },
-	}
-	return types.NewStreamNode(server, server.WriteAny, server.SetDownstreamAny)
+func NewRLSPrediction() *RLSPredictionServer {
+	return &RLSPredictionServer{}
 }
 
 /*
 NewRLSUpdate creates a Value closure executing the symmetric square-root rank-one update.
 No structs, pure Value closure.
 */
-type rlsUpdateServer struct {
-	Downstream func(context.Context, any) error
-}
+type RLSUpdateServer struct{}
 
-func (s *rlsUpdateServer) WriteAny(ctx context.Context, in any) error {
-	obs := in.(RLSObservation)
+func (s *RLSUpdateServer) Update(obs RLSObservation) RLSPosterior {
 	beta := obs.Beta
 	root := obs.Root
 	factor := obs.Factor
@@ -133,7 +118,7 @@ func (s *rlsUpdateServer) WriteAny(ctx context.Context, in any) error {
 	innovation := obs.Target - obs.Prediction
 
 	if len(root) != len(beta) || len(factor) != len(beta) {
-		return s.Downstream(ctx, RLSPosterior{RLSForecast: obs.RLSForecast})
+		return RLSPosterior{RLSForecast: obs.RLSForecast}
 	}
 
 	energy := 0.0
@@ -143,7 +128,7 @@ func (s *rlsUpdateServer) WriteAny(ctx context.Context, in any) error {
 
 	alpha := lambda + energy
 	if !(alpha > 0) {
-		return s.Downstream(ctx, RLSPosterior{RLSForecast: obs.RLSForecast})
+		return RLSPosterior{RLSForecast: obs.RLSForecast}
 	}
 
 	rootLambda := math.Sqrt(lambda)
@@ -155,7 +140,7 @@ func (s *rlsUpdateServer) WriteAny(ctx context.Context, in any) error {
 
 	for row := range root {
 		if len(root[row]) != len(beta) {
-			return s.Downstream(ctx, RLSPosterior{RLSForecast: obs.RLSForecast})
+			return RLSPosterior{RLSForecast: obs.RLSForecast}
 		}
 
 		for column, coefficient := range root[row] {
@@ -179,61 +164,16 @@ func (s *rlsUpdateServer) WriteAny(ctx context.Context, in any) error {
 	result.NoiseScale = noise
 	result.Observations++
 
-	return s.Downstream(ctx, RLSPosterior{
+	return RLSPosterior{
 		RLSForecast:      result,
 		Alpha:            alpha,
 		Innovation:       innovation,
 		RootLambda:       rootLambda,
 		GammaDenominator: denominator,
 		Gain:             gain,
-	})
-}
-func (s *rlsUpdateServer) SetDownstreamAny(next func(context.Context, any) error) { s.Downstream = next }
-
-
-type RLSUpdateNode types.StreamNode[any, any]
-
-func NewRLSUpdate() RLSUpdateNode {
-	server := &rlsUpdateServer{
-		Downstream: func(ctx context.Context, in any) error { return nil },
 	}
-	return types.NewStreamNode(server, server.WriteAny, server.SetDownstreamAny)
 }
 
-
-
-type rlsPredictionNode types.StreamNode[any, any]
-
-func NewrlsPrediction() rlsPredictionNode {
-	server := &rlsPredictionServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = func(c context.Context, val any) error {
-				return next(c, val)
-			}
-		},
-	)
-}
-
-
-
-type rlsUpdateNode types.StreamNode[any, any]
-
-func NewrlsUpdate() rlsUpdateNode {
-	server := &rlsUpdateServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = func(c context.Context, val any) error {
-				return next(c, val)
-			}
-		},
-	)
+func NewRLSUpdate() *RLSUpdateServer {
+	return &RLSUpdateServer{}
 }

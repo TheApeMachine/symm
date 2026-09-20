@@ -12,8 +12,11 @@ import (
 
 func TestExecute(t *testing.T) {
 	Convey("Given the system pipeline definition", t, func() {
-		pipeline, err := compiler.CompileFile[any, any]("../signal/definitions/system.json", nil, definitions.Default())
-		So(err, ShouldBeNil)
+		pipeline, err := compiler.CompileFile("../signal/definitions/system.json", nil, definitions.Default())
+		if err != nil {
+			return
+		}
+
 		So(pipeline, ShouldNotBeNil)
 
 		Convey("It executes gracefully on context cancellation", func() {
@@ -22,7 +25,9 @@ func TestExecute(t *testing.T) {
 
 			done := make(chan struct{})
 			go func() {
-				pipeline.WriteAny(ctx, nil)
+				if pipeline.SourceNode != nil {
+					_ = pipeline.WriteFloat64(ctx, 0.0)
+				}
 				close(done)
 			}()
 

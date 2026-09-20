@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 
@@ -115,11 +114,11 @@ func (s *CounterfactualServer) WriteParams(ctx context.Context, callArgs Counter
 	for i := 0; i < factualRowList.Len(); i++ {
 		intervened[i] = factualRowList.At(i)
 	}
-	if s.Treatment >= 0 && s.Treatment < len(intervened) {
-		intervened[s.Treatment] = s.Level
-	} else {
+	if s.Treatment < 0 || s.Treatment >= len(intervened) {
 		return nil
 	}
+
+	intervened[s.Treatment] = s.Level
 
 	// 4. Counterfactual Prediction
 	cDesignRow := make([]float64, 1, len(s.Features)+1)
@@ -145,17 +144,6 @@ func (s *CounterfactualServer) Done(ctx context.Context, call Counterfactual_don
 	return nil
 }
 
-
-
-type CounterfactualNode types.StreamNode[any, any]
-
-func NewCounterfactual() CounterfactualNode {
-	server := &CounterfactualServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewCounterfactual() *CounterfactualServer {
+	return &CounterfactualServer{}
 }

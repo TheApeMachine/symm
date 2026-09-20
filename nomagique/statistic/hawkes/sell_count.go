@@ -1,15 +1,17 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type SellCountServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
-func NewSellCountServer() *SellCountServer {
+func NewSellCount() *SellCountServer {
 	return &SellCountServer{}
 }
 
@@ -18,39 +20,31 @@ func (s *SellCountServer) Write(ctx context.Context, call SellCount_write) error
 	if err != nil {
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
 	}
 
-	if s.Downstream == nil {
-		return nil
-	}
-	
 	reading, err := extractReading(payloadPtr)
 	if err != nil || reading == nil {
 		return nil
 	}
-	result := reading.SellCount
-	return s.Downstream(ctx, result)
-}
 
-func (s *SellCountServer) Done(ctx context.Context, call SellCount_done) error {
+	result := reading.SellCount
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
-
-
-type SellCountNode types.StreamNode[any, any]
-
-func NewSellCount() SellCountNode {
-	server := &SellCountServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func (s *SellCountServer) Done(ctx context.Context, call SellCount_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
 }

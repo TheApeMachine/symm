@@ -4,7 +4,6 @@ import (
 	"context"
 
 	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type WindowServer struct {
@@ -13,8 +12,8 @@ type WindowServer struct {
 	Downstream func(context.Context, any) error
 }
 
-func NewWindowServer(size int) *WindowServer {
-	return &WindowServer{size: size, buf: make([][]byte, 0, size)}
+func NewWindow() *WindowServer {
+	return &WindowServer{size: 10, buf: make([][]byte, 0, 10)}
 }
 
 func (s *WindowServer) Evaluate(ctx context.Context, in any) (any, error) {
@@ -25,6 +24,7 @@ func (s *WindowServer) Evaluate(ctx context.Context, in any) (any, error) {
 	if s.Downstream != nil {
 		return in, s.Downstream(ctx, in)
 	}
+
 	return in, nil
 }
 
@@ -47,6 +47,7 @@ func (s *WindowServer) Execute(ctx context.Context, call Window_execute) error {
 					if len(s.buf) >= s.size {
 						s.buf = s.buf[1:]
 					}
+
 					s.buf = append(s.buf, bytes)
 				}
 			}
@@ -56,23 +57,3 @@ func (s *WindowServer) Execute(ctx context.Context, call Window_execute) error {
 	_, err = s.Evaluate(ctx, nil)
 	return err
 }
-
-type WindowNode types.StreamNode[any, any]
-
-func NewWindow(size types.Integer) WindowNode {
-	sz := 10
-	if size != nil {
-		sz = size(nil)
-	}
-	server := NewWindowServer(sz)
-	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
-		_, err := server.Evaluate(ctx, in)
-		return err
-	}, func(next func(context.Context, any) error) {
-		server.Downstream = func(ctx context.Context, res any) error {
-			return next(ctx, res)
-		}
-	})
-}
-
-

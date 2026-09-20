@@ -1,44 +1,51 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type RelativeChangeServer struct {
-	Downstream  func(context.Context, float64) error
+	Downstream  types.Float64Sink
 	previous    float64
 	initialized bool
 }
 
 func (s *RelativeChangeServer) Write(ctx context.Context, call RelativeChange_write) error {
 	a := call.Args().A()
-	result := float64(0)
 	if !s.initialized || s.previous == 0 {
 		s.previous = a
 		s.initialized = true
-	} else {
-		result = (a - s.previous) / s.previous
-		s.previous = a
+		if capnp.Client(s.Downstream).IsValid() {
+			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+				p.SetValue(0)
+				return nil
+			})
+		}
+		return nil
 	}
-	return s.Downstream(ctx, result)
-}
 
-func (s *RelativeChangeServer) Done(ctx context.Context, call RelativeChange_done) error {
+	result := (a - s.previous) / s.previous
+	s.previous = a
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *RelativeChangeServer) Done(ctx context.Context, call RelativeChange_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type RelativeChangeNode types.StreamNode[any, any]
-
-func NewRelativeChange() RelativeChangeNode {
-	server := &RelativeChangeServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewRelativeChange() *RelativeChangeServer {
+	return &RelativeChangeServer{}
 }

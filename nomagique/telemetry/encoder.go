@@ -10,7 +10,7 @@ import (
 )
 
 /*
-Encoder creates a closure that takes measurements and encodes them into a 
+Encoder creates a closure that takes measurements and encodes them into a
 telemetry Frame FlatBuffer for downstream consumption.
 */
 func NewEncoder() types.Value[any, any] {

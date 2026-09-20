@@ -1,12 +1,14 @@
 package statistic
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type EMAServer struct {
-	Downstream  func(context.Context, float64) error
+	Downstream  types.Float64Sink
 	ema         float64
 	initialized bool
 	Alpha       float64
@@ -14,36 +16,46 @@ type EMAServer struct {
 
 func (s *EMAServer) Write(ctx context.Context, call EMA_write) error {
 	a := call.Args().A()
-	result := float64(0)
 	if s.Alpha <= 0 {
-		result = a
-	} else if !s.initialized {
-		s.ema = a
-		s.initialized = true
-		result = s.ema
-	} else {
-		s.ema = (a * s.Alpha) + (s.ema * (1.0 - s.Alpha))
-		result = s.ema
+		if capnp.Client(s.Downstream).IsValid() {
+			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+				p.SetValue(a)
+				return nil
+			})
+		}
+		return nil
 	}
 
-	return s.Downstream(ctx, result)
-}
+	if !s.initialized {
+		s.ema = a
+		s.initialized = true
+		if capnp.Client(s.Downstream).IsValid() {
+			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+				p.SetValue(s.ema)
+				return nil
+			})
+		}
+		return nil
+	}
 
-func (s *EMAServer) Done(ctx context.Context, call EMA_done) error {
+	s.ema = (a * s.Alpha) + (s.ema * (1.0 - s.Alpha))
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(s.ema)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *EMAServer) Done(ctx context.Context, call EMA_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type EMANode types.StreamNode[any, any]
-
-func NewEMA() EMANode {
-	server := &EMAServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewEMA() *EMAServer {
+	return &EMAServer{}
 }

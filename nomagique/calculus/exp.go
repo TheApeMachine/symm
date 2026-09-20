@@ -1,37 +1,37 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type ExpServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
 func (s *ExpServer) Write(ctx context.Context, call Exp_write) error {
 	a := call.Args().A()
 	result := math.Exp(a)
-
-	return s.Downstream(ctx, result)
-}
-
-func (s *ExpServer) Done(ctx context.Context, call Exp_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *ExpServer) Done(ctx context.Context, call Exp_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type ExpNode types.StreamNode[any, any]
-
-func NewExp() ExpNode {
-	server := &ExpServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewExp() *ExpServer {
+	return &ExpServer{}
 }

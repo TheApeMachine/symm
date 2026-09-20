@@ -1,7 +1,6 @@
 package geometry
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"math"
@@ -24,21 +23,21 @@ func wireToPhaseDial(wire WirePhaseDial) (PhaseDial, error) {
 	if !wire.IsValid() {
 		return nil, fmt.Errorf("invalid wire phase dial")
 	}
-	
+
 	comp, err := wire.Components()
 	if err != nil {
 		return nil, err
 	}
-	
-	if comp.Len() % 2 != 0 {
+
+	if comp.Len()%2 != 0 {
 		return nil, fmt.Errorf("wire phase dial components must be even (real/imag pairs)")
 	}
-	
+
 	dial := make(PhaseDial, comp.Len()/2)
 	for i := 0; i < comp.Len(); i += 2 {
 		dial[i/2] = complex(comp.At(i), comp.At(i+1))
 	}
-	
+
 	return dial, nil
 }
 
@@ -124,18 +123,18 @@ func validateDial(dial PhaseDial) error {
 // PhasePathServer implements PhasePath_Server natively.
 type PhasePathServer struct{}
 
-func NewPhasePathServer() *PhasePathServer {
+func NewPhasePath() *PhasePathServer {
 	return &PhasePathServer{}
 }
 
 func (s *PhasePathServer) Execute(ctx context.Context, call PhasePath_execute) error {
 	samples := call.Args().Samples()
-	
+
 	res, err := call.AllocResults()
 	if err != nil {
 		return err
 	}
-	
+
 	reading, err := res.NewReading()
 	if err != nil {
 		return err
@@ -160,7 +159,7 @@ func (s *PhasePathServer) Execute(ctx context.Context, call PhasePath_execute) e
 // NormalizeServer implements Normalize_Server natively.
 type NormalizeServer struct{}
 
-func NewNormalizeServer() *NormalizeServer {
+func NewNormalize() *NormalizeServer {
 	return &NormalizeServer{}
 }
 
@@ -169,38 +168,38 @@ func (s *NormalizeServer) Execute(ctx context.Context, call Normalize_execute) e
 	if err != nil {
 		return err
 	}
-	
+
 	dial, err := wireToPhaseDial(wireIn)
 	if err != nil {
 		return err
 	}
-	
+
 	normalized := normalizeDial(dial)
-	
+
 	res, err := call.AllocResults()
 	if err != nil {
 		return err
 	}
-	
+
 	wireOut, err := res.NewDial()
 	if err != nil {
 		return err
 	}
-	
+
 	outList, err := wireOut.NewComponents(int32(len(normalized) * 2))
 	if err != nil {
 		return err
 	}
-	
+
 	phaseDialToWire(normalized, outList)
-	
+
 	return nil
 }
 
 // OverlapServer implements Overlap_Server natively.
 type OverlapServer struct{}
 
-func NewOverlapServer() *OverlapServer {
+func NewOverlap() *OverlapServer {
 	return &OverlapServer{}
 }
 
@@ -209,37 +208,37 @@ func (s *OverlapServer) Execute(ctx context.Context, call Overlap_execute) error
 	if err != nil {
 		return err
 	}
-	
+
 	wireProbe, err := pair.Probe()
 	if err != nil {
 		return err
 	}
-	
+
 	wireEntry, err := pair.Entry()
 	if err != nil {
 		return err
 	}
-	
+
 	probe, err := wireToPhaseDial(wireProbe)
 	if err != nil {
 		return err
 	}
-	
+
 	entry, err := wireToPhaseDial(wireEntry)
 	if err != nil {
 		return err
 	}
-	
+
 	overlap := dialOverlap(probe, entry)
-	
+
 	res, err := call.AllocResults()
 	if err != nil {
 		return err
 	}
-	
+
 	res.SetReal(real(overlap))
 	res.SetImag(imag(overlap))
-	
+
 	return nil
 }
 
@@ -266,7 +265,7 @@ type CorpusServer struct {
 	capSize    int
 }
 
-func NewCorpusServer(maxSize int) *CorpusServer {
+func NewCorpus(maxSize int) *CorpusServer {
 	if maxSize <= 0 {
 		maxSize = 1000
 	}
@@ -281,39 +280,39 @@ func (s *CorpusServer) Execute(ctx context.Context, call Corpus_execute) error {
 	if err != nil {
 		return err
 	}
-	
+
 	res, err := call.AllocResults()
 	if err != nil {
 		return err
 	}
-	
+
 	switch command.Which() {
 	case WireCorpusCommand_Which_insert:
 		insertCmd, err := command.Insert()
 		if err != nil {
 			return err
 		}
-		
+
 		wireDial, err := insertCmd.Dial()
 		if err != nil {
 			return err
 		}
-		
+
 		dial, err := wireToPhaseDial(wireDial)
 		if err != nil {
 			return err
 		}
-		
+
 		if err := validateDial(dial); err != nil {
 			return err
 		}
 		dial = copyAndNormalize(dial)
-		
+
 		outcomePtr, err := insertCmd.Outcome()
 		if err != nil {
 			return err
 		}
-		
+
 		var outcomeBytes []byte
 		if outcomePtr.IsValid() {
 			msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
@@ -323,58 +322,60 @@ func (s *CorpusServer) Execute(ctx context.Context, call Corpus_execute) error {
 				}
 			}
 		}
-		
+
 		resultOut, err := res.NewResult()
 		if err != nil {
 			return err
 		}
-		
+
 		s.mu.Lock()
 		if s.dimensions == 0 {
 			s.dimensions = len(dial)
 		}
-		
+
 		if len(dial) == s.dimensions {
 			entry := CorpusEntry{
 				Dial:    dial,
 				Outcome: outcomeBytes,
 				At:      time.Unix(0, insertCmd.At()),
 			}
-			if len(s.entries) < s.capSize {
-				s.entries = append(s.entries, entry)
-			} else {
+			if len(s.entries) >= s.capSize {
 				s.entries[s.next] = entry
 				s.next = (s.next + 1) % s.capSize
+			}
+
+			if len(s.entries) < s.capSize {
+				s.entries = append(s.entries, entry)
 			}
 			resultOut.SetInserted(true)
 		}
 		s.mu.Unlock()
-		
+
 	case WireCorpusCommand_Which_query:
 		queryCmd, err := command.Query()
 		if err != nil {
 			return err
 		}
-		
+
 		wireDial, err := queryCmd.Dial()
 		if err != nil {
 			return err
 		}
-		
+
 		dial, err := wireToPhaseDial(wireDial)
 		if err != nil {
 			return err
 		}
-		
+
 		if err := validateDial(dial); err != nil {
 			return err
 		}
-		
+
 		anglesList, err := queryCmd.Angles()
 		if err != nil || queryCmd.TopK() <= 0 || anglesList.Len() == 0 {
 			return nil
 		}
-		
+
 		var angles []float64
 		for i := 0; i < anglesList.Len(); i++ {
 			ang := anglesList.At(i)
@@ -383,7 +384,7 @@ func (s *CorpusServer) Execute(ctx context.Context, call Corpus_execute) error {
 			}
 			angles = append(angles, ang)
 		}
-		
+
 		excludedList, err := queryCmd.ExcludeTimes()
 		excluded := make(map[int64]bool)
 		if err == nil {
@@ -391,13 +392,13 @@ func (s *CorpusServer) Execute(ctx context.Context, call Corpus_execute) error {
 				excluded[excludedList.At(i)] = true
 			}
 		}
-		
+
 		s.mu.RLock()
 		if s.dimensions != 0 && len(dial) != s.dimensions {
 			s.mu.RUnlock()
 			return nil
 		}
-		
+
 		evalEntries := make([]CorpusEntry, 0, len(s.entries))
 		overlaps := make([]complex128, 0, len(s.entries))
 		for _, entry := range s.entries {
@@ -408,19 +409,19 @@ func (s *CorpusServer) Execute(ctx context.Context, call Corpus_execute) error {
 			overlaps = append(overlaps, dialOverlap(dial, entry.Dial))
 		}
 		s.mu.RUnlock()
-		
+
 		resultOut, err := res.NewResult()
 		if err != nil {
 			return err
 		}
-		
+
 		scanList, err := resultOut.NewScan(int32(len(angles)))
 		if err != nil {
 			return err
 		}
-		
+
 		matches := make([]CorpusMatch, len(evalEntries))
-		
+
 		for angleIndex, angle := range angles {
 			rotation := cmplx.Rect(1, -angle)
 			for entryIndex, entry := range evalEntries {
@@ -432,27 +433,27 @@ func (s *CorpusServer) Execute(ctx context.Context, call Corpus_execute) error {
 			}
 			rankMatches(matches)
 			limit := min(int(queryCmd.TopK()), len(matches))
-			
+
 			matchList := scanList.At(angleIndex)
 			resMatches, err := matchList.NewMatches(int32(limit))
 			if err == nil {
-					for i := 0; i < limit; i++ {
-						m := matches[i]
-						resMatch := resMatches.At(i)
-						resMatch.SetSimilarity(m.Similarity)
-						resMatch.SetAt(m.At.UnixNano())
-						
-						if len(m.Outcome) > 0 {
-							msg, err := capnp.Unmarshal(m.Outcome)
+				for i := 0; i < limit; i++ {
+					m := matches[i]
+					resMatch := resMatches.At(i)
+					resMatch.SetSimilarity(m.Similarity)
+					resMatch.SetAt(m.At.UnixNano())
+
+					if len(m.Outcome) > 0 {
+						msg, err := capnp.Unmarshal(m.Outcome)
+						if err == nil {
+							root, err := msg.Root()
 							if err == nil {
-								root, err := msg.Root()
-								if err == nil {
-									resMatch.SetOutcome(root)
-								}
+								resMatch.SetOutcome(root)
 							}
 						}
 					}
 				}
+			}
 		}
 	case WireCorpusCommand_Which_count:
 		s.mu.RLock()
@@ -463,7 +464,7 @@ func (s *CorpusServer) Execute(ctx context.Context, call Corpus_execute) error {
 			resultOut.SetSize(int32(sz))
 		}
 	}
-	
+
 	return nil
 }
 
@@ -474,64 +475,4 @@ func rankMatches(matches []CorpusMatch) {
 		}
 		return matches[left].At.Before(matches[right].At)
 	})
-}
-
-
-
-type PhasePathNode types.StreamNode[any, any]
-
-func NewPhasePath() PhasePathNode {
-	server := &PhasePathServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
-}
-
-
-
-type NormalizeNode types.StreamNode[any, any]
-
-func NewNormalize() NormalizeNode {
-	server := &NormalizeServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
-}
-
-
-
-type OverlapNode types.StreamNode[any, any]
-
-func NewOverlap() OverlapNode {
-	server := &OverlapServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
-}
-
-
-
-type CorpusNode types.StreamNode[any, any]
-
-func NewCorpus() CorpusNode {
-	server := &CorpusServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
 }

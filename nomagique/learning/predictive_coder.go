@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	context "context"
 	"errors"
 
@@ -171,6 +170,15 @@ func NewPredictiveCoderServer(config PredictiveCoderConfig) *PredictiveCoderServ
 		coder.alpha = 0.03
 	}
 
+	coder.pace = &PaceServer{
+		Rest:   coder.alpha,
+		Lower:  0.005,
+		Upper:  0.150,
+		Gain:   0.1,
+		Band:   0.2,
+		Window: 256,
+	}
+
 	if config.UsePace {
 		coder.pace = &PaceServer{
 			Rest:   config.Rest,
@@ -179,18 +187,6 @@ func NewPredictiveCoderServer(config PredictiveCoderConfig) *PredictiveCoderServ
 			Gain:   config.Gain,
 			Band:   config.Band,
 			Window: config.Window,
-		}
-	} else {
-		// Default pace controller if not explicitly skipped but UsePace is false?
-		// We'll assume the caller passes UsePace=true if they want it.
-		// For backward compatibility with the old types.Value stub:
-		coder.pace = &PaceServer{
-			Rest:   coder.alpha,
-			Lower:  0.005,
-			Upper:  0.150,
-			Gain:   0.1,
-			Band:   0.2,
-			Window: 256,
 		}
 	}
 
@@ -487,17 +483,6 @@ func (predictiveCoder *PredictiveCoderServer) ledgerExecute(
 	return predictiveCoder.ledger.Execute(command)
 }
 
-
-
-type PredictiveCoderNode types.StreamNode[any, any]
-
-func NewPredictiveCoder() PredictiveCoderNode {
-	server := &PredictiveCoderServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewPredictiveCoder() *PredictiveCoderServer {
+	return &PredictiveCoderServer{}
 }

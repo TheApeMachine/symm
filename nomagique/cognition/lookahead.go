@@ -1,7 +1,6 @@
 package cognition
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"bytes"
 	"context"
 	"math"
@@ -48,17 +47,6 @@ func (s *LookaheadServer) Done(ctx context.Context, call Lookahead_done) error {
 	return nil
 }
 
-
-
-type LookaheadNode types.StreamNode[any, any]
-
-func NewLookahead() LookaheadNode {
-	server := &LookaheadServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewLookahead() *LookaheadServer {
+	return &LookaheadServer{}
 }

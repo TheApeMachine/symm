@@ -2,13 +2,13 @@ package temporal
 
 import (
 	"context"
-	"errors"
-	
+
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type DelayServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	horizon    int
 	buffer     []float64
 	idx        int
@@ -16,7 +16,10 @@ type DelayServer struct {
 
 func (s *DelayServer) Write(ctx context.Context, call Delay_write) error {
 	val := call.Args().A()
-	
+	if s.horizon <= 0 {
+		s.horizon = 1
+	}
+
 	if len(s.buffer) < s.horizon {
 		s.buffer = append(s.buffer, val)
 		return nil
@@ -26,31 +29,23 @@ func (s *DelayServer) Write(ctx context.Context, call Delay_write) error {
 	s.buffer[s.idx] = val
 	s.idx = (s.idx + 1) % s.horizon
 
-	return s.Downstream(ctx, delayed)
-}
-
-func (s *DelayServer) Done(ctx context.Context, call Delay_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(delayed)
+			return nil
+		})
+	}
 	return nil
 }
 
-type DelayNode types.StreamNode[any, any]
-
-func NewDelay(horizon types.Integer) (DelayNode, error) {
-	h := horizon(nil)
-	if h <= 0 {
-		return nil, errors.New("requires positive 'horizon'")
+func (s *DelayServer) Done(ctx context.Context, call Delay_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
 	}
-	
-	server := &DelayServer{horizon: h}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = func(c context.Context, p float64) error {
-				return next(c, p)
-			}
-		},
-	), nil
+	return nil
+}
+
+func NewDelay() *DelayServer {
+	return &DelayServer{horizon: 1}
 }

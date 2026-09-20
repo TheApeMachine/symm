@@ -1,12 +1,14 @@
 package statistic
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type VarianceServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	count      float64
 	mean       float64
 	m2         float64
@@ -24,24 +26,23 @@ func (s *VarianceServer) Write(ctx context.Context, call Variance_write) error {
 		result = s.m2 / (s.count - 1)
 	}
 
-	return s.Downstream(ctx, result)
-}
-
-func (s *VarianceServer) Done(ctx context.Context, call Variance_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *VarianceServer) Done(ctx context.Context, call Variance_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type VarianceNode types.StreamNode[any, any]
-
-func NewVariance() VarianceNode {
-	server := &VarianceServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewVariance() *VarianceServer {
+	return &VarianceServer{}
 }

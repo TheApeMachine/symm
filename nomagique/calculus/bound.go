@@ -1,13 +1,15 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type BoundServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	Min        float64
 	Max        float64
 }
@@ -15,24 +17,23 @@ type BoundServer struct {
 func (s *BoundServer) Write(ctx context.Context, call Bound_write) error {
 	a := call.Args().A()
 	result := math.Max(s.Min, math.Min(s.Max, a))
-	return s.Downstream(ctx, result)
-}
-
-func (s *BoundServer) Done(ctx context.Context, call Bound_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *BoundServer) Done(ctx context.Context, call Bound_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type BoundNode types.StreamNode[any, any]
-
-func NewBound() BoundNode {
-	server := &BoundServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewBound() *BoundServer {
+	return &BoundServer{}
 }

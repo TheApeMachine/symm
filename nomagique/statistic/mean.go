@@ -1,12 +1,14 @@
 package statistic
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type MeanServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	count      float64
 	sum        float64
 }
@@ -16,25 +18,23 @@ func (s *MeanServer) Write(ctx context.Context, call Mean_write) error {
 	s.count++
 	s.sum += a
 	result := s.sum / s.count
-
-	return s.Downstream(ctx, result)
-}
-
-func (s *MeanServer) Done(ctx context.Context, call Mean_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *MeanServer) Done(ctx context.Context, call Mean_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type MeanNode types.StreamNode[any, any]
-
-func NewMean() MeanNode {
-	server := &MeanServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewMean() *MeanServer {
+	return &MeanServer{}
 }

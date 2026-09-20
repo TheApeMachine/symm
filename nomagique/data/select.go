@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type SelectServer struct {
@@ -13,8 +12,8 @@ type SelectServer struct {
 	Path       string
 }
 
-func NewSelectServer(path string) *SelectServer {
-	return &SelectServer{Path: path}
+func NewSelect() *SelectServer {
+	return &SelectServer{}
 }
 
 func (s *SelectServer) Evaluate(ctx context.Context, in any) (any, error) {
@@ -84,24 +83,3 @@ func (s *SelectServer) Write(ctx context.Context, call Select_write) error {
 func (s *SelectServer) Done(ctx context.Context, call Select_done) error {
 	return nil
 }
-
-type SelectNode types.StreamNode[any, any]
-
-func NewSelect(path types.String) SelectNode {
-	server := &SelectServer{}
-	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
-		p := ""
-		if path != nil {
-			p = path(in)
-		}
-		server.Path = p
-		_, err := server.Evaluate(ctx, in)
-		return err
-	}, func(next func(context.Context, any) error) {
-		server.Downstream = func(ctx context.Context, res any) error {
-			return next(ctx, res)
-		}
-	})
-}
-
-

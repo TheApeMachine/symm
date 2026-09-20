@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"context"
 	"capnproto.org/go/capnp/v3"
+	"context"
 )
 
 type WebRTCServerImpl struct {
@@ -19,12 +19,12 @@ func (s *WebRTCServerImpl) Write(ctx context.Context, call WebRTCServer_write) e
 		// fallback to see if it's named something else
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
 	}
-	
+
 	if s.Downstream != nil {
 		return s.Downstream(ctx, payloadPtr)
 	}

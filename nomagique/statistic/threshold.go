@@ -1,12 +1,14 @@
 package statistic
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type ThresholdServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	Band       float64
 	Rest       float64
 	Lower      float64
@@ -18,28 +20,29 @@ func (s *ThresholdServer) Write(ctx context.Context, call Threshold_write) error
 	result := s.Rest
 	if a < s.Band {
 		result = s.Upper
-	} else if a > 1.0-s.Band {
+	}
+
+	if a > 1.0-s.Band {
 		result = s.Lower
 	}
 
-	return s.Downstream(ctx, result)
-}
-
-func (s *ThresholdServer) Done(ctx context.Context, call Threshold_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *ThresholdServer) Done(ctx context.Context, call Threshold_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type ThresholdNode types.StreamNode[any, any]
-
-func NewThreshold() ThresholdNode {
-	server := &ThresholdServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewThreshold() *ThresholdServer {
+	return &ThresholdServer{}
 }

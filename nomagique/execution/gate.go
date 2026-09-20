@@ -1,19 +1,14 @@
 package execution
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"sync"
 )
 
 type GateServer struct {
-	holding bool
-	mu      sync.Mutex
+	holding    bool
+	mu         sync.Mutex
 	Downstream func(context.Context, string) error
-}
-
-func NewGateServer(initialHolding bool) *GateServer {
-	return &GateServer{holding: initialHolding}
 }
 
 func (s *GateServer) Write(ctx context.Context, call Gate_write) error {
@@ -21,7 +16,7 @@ func (s *GateServer) Write(ctx context.Context, call Gate_write) error {
 	if err != nil {
 		return err
 	}
-	
+
 	action, err := args.Action()
 	if err != nil {
 		return err
@@ -31,16 +26,14 @@ func (s *GateServer) Write(ctx context.Context, call Gate_write) error {
 	defer s.mu.Unlock()
 
 	result := "wait"
-	if action == "enter" {
-		if !s.holding {
-			s.holding = true
-			result = "enter"
-		}
-	} else if action == "exit" {
-		if s.holding {
-			s.holding = false
-			result = "exit"
-		}
+	if action == "enter" && !s.holding {
+		s.holding = true
+		result = "enter"
+	}
+
+	if action == "exit" && s.holding {
+		s.holding = false
+		result = "exit"
 	}
 
 	if s.Downstream != nil {
@@ -53,17 +46,6 @@ func (s *GateServer) Done(ctx context.Context, call Gate_done) error {
 	return nil
 }
 
-
-
-type GateNode types.StreamNode[any, any]
-
-func NewGate() GateNode {
-	server := &GateServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewGate() *GateServer {
+	return &GateServer{}
 }

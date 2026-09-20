@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -30,17 +29,6 @@ func (s *BinaryTargetServer) Done(ctx context.Context, call BinaryTarget_done) e
 	return nil
 }
 
-
-
-type BinaryTargetNode types.StreamNode[any, any]
-
-func NewBinaryTarget() BinaryTargetNode {
-	server := &BinaryTargetServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewBinaryTarget() *BinaryTargetServer {
+	return &BinaryTargetServer{}
 }

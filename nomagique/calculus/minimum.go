@@ -1,38 +1,38 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type MinimumServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
 func (s *MinimumServer) Write(ctx context.Context, call Minimum_write) error {
 	a := call.Args().A()
 	b := call.Args().B()
 	result := math.Min(a, b)
-
-	return s.Downstream(ctx, result)
-}
-
-func (s *MinimumServer) Done(ctx context.Context, call Minimum_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *MinimumServer) Done(ctx context.Context, call Minimum_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type MinimumNode types.StreamNode[any, any]
-
-func NewMinimum() MinimumNode {
-	server := &MinimumServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewMinimum() *MinimumServer {
+	return &MinimumServer{}
 }

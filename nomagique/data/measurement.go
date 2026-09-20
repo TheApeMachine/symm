@@ -197,8 +197,6 @@ func (measurement *Measurement[T]) Pull(other *Measurement[T], keys ...string) {
 	}
 }
 
-
-
 /*
 Reset zeroes every metric's values in place, so a pre-allocated measurement
 can flow through again without being reallocated. The declared schema never
@@ -230,7 +228,6 @@ const (
 	MetadataMahalanobisSNR = "mahalanobis_snr"
 )
 
-
 /*
 Finalize derives the measurement's quality facts from its own estimator
 metadata, mutating the measurement in place.
@@ -245,8 +242,9 @@ NewFinalizer creates the measurement quality derivation Value closure.
 No structs, pure Value closure.
 */
 type Finalizer[Value any] func(*Measurement[Value]) *Measurement[Value]
+
 func NewFinalizer[Value any]() Finalizer[Value] {
-	server := NewQualityServer()
+	server := NewQuality()
 
 	return func(measurement *Measurement[Value]) *Measurement[Value] {
 		if measurement != nil {
@@ -256,14 +254,14 @@ func NewFinalizer[Value any]() Finalizer[Value] {
 				facts, err = NewWireQualityFacts(seg)
 				if err == nil {
 					FactsFromMetadata(measurement.Metadata, facts)
-					
+
 					// Evaluate quality via the capnp server interface locally
 					call, release := Quality_ServerToClient(server).Evaluate(context.Background(), func(p Quality_evaluate_Params) error {
 						p.SetFacts(facts)
 						return nil
 					})
 					defer release()
-					
+
 					res, err := call.Struct()
 					if err == nil {
 						reading, err := res.Reading()

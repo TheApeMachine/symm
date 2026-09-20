@@ -1,7 +1,6 @@
 package store
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -46,17 +45,6 @@ func (s *ConstantServer) Evaluate(ctx context.Context, call Constant_evaluate) e
 	return nil
 }
 
-
-
-type ConstantNode types.StreamNode[any, any]
-
-func NewConstant() ConstantNode {
-	server := &ConstantServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewConstant() *ConstantServer {
+	return &ConstantServer{}
 }

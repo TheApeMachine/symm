@@ -2,20 +2,19 @@ package probability
 
 import (
 	"context"
-	
+
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-type ConcentrationNode types.StreamNode[any, any]
-
 type ConcentrationServer struct {
-	Downstream func(context.Context, any) error
+	Downstream types.Float64Sink
 }
 
 func (s *ConcentrationServer) Write(ctx context.Context, payload any) error {
 	vals, ok := payload.([]float64)
 	if !ok {
-		return s.Downstream(ctx, payload)
+		return nil
 	}
 
 	var total float64
@@ -24,7 +23,13 @@ func (s *ConcentrationServer) Write(ctx context.Context, payload any) error {
 	}
 
 	if total == 0 {
-		return s.Downstream(ctx, 0.0)
+		if capnp.Client(s.Downstream).IsValid() {
+			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+				p.SetValue(0.0)
+				return nil
+			})
+		}
+		return nil
 	}
 
 	var hhi float64
@@ -33,18 +38,23 @@ func (s *ConcentrationServer) Write(ctx context.Context, payload any) error {
 		hhi += p * p
 	}
 
-	return s.Downstream(ctx, hhi)
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(hhi)
+			return nil
+		})
+	}
+	return nil
 }
 
-func NewConcentration() ConcentrationNode {
-	server := &ConcentrationServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return server.Write(ctx, payload)
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = next
-		},
-	)
+func (s *ConcentrationServer) Done(ctx context.Context) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
+
+func NewConcentration() *ConcentrationServer {
+	return &ConcentrationServer{}
 }

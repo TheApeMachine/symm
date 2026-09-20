@@ -1,7 +1,6 @@
 package cognition
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 	"sync/atomic"
@@ -53,17 +52,6 @@ func (s *SurprisalServer) Done(ctx context.Context, call Surprisal_done) error {
 	return nil
 }
 
-
-
-type SurprisalNode types.StreamNode[any, any]
-
-func NewSurprisal() SurprisalNode {
-	server := &SurprisalServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewSurprisal() *SurprisalServer {
+	return &SurprisalServer{}
 }

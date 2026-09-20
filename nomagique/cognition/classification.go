@@ -1,7 +1,6 @@
 package cognition
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -69,17 +68,6 @@ func (s *ClassificationServer) Done(ctx context.Context, call Classification_don
 	return s.Downstream(ctx, winner.name, runnerUp, winner.prob, contrast, winner.support, passed)
 }
 
-
-
-type ClassificationNode types.StreamNode[any, any]
-
-func NewClassification() ClassificationNode {
-	server := &ClassificationServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewClassification() *ClassificationServer {
+	return &ClassificationServer{}
 }

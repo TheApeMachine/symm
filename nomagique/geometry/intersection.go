@@ -1,12 +1,14 @@
 package geometry
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type IntersectionServer struct {
-	DownstreamIntersection func(context.Context, bool) error
+	Downstream types.BoolSink
 }
 
 func (s *IntersectionServer) Write(ctx context.Context, call Intersection_write) error {
@@ -15,27 +17,23 @@ func (s *IntersectionServer) Write(ctx context.Context, call Intersection_write)
 	rightStart := call.Args().RightStart()
 	rightEnd := call.Args().RightEnd()
 	result := leftStart < rightEnd && rightStart < leftEnd
-	if s.DownstreamIntersection != nil {
-		return s.DownstreamIntersection(ctx, result)
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.BoolSink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
 	}
 	return nil
 }
 
 func (s *IntersectionServer) Done(ctx context.Context, call Intersection_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
 	return nil
 }
 
-
-
-type IntersectionNode types.StreamNode[any, any]
-
-func NewIntersection() IntersectionNode {
-	server := &IntersectionServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewIntersection() *IntersectionServer {
+	return &IntersectionServer{}
 }

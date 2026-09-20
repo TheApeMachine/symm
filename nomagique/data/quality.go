@@ -1,7 +1,6 @@
 package data
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"strconv"
 )
@@ -9,7 +8,7 @@ import (
 // QualityServer implements Quality_Server from the capnp schema.
 type QualityServer struct{}
 
-func NewQualityServer() *QualityServer {
+func NewQuality() *QualityServer {
 	return &QualityServer{}
 }
 
@@ -100,19 +99,4 @@ func FactsFromMetadata(metadata map[string]string, facts WireQualityFacts) error
 	}
 
 	return nil
-}
-
-
-
-type QualityNode types.StreamNode[any, any]
-
-func NewQuality() QualityNode {
-	server := &QualityServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
 }

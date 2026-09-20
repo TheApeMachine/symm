@@ -7,16 +7,14 @@ import (
 	"strings"
 	"sync"
 
+	"capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/catalog"
-	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/signal"
-	"capnproto.org/go/capnp/v3"
 )
-type HTTPServerNode types.StreamNode[any, any]
 
 type HTTPServerImpl struct {
 	once         sync.Once
@@ -29,7 +27,7 @@ type HTTPServerImpl struct {
 	focusChan    chan string
 }
 
-func NewHTTPServer() HTTPServerNode {
+func NewHTTPServer() *HTTPServerImpl {
 	server := &HTTPServerImpl{
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(request *http.Request) bool { return true },
@@ -43,7 +41,7 @@ func NewHTTPServer() HTTPServerNode {
 			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
 		},
 	}
-	
+
 	// Start server immediately on port 8765
 	address := ":8765"
 	handler := server.buildHTTPHandler()
@@ -55,20 +53,7 @@ func NewHTTPServer() HTTPServerNode {
 		}
 	}()
 
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			if ch, ok := ctx.Value("focusChan").(chan string); ok {
-				server.focusChan = ch
-			}
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = func(c context.Context, ptr capnp.Ptr) error {
-				return next(c, ptr)
-			}
-		},
-	)
+	return server
 }
 
 func (s *HTTPServerImpl) Write(ctx context.Context, call HTTPServer_write) error {
@@ -77,17 +62,17 @@ func (s *HTTPServerImpl) Write(ctx context.Context, call HTTPServer_write) error
 		// fallback to see if it's named something else
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = args.Addr()
 	if err != nil {
 		return err
 	}
-	
+
 	// Server is already started in NewHTTPServer
 
 	if payloadPtr.IsValid() {
@@ -275,7 +260,7 @@ func (s *HTTPServerImpl) buildHTTPHandler() http.Handler {
 				if err != nil {
 					break
 				}
-				
+
 				var msg map[string]any
 				if err := sonic.Unmarshal(messageBytes, &msg); err == nil {
 					if typ, ok := msg["type"].(string); ok && typ == "FOCUS" {

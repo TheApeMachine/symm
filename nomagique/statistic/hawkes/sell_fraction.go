@@ -1,15 +1,17 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type SellFractionServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
-func NewSellFractionServer() *SellFractionServer {
+func NewSellFraction() *SellFractionServer {
 	return &SellFractionServer{}
 }
 
@@ -18,39 +20,31 @@ func (s *SellFractionServer) Write(ctx context.Context, call SellFraction_write)
 	if err != nil {
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
 	}
 
-	if s.Downstream == nil {
-		return nil
-	}
-	
 	reading, err := extractReading(payloadPtr)
 	if err != nil || reading == nil {
 		return nil
 	}
-	result := reading.SellFraction
-	return s.Downstream(ctx, result)
-}
 
-func (s *SellFractionServer) Done(ctx context.Context, call SellFraction_done) error {
+	result := reading.SellFraction
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
-
-
-type SellFractionNode types.StreamNode[any, any]
-
-func NewSellFraction() SellFractionNode {
-	server := &SellFractionServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func (s *SellFractionServer) Done(ctx context.Context, call SellFraction_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
 }

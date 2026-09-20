@@ -1,22 +1,16 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"time"
+
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 type ProcessServer struct {
-	state *path
+	state      *path
 	Downstream func(context.Context, *Reading) error
-}
-
-func NewProcessServer() *ProcessServer {
-	return &ProcessServer{
-		state: &path{samples: make([]sample, 0)},
-	}
 }
 
 func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
@@ -24,7 +18,7 @@ func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
 	if err != nil {
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
@@ -33,7 +27,7 @@ func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
 	if s.Downstream == nil {
 		return nil
 	}
-	
+
 	var event [2]float64
 	if payloadPtr.IsValid() {
 		data := payloadPtr.Data()
@@ -113,23 +107,8 @@ func (s *ProcessServer) Done(ctx context.Context, call Process_done) error {
 	return nil
 }
 
-
-
-type ProcessNode types.StreamNode[any, any]
-
-func NewProcess() ProcessNode {
-	server := &ProcessServer{}
-	var nativeDownstream func(context.Context, any) error
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			if nativeDownstream != nil {
-				return nativeDownstream(ctx, &Reading{})
-			}
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			nativeDownstream = next
-		},
-	)
+func NewProcess() *ProcessServer {
+	return &ProcessServer{
+		state: &path{samples: make([]sample, 0)},
+	}
 }

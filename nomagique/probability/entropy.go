@@ -4,42 +4,39 @@ import (
 	"context"
 	"math"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type EntropyServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	acc        float64
 }
 
 func (s *EntropyServer) Write(ctx context.Context, call Entropy_write) error {
 	m := call.Args().A()
-
 	if m != 0 {
 		s.acc += -m * math.Log(m)
 	}
+
 	result := s.acc
-
-	return s.Downstream(ctx, result)
-}
-
-func (s *EntropyServer) Done(ctx context.Context, call Entropy_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
-type EntropyNode types.StreamNode[any, any]
+func (s *EntropyServer) Done(ctx context.Context, call Entropy_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-func NewEntropy() EntropyNode {
-	server := &EntropyServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = func(c context.Context, p float64) error {
-				return next(c, p)
-			}
-		},
-	)
+func NewEntropy() *EntropyServer {
+	return &EntropyServer{}
 }

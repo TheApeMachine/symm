@@ -1,7 +1,6 @@
 package execution
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/bytedance/sonic"
@@ -40,11 +39,11 @@ type RegulatorServer struct {
 	fee    *decimal.Decimal
 
 	lastOrderID string
-	
+
 	Downstream func(context.Context, *PositionState) error
 }
 
-func NewRegulatorServer() *RegulatorServer {
+func NewRegulator() *RegulatorServer {
 	return &RegulatorServer{
 		quantity: decimal.NewFromInt64(0),
 		basis:    decimal.NewFromInt64(0),
@@ -61,12 +60,12 @@ func (s *RegulatorServer) Write(ctx context.Context, call Regulator_write) error
 	if err != nil {
 		return err
 	}
-	
+
 	sym, err := args.Symbol()
 	if err != nil {
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
@@ -82,16 +81,16 @@ func (s *RegulatorServer) Write(ctx context.Context, call Regulator_write) error
 			}
 		}
 	}
-	
+
 	state := s.evaluate(sym, report)
 	if state == nil {
 		return nil
 	}
-	
+
 	if s.Downstream == nil {
 		return nil
 	}
-	
+
 	return s.Downstream(ctx, state)
 }
 
@@ -189,19 +188,4 @@ func (s *RegulatorServer) evaluate(sym string, report *Fill) *PositionState {
 		EntryFee: s.entryFee,
 		Realized: s.realized,
 	}
-}
-
-
-
-type RegulatorNode types.StreamNode[any, any]
-
-func NewRegulator() RegulatorNode {
-	server := &RegulatorServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
 }

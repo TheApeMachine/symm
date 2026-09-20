@@ -4,36 +4,123 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Compile lowers a declarative JSON Graph into an in-memory executable nomagique composition.
-Topologies are resolved once during compilation into nested nomagique primitives
-(NewNumber, NewFan, NewFork, NewJoin, NewTee).
-Zero map allocations or graph edge traversals occur on the execution hot path.
+CompiledNode stores the metadata, local capability client, and invocation assembler for one node.
 */
-func Compile[In, Out any](
+type CompiledNode struct {
+	ID          string
+	Type        string
+	Server      any
+	Client      capnp.Client
+	Assembler   *InvocationAssembler
+	Inputs      map[string]PortType
+	Outputs     map[string]PortType
+	Descriptor  PrimitiveDescriptor
+	Downstreams map[string][]capnp.Client
+}
+
+/*
+Pipeline represents an executable, in-memory composition of Cap'n Proto primitives.
+Zero any payloads or graph traversals exist on the runtime execution path.
+*/
+type Pipeline struct {
+	Nodes      map[string]*CompiledNode
+	ExecOrder  []string
+	SourceNode *CompiledNode
+	SinkNode   *CompiledNode
+}
+
+/*
+InputSink returns the typed Float64Sink capability for an input port on a node.
+*/
+func (p *Pipeline) InputSink(nodeID, portName string) (types.Float64Sink, error) {
+	node, exists := p.Nodes[nodeID]
+	if !exists {
+		return types.Float64Sink{}, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			fmt.Sprintf("pipeline: node %q not found", nodeID),
+			nil,
+		))
+	}
+	client, err := node.Assembler.InputSink(portName)
+	if err != nil {
+		return types.Float64Sink{}, err
+	}
+	return types.Float64Sink(client), nil
+}
+
+/*
+ConnectOutput binds a downstream typed Float64Sink capability to a node's output port.
+*/
+func (p *Pipeline) ConnectOutput(nodeID, portName string, sink types.Float64Sink) error {
+	node, exists := p.Nodes[nodeID]
+	if !exists {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			fmt.Sprintf("pipeline: node %q not found", nodeID),
+			nil,
+		))
+	}
+	node.Downstreams[portName] = append(node.Downstreams[portName], capnp.Client(sink))
+	return node.Descriptor.BindDownstream(node.Server, portName, node.Downstreams[portName])
+}
+
+/*
+WaitStreaming waits for all streaming calls across all pipeline nodes to flush.
+*/
+func (p *Pipeline) WaitStreaming() error {
+	for _, id := range p.ExecOrder {
+		if n, ok := p.Nodes[id]; ok {
+			if err := n.Assembler.WaitStreaming(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+/*
+WriteFloat64 sends a float64 observation into the pipeline's ingress.
+*/
+func (p *Pipeline) WriteFloat64(ctx context.Context, val float64) error {
+	if p.SourceNode == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"pipeline: no source node configured",
+			nil,
+		))
+	}
+	sink, err := p.InputSink(p.SourceNode.ID, "in")
+	if err != nil {
+		return err
+	}
+	if err := sink.Write(ctx, func(params types.Float64Sink_write_Params) error {
+		params.SetValue(val)
+		return nil
+	}); err != nil {
+		return err
+	}
+	return p.WaitStreaming()
+}
+
+/*
+Compile lowers a declarative JSON Graph into an in-memory executable Cap'n Proto composition.
+Nodes are instantiated once, capabilities are wired directly, and port types are strictly validated.
+*/
+func Compile(
 	graph Graph,
 	reg *Registry,
 	repos ...DefinitionRepository,
-) (types.StreamNode[In, Out], error) {
+) (*Pipeline, error) {
 	if reg == nil {
 		reg = DefaultRegistry()
-	}
-
-	var repo DefinitionRepository
-	if len(repos) > 0 {
-		repo = repos[0]
-		if reg.Repository() == nil {
-			reg.SetRepository(repo)
-		}
-	} else if reg.Repository() != nil {
-		repo = reg.Repository()
 	}
 
 	if len(graph.Nodes) == 0 {
@@ -44,13 +131,10 @@ func Compile[In, Out any](
 		))
 	}
 
-	errnie.Debug(fmt.Sprintf("[compiler.Compile] compiling graph %s (%d nodes)...", graph.Name, len(graph.Nodes)))
-
-	// 1. Build adjacency and in-degree maps for operational and source/sink nodes
+	// 1. Build adjacency and in-degree maps for topological sort
 	inDegree := make(map[string]int)
-	adjacency := make(map[string][]string)       // For topological sort
-	incoming := make(map[string][]string)        // For topological sort
-	
+	adjacency := make(map[string][]string)
+
 	for id := range graph.Nodes {
 		inDegree[id] = 0
 	}
@@ -60,14 +144,13 @@ func Compile[In, Out any](
 			for _, target := range targets {
 				if _, exists := graph.Nodes[target.NodeID]; exists {
 					adjacency[id] = append(adjacency[id], target.NodeID)
-					incoming[target.NodeID] = append(incoming[target.NodeID], id)
 					inDegree[target.NodeID]++
 				}
 			}
 		}
 	}
 
-	// 2. Topological Sort (Kahn's Algorithm) to guarantee acyclicity
+	// 2. Kahn's Algorithm for topological ordering and cycle detection
 	queue := make([]string, 0)
 	for id, degree := range inDegree {
 		if degree == 0 {
@@ -97,142 +180,175 @@ func Compile[In, Out any](
 		))
 	}
 
-	// 3. Instantiate operational nodes and recursively resolve definition references in topological order
-	instances := make(map[string]types.StreamNode[any, any])
+	// 3. Instantiate nodes and setup InvocationAssemblers
+	nodes := make(map[string]*CompiledNode)
 	for _, id := range execOrder {
 		node := graph.Nodes[id]
-		if isSource(node) {
-			continue
-		}
-
-		if strings.HasPrefix(node.Type, "definition:") {
-			defName := strings.TrimPrefix(node.Type, "definition:")
-			if repo == nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf("compiler: node %q references definition %q but no repository provided", id, defName),
-					nil,
-				))
-			}
-
-			childGraph, err := repo.Load(defName)
-			if err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.NotFound,
-					fmt.Sprintf("compiler: child definition %q not found for node %q", defName, id),
-					err,
-				))
-			}
-
-			childClosure, err := Compile[any, any](childGraph, reg, repo)
-			if err != nil {
-				return nil, errnie.Error(err)
-			}
-
-			instances[id] = childClosure
-			errnie.Debug(fmt.Sprintf("[compiler.Compile] recursively compiled definition %s for node %s", defName, id))
-			continue
-		}
-
-		closure, err := reg.Resolve(node, instances)
+		desc, err := reg.Resolve(node.Type)
 		if err != nil {
 			return nil, errnie.Error(err)
 		}
 
-		errnie.Debug(fmt.Sprintf("[compiler.Compile] resolved node %s (%s)", id, node.Type))
-		instances[id] = closure
-	}
-
-	// 4. Wire internal node connections
-	for id, n := range graph.Nodes {
-		inst, ok := instances[id]
-		if !ok {
-			continue
+		server, client, err := desc.Construct(node)
+		if err != nil {
+			return nil, errnie.Error(err)
 		}
 
-		var downstreams []types.StreamNode[any, any]
-		for outPort, targets := range n.Connections.Outputs {
-			_ = outPort
+		assembler := NewInvocationAssembler(
+			node.ID,
+			client,
+			desc.InputPorts,
+			desc.CreateSetter,
+			func(ctx context.Context, setters map[string]func(capnp.Struct)) error {
+				return desc.Invoke(ctx, client, setters)
+			},
+			func(ctx context.Context) error {
+				return desc.Done(ctx, client)
+			},
+		)
+
+		// Populate static inputs from inputData if unwired
+		if node.InputData != nil {
+			for portName, valData := range node.InputData {
+				if _, isInput := desc.InputPorts[portName]; isInput {
+					// Check if port is not wired
+					isWired := false
+					if wires, ok := node.Connections.Inputs[portName]; ok && len(wires) > 0 {
+						isWired = true
+					}
+					if !isWired {
+						if setterGen, ok := desc.CreateSetter[portName]; ok {
+							var val float64
+							switch v := valData.(type) {
+							case float64:
+								val = v
+							case map[string]any:
+								if f, ok := v["float"].(float64); ok {
+									val = f
+								}
+								if f, ok := v["number"].(float64); ok {
+									val = f
+								}
+							}
+							assembler.SetStaticInput(portName, setterGen(val))
+						}
+					}
+				}
+			}
+		}
+
+		compiled := &CompiledNode{
+			ID:          id,
+			Type:        node.Type,
+			Server:      server,
+			Client:      client,
+			Assembler:   assembler,
+			Inputs:      desc.InputPorts,
+			Outputs:     desc.OutputPorts,
+			Descriptor:  desc,
+			Downstreams: make(map[string][]capnp.Client),
+		}
+
+		nodes[id] = compiled
+	}
+
+	// 4. Validate port types on edges and bind capabilities
+	for id, fromNode := range nodes {
+		origNode := graph.Nodes[id]
+		for outPort, targets := range origNode.Connections.Outputs {
+			fromPortType, hasOut := fromNode.Outputs[outPort]
+			if !hasOut {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf("compiler: node %q (%s) has no output port %q", id, fromNode.Type, outPort),
+					nil,
+				))
+			}
 
 			for _, target := range targets {
-				if nextInst, ok := instances[target.NodeID]; ok {
-					downstreams = append(downstreams, nextInst)
+				toNode, exists := nodes[target.NodeID]
+				if !exists {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: target node %q not found", target.NodeID),
+						nil,
+					))
 				}
-			}
-		}
 
-		if len(downstreams) > 0 {
-			inst.SetDownstreamAny(func(ctx context.Context, payload any) error {
-				for _, nextClosure := range downstreams {
-					if err := nextClosure.WriteAny(ctx, payload); err != nil {
-						return err
-					}
+				toPortType, hasIn := toNode.Inputs[target.PortName]
+				if !hasIn {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: node %q (%s) has no input port %q", target.NodeID, toNode.Type, target.PortName),
+						nil,
+					))
 				}
-				return nil
-			})
+
+				// Type check: output and input port types must match exactly
+				if fromPortType != toPortType {
+					return nil, errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("compiler: type mismatch on edge %s.%s (%s) -> %s.%s (%s)",
+							fromNode.ID, outPort, fromPortType, toNode.ID, target.PortName, toPortType),
+						nil,
+					))
+				}
+
+				// Obtain typed input sink capability from target assembler
+				targetSink, err := toNode.Assembler.InputSink(target.PortName)
+				if err != nil {
+					return nil, err
+				}
+
+				fromNode.Downstreams[outPort] = append(fromNode.Downstreams[outPort], targetSink)
+			}
 		}
 	}
 
-	// 5. Find boundaries
-	var sourceNodeID string
-	var sinkNodeID string
-	for id, node := range graph.Nodes {
-		if isSource(node) {
-			sourceNodeID = id
-		}
-		if isSink(node) {
-			sinkNodeID = id
+	// 5. Connect downstream capabilities to each primitive server
+	for _, node := range nodes {
+		for outPort, sinks := range node.Downstreams {
+			if err := node.Descriptor.BindDownstream(node.Server, outPort, sinks); err != nil {
+				return nil, errnie.Error(err)
+			}
 		}
 	}
 
-	return types.NewStreamNode(nil, func(ctx context.Context, payload any) error {
-		if sourceNodeID != "" {
-			if instance, ok := instances[sourceNodeID]; ok {
-				return instance.WriteAny(ctx, payload)
-			}
-		} else {
-			hasInputs := make(map[string]bool)
-			for _, node := range graph.Nodes {
-				for _, targets := range node.Connections.Outputs {
-					for _, target := range targets {
-						hasInputs[target.NodeID] = true
-					}
-				}
-			}
-			for id, instance := range instances {
-				if !hasInputs[id] {
-					if err := instance.WriteAny(ctx, payload); err != nil {
-						return err
-					}
-				}
-			}
+	pipeline := &Pipeline{
+		Nodes:     nodes,
+		ExecOrder: execOrder,
+	}
+
+	// Identify Source and Sink nodes
+	for _, node := range nodes {
+		if node.Type == "source" || node.Type == "data.Source" {
+			pipeline.SourceNode = node
 		}
-		return nil
-	}, func(next func(context.Context, any) error) {
-		if sinkNodeID != "" {
-			if instance, ok := instances[sinkNodeID]; ok {
-				instance.SetDownstreamAny(next)
-			}
-		} else {
-			for id, node := range graph.Nodes {
-				if len(node.Connections.Outputs) == 0 {
-					if instance, ok := instances[id]; ok {
-						instance.SetDownstreamAny(next)
-					}
-				}
-			}
+		if node.Type == "sink" || node.Type == "data.Sink" {
+			pipeline.SinkNode = node
 		}
-	}), nil
+	}
+
+	// If no explicit SourceNode, pick the first node in topological order with 0 in-degree
+	if pipeline.SourceNode == nil && len(execOrder) > 0 {
+		pipeline.SourceNode = nodes[execOrder[0]]
+	}
+	// If no explicit SinkNode, pick the last node in topological order
+	if pipeline.SinkNode == nil && len(execOrder) > 0 {
+		pipeline.SinkNode = nodes[execOrder[len(execOrder)-1]]
+	}
+
+	return pipeline, nil
 }
 
 /*
-CompileFile reads a JSON graph from disk and compiles it into an executable closure.
+CompileFile reads a JSON graph from disk and compiles it into an executable Pipeline.
 */
-func CompileFile[In, Out any](
+func CompileFile(
 	jsonPath string,
 	reg *Registry,
 	repos ...DefinitionRepository,
-) (types.StreamNode[In, Out], error) {
+) (*Pipeline, error) {
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -251,13 +367,5 @@ func CompileFile[In, Out any](
 		))
 	}
 
-	return Compile[In, Out](graph, reg, repos...)
-}
-
-func isSource(node Node) bool {
-	return node.Type == "nomagique.System" || node.Type == "nomagique.Network" || node.Type == "nomagique.Database"
-}
-
-func isSink(node Node) bool {
-	return node.Type == "nomagique.Console" || node.Type == "nomagique.File"
+	return Compile(graph, reg, repos...)
 }

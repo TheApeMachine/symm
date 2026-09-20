@@ -2,176 +2,240 @@ package compiler_test
 
 import (
 	"context"
-	"path/filepath"
-	goruntime "runtime"
+	"math"
 	"testing"
 
+	capnp "capnproto.org/go/capnp/v3"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique/compiler"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-func TestCompile(t *testing.T) {
-	Convey("Given the generic in-memory compiler", t, func() {
+func TestCompileFlume(t *testing.T) {
+	Convey("Given the typed Cap'n Proto Flume compiler", t, func() {
 		reg := compiler.DefaultRegistry()
 		So(reg, ShouldNotBeNil)
-		repo := definitions.Default()
-		reg.SetRepository(repo)
 
-		Convey("Compiling the master system graph", func() {
-			systemGraph, err := definitions.Load("system")
-			So(err, ShouldBeNil)
-			So(len(systemGraph.Nodes), ShouldBeGreaterThan, 0)
-
-			systemPipeline, err := compiler.Compile[any, any](systemGraph, reg, repo)
-			So(err, ShouldBeNil)
-			So(systemPipeline, ShouldNotBeNil)
-
-			Convey("A market trade tick executes through the compiled closure", func() {
-				tick := map[string]any{
-					"trade": map[string]any{
-						"data": map[string]any{
-							"side":      "buy",
-							"symbol":    "BTC/USD",
-							"price":     50000.0,
-							"qty":       1.5,
-							"timestamp": int64(1700000000),
-						},
-					},
-				}
-
-				result := systemPipeline.WriteAny(context.Background(), tick)
-				_ = result
-			})
-		})
-
-		Convey("Compiling a linear stage graph (logic)", func() {
-			logicGraph, err := definitions.Load("logic")
-			So(err, ShouldBeNil)
-
-			logicPipeline, err := compiler.Compile[any, any](logicGraph, reg, repo)
-			So(err, ShouldBeNil)
-			So(logicPipeline, ShouldNotBeNil)
-
-			readings := []float64{0.5, -0.2, 1.1, 0.0}
-			result := logicPipeline.WriteAny(context.Background(), readings)
-			_ = result
-		})
-
-		Convey("Compiling a fan-out signal graph (derivatives:trade)", func() {
-			derivGraph, err := definitions.Load("derivatives:trade")
-			So(err, ShouldBeNil)
-
-			derivPipeline, err := compiler.Compile[any, any](derivGraph, reg, repo)
-			So(err, ShouldBeNil)
-			So(derivPipeline, ShouldNotBeNil)
-
-			fillData := map[string]any{
-				"symbol":    "PF_SOLUSD",
-				"side":      "buy",
-				"price":     150.0,
-				"qty":       10.0,
-				"type":      "liquidation",
-				"timestamp": int64(1700000000),
-			}
-
-			err = derivPipeline.WriteAny(context.Background(), fillData)
-			So(err, ShouldBeNil)
-		})
-
-		Convey("Compiling a fan-out signal graph (cvd:trade)", func() {
-			cvdGraph, err := definitions.Load("cvd:trade")
-			So(err, ShouldBeNil)
-
-			cvdPipeline, err := compiler.Compile[any, any](cvdGraph, reg, repo)
-			So(err, ShouldBeNil)
-			So(cvdPipeline, ShouldNotBeNil)
-
-			tradeData := map[string]any{
-				"symbol":    "PF_SOLUSD",
-				"side":      "buy",
-				"price":     150.0,
-				"qty":       10.0,
-				"timestamp": int64(1700000000),
-			}
-
-			err = cvdPipeline.WriteAny(context.Background(), tradeData)
-			So(err, ShouldBeNil)
-		})
-
-		Convey("Compiling hawkes:trade signal graph", func() {
-			hawkesGraph, err := definitions.Load("hawkes:trade")
-			So(err, ShouldBeNil)
-
-			hawkesPipeline, err := compiler.Compile[any, []float64](hawkesGraph, reg, repo)
-			So(err, ShouldBeNil)
-			So(hawkesPipeline, ShouldNotBeNil)
-
-			tradeData := map[string]any{
-				"symbol":    "BTC/USD",
-				"side":      "buy",
-				"price":     50000.0,
-				"qty":       1.5,
-				"timestamp": int64(1700000000000000000),
-			}
-
-			var metrics []any
-			hawkesPipeline.SetDownstreamAny(func(ctx context.Context, in any) error {
-				// Just capture anything it receives for the test assertion
-				if m, ok := in.([]any); ok {
-					metrics = append(metrics, m...)
-				} else if m, ok := in.([]float64); ok {
-					for _, v := range m {
-						metrics = append(metrics, v)
-					}
-				} else if in != nil {
-					metrics = append(metrics, in)
-				}
-				return nil
-			})
-			err = hawkesPipeline.WriteAny(context.Background(), tradeData)
-			So(err, ShouldBeNil)
-			So(len(metrics), ShouldBeGreaterThan, 0)
-		})
-
-		Convey("Cycle detection in graph", func() {
-			cycleGraph := compiler.Graph{
-				ID:   "cycle:test",
-				Name: "cycle:test",
+		Convey("Test B: Multi-input graph invocation with same evaluation", func() {
+			graph := compiler.Graph{
+				ID:   "multi_input_test",
+				Name: "multi_input_test",
 				Nodes: map[string]compiler.Node{
-					"n1": {
-						ID:   "n1",
-						Type: "arithmetic.Add",
+					"left": {
+						ID:   "left",
+						Type: "data.Source",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
-								"out": {{NodeID: "n2", PortName: "in"}},
+								"out": {{NodeID: "add", PortName: "a"}},
 							},
 						},
 					},
-					"n2": {
-						ID:   "n2",
+					"right": {
+						ID:   "right",
+						Type: "data.Source",
+						Connections: compiler.Connections{
+							Outputs: map[string][]compiler.ConnectionTarget{
+								"out": {{NodeID: "add", PortName: "b"}},
+							},
+						},
+					},
+					"add": {
+						ID:   "add",
 						Type: "arithmetic.Add",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
-								"out": {{NodeID: "n1", PortName: "in"}},
+								"out": {{NodeID: "sink", PortName: "value"}},
 							},
 						},
+					},
+					"sink": {
+						ID:   "sink",
+						Type: "data.Sink",
 					},
 				},
 			}
 
-			_, err := compiler.Compile[any, any](cycleGraph, reg, repo)
-			So(err, ShouldNotBeNil)
+			pipeline, err := compiler.Compile(graph, reg)
+			So(err, ShouldBeNil)
+			So(pipeline, ShouldNotBeNil)
+
+			var receivedResult float64
+			sinkCapability := types.NewFloat64Sink(
+				func(ctx context.Context, val float64) error {
+					receivedResult = val
+					return nil
+				},
+				nil,
+			)
+			err = pipeline.ConnectOutput("sink", "out", sinkCapability)
+			So(err, ShouldBeNil)
+
+			ctx, _ := types.NextEvaluationContext(context.Background())
+			leftSink, err := pipeline.InputSink("left", "in")
+			So(err, ShouldBeNil)
+			rightSink, err := pipeline.InputSink("right", "in")
+			So(err, ShouldBeNil)
+
+			err = leftSink.Write(ctx, func(p types.Float64Sink_write_Params) error {
+				p.SetValue(2.0)
+				return nil
+			})
+			So(err, ShouldBeNil)
+
+			err = rightSink.Write(ctx, func(p types.Float64Sink_write_Params) error {
+				p.SetValue(2.0)
+				return nil
+			})
+			So(err, ShouldBeNil)
+
+			err = pipeline.WaitStreaming()
+			So(err, ShouldBeNil)
+			So(receivedResult, ShouldEqual, 4.0)
+
+			Convey("Test C: Incomplete invocation (send only add.a)", func() {
+				receivedResult = -999.0
+				incompleteCtx, _ := types.NextEvaluationContext(context.Background())
+
+				err := leftSink.Write(incompleteCtx, func(p types.Float64Sink_write_Params) error {
+					p.SetValue(2.0)
+					return nil
+				})
+				So(err, ShouldBeNil)
+
+				err = pipeline.WaitStreaming()
+				So(err, ShouldBeNil)
+				// Add.write was NOT invoked because add.b was never supplied for this evaluation
+				So(receivedResult, ShouldEqual, -999.0)
+			})
+
+			Convey("Test D: Evaluation isolation (eval 1 receives add.a, eval 2 receives add.b)", func() {
+				receivedResult = -999.0
+				ctx1 := types.WithEvaluationID(context.Background(), 100)
+				ctx2 := types.WithEvaluationID(context.Background(), 200)
+
+				// Evaluation 1 provides add.a = 2.0
+				err := leftSink.Write(ctx1, func(p types.Float64Sink_write_Params) error {
+					p.SetValue(2.0)
+					return nil
+				})
+				So(err, ShouldBeNil)
+
+				// Evaluation 2 provides add.b = 3.0
+				err = rightSink.Write(ctx2, func(p types.Float64Sink_write_Params) error {
+					p.SetValue(3.0)
+					return nil
+				})
+				So(err, ShouldBeNil)
+
+				err = pipeline.WaitStreaming()
+				So(err, ShouldBeNil)
+				// Never combined: Add.write was not invoked for either incomplete evaluation
+				So(receivedResult, ShouldEqual, -999.0)
+			})
 		})
 
-		Convey("CompileFile helper compiles directly from path", func() {
-			_, thisFile, _, _ := goruntime.Caller(0)
-			repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-			systemPath := filepath.Join(repoRoot, "signal", "definitions", "system.json")
+		Convey("Test E: Type mismatch between incompatible ports fails at compile time", func() {
+			customReg := compiler.NewRegistry()
+			customReg.Register(compiler.PrimitiveDescriptor{
+				Op: "text.Producer",
+				OutputPorts: map[string]compiler.PortType{
+					"out": compiler.PortTypeText,
+				},
+				Construct: func(node compiler.Node) (any, capnp.Client, error) {
+					return nil, capnp.Client{}, nil
+				},
+			})
 
-			fn, err := compiler.CompileFile[any, any](systemPath, reg, repo)
+			mismatchGraph := compiler.Graph{
+				ID:   "mismatch_test",
+				Name: "mismatch_test",
+				Nodes: map[string]compiler.Node{
+					"textSrc": {
+						ID:   "textSrc",
+						Type: "text.Producer",
+						Connections: compiler.Connections{
+							Outputs: map[string][]compiler.ConnectionTarget{
+								"out": {{NodeID: "add", PortName: "a"}},
+							},
+						},
+					},
+					"add": {
+						ID:   "add",
+						Type: "arithmetic.Add",
+					},
+				},
+			}
+
+			_, err := compiler.Compile(mismatchGraph, customReg)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "type mismatch")
+		})
+
+		Convey("Test F: End-to-end JSON graph (source -> atanh -> add -> sink)", func() {
+			endToEndGraph := compiler.Graph{
+				ID:   "e2e_atanh_add",
+				Name: "e2e_atanh_add",
+				Nodes: map[string]compiler.Node{
+					"src": {
+						ID:   "src",
+						Type: "data.Source",
+						Connections: compiler.Connections{
+							Outputs: map[string][]compiler.ConnectionTarget{
+								"out": {{NodeID: "atanh", PortName: "a"}},
+							},
+						},
+					},
+					"atanh": {
+						ID:   "atanh",
+						Type: "calculus.Atanh",
+						Connections: compiler.Connections{
+							Outputs: map[string][]compiler.ConnectionTarget{
+								"out": {{NodeID: "add", PortName: "a"}},
+							},
+						},
+					},
+					"add": {
+						ID:   "add",
+						Type: "arithmetic.Add",
+						InputData: map[string]any{
+							"b": 1.0,
+						},
+						Connections: compiler.Connections{
+							Outputs: map[string][]compiler.ConnectionTarget{
+								"out": {{NodeID: "sink", PortName: "value"}},
+							},
+						},
+					},
+					"sink": {
+						ID:   "sink",
+						Type: "data.Sink",
+					},
+				},
+			}
+
+			pipeline, err := compiler.Compile(endToEndGraph, reg)
 			So(err, ShouldBeNil)
-			So(fn, ShouldNotBeNil)
+			So(pipeline, ShouldNotBeNil)
+
+			var finalResult float64
+			sinkCapability := types.NewFloat64Sink(
+				func(ctx context.Context, val float64) error {
+					finalResult = val
+					return nil
+				},
+				nil,
+			)
+			err = pipeline.ConnectOutput("sink", "out", sinkCapability)
+			So(err, ShouldBeNil)
+
+			inputVal := 0.5
+			ctx, _ := types.NextEvaluationContext(context.Background())
+
+			err = pipeline.WriteFloat64(ctx, inputVal)
+			So(err, ShouldBeNil)
+
+			expected := math.Atanh(inputVal) + 1.0
+			So(finalResult, ShouldEqual, expected)
 		})
 	})
 }

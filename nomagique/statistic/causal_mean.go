@@ -1,12 +1,14 @@
 package statistic
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type CausalMeanServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 	count      float64
 	sum        float64
 	prevMean   float64
@@ -23,24 +25,23 @@ func (s *CausalMeanServer) Write(ctx context.Context, call CausalMean_write) err
 		result = a
 	}
 
-	return s.Downstream(ctx, result)
-}
-
-func (s *CausalMeanServer) Done(ctx context.Context, call CausalMean_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *CausalMeanServer) Done(ctx context.Context, call CausalMean_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type CausalMeanNode types.StreamNode[any, any]
-
-func NewCausalMean() CausalMeanNode {
-	server := &CausalMeanServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewCausalMean() *CausalMeanServer {
+	return &CausalMeanServer{}
 }

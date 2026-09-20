@@ -1,15 +1,17 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type ArrivalRateServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
-func NewArrivalRateServer() *ArrivalRateServer {
+func NewArrivalRate() *ArrivalRateServer {
 	return &ArrivalRateServer{}
 }
 
@@ -18,39 +20,31 @@ func (s *ArrivalRateServer) Write(ctx context.Context, call ArrivalRate_write) e
 	if err != nil {
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
 	}
 
-	if s.Downstream == nil {
-		return nil
-	}
-	
 	reading, err := extractReading(payloadPtr)
 	if err != nil || reading == nil {
 		return nil
 	}
-	result := reading.ArrivalRate
-	return s.Downstream(ctx, result)
-}
 
-func (s *ArrivalRateServer) Done(ctx context.Context, call ArrivalRate_done) error {
+	result := reading.ArrivalRate
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
-
-
-type ArrivalRateNode types.StreamNode[any, any]
-
-func NewArrivalRate() ArrivalRateNode {
-	server := &ArrivalRateServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func (s *ArrivalRateServer) Done(ctx context.Context, call ArrivalRate_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
 }

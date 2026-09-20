@@ -3,8 +3,6 @@ package probability
 import (
 	"context"
 	"math"
-
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type DistributionServer struct {
@@ -94,19 +92,6 @@ func (s *DistributionServer) Done(ctx context.Context, call Distribution_done) e
 	return nil
 }
 
-type DistributionNode types.StreamNode[any, any]
-
-func NewDistribution() DistributionNode {
-	server := &DistributionServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = func(c context.Context, p NativeReading) error {
-				return next(c, p)
-			}
-		},
-	)
+func NewDistribution() *DistributionServer {
+	return &DistributionServer{}
 }

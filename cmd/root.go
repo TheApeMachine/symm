@@ -24,17 +24,21 @@ var (
 			defer cancel()
 
 			errnie.Info("[root] compiling system graph: " + graphPath)
-			pipeline, err := compiler.CompileFile[any, any](graphPath, nil, definitions.Default())
+			pipeline, err := compiler.CompileFile(graphPath, nil, definitions.Default())
 			if err != nil {
 				return errnie.Error(errnie.Err(errnie.Internal, "[root] compilation failed", err))
 			}
 
 			errnie.Info("[root] system ready; running pipeline")
-			
+
 			focusChan := make(chan string, 100)
 			ctx = context.WithValue(ctx, "focusChan", focusChan)
-			
-			go pipeline.WriteAny(ctx, nil)
+
+			go func() {
+				if err := pipeline.WriteFloat64(ctx, 0.0); err != nil {
+					errnie.Error(err)
+				}
+			}()
 
 			<-ctx.Done()
 			errnie.Info("[root] system terminated cleanly")

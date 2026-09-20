@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type SeriesInput struct {
@@ -32,17 +31,14 @@ type seriesRing struct {
 }
 
 type SeriesServer struct {
-	capacity int
-	rings    map[string]*seriesRing
+	capacity   int
+	rings      map[string]*seriesRing
 	Downstream func(context.Context, SeriesReading) error
 }
 
-func NewSeriesServer(capacity int) *SeriesServer {
-	if capacity <= 0 {
-		capacity = 100
-	}
+func NewSeries() *SeriesServer {
 	return &SeriesServer{
-		capacity: capacity,
+		capacity: 100,
 		rings:    make(map[string]*seriesRing),
 	}
 }
@@ -62,15 +58,16 @@ func (s *SeriesServer) Evaluate(ctx context.Context, input SeriesInput) (SeriesR
 		return reading, nil
 	}
 
+	reading.Found = s.observe(input.Key, input.Sec, input.Nsec, input.Value)
+
 	if input.Query {
 		reading.Value, reading.Found = s.asOf(input.Key, input.Sec, input.Nsec)
-	} else {
-		reading.Found = s.observe(input.Key, input.Sec, input.Nsec, input.Value)
 	}
 
 	if s.Downstream != nil {
 		return reading, s.Downstream(ctx, reading)
 	}
+
 	return reading, nil
 }
 
@@ -79,20 +76,22 @@ func (s *SeriesServer) Write(ctx context.Context, call Series_write) error {
 	if err != nil {
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
 	}
-	
+
 	var input SeriesInput
 	if payloadPtr.IsValid() {
 		data := payloadPtr.Data()
 		if len(data) > 0 {
-			_ = sonic.Unmarshal(data, &input)
+			if unmarshalErr := sonic.Unmarshal(data, &input); unmarshalErr != nil {
+				return unmarshalErr
+			}
 		}
 	}
-	
+
 	_, err = s.Evaluate(ctx, input)
 	return err
 }
@@ -167,24 +166,3 @@ func (s *SeriesServer) asOf(
 
 	return best, found
 }
-
-type SeriesNode types.StreamNode[SeriesInput, SeriesReading]
-
-func NewSeries(capacity types.Integer) SeriesNode {
-	c := 100
-	if capacity != nil {
-		c = capacity(0)
-	}
-	server := NewSeriesServer(c)
-	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
-		input := in.(SeriesInput)
-		_, err := server.Evaluate(ctx, input)
-		return err
-	}, func(next func(context.Context, any) error) {
-		server.Downstream = func(ctx context.Context, res SeriesReading) error {
-			return next(ctx, res)
-		}
-	})
-}
-
-

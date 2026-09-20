@@ -1,12 +1,14 @@
 package calculus
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type PolarizeServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
 func (s *PolarizeServer) Write(ctx context.Context, call Polarize_write) error {
@@ -16,34 +18,35 @@ func (s *PolarizeServer) Write(ctx context.Context, call Polarize_write) error {
 	if alpha < 0 {
 		alpha = 0
 	}
+
 	beta := -a
 	if beta < 0 {
 		beta = 0
 	}
+
 	if b > 0 {
 		alpha = alpha / (alpha + b)
 		beta = beta / (beta + b)
 	}
+
 	result := alpha - beta
-
-	return s.Downstream(ctx, result)
-}
-
-func (s *PolarizeServer) Done(ctx context.Context, call Polarize_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
+func (s *PolarizeServer) Done(ctx context.Context, call Polarize_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
+}
 
-
-type PolarizeNode types.StreamNode[any, any]
-
-func NewPolarize() PolarizeNode {
-	server := &PolarizeServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewPolarize() *PolarizeServer {
+	return &PolarizeServer{}
 }

@@ -3,8 +3,6 @@ package algo
 import (
 	"context"
 	"math"
-
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type OLSServer struct {
@@ -106,7 +104,7 @@ func (s *OLSServer) Write(ctx context.Context, call OLS_write) error {
 		y[i] = make([]float64, 1)
 		y[i][0] = yInIVals.At(0)
 	}
-	
+
 	_, err := s.Evaluate(ctx, x, y)
 	return err
 }
@@ -115,23 +113,6 @@ func (s *OLSServer) Done(ctx context.Context, call OLS_done) error {
 	return nil
 }
 
-type OLSNode types.StreamNode[[2][][]float64, []float64]
-
-func NewOLS(tolerance types.Float) OLSNode {
-	server := &OLSServer{}
-	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
-		input := in.([2][][]float64)
-		server.Tolerance = 1e-9
-		if tolerance != nil {
-			server.Tolerance = tolerance(input)
-		}
-		_, err := server.Evaluate(ctx, input[0], input[1])
-		return err
-	}, func(next func(context.Context, any) error) {
-		server.DownstreamOLS = func(ctx context.Context, res []float64) error {
-			return next(ctx, res)
-		}
-	})
+func NewOLS() *OLSServer {
+	return &OLSServer{Tolerance: 1e-9}
 }
-
-

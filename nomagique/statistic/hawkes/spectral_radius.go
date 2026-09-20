@@ -1,15 +1,17 @@
 package hawkes
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type SpectralRadiusServer struct {
-	Downstream func(context.Context, float64) error
+	Downstream types.Float64Sink
 }
 
-func NewSpectralRadiusServer() *SpectralRadiusServer {
+func NewSpectralRadius() *SpectralRadiusServer {
 	return &SpectralRadiusServer{}
 }
 
@@ -18,39 +20,31 @@ func (s *SpectralRadiusServer) Write(ctx context.Context, call SpectralRadius_wr
 	if err != nil {
 		return err
 	}
-	
+
 	payloadPtr, err := args.Payload()
 	if err != nil {
 		return err
 	}
 
-	if s.Downstream == nil {
-		return nil
-	}
-	
 	reading, err := extractReading(payloadPtr)
 	if err != nil || reading == nil {
 		return nil
 	}
-	result := reading.SpectralRadius
-	return s.Downstream(ctx, result)
-}
 
-func (s *SpectralRadiusServer) Done(ctx context.Context, call SpectralRadius_done) error {
+	result := reading.SpectralRadius
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(result)
+			return nil
+		})
+	}
 	return nil
 }
 
-
-
-type SpectralRadiusNode types.StreamNode[any, any]
-
-func NewSpectralRadius() SpectralRadiusNode {
-	server := &SpectralRadiusServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func (s *SpectralRadiusServer) Done(ctx context.Context, call SpectralRadius_done) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
+	}
+	return nil
 }

@@ -3,8 +3,6 @@ package algo
 import (
 	"context"
 	"math"
-
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type GaussJordanServer struct {
@@ -74,11 +72,11 @@ func (s *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64, righ
 			}
 		}
 	}
-	
+
 	if s.DownstreamGaussJordan != nil {
 		return b, s.DownstreamGaussJordan(ctx, b)
 	}
-	
+
 	return b, nil
 }
 
@@ -123,21 +121,6 @@ func (s *GaussJordanServer) Done(ctx context.Context, call GaussJordan_done) err
 	return nil
 }
 
-type GaussJordanNode types.StreamNode[[2][][]float64, [][]float64]
-
-func NewGaussJordan(tolerance types.Float) GaussJordanNode {
-	server := &GaussJordanServer{}
-	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
-		input := in.([2][][]float64)
-		server.Tolerance = 1e-9
-		if tolerance != nil {
-			server.Tolerance = tolerance(input)
-		}
-		_, err := server.Evaluate(ctx, input[0], input[1])
-		return err
-	}, func(next func(context.Context, any) error) {
-		server.DownstreamGaussJordan = func(ctx context.Context, res [][]float64) error {
-			return next(ctx, res)
-		}
-	})
+func NewGaussJordan() *GaussJordanServer {
+	return &GaussJordanServer{Tolerance: 1e-9}
 }

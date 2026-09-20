@@ -1,7 +1,6 @@
 package store
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"sync/atomic"
 
@@ -54,12 +53,12 @@ func (s *RadixServer) Write(ctx context.Context, call Radix_write) error {
 	if err != nil {
 		return err
 	}
-	
+
 	valPtr, err := call.Args().Value()
 	if err != nil {
 		return err
 	}
-	
+
 	// Serialize valPtr into []byte to store safely
 	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err == nil {
@@ -70,7 +69,7 @@ func (s *RadixServer) Write(ctx context.Context, call Radix_write) error {
 				current := s.root.Load()
 				updated, _, _ := current.Insert(key, bytes)
 				s.root.Store(updated)
-				
+
 				res, err := call.AllocResults()
 				if err == nil {
 					res.SetValue(valPtr)
@@ -87,7 +86,7 @@ func (s *RadixServer) Identify(ctx context.Context, call Radix_identify) error {
 	if err != nil {
 		return err
 	}
-	
+
 	valPtr, err := call.Args().Value()
 	if err != nil {
 		return err
@@ -129,17 +128,6 @@ func (s *RadixServer) Identify(ctx context.Context, call Radix_identify) error {
 	return nil
 }
 
-
-
-type RadixNode types.StreamNode[any, any]
-
-func NewRadix() RadixNode {
-	server := &RadixServer{}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return nil
-		},
-		func(next func(context.Context, any) error) {},
-	)
+func NewRadix() *RadixServer {
+	return NewRadixServer()
 }

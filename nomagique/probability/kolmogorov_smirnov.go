@@ -4,13 +4,12 @@ import (
 	"context"
 	"math"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-type KolmogorovSmirnovNode types.StreamNode[any, any]
-
 type KolmogorovSmirnovServer struct {
-	Downstream func(context.Context, any) error
+	Downstream types.Float64Sink
 	window     []float64
 	maxSize    int
 }
@@ -18,16 +17,22 @@ type KolmogorovSmirnovServer struct {
 func (s *KolmogorovSmirnovServer) Write(ctx context.Context, payload any) error {
 	val, ok := payload.(float64)
 	if !ok {
-		return s.Downstream(ctx, payload) // pass-through if not float
+		return nil
 	}
 
 	s.window = append(s.window, val)
-	if len(s.window) > s.maxSize {
+	if s.maxSize > 0 && len(s.window) > s.maxSize {
 		s.window = s.window[1:]
 	}
 
 	stat := s.computeKSStatistic()
-	return s.Downstream(ctx, stat)
+	if capnp.Client(s.Downstream).IsValid() {
+		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
+			p.SetValue(stat)
+			return nil
+		})
+	}
+	return nil
 }
 
 func (s *KolmogorovSmirnovServer) computeKSStatistic() float64 {
@@ -36,12 +41,9 @@ func (s *KolmogorovSmirnovServer) computeKSStatistic() float64 {
 		return 0.0
 	}
 
-	// Calculate empirical CDF and compare to standard normal CDF
-	// First sort a copy of the window
 	sorted := make([]float64, n)
 	copy(sorted, s.window)
-	
-	// simple insertion sort for small window
+
 	for i := 1; i < n; i++ {
 		for j := i; j > 0 && sorted[j-1] > sorted[j]; j-- {
 			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
@@ -51,10 +53,7 @@ func (s *KolmogorovSmirnovServer) computeKSStatistic() float64 {
 	var dMax float64
 	for i, v := range sorted {
 		ecdf := float64(i+1) / float64(n)
-		
-		// Approximate Standard Normal CDF
 		cdf := 0.5 * (1.0 + math.Erf(v/math.Sqrt2))
-		
 		d := math.Abs(ecdf - cdf)
 		if d > dMax {
 			dMax = d
@@ -63,17 +62,14 @@ func (s *KolmogorovSmirnovServer) computeKSStatistic() float64 {
 	return dMax
 }
 
-func NewKolmogorovSmirnov() KolmogorovSmirnovNode {
-	server := &KolmogorovSmirnovServer{
-		maxSize: 100, // sliding window size
+func (s *KolmogorovSmirnovServer) Done(ctx context.Context) error {
+	if capnp.Client(s.Downstream).IsValid() {
+		_, release := s.Downstream.Done(ctx, nil)
+		release()
 	}
-	return types.NewStreamNode(
-		server,
-		func(ctx context.Context, payload any) error {
-			return server.Write(ctx, payload)
-		},
-		func(next func(context.Context, any) error) {
-			server.Downstream = next
-		},
-	)
+	return nil
+}
+
+func NewKolmogorovSmirnov() *KolmogorovSmirnovServer {
+	return &KolmogorovSmirnovServer{maxSize: 100}
 }

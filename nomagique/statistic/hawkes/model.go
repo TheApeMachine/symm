@@ -1,9 +1,5 @@
 package hawkes
 
-
-
-
-
 /*
 Reading is the empirical arrival state and, when a model exists, the
 pre-arrival Hawkes decomposition.
@@ -29,8 +25,6 @@ type Reading struct {
 	SNR                                                float64
 	HasSNR                                             bool
 }
-
-
 
 func evaluateReading(
 	reading *Reading,
