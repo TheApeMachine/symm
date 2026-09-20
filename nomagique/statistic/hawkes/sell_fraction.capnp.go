@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireSellFraction capnp.Struct
-
-// WireSellFraction_TypeID is the unique identifier for the type WireSellFraction.
-const WireSellFraction_TypeID = 0xb093c2c4e6a2ad6d
-
-func NewWireSellFraction(s *capnp.Segment) (WireSellFraction, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSellFraction(st), err
-}
-
-func NewRootWireSellFraction(s *capnp.Segment) (WireSellFraction, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSellFraction(st), err
-}
-
-func ReadRootWireSellFraction(msg *capnp.Message) (WireSellFraction, error) {
-	root, err := msg.Root()
-	return WireSellFraction(root.Struct()), err
-}
-
-func (s WireSellFraction) String() string {
-	str, _ := text.Marshal(0xb093c2c4e6a2ad6d, capnp.Struct(s))
-	return str
-}
-
-func (s WireSellFraction) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireSellFraction) DecodeFromPtr(p capnp.Ptr) WireSellFraction {
-	return WireSellFraction(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireSellFraction) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireSellFraction) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireSellFraction) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireSellFraction) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireSellFraction) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireSellFraction) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireSellFraction) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireSellFraction_List is a list of WireSellFraction.
-type WireSellFraction_List = capnp.StructList[WireSellFraction]
-
-// NewWireSellFraction creates a new list of WireSellFraction.
-func NewWireSellFraction_List(s *capnp.Segment, sz int32) (WireSellFraction_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireSellFraction](l), err
-}
-
-// WireSellFraction_Future is a wrapper for a WireSellFraction promised by a client call.
-type WireSellFraction_Future struct{ *capnp.Future }
-
-func (f WireSellFraction_Future) Struct() (WireSellFraction, error) {
-	p, err := f.Future.Ptr()
-	return WireSellFraction(p.Struct()), err
-}
-func (p WireSellFraction_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type SellFraction capnp.Client
 
 // SellFraction_TypeID is the unique identifier for the type SellFraction.
-const SellFraction_TypeID = 0x8ddee59b681dce4e
+const SellFraction_TypeID = 0x82c7b7d3d8bfc146
 
 func (c SellFraction) Write(ctx context.Context, params func(SellFraction_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0x8ddee59b681dce4e,
+			InterfaceID:   0x82c7b7d3d8bfc146,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/sell_fraction.capnp:SellFraction",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(SellFraction_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c SellFraction) Done(ctx context.Context, params func(SellFraction_done_Pa
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0x8ddee59b681dce4e,
+			InterfaceID:   0x82c7b7d3d8bfc146,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/sell_fraction.capnp:SellFraction",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func SellFraction_Methods(methods []server.Method, s SellFraction_Server) []serv
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0x8ddee59b681dce4e,
+			InterfaceID:   0x82c7b7d3d8bfc146,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/sell_fraction.capnp:SellFraction",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func SellFraction_Methods(methods []server.Method, s SellFraction_Server) []serv
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0x8ddee59b681dce4e,
+			InterfaceID:   0x82c7b7d3d8bfc146,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/sell_fraction.capnp:SellFraction",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c SellFraction_done) Args() SellFraction_done_Params {
 
 // AllocResults allocates the results struct.
 func (c SellFraction_done) AllocResults() (SellFraction_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellFraction_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewSellFraction_List(s *capnp.Segment, sz int32) (SellFraction_List, error)
 type SellFraction_write_Params capnp.Struct
 
 // SellFraction_write_Params_TypeID is the unique identifier for the type SellFraction_write_Params.
-const SellFraction_write_Params_TypeID = 0x9c4ea8bfce854753
+const SellFraction_write_Params_TypeID = 0xa5d0e64bd6cf35cf
 
 func NewSellFraction_write_Params(s *capnp.Segment) (SellFraction_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellFraction_write_Params(st), err
 }
 
 func NewRootSellFraction_write_Params(s *capnp.Segment) (SellFraction_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellFraction_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootSellFraction_write_Params(msg *capnp.Message) (SellFraction_write_P
 }
 
 func (s SellFraction_write_Params) String() string {
-	str, _ := text.Marshal(0x9c4ea8bfce854753, capnp.Struct(s))
+	str, _ := text.Marshal(0xa5d0e64bd6cf35cf, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s SellFraction_write_Params) Message() *capnp.Message {
 func (s SellFraction_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s SellFraction_write_Params) View() (WireSellFraction, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireSellFraction(p.Struct()), err
+func (s SellFraction_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s SellFraction_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s SellFraction_write_Params) SetView(v WireSellFraction) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireSellFraction struct, preferring placement in s's segment.
-func (s SellFraction_write_Params) NewView() (WireSellFraction, error) {
-	ss, err := NewWireSellFraction(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireSellFraction{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s SellFraction_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // SellFraction_write_Params_List is a list of SellFraction_write_Params.
@@ -376,7 +282,7 @@ type SellFraction_write_Params_List = capnp.StructList[SellFraction_write_Params
 
 // NewSellFraction_write_Params creates a new list of SellFraction_write_Params.
 func NewSellFraction_write_Params_List(s *capnp.Segment, sz int32) (SellFraction_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[SellFraction_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f SellFraction_write_Params_Future) Struct() (SellFraction_write_Params, e
 	p, err := f.Future.Ptr()
 	return SellFraction_write_Params(p.Struct()), err
 }
-func (p SellFraction_write_Params_Future) View() WireSellFraction_Future {
-	return WireSellFraction_Future{Future: p.Future.Field(0, nil)}
-}
 
 type SellFraction_done_Params capnp.Struct
 
 // SellFraction_done_Params_TypeID is the unique identifier for the type SellFraction_done_Params.
-const SellFraction_done_Params_TypeID = 0x80e52c9c073763ae
+const SellFraction_done_Params_TypeID = 0xcb0502df53bba745
 
 func NewSellFraction_done_Params(s *capnp.Segment) (SellFraction_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootSellFraction_done_Params(msg *capnp.Message) (SellFraction_done_Par
 }
 
 func (s SellFraction_done_Params) String() string {
-	str, _ := text.Marshal(0x80e52c9c073763ae, capnp.Struct(s))
+	str, _ := text.Marshal(0xcb0502df53bba745, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f SellFraction_done_Params_Future) Struct() (SellFraction_done_Params, err
 type SellFraction_done_Results capnp.Struct
 
 // SellFraction_done_Results_TypeID is the unique identifier for the type SellFraction_done_Results.
-const SellFraction_done_Results_TypeID = 0xc46673688c48bf4a
+const SellFraction_done_Results_TypeID = 0x900698f3c20de597
 
 func NewSellFraction_done_Results(s *capnp.Segment) (SellFraction_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellFraction_done_Results(st), err
 }
 
 func NewRootSellFraction_done_Results(s *capnp.Segment) (SellFraction_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellFraction_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootSellFraction_done_Results(msg *capnp.Message) (SellFraction_done_Re
 }
 
 func (s SellFraction_done_Results) String() string {
-	str, _ := text.Marshal(0xc46673688c48bf4a, capnp.Struct(s))
+	str, _ := text.Marshal(0x900698f3c20de597, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s SellFraction_done_Results) Message() *capnp.Message {
 func (s SellFraction_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s SellFraction_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s SellFraction_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // SellFraction_done_Results_List is a list of SellFraction_done_Results.
 type SellFraction_done_Results_List = capnp.StructList[SellFraction_done_Results]
 
 // NewSellFraction_done_Results creates a new list of SellFraction_done_Results.
 func NewSellFraction_done_Results_List(s *capnp.Segment, sz int32) (SellFraction_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[SellFraction_done_Results](l), err
 }
 

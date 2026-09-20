@@ -3,13 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("learning");
 $Go.import("github.com/theapemachine/symm/nomagique/learning");
 
-struct WireTaskLearnerInput {
-  features @0 :List(Float64);
-  target @1 :Float64;
-  observed @2 :Bool;
-}
-
 interface TaskLearner {
-  write @0 (input :WireTaskLearnerInput) -> stream;
-  done @1 ();
+  write @0 (feature :Float64, target :Float64, observed :Bool) -> stream;
+  done @1 () -> (out :Float64);
 }

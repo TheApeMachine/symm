@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireJoin capnp.Struct
-
-// WireJoin_TypeID is the unique identifier for the type WireJoin.
-const WireJoin_TypeID = 0xa16ecf6de6ba3caa
-
-func NewWireJoin(s *capnp.Segment) (WireJoin, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireJoin(st), err
-}
-
-func NewRootWireJoin(s *capnp.Segment) (WireJoin, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireJoin(st), err
-}
-
-func ReadRootWireJoin(msg *capnp.Message) (WireJoin, error) {
-	root, err := msg.Root()
-	return WireJoin(root.Struct()), err
-}
-
-func (s WireJoin) String() string {
-	str, _ := text.Marshal(0xa16ecf6de6ba3caa, capnp.Struct(s))
-	return str
-}
-
-func (s WireJoin) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireJoin) DecodeFromPtr(p capnp.Ptr) WireJoin {
-	return WireJoin(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireJoin) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireJoin) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireJoin) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireJoin) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireJoin) Payloads() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireJoin) HasPayloads() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireJoin) SetPayloads(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireJoin_List is a list of WireJoin.
-type WireJoin_List = capnp.StructList[WireJoin]
-
-// NewWireJoin creates a new list of WireJoin.
-func NewWireJoin_List(s *capnp.Segment, sz int32) (WireJoin_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireJoin](l), err
-}
-
-// WireJoin_Future is a wrapper for a WireJoin promised by a client call.
-type WireJoin_Future struct{ *capnp.Future }
-
-func (f WireJoin_Future) Struct() (WireJoin, error) {
-	p, err := f.Future.Ptr()
-	return WireJoin(p.Struct()), err
-}
-func (p WireJoin_Future) Payloads() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Join capnp.Client
 
 // Join_TypeID is the unique identifier for the type Join.
@@ -287,7 +208,7 @@ func (c Join_done) Args() Join_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Join_done) AllocResults() (Join_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Join_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s Join_write_Params) Message() *capnp.Message {
 func (s Join_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Join_write_Params) Payload() (WireJoin, error) {
+func (s Join_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireJoin(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Join_write_Params) HasPayload() bool {
+func (s Join_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Join_write_Params) SetPayload(v WireJoin) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireJoin struct, preferring placement in s's segment.
-func (s Join_write_Params) NewPayload() (WireJoin, error) {
-	ss, err := NewWireJoin(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireJoin{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Join_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Join_write_Params_List is a list of Join_write_Params.
@@ -386,9 +296,6 @@ type Join_write_Params_Future struct{ *capnp.Future }
 func (f Join_write_Params_Future) Struct() (Join_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Join_write_Params(p.Struct()), err
-}
-func (p Join_write_Params_Future) Payload() WireJoin_Future {
-	return WireJoin_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Join_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type Join_done_Results capnp.Struct
 const Join_done_Results_TypeID = 0xd72c0951f4c98f70
 
 func NewJoin_done_Results(s *capnp.Segment) (Join_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Join_done_Results(st), err
 }
 
 func NewRootJoin_done_Results(s *capnp.Segment) (Join_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Join_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s Join_done_Results) Message() *capnp.Message {
 func (s Join_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Join_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Join_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Join_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Join_done_Results_List is a list of Join_done_Results.
 type Join_done_Results_List = capnp.StructList[Join_done_Results]
 
 // NewJoin_done_Results creates a new list of Join_done_Results.
 func NewJoin_done_Results_List(s *capnp.Segment, sz int32) (Join_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Join_done_Results](l), err
 }
 

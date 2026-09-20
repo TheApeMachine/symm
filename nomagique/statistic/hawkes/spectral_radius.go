@@ -3,48 +3,33 @@ package hawkes
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type SpectralRadiusServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
 func NewSpectralRadius() *SpectralRadiusServer {
 	return &SpectralRadiusServer{}
 }
 
-func (s *SpectralRadiusServer) Write(ctx context.Context, call SpectralRadius_write) error {
-	args, err := call.Args().View()
-	if err != nil {
-		return err
-	}
-
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	reading, err := extractReading(payloadPtr)
-	if err != nil || reading == nil {
-		return nil
-	}
-
-	result := reading.SpectralRadius
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (server *SpectralRadiusServer) Write(ctx context.Context, call SpectralRadius_write) error {
+	server.out = call.Args().In()
 	return nil
 }
 
-func (s *SpectralRadiusServer) Done(ctx context.Context, call SpectralRadius_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (server *SpectralRadiusServer) Done(ctx context.Context, call SpectralRadius_done) error {
+	result, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"spectral_radius: alloc results failed",
+			err,
+		))
 	}
+
+	result.SetOut(server.out)
+	server.out = 0
 	return nil
 }

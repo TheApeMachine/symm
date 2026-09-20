@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireBase64Encode { data @0 :Data; }
-
 interface Base64Encode {
-  write @0 (payload :WireBase64Encode) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

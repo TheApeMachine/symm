@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireBroadcast { payload @0 :AnyPointer; channels @1 :List(Text); }
-
 interface Broadcast {
-  write @0 (payload :WireBroadcast) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

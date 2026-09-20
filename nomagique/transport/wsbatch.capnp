@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireWSBatch { messages @0 :AnyPointer; }
-
 interface WSBatch {
-  write @0 (payload :WireWSBatch) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

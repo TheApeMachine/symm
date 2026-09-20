@@ -3,13 +3,13 @@
 package algo
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type RLS capnp.Client
@@ -27,7 +27,7 @@ func (c RLS) Write(ctx context.Context, params func(RLS_write_Params) error) err
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(RLS_write_Params(s)) }
 	}
 
@@ -209,7 +209,7 @@ func (c RLS_done) Args() RLS_done_Params {
 
 // AllocResults allocates the results struct.
 func (c RLS_done) AllocResults() (RLS_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RLS_done_Results(r), err
 }
 
@@ -228,12 +228,12 @@ type RLS_write_Params capnp.Struct
 const RLS_write_Params_TypeID = 0xef1eec650d185d71
 
 func NewRLS_write_Params(s *capnp.Segment) (RLS_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return RLS_write_Params(st), err
 }
 
 func NewRootRLS_write_Params(s *capnp.Segment) (RLS_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return RLS_write_Params(st), err
 }
 
@@ -269,28 +269,28 @@ func (s RLS_write_Params) Message() *capnp.Message {
 func (s RLS_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s RLS_write_Params) In() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
+func (s RLS_write_Params) X() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s RLS_write_Params) HasIn() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s RLS_write_Params) SetX(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s RLS_write_Params) SetIn(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s RLS_write_Params) Target() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewIn sets the in field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s RLS_write_Params) NewIn(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
+func (s RLS_write_Params) SetTarget(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s RLS_write_Params) Lambda() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s RLS_write_Params) SetLambda(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
 // RLS_write_Params_List is a list of RLS_write_Params.
@@ -298,7 +298,7 @@ type RLS_write_Params_List = capnp.StructList[RLS_write_Params]
 
 // NewRLS_write_Params creates a new list of RLS_write_Params.
 func NewRLS_write_Params_List(s *capnp.Segment, sz int32) (RLS_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[RLS_write_Params](l), err
 }
 
@@ -381,12 +381,12 @@ type RLS_done_Results capnp.Struct
 const RLS_done_Results_TypeID = 0xa846aac5d0138d6b
 
 func NewRLS_done_Results(s *capnp.Segment) (RLS_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RLS_done_Results(st), err
 }
 
 func NewRootRLS_done_Results(s *capnp.Segment) (RLS_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RLS_done_Results(st), err
 }
 
@@ -422,13 +422,20 @@ func (s RLS_done_Results) Message() *capnp.Message {
 func (s RLS_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s RLS_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s RLS_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // RLS_done_Results_List is a list of RLS_done_Results.
 type RLS_done_Results_List = capnp.StructList[RLS_done_Results]
 
 // NewRLS_done_Results creates a new list of RLS_done_Results.
 func NewRLS_done_Results_List(s *capnp.Segment, sz int32) (RLS_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[RLS_done_Results](l), err
 }
 

@@ -11,106 +11,6 @@ import (
 	context "context"
 )
 
-type WireSubmit capnp.Struct
-
-// WireSubmit_TypeID is the unique identifier for the type WireSubmit.
-const WireSubmit_TypeID = 0x9e96b0ac81ebaa17
-
-func NewWireSubmit(s *capnp.Segment) (WireSubmit, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireSubmit(st), err
-}
-
-func NewRootWireSubmit(s *capnp.Segment) (WireSubmit, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireSubmit(st), err
-}
-
-func ReadRootWireSubmit(msg *capnp.Message) (WireSubmit, error) {
-	root, err := msg.Root()
-	return WireSubmit(root.Struct()), err
-}
-
-func (s WireSubmit) String() string {
-	str, _ := text.Marshal(0x9e96b0ac81ebaa17, capnp.Struct(s))
-	return str
-}
-
-func (s WireSubmit) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireSubmit) DecodeFromPtr(p capnp.Ptr) WireSubmit {
-	return WireSubmit(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireSubmit) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireSubmit) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireSubmit) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireSubmit) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireSubmit) Action() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s WireSubmit) HasAction() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireSubmit) ActionBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s WireSubmit) SetAction(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s WireSubmit) Symbol() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireSubmit) HasSymbol() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireSubmit) SymbolBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireSubmit) SetSymbol(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-// WireSubmit_List is a list of WireSubmit.
-type WireSubmit_List = capnp.StructList[WireSubmit]
-
-// NewWireSubmit creates a new list of WireSubmit.
-func NewWireSubmit_List(s *capnp.Segment, sz int32) (WireSubmit_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireSubmit](l), err
-}
-
-// WireSubmit_Future is a wrapper for a WireSubmit promised by a client call.
-type WireSubmit_Future struct{ *capnp.Future }
-
-func (f WireSubmit_Future) Struct() (WireSubmit, error) {
-	p, err := f.Future.Ptr()
-	return WireSubmit(p.Struct()), err
-}
-
 type Submit capnp.Client
 
 // Submit_TypeID is the unique identifier for the type Submit.
@@ -126,7 +26,7 @@ func (c Submit) Write(ctx context.Context, params func(Submit_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Submit_write_Params(s)) }
 	}
 
@@ -308,7 +208,7 @@ func (c Submit_done) Args() Submit_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Submit_done) AllocResults() (Submit_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Submit_done_Results(r), err
 }
 
@@ -327,12 +227,12 @@ type Submit_write_Params capnp.Struct
 const Submit_write_Params_TypeID = 0xb16985c6272dc02b
 
 func NewSubmit_write_Params(s *capnp.Segment) (Submit_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Submit_write_Params(st), err
 }
 
 func NewRootSubmit_write_Params(s *capnp.Segment) (Submit_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Submit_write_Params(st), err
 }
 
@@ -368,28 +268,40 @@ func (s Submit_write_Params) Message() *capnp.Message {
 func (s Submit_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Submit_write_Params) Submit() (WireSubmit, error) {
+func (s Submit_write_Params) Action() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireSubmit(p.Struct()), err
+	return p.Text(), err
 }
 
-func (s Submit_write_Params) HasSubmit() bool {
+func (s Submit_write_Params) HasAction() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Submit_write_Params) SetSubmit(v WireSubmit) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Submit_write_Params) ActionBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-// NewSubmit sets the submit field to a newly
-// allocated WireSubmit struct, preferring placement in s's segment.
-func (s Submit_write_Params) NewSubmit() (WireSubmit, error) {
-	ss, err := NewWireSubmit(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireSubmit{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Submit_write_Params) SetAction(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Submit_write_Params) Symbol() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Submit_write_Params) HasSymbol() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Submit_write_Params) SymbolBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Submit_write_Params) SetSymbol(v string) error {
+	return capnp.Struct(s).SetText(1, v)
 }
 
 // Submit_write_Params_List is a list of Submit_write_Params.
@@ -397,7 +309,7 @@ type Submit_write_Params_List = capnp.StructList[Submit_write_Params]
 
 // NewSubmit_write_Params creates a new list of Submit_write_Params.
 func NewSubmit_write_Params_List(s *capnp.Segment, sz int32) (Submit_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[Submit_write_Params](l), err
 }
 
@@ -407,9 +319,6 @@ type Submit_write_Params_Future struct{ *capnp.Future }
 func (f Submit_write_Params_Future) Struct() (Submit_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Submit_write_Params(p.Struct()), err
-}
-func (p Submit_write_Params_Future) Submit() WireSubmit_Future {
-	return WireSubmit_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Submit_done_Params capnp.Struct
@@ -483,12 +392,12 @@ type Submit_done_Results capnp.Struct
 const Submit_done_Results_TypeID = 0xb01a00cfe2bbf0b9
 
 func NewSubmit_done_Results(s *capnp.Segment) (Submit_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Submit_done_Results(st), err
 }
 
 func NewRootSubmit_done_Results(s *capnp.Segment) (Submit_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4})
 	return Submit_done_Results(st), err
 }
 
@@ -524,13 +433,87 @@ func (s Submit_done_Results) Message() *capnp.Message {
 func (s Submit_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Submit_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Submit_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Submit_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s Submit_done_Results) Symbol() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Submit_done_Results) HasSymbol() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Submit_done_Results) SymbolBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Submit_done_Results) SetSymbol(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Submit_done_Results) Action() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Submit_done_Results) HasAction() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Submit_done_Results) ActionBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Submit_done_Results) SetAction(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+func (s Submit_done_Results) Status() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s Submit_done_Results) HasStatus() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Submit_done_Results) StatusBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Submit_done_Results) SetStatus(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
+func (s Submit_done_Results) Timestamp() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s Submit_done_Results) SetTimestamp(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
 
 // Submit_done_Results_List is a list of Submit_done_Results.
 type Submit_done_Results_List = capnp.StructList[Submit_done_Results]
 
 // NewSubmit_done_Results creates a new list of Submit_done_Results.
 func NewSubmit_done_Results_List(s *capnp.Segment, sz int32) (Submit_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 4}, sz)
 	return capnp.StructList[Submit_done_Results](l), err
 }
 

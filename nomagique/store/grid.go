@@ -1,128 +1,49 @@
 package store
 
 import (
+	"bytes"
 	"context"
-	"math"
+
+	"github.com/theapemachine/errnie"
 )
 
-// GridServer implements Grid_Server from the capnp schema.
-// It acts as a virtual lock-free metric coordinate store over Cap'n Proto.
 type GridServer struct {
-	cells  []Grid
-	coords [][2]int
-}
-
-func NewGridServer() *GridServer {
-	return &GridServer{
-		cells:  make([]Grid, 0),
-		coords: make([][2]int, 0),
-	}
-}
-
-func (s *GridServer) Poke(ctx context.Context, call Grid_poke) error {
-	payload, err := call.Args().Payload()
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	outList, err := res.NewCells(int32(len(s.cells)))
-	if err != nil {
-		return err
-	}
-
-	for i, cell := range s.cells {
-		if cell.IsValid() {
-			pokeCall, release := cell.Poke(ctx, func(p Grid_poke_Params) error {
-				p.SetPayload(payload)
-				return nil
-			})
-
-			pokeRes, err := pokeCall.Struct()
-			if err == nil {
-				cellsRes, err := pokeRes.Cells()
-				if err == nil && cellsRes.Len() > 0 {
-					outList.Set(i, cellsRes.At(0))
-				}
-			}
-			release()
-		}
-	}
-
-	return nil
-}
-
-func (s *GridServer) Peek(ctx context.Context, call Grid_peek) error {
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	outList, err := res.NewCells(int32(len(s.cells)))
-	if err != nil {
-		return err
-	}
-
-	for i, cell := range s.cells {
-		if cell.IsValid() {
-			peekCall, release := cell.Peek(ctx, func(p Grid_peek_Params) error {
-				return nil
-			})
-
-			peekRes, err := peekCall.Struct()
-			if err == nil {
-				cellsRes, err := peekRes.Cells()
-				if err == nil && cellsRes.Len() > 0 {
-					outList.Set(i, cellsRes.At(0))
-				}
-			}
-			release()
-		}
-	}
-
-	return nil
-}
-
-func (s *GridServer) Register(ctx context.Context, call Grid_register) error {
-	payload, err := call.Args().Payload()
-	if err != nil {
-		return err
-	}
-
-	// In a real capability-based model, the payload might contain the Client/Capability itself,
-	// or we register a new local cell that proxies the capability.
-	// For now, we will decode the payload as a Grid capability and store it.
-
-	if payload.IsValid() {
-		// Allocate unique 2D coordinates dynamically using square expansion
-		n := len(s.cells)
-		sz := int(math.Sqrt(float64(n)))
-		rem := n - sz*sz
-		x, y := sz, rem-sz
-
-		if rem < sz {
-			x, y = rem, sz
-		}
-
-		s.coords = append(s.coords, [2]int{x, y})
-
-		// Attempt to extract a client capability from the payload if it's an interface pointer.
-		client := payload.Interface().Client()
-		if client.IsValid() {
-			s.cells = append(s.cells, Grid(client))
-		}
-	}
-
-	return nil
+	out []byte
 }
 
 func NewGrid() *GridServer {
-	return &GridServer{
-		cells:  make([]Grid, 0),
-		coords: make([][2]int, 0),
+	return &GridServer{}
+}
+
+func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
+	inData, err := call.Args().In()
+	if err == nil && len(inData) > 0 {
+		server.out = bytes.Clone(inData)
 	}
+
+	return nil
+}
+
+func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"grid: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"grid: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
+	return nil
 }

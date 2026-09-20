@@ -3,13 +3,12 @@
 package temporal
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
 )
 
 type Transition capnp.Client
@@ -209,7 +208,7 @@ func (c Transition_done) Args() Transition_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Transition_done) AllocResults() (Transition_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Transition_done_Results(r), err
 }
 
@@ -370,12 +369,12 @@ type Transition_done_Results capnp.Struct
 const Transition_done_Results_TypeID = 0xeb25881ced5c675a
 
 func NewTransition_done_Results(s *capnp.Segment) (Transition_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Transition_done_Results(st), err
 }
 
 func NewRootTransition_done_Results(s *capnp.Segment) (Transition_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Transition_done_Results(st), err
 }
 
@@ -411,13 +410,25 @@ func (s Transition_done_Results) Message() *capnp.Message {
 func (s Transition_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Transition_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Transition_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Transition_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Transition_done_Results_List is a list of Transition_done_Results.
 type Transition_done_Results_List = capnp.StructList[Transition_done_Results]
 
 // NewTransition_done_Results creates a new list of Transition_done_Results.
 func NewTransition_done_Results_List(s *capnp.Segment, sz int32) (Transition_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Transition_done_Results](l), err
 }
 

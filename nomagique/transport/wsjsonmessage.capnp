@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireWSJSONMessage { type @0 :Text; payload @1 :AnyPointer; }
-
 interface WSJSONMessage {
-  write @0 (payload :WireWSJSONMessage) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

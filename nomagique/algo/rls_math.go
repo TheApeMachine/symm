@@ -1,7 +1,10 @@
 package algo
 
 import (
+	"context"
 	"math"
+
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -176,4 +179,59 @@ func (s *RLSUpdateServer) Update(obs RLSObservation) RLSPosterior {
 
 func NewRLSUpdate() *RLSUpdateServer {
 	return &RLSUpdateServer{}
+}
+
+type RLSServer struct {
+	theta float64
+	p     float64
+	out   float64
+}
+
+func NewRLS() *RLSServer {
+	return &RLSServer{
+		theta: 0.0,
+		p:     1.0,
+	}
+}
+
+func (server *RLSServer) Write(ctx context.Context, call RLS_write) error {
+	args := call.Args()
+	valX := args.X()
+	target := args.Target()
+	lambda := args.Lambda()
+
+	if lambda <= 0 {
+		lambda = 1.0
+	}
+
+	prediction := server.theta * valX
+	residual := target - prediction
+
+	denom := lambda + server.p*valX*valX
+	var gain float64
+
+	if denom > 0 {
+		gain = (server.p * valX) / denom
+	}
+
+	server.theta += gain * residual
+	server.p = (server.p - gain*valX*server.p) / lambda
+
+	server.out = prediction
+	return nil
+}
+
+func (server *RLSServer) Done(ctx context.Context, call RLS_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"rls: alloc results failed",
+			err,
+		))
+	}
+
+	results.SetOut(server.out)
+	server.out = 0
+	return nil
 }

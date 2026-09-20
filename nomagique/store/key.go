@@ -2,35 +2,38 @@ package store
 
 import (
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
-// KeyServer implements Key_Server from the capnp schema.
 type KeyServer struct {
-	path []string
-}
-
-func NewKeyServer(path ...string) *KeyServer {
-	return &KeyServer{
-		path: path,
-	}
-}
-
-func (s *KeyServer) Extract(ctx context.Context, call Key_extract) error {
-	// Dynamically extracting values by string path from an AnyPointer
-	// requires Cap'n Proto dynamic schema introspection.
-	// For now, we will return not found, until dynamic schema is fully enabled.
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	res.SetFound(false)
-	res.SetValue(0.0)
-
-	return nil
+	val   float64
+	found bool
 }
 
 func NewKey() *KeyServer {
 	return &KeyServer{}
+}
+
+func (server *KeyServer) Write(ctx context.Context, call Key_write) error {
+	server.val = 0.0
+	server.found = false
+	return nil
+}
+
+func (server *KeyServer) Done(ctx context.Context, call Key_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"key: alloc results failed",
+			err,
+		))
+	}
+
+	results.SetValue(server.val)
+	results.SetFound(server.found)
+	server.val = 0
+	server.found = false
+	return nil
 }

@@ -209,7 +209,7 @@ func (c RatioTarget_done) Args() RatioTarget_done_Params {
 
 // AllocResults allocates the results struct.
 func (c RatioTarget_done) AllocResults() (RatioTarget_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RatioTarget_done_Results(r), err
 }
 
@@ -373,12 +373,12 @@ type RatioTarget_done_Results capnp.Struct
 const RatioTarget_done_Results_TypeID = 0xe1aca6aee8272856
 
 func NewRatioTarget_done_Results(s *capnp.Segment) (RatioTarget_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RatioTarget_done_Results(st), err
 }
 
 func NewRootRatioTarget_done_Results(s *capnp.Segment) (RatioTarget_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RatioTarget_done_Results(st), err
 }
 
@@ -414,13 +414,20 @@ func (s RatioTarget_done_Results) Message() *capnp.Message {
 func (s RatioTarget_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s RatioTarget_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s RatioTarget_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // RatioTarget_done_Results_List is a list of RatioTarget_done_Results.
 type RatioTarget_done_Results_List = capnp.StructList[RatioTarget_done_Results]
 
 // NewRatioTarget_done_Results creates a new list of RatioTarget_done_Results.
 func NewRatioTarget_done_Results_List(s *capnp.Segment, sz int32) (RatioTarget_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[RatioTarget_done_Results](l), err
 }
 

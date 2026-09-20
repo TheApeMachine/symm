@@ -11,102 +11,6 @@ import (
 	context "context"
 )
 
-type WireBearerAuth capnp.Struct
-
-// WireBearerAuth_TypeID is the unique identifier for the type WireBearerAuth.
-const WireBearerAuth_TypeID = 0xe037ca3b165b363b
-
-func NewWireBearerAuth(s *capnp.Segment) (WireBearerAuth, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireBearerAuth(st), err
-}
-
-func NewRootWireBearerAuth(s *capnp.Segment) (WireBearerAuth, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireBearerAuth(st), err
-}
-
-func ReadRootWireBearerAuth(msg *capnp.Message) (WireBearerAuth, error) {
-	root, err := msg.Root()
-	return WireBearerAuth(root.Struct()), err
-}
-
-func (s WireBearerAuth) String() string {
-	str, _ := text.Marshal(0xe037ca3b165b363b, capnp.Struct(s))
-	return str
-}
-
-func (s WireBearerAuth) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireBearerAuth) DecodeFromPtr(p capnp.Ptr) WireBearerAuth {
-	return WireBearerAuth(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireBearerAuth) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireBearerAuth) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireBearerAuth) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireBearerAuth) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireBearerAuth) Headers() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireBearerAuth) HasHeaders() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireBearerAuth) SetHeaders(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireBearerAuth) Token() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireBearerAuth) HasToken() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireBearerAuth) TokenBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireBearerAuth) SetToken(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-// WireBearerAuth_List is a list of WireBearerAuth.
-type WireBearerAuth_List = capnp.StructList[WireBearerAuth]
-
-// NewWireBearerAuth creates a new list of WireBearerAuth.
-func NewWireBearerAuth_List(s *capnp.Segment, sz int32) (WireBearerAuth_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireBearerAuth](l), err
-}
-
-// WireBearerAuth_Future is a wrapper for a WireBearerAuth promised by a client call.
-type WireBearerAuth_Future struct{ *capnp.Future }
-
-func (f WireBearerAuth_Future) Struct() (WireBearerAuth, error) {
-	p, err := f.Future.Ptr()
-	return WireBearerAuth(p.Struct()), err
-}
-func (p WireBearerAuth_Future) Headers() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type BearerAuth capnp.Client
 
 // BearerAuth_TypeID is the unique identifier for the type BearerAuth.
@@ -304,7 +208,7 @@ func (c BearerAuth_done) Args() BearerAuth_done_Params {
 
 // AllocResults allocates the results struct.
 func (c BearerAuth_done) AllocResults() (BearerAuth_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return BearerAuth_done_Results(r), err
 }
 
@@ -364,28 +268,17 @@ func (s BearerAuth_write_Params) Message() *capnp.Message {
 func (s BearerAuth_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BearerAuth_write_Params) Payload() (WireBearerAuth, error) {
+func (s BearerAuth_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireBearerAuth(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s BearerAuth_write_Params) HasPayload() bool {
+func (s BearerAuth_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BearerAuth_write_Params) SetPayload(v WireBearerAuth) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireBearerAuth struct, preferring placement in s's segment.
-func (s BearerAuth_write_Params) NewPayload() (WireBearerAuth, error) {
-	ss, err := NewWireBearerAuth(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireBearerAuth{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s BearerAuth_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // BearerAuth_write_Params_List is a list of BearerAuth_write_Params.
@@ -403,9 +296,6 @@ type BearerAuth_write_Params_Future struct{ *capnp.Future }
 func (f BearerAuth_write_Params_Future) Struct() (BearerAuth_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return BearerAuth_write_Params(p.Struct()), err
-}
-func (p BearerAuth_write_Params_Future) Payload() WireBearerAuth_Future {
-	return WireBearerAuth_Future{Future: p.Future.Field(0, nil)}
 }
 
 type BearerAuth_done_Params capnp.Struct
@@ -479,12 +369,12 @@ type BearerAuth_done_Results capnp.Struct
 const BearerAuth_done_Results_TypeID = 0x9cda3f63f295b8af
 
 func NewBearerAuth_done_Results(s *capnp.Segment) (BearerAuth_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return BearerAuth_done_Results(st), err
 }
 
 func NewRootBearerAuth_done_Results(s *capnp.Segment) (BearerAuth_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return BearerAuth_done_Results(st), err
 }
 
@@ -520,13 +410,25 @@ func (s BearerAuth_done_Results) Message() *capnp.Message {
 func (s BearerAuth_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s BearerAuth_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s BearerAuth_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s BearerAuth_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // BearerAuth_done_Results_List is a list of BearerAuth_done_Results.
 type BearerAuth_done_Results_List = capnp.StructList[BearerAuth_done_Results]
 
 // NewBearerAuth_done_Results creates a new list of BearerAuth_done_Results.
 func NewBearerAuth_done_Results_List(s *capnp.Segment, sz int32) (BearerAuth_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[BearerAuth_done_Results](l), err
 }
 

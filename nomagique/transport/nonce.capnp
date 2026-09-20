@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireNonce { }
-
 interface Nonce {
-  write @0 (payload :WireNonce) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

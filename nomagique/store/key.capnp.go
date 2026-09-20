@@ -7,6 +7,7 @@ import (
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	math "math"
 )
@@ -16,23 +17,41 @@ type Key capnp.Client
 // Key_TypeID is the unique identifier for the type Key.
 const Key_TypeID = 0xabd0aec8491cb8ba
 
-func (c Key) Extract(ctx context.Context, params func(Key_extract_Params) error) (Key_extract_Results_Future, capnp.ReleaseFunc) {
-
+func (c Key) Write(ctx context.Context, params func(Key_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xabd0aec8491cb8ba,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/key.capnp:Key",
-			MethodName:    "extract",
+			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Key_extract_Params(s)) }
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Key_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c Key) Done(ctx context.Context, params func(Key_done_Params) error) (Key_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xabd0aec8491cb8ba,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/key.capnp:Key",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Key_done_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Key_extract_Results_Future{Future: ans.Future()}, release
+	return Key_done_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -109,7 +128,9 @@ func (c Key) GetFlowLimiter() fc.FlowLimiter {
 
 // A Key_Server is a Key with a local implementation.
 type Key_Server interface {
-	Extract(context.Context, Key_extract) error
+	Write(context.Context, Key_write) error
+
+	Done(context.Context, Key_done) error
 }
 
 // Key_NewServer creates a new Server from an implementation of Key_Server.
@@ -128,7 +149,7 @@ func Key_ServerToClient(s Key_Server) Key {
 // This can be used to create a more complicated Server.
 func Key_Methods(methods []server.Method, s Key_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 1)
+		methods = make([]server.Method, 0, 2)
 	}
 
 	methods = append(methods, server.Method{
@@ -136,31 +157,60 @@ func Key_Methods(methods []server.Method, s Key_Server) []server.Method {
 			InterfaceID:   0xabd0aec8491cb8ba,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/key.capnp:Key",
-			MethodName:    "extract",
+			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Extract(ctx, Key_extract{call})
+			return s.Write(ctx, Key_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xabd0aec8491cb8ba,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/key.capnp:Key",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, Key_done{call})
 		},
 	})
 
 	return methods
 }
 
-// Key_extract holds the state for a server call to Key.extract.
+// Key_write holds the state for a server call to Key.write.
 // See server.Call for documentation.
-type Key_extract struct {
+type Key_write struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Key_extract) Args() Key_extract_Params {
-	return Key_extract_Params(c.Call.Args())
+func (c Key_write) Args() Key_write_Params {
+	return Key_write_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Key_extract) AllocResults() (Key_extract_Results, error) {
+func (c Key_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// Key_done holds the state for a server call to Key.done.
+// See server.Call for documentation.
+type Key_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Key_done) Args() Key_done_Params {
+	return Key_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Key_done) AllocResults() (Key_done_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return Key_extract_Results(r), err
+	return Key_done_Results(r), err
 }
 
 // Key_List is a list of Key.
@@ -172,161 +222,242 @@ func NewKey_List(s *capnp.Segment, sz int32) (Key_List, error) {
 	return capnp.CapList[Key](l), err
 }
 
-type Key_extract_Params capnp.Struct
+type Key_write_Params capnp.Struct
 
-// Key_extract_Params_TypeID is the unique identifier for the type Key_extract_Params.
-const Key_extract_Params_TypeID = 0x9b51f810d340c4cf
+// Key_write_Params_TypeID is the unique identifier for the type Key_write_Params.
+const Key_write_Params_TypeID = 0x9b51f810d340c4cf
 
-func NewKey_extract_Params(s *capnp.Segment) (Key_extract_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Key_extract_Params(st), err
+func NewKey_write_Params(s *capnp.Segment) (Key_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Key_write_Params(st), err
 }
 
-func NewRootKey_extract_Params(s *capnp.Segment) (Key_extract_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Key_extract_Params(st), err
+func NewRootKey_write_Params(s *capnp.Segment) (Key_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Key_write_Params(st), err
 }
 
-func ReadRootKey_extract_Params(msg *capnp.Message) (Key_extract_Params, error) {
+func ReadRootKey_write_Params(msg *capnp.Message) (Key_write_Params, error) {
 	root, err := msg.Root()
-	return Key_extract_Params(root.Struct()), err
+	return Key_write_Params(root.Struct()), err
 }
 
-func (s Key_extract_Params) String() string {
+func (s Key_write_Params) String() string {
 	str, _ := text.Marshal(0x9b51f810d340c4cf, capnp.Struct(s))
 	return str
 }
 
-func (s Key_extract_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Key_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Key_extract_Params) DecodeFromPtr(p capnp.Ptr) Key_extract_Params {
-	return Key_extract_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (Key_write_Params) DecodeFromPtr(p capnp.Ptr) Key_write_Params {
+	return Key_write_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Key_extract_Params) ToPtr() capnp.Ptr {
+func (s Key_write_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Key_extract_Params) IsValid() bool {
+func (s Key_write_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Key_extract_Params) Message() *capnp.Message {
+func (s Key_write_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Key_extract_Params) Segment() *capnp.Segment {
+func (s Key_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Key_extract_Params) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
+func (s Key_write_Params) In() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
 }
 
-func (s Key_extract_Params) HasPayload() bool {
+func (s Key_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Key_extract_Params) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
+func (s Key_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// Key_extract_Params_List is a list of Key_extract_Params.
-type Key_extract_Params_List = capnp.StructList[Key_extract_Params]
-
-// NewKey_extract_Params creates a new list of Key_extract_Params.
-func NewKey_extract_Params_List(s *capnp.Segment, sz int32) (Key_extract_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Key_extract_Params](l), err
+func (s Key_write_Params) Path() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
 }
 
-// Key_extract_Params_Future is a wrapper for a Key_extract_Params promised by a client call.
-type Key_extract_Params_Future struct{ *capnp.Future }
+func (s Key_write_Params) HasPath() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
 
-func (f Key_extract_Params_Future) Struct() (Key_extract_Params, error) {
+func (s Key_write_Params) PathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Key_write_Params) SetPath(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+// Key_write_Params_List is a list of Key_write_Params.
+type Key_write_Params_List = capnp.StructList[Key_write_Params]
+
+// NewKey_write_Params creates a new list of Key_write_Params.
+func NewKey_write_Params_List(s *capnp.Segment, sz int32) (Key_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[Key_write_Params](l), err
+}
+
+// Key_write_Params_Future is a wrapper for a Key_write_Params promised by a client call.
+type Key_write_Params_Future struct{ *capnp.Future }
+
+func (f Key_write_Params_Future) Struct() (Key_write_Params, error) {
 	p, err := f.Future.Ptr()
-	return Key_extract_Params(p.Struct()), err
-}
-func (p Key_extract_Params_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
+	return Key_write_Params(p.Struct()), err
 }
 
-type Key_extract_Results capnp.Struct
+type Key_done_Params capnp.Struct
 
-// Key_extract_Results_TypeID is the unique identifier for the type Key_extract_Results.
-const Key_extract_Results_TypeID = 0xa837f047051db1c8
+// Key_done_Params_TypeID is the unique identifier for the type Key_done_Params.
+const Key_done_Params_TypeID = 0xd29236e3705f0bc1
 
-func NewKey_extract_Results(s *capnp.Segment) (Key_extract_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return Key_extract_Results(st), err
+func NewKey_done_Params(s *capnp.Segment) (Key_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Key_done_Params(st), err
 }
 
-func NewRootKey_extract_Results(s *capnp.Segment) (Key_extract_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return Key_extract_Results(st), err
+func NewRootKey_done_Params(s *capnp.Segment) (Key_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Key_done_Params(st), err
 }
 
-func ReadRootKey_extract_Results(msg *capnp.Message) (Key_extract_Results, error) {
+func ReadRootKey_done_Params(msg *capnp.Message) (Key_done_Params, error) {
 	root, err := msg.Root()
-	return Key_extract_Results(root.Struct()), err
+	return Key_done_Params(root.Struct()), err
 }
 
-func (s Key_extract_Results) String() string {
-	str, _ := text.Marshal(0xa837f047051db1c8, capnp.Struct(s))
+func (s Key_done_Params) String() string {
+	str, _ := text.Marshal(0xd29236e3705f0bc1, capnp.Struct(s))
 	return str
 }
 
-func (s Key_extract_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Key_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Key_extract_Results) DecodeFromPtr(p capnp.Ptr) Key_extract_Results {
-	return Key_extract_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Key_done_Params) DecodeFromPtr(p capnp.Ptr) Key_done_Params {
+	return Key_done_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Key_extract_Results) ToPtr() capnp.Ptr {
+func (s Key_done_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Key_extract_Results) IsValid() bool {
+func (s Key_done_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Key_extract_Results) Message() *capnp.Message {
+func (s Key_done_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Key_extract_Results) Segment() *capnp.Segment {
+func (s Key_done_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Key_extract_Results) Value() float64 {
+
+// Key_done_Params_List is a list of Key_done_Params.
+type Key_done_Params_List = capnp.StructList[Key_done_Params]
+
+// NewKey_done_Params creates a new list of Key_done_Params.
+func NewKey_done_Params_List(s *capnp.Segment, sz int32) (Key_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Key_done_Params](l), err
+}
+
+// Key_done_Params_Future is a wrapper for a Key_done_Params promised by a client call.
+type Key_done_Params_Future struct{ *capnp.Future }
+
+func (f Key_done_Params_Future) Struct() (Key_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return Key_done_Params(p.Struct()), err
+}
+
+type Key_done_Results capnp.Struct
+
+// Key_done_Results_TypeID is the unique identifier for the type Key_done_Results.
+const Key_done_Results_TypeID = 0xf4c277cbd51dd470
+
+func NewKey_done_Results(s *capnp.Segment) (Key_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Key_done_Results(st), err
+}
+
+func NewRootKey_done_Results(s *capnp.Segment) (Key_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
+	return Key_done_Results(st), err
+}
+
+func ReadRootKey_done_Results(msg *capnp.Message) (Key_done_Results, error) {
+	root, err := msg.Root()
+	return Key_done_Results(root.Struct()), err
+}
+
+func (s Key_done_Results) String() string {
+	str, _ := text.Marshal(0xf4c277cbd51dd470, capnp.Struct(s))
+	return str
+}
+
+func (s Key_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Key_done_Results) DecodeFromPtr(p capnp.Ptr) Key_done_Results {
+	return Key_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Key_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Key_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Key_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Key_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Key_done_Results) Value() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Key_extract_Results) SetValue(v float64) {
+func (s Key_done_Results) SetValue(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s Key_extract_Results) Found() bool {
+func (s Key_done_Results) Found() bool {
 	return capnp.Struct(s).Bit(64)
 }
 
-func (s Key_extract_Results) SetFound(v bool) {
+func (s Key_done_Results) SetFound(v bool) {
 	capnp.Struct(s).SetBit(64, v)
 }
 
-// Key_extract_Results_List is a list of Key_extract_Results.
-type Key_extract_Results_List = capnp.StructList[Key_extract_Results]
+// Key_done_Results_List is a list of Key_done_Results.
+type Key_done_Results_List = capnp.StructList[Key_done_Results]
 
-// NewKey_extract_Results creates a new list of Key_extract_Results.
-func NewKey_extract_Results_List(s *capnp.Segment, sz int32) (Key_extract_Results_List, error) {
+// NewKey_done_Results creates a new list of Key_done_Results.
+func NewKey_done_Results_List(s *capnp.Segment, sz int32) (Key_done_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
-	return capnp.StructList[Key_extract_Results](l), err
+	return capnp.StructList[Key_done_Results](l), err
 }
 
-// Key_extract_Results_Future is a wrapper for a Key_extract_Results promised by a client call.
-type Key_extract_Results_Future struct{ *capnp.Future }
+// Key_done_Results_Future is a wrapper for a Key_done_Results promised by a client call.
+type Key_done_Results_Future struct{ *capnp.Future }
 
-func (f Key_extract_Results_Future) Struct() (Key_extract_Results, error) {
+func (f Key_done_Results_Future) Struct() (Key_done_Results, error) {
 	p, err := f.Future.Ptr()
-	return Key_extract_Results(p.Struct()), err
+	return Key_done_Results(p.Struct()), err
 }

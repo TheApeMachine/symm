@@ -1,25 +1,46 @@
 package transport
 
 import (
+	"bytes"
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type ForkServer struct {
-	Downstream func(context.Context, any) error
+	out []byte
 }
 
 func NewFork() *ForkServer {
 	return &ForkServer{}
 }
 
-func (s *ForkServer) Write(ctx context.Context, call Fork_write) error {
-	if s.Downstream != nil {
-		return s.Downstream(ctx, nil)
-	}
-
+func (server *ForkServer) Write(ctx context.Context, call Fork_write) error {
+	data, _ := call.Args().In()
+	server.out = bytes.Clone(data)
 	return nil
 }
 
-func (s *ForkServer) Done(ctx context.Context, call Fork_done) error {
+func (server *ForkServer) Done(ctx context.Context, call Fork_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"fork: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"fork: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
 	return nil
 }

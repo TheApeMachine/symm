@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/cognition");
 
 interface Pack {
   write @0 (count :UInt64, mass :UInt64, writeStep :UInt64) -> stream;
-  done @1 ();
+  done @1 () -> (out :Data);
 }

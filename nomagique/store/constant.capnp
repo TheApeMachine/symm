@@ -4,5 +4,6 @@ $Go.package("store");
 $Go.import("nomagique/store");
 
 interface Constant {
-  evaluate @0 (payload :AnyPointer) -> (value :AnyPointer);
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

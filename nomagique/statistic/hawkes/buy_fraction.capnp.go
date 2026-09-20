@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireBuyFraction capnp.Struct
-
-// WireBuyFraction_TypeID is the unique identifier for the type WireBuyFraction.
-const WireBuyFraction_TypeID = 0x8a40c9a27af3b545
-
-func NewWireBuyFraction(s *capnp.Segment) (WireBuyFraction, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBuyFraction(st), err
-}
-
-func NewRootWireBuyFraction(s *capnp.Segment) (WireBuyFraction, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBuyFraction(st), err
-}
-
-func ReadRootWireBuyFraction(msg *capnp.Message) (WireBuyFraction, error) {
-	root, err := msg.Root()
-	return WireBuyFraction(root.Struct()), err
-}
-
-func (s WireBuyFraction) String() string {
-	str, _ := text.Marshal(0x8a40c9a27af3b545, capnp.Struct(s))
-	return str
-}
-
-func (s WireBuyFraction) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireBuyFraction) DecodeFromPtr(p capnp.Ptr) WireBuyFraction {
-	return WireBuyFraction(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireBuyFraction) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireBuyFraction) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireBuyFraction) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireBuyFraction) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireBuyFraction) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireBuyFraction) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireBuyFraction) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireBuyFraction_List is a list of WireBuyFraction.
-type WireBuyFraction_List = capnp.StructList[WireBuyFraction]
-
-// NewWireBuyFraction creates a new list of WireBuyFraction.
-func NewWireBuyFraction_List(s *capnp.Segment, sz int32) (WireBuyFraction_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireBuyFraction](l), err
-}
-
-// WireBuyFraction_Future is a wrapper for a WireBuyFraction promised by a client call.
-type WireBuyFraction_Future struct{ *capnp.Future }
-
-func (f WireBuyFraction_Future) Struct() (WireBuyFraction, error) {
-	p, err := f.Future.Ptr()
-	return WireBuyFraction(p.Struct()), err
-}
-func (p WireBuyFraction_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type BuyFraction capnp.Client
 
 // BuyFraction_TypeID is the unique identifier for the type BuyFraction.
-const BuyFraction_TypeID = 0xb945aa80d75f2668
+const BuyFraction_TypeID = 0xe7030e8f3eaf0e91
 
 func (c BuyFraction) Write(ctx context.Context, params func(BuyFraction_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xb945aa80d75f2668,
+			InterfaceID:   0xe7030e8f3eaf0e91,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/buy_fraction.capnp:BuyFraction",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(BuyFraction_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c BuyFraction) Done(ctx context.Context, params func(BuyFraction_done_Para
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xb945aa80d75f2668,
+			InterfaceID:   0xe7030e8f3eaf0e91,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/buy_fraction.capnp:BuyFraction",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func BuyFraction_Methods(methods []server.Method, s BuyFraction_Server) []server
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xb945aa80d75f2668,
+			InterfaceID:   0xe7030e8f3eaf0e91,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/buy_fraction.capnp:BuyFraction",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func BuyFraction_Methods(methods []server.Method, s BuyFraction_Server) []server
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xb945aa80d75f2668,
+			InterfaceID:   0xe7030e8f3eaf0e91,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/buy_fraction.capnp:BuyFraction",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c BuyFraction_done) Args() BuyFraction_done_Params {
 
 // AllocResults allocates the results struct.
 func (c BuyFraction_done) AllocResults() (BuyFraction_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyFraction_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewBuyFraction_List(s *capnp.Segment, sz int32) (BuyFraction_List, error) {
 type BuyFraction_write_Params capnp.Struct
 
 // BuyFraction_write_Params_TypeID is the unique identifier for the type BuyFraction_write_Params.
-const BuyFraction_write_Params_TypeID = 0xce9ec4a5d0d36342
+const BuyFraction_write_Params_TypeID = 0xc0b94aa89c65517c
 
 func NewBuyFraction_write_Params(s *capnp.Segment) (BuyFraction_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyFraction_write_Params(st), err
 }
 
 func NewRootBuyFraction_write_Params(s *capnp.Segment) (BuyFraction_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyFraction_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootBuyFraction_write_Params(msg *capnp.Message) (BuyFraction_write_Par
 }
 
 func (s BuyFraction_write_Params) String() string {
-	str, _ := text.Marshal(0xce9ec4a5d0d36342, capnp.Struct(s))
+	str, _ := text.Marshal(0xc0b94aa89c65517c, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s BuyFraction_write_Params) Message() *capnp.Message {
 func (s BuyFraction_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BuyFraction_write_Params) View() (WireBuyFraction, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireBuyFraction(p.Struct()), err
+func (s BuyFraction_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s BuyFraction_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BuyFraction_write_Params) SetView(v WireBuyFraction) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireBuyFraction struct, preferring placement in s's segment.
-func (s BuyFraction_write_Params) NewView() (WireBuyFraction, error) {
-	ss, err := NewWireBuyFraction(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireBuyFraction{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s BuyFraction_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // BuyFraction_write_Params_List is a list of BuyFraction_write_Params.
@@ -376,7 +282,7 @@ type BuyFraction_write_Params_List = capnp.StructList[BuyFraction_write_Params]
 
 // NewBuyFraction_write_Params creates a new list of BuyFraction_write_Params.
 func NewBuyFraction_write_Params_List(s *capnp.Segment, sz int32) (BuyFraction_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[BuyFraction_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f BuyFraction_write_Params_Future) Struct() (BuyFraction_write_Params, err
 	p, err := f.Future.Ptr()
 	return BuyFraction_write_Params(p.Struct()), err
 }
-func (p BuyFraction_write_Params_Future) View() WireBuyFraction_Future {
-	return WireBuyFraction_Future{Future: p.Future.Field(0, nil)}
-}
 
 type BuyFraction_done_Params capnp.Struct
 
 // BuyFraction_done_Params_TypeID is the unique identifier for the type BuyFraction_done_Params.
-const BuyFraction_done_Params_TypeID = 0xa6f9c48bd38a6418
+const BuyFraction_done_Params_TypeID = 0x862321ee6eb49d95
 
 func NewBuyFraction_done_Params(s *capnp.Segment) (BuyFraction_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootBuyFraction_done_Params(msg *capnp.Message) (BuyFraction_done_Param
 }
 
 func (s BuyFraction_done_Params) String() string {
-	str, _ := text.Marshal(0xa6f9c48bd38a6418, capnp.Struct(s))
+	str, _ := text.Marshal(0x862321ee6eb49d95, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f BuyFraction_done_Params_Future) Struct() (BuyFraction_done_Params, error
 type BuyFraction_done_Results capnp.Struct
 
 // BuyFraction_done_Results_TypeID is the unique identifier for the type BuyFraction_done_Results.
-const BuyFraction_done_Results_TypeID = 0xdafd0a2407fa3c73
+const BuyFraction_done_Results_TypeID = 0x9a934e5d72c4a5cf
 
 func NewBuyFraction_done_Results(s *capnp.Segment) (BuyFraction_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyFraction_done_Results(st), err
 }
 
 func NewRootBuyFraction_done_Results(s *capnp.Segment) (BuyFraction_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyFraction_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootBuyFraction_done_Results(msg *capnp.Message) (BuyFraction_done_Resu
 }
 
 func (s BuyFraction_done_Results) String() string {
-	str, _ := text.Marshal(0xdafd0a2407fa3c73, capnp.Struct(s))
+	str, _ := text.Marshal(0x9a934e5d72c4a5cf, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s BuyFraction_done_Results) Message() *capnp.Message {
 func (s BuyFraction_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s BuyFraction_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s BuyFraction_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // BuyFraction_done_Results_List is a list of BuyFraction_done_Results.
 type BuyFraction_done_Results_List = capnp.StructList[BuyFraction_done_Results]
 
 // NewBuyFraction_done_Results creates a new list of BuyFraction_done_Results.
 func NewBuyFraction_done_Results_List(s *capnp.Segment, sz int32) (BuyFraction_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[BuyFraction_done_Results](l), err
 }
 

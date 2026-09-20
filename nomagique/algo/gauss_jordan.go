@@ -3,20 +3,23 @@ package algo
 import (
 	"context"
 	"math"
+
+	"github.com/theapemachine/errnie"
 )
 
 type GaussJordanServer struct {
-	DownstreamGaussJordan func(context.Context, [][]float64) error
-	Tolerance             float64
+	Tolerance float64
+	x1        float64
+	x2        float64
 }
 
-func (s *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64, right [][]float64) ([][]float64, error) {
+func (server *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64, right [][]float64) ([][]float64, error) {
 	rows := len(left)
 	if rows == 0 {
 		return nil, nil
 	}
 
-	tol := s.Tolerance
+	tol := server.Tolerance
 	if tol <= 0 {
 		tol = 1e-9
 	}
@@ -26,98 +29,99 @@ func (s *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64, righ
 		rightCols = len(right[0])
 	}
 
-	a := make([][]float64, rows)
-	b := make([][]float64, rows)
-	for i := 0; i < rows; i++ {
-		a[i] = make([]float64, rows)
-		copy(a[i], left[i])
+	matA := make([][]float64, rows)
+	matB := make([][]float64, rows)
+	for index := 0; index < rows; index++ {
+		matA[index] = make([]float64, rows)
+		copy(matA[index], left[index])
 
-		b[i] = make([]float64, rightCols)
-		copy(b[i], right[i])
+		matB[index] = make([]float64, rightCols)
+		copy(matB[index], right[index])
 	}
 
 	for col := 0; col < rows; col++ {
 		pivotRow := col
-		maxVal := math.Abs(a[col][col])
-		for r := col + 1; r < rows; r++ {
-			val := math.Abs(a[r][col])
+		maxVal := math.Abs(matA[col][col])
+		for row := col + 1; row < rows; row++ {
+			val := math.Abs(matA[row][col])
 			if val > maxVal {
 				maxVal = val
-				pivotRow = r
+				pivotRow = row
 			}
 		}
+
 		if maxVal <= tol {
 			return nil, nil
 		}
+
 		if pivotRow != col {
-			a[col], a[pivotRow] = a[pivotRow], a[col]
-			b[col], b[pivotRow] = b[pivotRow], b[col]
+			matA[col], matA[pivotRow] = matA[pivotRow], matA[col]
+			matB[col], matB[pivotRow] = matB[pivotRow], matB[col]
 		}
-		pivot := a[col][col]
-		for c := col; c < rows; c++ {
-			a[col][c] /= pivot
+
+		pivot := matA[col][col]
+		for index := col; index < rows; index++ {
+			matA[col][index] /= pivot
 		}
-		for c := 0; c < rightCols; c++ {
-			b[col][c] /= pivot
+
+		for index := 0; index < rightCols; index++ {
+			matB[col][index] /= pivot
 		}
-		for r := 0; r < rows; r++ {
-			if r != col {
-				factor := a[r][col]
-				for c := col; c < rows; c++ {
-					a[r][c] -= factor * a[col][c]
+
+		for row := 0; row < rows; row++ {
+			if row != col {
+				factor := matA[row][col]
+				for index := col; index < rows; index++ {
+					matA[row][index] -= factor * matA[col][index]
 				}
-				for c := 0; c < rightCols; c++ {
-					b[r][c] -= factor * b[col][c]
+
+				for index := 0; index < rightCols; index++ {
+					matB[row][index] -= factor * matB[col][index]
 				}
 			}
 		}
 	}
 
-	if s.DownstreamGaussJordan != nil {
-		return b, s.DownstreamGaussJordan(ctx, b)
-	}
-
-	return b, nil
+	return matB, nil
 }
 
-func (s *GaussJordanServer) Write(ctx context.Context, call GaussJordan_write) error {
-	left, _ := call.Args().Left()
-	right, _ := call.Args().Right()
-	rows := left.Len()
-	if rows == 0 {
-		return nil
+func (server *GaussJordanServer) Write(ctx context.Context, call GaussJordan_write) error {
+	args := call.Args()
+	a11 := args.A11()
+	a12 := args.A12()
+	a21 := args.A21()
+	a22 := args.A22()
+	valB1 := args.B1()
+	valB2 := args.B2()
+
+	det := a11*a22 - a12*a21
+	tol := server.Tolerance
+	if tol <= 0 {
+		tol = 1e-9
 	}
 
-	rightCols := 0
-	if rows > 0 && right.Len() > 0 {
-		right0 := right.At(0)
-		vals, _ := right0.Values()
-		rightCols = vals.Len()
+	if math.Abs(det) > tol {
+		server.x1 = (valB1*a22 - a12*valB2) / det
+		server.x2 = (a11*valB2 - valB1*a21) / det
 	}
 
-	a := make([][]float64, rows)
-	b := make([][]float64, rows)
-	for i := 0; i < rows; i++ {
-		leftRow := left.At(i)
-		leftVals, _ := leftRow.Values()
-		a[i] = make([]float64, rows)
-		for j := 0; j < rows; j++ {
-			a[i][j] = leftVals.At(j)
-		}
-
-		rightRow := right.At(i)
-		rightVals, _ := rightRow.Values()
-		b[i] = make([]float64, rightCols)
-		for j := 0; j < rightCols; j++ {
-			b[i][j] = rightVals.At(j)
-		}
-	}
-
-	_, err := s.Evaluate(ctx, a, b)
-	return err
+	return nil
 }
 
-func (s *GaussJordanServer) Done(ctx context.Context, call GaussJordan_done) error {
+func (server *GaussJordanServer) Done(ctx context.Context, call GaussJordan_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"gauss_jordan: alloc results failed",
+			err,
+		))
+	}
+
+	results.SetX1(server.x1)
+	results.SetX2(server.x2)
+	server.x1 = 0
+	server.x2 = 0
 	return nil
 }
 

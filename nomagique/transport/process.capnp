@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireProcess { executable @0 :Text; args @1 :List(Text); }
-
 interface Process {
-  write @0 (payload :WireProcess) -> stream;
-  done @1 ();
+  write @0 (in :Data, binary :Text, args :Text) -> stream;
+  done @1 () -> (out :Data);
 }

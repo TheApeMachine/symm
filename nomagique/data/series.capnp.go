@@ -9,86 +9,8 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireSeries capnp.Struct
-
-// WireSeries_TypeID is the unique identifier for the type WireSeries.
-const WireSeries_TypeID = 0x80f55d7a92b3a90d
-
-func NewWireSeries(s *capnp.Segment) (WireSeries, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSeries(st), err
-}
-
-func NewRootWireSeries(s *capnp.Segment) (WireSeries, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSeries(st), err
-}
-
-func ReadRootWireSeries(msg *capnp.Message) (WireSeries, error) {
-	root, err := msg.Root()
-	return WireSeries(root.Struct()), err
-}
-
-func (s WireSeries) String() string {
-	str, _ := text.Marshal(0x80f55d7a92b3a90d, capnp.Struct(s))
-	return str
-}
-
-func (s WireSeries) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireSeries) DecodeFromPtr(p capnp.Ptr) WireSeries {
-	return WireSeries(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireSeries) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireSeries) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireSeries) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireSeries) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireSeries) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireSeries) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireSeries) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireSeries_List is a list of WireSeries.
-type WireSeries_List = capnp.StructList[WireSeries]
-
-// NewWireSeries creates a new list of WireSeries.
-func NewWireSeries_List(s *capnp.Segment, sz int32) (WireSeries_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireSeries](l), err
-}
-
-// WireSeries_Future is a wrapper for a WireSeries promised by a client call.
-type WireSeries_Future struct{ *capnp.Future }
-
-func (f WireSeries_Future) Struct() (WireSeries, error) {
-	p, err := f.Future.Ptr()
-	return WireSeries(p.Struct()), err
-}
-func (p WireSeries_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type Series capnp.Client
 
@@ -105,7 +27,7 @@ func (c Series) Write(ctx context.Context, params func(Series_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 32, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Series_write_Params(s)) }
 	}
 
@@ -287,7 +209,7 @@ func (c Series_done) Args() Series_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Series_done) AllocResults() (Series_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Series_done_Results(r), err
 }
 
@@ -306,12 +228,12 @@ type Series_write_Params capnp.Struct
 const Series_write_Params_TypeID = 0xbcdc9d212724ef10
 
 func NewSeries_write_Params(s *capnp.Segment) (Series_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Series_write_Params(st), err
 }
 
 func NewRootSeries_write_Params(s *capnp.Segment) (Series_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Series_write_Params(st), err
 }
 
@@ -347,28 +269,54 @@ func (s Series_write_Params) Message() *capnp.Message {
 func (s Series_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Series_write_Params) Series() (WireSeries, error) {
+func (s Series_write_Params) Key() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireSeries(p.Struct()), err
+	return p.Text(), err
 }
 
-func (s Series_write_Params) HasSeries() bool {
+func (s Series_write_Params) HasKey() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Series_write_Params) SetSeries(v WireSeries) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Series_write_Params) KeyBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-// NewSeries sets the series field to a newly
-// allocated WireSeries struct, preferring placement in s's segment.
-func (s Series_write_Params) NewSeries() (WireSeries, error) {
-	ss, err := NewWireSeries(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireSeries{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Series_write_Params) SetKey(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Series_write_Params) Sec() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Series_write_Params) SetSec(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Series_write_Params) Nsec() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Series_write_Params) SetNsec(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Series_write_Params) Value() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Series_write_Params) SetValue(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s Series_write_Params) Query() bool {
+	return capnp.Struct(s).Bit(192)
+}
+
+func (s Series_write_Params) SetQuery(v bool) {
+	capnp.Struct(s).SetBit(192, v)
 }
 
 // Series_write_Params_List is a list of Series_write_Params.
@@ -376,7 +324,7 @@ type Series_write_Params_List = capnp.StructList[Series_write_Params]
 
 // NewSeries_write_Params creates a new list of Series_write_Params.
 func NewSeries_write_Params_List(s *capnp.Segment, sz int32) (Series_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1}, sz)
 	return capnp.StructList[Series_write_Params](l), err
 }
 
@@ -386,9 +334,6 @@ type Series_write_Params_Future struct{ *capnp.Future }
 func (f Series_write_Params_Future) Struct() (Series_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Series_write_Params(p.Struct()), err
-}
-func (p Series_write_Params_Future) Series() WireSeries_Future {
-	return WireSeries_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Series_done_Params capnp.Struct
@@ -462,12 +407,12 @@ type Series_done_Results capnp.Struct
 const Series_done_Results_TypeID = 0xf969334d66e084c6
 
 func NewSeries_done_Results(s *capnp.Segment) (Series_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Series_done_Results(st), err
 }
 
 func NewRootSeries_done_Results(s *capnp.Segment) (Series_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Series_done_Results(st), err
 }
 
@@ -503,13 +448,62 @@ func (s Series_done_Results) Message() *capnp.Message {
 func (s Series_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Series_done_Results) Key() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Series_done_Results) HasKey() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Series_done_Results) KeyBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Series_done_Results) SetKey(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Series_done_Results) Sec() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Series_done_Results) SetSec(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Series_done_Results) Nsec() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Series_done_Results) SetNsec(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Series_done_Results) Value() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Series_done_Results) SetValue(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s Series_done_Results) Found() bool {
+	return capnp.Struct(s).Bit(192)
+}
+
+func (s Series_done_Results) SetFound(v bool) {
+	capnp.Struct(s).SetBit(192, v)
+}
 
 // Series_done_Results_List is a list of Series_done_Results.
 type Series_done_Results_List = capnp.StructList[Series_done_Results]
 
 // NewSeries_done_Results creates a new list of Series_done_Results.
 func NewSeries_done_Results_List(s *capnp.Segment, sz int32) (Series_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1}, sz)
 	return capnp.StructList[Series_done_Results](l), err
 }
 

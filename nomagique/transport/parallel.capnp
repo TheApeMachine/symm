@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireParallel { payloads @0 :AnyPointer; task @1 :AnyPointer; }
-
 interface Parallel {
-  write @0 (payload :WireParallel) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

@@ -3,46 +3,38 @@ package calculus
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type RelativeChangeServer struct {
-	Downstream  types.Float64Sink
-	previous    float64
-	initialized bool
+	out float64
 }
 
-func (s *RelativeChangeServer) Write(ctx context.Context, call RelativeChange_write) error {
-	a := call.Args().A()
-	if !s.initialized || s.previous == 0 {
-		s.previous = a
-		s.initialized = true
-		if capnp.Client(s.Downstream).IsValid() {
-			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-				p.SetValue(0)
-				return nil
-			})
-		}
+func (srv *RelativeChangeServer) Write(ctx context.Context, call RelativeChange_write) error {
+	prev := call.Args().Prev()
+
+	if prev == 0 {
+		srv.out = 0
 		return nil
 	}
 
-	result := (a - s.previous) / s.previous
-	s.previous = a
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = (call.Args().In() - prev) / prev
 	return nil
 }
 
-func (s *RelativeChangeServer) Done(ctx context.Context, call RelativeChange_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *RelativeChangeServer) Done(ctx context.Context, call RelativeChange_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc relative_change results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

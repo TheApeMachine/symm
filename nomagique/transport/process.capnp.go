@@ -11,112 +11,6 @@ import (
 	context "context"
 )
 
-type WireProcess capnp.Struct
-
-// WireProcess_TypeID is the unique identifier for the type WireProcess.
-const WireProcess_TypeID = 0x9d74b1932fb398d3
-
-func NewWireProcess(s *capnp.Segment) (WireProcess, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireProcess(st), err
-}
-
-func NewRootWireProcess(s *capnp.Segment) (WireProcess, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireProcess(st), err
-}
-
-func ReadRootWireProcess(msg *capnp.Message) (WireProcess, error) {
-	root, err := msg.Root()
-	return WireProcess(root.Struct()), err
-}
-
-func (s WireProcess) String() string {
-	str, _ := text.Marshal(0x9d74b1932fb398d3, capnp.Struct(s))
-	return str
-}
-
-func (s WireProcess) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireProcess) DecodeFromPtr(p capnp.Ptr) WireProcess {
-	return WireProcess(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireProcess) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireProcess) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireProcess) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireProcess) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireProcess) Executable() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s WireProcess) HasExecutable() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireProcess) ExecutableBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s WireProcess) SetExecutable(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s WireProcess) Args() (capnp.TextList, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.TextList(p.List()), err
-}
-
-func (s WireProcess) HasArgs() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireProcess) SetArgs(v capnp.TextList) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewArgs sets the args field to a newly
-// allocated capnp.TextList, preferring placement in s's segment.
-func (s WireProcess) NewArgs(n int32) (capnp.TextList, error) {
-	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.TextList{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
-}
-
-// WireProcess_List is a list of WireProcess.
-type WireProcess_List = capnp.StructList[WireProcess]
-
-// NewWireProcess creates a new list of WireProcess.
-func NewWireProcess_List(s *capnp.Segment, sz int32) (WireProcess_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireProcess](l), err
-}
-
-// WireProcess_Future is a wrapper for a WireProcess promised by a client call.
-type WireProcess_Future struct{ *capnp.Future }
-
-func (f WireProcess_Future) Struct() (WireProcess, error) {
-	p, err := f.Future.Ptr()
-	return WireProcess(p.Struct()), err
-}
-
 type Process capnp.Client
 
 // Process_TypeID is the unique identifier for the type Process.
@@ -132,7 +26,7 @@ func (c Process) Write(ctx context.Context, params func(Process_write_Params) er
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Process_write_Params(s)) }
 	}
 
@@ -314,7 +208,7 @@ func (c Process_done) Args() Process_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Process_done) AllocResults() (Process_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Process_done_Results(r), err
 }
 
@@ -333,12 +227,12 @@ type Process_write_Params capnp.Struct
 const Process_write_Params_TypeID = 0x9d9b2dd257eaa275
 
 func NewProcess_write_Params(s *capnp.Segment) (Process_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Process_write_Params(st), err
 }
 
 func NewRootProcess_write_Params(s *capnp.Segment) (Process_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return Process_write_Params(st), err
 }
 
@@ -374,28 +268,53 @@ func (s Process_write_Params) Message() *capnp.Message {
 func (s Process_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Process_write_Params) Payload() (WireProcess, error) {
+func (s Process_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireProcess(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Process_write_Params) HasPayload() bool {
+func (s Process_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Process_write_Params) SetPayload(v WireProcess) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Process_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewPayload sets the payload field to a newly
-// allocated WireProcess struct, preferring placement in s's segment.
-func (s Process_write_Params) NewPayload() (WireProcess, error) {
-	ss, err := NewWireProcess(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireProcess{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Process_write_Params) Binary() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Process_write_Params) HasBinary() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Process_write_Params) BinaryBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Process_write_Params) SetBinary(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Process_write_Params) Args() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Process_write_Params) HasArgs() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Process_write_Params) ArgsBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Process_write_Params) SetArgs(v string) error {
+	return capnp.Struct(s).SetText(2, v)
 }
 
 // Process_write_Params_List is a list of Process_write_Params.
@@ -403,7 +322,7 @@ type Process_write_Params_List = capnp.StructList[Process_write_Params]
 
 // NewProcess_write_Params creates a new list of Process_write_Params.
 func NewProcess_write_Params_List(s *capnp.Segment, sz int32) (Process_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
 	return capnp.StructList[Process_write_Params](l), err
 }
 
@@ -413,9 +332,6 @@ type Process_write_Params_Future struct{ *capnp.Future }
 func (f Process_write_Params_Future) Struct() (Process_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Process_write_Params(p.Struct()), err
-}
-func (p Process_write_Params_Future) Payload() WireProcess_Future {
-	return WireProcess_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Process_done_Params capnp.Struct
@@ -489,12 +405,12 @@ type Process_done_Results capnp.Struct
 const Process_done_Results_TypeID = 0xa7941fb274ab2c4a
 
 func NewProcess_done_Results(s *capnp.Segment) (Process_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Process_done_Results(st), err
 }
 
 func NewRootProcess_done_Results(s *capnp.Segment) (Process_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Process_done_Results(st), err
 }
 
@@ -530,13 +446,25 @@ func (s Process_done_Results) Message() *capnp.Message {
 func (s Process_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Process_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Process_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Process_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Process_done_Results_List is a list of Process_done_Results.
 type Process_done_Results_List = capnp.StructList[Process_done_Results]
 
 // NewProcess_done_Results creates a new list of Process_done_Results.
 func NewProcess_done_Results_List(s *capnp.Segment, sz int32) (Process_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Process_done_Results](l), err
 }
 

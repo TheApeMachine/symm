@@ -1,13 +1,9 @@
 using Go = import "/go.capnp";
-@0xbfed4393e2a1e113;
+@0xcb55a8fefb87612f;
 $Go.package("hawkes");
 $Go.import("nomagique/statistic/hawkes");
 
-struct WireEventCount {
-  payload @0 :AnyPointer;
-}
-
 interface EventCount {
-  write @0 (view :WireEventCount) -> stream;
-  done @1 ();
+  write @0 (in :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

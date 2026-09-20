@@ -3,20 +3,12 @@ using Go = import "/go.capnp";
 $Go.package("tables");
 $Go.import("nomagique/store/tables");
 
-struct WireIcebergTable {
-  config @0 :Text;
-  payload @1 :AnyPointer;
-}
-
-struct WireIcebergScan {
-  config @0 :Text;
-  query @1 :AnyPointer;
-}
-
 interface IcebergTable {
-  execute @0 (table :WireIcebergTable) -> (result :AnyPointer);
+  write @0 (config :Text, payload :Data) -> stream;
+  done @1 () -> (out :Data);
 }
 
 interface IcebergScan {
-  execute @0 (scan :WireIcebergScan) -> (results :AnyPointer);
+  write @0 (config :Text, query :Data) -> stream;
+  done @1 () -> (out :Data);
 }

@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireGate { payload @0 :AnyPointer; condition @1 :Text; }
-
 interface Gate {
-  write @0 (payload :WireGate) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

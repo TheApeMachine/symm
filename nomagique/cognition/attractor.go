@@ -6,22 +6,31 @@ import (
 	"sync/atomic"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/theapemachine/errnie"
 )
 
 type AttractorServer struct {
-	Downstream func(context.Context, []byte, float64, uint64) error
-	Root       *atomic.Pointer[iradix.Tree[[]byte]]
+	Root  *atomic.Pointer[iradix.Tree[[]byte]]
+	class []byte
+	prob  float64
+	count uint64
+}
+
+func NewAttractor() *AttractorServer {
+	return &AttractorServer{}
 }
 
 func (s *AttractorServer) Write(ctx context.Context, call Attractor_write) error {
-	contextBytes, _ := call.Args().ContextBytes()
-	if s.Root == nil || len(contextBytes) == 0 {
+	contextBytes, err := call.Args().ContextBytes()
+	if err != nil || s.Root == nil || len(contextBytes) == 0 {
 		return nil
 	}
+
 	tree := s.Root.Load()
 	if tree == nil {
 		return nil
 	}
+
 	exactPrefix := make([]byte, 2+len(contextBytes)+1)
 	exactPrefix[0] = 'b'
 	exactPrefix[1] = '/'
@@ -40,21 +49,26 @@ func (s *AttractorServer) Write(ctx context.Context, call Attractor_write) error
 			continue
 		}
 
-		// Basic unpack of weight
-		var count uint64
-		var prob float64
-		// Call downstream inside the loop
-		if err := s.Downstream(ctx, class, prob, count); err != nil {
-			return err
-		}
+		s.class = bytes.Clone(class)
+		s.prob = 1.0
+		s.count = 1
+		break
 	}
 	return nil
 }
 
 func (s *AttractorServer) Done(ctx context.Context, call Attractor_done) error {
-	return nil
-}
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
 
-func NewAttractor() *AttractorServer {
-	return &AttractorServer{}
+	_ = results.SetClass(s.class)
+	results.SetProb(s.prob)
+	results.SetCount(s.count)
+
+	s.class = nil
+	s.prob = 0
+	s.count = 0
+	return nil
 }

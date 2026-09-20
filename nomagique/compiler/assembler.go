@@ -23,6 +23,8 @@ const (
 	PortTypeData    PortType = "Data"
 )
 
+const maxPendingEvaluations = 1024
+
 type evaluationState struct {
 	setters  map[string]func(capnp.Struct)
 	received map[string]bool
@@ -33,18 +35,21 @@ InvocationAssembler manages the typed activation and argument assembly
 for one compiled Cap'n Proto node. It guarantees that inputs from different
 evaluations are never combined, incomplete evaluations never fire, and
 the generated client Write call is made once all required ports are present.
+Zero any values exist in the runtime execution path.
 */
 type InvocationAssembler struct {
-	mu           sync.Mutex
-	nodeID       string
-	client       capnp.Client
-	inputPorts   map[string]PortType
-	staticInputs map[string]func(capnp.Struct)
-	createSetter map[string]func(val any) func(capnp.Struct)
-	invokeFn     func(ctx context.Context, setters map[string]func(capnp.Struct)) error
-	doneFn       func(ctx context.Context) error
-	evaluations  map[uint64]*evaluationState
-	inputSinks   map[string]capnp.Client
+	mu              sync.Mutex
+	nodeID          string
+	client          capnp.Client
+	inputPorts      map[string]PortType
+	staticInputs    map[string]func(capnp.Struct)
+	sinkFactories   map[string]func(assembler *InvocationAssembler) capnp.Client
+	invokeFn        func(ctx context.Context, setters map[string]func(capnp.Struct)) error
+	doneFn          func(ctx context.Context) error
+	evaluations     map[uint64]*evaluationState
+	inputSinks      map[string]capnp.Client
+	wiredInputs     map[string]bool
+	completedInputs map[string]bool
 }
 
 /*
@@ -54,79 +59,85 @@ func NewInvocationAssembler(
 	nodeID string,
 	client capnp.Client,
 	inputPorts map[string]PortType,
-	createSetter map[string]func(val any) func(capnp.Struct),
+	sinkFactories map[string]func(assembler *InvocationAssembler) capnp.Client,
 	invokeFn func(ctx context.Context, setters map[string]func(capnp.Struct)) error,
 	doneFn func(ctx context.Context) error,
 ) *InvocationAssembler {
 	return &InvocationAssembler{
-		nodeID:       nodeID,
-		client:       client,
-		inputPorts:   inputPorts,
-		staticInputs: make(map[string]func(capnp.Struct)),
-		createSetter: createSetter,
-		invokeFn:     invokeFn,
-		doneFn:       doneFn,
-		evaluations:  make(map[uint64]*evaluationState),
-		inputSinks:   make(map[string]capnp.Client),
+		nodeID:          nodeID,
+		client:          client,
+		inputPorts:      inputPorts,
+		staticInputs:    make(map[string]func(capnp.Struct)),
+		sinkFactories:   sinkFactories,
+		invokeFn:        invokeFn,
+		doneFn:          doneFn,
+		evaluations:     make(map[uint64]*evaluationState),
+		inputSinks:      make(map[string]capnp.Client),
+		wiredInputs:     make(map[string]bool),
+		completedInputs: make(map[string]bool),
 	}
+}
+
+/*
+MarkWired records that an input port is wired from an upstream edge.
+*/
+func (assembler *InvocationAssembler) MarkWired(portName string) {
+	assembler.mu.Lock()
+	defer assembler.mu.Unlock()
+	assembler.wiredInputs[portName] = true
 }
 
 /*
 SetStaticInput configures an unwired port with a constant setter from node inputData/config.
 */
-func (a *InvocationAssembler) SetStaticInput(portName string, setter func(capnp.Struct)) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.staticInputs[portName] = setter
+func (assembler *InvocationAssembler) SetStaticInput(portName string, setter func(capnp.Struct)) {
+	assembler.mu.Lock()
+	defer assembler.mu.Unlock()
+	assembler.staticInputs[portName] = setter
 }
 
 /*
 InputSink returns the typed Cap'n Proto sink capability for a given input port.
 */
-func (a *InvocationAssembler) InputSink(portName string) (capnp.Client, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+func (assembler *InvocationAssembler) InputSink(portName string) (capnp.Client, error) {
+	assembler.mu.Lock()
+	defer assembler.mu.Unlock()
 
-	if sink, exists := a.inputSinks[portName]; exists {
+	if sink, exists := assembler.inputSinks[portName]; exists {
 		return sink, nil
 	}
 
-	portType, ok := a.inputPorts[portName]
+	factory, ok := assembler.sinkFactories[portName]
 	if !ok {
 		return capnp.Client{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("assembler: node %q has no input port %q", a.nodeID, portName),
+			fmt.Sprintf("assembler: node %q has no sink factory for port %q", assembler.nodeID, portName),
 			nil,
 		))
 	}
 
-	switch portType {
-	case PortTypeFloat64:
-		sink := types.NewFloat64Sink(
-			func(ctx context.Context, val float64) error {
-				return a.recordInput(ctx, portName, val)
-			},
-			func(ctx context.Context) error {
-				return a.recordDone(ctx)
-			},
-		)
-		client := capnp.Client(sink)
-		a.inputSinks[portName] = client
-		return client, nil
-
-	default:
-		return capnp.Client{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("assembler: unsupported port type %s for port %s on node %s", portType, portName, a.nodeID),
-			nil,
-		))
-	}
+	client := factory(assembler)
+	assembler.inputSinks[portName] = client
+	return client, nil
 }
 
-func (a *InvocationAssembler) recordInput(ctx context.Context, portName string, val any) error {
-	evalID, ok := types.EvaluationIDFromContext(ctx)
-	if !ok {
-		ctx, evalID = types.NextEvaluationContext(ctx)
+/*
+Record accepts a pre-typed Cap'n Proto parameter setter for a specific evaluation.
+Zero any payloads or assertions exist on this path.
+*/
+func (assembler *InvocationAssembler) Record(
+	ctx context.Context,
+	evalID uint64,
+	portName string,
+	setter func(capnp.Struct),
+) error {
+	if evalID == 0 {
+		var ok bool
+		evalID, ok = types.EvaluationIDFromContext(ctx)
+
+		if !ok || evalID == 0 {
+			ctx, evalID = types.NextEvaluationContext(ctx)
+		}
 	}
 
 	var (
@@ -134,71 +145,137 @@ func (a *InvocationAssembler) recordInput(ctx context.Context, portName string, 
 		shouldInvoke bool
 	)
 
-	a.mu.Lock()
-	state, exists := a.evaluations[evalID]
+	assembler.mu.Lock()
+
+	state, exists := assembler.evaluations[evalID]
 	if !exists {
+		if len(assembler.evaluations) >= maxPendingEvaluations {
+			// Prune oldest incomplete evaluation to bound memory
+			for staleEvalID := range assembler.evaluations {
+				delete(assembler.evaluations, staleEvalID)
+				break
+			}
+		}
+
 		state = &evaluationState{
 			setters:  make(map[string]func(capnp.Struct)),
 			received: make(map[string]bool),
 		}
-		// Populate any static inputs configured on unwired controls
-		for p, setter := range a.staticInputs {
-			state.setters[p] = setter
-			state.received[p] = true
+
+		for inputPort, staticSetter := range assembler.staticInputs {
+			state.setters[inputPort] = staticSetter
+			state.received[inputPort] = true
 		}
-		a.evaluations[evalID] = state
+
+		assembler.evaluations[evalID] = state
 	}
 
-	if setterGen, ok := a.createSetter[portName]; ok {
-		state.setters[portName] = setterGen(val)
-		state.received[portName] = true
-	}
+	state.setters[portName] = setter
+	state.received[portName] = true
 
-	// Check if all declared input ports are satisfied
 	allSatisfied := true
-	for p := range a.inputPorts {
-		if !state.received[p] {
-			allSatisfied = false
-			break
+	if len(assembler.wiredInputs) > 0 {
+		for port := range assembler.wiredInputs {
+			if !state.received[port] {
+				allSatisfied = false
+				break
+			}
+		}
+	}
+
+	if len(assembler.wiredInputs) == 0 {
+		for port := range assembler.inputPorts {
+			if !state.received[port] {
+				allSatisfied = false
+				break
+			}
 		}
 	}
 
 	if allSatisfied {
 		shouldInvoke = true
 		readySetters = state.setters
-		delete(a.evaluations, evalID)
+		delete(assembler.evaluations, evalID)
 	}
-	a.mu.Unlock()
 
-	if shouldInvoke && a.invokeFn != nil {
-		return a.invokeFn(ctx, readySetters)
+	assembler.mu.Unlock()
+
+	if shouldInvoke && assembler.invokeFn != nil {
+		ctx = types.WithEvaluationID(ctx, evalID)
+		return assembler.invokeFn(ctx, readySetters)
 	}
 
 	return nil
 }
 
-func (a *InvocationAssembler) recordDone(ctx context.Context) error {
-	if a.doneFn != nil {
-		return a.doneFn(ctx)
+/*
+RecordDone records that an input port has completed streaming.
+Completion propagates downstream only when all wired input ports have finished.
+*/
+func (assembler *InvocationAssembler) RecordDone(ctx context.Context, portName string) error {
+	var shouldDone bool
+
+	assembler.mu.Lock()
+	assembler.completedInputs[portName] = true
+
+	// Prune abandoned incomplete evaluations that were awaiting this port
+	for evalID, state := range assembler.evaluations {
+		if !state.received[portName] {
+			delete(assembler.evaluations, evalID)
+		}
 	}
+
+	// Check if all wired inputs have completed
+	allDone := true
+	if len(assembler.wiredInputs) > 0 {
+		for port := range assembler.wiredInputs {
+			if !assembler.completedInputs[port] {
+				allDone = false
+				break
+			}
+		}
+	}
+
+	if len(assembler.wiredInputs) == 0 {
+		for port := range assembler.inputPorts {
+			if !assembler.completedInputs[port] {
+				allDone = false
+				break
+			}
+		}
+	}
+
+	if allDone {
+		shouldDone = true
+		// Clear all remaining evaluations on completion
+		assembler.evaluations = make(map[uint64]*evaluationState)
+	}
+
+	assembler.mu.Unlock()
+
+	if shouldDone && assembler.doneFn != nil {
+		return assembler.doneFn(ctx)
+	}
+
 	return nil
 }
 
 /*
 WaitStreaming waits for pending streaming calls on the underlying client.
 */
-func (a *InvocationAssembler) WaitStreaming() error {
-	a.mu.Lock()
-	sinks := make([]capnp.Client, 0, len(a.inputSinks))
-	for _, s := range a.inputSinks {
-		sinks = append(sinks, s)
+func (assembler *InvocationAssembler) WaitStreaming() error {
+	assembler.mu.Lock()
+	sinks := make([]capnp.Client, 0, len(assembler.inputSinks))
+	for _, sink := range assembler.inputSinks {
+		sinks = append(sinks, sink)
 	}
-	a.mu.Unlock()
+	assembler.mu.Unlock()
 
-	for _, s := range sinks {
-		if err := s.WaitStreaming(); err != nil {
+	for _, sink := range sinks {
+		if err := sink.WaitStreaming(); err != nil {
 			return err
 		}
 	}
-	return a.client.WaitStreaming()
+
+	return assembler.client.WaitStreaming()
 }

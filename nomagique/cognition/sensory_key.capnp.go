@@ -3,13 +3,12 @@
 package cognition
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
 )
 
 type SensoryKey capnp.Client
@@ -209,7 +208,7 @@ func (c SensoryKey_done) Args() SensoryKey_done_Params {
 
 // AllocResults allocates the results struct.
 func (c SensoryKey_done) AllocResults() (SensoryKey_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return SensoryKey_done_Results(r), err
 }
 
@@ -370,12 +369,12 @@ type SensoryKey_done_Results capnp.Struct
 const SensoryKey_done_Results_TypeID = 0xfcb18cd1fd8e7790
 
 func NewSensoryKey_done_Results(s *capnp.Segment) (SensoryKey_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return SensoryKey_done_Results(st), err
 }
 
 func NewRootSensoryKey_done_Results(s *capnp.Segment) (SensoryKey_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return SensoryKey_done_Results(st), err
 }
 
@@ -411,13 +410,25 @@ func (s SensoryKey_done_Results) Message() *capnp.Message {
 func (s SensoryKey_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s SensoryKey_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s SensoryKey_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s SensoryKey_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // SensoryKey_done_Results_List is a list of SensoryKey_done_Results.
 type SensoryKey_done_Results_List = capnp.StructList[SensoryKey_done_Results]
 
 // NewSensoryKey_done_Results creates a new list of SensoryKey_done_Results.
 func NewSensoryKey_done_Results_List(s *capnp.Segment, sz int32) (SensoryKey_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[SensoryKey_done_Results](l), err
 }
 

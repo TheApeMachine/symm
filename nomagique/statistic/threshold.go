@@ -3,46 +3,54 @@ package statistic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type ThresholdServer struct {
-	Downstream types.Float64Sink
-	Band       float64
-	Rest       float64
-	Lower      float64
-	Upper      float64
+	out   float64
+	Band  float64
+	Rest  float64
+	Lower float64
+	Upper float64
 }
 
-func (s *ThresholdServer) Write(ctx context.Context, call Threshold_write) error {
-	a := call.Args().A()
-	result := s.Rest
-	if a < s.Band {
-		result = s.Upper
+func (srv *ThresholdServer) Write(ctx context.Context, call Threshold_write) error {
+	inVal := call.Args().In()
+	result := srv.Rest
+
+	if inVal < srv.Band {
+		result = srv.Upper
 	}
 
-	if a > 1.0-s.Band {
-		result = s.Lower
+	if inVal > 1.0-srv.Band {
+		result = srv.Lower
 	}
 
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = result
 	return nil
 }
 
-func (s *ThresholdServer) Done(ctx context.Context, call Threshold_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *ThresholdServer) Done(ctx context.Context, call Threshold_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc threshold results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 
-func NewThreshold() *ThresholdServer {
-	return &ThresholdServer{}
+func NewThreshold(band, rest, lower, upper float64) *ThresholdServer {
+	return &ThresholdServer{
+		Band:  band,
+		Rest:  rest,
+		Lower: lower,
+		Upper: upper,
+	}
 }

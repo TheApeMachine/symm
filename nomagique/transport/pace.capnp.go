@@ -11,92 +11,6 @@ import (
 	context "context"
 )
 
-type WirePace capnp.Struct
-
-// WirePace_TypeID is the unique identifier for the type WirePace.
-const WirePace_TypeID = 0xc9e485e27ccacf15
-
-func NewWirePace(s *capnp.Segment) (WirePace, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return WirePace(st), err
-}
-
-func NewRootWirePace(s *capnp.Segment) (WirePace, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return WirePace(st), err
-}
-
-func ReadRootWirePace(msg *capnp.Message) (WirePace, error) {
-	root, err := msg.Root()
-	return WirePace(root.Struct()), err
-}
-
-func (s WirePace) String() string {
-	str, _ := text.Marshal(0xc9e485e27ccacf15, capnp.Struct(s))
-	return str
-}
-
-func (s WirePace) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WirePace) DecodeFromPtr(p capnp.Ptr) WirePace {
-	return WirePace(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WirePace) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WirePace) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WirePace) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WirePace) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WirePace) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WirePace) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WirePace) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WirePace) Interval() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
-}
-
-func (s WirePace) SetInterval(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
-}
-
-// WirePace_List is a list of WirePace.
-type WirePace_List = capnp.StructList[WirePace]
-
-// NewWirePace creates a new list of WirePace.
-func NewWirePace_List(s *capnp.Segment, sz int32) (WirePace_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[WirePace](l), err
-}
-
-// WirePace_Future is a wrapper for a WirePace promised by a client call.
-type WirePace_Future struct{ *capnp.Future }
-
-func (f WirePace_Future) Struct() (WirePace, error) {
-	p, err := f.Future.Ptr()
-	return WirePace(p.Struct()), err
-}
-func (p WirePace_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Pace capnp.Client
 
 // Pace_TypeID is the unique identifier for the type Pace.
@@ -294,7 +208,7 @@ func (c Pace_done) Args() Pace_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Pace_done) AllocResults() (Pace_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Pace_done_Results(r), err
 }
 
@@ -354,28 +268,17 @@ func (s Pace_write_Params) Message() *capnp.Message {
 func (s Pace_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Pace_write_Params) Payload() (WirePace, error) {
+func (s Pace_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WirePace(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Pace_write_Params) HasPayload() bool {
+func (s Pace_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Pace_write_Params) SetPayload(v WirePace) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WirePace struct, preferring placement in s's segment.
-func (s Pace_write_Params) NewPayload() (WirePace, error) {
-	ss, err := NewWirePace(capnp.Struct(s).Segment())
-	if err != nil {
-		return WirePace{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Pace_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Pace_write_Params_List is a list of Pace_write_Params.
@@ -393,9 +296,6 @@ type Pace_write_Params_Future struct{ *capnp.Future }
 func (f Pace_write_Params_Future) Struct() (Pace_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Pace_write_Params(p.Struct()), err
-}
-func (p Pace_write_Params_Future) Payload() WirePace_Future {
-	return WirePace_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Pace_done_Params capnp.Struct
@@ -469,12 +369,12 @@ type Pace_done_Results capnp.Struct
 const Pace_done_Results_TypeID = 0xd1e91ff593af6dee
 
 func NewPace_done_Results(s *capnp.Segment) (Pace_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Pace_done_Results(st), err
 }
 
 func NewRootPace_done_Results(s *capnp.Segment) (Pace_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Pace_done_Results(st), err
 }
 
@@ -510,13 +410,25 @@ func (s Pace_done_Results) Message() *capnp.Message {
 func (s Pace_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Pace_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Pace_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Pace_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Pace_done_Results_List is a list of Pace_done_Results.
 type Pace_done_Results_List = capnp.StructList[Pace_done_Results]
 
 // NewPace_done_Results creates a new list of Pace_done_Results.
 func NewPace_done_Results_List(s *capnp.Segment, sz int32) (Pace_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Pace_done_Results](l), err
 }
 

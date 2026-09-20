@@ -1,25 +1,46 @@
 package transport
 
 import (
+	"bytes"
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type JSONDecodeServer struct {
-	Downstream func(context.Context, any) error
+	out []byte
 }
 
 func NewJSONDecode() *JSONDecodeServer {
 	return &JSONDecodeServer{}
 }
 
-func (s *JSONDecodeServer) Write(ctx context.Context, call JSONDecode_write) error {
-	if s.Downstream != nil {
-		return s.Downstream(ctx, nil)
-	}
-
+func (server *JSONDecodeServer) Write(ctx context.Context, call JSONDecode_write) error {
+	data, _ := call.Args().In()
+	server.out = bytes.Clone(data)
 	return nil
 }
 
-func (s *JSONDecodeServer) Done(ctx context.Context, call JSONDecode_done) error {
+func (server *JSONDecodeServer) Done(ctx context.Context, call JSONDecode_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"jsondecode: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"jsondecode: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
 	return nil
 }

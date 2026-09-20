@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireJSONEncode capnp.Struct
-
-// WireJSONEncode_TypeID is the unique identifier for the type WireJSONEncode.
-const WireJSONEncode_TypeID = 0xb9c4a05f302b86af
-
-func NewWireJSONEncode(s *capnp.Segment) (WireJSONEncode, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireJSONEncode(st), err
-}
-
-func NewRootWireJSONEncode(s *capnp.Segment) (WireJSONEncode, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireJSONEncode(st), err
-}
-
-func ReadRootWireJSONEncode(msg *capnp.Message) (WireJSONEncode, error) {
-	root, err := msg.Root()
-	return WireJSONEncode(root.Struct()), err
-}
-
-func (s WireJSONEncode) String() string {
-	str, _ := text.Marshal(0xb9c4a05f302b86af, capnp.Struct(s))
-	return str
-}
-
-func (s WireJSONEncode) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireJSONEncode) DecodeFromPtr(p capnp.Ptr) WireJSONEncode {
-	return WireJSONEncode(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireJSONEncode) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireJSONEncode) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireJSONEncode) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireJSONEncode) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireJSONEncode) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireJSONEncode) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireJSONEncode) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireJSONEncode_List is a list of WireJSONEncode.
-type WireJSONEncode_List = capnp.StructList[WireJSONEncode]
-
-// NewWireJSONEncode creates a new list of WireJSONEncode.
-func NewWireJSONEncode_List(s *capnp.Segment, sz int32) (WireJSONEncode_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireJSONEncode](l), err
-}
-
-// WireJSONEncode_Future is a wrapper for a WireJSONEncode promised by a client call.
-type WireJSONEncode_Future struct{ *capnp.Future }
-
-func (f WireJSONEncode_Future) Struct() (WireJSONEncode, error) {
-	p, err := f.Future.Ptr()
-	return WireJSONEncode(p.Struct()), err
-}
-func (p WireJSONEncode_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type JSONEncode capnp.Client
 
 // JSONEncode_TypeID is the unique identifier for the type JSONEncode.
@@ -287,7 +208,7 @@ func (c JSONEncode_done) Args() JSONEncode_done_Params {
 
 // AllocResults allocates the results struct.
 func (c JSONEncode_done) AllocResults() (JSONEncode_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return JSONEncode_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s JSONEncode_write_Params) Message() *capnp.Message {
 func (s JSONEncode_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s JSONEncode_write_Params) Payload() (WireJSONEncode, error) {
+func (s JSONEncode_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireJSONEncode(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s JSONEncode_write_Params) HasPayload() bool {
+func (s JSONEncode_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s JSONEncode_write_Params) SetPayload(v WireJSONEncode) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireJSONEncode struct, preferring placement in s's segment.
-func (s JSONEncode_write_Params) NewPayload() (WireJSONEncode, error) {
-	ss, err := NewWireJSONEncode(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireJSONEncode{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s JSONEncode_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // JSONEncode_write_Params_List is a list of JSONEncode_write_Params.
@@ -386,9 +296,6 @@ type JSONEncode_write_Params_Future struct{ *capnp.Future }
 func (f JSONEncode_write_Params_Future) Struct() (JSONEncode_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return JSONEncode_write_Params(p.Struct()), err
-}
-func (p JSONEncode_write_Params_Future) Payload() WireJSONEncode_Future {
-	return WireJSONEncode_Future{Future: p.Future.Field(0, nil)}
 }
 
 type JSONEncode_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type JSONEncode_done_Results capnp.Struct
 const JSONEncode_done_Results_TypeID = 0xa482253d786c10f8
 
 func NewJSONEncode_done_Results(s *capnp.Segment) (JSONEncode_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return JSONEncode_done_Results(st), err
 }
 
 func NewRootJSONEncode_done_Results(s *capnp.Segment) (JSONEncode_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return JSONEncode_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s JSONEncode_done_Results) Message() *capnp.Message {
 func (s JSONEncode_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s JSONEncode_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s JSONEncode_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s JSONEncode_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // JSONEncode_done_Results_List is a list of JSONEncode_done_Results.
 type JSONEncode_done_Results_List = capnp.StructList[JSONEncode_done_Results]
 
 // NewJSONEncode_done_Results creates a new list of JSONEncode_done_Results.
 func NewJSONEncode_done_Results_List(s *capnp.Segment, sz int32) (JSONEncode_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[JSONEncode_done_Results](l), err
 }
 

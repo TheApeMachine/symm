@@ -4,20 +4,31 @@ import (
 	"context"
 	"math"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type ShannonAmbiguityServer struct {
-	Downstream types.Float64Sink
-	vals       []float64
-	total      float64
+	vals  []float64
+	total float64
+}
+
+func NewShannonAmbiguity() *ShannonAmbiguityServer {
+	return &ShannonAmbiguityServer{}
 }
 
 func (s *ShannonAmbiguityServer) Write(ctx context.Context, call ShannonAmbiguity_write) error {
-	a := call.Args().A()
-	s.vals = append(s.vals, a)
-	s.total += a
+	val := call.Args().In()
+	s.vals = append(s.vals, val)
+	s.total += val
+	return nil
+}
+
+func (s *ShannonAmbiguityServer) Done(ctx context.Context, call ShannonAmbiguity_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
+
 	result := float64(0)
 	if len(s.vals) >= 2 && s.total != 0 {
 		entropy := 0.0
@@ -27,26 +38,12 @@ func (s *ShannonAmbiguityServer) Write(ctx context.Context, call ShannonAmbiguit
 				entropy -= p * math.Log(p)
 			}
 		}
+
 		result = entropy / math.Log(float64(len(s.vals)))
 	}
 
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	results.SetOut(result)
+	s.vals = nil
+	s.total = 0
 	return nil
-}
-
-func (s *ShannonAmbiguityServer) Done(ctx context.Context, call ShannonAmbiguity_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
-	}
-	return nil
-}
-
-func NewShannonAmbiguity() *ShannonAmbiguityServer {
-	return &ShannonAmbiguityServer{}
 }

@@ -3,12 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("store");
 $Go.import("nomagique/store");
 
-struct Cell {
-  payload @0 :AnyPointer;
-}
-
 interface Grid {
-  poke @0 (payload :AnyPointer) -> (cells :List(Cell));
-  peek @1 () -> (cells :List(Cell));
-  register @2 (payload :AnyPointer);
+  write @0 (in :Data, metrics :Text) -> stream;
+  done @1 () -> (out :Data);
 }

@@ -3,35 +3,36 @@ package statistic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type MeanServer struct {
-	Downstream types.Float64Sink
-	count      float64
-	sum        float64
+	out   float64
+	count float64
+	sum   float64
 }
 
-func (s *MeanServer) Write(ctx context.Context, call Mean_write) error {
-	a := call.Args().A()
-	s.count++
-	s.sum += a
-	result := s.sum / s.count
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (srv *MeanServer) Write(ctx context.Context, call Mean_write) error {
+	inVal := call.Args().In()
+	srv.count++
+	srv.sum += inVal
+	srv.out = srv.sum / srv.count
 	return nil
 }
 
-func (s *MeanServer) Done(ctx context.Context, call Mean_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *MeanServer) Done(ctx context.Context, call Mean_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc mean results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

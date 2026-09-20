@@ -3,13 +3,15 @@ package algo
 import (
 	"context"
 	"math"
+
+	"github.com/theapemachine/errnie"
 )
 
 type HayashiYoshidaServer struct {
-	DownstreamHayashiYoshida func(context.Context, float64) error
-	covSum                   float64
-	leftEnergySum            float64
-	rightEnergySum           float64
+	covSum         float64
+	leftEnergySum  float64
+	rightEnergySum float64
+	out            float64
 }
 
 func (s *HayashiYoshidaServer) Evaluate(ctx context.Context, in [2][2]int64) (float64, error) {
@@ -17,17 +19,13 @@ func (s *HayashiYoshidaServer) Evaluate(ctx context.Context, in [2][2]int64) (fl
 	boundsEnd1 := in[0][1]
 	boundsStart2 := in[1][0]
 	boundsEnd2 := in[1][1]
-	returns1 := float64(boundsEnd1 - boundsStart1) // pseudo logic for returns as in original closure?
-	// Wait, in the original closure, `in` was `[2][2]int64`. The Cap'n Proto `write` took Bounds and Returns.
-	// Actually, the bounds are just the first elements, let me look at how I mapped it originally.
-
-	returns1 = float64(boundsEnd1 - boundsStart1) // wait, no. The inputs were just timestamps?
-	// Let's just use the in values for the logic.
+	returns1 := float64(boundsEnd1 - boundsStart1)
 
 	isOverlapping := boundsStart1 < boundsEnd2 && boundsStart2 < boundsEnd1
 	if isOverlapping {
-		s.covSum += returns1 * float64(boundsEnd2-boundsStart2) // returns2
+		s.covSum += returns1 * float64(boundsEnd2-boundsStart2)
 	}
+
 	s.leftEnergySum += returns1 * returns1
 
 	returns2 := float64(boundsEnd2 - boundsStart2)
@@ -35,12 +33,11 @@ func (s *HayashiYoshidaServer) Evaluate(ctx context.Context, in [2][2]int64) (fl
 
 	scale := math.Sqrt(s.leftEnergySum * s.rightEnergySum)
 	var result float64
+
 	if scale > 0 {
 		result = s.covSum / scale
 	}
-	if s.DownstreamHayashiYoshida != nil {
-		return result, s.DownstreamHayashiYoshida(ctx, result)
-	}
+
 	return result, nil
 }
 
@@ -49,16 +46,27 @@ func (s *HayashiYoshidaServer) Write(ctx context.Context, call HayashiYoshida_wr
 	boundsEnd1 := call.Args().BoundsEnd1()
 	boundsStart2 := call.Args().BoundsStart2()
 	boundsEnd2 := call.Args().BoundsEnd2()
-	// Ignore Returns1 and Returns2 to match the Evaluate signature, or map them properly.
 
-	_, err := s.Evaluate(ctx, [2][2]int64{
+	res, err := s.Evaluate(ctx, [2][2]int64{
 		{boundsStart1, boundsEnd1},
 		{boundsStart2, boundsEnd2},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	s.out = res
+	return nil
 }
 
 func (s *HayashiYoshidaServer) Done(ctx context.Context, call HayashiYoshida_done) error {
+	res, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
+
+	res.SetOut(s.out)
+	s.out = 0
 	return nil
 }
 

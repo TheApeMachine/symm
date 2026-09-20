@@ -1,13 +1,9 @@
 using Go = import "/go.capnp";
-@0xce2530a4a850b491;
+@0xc367676e27bcfb9c;
 $Go.package("hawkes");
 $Go.import("nomagique/statistic/hawkes");
 
-struct WireConditionalIntensity {
-  payload @0 :AnyPointer;
-}
-
 interface ConditionalIntensity {
-  write @0 (view :WireConditionalIntensity) -> stream;
-  done @1 ();
+  write @0 (in :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

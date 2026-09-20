@@ -2,49 +2,64 @@ package data
 
 import (
 	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 )
 
 type ExtractServer struct {
-	Downstream func(context.Context, float64) error
+	path string
+	out  float64
 }
 
 func NewExtract() *ExtractServer {
 	return &ExtractServer{}
 }
 
-func (s *ExtractServer) Evaluate(ctx context.Context, payload any) (float64, error) {
-	val := 0.0
-	if v, ok := payload.(float64); ok {
-		val = v
-	}
-
-	if s.Downstream != nil {
-		return val, s.Downstream(ctx, val)
-	}
-
-	return val, nil
-}
-
 func (s *ExtractServer) Write(ctx context.Context, call Extract_write) error {
-	args, err := call.Args().Extract()
-	if err != nil {
-		return err
+	pathStr, err := call.Args().Path()
+	if err == nil && len(pathStr) > 0 {
+		s.path = pathStr
 	}
 
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
+	dataBytes, err := call.Args().In()
+	if err != nil || len(dataBytes) == 0 {
+		return nil
 	}
 
-	var payload any
-	if payloadPtr.IsValid() {
-		// placeholder
+	// Try reading as Cap'n Proto WireMeasurement message
+	msg, err := capnp.Unmarshal(dataBytes)
+	if err == nil {
+		measurement, err := ReadRootWireMeasurement(msg)
+		if err == nil {
+			metrics, err := measurement.Metrics()
+			if err == nil && metrics.Len() > 0 {
+				s.out = metrics.At(0).Raw()
+				return nil
+			}
+		}
 	}
 
-	_, evalErr := s.Evaluate(ctx, payload)
-	return evalErr
+	// Also support JSON map
+	var m map[string]any
+	if err := sonic.Unmarshal(dataBytes, &m); err == nil && m != nil {
+		if val, ok := m[s.path].(float64); ok {
+			s.out = val
+			return nil
+		}
+	}
+
+	return nil
 }
 
 func (s *ExtractServer) Done(ctx context.Context, call Extract_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
+
+	results.SetOut(s.out)
+	s.out = 0
 	return nil
 }

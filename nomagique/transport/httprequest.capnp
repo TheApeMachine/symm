@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireHTTPRequest { url @0 :Text; method @1 :Text; body @2 :Data; headers @3 :AnyPointer; }
-
 interface HTTPRequest {
-  write @0 (payload :WireHTTPRequest) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

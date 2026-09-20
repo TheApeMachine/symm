@@ -3,48 +3,33 @@ package hawkes
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type SellIntensityServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
 func NewSellIntensity() *SellIntensityServer {
 	return &SellIntensityServer{}
 }
 
-func (s *SellIntensityServer) Write(ctx context.Context, call SellIntensity_write) error {
-	args, err := call.Args().View()
-	if err != nil {
-		return err
-	}
-
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	reading, err := extractReading(payloadPtr)
-	if err != nil || reading == nil {
-		return nil
-	}
-
-	result := reading.LambdaSell
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (server *SellIntensityServer) Write(ctx context.Context, call SellIntensity_write) error {
+	server.out = call.Args().In()
 	return nil
 }
 
-func (s *SellIntensityServer) Done(ctx context.Context, call SellIntensity_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (server *SellIntensityServer) Done(ctx context.Context, call SellIntensity_done) error {
+	result, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"sell_intensity: alloc results failed",
+			err,
+		))
 	}
+
+	result.SetOut(server.out)
+	server.out = 0
 	return nil
 }

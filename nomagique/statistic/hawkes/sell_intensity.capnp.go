@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireSellIntensity capnp.Struct
-
-// WireSellIntensity_TypeID is the unique identifier for the type WireSellIntensity.
-const WireSellIntensity_TypeID = 0xbcbc3f91a721808b
-
-func NewWireSellIntensity(s *capnp.Segment) (WireSellIntensity, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSellIntensity(st), err
-}
-
-func NewRootWireSellIntensity(s *capnp.Segment) (WireSellIntensity, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSellIntensity(st), err
-}
-
-func ReadRootWireSellIntensity(msg *capnp.Message) (WireSellIntensity, error) {
-	root, err := msg.Root()
-	return WireSellIntensity(root.Struct()), err
-}
-
-func (s WireSellIntensity) String() string {
-	str, _ := text.Marshal(0xbcbc3f91a721808b, capnp.Struct(s))
-	return str
-}
-
-func (s WireSellIntensity) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireSellIntensity) DecodeFromPtr(p capnp.Ptr) WireSellIntensity {
-	return WireSellIntensity(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireSellIntensity) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireSellIntensity) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireSellIntensity) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireSellIntensity) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireSellIntensity) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireSellIntensity) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireSellIntensity) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireSellIntensity_List is a list of WireSellIntensity.
-type WireSellIntensity_List = capnp.StructList[WireSellIntensity]
-
-// NewWireSellIntensity creates a new list of WireSellIntensity.
-func NewWireSellIntensity_List(s *capnp.Segment, sz int32) (WireSellIntensity_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireSellIntensity](l), err
-}
-
-// WireSellIntensity_Future is a wrapper for a WireSellIntensity promised by a client call.
-type WireSellIntensity_Future struct{ *capnp.Future }
-
-func (f WireSellIntensity_Future) Struct() (WireSellIntensity, error) {
-	p, err := f.Future.Ptr()
-	return WireSellIntensity(p.Struct()), err
-}
-func (p WireSellIntensity_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type SellIntensity capnp.Client
 
 // SellIntensity_TypeID is the unique identifier for the type SellIntensity.
-const SellIntensity_TypeID = 0xa1fec8c303d59a5d
+const SellIntensity_TypeID = 0xfdebf485286b9d20
 
 func (c SellIntensity) Write(ctx context.Context, params func(SellIntensity_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xa1fec8c303d59a5d,
+			InterfaceID:   0xfdebf485286b9d20,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/sell_intensity.capnp:SellIntensity",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(SellIntensity_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c SellIntensity) Done(ctx context.Context, params func(SellIntensity_done_
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xa1fec8c303d59a5d,
+			InterfaceID:   0xfdebf485286b9d20,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/sell_intensity.capnp:SellIntensity",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func SellIntensity_Methods(methods []server.Method, s SellIntensity_Server) []se
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xa1fec8c303d59a5d,
+			InterfaceID:   0xfdebf485286b9d20,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/sell_intensity.capnp:SellIntensity",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func SellIntensity_Methods(methods []server.Method, s SellIntensity_Server) []se
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xa1fec8c303d59a5d,
+			InterfaceID:   0xfdebf485286b9d20,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/sell_intensity.capnp:SellIntensity",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c SellIntensity_done) Args() SellIntensity_done_Params {
 
 // AllocResults allocates the results struct.
 func (c SellIntensity_done) AllocResults() (SellIntensity_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellIntensity_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewSellIntensity_List(s *capnp.Segment, sz int32) (SellIntensity_List, erro
 type SellIntensity_write_Params capnp.Struct
 
 // SellIntensity_write_Params_TypeID is the unique identifier for the type SellIntensity_write_Params.
-const SellIntensity_write_Params_TypeID = 0x9a8712cef6b75666
+const SellIntensity_write_Params_TypeID = 0xfb23ac5b15eac347
 
 func NewSellIntensity_write_Params(s *capnp.Segment) (SellIntensity_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellIntensity_write_Params(st), err
 }
 
 func NewRootSellIntensity_write_Params(s *capnp.Segment) (SellIntensity_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellIntensity_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootSellIntensity_write_Params(msg *capnp.Message) (SellIntensity_write
 }
 
 func (s SellIntensity_write_Params) String() string {
-	str, _ := text.Marshal(0x9a8712cef6b75666, capnp.Struct(s))
+	str, _ := text.Marshal(0xfb23ac5b15eac347, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s SellIntensity_write_Params) Message() *capnp.Message {
 func (s SellIntensity_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s SellIntensity_write_Params) View() (WireSellIntensity, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireSellIntensity(p.Struct()), err
+func (s SellIntensity_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s SellIntensity_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s SellIntensity_write_Params) SetView(v WireSellIntensity) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireSellIntensity struct, preferring placement in s's segment.
-func (s SellIntensity_write_Params) NewView() (WireSellIntensity, error) {
-	ss, err := NewWireSellIntensity(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireSellIntensity{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s SellIntensity_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // SellIntensity_write_Params_List is a list of SellIntensity_write_Params.
@@ -376,7 +282,7 @@ type SellIntensity_write_Params_List = capnp.StructList[SellIntensity_write_Para
 
 // NewSellIntensity_write_Params creates a new list of SellIntensity_write_Params.
 func NewSellIntensity_write_Params_List(s *capnp.Segment, sz int32) (SellIntensity_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[SellIntensity_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f SellIntensity_write_Params_Future) Struct() (SellIntensity_write_Params,
 	p, err := f.Future.Ptr()
 	return SellIntensity_write_Params(p.Struct()), err
 }
-func (p SellIntensity_write_Params_Future) View() WireSellIntensity_Future {
-	return WireSellIntensity_Future{Future: p.Future.Field(0, nil)}
-}
 
 type SellIntensity_done_Params capnp.Struct
 
 // SellIntensity_done_Params_TypeID is the unique identifier for the type SellIntensity_done_Params.
-const SellIntensity_done_Params_TypeID = 0xbf174ffe39f102d2
+const SellIntensity_done_Params_TypeID = 0x969b85941cb60f82
 
 func NewSellIntensity_done_Params(s *capnp.Segment) (SellIntensity_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootSellIntensity_done_Params(msg *capnp.Message) (SellIntensity_done_P
 }
 
 func (s SellIntensity_done_Params) String() string {
-	str, _ := text.Marshal(0xbf174ffe39f102d2, capnp.Struct(s))
+	str, _ := text.Marshal(0x969b85941cb60f82, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f SellIntensity_done_Params_Future) Struct() (SellIntensity_done_Params, e
 type SellIntensity_done_Results capnp.Struct
 
 // SellIntensity_done_Results_TypeID is the unique identifier for the type SellIntensity_done_Results.
-const SellIntensity_done_Results_TypeID = 0xb417875befbc5f64
+const SellIntensity_done_Results_TypeID = 0xa685340d6618326f
 
 func NewSellIntensity_done_Results(s *capnp.Segment) (SellIntensity_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellIntensity_done_Results(st), err
 }
 
 func NewRootSellIntensity_done_Results(s *capnp.Segment) (SellIntensity_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SellIntensity_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootSellIntensity_done_Results(msg *capnp.Message) (SellIntensity_done_
 }
 
 func (s SellIntensity_done_Results) String() string {
-	str, _ := text.Marshal(0xb417875befbc5f64, capnp.Struct(s))
+	str, _ := text.Marshal(0xa685340d6618326f, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s SellIntensity_done_Results) Message() *capnp.Message {
 func (s SellIntensity_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s SellIntensity_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s SellIntensity_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // SellIntensity_done_Results_List is a list of SellIntensity_done_Results.
 type SellIntensity_done_Results_List = capnp.StructList[SellIntensity_done_Results]
 
 // NewSellIntensity_done_Results creates a new list of SellIntensity_done_Results.
 func NewSellIntensity_done_Results_List(s *capnp.Segment, sz int32) (SellIntensity_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[SellIntensity_done_Results](l), err
 }
 

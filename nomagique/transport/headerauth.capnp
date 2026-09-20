@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireHeaderAuth { headers @0 :AnyPointer; key @1 :Text; value @2 :Text; }
-
 interface HeaderAuth {
-  write @0 (payload :WireHeaderAuth) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

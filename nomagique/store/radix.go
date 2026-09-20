@@ -1,133 +1,65 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 
-	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/errnie"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 )
 
-// RadixServer implements Radix_Server from the capnp schema.
 type RadixServer struct {
-	root atomic.Pointer[iradix.Tree[[]byte]]
+	root  atomic.Pointer[iradix.Tree[[]byte]]
+	out   []byte
+	found bool
 }
 
 func NewRadixServer() *RadixServer {
-	s := &RadixServer{}
-	s.root.Store(iradix.New[[]byte]())
-	return s
-}
-
-func (s *RadixServer) Read(ctx context.Context, call Radix_read) error {
-	key, err := call.Args().Key()
-	if err != nil {
-		return err
-	}
-
-	current := s.root.Load()
-	val, found := current.Get(key)
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-	res.SetFound(found)
-
-	if found {
-		// val is []byte containing a Cap'n Proto serialized message
-		msg, err := capnp.Unmarshal(val)
-		if err == nil {
-			rootPtr, err := msg.Root()
-			if err == nil {
-				res.SetValue(rootPtr)
-			}
-		}
-	}
-
-	return nil
-}
-
-func (s *RadixServer) Write(ctx context.Context, call Radix_write) error {
-	key, err := call.Args().Key()
-	if err != nil {
-		return err
-	}
-
-	valPtr, err := call.Args().Value()
-	if err != nil {
-		return err
-	}
-
-	// Serialize valPtr into []byte to store safely
-	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-	if err == nil {
-		err = msg.SetRoot(valPtr)
-		if err == nil {
-			bytes, err := seg.Message().Marshal()
-			if err == nil {
-				current := s.root.Load()
-				updated, _, _ := current.Insert(key, bytes)
-				s.root.Store(updated)
-
-				res, err := call.AllocResults()
-				if err == nil {
-					res.SetValue(valPtr)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func (s *RadixServer) Identify(ctx context.Context, call Radix_identify) error {
-	key, err := call.Args().Key()
-	if err != nil {
-		return err
-	}
-
-	valPtr, err := call.Args().Value()
-	if err != nil {
-		return err
-	}
-
-	current := s.root.Load()
-	val, found := current.Get(key)
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	if found {
-		msg, err := capnp.Unmarshal(val)
-		if err == nil {
-			rootPtr, err := msg.Root()
-			if err == nil {
-				res.SetValue(rootPtr)
-			}
-		}
-		return nil
-	}
-
-	// Insert if not found
-	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-	if err == nil {
-		err = msg.SetRoot(valPtr)
-		if err == nil {
-			bytes, err := seg.Message().Marshal()
-			if err == nil {
-				updated, _, _ := current.Insert(key, bytes)
-				s.root.Store(updated)
-				res.SetValue(valPtr)
-			}
-		}
-	}
-
-	return nil
+	server := &RadixServer{}
+	server.root.Store(iradix.New[[]byte]())
+	return server
 }
 
 func NewRadix() *RadixServer {
 	return NewRadixServer()
+}
+
+func (server *RadixServer) Write(ctx context.Context, call Radix_write) error {
+	key, _ := call.Args().Key()
+	val, _ := call.Args().Value()
+
+	current := server.root.Load()
+	updated, _, _ := current.Insert([]byte(key), bytes.Clone(val))
+	server.root.Store(updated)
+
+	server.out = bytes.Clone(val)
+	server.found = true
+	return nil
+}
+
+func (server *RadixServer) Done(ctx context.Context, call Radix_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"radix: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"radix: set out failed",
+				err,
+			))
+		}
+	}
+	results.SetFound(server.found)
+
+	server.out = nil
+	server.found = false
+	return nil
 }

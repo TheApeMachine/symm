@@ -3,13 +3,12 @@
 package cognition
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
 )
 
 type Reinforce capnp.Client
@@ -209,7 +208,7 @@ func (c Reinforce_done) Args() Reinforce_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Reinforce_done) AllocResults() (Reinforce_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Reinforce_done_Results(r), err
 }
 
@@ -383,12 +382,12 @@ type Reinforce_done_Results capnp.Struct
 const Reinforce_done_Results_TypeID = 0xf785ba3ce6b7ba39
 
 func NewReinforce_done_Results(s *capnp.Segment) (Reinforce_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Reinforce_done_Results(st), err
 }
 
 func NewRootReinforce_done_Results(s *capnp.Segment) (Reinforce_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Reinforce_done_Results(st), err
 }
 
@@ -424,13 +423,25 @@ func (s Reinforce_done_Results) Message() *capnp.Message {
 func (s Reinforce_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Reinforce_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Reinforce_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Reinforce_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Reinforce_done_Results_List is a list of Reinforce_done_Results.
 type Reinforce_done_Results_List = capnp.StructList[Reinforce_done_Results]
 
 // NewReinforce_done_Results creates a new list of Reinforce_done_Results.
 func NewReinforce_done_Results_List(s *capnp.Segment, sz int32) (Reinforce_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Reinforce_done_Results](l), err
 }
 

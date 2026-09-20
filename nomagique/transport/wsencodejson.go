@@ -1,25 +1,46 @@
 package transport
 
 import (
+	"bytes"
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type WSEncodeJSONServer struct {
-	Downstream func(context.Context, any) error
+	out []byte
 }
 
 func NewWSEncodeJSON() *WSEncodeJSONServer {
 	return &WSEncodeJSONServer{}
 }
 
-func (s *WSEncodeJSONServer) Write(ctx context.Context, call WSEncodeJSON_write) error {
-	if s.Downstream != nil {
-		return s.Downstream(ctx, nil)
-	}
-
+func (server *WSEncodeJSONServer) Write(ctx context.Context, call WSEncodeJSON_write) error {
+	data, _ := call.Args().In()
+	server.out = bytes.Clone(data)
 	return nil
 }
 
-func (s *WSEncodeJSONServer) Done(ctx context.Context, call WSEncodeJSON_done) error {
+func (server *WSEncodeJSONServer) Done(ctx context.Context, call WSEncodeJSON_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"wsencodejson: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"wsencodejson: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
 	return nil
 }

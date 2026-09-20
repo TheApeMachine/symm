@@ -11,71 +11,6 @@ import (
 	context "context"
 )
 
-type WireNonce capnp.Struct
-
-// WireNonce_TypeID is the unique identifier for the type WireNonce.
-const WireNonce_TypeID = 0x9cedf2917305b45f
-
-func NewWireNonce(s *capnp.Segment) (WireNonce, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return WireNonce(st), err
-}
-
-func NewRootWireNonce(s *capnp.Segment) (WireNonce, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return WireNonce(st), err
-}
-
-func ReadRootWireNonce(msg *capnp.Message) (WireNonce, error) {
-	root, err := msg.Root()
-	return WireNonce(root.Struct()), err
-}
-
-func (s WireNonce) String() string {
-	str, _ := text.Marshal(0x9cedf2917305b45f, capnp.Struct(s))
-	return str
-}
-
-func (s WireNonce) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireNonce) DecodeFromPtr(p capnp.Ptr) WireNonce {
-	return WireNonce(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireNonce) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireNonce) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireNonce) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireNonce) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-
-// WireNonce_List is a list of WireNonce.
-type WireNonce_List = capnp.StructList[WireNonce]
-
-// NewWireNonce creates a new list of WireNonce.
-func NewWireNonce_List(s *capnp.Segment, sz int32) (WireNonce_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[WireNonce](l), err
-}
-
-// WireNonce_Future is a wrapper for a WireNonce promised by a client call.
-type WireNonce_Future struct{ *capnp.Future }
-
-func (f WireNonce_Future) Struct() (WireNonce, error) {
-	p, err := f.Future.Ptr()
-	return WireNonce(p.Struct()), err
-}
-
 type Nonce capnp.Client
 
 // Nonce_TypeID is the unique identifier for the type Nonce.
@@ -273,7 +208,7 @@ func (c Nonce_done) Args() Nonce_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Nonce_done) AllocResults() (Nonce_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Nonce_done_Results(r), err
 }
 
@@ -333,28 +268,17 @@ func (s Nonce_write_Params) Message() *capnp.Message {
 func (s Nonce_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Nonce_write_Params) Payload() (WireNonce, error) {
+func (s Nonce_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireNonce(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Nonce_write_Params) HasPayload() bool {
+func (s Nonce_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Nonce_write_Params) SetPayload(v WireNonce) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireNonce struct, preferring placement in s's segment.
-func (s Nonce_write_Params) NewPayload() (WireNonce, error) {
-	ss, err := NewWireNonce(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireNonce{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Nonce_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Nonce_write_Params_List is a list of Nonce_write_Params.
@@ -372,9 +296,6 @@ type Nonce_write_Params_Future struct{ *capnp.Future }
 func (f Nonce_write_Params_Future) Struct() (Nonce_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Nonce_write_Params(p.Struct()), err
-}
-func (p Nonce_write_Params_Future) Payload() WireNonce_Future {
-	return WireNonce_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Nonce_done_Params capnp.Struct
@@ -448,12 +369,12 @@ type Nonce_done_Results capnp.Struct
 const Nonce_done_Results_TypeID = 0xfe67a23c13d93bf3
 
 func NewNonce_done_Results(s *capnp.Segment) (Nonce_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Nonce_done_Results(st), err
 }
 
 func NewRootNonce_done_Results(s *capnp.Segment) (Nonce_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Nonce_done_Results(st), err
 }
 
@@ -489,13 +410,25 @@ func (s Nonce_done_Results) Message() *capnp.Message {
 func (s Nonce_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Nonce_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Nonce_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Nonce_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Nonce_done_Results_List is a list of Nonce_done_Results.
 type Nonce_done_Results_List = capnp.StructList[Nonce_done_Results]
 
 // NewNonce_done_Results creates a new list of Nonce_done_Results.
 func NewNonce_done_Results_List(s *capnp.Segment, sz int32) (Nonce_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Nonce_done_Results](l), err
 }
 

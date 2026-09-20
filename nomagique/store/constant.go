@@ -1,50 +1,52 @@
 package store
 
 import (
+	"bytes"
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/errnie"
 )
 
-// ConstantServer implements Constant_Server from the capnp schema.
 type ConstantServer struct {
 	value []byte
 }
 
-func NewConstantServer(val capnp.Ptr) *ConstantServer {
-	s := &ConstantServer{}
-	if val.IsValid() {
-		msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-		if err == nil {
-			if msg.SetRoot(val) == nil {
-				if bytes, err := seg.Message().Marshal(); err == nil {
-					s.value = bytes
-				}
-			}
-		}
-	}
-	return s
+func NewConstant() *ConstantServer {
+	return &ConstantServer{}
 }
 
-func (s *ConstantServer) Evaluate(ctx context.Context, call Constant_evaluate) error {
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
+func NewConstantServer(val []byte) *ConstantServer {
+	return &ConstantServer{value: bytes.Clone(val)}
+}
 
-	if len(s.value) > 0 {
-		msg, err := capnp.Unmarshal(s.value)
-		if err == nil {
-			rootPtr, err := msg.Root()
-			if err == nil {
-				res.SetValue(rootPtr)
-			}
-		}
+func (server *ConstantServer) Write(ctx context.Context, call Constant_write) error {
+	inData, err := call.Args().In()
+	if err == nil && len(inData) > 0 {
+		server.value = bytes.Clone(inData)
 	}
 
 	return nil
 }
 
-func NewConstant() *ConstantServer {
-	return &ConstantServer{}
+func (server *ConstantServer) Done(ctx context.Context, call Constant_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"constant: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.value) > 0 {
+		if err := results.SetOut(server.value); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"constant: set out failed",
+				err,
+			))
+		}
+	}
+
+	return nil
 }

@@ -3,34 +3,36 @@ package geometry
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type IntersectionServer struct {
-	Downstream types.BoolSink
+	out bool
 }
 
-func (s *IntersectionServer) Write(ctx context.Context, call Intersection_write) error {
+func (srv *IntersectionServer) Write(ctx context.Context, call Intersection_write) error {
 	leftStart := call.Args().LeftStart()
 	leftEnd := call.Args().LeftEnd()
 	rightStart := call.Args().RightStart()
 	rightEnd := call.Args().RightEnd()
-	result := leftStart < rightEnd && rightStart < leftEnd
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.BoolSink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+
+	srv.out = leftStart < rightEnd && rightStart < leftEnd
 	return nil
 }
 
-func (s *IntersectionServer) Done(ctx context.Context, call Intersection_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *IntersectionServer) Done(ctx context.Context, call Intersection_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"geometry: alloc intersection results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = false
 	return nil
 }
 

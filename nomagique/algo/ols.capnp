@@ -4,11 +4,7 @@ using Go = import "/go.capnp";
 $Go.package("algo");
 $Go.import("github.com/theapemachine/symm/nomagique/algo");
 
-struct OLSRow {
-  values @0 :List(Float64);
-}
-
 interface OLS {
-  write @0 (x :List(OLSRow), y :List(OLSRow)) -> stream;
-  done @1 ();
+  write @0 (x :Float64, y :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

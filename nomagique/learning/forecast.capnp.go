@@ -209,7 +209,7 @@ func (c Forecast_done) Args() Forecast_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Forecast_done) AllocResults() (Forecast_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 40, PointerCount: 0})
 	return Forecast_done_Results(r), err
 }
 
@@ -365,12 +365,12 @@ type Forecast_done_Results capnp.Struct
 const Forecast_done_Results_TypeID = 0x92eb87ffcb808d76
 
 func NewForecast_done_Results(s *capnp.Segment) (Forecast_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
 	return Forecast_done_Results(st), err
 }
 
 func NewRootForecast_done_Results(s *capnp.Segment) (Forecast_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
 	return Forecast_done_Results(st), err
 }
 
@@ -406,13 +406,52 @@ func (s Forecast_done_Results) Message() *capnp.Message {
 func (s Forecast_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Forecast_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Forecast_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Forecast_done_Results) Mean() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Forecast_done_Results) SetMean(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Forecast_done_Results) Variance() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Forecast_done_Results) SetVariance(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s Forecast_done_Results) Skewness() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s Forecast_done_Results) SetSkewness(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+func (s Forecast_done_Results) Kurtosis() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s Forecast_done_Results) SetKurtosis(v float64) {
+	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
+}
 
 // Forecast_done_Results_List is a list of Forecast_done_Results.
 type Forecast_done_Results_List = capnp.StructList[Forecast_done_Results]
 
 // NewForecast_done_Results creates a new list of Forecast_done_Results.
 func NewForecast_done_Results_List(s *capnp.Segment, sz int32) (Forecast_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0}, sz)
 	return capnp.StructList[Forecast_done_Results](l), err
 }
 

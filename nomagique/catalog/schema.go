@@ -6,6 +6,7 @@ Port is one wired connection of a primitive: a stream it reads, or the stream it
 type Port struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
+	RawType     string `json:"rawType,omitempty"`
 	Description string `json:"description"`
 }
 
@@ -38,4 +39,9 @@ type Schema struct {
 	Stateful          bool     `json:"stateful,omitempty"`
 	ReturnsError      bool     `json:"returnsError,omitempty"`
 	InjectedDeps      []string `json:"injectedDeps,omitempty"`
+	CapnpWrite        bool     `json:"capnpWrite,omitempty"`
+	HasDownstream     bool     `json:"hasDownstream,omitempty"`
+	DownstreamKind    string   `json:"downstreamKind,omitempty"`
+	HasServer         bool     `json:"hasServer,omitempty"`
+	HasImpl           bool     `json:"hasImpl,omitempty"`
 }

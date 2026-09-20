@@ -11,120 +11,6 @@ import (
 	context "context"
 )
 
-type WireHeaderAuth capnp.Struct
-
-// WireHeaderAuth_TypeID is the unique identifier for the type WireHeaderAuth.
-const WireHeaderAuth_TypeID = 0xd4a108c57f67f343
-
-func NewWireHeaderAuth(s *capnp.Segment) (WireHeaderAuth, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
-	return WireHeaderAuth(st), err
-}
-
-func NewRootWireHeaderAuth(s *capnp.Segment) (WireHeaderAuth, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
-	return WireHeaderAuth(st), err
-}
-
-func ReadRootWireHeaderAuth(msg *capnp.Message) (WireHeaderAuth, error) {
-	root, err := msg.Root()
-	return WireHeaderAuth(root.Struct()), err
-}
-
-func (s WireHeaderAuth) String() string {
-	str, _ := text.Marshal(0xd4a108c57f67f343, capnp.Struct(s))
-	return str
-}
-
-func (s WireHeaderAuth) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireHeaderAuth) DecodeFromPtr(p capnp.Ptr) WireHeaderAuth {
-	return WireHeaderAuth(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireHeaderAuth) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireHeaderAuth) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireHeaderAuth) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireHeaderAuth) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireHeaderAuth) Headers() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireHeaderAuth) HasHeaders() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireHeaderAuth) SetHeaders(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireHeaderAuth) Key() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireHeaderAuth) HasKey() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireHeaderAuth) KeyBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireHeaderAuth) SetKey(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-func (s WireHeaderAuth) Value() (string, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.Text(), err
-}
-
-func (s WireHeaderAuth) HasValue() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s WireHeaderAuth) ValueBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.TextBytes(), err
-}
-
-func (s WireHeaderAuth) SetValue(v string) error {
-	return capnp.Struct(s).SetText(2, v)
-}
-
-// WireHeaderAuth_List is a list of WireHeaderAuth.
-type WireHeaderAuth_List = capnp.StructList[WireHeaderAuth]
-
-// NewWireHeaderAuth creates a new list of WireHeaderAuth.
-func NewWireHeaderAuth_List(s *capnp.Segment, sz int32) (WireHeaderAuth_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
-	return capnp.StructList[WireHeaderAuth](l), err
-}
-
-// WireHeaderAuth_Future is a wrapper for a WireHeaderAuth promised by a client call.
-type WireHeaderAuth_Future struct{ *capnp.Future }
-
-func (f WireHeaderAuth_Future) Struct() (WireHeaderAuth, error) {
-	p, err := f.Future.Ptr()
-	return WireHeaderAuth(p.Struct()), err
-}
-func (p WireHeaderAuth_Future) Headers() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type HeaderAuth capnp.Client
 
 // HeaderAuth_TypeID is the unique identifier for the type HeaderAuth.
@@ -322,7 +208,7 @@ func (c HeaderAuth_done) Args() HeaderAuth_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HeaderAuth_done) AllocResults() (HeaderAuth_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HeaderAuth_done_Results(r), err
 }
 
@@ -382,28 +268,17 @@ func (s HeaderAuth_write_Params) Message() *capnp.Message {
 func (s HeaderAuth_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HeaderAuth_write_Params) Payload() (WireHeaderAuth, error) {
+func (s HeaderAuth_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireHeaderAuth(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s HeaderAuth_write_Params) HasPayload() bool {
+func (s HeaderAuth_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HeaderAuth_write_Params) SetPayload(v WireHeaderAuth) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireHeaderAuth struct, preferring placement in s's segment.
-func (s HeaderAuth_write_Params) NewPayload() (WireHeaderAuth, error) {
-	ss, err := NewWireHeaderAuth(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireHeaderAuth{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s HeaderAuth_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // HeaderAuth_write_Params_List is a list of HeaderAuth_write_Params.
@@ -421,9 +296,6 @@ type HeaderAuth_write_Params_Future struct{ *capnp.Future }
 func (f HeaderAuth_write_Params_Future) Struct() (HeaderAuth_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return HeaderAuth_write_Params(p.Struct()), err
-}
-func (p HeaderAuth_write_Params_Future) Payload() WireHeaderAuth_Future {
-	return WireHeaderAuth_Future{Future: p.Future.Field(0, nil)}
 }
 
 type HeaderAuth_done_Params capnp.Struct
@@ -497,12 +369,12 @@ type HeaderAuth_done_Results capnp.Struct
 const HeaderAuth_done_Results_TypeID = 0xc03f0adcc8aba5a5
 
 func NewHeaderAuth_done_Results(s *capnp.Segment) (HeaderAuth_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HeaderAuth_done_Results(st), err
 }
 
 func NewRootHeaderAuth_done_Results(s *capnp.Segment) (HeaderAuth_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HeaderAuth_done_Results(st), err
 }
 
@@ -538,13 +410,25 @@ func (s HeaderAuth_done_Results) Message() *capnp.Message {
 func (s HeaderAuth_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s HeaderAuth_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s HeaderAuth_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s HeaderAuth_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // HeaderAuth_done_Results_List is a list of HeaderAuth_done_Results.
 type HeaderAuth_done_Results_List = capnp.StructList[HeaderAuth_done_Results]
 
 // NewHeaderAuth_done_Results creates a new list of HeaderAuth_done_Results.
 func NewHeaderAuth_done_Results_List(s *capnp.Segment, sz int32) (HeaderAuth_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[HeaderAuth_done_Results](l), err
 }
 

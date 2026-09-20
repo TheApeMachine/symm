@@ -9,103 +9,8 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireRegulator capnp.Struct
-
-// WireRegulator_TypeID is the unique identifier for the type WireRegulator.
-const WireRegulator_TypeID = 0xbb36dcfc0fa5bddc
-
-func NewWireRegulator(s *capnp.Segment) (WireRegulator, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireRegulator(st), err
-}
-
-func NewRootWireRegulator(s *capnp.Segment) (WireRegulator, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireRegulator(st), err
-}
-
-func ReadRootWireRegulator(msg *capnp.Message) (WireRegulator, error) {
-	root, err := msg.Root()
-	return WireRegulator(root.Struct()), err
-}
-
-func (s WireRegulator) String() string {
-	str, _ := text.Marshal(0xbb36dcfc0fa5bddc, capnp.Struct(s))
-	return str
-}
-
-func (s WireRegulator) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireRegulator) DecodeFromPtr(p capnp.Ptr) WireRegulator {
-	return WireRegulator(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireRegulator) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireRegulator) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireRegulator) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireRegulator) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireRegulator) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireRegulator) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireRegulator) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireRegulator) Symbol() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireRegulator) HasSymbol() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireRegulator) SymbolBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireRegulator) SetSymbol(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-// WireRegulator_List is a list of WireRegulator.
-type WireRegulator_List = capnp.StructList[WireRegulator]
-
-// NewWireRegulator creates a new list of WireRegulator.
-func NewWireRegulator_List(s *capnp.Segment, sz int32) (WireRegulator_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireRegulator](l), err
-}
-
-// WireRegulator_Future is a wrapper for a WireRegulator promised by a client call.
-type WireRegulator_Future struct{ *capnp.Future }
-
-func (f WireRegulator_Future) Struct() (WireRegulator, error) {
-	p, err := f.Future.Ptr()
-	return WireRegulator(p.Struct()), err
-}
-func (p WireRegulator_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type Regulator capnp.Client
 
@@ -122,7 +27,7 @@ func (c Regulator) Write(ctx context.Context, params func(Regulator_write_Params
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 6}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Regulator_write_Params(s)) }
 	}
 
@@ -304,7 +209,7 @@ func (c Regulator_done) Args() Regulator_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Regulator_done) AllocResults() (Regulator_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Regulator_done_Results(r), err
 }
 
@@ -323,12 +228,12 @@ type Regulator_write_Params capnp.Struct
 const Regulator_write_Params_TypeID = 0xe7f5cef0464dda12
 
 func NewRegulator_write_Params(s *capnp.Segment) (Regulator_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 6})
 	return Regulator_write_Params(st), err
 }
 
 func NewRootRegulator_write_Params(s *capnp.Segment) (Regulator_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 6})
 	return Regulator_write_Params(st), err
 }
 
@@ -364,28 +269,136 @@ func (s Regulator_write_Params) Message() *capnp.Message {
 func (s Regulator_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Regulator_write_Params) Regulator() (WireRegulator, error) {
+func (s Regulator_write_Params) Id() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireRegulator(p.Struct()), err
+	return p.Text(), err
 }
 
-func (s Regulator_write_Params) HasRegulator() bool {
+func (s Regulator_write_Params) HasId() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Regulator_write_Params) SetRegulator(v WireRegulator) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Regulator_write_Params) IdBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-// NewRegulator sets the regulator field to a newly
-// allocated WireRegulator struct, preferring placement in s's segment.
-func (s Regulator_write_Params) NewRegulator() (WireRegulator, error) {
-	ss, err := NewWireRegulator(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireRegulator{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Regulator_write_Params) SetId(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Regulator_write_Params) OrderId() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Regulator_write_Params) HasOrderId() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Regulator_write_Params) OrderIdBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Regulator_write_Params) SetOrderId(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Regulator_write_Params) ClientOrderId() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Regulator_write_Params) HasClientOrderId() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Regulator_write_Params) ClientOrderIdBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Regulator_write_Params) SetClientOrderId(v string) error {
+	return capnp.Struct(s).SetText(2, v)
+}
+
+func (s Regulator_write_Params) Side() (string, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.Text(), err
+}
+
+func (s Regulator_write_Params) HasSide() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Regulator_write_Params) SideBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return p.TextBytes(), err
+}
+
+func (s Regulator_write_Params) SetSide(v string) error {
+	return capnp.Struct(s).SetText(3, v)
+}
+
+func (s Regulator_write_Params) CumQty() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Regulator_write_Params) SetCumQty(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Regulator_write_Params) CumCost() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Regulator_write_Params) SetCumCost(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Regulator_write_Params) Fee() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Regulator_write_Params) SetFee(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s Regulator_write_Params) Status() (string, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.Text(), err
+}
+
+func (s Regulator_write_Params) HasStatus() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Regulator_write_Params) StatusBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return p.TextBytes(), err
+}
+
+func (s Regulator_write_Params) SetStatus(v string) error {
+	return capnp.Struct(s).SetText(4, v)
+}
+
+func (s Regulator_write_Params) Symbol() (string, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.Text(), err
+}
+
+func (s Regulator_write_Params) HasSymbol() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s Regulator_write_Params) SymbolBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return p.TextBytes(), err
+}
+
+func (s Regulator_write_Params) SetSymbol(v string) error {
+	return capnp.Struct(s).SetText(5, v)
 }
 
 // Regulator_write_Params_List is a list of Regulator_write_Params.
@@ -393,7 +406,7 @@ type Regulator_write_Params_List = capnp.StructList[Regulator_write_Params]
 
 // NewRegulator_write_Params creates a new list of Regulator_write_Params.
 func NewRegulator_write_Params_List(s *capnp.Segment, sz int32) (Regulator_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 6}, sz)
 	return capnp.StructList[Regulator_write_Params](l), err
 }
 
@@ -403,9 +416,6 @@ type Regulator_write_Params_Future struct{ *capnp.Future }
 func (f Regulator_write_Params_Future) Struct() (Regulator_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Regulator_write_Params(p.Struct()), err
-}
-func (p Regulator_write_Params_Future) Regulator() WireRegulator_Future {
-	return WireRegulator_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Regulator_done_Params capnp.Struct
@@ -479,12 +489,12 @@ type Regulator_done_Results capnp.Struct
 const Regulator_done_Results_TypeID = 0xe7c0e32dd91fc471
 
 func NewRegulator_done_Results(s *capnp.Segment) (Regulator_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Regulator_done_Results(st), err
 }
 
 func NewRootRegulator_done_Results(s *capnp.Segment) (Regulator_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return Regulator_done_Results(st), err
 }
 
@@ -520,13 +530,62 @@ func (s Regulator_done_Results) Message() *capnp.Message {
 func (s Regulator_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Regulator_done_Results) Symbol() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Regulator_done_Results) HasSymbol() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Regulator_done_Results) SymbolBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Regulator_done_Results) SetSymbol(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Regulator_done_Results) Quantity() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Regulator_done_Results) SetQuantity(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Regulator_done_Results) Basis() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Regulator_done_Results) SetBasis(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Regulator_done_Results) EntryFee() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Regulator_done_Results) SetEntryFee(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s Regulator_done_Results) Realized() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s Regulator_done_Results) SetRealized(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
 
 // Regulator_done_Results_List is a list of Regulator_done_Results.
 type Regulator_done_Results_List = capnp.StructList[Regulator_done_Results]
 
 // NewRegulator_done_Results creates a new list of Regulator_done_Results.
 func NewRegulator_done_Results_List(s *capnp.Segment, sz int32) (Regulator_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1}, sz)
 	return capnp.StructList[Regulator_done_Results](l), err
 }
 

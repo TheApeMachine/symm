@@ -4,45 +4,40 @@ import (
 	"context"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 )
 
 type DecideServer struct {
-	Downstream func(context.Context, string) error
+	out string
 }
 
-func (s *DecideServer) Write(ctx context.Context, call Decide_write) error {
-	args, err := call.Args().Decide()
-	if err != nil {
-		return err
-	}
+func NewDecide() *DecideServer {
+	return &DecideServer{}
+}
 
+func (server *DecideServer) Write(ctx context.Context, call Decide_write) error {
+	args := call.Args()
 	minContrast := args.MinContrast()
+	winner, _ := args.Winner()
+	contrast := args.Contrast()
+	isBreak := args.IsBreak()
 
-	evalPtr, err := args.Eval()
-	if err != nil || !evalPtr.IsValid() {
-		if s.Downstream != nil {
-			_ = s.Downstream(ctx, "wait")
+	if inData, err := args.In(); err == nil && len(inData) > 0 {
+		var eval map[string]any
+		if err := sonic.Unmarshal(inData, &eval); err == nil && eval != nil {
+			if w, ok := eval["winner"].(string); ok {
+				winner = w
+			}
+			if c, ok := eval["contrast"].(float64); ok {
+				contrast = c
+			}
+			if b, ok := eval["isBreak"].(bool); ok {
+				isBreak = b
+			}
+			if mc, ok := eval["minContrast"].(float64); ok {
+				minContrast = mc
+			}
 		}
-		return err
-	}
-
-	var eval map[string]any
-	evalBytes := evalPtr.Data()
-	_ = sonic.Unmarshal(evalBytes, &eval)
-
-	winner := ""
-	if w, ok := eval["winner"].(string); ok {
-		winner = w
-	}
-
-	contrast := 0.0
-	if c, ok := eval["contrast"].(float64); ok {
-		contrast = c
-	}
-
-	isBreak := false
-	if b, ok := eval["isBreak"].(bool); ok {
-		isBreak = b
 	}
 
 	result := "wait"
@@ -50,16 +45,21 @@ func (s *DecideServer) Write(ctx context.Context, call Decide_write) error {
 		result = winner
 	}
 
-	if s.Downstream != nil {
-		return s.Downstream(ctx, result)
+	server.out = result
+	return nil
+}
+
+func (server *DecideServer) Done(ctx context.Context, call Decide_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"decide: alloc results failed",
+			err,
+		))
 	}
-	return nil
-}
 
-func (s *DecideServer) Done(ctx context.Context, call Decide_done) error {
+	results.SetOut(server.out)
+	server.out = ""
 	return nil
-}
-
-func NewDecide() *DecideServer {
-	return &DecideServer{}
 }

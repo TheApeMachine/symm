@@ -7,150 +7,50 @@ import (
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 )
-
-type Cell capnp.Struct
-
-// Cell_TypeID is the unique identifier for the type Cell.
-const Cell_TypeID = 0xcd53e97d9c1943e9
-
-func NewCell(s *capnp.Segment) (Cell, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Cell(st), err
-}
-
-func NewRootCell(s *capnp.Segment) (Cell, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Cell(st), err
-}
-
-func ReadRootCell(msg *capnp.Message) (Cell, error) {
-	root, err := msg.Root()
-	return Cell(root.Struct()), err
-}
-
-func (s Cell) String() string {
-	str, _ := text.Marshal(0xcd53e97d9c1943e9, capnp.Struct(s))
-	return str
-}
-
-func (s Cell) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Cell) DecodeFromPtr(p capnp.Ptr) Cell {
-	return Cell(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Cell) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Cell) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Cell) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Cell) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Cell) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s Cell) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Cell) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// Cell_List is a list of Cell.
-type Cell_List = capnp.StructList[Cell]
-
-// NewCell creates a new list of Cell.
-func NewCell_List(s *capnp.Segment, sz int32) (Cell_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Cell](l), err
-}
-
-// Cell_Future is a wrapper for a Cell promised by a client call.
-type Cell_Future struct{ *capnp.Future }
-
-func (f Cell_Future) Struct() (Cell, error) {
-	p, err := f.Future.Ptr()
-	return Cell(p.Struct()), err
-}
-func (p Cell_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type Grid capnp.Client
 
 // Grid_TypeID is the unique identifier for the type Grid.
 const Grid_TypeID = 0xc6618673c2949b62
 
-func (c Grid) Poke(ctx context.Context, params func(Grid_poke_Params) error) (Grid_poke_Results_Future, capnp.ReleaseFunc) {
-
+func (c Grid) Write(ctx context.Context, params func(Grid_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/grid.capnp:Grid",
-			MethodName:    "poke",
+			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_poke_Params(s)) }
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_write_Params(s)) }
 	}
 
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Grid_poke_Results_Future{Future: ans.Future()}, release
+	return capnp.Client(c).SendStreamCall(ctx, s)
 
 }
 
-func (c Grid) Peek(ctx context.Context, params func(Grid_peek_Params) error) (Grid_peek_Results_Future, capnp.ReleaseFunc) {
+func (c Grid) Done(ctx context.Context, params func(Grid_done_Params) error) (Grid_done_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      1,
 			InterfaceName: "nomagique/store/grid.capnp:Grid",
-			MethodName:    "peek",
+			MethodName:    "done",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_peek_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_done_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Grid_peek_Results_Future{Future: ans.Future()}, release
-
-}
-
-func (c Grid) Register(ctx context.Context, params func(Grid_register_Params) error) (Grid_register_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xc6618673c2949b62,
-			MethodID:      2,
-			InterfaceName: "nomagique/store/grid.capnp:Grid",
-			MethodName:    "register",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Grid_register_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Grid_register_Results_Future{Future: ans.Future()}, release
+	return Grid_done_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -227,11 +127,9 @@ func (c Grid) GetFlowLimiter() fc.FlowLimiter {
 
 // A Grid_Server is a Grid with a local implementation.
 type Grid_Server interface {
-	Poke(context.Context, Grid_poke) error
+	Write(context.Context, Grid_write) error
 
-	Peek(context.Context, Grid_peek) error
-
-	Register(context.Context, Grid_register) error
+	Done(context.Context, Grid_done) error
 }
 
 // Grid_NewServer creates a new Server from an implementation of Grid_Server.
@@ -250,7 +148,7 @@ func Grid_ServerToClient(s Grid_Server) Grid {
 // This can be used to create a more complicated Server.
 func Grid_Methods(methods []server.Method, s Grid_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 3)
+		methods = make([]server.Method, 0, 2)
 	}
 
 	methods = append(methods, server.Method{
@@ -258,10 +156,10 @@ func Grid_Methods(methods []server.Method, s Grid_Server) []server.Method {
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/grid.capnp:Grid",
-			MethodName:    "poke",
+			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Poke(ctx, Grid_poke{call})
+			return s.Write(ctx, Grid_write{call})
 		},
 	})
 
@@ -270,77 +168,48 @@ func Grid_Methods(methods []server.Method, s Grid_Server) []server.Method {
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      1,
 			InterfaceName: "nomagique/store/grid.capnp:Grid",
-			MethodName:    "peek",
+			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Peek(ctx, Grid_peek{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xc6618673c2949b62,
-			MethodID:      2,
-			InterfaceName: "nomagique/store/grid.capnp:Grid",
-			MethodName:    "register",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Register(ctx, Grid_register{call})
+			return s.Done(ctx, Grid_done{call})
 		},
 	})
 
 	return methods
 }
 
-// Grid_poke holds the state for a server call to Grid.poke.
+// Grid_write holds the state for a server call to Grid.write.
 // See server.Call for documentation.
-type Grid_poke struct {
+type Grid_write struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Grid_poke) Args() Grid_poke_Params {
-	return Grid_poke_Params(c.Call.Args())
+func (c Grid_write) Args() Grid_write_Params {
+	return Grid_write_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Grid_poke) AllocResults() (Grid_poke_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_poke_Results(r), err
-}
-
-// Grid_peek holds the state for a server call to Grid.peek.
-// See server.Call for documentation.
-type Grid_peek struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c Grid_peek) Args() Grid_peek_Params {
-	return Grid_peek_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c Grid_peek) AllocResults() (Grid_peek_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_peek_Results(r), err
-}
-
-// Grid_register holds the state for a server call to Grid.register.
-// See server.Call for documentation.
-type Grid_register struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c Grid_register) Args() Grid_register_Params {
-	return Grid_register_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c Grid_register) AllocResults() (Grid_register_Results, error) {
+func (c Grid_write) AllocResults() (stream.StreamResult, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Grid_register_Results(r), err
+	return stream.StreamResult(r), err
+}
+
+// Grid_done holds the state for a server call to Grid.done.
+// See server.Call for documentation.
+type Grid_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Grid_done) Args() Grid_done_Params {
+	return Grid_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Grid_done) AllocResults() (Grid_done_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return Grid_done_Results(r), err
 }
 
 // Grid_List is a list of Grid.
@@ -352,466 +221,239 @@ func NewGrid_List(s *capnp.Segment, sz int32) (Grid_List, error) {
 	return capnp.CapList[Grid](l), err
 }
 
-type Grid_poke_Params capnp.Struct
+type Grid_write_Params capnp.Struct
 
-// Grid_poke_Params_TypeID is the unique identifier for the type Grid_poke_Params.
-const Grid_poke_Params_TypeID = 0x8b2a68e19c111ac0
+// Grid_write_Params_TypeID is the unique identifier for the type Grid_write_Params.
+const Grid_write_Params_TypeID = 0x8b2a68e19c111ac0
 
-func NewGrid_poke_Params(s *capnp.Segment) (Grid_poke_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_poke_Params(st), err
+func NewGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Grid_write_Params(st), err
 }
 
-func NewRootGrid_poke_Params(s *capnp.Segment) (Grid_poke_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_poke_Params(st), err
+func NewRootGrid_write_Params(s *capnp.Segment) (Grid_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return Grid_write_Params(st), err
 }
 
-func ReadRootGrid_poke_Params(msg *capnp.Message) (Grid_poke_Params, error) {
+func ReadRootGrid_write_Params(msg *capnp.Message) (Grid_write_Params, error) {
 	root, err := msg.Root()
-	return Grid_poke_Params(root.Struct()), err
+	return Grid_write_Params(root.Struct()), err
 }
 
-func (s Grid_poke_Params) String() string {
+func (s Grid_write_Params) String() string {
 	str, _ := text.Marshal(0x8b2a68e19c111ac0, capnp.Struct(s))
 	return str
 }
 
-func (s Grid_poke_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Grid_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Grid_poke_Params) DecodeFromPtr(p capnp.Ptr) Grid_poke_Params {
-	return Grid_poke_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (Grid_write_Params) DecodeFromPtr(p capnp.Ptr) Grid_write_Params {
+	return Grid_write_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Grid_poke_Params) ToPtr() capnp.Ptr {
+func (s Grid_write_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Grid_poke_Params) IsValid() bool {
+func (s Grid_write_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Grid_poke_Params) Message() *capnp.Message {
+func (s Grid_write_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Grid_poke_Params) Segment() *capnp.Segment {
+func (s Grid_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Grid_poke_Params) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s Grid_poke_Params) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Grid_poke_Params) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// Grid_poke_Params_List is a list of Grid_poke_Params.
-type Grid_poke_Params_List = capnp.StructList[Grid_poke_Params]
-
-// NewGrid_poke_Params creates a new list of Grid_poke_Params.
-func NewGrid_poke_Params_List(s *capnp.Segment, sz int32) (Grid_poke_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Grid_poke_Params](l), err
-}
-
-// Grid_poke_Params_Future is a wrapper for a Grid_poke_Params promised by a client call.
-type Grid_poke_Params_Future struct{ *capnp.Future }
-
-func (f Grid_poke_Params_Future) Struct() (Grid_poke_Params, error) {
-	p, err := f.Future.Ptr()
-	return Grid_poke_Params(p.Struct()), err
-}
-func (p Grid_poke_Params_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
-type Grid_poke_Results capnp.Struct
-
-// Grid_poke_Results_TypeID is the unique identifier for the type Grid_poke_Results.
-const Grid_poke_Results_TypeID = 0xd426bc78ae7e15ff
-
-func NewGrid_poke_Results(s *capnp.Segment) (Grid_poke_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_poke_Results(st), err
-}
-
-func NewRootGrid_poke_Results(s *capnp.Segment) (Grid_poke_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_poke_Results(st), err
-}
-
-func ReadRootGrid_poke_Results(msg *capnp.Message) (Grid_poke_Results, error) {
-	root, err := msg.Root()
-	return Grid_poke_Results(root.Struct()), err
-}
-
-func (s Grid_poke_Results) String() string {
-	str, _ := text.Marshal(0xd426bc78ae7e15ff, capnp.Struct(s))
-	return str
-}
-
-func (s Grid_poke_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Grid_poke_Results) DecodeFromPtr(p capnp.Ptr) Grid_poke_Results {
-	return Grid_poke_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Grid_poke_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Grid_poke_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Grid_poke_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Grid_poke_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Grid_poke_Results) Cells() (Cell_List, error) {
+func (s Grid_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return Cell_List(p.List()), err
+	return []byte(p.Data()), err
 }
 
-func (s Grid_poke_Results) HasCells() bool {
+func (s Grid_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Grid_poke_Results) SetCells(v Cell_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s Grid_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewCells sets the cells field to a newly
-// allocated Cell_List, preferring placement in s's segment.
-func (s Grid_poke_Results) NewCells(n int32) (Cell_List, error) {
-	l, err := NewCell_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return Cell_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
+func (s Grid_write_Params) Metrics() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
 }
 
-// Grid_poke_Results_List is a list of Grid_poke_Results.
-type Grid_poke_Results_List = capnp.StructList[Grid_poke_Results]
-
-// NewGrid_poke_Results creates a new list of Grid_poke_Results.
-func NewGrid_poke_Results_List(s *capnp.Segment, sz int32) (Grid_poke_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Grid_poke_Results](l), err
+func (s Grid_write_Params) HasMetrics() bool {
+	return capnp.Struct(s).HasPtr(1)
 }
 
-// Grid_poke_Results_Future is a wrapper for a Grid_poke_Results promised by a client call.
-type Grid_poke_Results_Future struct{ *capnp.Future }
+func (s Grid_write_Params) MetricsBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
 
-func (f Grid_poke_Results_Future) Struct() (Grid_poke_Results, error) {
+func (s Grid_write_Params) SetMetrics(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+// Grid_write_Params_List is a list of Grid_write_Params.
+type Grid_write_Params_List = capnp.StructList[Grid_write_Params]
+
+// NewGrid_write_Params creates a new list of Grid_write_Params.
+func NewGrid_write_Params_List(s *capnp.Segment, sz int32) (Grid_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[Grid_write_Params](l), err
+}
+
+// Grid_write_Params_Future is a wrapper for a Grid_write_Params promised by a client call.
+type Grid_write_Params_Future struct{ *capnp.Future }
+
+func (f Grid_write_Params_Future) Struct() (Grid_write_Params, error) {
 	p, err := f.Future.Ptr()
-	return Grid_poke_Results(p.Struct()), err
+	return Grid_write_Params(p.Struct()), err
 }
 
-type Grid_peek_Params capnp.Struct
+type Grid_done_Params capnp.Struct
 
-// Grid_peek_Params_TypeID is the unique identifier for the type Grid_peek_Params.
-const Grid_peek_Params_TypeID = 0xa1427acd498114b6
+// Grid_done_Params_TypeID is the unique identifier for the type Grid_done_Params.
+const Grid_done_Params_TypeID = 0xa1427acd498114b6
 
-func NewGrid_peek_Params(s *capnp.Segment) (Grid_peek_Params, error) {
+func NewGrid_done_Params(s *capnp.Segment) (Grid_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Grid_peek_Params(st), err
+	return Grid_done_Params(st), err
 }
 
-func NewRootGrid_peek_Params(s *capnp.Segment) (Grid_peek_Params, error) {
+func NewRootGrid_done_Params(s *capnp.Segment) (Grid_done_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Grid_peek_Params(st), err
+	return Grid_done_Params(st), err
 }
 
-func ReadRootGrid_peek_Params(msg *capnp.Message) (Grid_peek_Params, error) {
+func ReadRootGrid_done_Params(msg *capnp.Message) (Grid_done_Params, error) {
 	root, err := msg.Root()
-	return Grid_peek_Params(root.Struct()), err
+	return Grid_done_Params(root.Struct()), err
 }
 
-func (s Grid_peek_Params) String() string {
+func (s Grid_done_Params) String() string {
 	str, _ := text.Marshal(0xa1427acd498114b6, capnp.Struct(s))
 	return str
 }
 
-func (s Grid_peek_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Grid_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Grid_peek_Params) DecodeFromPtr(p capnp.Ptr) Grid_peek_Params {
-	return Grid_peek_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (Grid_done_Params) DecodeFromPtr(p capnp.Ptr) Grid_done_Params {
+	return Grid_done_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Grid_peek_Params) ToPtr() capnp.Ptr {
+func (s Grid_done_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Grid_peek_Params) IsValid() bool {
+func (s Grid_done_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Grid_peek_Params) Message() *capnp.Message {
+func (s Grid_done_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Grid_peek_Params) Segment() *capnp.Segment {
+func (s Grid_done_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
 
-// Grid_peek_Params_List is a list of Grid_peek_Params.
-type Grid_peek_Params_List = capnp.StructList[Grid_peek_Params]
+// Grid_done_Params_List is a list of Grid_done_Params.
+type Grid_done_Params_List = capnp.StructList[Grid_done_Params]
 
-// NewGrid_peek_Params creates a new list of Grid_peek_Params.
-func NewGrid_peek_Params_List(s *capnp.Segment, sz int32) (Grid_peek_Params_List, error) {
+// NewGrid_done_Params creates a new list of Grid_done_Params.
+func NewGrid_done_Params_List(s *capnp.Segment, sz int32) (Grid_done_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[Grid_peek_Params](l), err
+	return capnp.StructList[Grid_done_Params](l), err
 }
 
-// Grid_peek_Params_Future is a wrapper for a Grid_peek_Params promised by a client call.
-type Grid_peek_Params_Future struct{ *capnp.Future }
+// Grid_done_Params_Future is a wrapper for a Grid_done_Params promised by a client call.
+type Grid_done_Params_Future struct{ *capnp.Future }
 
-func (f Grid_peek_Params_Future) Struct() (Grid_peek_Params, error) {
+func (f Grid_done_Params_Future) Struct() (Grid_done_Params, error) {
 	p, err := f.Future.Ptr()
-	return Grid_peek_Params(p.Struct()), err
+	return Grid_done_Params(p.Struct()), err
 }
 
-type Grid_peek_Results capnp.Struct
+type Grid_done_Results capnp.Struct
 
-// Grid_peek_Results_TypeID is the unique identifier for the type Grid_peek_Results.
-const Grid_peek_Results_TypeID = 0xdf7ff8cd7fbf2e00
+// Grid_done_Results_TypeID is the unique identifier for the type Grid_done_Results.
+const Grid_done_Results_TypeID = 0xdf7ff8cd7fbf2e00
 
-func NewGrid_peek_Results(s *capnp.Segment) (Grid_peek_Results, error) {
+func NewGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_peek_Results(st), err
+	return Grid_done_Results(st), err
 }
 
-func NewRootGrid_peek_Results(s *capnp.Segment) (Grid_peek_Results, error) {
+func NewRootGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_peek_Results(st), err
+	return Grid_done_Results(st), err
 }
 
-func ReadRootGrid_peek_Results(msg *capnp.Message) (Grid_peek_Results, error) {
+func ReadRootGrid_done_Results(msg *capnp.Message) (Grid_done_Results, error) {
 	root, err := msg.Root()
-	return Grid_peek_Results(root.Struct()), err
+	return Grid_done_Results(root.Struct()), err
 }
 
-func (s Grid_peek_Results) String() string {
+func (s Grid_done_Results) String() string {
 	str, _ := text.Marshal(0xdf7ff8cd7fbf2e00, capnp.Struct(s))
 	return str
 }
 
-func (s Grid_peek_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Grid_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Grid_peek_Results) DecodeFromPtr(p capnp.Ptr) Grid_peek_Results {
-	return Grid_peek_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Grid_done_Results) DecodeFromPtr(p capnp.Ptr) Grid_done_Results {
+	return Grid_done_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Grid_peek_Results) ToPtr() capnp.Ptr {
+func (s Grid_done_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Grid_peek_Results) IsValid() bool {
+func (s Grid_done_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Grid_peek_Results) Message() *capnp.Message {
+func (s Grid_done_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Grid_peek_Results) Segment() *capnp.Segment {
+func (s Grid_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Grid_peek_Results) Cells() (Cell_List, error) {
+func (s Grid_done_Results) Out() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return Cell_List(p.List()), err
+	return []byte(p.Data()), err
 }
 
-func (s Grid_peek_Results) HasCells() bool {
+func (s Grid_done_Results) HasOut() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Grid_peek_Results) SetCells(v Cell_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s Grid_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewCells sets the cells field to a newly
-// allocated Cell_List, preferring placement in s's segment.
-func (s Grid_peek_Results) NewCells(n int32) (Cell_List, error) {
-	l, err := NewCell_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return Cell_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
+// Grid_done_Results_List is a list of Grid_done_Results.
+type Grid_done_Results_List = capnp.StructList[Grid_done_Results]
 
-// Grid_peek_Results_List is a list of Grid_peek_Results.
-type Grid_peek_Results_List = capnp.StructList[Grid_peek_Results]
-
-// NewGrid_peek_Results creates a new list of Grid_peek_Results.
-func NewGrid_peek_Results_List(s *capnp.Segment, sz int32) (Grid_peek_Results_List, error) {
+// NewGrid_done_Results creates a new list of Grid_done_Results.
+func NewGrid_done_Results_List(s *capnp.Segment, sz int32) (Grid_done_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Grid_peek_Results](l), err
+	return capnp.StructList[Grid_done_Results](l), err
 }
 
-// Grid_peek_Results_Future is a wrapper for a Grid_peek_Results promised by a client call.
-type Grid_peek_Results_Future struct{ *capnp.Future }
+// Grid_done_Results_Future is a wrapper for a Grid_done_Results promised by a client call.
+type Grid_done_Results_Future struct{ *capnp.Future }
 
-func (f Grid_peek_Results_Future) Struct() (Grid_peek_Results, error) {
+func (f Grid_done_Results_Future) Struct() (Grid_done_Results, error) {
 	p, err := f.Future.Ptr()
-	return Grid_peek_Results(p.Struct()), err
-}
-
-type Grid_register_Params capnp.Struct
-
-// Grid_register_Params_TypeID is the unique identifier for the type Grid_register_Params.
-const Grid_register_Params_TypeID = 0xe15b71ee29bec4d7
-
-func NewGrid_register_Params(s *capnp.Segment) (Grid_register_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_register_Params(st), err
-}
-
-func NewRootGrid_register_Params(s *capnp.Segment) (Grid_register_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Grid_register_Params(st), err
-}
-
-func ReadRootGrid_register_Params(msg *capnp.Message) (Grid_register_Params, error) {
-	root, err := msg.Root()
-	return Grid_register_Params(root.Struct()), err
-}
-
-func (s Grid_register_Params) String() string {
-	str, _ := text.Marshal(0xe15b71ee29bec4d7, capnp.Struct(s))
-	return str
-}
-
-func (s Grid_register_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Grid_register_Params) DecodeFromPtr(p capnp.Ptr) Grid_register_Params {
-	return Grid_register_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Grid_register_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Grid_register_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Grid_register_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Grid_register_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Grid_register_Params) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s Grid_register_Params) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Grid_register_Params) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// Grid_register_Params_List is a list of Grid_register_Params.
-type Grid_register_Params_List = capnp.StructList[Grid_register_Params]
-
-// NewGrid_register_Params creates a new list of Grid_register_Params.
-func NewGrid_register_Params_List(s *capnp.Segment, sz int32) (Grid_register_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Grid_register_Params](l), err
-}
-
-// Grid_register_Params_Future is a wrapper for a Grid_register_Params promised by a client call.
-type Grid_register_Params_Future struct{ *capnp.Future }
-
-func (f Grid_register_Params_Future) Struct() (Grid_register_Params, error) {
-	p, err := f.Future.Ptr()
-	return Grid_register_Params(p.Struct()), err
-}
-func (p Grid_register_Params_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
-type Grid_register_Results capnp.Struct
-
-// Grid_register_Results_TypeID is the unique identifier for the type Grid_register_Results.
-const Grid_register_Results_TypeID = 0xe36a9d22ddb12c38
-
-func NewGrid_register_Results(s *capnp.Segment) (Grid_register_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Grid_register_Results(st), err
-}
-
-func NewRootGrid_register_Results(s *capnp.Segment) (Grid_register_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return Grid_register_Results(st), err
-}
-
-func ReadRootGrid_register_Results(msg *capnp.Message) (Grid_register_Results, error) {
-	root, err := msg.Root()
-	return Grid_register_Results(root.Struct()), err
-}
-
-func (s Grid_register_Results) String() string {
-	str, _ := text.Marshal(0xe36a9d22ddb12c38, capnp.Struct(s))
-	return str
-}
-
-func (s Grid_register_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Grid_register_Results) DecodeFromPtr(p capnp.Ptr) Grid_register_Results {
-	return Grid_register_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Grid_register_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Grid_register_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Grid_register_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Grid_register_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-
-// Grid_register_Results_List is a list of Grid_register_Results.
-type Grid_register_Results_List = capnp.StructList[Grid_register_Results]
-
-// NewGrid_register_Results creates a new list of Grid_register_Results.
-func NewGrid_register_Results_List(s *capnp.Segment, sz int32) (Grid_register_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[Grid_register_Results](l), err
-}
-
-// Grid_register_Results_Future is a wrapper for a Grid_register_Results promised by a client call.
-type Grid_register_Results_Future struct{ *capnp.Future }
-
-func (f Grid_register_Results_Future) Struct() (Grid_register_Results, error) {
-	p, err := f.Future.Ptr()
-	return Grid_register_Results(p.Struct()), err
+	return Grid_done_Results(p.Struct()), err
 }

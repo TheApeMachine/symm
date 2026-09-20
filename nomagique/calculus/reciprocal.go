@@ -3,35 +3,41 @@ package calculus
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type ReciprocalServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *ReciprocalServer) Write(ctx context.Context, call Reciprocal_write) error {
-	a := call.Args().A()
-	result := float64(0)
-	if a != 0 {
-		result = 1.0 / a
+func (srv *ReciprocalServer) Write(ctx context.Context, call Reciprocal_write) error {
+	inVal := call.Args().In()
+
+	if inVal == 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: reciprocal of zero",
+			nil,
+		))
 	}
 
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = 1.0 / inVal
 	return nil
 }
 
-func (s *ReciprocalServer) Done(ctx context.Context, call Reciprocal_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *ReciprocalServer) Done(ctx context.Context, call Reciprocal_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc reciprocal results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

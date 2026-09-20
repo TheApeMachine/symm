@@ -3,11 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("hawkes");
 $Go.import("nomagique/statistic/hawkes");
 
-struct WireArrivalRate {
-  payload @0 :AnyPointer;
-}
-
 interface ArrivalRate {
-  write @0 (view :WireArrivalRate) -> stream;
-  done @1 ();
+  write @0 (in :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

@@ -3,13 +3,13 @@
 package cognition
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type Lookahead capnp.Client
@@ -209,7 +209,7 @@ func (c Lookahead_done) Args() Lookahead_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Lookahead_done) AllocResults() (Lookahead_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Lookahead_done_Results(r), err
 }
 
@@ -370,12 +370,12 @@ type Lookahead_done_Results capnp.Struct
 const Lookahead_done_Results_TypeID = 0xefb9bcfcd7a92ab1
 
 func NewLookahead_done_Results(s *capnp.Segment) (Lookahead_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Lookahead_done_Results(st), err
 }
 
 func NewRootLookahead_done_Results(s *capnp.Segment) (Lookahead_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return Lookahead_done_Results(st), err
 }
 
@@ -411,13 +411,33 @@ func (s Lookahead_done_Results) Message() *capnp.Message {
 func (s Lookahead_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Lookahead_done_Results) Seq() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Lookahead_done_Results) HasSeq() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Lookahead_done_Results) SetSeq(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s Lookahead_done_Results) LogP() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Lookahead_done_Results) SetLogP(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Lookahead_done_Results_List is a list of Lookahead_done_Results.
 type Lookahead_done_Results_List = capnp.StructList[Lookahead_done_Results]
 
 // NewLookahead_done_Results creates a new list of Lookahead_done_Results.
 func NewLookahead_done_Results_List(s *capnp.Segment, sz int32) (Lookahead_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
 	return capnp.StructList[Lookahead_done_Results](l), err
 }
 

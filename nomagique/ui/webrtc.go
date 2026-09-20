@@ -1,36 +1,50 @@
 package ui
 
 import (
-	"capnproto.org/go/capnp/v3"
+	"bytes"
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type WebRTCServerImpl struct {
-	Downstream func(context.Context, capnp.Ptr) error
+	out []byte
+}
+
+func NewWebRTCServer() *WebRTCServerImpl {
+	return &WebRTCServerImpl{}
 }
 
 func NewWebRTCServerImpl() *WebRTCServerImpl {
 	return &WebRTCServerImpl{}
 }
 
-func (s *WebRTCServerImpl) Write(ctx context.Context, call WebRTCServer_write) error {
-	args, err := call.Args().Server()
-	if err != nil {
-		// fallback to see if it's named something else
-		return err
-	}
-
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	if s.Downstream != nil {
-		return s.Downstream(ctx, payloadPtr)
-	}
+func (server *WebRTCServerImpl) Write(ctx context.Context, call WebRTCServer_write) error {
+	data, _ := call.Args().In()
+	server.out = bytes.Clone(data)
 	return nil
 }
 
-func (s *WebRTCServerImpl) Done(ctx context.Context, call WebRTCServer_done) error {
+func (server *WebRTCServerImpl) Done(ctx context.Context, call WebRTCServer_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"webrtc: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"webrtc: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
 	return nil
 }

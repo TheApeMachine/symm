@@ -34,11 +34,7 @@ var (
 			focusChan := make(chan string, 100)
 			ctx = context.WithValue(ctx, "focusChan", focusChan)
 
-			go func() {
-				if err := pipeline.WriteFloat64(ctx, 0.0); err != nil {
-					errnie.Error(err)
-				}
-			}()
+			pipeline.Start(ctx)
 
 			<-ctx.Done()
 			errnie.Info("[root] system terminated cleanly")

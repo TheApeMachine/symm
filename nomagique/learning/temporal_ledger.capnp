@@ -4,19 +4,7 @@ using Go = import "/go.capnp";
 $Go.package("learning");
 $Go.import("github.com/theapemachine/symm/nomagique/learning");
 
-struct IssueAction {
-  step @0 :Int64;
-  reference @1 :Float64;
-  features @2 :List(Float64);
-  predictions @3 :List(Float64);
-  horizon @4 :Int64;
-}
-struct ResolveAction {
-  step @0 :Int64;
-  reference @1 :Float64;
-}
-
 interface TemporalLedger {
-  write @0 (issue :IssueAction, resolve :ResolveAction) -> stream;
-  done @1 ();
+  write @0 (issueStep :Int64, issueReference :Float64, resolveStep :Int64, resolveReference :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

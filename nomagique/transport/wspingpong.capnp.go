@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireWSPingPong capnp.Struct
-
-// WireWSPingPong_TypeID is the unique identifier for the type WireWSPingPong.
-const WireWSPingPong_TypeID = 0x96aff4df664958b2
-
-func NewWireWSPingPong(s *capnp.Segment) (WireWSPingPong, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSPingPong(st), err
-}
-
-func NewRootWireWSPingPong(s *capnp.Segment) (WireWSPingPong, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSPingPong(st), err
-}
-
-func ReadRootWireWSPingPong(msg *capnp.Message) (WireWSPingPong, error) {
-	root, err := msg.Root()
-	return WireWSPingPong(root.Struct()), err
-}
-
-func (s WireWSPingPong) String() string {
-	str, _ := text.Marshal(0x96aff4df664958b2, capnp.Struct(s))
-	return str
-}
-
-func (s WireWSPingPong) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWSPingPong) DecodeFromPtr(p capnp.Ptr) WireWSPingPong {
-	return WireWSPingPong(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWSPingPong) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWSPingPong) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWSPingPong) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWSPingPong) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWSPingPong) Connection() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireWSPingPong) HasConnection() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWSPingPong) SetConnection(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireWSPingPong_List is a list of WireWSPingPong.
-type WireWSPingPong_List = capnp.StructList[WireWSPingPong]
-
-// NewWireWSPingPong creates a new list of WireWSPingPong.
-func NewWireWSPingPong_List(s *capnp.Segment, sz int32) (WireWSPingPong_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireWSPingPong](l), err
-}
-
-// WireWSPingPong_Future is a wrapper for a WireWSPingPong promised by a client call.
-type WireWSPingPong_Future struct{ *capnp.Future }
-
-func (f WireWSPingPong_Future) Struct() (WireWSPingPong, error) {
-	p, err := f.Future.Ptr()
-	return WireWSPingPong(p.Struct()), err
-}
-func (p WireWSPingPong_Future) Connection() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type WSPingPong capnp.Client
 
 // WSPingPong_TypeID is the unique identifier for the type WSPingPong.
@@ -287,7 +208,7 @@ func (c WSPingPong_done) Args() WSPingPong_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WSPingPong_done) AllocResults() (WSPingPong_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSPingPong_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s WSPingPong_write_Params) Message() *capnp.Message {
 func (s WSPingPong_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WSPingPong_write_Params) Payload() (WireWSPingPong, error) {
+func (s WSPingPong_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWSPingPong(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WSPingPong_write_Params) HasPayload() bool {
+func (s WSPingPong_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WSPingPong_write_Params) SetPayload(v WireWSPingPong) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireWSPingPong struct, preferring placement in s's segment.
-func (s WSPingPong_write_Params) NewPayload() (WireWSPingPong, error) {
-	ss, err := NewWireWSPingPong(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWSPingPong{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WSPingPong_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // WSPingPong_write_Params_List is a list of WSPingPong_write_Params.
@@ -386,9 +296,6 @@ type WSPingPong_write_Params_Future struct{ *capnp.Future }
 func (f WSPingPong_write_Params_Future) Struct() (WSPingPong_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WSPingPong_write_Params(p.Struct()), err
-}
-func (p WSPingPong_write_Params_Future) Payload() WireWSPingPong_Future {
-	return WireWSPingPong_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WSPingPong_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type WSPingPong_done_Results capnp.Struct
 const WSPingPong_done_Results_TypeID = 0xa90cccae17b69ed7
 
 func NewWSPingPong_done_Results(s *capnp.Segment) (WSPingPong_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSPingPong_done_Results(st), err
 }
 
 func NewRootWSPingPong_done_Results(s *capnp.Segment) (WSPingPong_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSPingPong_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s WSPingPong_done_Results) Message() *capnp.Message {
 func (s WSPingPong_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WSPingPong_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WSPingPong_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WSPingPong_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WSPingPong_done_Results_List is a list of WSPingPong_done_Results.
 type WSPingPong_done_Results_List = capnp.StructList[WSPingPong_done_Results]
 
 // NewWSPingPong_done_Results creates a new list of WSPingPong_done_Results.
 func NewWSPingPong_done_Results_List(s *capnp.Segment, sz int32) (WSPingPong_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WSPingPong_done_Results](l), err
 }
 

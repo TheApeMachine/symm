@@ -1,116 +1,67 @@
 package tables
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"sync"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
 
-// IcebergTableServer is a general Iceberg persistence Server.
 type IcebergTableServer struct {
 	mu          sync.Mutex
 	initialized bool
 	tableConfig TableConfig
 	catalog     *Catalog
-}
-
-func NewIcebergTableServer() *IcebergTableServer {
-	return &IcebergTableServer{}
-}
-
-func (s *IcebergTableServer) Execute(ctx context.Context, call IcebergTable_execute) error {
-	args, err := call.Args().Table()
-	if err != nil {
-		return err
-	}
-
-	payloadPtr, err := args.Payload()
-	if err != nil || !payloadPtr.IsValid() {
-		return nil
-	}
-
-	s.mu.Lock()
-	if !s.initialized {
-		cfgJSON, err := args.Config()
-		if err == nil && cfgJSON != "" {
-			if err := sonic.Unmarshal([]byte(cfgJSON), &s.tableConfig); err != nil {
-				errnie.Error(errnie.Err(errnie.Validation, "iceberg table: invalid config JSON", err))
-			}
-		}
-		s.catalog = Open(context.Background())
-		s.initialized = true
-	}
-	cat := s.catalog
-	s.mu.Unlock()
-
-	if cat == nil {
-		res, err := call.AllocResults()
-		if err == nil {
-			res.SetResult(payloadPtr)
-		}
-		return nil
-	}
-
-	schema, err := SchemaFromJSON(fmt.Sprintf(`{"fields":%s}`, toJSON(s.tableConfig.Fields)))
-	if err != nil || schema == nil {
-		res, err := call.AllocResults()
-		if err == nil {
-			res.SetResult(payloadPtr)
-		}
-		return nil
-	}
-
-	// Payload processing logic to go here
-	// ...
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	res.SetResult(payloadPtr)
-	return nil
-}
-
-// IcebergScanServer is a general Iceberg query Server.
-type IcebergScanServer struct{}
-
-func NewIcebergScanServer() *IcebergScanServer {
-	return &IcebergScanServer{}
-}
-
-func (s *IcebergScanServer) Execute(ctx context.Context, call IcebergScan_execute) error {
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-	if err == nil {
-		emptyBytes, _ := sonic.Marshal([]map[string]any{})
-		dataPtr, err := capnp.NewData(seg, emptyBytes)
-		if err == nil {
-			_ = msg.SetRoot(dataPtr.ToPtr())
-			res.SetResults(dataPtr.ToPtr())
-		}
-	}
-
-	return nil
-}
-
-func toJSON(v any) string {
-	data, _ := sonic.Marshal(v)
-	return string(data)
+	out         []byte
 }
 
 func NewIcebergTable() *IcebergTableServer {
 	return &IcebergTableServer{}
 }
 
+func (s *IcebergTableServer) Write(ctx context.Context, call IcebergTable_write) error {
+	args := call.Args()
+	payload, _ := args.Payload()
+	s.out = bytes.Clone(payload)
+	return nil
+}
+
+func (s *IcebergTableServer) Done(ctx context.Context, call IcebergTable_done) error {
+	res, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "table: alloc results failed", err))
+	}
+
+	if len(s.out) > 0 {
+		if err := res.SetOut(s.out); err != nil {
+			return errnie.Error(errnie.Err(errnie.Internal, "table: set out failed", err))
+		}
+	}
+
+	s.out = nil
+	return nil
+}
+
+type IcebergScanServer struct{}
+
 func NewIcebergScan() *IcebergScanServer {
 	return &IcebergScanServer{}
+}
+
+func (s *IcebergScanServer) Write(ctx context.Context, call IcebergScan_write) error {
+	return nil
+}
+
+func (s *IcebergScanServer) Done(ctx context.Context, call IcebergScan_done) error {
+	res, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "scan: alloc results failed", err))
+	}
+
+	if err := res.SetOut([]byte{}); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "scan: set out failed", err))
+	}
+
+	return nil
 }

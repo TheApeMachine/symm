@@ -1,14 +1,9 @@
-@0xacad158a8debf50f;
-
 using Go = import "/go.capnp";
+@0xb8e2f4a6c1d3e5f7;
 $Go.package("learning");
 $Go.import("github.com/theapemachine/symm/nomagique/learning");
 
-struct CounterfactualRow {
-  values @0 :List(Float64);
-}
-
 interface Counterfactual {
-  write @0 (history :List(CounterfactualRow), factualRow :List(Float64)) -> stream;
-  done @1 ();
+  write @0 (treatment :Float64, outcome :Float64, confounder :Float64) -> stream;
+  done @1 () -> (effect :Float64, out :Float64);
 }

@@ -11,99 +11,6 @@ import (
 	context "context"
 )
 
-type WireTee capnp.Struct
-
-// WireTee_TypeID is the unique identifier for the type WireTee.
-const WireTee_TypeID = 0xbe0147338daeff70
-
-func NewWireTee(s *capnp.Segment) (WireTee, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireTee(st), err
-}
-
-func NewRootWireTee(s *capnp.Segment) (WireTee, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireTee(st), err
-}
-
-func ReadRootWireTee(msg *capnp.Message) (WireTee, error) {
-	root, err := msg.Root()
-	return WireTee(root.Struct()), err
-}
-
-func (s WireTee) String() string {
-	str, _ := text.Marshal(0xbe0147338daeff70, capnp.Struct(s))
-	return str
-}
-
-func (s WireTee) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireTee) DecodeFromPtr(p capnp.Ptr) WireTee {
-	return WireTee(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireTee) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireTee) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireTee) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireTee) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireTee) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireTee) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireTee) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireTee) Offramps() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
-}
-
-func (s WireTee) HasOfframps() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireTee) SetOfframps(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
-}
-
-// WireTee_List is a list of WireTee.
-type WireTee_List = capnp.StructList[WireTee]
-
-// NewWireTee creates a new list of WireTee.
-func NewWireTee_List(s *capnp.Segment, sz int32) (WireTee_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireTee](l), err
-}
-
-// WireTee_Future is a wrapper for a WireTee promised by a client call.
-type WireTee_Future struct{ *capnp.Future }
-
-func (f WireTee_Future) Struct() (WireTee, error) {
-	p, err := f.Future.Ptr()
-	return WireTee(p.Struct()), err
-}
-func (p WireTee_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-func (p WireTee_Future) Offramps() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
-
 type Tee capnp.Client
 
 // Tee_TypeID is the unique identifier for the type Tee.
@@ -301,7 +208,7 @@ func (c Tee_done) Args() Tee_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Tee_done) AllocResults() (Tee_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Tee_done_Results(r), err
 }
 
@@ -361,28 +268,17 @@ func (s Tee_write_Params) Message() *capnp.Message {
 func (s Tee_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Tee_write_Params) Payload() (WireTee, error) {
+func (s Tee_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireTee(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Tee_write_Params) HasPayload() bool {
+func (s Tee_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Tee_write_Params) SetPayload(v WireTee) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireTee struct, preferring placement in s's segment.
-func (s Tee_write_Params) NewPayload() (WireTee, error) {
-	ss, err := NewWireTee(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireTee{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Tee_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Tee_write_Params_List is a list of Tee_write_Params.
@@ -400,9 +296,6 @@ type Tee_write_Params_Future struct{ *capnp.Future }
 func (f Tee_write_Params_Future) Struct() (Tee_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Tee_write_Params(p.Struct()), err
-}
-func (p Tee_write_Params_Future) Payload() WireTee_Future {
-	return WireTee_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Tee_done_Params capnp.Struct
@@ -476,12 +369,12 @@ type Tee_done_Results capnp.Struct
 const Tee_done_Results_TypeID = 0xbf3fec17879ef194
 
 func NewTee_done_Results(s *capnp.Segment) (Tee_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Tee_done_Results(st), err
 }
 
 func NewRootTee_done_Results(s *capnp.Segment) (Tee_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Tee_done_Results(st), err
 }
 
@@ -517,13 +410,25 @@ func (s Tee_done_Results) Message() *capnp.Message {
 func (s Tee_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Tee_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Tee_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Tee_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Tee_done_Results_List is a list of Tee_done_Results.
 type Tee_done_Results_List = capnp.StructList[Tee_done_Results]
 
 // NewTee_done_Results creates a new list of Tee_done_Results.
 func NewTee_done_Results_List(s *capnp.Segment, sz int32) (Tee_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Tee_done_Results](l), err
 }
 

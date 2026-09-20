@@ -3,14 +3,13 @@
 package physics
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
 )
 
 type Simulation capnp.Client
@@ -210,7 +209,7 @@ func (c Simulation_done) Args() Simulation_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Simulation_done) AllocResults() (Simulation_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Simulation_done_Results(r), err
 }
 
@@ -371,12 +370,12 @@ type Simulation_done_Results capnp.Struct
 const Simulation_done_Results_TypeID = 0xc7ffdad3d1ac1caf
 
 func NewSimulation_done_Results(s *capnp.Segment) (Simulation_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Simulation_done_Results(st), err
 }
 
 func NewRootSimulation_done_Results(s *capnp.Segment) (Simulation_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Simulation_done_Results(st), err
 }
 
@@ -412,13 +411,25 @@ func (s Simulation_done_Results) Message() *capnp.Message {
 func (s Simulation_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Simulation_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Simulation_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Simulation_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Simulation_done_Results_List is a list of Simulation_done_Results.
 type Simulation_done_Results_List = capnp.StructList[Simulation_done_Results]
 
 // NewSimulation_done_Results creates a new list of Simulation_done_Results.
 func NewSimulation_done_Results_List(s *capnp.Segment, sz int32) (Simulation_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Simulation_done_Results](l), err
 }
 
@@ -430,26 +441,27 @@ func (f Simulation_done_Results_Future) Struct() (Simulation_done_Results, error
 	return Simulation_done_Results(p.Struct()), err
 }
 
-const schema_d07f87db81249766 = "x\xda2(at`1\xe4\xf5\xe7d`\x0a\xcca" +
-	"e\xfb\xbf\xf0\xc0\xcbH\xf9\xe6\x8d\xed\x0c\x82\xca\xcc\xff" +
-	"\xd3\xa6\xab4\xden\xaf\xbf\xc0\xc0\xc0h\xdc\xcbR\xc4" +
-	"(\xbc\x90\x85\x9d\x81Ax.K\xbb\xf0[\x10\xeb\xbf" +
-	"\xb3\x9c\xc2\x8aY\xbb\xc3v1\x08\xea120\xb02" +
-	"\xb230\x18_e\xb9\xc5\xc8\xc0(\xfc\x92\xc5\x9e\x81" +
-	"\xf1\xbf\xc8\xd1\xe9\xddv\xb1\xf6\xfb!\x0a@z\x8c9" +
-	"Y/12\xb0\xfc_/\xb3\xe6\xe2\xe5[\xff\x8f#" +
-	"\xc9\xfc\x05\xe9\xfc\xcf\xc0\xf8?/?71=\xb3\xb0" +
-	"\x94%U\xbf \xa3\xb283\xb9X\xbf83\xb74" +
-	"'\xb1$3?O/9\xb1 \xaf\xc0*\x18$ " +
-	"\x0f\x16\x09`d\x0c\xe4`fEr\x0fc\xde\xc6\x03" +
-	"\xe5\xc6\xb3\xe2g\x0a\x1a\x1a10\x09\xaa\xb23\"\x9c" +
-	"\xc2\x08\xb3YPR\x8b\x81I\x90\x97]\xbe\xbc(\xb3" +
-	"$\xd5\x81\x91?%?/\xd5\x811\x80\x11\xe1\x006" +
-	"B\x0e\x80\x08\x80\x0dP\x09H,Jd\xce-\x0ed" +
-	"afa``ad`\x10\xe4\xd5b`\x08\xe4`" +
-	"f\x0c\x14ab\xe4OI,Id\xe4e`b\xe4" +
-	"e \xd9\x02\x90\xcb\xc0\xe6\xe72\x16\x93\xa57(\xb5" +
-	"\xb84\x87\xb9\xa4\x18\x10\x00\x00\xff\xff\xf8\x02\xa1\x07"
+const schema_d07f87db81249766 = "x\xda\x12\xb8\xef\xc0b\xc8\xab\xce\xc2\xc0\x14h\xc0\xca" +
+	"\xf6\x7f\xe1\x81\x97\x91\xf2\xcd\x1b\xdb\x19\x04\x95\x99\xff\xa7" +
+	"MWi\xbc\xdd^\x7f\x81\x81\x81\xd1\xf8'c\x11\xa3" +
+	"0/\x13;\x03\x830'S\xbbp$\x88\xf5\xdfY" +
+	"Na\xc5\xac\xdda\xbb\x18\x04\xf5\x18\x19\x18X\x19\xd9" +
+	"\x19\x18\x8c\x1d\x99n120\x0a\x872\xd930\xfe" +
+	"\x179:\xbd\xdb.\xd6~?D\x01\x0bH\xbe\x94\xe9" +
+	"\x12#\x03\xcb\xff\xf52k.^\xbe\xf5\xff8\xb2\xd6" +
+	"L\x88\xd6Z&{\x86\xc8\xffy\xf9\xb9\x89\xe9\x99\x85" +
+	"\xa5,\xa9\xfa\x05\x19\x95\xc5\x99\xc9\xc5\xfa\xc5\x99\xb9\xa5" +
+	"9\x89%\x99\xf9yz\xc9\x89\x05y\x05V\xc1 \x01" +
+	"y\xb0H\x00#c \x073+\x92\xa3\x18\xf36\x1e" +
+	"(7\x9e\x15?S\xd0\xd0\x88\x81IP\x95\x9d\x11\xe1" +
+	"\x1eF\x98\xf5\x82\x92Z\x0cL\x82\xbc\xec\xf2\xe5E\x99" +
+	"%\xa9\x0e\x8c\xfc)\xf9y\xa9\x0e\x8c\x01\x8c\x8cp\x07" +
+	"\xb0\x11r\x00D\x00l\x80J@bQ\"snq" +
+	" \x0b3\x0b\x03\x03\x0b#\x03\x83 \xaf\x16\x03C " +
+	"\x073c\xa0\x08\x13#\x7fJbI\"#/\x03\x13" +
+	"#/\x03\xc9\x16\x80\\\x066?\x97\xb1\x98,\xbdA" +
+	"\xa9\xc5\xa59\xcc%(\x8eSB8\x8e=\xbf\xb4\x04" +
+	"\xe66@\x00\x00\x00\xff\xff*\xb1\xa1G"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{

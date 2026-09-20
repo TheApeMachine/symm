@@ -11,83 +11,6 @@ import (
 	context "context"
 )
 
-type WireJSONDecode capnp.Struct
-
-// WireJSONDecode_TypeID is the unique identifier for the type WireJSONDecode.
-const WireJSONDecode_TypeID = 0xee35a56acc567d15
-
-func NewWireJSONDecode(s *capnp.Segment) (WireJSONDecode, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireJSONDecode(st), err
-}
-
-func NewRootWireJSONDecode(s *capnp.Segment) (WireJSONDecode, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireJSONDecode(st), err
-}
-
-func ReadRootWireJSONDecode(msg *capnp.Message) (WireJSONDecode, error) {
-	root, err := msg.Root()
-	return WireJSONDecode(root.Struct()), err
-}
-
-func (s WireJSONDecode) String() string {
-	str, _ := text.Marshal(0xee35a56acc567d15, capnp.Struct(s))
-	return str
-}
-
-func (s WireJSONDecode) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireJSONDecode) DecodeFromPtr(p capnp.Ptr) WireJSONDecode {
-	return WireJSONDecode(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireJSONDecode) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireJSONDecode) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireJSONDecode) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireJSONDecode) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireJSONDecode) Data() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s WireJSONDecode) HasData() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireJSONDecode) SetData(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-// WireJSONDecode_List is a list of WireJSONDecode.
-type WireJSONDecode_List = capnp.StructList[WireJSONDecode]
-
-// NewWireJSONDecode creates a new list of WireJSONDecode.
-func NewWireJSONDecode_List(s *capnp.Segment, sz int32) (WireJSONDecode_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireJSONDecode](l), err
-}
-
-// WireJSONDecode_Future is a wrapper for a WireJSONDecode promised by a client call.
-type WireJSONDecode_Future struct{ *capnp.Future }
-
-func (f WireJSONDecode_Future) Struct() (WireJSONDecode, error) {
-	p, err := f.Future.Ptr()
-	return WireJSONDecode(p.Struct()), err
-}
-
 type JSONDecode capnp.Client
 
 // JSONDecode_TypeID is the unique identifier for the type JSONDecode.
@@ -285,7 +208,7 @@ func (c JSONDecode_done) Args() JSONDecode_done_Params {
 
 // AllocResults allocates the results struct.
 func (c JSONDecode_done) AllocResults() (JSONDecode_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return JSONDecode_done_Results(r), err
 }
 
@@ -345,28 +268,17 @@ func (s JSONDecode_write_Params) Message() *capnp.Message {
 func (s JSONDecode_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s JSONDecode_write_Params) Payload() (WireJSONDecode, error) {
+func (s JSONDecode_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireJSONDecode(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s JSONDecode_write_Params) HasPayload() bool {
+func (s JSONDecode_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s JSONDecode_write_Params) SetPayload(v WireJSONDecode) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireJSONDecode struct, preferring placement in s's segment.
-func (s JSONDecode_write_Params) NewPayload() (WireJSONDecode, error) {
-	ss, err := NewWireJSONDecode(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireJSONDecode{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s JSONDecode_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // JSONDecode_write_Params_List is a list of JSONDecode_write_Params.
@@ -384,9 +296,6 @@ type JSONDecode_write_Params_Future struct{ *capnp.Future }
 func (f JSONDecode_write_Params_Future) Struct() (JSONDecode_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return JSONDecode_write_Params(p.Struct()), err
-}
-func (p JSONDecode_write_Params_Future) Payload() WireJSONDecode_Future {
-	return WireJSONDecode_Future{Future: p.Future.Field(0, nil)}
 }
 
 type JSONDecode_done_Params capnp.Struct
@@ -460,12 +369,12 @@ type JSONDecode_done_Results capnp.Struct
 const JSONDecode_done_Results_TypeID = 0xe4885c06de5cb130
 
 func NewJSONDecode_done_Results(s *capnp.Segment) (JSONDecode_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return JSONDecode_done_Results(st), err
 }
 
 func NewRootJSONDecode_done_Results(s *capnp.Segment) (JSONDecode_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return JSONDecode_done_Results(st), err
 }
 
@@ -501,13 +410,25 @@ func (s JSONDecode_done_Results) Message() *capnp.Message {
 func (s JSONDecode_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s JSONDecode_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s JSONDecode_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s JSONDecode_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // JSONDecode_done_Results_List is a list of JSONDecode_done_Results.
 type JSONDecode_done_Results_List = capnp.StructList[JSONDecode_done_Results]
 
 // NewJSONDecode_done_Results creates a new list of JSONDecode_done_Results.
 func NewJSONDecode_done_Results_List(s *capnp.Segment, sz int32) (JSONDecode_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[JSONDecode_done_Results](l), err
 }
 

@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireConditionalIntensity capnp.Struct
-
-// WireConditionalIntensity_TypeID is the unique identifier for the type WireConditionalIntensity.
-const WireConditionalIntensity_TypeID = 0xad32b70808f6b4ef
-
-func NewWireConditionalIntensity(s *capnp.Segment) (WireConditionalIntensity, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireConditionalIntensity(st), err
-}
-
-func NewRootWireConditionalIntensity(s *capnp.Segment) (WireConditionalIntensity, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireConditionalIntensity(st), err
-}
-
-func ReadRootWireConditionalIntensity(msg *capnp.Message) (WireConditionalIntensity, error) {
-	root, err := msg.Root()
-	return WireConditionalIntensity(root.Struct()), err
-}
-
-func (s WireConditionalIntensity) String() string {
-	str, _ := text.Marshal(0xad32b70808f6b4ef, capnp.Struct(s))
-	return str
-}
-
-func (s WireConditionalIntensity) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireConditionalIntensity) DecodeFromPtr(p capnp.Ptr) WireConditionalIntensity {
-	return WireConditionalIntensity(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireConditionalIntensity) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireConditionalIntensity) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireConditionalIntensity) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireConditionalIntensity) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireConditionalIntensity) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireConditionalIntensity) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireConditionalIntensity) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireConditionalIntensity_List is a list of WireConditionalIntensity.
-type WireConditionalIntensity_List = capnp.StructList[WireConditionalIntensity]
-
-// NewWireConditionalIntensity creates a new list of WireConditionalIntensity.
-func NewWireConditionalIntensity_List(s *capnp.Segment, sz int32) (WireConditionalIntensity_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireConditionalIntensity](l), err
-}
-
-// WireConditionalIntensity_Future is a wrapper for a WireConditionalIntensity promised by a client call.
-type WireConditionalIntensity_Future struct{ *capnp.Future }
-
-func (f WireConditionalIntensity_Future) Struct() (WireConditionalIntensity, error) {
-	p, err := f.Future.Ptr()
-	return WireConditionalIntensity(p.Struct()), err
-}
-func (p WireConditionalIntensity_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type ConditionalIntensity capnp.Client
 
 // ConditionalIntensity_TypeID is the unique identifier for the type ConditionalIntensity.
-const ConditionalIntensity_TypeID = 0xec18cc563b2c1edd
+const ConditionalIntensity_TypeID = 0x8c57b2cf72f8ceef
 
 func (c ConditionalIntensity) Write(ctx context.Context, params func(ConditionalIntensity_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xec18cc563b2c1edd,
+			InterfaceID:   0x8c57b2cf72f8ceef,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/conditional_intensity.capnp:ConditionalIntensity",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(ConditionalIntensity_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c ConditionalIntensity) Done(ctx context.Context, params func(ConditionalI
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xec18cc563b2c1edd,
+			InterfaceID:   0x8c57b2cf72f8ceef,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/conditional_intensity.capnp:ConditionalIntensity",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func ConditionalIntensity_Methods(methods []server.Method, s ConditionalIntensit
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xec18cc563b2c1edd,
+			InterfaceID:   0x8c57b2cf72f8ceef,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/conditional_intensity.capnp:ConditionalIntensity",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func ConditionalIntensity_Methods(methods []server.Method, s ConditionalIntensit
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xec18cc563b2c1edd,
+			InterfaceID:   0x8c57b2cf72f8ceef,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/conditional_intensity.capnp:ConditionalIntensity",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c ConditionalIntensity_done) Args() ConditionalIntensity_done_Params {
 
 // AllocResults allocates the results struct.
 func (c ConditionalIntensity_done) AllocResults() (ConditionalIntensity_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return ConditionalIntensity_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewConditionalIntensity_List(s *capnp.Segment, sz int32) (ConditionalIntens
 type ConditionalIntensity_write_Params capnp.Struct
 
 // ConditionalIntensity_write_Params_TypeID is the unique identifier for the type ConditionalIntensity_write_Params.
-const ConditionalIntensity_write_Params_TypeID = 0xa52854fa161661e5
+const ConditionalIntensity_write_Params_TypeID = 0xf3df265d2d295cc9
 
 func NewConditionalIntensity_write_Params(s *capnp.Segment) (ConditionalIntensity_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return ConditionalIntensity_write_Params(st), err
 }
 
 func NewRootConditionalIntensity_write_Params(s *capnp.Segment) (ConditionalIntensity_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return ConditionalIntensity_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootConditionalIntensity_write_Params(msg *capnp.Message) (ConditionalI
 }
 
 func (s ConditionalIntensity_write_Params) String() string {
-	str, _ := text.Marshal(0xa52854fa161661e5, capnp.Struct(s))
+	str, _ := text.Marshal(0xf3df265d2d295cc9, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s ConditionalIntensity_write_Params) Message() *capnp.Message {
 func (s ConditionalIntensity_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s ConditionalIntensity_write_Params) View() (WireConditionalIntensity, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireConditionalIntensity(p.Struct()), err
+func (s ConditionalIntensity_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s ConditionalIntensity_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s ConditionalIntensity_write_Params) SetView(v WireConditionalIntensity) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireConditionalIntensity struct, preferring placement in s's segment.
-func (s ConditionalIntensity_write_Params) NewView() (WireConditionalIntensity, error) {
-	ss, err := NewWireConditionalIntensity(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireConditionalIntensity{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s ConditionalIntensity_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // ConditionalIntensity_write_Params_List is a list of ConditionalIntensity_write_Params.
@@ -376,7 +282,7 @@ type ConditionalIntensity_write_Params_List = capnp.StructList[ConditionalIntens
 
 // NewConditionalIntensity_write_Params creates a new list of ConditionalIntensity_write_Params.
 func NewConditionalIntensity_write_Params_List(s *capnp.Segment, sz int32) (ConditionalIntensity_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[ConditionalIntensity_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f ConditionalIntensity_write_Params_Future) Struct() (ConditionalIntensity
 	p, err := f.Future.Ptr()
 	return ConditionalIntensity_write_Params(p.Struct()), err
 }
-func (p ConditionalIntensity_write_Params_Future) View() WireConditionalIntensity_Future {
-	return WireConditionalIntensity_Future{Future: p.Future.Field(0, nil)}
-}
 
 type ConditionalIntensity_done_Params capnp.Struct
 
 // ConditionalIntensity_done_Params_TypeID is the unique identifier for the type ConditionalIntensity_done_Params.
-const ConditionalIntensity_done_Params_TypeID = 0xef0c45fb75fd5a0a
+const ConditionalIntensity_done_Params_TypeID = 0x8fd9804778a999da
 
 func NewConditionalIntensity_done_Params(s *capnp.Segment) (ConditionalIntensity_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootConditionalIntensity_done_Params(msg *capnp.Message) (ConditionalIn
 }
 
 func (s ConditionalIntensity_done_Params) String() string {
-	str, _ := text.Marshal(0xef0c45fb75fd5a0a, capnp.Struct(s))
+	str, _ := text.Marshal(0x8fd9804778a999da, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f ConditionalIntensity_done_Params_Future) Struct() (ConditionalIntensity_
 type ConditionalIntensity_done_Results capnp.Struct
 
 // ConditionalIntensity_done_Results_TypeID is the unique identifier for the type ConditionalIntensity_done_Results.
-const ConditionalIntensity_done_Results_TypeID = 0x8fe7f58c9a6470df
+const ConditionalIntensity_done_Results_TypeID = 0xa7108249fac358b5
 
 func NewConditionalIntensity_done_Results(s *capnp.Segment) (ConditionalIntensity_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return ConditionalIntensity_done_Results(st), err
 }
 
 func NewRootConditionalIntensity_done_Results(s *capnp.Segment) (ConditionalIntensity_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return ConditionalIntensity_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootConditionalIntensity_done_Results(msg *capnp.Message) (ConditionalI
 }
 
 func (s ConditionalIntensity_done_Results) String() string {
-	str, _ := text.Marshal(0x8fe7f58c9a6470df, capnp.Struct(s))
+	str, _ := text.Marshal(0xa7108249fac358b5, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s ConditionalIntensity_done_Results) Message() *capnp.Message {
 func (s ConditionalIntensity_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s ConditionalIntensity_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s ConditionalIntensity_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // ConditionalIntensity_done_Results_List is a list of ConditionalIntensity_done_Results.
 type ConditionalIntensity_done_Results_List = capnp.StructList[ConditionalIntensity_done_Results]
 
 // NewConditionalIntensity_done_Results creates a new list of ConditionalIntensity_done_Results.
 func NewConditionalIntensity_done_Results_List(s *capnp.Segment, sz int32) (ConditionalIntensity_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[ConditionalIntensity_done_Results](l), err
 }
 

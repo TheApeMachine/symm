@@ -8,225 +8,50 @@ import (
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 )
-
-type WireIcebergTable capnp.Struct
-
-// WireIcebergTable_TypeID is the unique identifier for the type WireIcebergTable.
-const WireIcebergTable_TypeID = 0xe51d576812f26c2e
-
-func NewWireIcebergTable(s *capnp.Segment) (WireIcebergTable, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireIcebergTable(st), err
-}
-
-func NewRootWireIcebergTable(s *capnp.Segment) (WireIcebergTable, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireIcebergTable(st), err
-}
-
-func ReadRootWireIcebergTable(msg *capnp.Message) (WireIcebergTable, error) {
-	root, err := msg.Root()
-	return WireIcebergTable(root.Struct()), err
-}
-
-func (s WireIcebergTable) String() string {
-	str, _ := text.Marshal(0xe51d576812f26c2e, capnp.Struct(s))
-	return str
-}
-
-func (s WireIcebergTable) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireIcebergTable) DecodeFromPtr(p capnp.Ptr) WireIcebergTable {
-	return WireIcebergTable(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireIcebergTable) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireIcebergTable) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireIcebergTable) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireIcebergTable) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireIcebergTable) Config() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s WireIcebergTable) HasConfig() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireIcebergTable) ConfigBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s WireIcebergTable) SetConfig(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s WireIcebergTable) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
-}
-
-func (s WireIcebergTable) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireIcebergTable) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
-}
-
-// WireIcebergTable_List is a list of WireIcebergTable.
-type WireIcebergTable_List = capnp.StructList[WireIcebergTable]
-
-// NewWireIcebergTable creates a new list of WireIcebergTable.
-func NewWireIcebergTable_List(s *capnp.Segment, sz int32) (WireIcebergTable_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireIcebergTable](l), err
-}
-
-// WireIcebergTable_Future is a wrapper for a WireIcebergTable promised by a client call.
-type WireIcebergTable_Future struct{ *capnp.Future }
-
-func (f WireIcebergTable_Future) Struct() (WireIcebergTable, error) {
-	p, err := f.Future.Ptr()
-	return WireIcebergTable(p.Struct()), err
-}
-func (p WireIcebergTable_Future) Payload() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
-
-type WireIcebergScan capnp.Struct
-
-// WireIcebergScan_TypeID is the unique identifier for the type WireIcebergScan.
-const WireIcebergScan_TypeID = 0x9dc181d26eb547b2
-
-func NewWireIcebergScan(s *capnp.Segment) (WireIcebergScan, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireIcebergScan(st), err
-}
-
-func NewRootWireIcebergScan(s *capnp.Segment) (WireIcebergScan, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireIcebergScan(st), err
-}
-
-func ReadRootWireIcebergScan(msg *capnp.Message) (WireIcebergScan, error) {
-	root, err := msg.Root()
-	return WireIcebergScan(root.Struct()), err
-}
-
-func (s WireIcebergScan) String() string {
-	str, _ := text.Marshal(0x9dc181d26eb547b2, capnp.Struct(s))
-	return str
-}
-
-func (s WireIcebergScan) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireIcebergScan) DecodeFromPtr(p capnp.Ptr) WireIcebergScan {
-	return WireIcebergScan(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireIcebergScan) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireIcebergScan) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireIcebergScan) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireIcebergScan) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireIcebergScan) Config() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s WireIcebergScan) HasConfig() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireIcebergScan) ConfigBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s WireIcebergScan) SetConfig(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s WireIcebergScan) Query() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
-}
-
-func (s WireIcebergScan) HasQuery() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireIcebergScan) SetQuery(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
-}
-
-// WireIcebergScan_List is a list of WireIcebergScan.
-type WireIcebergScan_List = capnp.StructList[WireIcebergScan]
-
-// NewWireIcebergScan creates a new list of WireIcebergScan.
-func NewWireIcebergScan_List(s *capnp.Segment, sz int32) (WireIcebergScan_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireIcebergScan](l), err
-}
-
-// WireIcebergScan_Future is a wrapper for a WireIcebergScan promised by a client call.
-type WireIcebergScan_Future struct{ *capnp.Future }
-
-func (f WireIcebergScan_Future) Struct() (WireIcebergScan, error) {
-	p, err := f.Future.Ptr()
-	return WireIcebergScan(p.Struct()), err
-}
-func (p WireIcebergScan_Future) Query() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
 
 type IcebergTable capnp.Client
 
 // IcebergTable_TypeID is the unique identifier for the type IcebergTable.
 const IcebergTable_TypeID = 0xce2ab50338f6a568
 
-func (c IcebergTable) Execute(ctx context.Context, params func(IcebergTable_execute_Params) error) (IcebergTable_execute_Results_Future, capnp.ReleaseFunc) {
-
+func (c IcebergTable) Write(ctx context.Context, params func(IcebergTable_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xce2ab50338f6a568,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/tables/table.capnp:IcebergTable",
-			MethodName:    "execute",
+			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergTable_execute_Params(s)) }
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergTable_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c IcebergTable) Done(ctx context.Context, params func(IcebergTable_done_Params) error) (IcebergTable_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xce2ab50338f6a568,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/tables/table.capnp:IcebergTable",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergTable_done_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return IcebergTable_execute_Results_Future{Future: ans.Future()}, release
+	return IcebergTable_done_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -303,7 +128,9 @@ func (c IcebergTable) GetFlowLimiter() fc.FlowLimiter {
 
 // A IcebergTable_Server is a IcebergTable with a local implementation.
 type IcebergTable_Server interface {
-	Execute(context.Context, IcebergTable_execute) error
+	Write(context.Context, IcebergTable_write) error
+
+	Done(context.Context, IcebergTable_done) error
 }
 
 // IcebergTable_NewServer creates a new Server from an implementation of IcebergTable_Server.
@@ -322,7 +149,7 @@ func IcebergTable_ServerToClient(s IcebergTable_Server) IcebergTable {
 // This can be used to create a more complicated Server.
 func IcebergTable_Methods(methods []server.Method, s IcebergTable_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 1)
+		methods = make([]server.Method, 0, 2)
 	}
 
 	methods = append(methods, server.Method{
@@ -330,31 +157,60 @@ func IcebergTable_Methods(methods []server.Method, s IcebergTable_Server) []serv
 			InterfaceID:   0xce2ab50338f6a568,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/tables/table.capnp:IcebergTable",
-			MethodName:    "execute",
+			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Execute(ctx, IcebergTable_execute{call})
+			return s.Write(ctx, IcebergTable_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xce2ab50338f6a568,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/tables/table.capnp:IcebergTable",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, IcebergTable_done{call})
 		},
 	})
 
 	return methods
 }
 
-// IcebergTable_execute holds the state for a server call to IcebergTable.execute.
+// IcebergTable_write holds the state for a server call to IcebergTable.write.
 // See server.Call for documentation.
-type IcebergTable_execute struct {
+type IcebergTable_write struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c IcebergTable_execute) Args() IcebergTable_execute_Params {
-	return IcebergTable_execute_Params(c.Call.Args())
+func (c IcebergTable_write) Args() IcebergTable_write_Params {
+	return IcebergTable_write_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c IcebergTable_execute) AllocResults() (IcebergTable_execute_Results, error) {
+func (c IcebergTable_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// IcebergTable_done holds the state for a server call to IcebergTable.done.
+// See server.Call for documentation.
+type IcebergTable_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c IcebergTable_done) Args() IcebergTable_done_Params {
+	return IcebergTable_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c IcebergTable_done) AllocResults() (IcebergTable_done_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergTable_execute_Results(r), err
+	return IcebergTable_done_Results(r), err
 }
 
 // IcebergTable_List is a list of IcebergTable.
@@ -366,174 +222,241 @@ func NewIcebergTable_List(s *capnp.Segment, sz int32) (IcebergTable_List, error)
 	return capnp.CapList[IcebergTable](l), err
 }
 
-type IcebergTable_execute_Params capnp.Struct
+type IcebergTable_write_Params capnp.Struct
 
-// IcebergTable_execute_Params_TypeID is the unique identifier for the type IcebergTable_execute_Params.
-const IcebergTable_execute_Params_TypeID = 0xcec2209f6cf83c36
+// IcebergTable_write_Params_TypeID is the unique identifier for the type IcebergTable_write_Params.
+const IcebergTable_write_Params_TypeID = 0xcec2209f6cf83c36
 
-func NewIcebergTable_execute_Params(s *capnp.Segment) (IcebergTable_execute_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergTable_execute_Params(st), err
+func NewIcebergTable_write_Params(s *capnp.Segment) (IcebergTable_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return IcebergTable_write_Params(st), err
 }
 
-func NewRootIcebergTable_execute_Params(s *capnp.Segment) (IcebergTable_execute_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergTable_execute_Params(st), err
+func NewRootIcebergTable_write_Params(s *capnp.Segment) (IcebergTable_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return IcebergTable_write_Params(st), err
 }
 
-func ReadRootIcebergTable_execute_Params(msg *capnp.Message) (IcebergTable_execute_Params, error) {
+func ReadRootIcebergTable_write_Params(msg *capnp.Message) (IcebergTable_write_Params, error) {
 	root, err := msg.Root()
-	return IcebergTable_execute_Params(root.Struct()), err
+	return IcebergTable_write_Params(root.Struct()), err
 }
 
-func (s IcebergTable_execute_Params) String() string {
+func (s IcebergTable_write_Params) String() string {
 	str, _ := text.Marshal(0xcec2209f6cf83c36, capnp.Struct(s))
 	return str
 }
 
-func (s IcebergTable_execute_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s IcebergTable_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (IcebergTable_execute_Params) DecodeFromPtr(p capnp.Ptr) IcebergTable_execute_Params {
-	return IcebergTable_execute_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (IcebergTable_write_Params) DecodeFromPtr(p capnp.Ptr) IcebergTable_write_Params {
+	return IcebergTable_write_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s IcebergTable_execute_Params) ToPtr() capnp.Ptr {
+func (s IcebergTable_write_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s IcebergTable_execute_Params) IsValid() bool {
+func (s IcebergTable_write_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s IcebergTable_execute_Params) Message() *capnp.Message {
+func (s IcebergTable_write_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s IcebergTable_execute_Params) Segment() *capnp.Segment {
+func (s IcebergTable_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s IcebergTable_execute_Params) Table() (WireIcebergTable, error) {
+func (s IcebergTable_write_Params) Config() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireIcebergTable(p.Struct()), err
+	return p.Text(), err
 }
 
-func (s IcebergTable_execute_Params) HasTable() bool {
+func (s IcebergTable_write_Params) HasConfig() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s IcebergTable_execute_Params) SetTable(v WireIcebergTable) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s IcebergTable_write_Params) ConfigBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-// NewTable sets the table field to a newly
-// allocated WireIcebergTable struct, preferring placement in s's segment.
-func (s IcebergTable_execute_Params) NewTable() (WireIcebergTable, error) {
-	ss, err := NewWireIcebergTable(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireIcebergTable{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s IcebergTable_write_Params) SetConfig(v string) error {
+	return capnp.Struct(s).SetText(0, v)
 }
 
-// IcebergTable_execute_Params_List is a list of IcebergTable_execute_Params.
-type IcebergTable_execute_Params_List = capnp.StructList[IcebergTable_execute_Params]
-
-// NewIcebergTable_execute_Params creates a new list of IcebergTable_execute_Params.
-func NewIcebergTable_execute_Params_List(s *capnp.Segment, sz int32) (IcebergTable_execute_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[IcebergTable_execute_Params](l), err
+func (s IcebergTable_write_Params) Payload() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
 }
 
-// IcebergTable_execute_Params_Future is a wrapper for a IcebergTable_execute_Params promised by a client call.
-type IcebergTable_execute_Params_Future struct{ *capnp.Future }
+func (s IcebergTable_write_Params) HasPayload() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
 
-func (f IcebergTable_execute_Params_Future) Struct() (IcebergTable_execute_Params, error) {
+func (s IcebergTable_write_Params) SetPayload(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
+// IcebergTable_write_Params_List is a list of IcebergTable_write_Params.
+type IcebergTable_write_Params_List = capnp.StructList[IcebergTable_write_Params]
+
+// NewIcebergTable_write_Params creates a new list of IcebergTable_write_Params.
+func NewIcebergTable_write_Params_List(s *capnp.Segment, sz int32) (IcebergTable_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[IcebergTable_write_Params](l), err
+}
+
+// IcebergTable_write_Params_Future is a wrapper for a IcebergTable_write_Params promised by a client call.
+type IcebergTable_write_Params_Future struct{ *capnp.Future }
+
+func (f IcebergTable_write_Params_Future) Struct() (IcebergTable_write_Params, error) {
 	p, err := f.Future.Ptr()
-	return IcebergTable_execute_Params(p.Struct()), err
-}
-func (p IcebergTable_execute_Params_Future) Table() WireIcebergTable_Future {
-	return WireIcebergTable_Future{Future: p.Future.Field(0, nil)}
+	return IcebergTable_write_Params(p.Struct()), err
 }
 
-type IcebergTable_execute_Results capnp.Struct
+type IcebergTable_done_Params capnp.Struct
 
-// IcebergTable_execute_Results_TypeID is the unique identifier for the type IcebergTable_execute_Results.
-const IcebergTable_execute_Results_TypeID = 0xe91d69a88841222b
+// IcebergTable_done_Params_TypeID is the unique identifier for the type IcebergTable_done_Params.
+const IcebergTable_done_Params_TypeID = 0xb5726b5a01ec0103
 
-func NewIcebergTable_execute_Results(s *capnp.Segment) (IcebergTable_execute_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergTable_execute_Results(st), err
+func NewIcebergTable_done_Params(s *capnp.Segment) (IcebergTable_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return IcebergTable_done_Params(st), err
 }
 
-func NewRootIcebergTable_execute_Results(s *capnp.Segment) (IcebergTable_execute_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergTable_execute_Results(st), err
+func NewRootIcebergTable_done_Params(s *capnp.Segment) (IcebergTable_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return IcebergTable_done_Params(st), err
 }
 
-func ReadRootIcebergTable_execute_Results(msg *capnp.Message) (IcebergTable_execute_Results, error) {
+func ReadRootIcebergTable_done_Params(msg *capnp.Message) (IcebergTable_done_Params, error) {
 	root, err := msg.Root()
-	return IcebergTable_execute_Results(root.Struct()), err
+	return IcebergTable_done_Params(root.Struct()), err
 }
 
-func (s IcebergTable_execute_Results) String() string {
-	str, _ := text.Marshal(0xe91d69a88841222b, capnp.Struct(s))
+func (s IcebergTable_done_Params) String() string {
+	str, _ := text.Marshal(0xb5726b5a01ec0103, capnp.Struct(s))
 	return str
 }
 
-func (s IcebergTable_execute_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s IcebergTable_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (IcebergTable_execute_Results) DecodeFromPtr(p capnp.Ptr) IcebergTable_execute_Results {
-	return IcebergTable_execute_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (IcebergTable_done_Params) DecodeFromPtr(p capnp.Ptr) IcebergTable_done_Params {
+	return IcebergTable_done_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s IcebergTable_execute_Results) ToPtr() capnp.Ptr {
+func (s IcebergTable_done_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s IcebergTable_execute_Results) IsValid() bool {
+func (s IcebergTable_done_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s IcebergTable_execute_Results) Message() *capnp.Message {
+func (s IcebergTable_done_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s IcebergTable_execute_Results) Segment() *capnp.Segment {
+func (s IcebergTable_done_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s IcebergTable_execute_Results) Result() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
+
+// IcebergTable_done_Params_List is a list of IcebergTable_done_Params.
+type IcebergTable_done_Params_List = capnp.StructList[IcebergTable_done_Params]
+
+// NewIcebergTable_done_Params creates a new list of IcebergTable_done_Params.
+func NewIcebergTable_done_Params_List(s *capnp.Segment, sz int32) (IcebergTable_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[IcebergTable_done_Params](l), err
 }
 
-func (s IcebergTable_execute_Results) HasResult() bool {
+// IcebergTable_done_Params_Future is a wrapper for a IcebergTable_done_Params promised by a client call.
+type IcebergTable_done_Params_Future struct{ *capnp.Future }
+
+func (f IcebergTable_done_Params_Future) Struct() (IcebergTable_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return IcebergTable_done_Params(p.Struct()), err
+}
+
+type IcebergTable_done_Results capnp.Struct
+
+// IcebergTable_done_Results_TypeID is the unique identifier for the type IcebergTable_done_Results.
+const IcebergTable_done_Results_TypeID = 0x8b02f933f4bac737
+
+func NewIcebergTable_done_Results(s *capnp.Segment) (IcebergTable_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return IcebergTable_done_Results(st), err
+}
+
+func NewRootIcebergTable_done_Results(s *capnp.Segment) (IcebergTable_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return IcebergTable_done_Results(st), err
+}
+
+func ReadRootIcebergTable_done_Results(msg *capnp.Message) (IcebergTable_done_Results, error) {
+	root, err := msg.Root()
+	return IcebergTable_done_Results(root.Struct()), err
+}
+
+func (s IcebergTable_done_Results) String() string {
+	str, _ := text.Marshal(0x8b02f933f4bac737, capnp.Struct(s))
+	return str
+}
+
+func (s IcebergTable_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (IcebergTable_done_Results) DecodeFromPtr(p capnp.Ptr) IcebergTable_done_Results {
+	return IcebergTable_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s IcebergTable_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s IcebergTable_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s IcebergTable_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s IcebergTable_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s IcebergTable_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s IcebergTable_done_Results) HasOut() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s IcebergTable_execute_Results) SetResult(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
+func (s IcebergTable_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// IcebergTable_execute_Results_List is a list of IcebergTable_execute_Results.
-type IcebergTable_execute_Results_List = capnp.StructList[IcebergTable_execute_Results]
+// IcebergTable_done_Results_List is a list of IcebergTable_done_Results.
+type IcebergTable_done_Results_List = capnp.StructList[IcebergTable_done_Results]
 
-// NewIcebergTable_execute_Results creates a new list of IcebergTable_execute_Results.
-func NewIcebergTable_execute_Results_List(s *capnp.Segment, sz int32) (IcebergTable_execute_Results_List, error) {
+// NewIcebergTable_done_Results creates a new list of IcebergTable_done_Results.
+func NewIcebergTable_done_Results_List(s *capnp.Segment, sz int32) (IcebergTable_done_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[IcebergTable_execute_Results](l), err
+	return capnp.StructList[IcebergTable_done_Results](l), err
 }
 
-// IcebergTable_execute_Results_Future is a wrapper for a IcebergTable_execute_Results promised by a client call.
-type IcebergTable_execute_Results_Future struct{ *capnp.Future }
+// IcebergTable_done_Results_Future is a wrapper for a IcebergTable_done_Results promised by a client call.
+type IcebergTable_done_Results_Future struct{ *capnp.Future }
 
-func (f IcebergTable_execute_Results_Future) Struct() (IcebergTable_execute_Results, error) {
+func (f IcebergTable_done_Results_Future) Struct() (IcebergTable_done_Results, error) {
 	p, err := f.Future.Ptr()
-	return IcebergTable_execute_Results(p.Struct()), err
-}
-func (p IcebergTable_execute_Results_Future) Result() *capnp.Future {
-	return p.Future.Field(0, nil)
+	return IcebergTable_done_Results(p.Struct()), err
 }
 
 type IcebergScan capnp.Client
@@ -541,23 +464,41 @@ type IcebergScan capnp.Client
 // IcebergScan_TypeID is the unique identifier for the type IcebergScan.
 const IcebergScan_TypeID = 0xefa0adbd7a396d92
 
-func (c IcebergScan) Execute(ctx context.Context, params func(IcebergScan_execute_Params) error) (IcebergScan_execute_Results_Future, capnp.ReleaseFunc) {
-
+func (c IcebergScan) Write(ctx context.Context, params func(IcebergScan_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xefa0adbd7a396d92,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/tables/table.capnp:IcebergScan",
-			MethodName:    "execute",
+			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergScan_execute_Params(s)) }
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergScan_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c IcebergScan) Done(ctx context.Context, params func(IcebergScan_done_Params) error) (IcebergScan_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xefa0adbd7a396d92,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/tables/table.capnp:IcebergScan",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(IcebergScan_done_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return IcebergScan_execute_Results_Future{Future: ans.Future()}, release
+	return IcebergScan_done_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -634,7 +575,9 @@ func (c IcebergScan) GetFlowLimiter() fc.FlowLimiter {
 
 // A IcebergScan_Server is a IcebergScan with a local implementation.
 type IcebergScan_Server interface {
-	Execute(context.Context, IcebergScan_execute) error
+	Write(context.Context, IcebergScan_write) error
+
+	Done(context.Context, IcebergScan_done) error
 }
 
 // IcebergScan_NewServer creates a new Server from an implementation of IcebergScan_Server.
@@ -653,7 +596,7 @@ func IcebergScan_ServerToClient(s IcebergScan_Server) IcebergScan {
 // This can be used to create a more complicated Server.
 func IcebergScan_Methods(methods []server.Method, s IcebergScan_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 1)
+		methods = make([]server.Method, 0, 2)
 	}
 
 	methods = append(methods, server.Method{
@@ -661,31 +604,60 @@ func IcebergScan_Methods(methods []server.Method, s IcebergScan_Server) []server
 			InterfaceID:   0xefa0adbd7a396d92,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/tables/table.capnp:IcebergScan",
-			MethodName:    "execute",
+			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Execute(ctx, IcebergScan_execute{call})
+			return s.Write(ctx, IcebergScan_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xefa0adbd7a396d92,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/tables/table.capnp:IcebergScan",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, IcebergScan_done{call})
 		},
 	})
 
 	return methods
 }
 
-// IcebergScan_execute holds the state for a server call to IcebergScan.execute.
+// IcebergScan_write holds the state for a server call to IcebergScan.write.
 // See server.Call for documentation.
-type IcebergScan_execute struct {
+type IcebergScan_write struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c IcebergScan_execute) Args() IcebergScan_execute_Params {
-	return IcebergScan_execute_Params(c.Call.Args())
+func (c IcebergScan_write) Args() IcebergScan_write_Params {
+	return IcebergScan_write_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c IcebergScan_execute) AllocResults() (IcebergScan_execute_Results, error) {
+func (c IcebergScan_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// IcebergScan_done holds the state for a server call to IcebergScan.done.
+// See server.Call for documentation.
+type IcebergScan_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c IcebergScan_done) Args() IcebergScan_done_Params {
+	return IcebergScan_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c IcebergScan_done) AllocResults() (IcebergScan_done_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergScan_execute_Results(r), err
+	return IcebergScan_done_Results(r), err
 }
 
 // IcebergScan_List is a list of IcebergScan.
@@ -697,224 +669,290 @@ func NewIcebergScan_List(s *capnp.Segment, sz int32) (IcebergScan_List, error) {
 	return capnp.CapList[IcebergScan](l), err
 }
 
-type IcebergScan_execute_Params capnp.Struct
+type IcebergScan_write_Params capnp.Struct
 
-// IcebergScan_execute_Params_TypeID is the unique identifier for the type IcebergScan_execute_Params.
-const IcebergScan_execute_Params_TypeID = 0xe0d4d972989bb7b6
+// IcebergScan_write_Params_TypeID is the unique identifier for the type IcebergScan_write_Params.
+const IcebergScan_write_Params_TypeID = 0xe0d4d972989bb7b6
 
-func NewIcebergScan_execute_Params(s *capnp.Segment) (IcebergScan_execute_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergScan_execute_Params(st), err
+func NewIcebergScan_write_Params(s *capnp.Segment) (IcebergScan_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return IcebergScan_write_Params(st), err
 }
 
-func NewRootIcebergScan_execute_Params(s *capnp.Segment) (IcebergScan_execute_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergScan_execute_Params(st), err
+func NewRootIcebergScan_write_Params(s *capnp.Segment) (IcebergScan_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return IcebergScan_write_Params(st), err
 }
 
-func ReadRootIcebergScan_execute_Params(msg *capnp.Message) (IcebergScan_execute_Params, error) {
+func ReadRootIcebergScan_write_Params(msg *capnp.Message) (IcebergScan_write_Params, error) {
 	root, err := msg.Root()
-	return IcebergScan_execute_Params(root.Struct()), err
+	return IcebergScan_write_Params(root.Struct()), err
 }
 
-func (s IcebergScan_execute_Params) String() string {
+func (s IcebergScan_write_Params) String() string {
 	str, _ := text.Marshal(0xe0d4d972989bb7b6, capnp.Struct(s))
 	return str
 }
 
-func (s IcebergScan_execute_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s IcebergScan_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (IcebergScan_execute_Params) DecodeFromPtr(p capnp.Ptr) IcebergScan_execute_Params {
-	return IcebergScan_execute_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (IcebergScan_write_Params) DecodeFromPtr(p capnp.Ptr) IcebergScan_write_Params {
+	return IcebergScan_write_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s IcebergScan_execute_Params) ToPtr() capnp.Ptr {
+func (s IcebergScan_write_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s IcebergScan_execute_Params) IsValid() bool {
+func (s IcebergScan_write_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s IcebergScan_execute_Params) Message() *capnp.Message {
+func (s IcebergScan_write_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s IcebergScan_execute_Params) Segment() *capnp.Segment {
+func (s IcebergScan_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s IcebergScan_execute_Params) Scan() (WireIcebergScan, error) {
+func (s IcebergScan_write_Params) Config() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireIcebergScan(p.Struct()), err
+	return p.Text(), err
 }
 
-func (s IcebergScan_execute_Params) HasScan() bool {
+func (s IcebergScan_write_Params) HasConfig() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s IcebergScan_execute_Params) SetScan(v WireIcebergScan) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s IcebergScan_write_Params) ConfigBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-// NewScan sets the scan field to a newly
-// allocated WireIcebergScan struct, preferring placement in s's segment.
-func (s IcebergScan_execute_Params) NewScan() (WireIcebergScan, error) {
-	ss, err := NewWireIcebergScan(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireIcebergScan{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s IcebergScan_write_Params) SetConfig(v string) error {
+	return capnp.Struct(s).SetText(0, v)
 }
 
-// IcebergScan_execute_Params_List is a list of IcebergScan_execute_Params.
-type IcebergScan_execute_Params_List = capnp.StructList[IcebergScan_execute_Params]
-
-// NewIcebergScan_execute_Params creates a new list of IcebergScan_execute_Params.
-func NewIcebergScan_execute_Params_List(s *capnp.Segment, sz int32) (IcebergScan_execute_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[IcebergScan_execute_Params](l), err
+func (s IcebergScan_write_Params) Query() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
 }
 
-// IcebergScan_execute_Params_Future is a wrapper for a IcebergScan_execute_Params promised by a client call.
-type IcebergScan_execute_Params_Future struct{ *capnp.Future }
+func (s IcebergScan_write_Params) HasQuery() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
 
-func (f IcebergScan_execute_Params_Future) Struct() (IcebergScan_execute_Params, error) {
+func (s IcebergScan_write_Params) SetQuery(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
+// IcebergScan_write_Params_List is a list of IcebergScan_write_Params.
+type IcebergScan_write_Params_List = capnp.StructList[IcebergScan_write_Params]
+
+// NewIcebergScan_write_Params creates a new list of IcebergScan_write_Params.
+func NewIcebergScan_write_Params_List(s *capnp.Segment, sz int32) (IcebergScan_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[IcebergScan_write_Params](l), err
+}
+
+// IcebergScan_write_Params_Future is a wrapper for a IcebergScan_write_Params promised by a client call.
+type IcebergScan_write_Params_Future struct{ *capnp.Future }
+
+func (f IcebergScan_write_Params_Future) Struct() (IcebergScan_write_Params, error) {
 	p, err := f.Future.Ptr()
-	return IcebergScan_execute_Params(p.Struct()), err
-}
-func (p IcebergScan_execute_Params_Future) Scan() WireIcebergScan_Future {
-	return WireIcebergScan_Future{Future: p.Future.Field(0, nil)}
+	return IcebergScan_write_Params(p.Struct()), err
 }
 
-type IcebergScan_execute_Results capnp.Struct
+type IcebergScan_done_Params capnp.Struct
 
-// IcebergScan_execute_Results_TypeID is the unique identifier for the type IcebergScan_execute_Results.
-const IcebergScan_execute_Results_TypeID = 0xbe25545ee6b5ad7c
+// IcebergScan_done_Params_TypeID is the unique identifier for the type IcebergScan_done_Params.
+const IcebergScan_done_Params_TypeID = 0x83aa2d97a293e68f
 
-func NewIcebergScan_execute_Results(s *capnp.Segment) (IcebergScan_execute_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergScan_execute_Results(st), err
+func NewIcebergScan_done_Params(s *capnp.Segment) (IcebergScan_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return IcebergScan_done_Params(st), err
 }
 
-func NewRootIcebergScan_execute_Results(s *capnp.Segment) (IcebergScan_execute_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return IcebergScan_execute_Results(st), err
+func NewRootIcebergScan_done_Params(s *capnp.Segment) (IcebergScan_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return IcebergScan_done_Params(st), err
 }
 
-func ReadRootIcebergScan_execute_Results(msg *capnp.Message) (IcebergScan_execute_Results, error) {
+func ReadRootIcebergScan_done_Params(msg *capnp.Message) (IcebergScan_done_Params, error) {
 	root, err := msg.Root()
-	return IcebergScan_execute_Results(root.Struct()), err
+	return IcebergScan_done_Params(root.Struct()), err
 }
 
-func (s IcebergScan_execute_Results) String() string {
-	str, _ := text.Marshal(0xbe25545ee6b5ad7c, capnp.Struct(s))
+func (s IcebergScan_done_Params) String() string {
+	str, _ := text.Marshal(0x83aa2d97a293e68f, capnp.Struct(s))
 	return str
 }
 
-func (s IcebergScan_execute_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s IcebergScan_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (IcebergScan_execute_Results) DecodeFromPtr(p capnp.Ptr) IcebergScan_execute_Results {
-	return IcebergScan_execute_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (IcebergScan_done_Params) DecodeFromPtr(p capnp.Ptr) IcebergScan_done_Params {
+	return IcebergScan_done_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s IcebergScan_execute_Results) ToPtr() capnp.Ptr {
+func (s IcebergScan_done_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s IcebergScan_execute_Results) IsValid() bool {
+func (s IcebergScan_done_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s IcebergScan_execute_Results) Message() *capnp.Message {
+func (s IcebergScan_done_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s IcebergScan_execute_Results) Segment() *capnp.Segment {
+func (s IcebergScan_done_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s IcebergScan_execute_Results) Results() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
+
+// IcebergScan_done_Params_List is a list of IcebergScan_done_Params.
+type IcebergScan_done_Params_List = capnp.StructList[IcebergScan_done_Params]
+
+// NewIcebergScan_done_Params creates a new list of IcebergScan_done_Params.
+func NewIcebergScan_done_Params_List(s *capnp.Segment, sz int32) (IcebergScan_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[IcebergScan_done_Params](l), err
 }
 
-func (s IcebergScan_execute_Results) HasResults() bool {
+// IcebergScan_done_Params_Future is a wrapper for a IcebergScan_done_Params promised by a client call.
+type IcebergScan_done_Params_Future struct{ *capnp.Future }
+
+func (f IcebergScan_done_Params_Future) Struct() (IcebergScan_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return IcebergScan_done_Params(p.Struct()), err
+}
+
+type IcebergScan_done_Results capnp.Struct
+
+// IcebergScan_done_Results_TypeID is the unique identifier for the type IcebergScan_done_Results.
+const IcebergScan_done_Results_TypeID = 0x9974b38894482732
+
+func NewIcebergScan_done_Results(s *capnp.Segment) (IcebergScan_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return IcebergScan_done_Results(st), err
+}
+
+func NewRootIcebergScan_done_Results(s *capnp.Segment) (IcebergScan_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return IcebergScan_done_Results(st), err
+}
+
+func ReadRootIcebergScan_done_Results(msg *capnp.Message) (IcebergScan_done_Results, error) {
+	root, err := msg.Root()
+	return IcebergScan_done_Results(root.Struct()), err
+}
+
+func (s IcebergScan_done_Results) String() string {
+	str, _ := text.Marshal(0x9974b38894482732, capnp.Struct(s))
+	return str
+}
+
+func (s IcebergScan_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (IcebergScan_done_Results) DecodeFromPtr(p capnp.Ptr) IcebergScan_done_Results {
+	return IcebergScan_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s IcebergScan_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s IcebergScan_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s IcebergScan_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s IcebergScan_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s IcebergScan_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s IcebergScan_done_Results) HasOut() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s IcebergScan_execute_Results) SetResults(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
+func (s IcebergScan_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// IcebergScan_execute_Results_List is a list of IcebergScan_execute_Results.
-type IcebergScan_execute_Results_List = capnp.StructList[IcebergScan_execute_Results]
+// IcebergScan_done_Results_List is a list of IcebergScan_done_Results.
+type IcebergScan_done_Results_List = capnp.StructList[IcebergScan_done_Results]
 
-// NewIcebergScan_execute_Results creates a new list of IcebergScan_execute_Results.
-func NewIcebergScan_execute_Results_List(s *capnp.Segment, sz int32) (IcebergScan_execute_Results_List, error) {
+// NewIcebergScan_done_Results creates a new list of IcebergScan_done_Results.
+func NewIcebergScan_done_Results_List(s *capnp.Segment, sz int32) (IcebergScan_done_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[IcebergScan_execute_Results](l), err
+	return capnp.StructList[IcebergScan_done_Results](l), err
 }
 
-// IcebergScan_execute_Results_Future is a wrapper for a IcebergScan_execute_Results promised by a client call.
-type IcebergScan_execute_Results_Future struct{ *capnp.Future }
+// IcebergScan_done_Results_Future is a wrapper for a IcebergScan_done_Results promised by a client call.
+type IcebergScan_done_Results_Future struct{ *capnp.Future }
 
-func (f IcebergScan_execute_Results_Future) Struct() (IcebergScan_execute_Results, error) {
+func (f IcebergScan_done_Results_Future) Struct() (IcebergScan_done_Results, error) {
 	p, err := f.Future.Ptr()
-	return IcebergScan_execute_Results(p.Struct()), err
-}
-func (p IcebergScan_execute_Results_Future) Results() *capnp.Future {
-	return p.Future.Field(0, nil)
+	return IcebergScan_done_Results(p.Struct()), err
 }
 
-const schema_c7e14a3b8d9a2c1f = "x\xda\xa4\x94Ah\x13O\x18\xc5\xbfof\xb7\xe9\xa1" +
-	"\xe1\x9f\xc9\xf6Z\xf2\xc7\xb6\xa8\xb5&\xb1\x15\xb1Q\xd9" +
-	"\x9aK\xd0S\xb6\x06z+L\xd61\x0dl6\xe9&" +
-	"A[\x94\xa0'/^\x04A*E\x11\x04=\xe4\xa0" +
-	"\x10=U\xd0\x8bx)(z\xe8A\xd0\x83\x82'\xb1" +
-	"\x07Q/+\xb3k\xb2\xd1T\xdb\xe2)\xc3d\xf2~" +
-	"\xef}\xf3&\xc99\x9cV\x0e\x84w+@\x8c\xa4\xda" +
-	"\xe7>\xc8\xb4\xec\x97\x17\x9f\xac\x00\x1bF76\xbe|" +
-	"\xe5\xc8\xc9w\xcf@%!\x80\xc9o\xb8\x8c\x1a\x93K" +
-	"-L\xce\x02\xba\xe7\x9b\xad\x0fs\xb9\xd1\xc7\xc0\x12\x08" +
-	"\xa0\xa2<T$\xdf\x11P\xbb@t@w\xfe\xce\x97" +
-	"\xc3\xb45\xb6\x06l\x98\x06j\x80\x93+\xe4\x12j\xf7" +
-	"=\xa9&\xc9h\xaf\xe5\xca=t\xf4\xabu\xf3\xff\xa7" +
-	"k\xc0\x92\x1d\xb9U_\xee\x85'\xf7\xf0\xd1\x8d\xeb\xce" +
-	"\xfa\xab\xb7\xdd\xbc\xcfdC\x1eP\xa9<\x10\xb76\xa2" +
-	"\xf3\xb3C\xef7s?Jo\xa3v\x8cJ\xe4\x14\x95" +
-	"\xee\xf7\xed:~\xf9nq\xe8c7\xee\x1a%\x04P" +
-	"\xbb\xe7\xa9]-M-\xad6o}\xeaq\xff\x9c." +
-	"\xa1\xf6\xc6\x93Z\xa7\x19\x0d\x95\x10\x8c\xbbv\xb9\xc4\x0b" +
-	"\xc5\x85\xba*\x12\xd5Z\xd9\x11\x89\x1a\xcf[\xa2\xea\x7f" +
-	"\xc4M^\xb1+\xa9\xd9\xa2#N\x98\"/\x9c\xc2)" +
-	"\x93r;\x8bh\xf4S\x05@A\x00\xb67\x05`\x8c" +
-	"P4\x92\x04\x19\xe2 \xca\xcd\xfd\x13\x00\xc6\x1e\x8a\xc6" +
-	"A\x82\xbaY\xb6\xcf\x14\x0b8\x00\x04\x07\x00c\x0bu" +
-	"\xe1,b\x14\x08F\x01;\x06\xfa\xfeb\xa0\x03\xe7v" +
-	"\\\x9c\x13f\xbd&FftQ\xad[\xb5\xaa\xa1t" +
-	"\x9c\x84\xd3\x00F?Ec\x90`\xc3\xf1\xbf\xee\xe1\xa8" +
-	"[srr\x0bdJ\x85\xaa]7\x8c\xed\xd93\x96" +
-	"\x06\xc2\xd4P\xe3\xa7\x99i\xcc\xe2\x8e\x92x\x84N\x14" +
-	"=\xcb\x1d^\xfa%\xc9D\x90$\xe6\xfd\x1e#AM" +
-	"\x001\xf2\x0f\x93\xcb\xc6zpc\x01\xee\xbf\xaa\xc9m" +
-	"\x8c\x04O\xea7\xda6\x8b\x92\xe3\xa1\xbc%\xb6\xd3\x94" +
-	"\xf4\x1f\x9b\xd2\xa8\xf0E\xab\xccO\xf7\xdcah\xa7\x13" +
-	"\x9e\xf1\xcb\x00\xdd\x99SAf\xdd/K\x0fG\xd9\x8a" +
-	"\xa3\xfb\xa3\x0d\xaa\xd2~\xeb\xd8\xfe\x93\xd9\xb4*?\x02" +
-	"\x00\x00\xff\xffx\xe2V#"
+const schema_c7e14a3b8d9a2c1f = "x\xda\xac\x94Mh\x13A\x14\xc7\xdf\x9b\x99\xedF\xe8" +
+	"\x12\x96\xed\xc5S\xfc\x88\xa8\xc56_~V!\xd1\x93" +
+	"z\xcaT\x05\xf5\"\xd3t\x8c\xc1d7\xdd\xdd\x10\xda" +
+	"\x83\xa2\x1e\"\x88\x08*h+\xa2\x08\x1e\x14<\x04\xa9" +
+	"\x82 \x88 \xbd\x15\x04/z\xd2\x82\x1eD\xf0\"b" +
+	"O+;il\xa0\x96j\xe8i\x97\xd9\xff\xfb\xcfo" +
+	"\xde\x7f\xf6%\xcfa\x8e\xa5\x8c\x86\x06\x84\xe7\xb4\x9e\xe0" +
+	"\xda\x97\x1b\x0fn\x0d<\xbe\x04f\x02\x01\x98\x0e\x90y" +
+	"D> \xb0`\xd7\xcc\x8b\x1f\x99yr\x05\xcc$\x02" +
+	"h\x18~\xbaK\xbe\"\xa0\xd5$Y\xc0 \xbd\xf9\xe0" +
+	"\xcd\xcbO\xfd\xc9ViK\xf0\x96\xcc\x85\x82\xcfJ@" +
+	"\xf1\x1b\x9e<\xebN\xb7\x1c\x94\xb7F\xe7B\xef3\x0f" +
+	"\x7f\xee\xa6\xd3\xfd\xb3`n\xa4Al\xdb\xd4\xd5\xbd\x87" +
+	"?\xcd\x00`f\x9e\\D\xcb\xa0:\x80\xb5\x866\xac" +
+	"\x13\xe1[\xb0s\xdf\xaf\xf2\xbdu\xafg\x17HHh" +
+	"\xb4\x9f*\x92c\xb4\x0e\x18<{~\xe7\xb6\xfb\xfe\xdd" +
+	"\xc7\x05\x12%hRE\xf2F\x09\xaeW\xf6L\xbc|" +
+	"r\xff\xfb\x92\xfd\xd6\xb3\x09\xb4v\x84hV\x8a5\xac" +
+	"\x0bL\x87\xe3\x81\xedTD\xb14V\xeb\x91\x09\xcfw" +
+	"\\\x99\xf0\xc5HYz\xad\xc7`AT\xed\xea\xd0\xa1" +
+	"\x82\x1c\x91n\xf1HA\xd8\x83\xa3\x8e-\xe3y\xe1\x0a" +
+	"Z\xf1\xfe\xa7\xf8\xa8ZR\xd5\xc3\xd2\x8b\xd6\xca\xbe\xc7" +
+	"\x19e\x00\x0c\x01Lc\x03\x00\x8fP\xe4}\x04u\xa7" +
+	"\xe6\xa3\x01\x04\x0d\xc0\xee\xf0\x86\xa5W\xd3W\x7f\x83\x8e" +
+	"#\xe4\x85\xab\x8b\x8e\x06h\xffX\x0dyD\x1e\xa1Z" +
+	"G\xd0h7_\xd53S\xa7&\xcdT\x1a\x88\xb9I" +
+	"\xc7\xc5\xcb\x84\xed{i\xae\xed\x07b\x1az\xac\xee\x96" +
+	"|\x99\xc3hH\x91\xc3<vq\x00e\x11\xcf\x8b\xa8" +
+	"+*\x1e\x8f\xfci\xd1\xd6!\x00\x1e\xa7\xc8\x93\x04M" +
+	"\xc4>\x0c\x17\x07\x0e\x00\xf0-\x14\xf9v\x82\xd9\x82c" +
+	"\x9f.\x15\xb1\x17\x08\xf6\x02\x9e\xaf\x8a\xf1\xb2#F\xbb" +
+	"\xce\xaa\x0d\xa2Z\xb9\"HzY\x90\xd8XM\xba\xe3" +
+	"K0\xd8J\x18\xd9\x16\xc7b$\xed_\xebo\x91\xb4" +
+	"g\x07\xb6'\xc1\xf2\x91\xfc\x0e\x00\x00\xff\xffJ\xf2J" +
+	"\xd2"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
 		String: schema_c7e14a3b8d9a2c1f,
 		Nodes: []uint64{
-			0x9dc181d26eb547b2,
-			0xbe25545ee6b5ad7c,
+			0x83aa2d97a293e68f,
+			0x8b02f933f4bac737,
+			0x9974b38894482732,
+			0xb5726b5a01ec0103,
 			0xce2ab50338f6a568,
 			0xcec2209f6cf83c36,
 			0xe0d4d972989bb7b6,
-			0xe51d576812f26c2e,
-			0xe91d69a88841222b,
 			0xefa0adbd7a396d92,
 		},
 		Compressed: true,

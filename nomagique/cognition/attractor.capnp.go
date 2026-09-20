@@ -3,13 +3,13 @@
 package cognition
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type Attractor capnp.Client
@@ -209,7 +209,7 @@ func (c Attractor_done) Args() Attractor_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Attractor_done) AllocResults() (Attractor_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Attractor_done_Results(r), err
 }
 
@@ -370,12 +370,12 @@ type Attractor_done_Results capnp.Struct
 const Attractor_done_Results_TypeID = 0xff51ac1559ae1d26
 
 func NewAttractor_done_Results(s *capnp.Segment) (Attractor_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Attractor_done_Results(st), err
 }
 
 func NewRootAttractor_done_Results(s *capnp.Segment) (Attractor_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Attractor_done_Results(st), err
 }
 
@@ -411,13 +411,41 @@ func (s Attractor_done_Results) Message() *capnp.Message {
 func (s Attractor_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Attractor_done_Results) Class() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Attractor_done_Results) HasClass() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Attractor_done_Results) SetClass(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s Attractor_done_Results) Prob() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Attractor_done_Results) SetProb(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Attractor_done_Results) Count() uint64 {
+	return capnp.Struct(s).Uint64(8)
+}
+
+func (s Attractor_done_Results) SetCount(v uint64) {
+	capnp.Struct(s).SetUint64(8, v)
+}
 
 // Attractor_done_Results_List is a list of Attractor_done_Results.
 type Attractor_done_Results_List = capnp.StructList[Attractor_done_Results]
 
 // NewAttractor_done_Results creates a new list of Attractor_done_Results.
 func NewAttractor_done_Results_List(s *capnp.Segment, sz int32) (Attractor_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
 	return capnp.StructList[Attractor_done_Results](l), err
 }
 

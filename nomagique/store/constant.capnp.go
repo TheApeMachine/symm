@@ -8,6 +8,7 @@ import (
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 )
 
@@ -16,23 +17,41 @@ type Constant capnp.Client
 // Constant_TypeID is the unique identifier for the type Constant.
 const Constant_TypeID = 0xa9b15aea598ce5aa
 
-func (c Constant) Evaluate(ctx context.Context, params func(Constant_evaluate_Params) error) (Constant_evaluate_Results_Future, capnp.ReleaseFunc) {
-
+func (c Constant) Write(ctx context.Context, params func(Constant_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xa9b15aea598ce5aa,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/constant.capnp:Constant",
-			MethodName:    "evaluate",
+			MethodName:    "write",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Constant_evaluate_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Constant_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c Constant) Done(ctx context.Context, params func(Constant_done_Params) error) (Constant_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xa9b15aea598ce5aa,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/constant.capnp:Constant",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Constant_done_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Constant_evaluate_Results_Future{Future: ans.Future()}, release
+	return Constant_done_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -109,7 +128,9 @@ func (c Constant) GetFlowLimiter() fc.FlowLimiter {
 
 // A Constant_Server is a Constant with a local implementation.
 type Constant_Server interface {
-	Evaluate(context.Context, Constant_evaluate) error
+	Write(context.Context, Constant_write) error
+
+	Done(context.Context, Constant_done) error
 }
 
 // Constant_NewServer creates a new Server from an implementation of Constant_Server.
@@ -128,7 +149,7 @@ func Constant_ServerToClient(s Constant_Server) Constant {
 // This can be used to create a more complicated Server.
 func Constant_Methods(methods []server.Method, s Constant_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 1)
+		methods = make([]server.Method, 0, 2)
 	}
 
 	methods = append(methods, server.Method{
@@ -136,31 +157,60 @@ func Constant_Methods(methods []server.Method, s Constant_Server) []server.Metho
 			InterfaceID:   0xa9b15aea598ce5aa,
 			MethodID:      0,
 			InterfaceName: "nomagique/store/constant.capnp:Constant",
-			MethodName:    "evaluate",
+			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Evaluate(ctx, Constant_evaluate{call})
+			return s.Write(ctx, Constant_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xa9b15aea598ce5aa,
+			MethodID:      1,
+			InterfaceName: "nomagique/store/constant.capnp:Constant",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, Constant_done{call})
 		},
 	})
 
 	return methods
 }
 
-// Constant_evaluate holds the state for a server call to Constant.evaluate.
+// Constant_write holds the state for a server call to Constant.write.
 // See server.Call for documentation.
-type Constant_evaluate struct {
+type Constant_write struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Constant_evaluate) Args() Constant_evaluate_Params {
-	return Constant_evaluate_Params(c.Call.Args())
+func (c Constant_write) Args() Constant_write_Params {
+	return Constant_write_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Constant_evaluate) AllocResults() (Constant_evaluate_Results, error) {
+func (c Constant_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// Constant_done holds the state for a server call to Constant.done.
+// See server.Call for documentation.
+type Constant_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Constant_done) Args() Constant_done_Params {
+	return Constant_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Constant_done) AllocResults() (Constant_done_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Constant_evaluate_Results(r), err
+	return Constant_done_Results(r), err
 }
 
 // Constant_List is a list of Constant.
@@ -172,236 +222,283 @@ func NewConstant_List(s *capnp.Segment, sz int32) (Constant_List, error) {
 	return capnp.CapList[Constant](l), err
 }
 
-type Constant_evaluate_Params capnp.Struct
+type Constant_write_Params capnp.Struct
 
-// Constant_evaluate_Params_TypeID is the unique identifier for the type Constant_evaluate_Params.
-const Constant_evaluate_Params_TypeID = 0xe6343e409cc41f2c
+// Constant_write_Params_TypeID is the unique identifier for the type Constant_write_Params.
+const Constant_write_Params_TypeID = 0xe6343e409cc41f2c
 
-func NewConstant_evaluate_Params(s *capnp.Segment) (Constant_evaluate_Params, error) {
+func NewConstant_write_Params(s *capnp.Segment) (Constant_write_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Constant_evaluate_Params(st), err
+	return Constant_write_Params(st), err
 }
 
-func NewRootConstant_evaluate_Params(s *capnp.Segment) (Constant_evaluate_Params, error) {
+func NewRootConstant_write_Params(s *capnp.Segment) (Constant_write_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Constant_evaluate_Params(st), err
+	return Constant_write_Params(st), err
 }
 
-func ReadRootConstant_evaluate_Params(msg *capnp.Message) (Constant_evaluate_Params, error) {
+func ReadRootConstant_write_Params(msg *capnp.Message) (Constant_write_Params, error) {
 	root, err := msg.Root()
-	return Constant_evaluate_Params(root.Struct()), err
+	return Constant_write_Params(root.Struct()), err
 }
 
-func (s Constant_evaluate_Params) String() string {
+func (s Constant_write_Params) String() string {
 	str, _ := text.Marshal(0xe6343e409cc41f2c, capnp.Struct(s))
 	return str
 }
 
-func (s Constant_evaluate_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Constant_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Constant_evaluate_Params) DecodeFromPtr(p capnp.Ptr) Constant_evaluate_Params {
-	return Constant_evaluate_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (Constant_write_Params) DecodeFromPtr(p capnp.Ptr) Constant_write_Params {
+	return Constant_write_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Constant_evaluate_Params) ToPtr() capnp.Ptr {
+func (s Constant_write_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Constant_evaluate_Params) IsValid() bool {
+func (s Constant_write_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Constant_evaluate_Params) Message() *capnp.Message {
+func (s Constant_write_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Constant_evaluate_Params) Segment() *capnp.Segment {
+func (s Constant_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Constant_evaluate_Params) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
+func (s Constant_write_Params) In() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
 }
 
-func (s Constant_evaluate_Params) HasPayload() bool {
+func (s Constant_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Constant_evaluate_Params) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
+func (s Constant_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// Constant_evaluate_Params_List is a list of Constant_evaluate_Params.
-type Constant_evaluate_Params_List = capnp.StructList[Constant_evaluate_Params]
+// Constant_write_Params_List is a list of Constant_write_Params.
+type Constant_write_Params_List = capnp.StructList[Constant_write_Params]
 
-// NewConstant_evaluate_Params creates a new list of Constant_evaluate_Params.
-func NewConstant_evaluate_Params_List(s *capnp.Segment, sz int32) (Constant_evaluate_Params_List, error) {
+// NewConstant_write_Params creates a new list of Constant_write_Params.
+func NewConstant_write_Params_List(s *capnp.Segment, sz int32) (Constant_write_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Constant_evaluate_Params](l), err
+	return capnp.StructList[Constant_write_Params](l), err
 }
 
-// Constant_evaluate_Params_Future is a wrapper for a Constant_evaluate_Params promised by a client call.
-type Constant_evaluate_Params_Future struct{ *capnp.Future }
+// Constant_write_Params_Future is a wrapper for a Constant_write_Params promised by a client call.
+type Constant_write_Params_Future struct{ *capnp.Future }
 
-func (f Constant_evaluate_Params_Future) Struct() (Constant_evaluate_Params, error) {
+func (f Constant_write_Params_Future) Struct() (Constant_write_Params, error) {
 	p, err := f.Future.Ptr()
-	return Constant_evaluate_Params(p.Struct()), err
-}
-func (p Constant_evaluate_Params_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
+	return Constant_write_Params(p.Struct()), err
 }
 
-type Constant_evaluate_Results capnp.Struct
+type Constant_done_Params capnp.Struct
 
-// Constant_evaluate_Results_TypeID is the unique identifier for the type Constant_evaluate_Results.
-const Constant_evaluate_Results_TypeID = 0x9f121c82bed21c47
+// Constant_done_Params_TypeID is the unique identifier for the type Constant_done_Params.
+const Constant_done_Params_TypeID = 0xad1de917d9b0b5ae
 
-func NewConstant_evaluate_Results(s *capnp.Segment) (Constant_evaluate_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Constant_evaluate_Results(st), err
+func NewConstant_done_Params(s *capnp.Segment) (Constant_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Constant_done_Params(st), err
 }
 
-func NewRootConstant_evaluate_Results(s *capnp.Segment) (Constant_evaluate_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Constant_evaluate_Results(st), err
+func NewRootConstant_done_Params(s *capnp.Segment) (Constant_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Constant_done_Params(st), err
 }
 
-func ReadRootConstant_evaluate_Results(msg *capnp.Message) (Constant_evaluate_Results, error) {
+func ReadRootConstant_done_Params(msg *capnp.Message) (Constant_done_Params, error) {
 	root, err := msg.Root()
-	return Constant_evaluate_Results(root.Struct()), err
+	return Constant_done_Params(root.Struct()), err
 }
 
-func (s Constant_evaluate_Results) String() string {
-	str, _ := text.Marshal(0x9f121c82bed21c47, capnp.Struct(s))
+func (s Constant_done_Params) String() string {
+	str, _ := text.Marshal(0xad1de917d9b0b5ae, capnp.Struct(s))
 	return str
 }
 
-func (s Constant_evaluate_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Constant_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Constant_evaluate_Results) DecodeFromPtr(p capnp.Ptr) Constant_evaluate_Results {
-	return Constant_evaluate_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Constant_done_Params) DecodeFromPtr(p capnp.Ptr) Constant_done_Params {
+	return Constant_done_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Constant_evaluate_Results) ToPtr() capnp.Ptr {
+func (s Constant_done_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Constant_evaluate_Results) IsValid() bool {
+func (s Constant_done_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Constant_evaluate_Results) Message() *capnp.Message {
+func (s Constant_done_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Constant_evaluate_Results) Segment() *capnp.Segment {
+func (s Constant_done_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Constant_evaluate_Results) Value() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
+
+// Constant_done_Params_List is a list of Constant_done_Params.
+type Constant_done_Params_List = capnp.StructList[Constant_done_Params]
+
+// NewConstant_done_Params creates a new list of Constant_done_Params.
+func NewConstant_done_Params_List(s *capnp.Segment, sz int32) (Constant_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Constant_done_Params](l), err
 }
 
-func (s Constant_evaluate_Results) HasValue() bool {
+// Constant_done_Params_Future is a wrapper for a Constant_done_Params promised by a client call.
+type Constant_done_Params_Future struct{ *capnp.Future }
+
+func (f Constant_done_Params_Future) Struct() (Constant_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return Constant_done_Params(p.Struct()), err
+}
+
+type Constant_done_Results capnp.Struct
+
+// Constant_done_Results_TypeID is the unique identifier for the type Constant_done_Results.
+const Constant_done_Results_TypeID = 0xbf4797ed2cbc65b9
+
+func NewConstant_done_Results(s *capnp.Segment) (Constant_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return Constant_done_Results(st), err
+}
+
+func NewRootConstant_done_Results(s *capnp.Segment) (Constant_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return Constant_done_Results(st), err
+}
+
+func ReadRootConstant_done_Results(msg *capnp.Message) (Constant_done_Results, error) {
+	root, err := msg.Root()
+	return Constant_done_Results(root.Struct()), err
+}
+
+func (s Constant_done_Results) String() string {
+	str, _ := text.Marshal(0xbf4797ed2cbc65b9, capnp.Struct(s))
+	return str
+}
+
+func (s Constant_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Constant_done_Results) DecodeFromPtr(p capnp.Ptr) Constant_done_Results {
+	return Constant_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Constant_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Constant_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Constant_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Constant_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Constant_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Constant_done_Results) HasOut() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Constant_evaluate_Results) SetValue(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
+func (s Constant_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// Constant_evaluate_Results_List is a list of Constant_evaluate_Results.
-type Constant_evaluate_Results_List = capnp.StructList[Constant_evaluate_Results]
+// Constant_done_Results_List is a list of Constant_done_Results.
+type Constant_done_Results_List = capnp.StructList[Constant_done_Results]
 
-// NewConstant_evaluate_Results creates a new list of Constant_evaluate_Results.
-func NewConstant_evaluate_Results_List(s *capnp.Segment, sz int32) (Constant_evaluate_Results_List, error) {
+// NewConstant_done_Results creates a new list of Constant_done_Results.
+func NewConstant_done_Results_List(s *capnp.Segment, sz int32) (Constant_done_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Constant_evaluate_Results](l), err
+	return capnp.StructList[Constant_done_Results](l), err
 }
 
-// Constant_evaluate_Results_Future is a wrapper for a Constant_evaluate_Results promised by a client call.
-type Constant_evaluate_Results_Future struct{ *capnp.Future }
+// Constant_done_Results_Future is a wrapper for a Constant_done_Results promised by a client call.
+type Constant_done_Results_Future struct{ *capnp.Future }
 
-func (f Constant_evaluate_Results_Future) Struct() (Constant_evaluate_Results, error) {
+func (f Constant_done_Results_Future) Struct() (Constant_done_Results, error) {
 	p, err := f.Future.Ptr()
-	return Constant_evaluate_Results(p.Struct()), err
-}
-func (p Constant_evaluate_Results_Future) Value() *capnp.Future {
-	return p.Future.Field(0, nil)
+	return Constant_done_Results(p.Struct()), err
 }
 
-const schema_c826f6eb94916a2b = "x\xda\xb4Vol\x14\xd5\x17\xbdwfgg\x1b~" +
-	"\xa5\xbcN\x7f\x86Ba\xa5\xd9\x10\xc0\xb6@\xc1h\x8d" +
-	"\xda\xb5\x8di\xc0@vJH,\xc6\x0fC\xf7Q\xb7" +
-	"\xdd\xee.3S\xdb%\xc1\x86F\x8c\x7f\xd0(\xa9\xc1" +
-	"J\x85\xa0A)D\x92~!\x96\x98j\xb0\xd8jl" +
-	"\x14\xb4\x9a\x18\x1b\xd3\x88&\x95\xa0`\x82!~p\xcc" +
-	"{\xbbow\xdam\xa1m\xf4\xdb\xc0\x9ew\xce}\xf7" +
-	"\xdcwn7l\x95\x83\x9e\x8d\xf9\xef\xe5\x81\xa4'\x14" +
-	"\xaf\xb3\xfd\xc8\x83\xd7Z\x8f<{\x00H)\x02(\x92" +
-	"\x0a\xb0i\xc0\xb3\x0f\x01\xb5\x8b\x9ev@\xe7\xe3e\xa4" +
-	"w\xe2\xa9u/\x01\xb9\x9b\x01\x90\x01V)\xbb\x19\xa0" +
-	"\\\xa9\x06t\xbe\x1c\x0a~\xbd\xe4\x96~\x14\xc8\xca\x0c" +
-	"`\x9b\xd2\xcc\x00\x0d\x1cPWry\xb0\xab\xa4\xf08" +
-	"\x905\x19@R\xf9\x9c\x01^\xe6\x80sE\x07\xb6\x8c" +
-	"\xee\xab9\x91\x92\xf0\xb0\xdf\xdfg\x0a\x1e\xe7\xba\xfc\xfc" +
-	"\x8d\xef\x87w\xbe\xed\xae\xaeG9\xcc\x8e\xf6)\xac\xba" +
-	"\xbcC_\xec\xfc\xe4\xd5\xb2w\xd2\x00\xce\xadxM\x06" +
-	" ^\xc6=\xd2\xbfB\xa9\xbb~\xdf)\xd0W\xa2\x94" +
-	"&\xdf\x98\x02<\xe4e\x0c\xa7\x7f>\xd4\xf0\xeb\xae\xfe" +
-	"> ~\xd9\xb9\xa7\xf9\xb5\xee\xab\x7f\xae\x1e\x01\xc0M" +
-	"=\xde\x1a\xd4\xfa\xbc*\x80v\xd2[\xa7]b_N" +
-	"\xe1\xf1\xf2\xee\xc7\xbb\xce\x9fv\xeb\x0dx\xdfdt\x9f" +
-	"q\xbd\xf3\x1f\x94l\x199\xfb\xd5\x19 \xcbd\xa7\xac" +
-	"\xdcG~?Vu\x05\x00\xb5I\xef\x1f\xdaM\xcev" +
-	"\xc3[\xa7\x15\xab\x8cm\xf7\xd1\xee\x0b\xd6s\xc6\xa7@" +
-	"\x96\xcb\xce\xa9o\x97\x1e\xbewi\xe3\xbbL\x1bU\x09" +
-	"\xb5|\x86\xd1\xf2\xd4a\xed GO\xd6\x16\xf7\xee\x9f" +
-	"\xdc1\x0ad9f\xd1\xa9\x1aZ\xd9\x81$?\xd0\xa6" +
-	"\xb2:\x9c\xff?s\xb6\xe3\xc3\xd5\xdf\xb8m{]\xe5" +
-	"\xae\x9c\xe0\x80'i\xfb\xd8\x1bw\x9d\x19\x03R\";" +
-	"\x8b\x1b~\xb8\xdc7@\xfeb\xda\x97\xd4B\xd4&8" +
-	"\xd5\xb8:\xac5\xf8T\x80\xbf+>\xea\x1c\xbd\xd5\xf9" +
-	"\xa3\x8b\xec\x11\x1f'\xdb\xe6cd\xdf\x0d\x0d\xae\xfdm" +
-	"\xef\x13\x13n\xb5\xfd\xbe.\x06x\x81\x03\xee/\xeb\x1f" +
-	"/}\xab\xf9'\x97\xc5}\xbe\x17\x99\xc5cW\x8dW" +
-	"\x8e\x9d+\xb8\xe2\xeehO\xea\xe8I~\xb4\xcc?\xd4" +
-	"\x1b|x\xf3/\xee\xf1\xb9\xe8\xbb\xc0\x00c\x1c\xb0k" +
-	"\xc5\xc1\xc1\x1d\xe3\x89k\xa0\x97b\x06q\xd3\xc7g\x18" +
-	"\xf3\xdaa\xbb\x13\x8b\xb7\x1aM\x91\xbdm\x1e\xba\xde\xb2" +
-	"\xe3&]o\x1a\xe1HGE\xa3\x91\x88%\x1e\xa8\xe7" +
-	"\xdf\xedf\xc4\xa6\x81\xea\x90a\x1a\xad\x96\xee\x93=\x00" +
-	"\x1e\x04 kK\x01\xf4\x80\x8c\xfa\x06\x09\x09b\x11S" +
-	" \xe5\x95\x00\xfa\x1a\x19\xf5\xcd\x12\xaa-4\x89\xf9 " +
-	"a>\xa0\xffi#\xdaF\xb1\x10$,\x04\xcc\x95m" +
-	"2#\xe1\xb4j\x1d\xfbL\xc4[h d\x98*\xd3" +
-	"\xf4d4\xf3k\x00t\x9f\x8cz\x91\x84\x9d\x09#\x19" +
-	"\x8d\x1b\xe1\xd9I[h2\xcd\xf9\x18MV\xd0\x0e\xdb" +
-	"4\x1a\xed@\xc8(0\x17\xc0\xea\x15\xac\x8d\xf1\x98e" +
-	"\x1b1;M]+\xfeI\xd9\x15\x0d\x9b\x06\xea\xa9\xd5" +
-	"\x16\xb5-\x00\xb7DeVb\xde\xbd\xa0\xb4E\xf4\"" +
-	"\x83Vf7,\x12\xa61;\xb2'\x19\xe0\x96\xe1\x7f" +
-	"\xe6Y\xae\xb2I\x8dp \xe47\xa6\xf7\xb74{y" +
-	"\xb7\xc0\\\x1d\xab\xa7~\xdeQ\xf7E*\xdd\x17\x09\xe6" +
-	"^$]\xfc\"\x90p\x11\xa0\x7fO\xbc-\x16F\x04" +
-	"\x09q&\xddY<\x85\x10\xa2\xee\x91\x15\x80\xcc[C" +
-	"\x91\xd9\x84l\x05\x89\xe4\xa9\x8e\xf0\x1d\x00\x82\x18B\x9c" +
-	"\x97E|Vd\xdb\x9a\xdf\xa8H\xd3\xfb\xe5\xe7\x0d\xcb" +
-	"V+6\x0f\x8a\x90'\xa4\x06$\xa2\xa8\x9d\xe9\x9eN" +
-	"\xadT\x9ee\xf4\xf8\xfd\xff\xc7\x19\xc5\xb2C\x11\x9fD" +
-	"_\x07\x12yT\xc5\xec\x96B\x10aX\xc5~+W" +
-	"Q\xca\xe4\x1f\x8a\x9c#\xabX\xdf\x8a\xd5\x02\xf6\xc4\x83" +
-	"X\xc0\xa6;\x88\x8eI\x9b\"\x96M\xcd\x9c.\xceT" +
-	"[-\x8dF\xd3\xde,,\x19f\x8c\x9bzj\x15\xf0" +
-	"1\x9b\xc1\x8b\x80\x84\xfeF\x1a\x8dZ\xb8\x180$#" +
-	".\xc9.\x1d@\xf6\x9f\xb9\x05O\xb7\x1d;\xb2\xed\x14" +
-	"\xdb\x19ED\xbb\xda)\xfe\xf0@\xb1\x00HU\xa5h" +
-	"\xa7X\xfb(\xd6m\xa6\x9d\xec\xed\x05\xd1\xcf\xd3:\x88" +
-	"\x8e\x98\xb0\x9c~\xde>f\xfe\xa5\x1e(\xb3\x89\x08\x9b" +
-	"S\xd9d\xc1|\x1d\xbc3q&}\xe7\xf2\x0eS\xbb" +
-	"M\x1c\x99\xdf#\x9c\xfbBX\xe0]\xef\x14\xb4\xf5\xd5" +
-	"\xf4v\xb18S\xbcO\xbd\xca\xd4T\xfc'\x00\x00\xff" +
-	"\xff\x95j\x00\x14"
+const schema_c826f6eb94916a2b = "x\xda\x9cUoh\x1be\x18\x7f\x9e\xbb$\xef\x856" +
+	"\xc6\xd7+s\x8b\xdb\"\xa5\x93\xadf\xff\xdaM\x98\xa8" +
+	"\x0d\xf5\xc3(\x82\xe4\x02\xfb\xb0\x81\x8c[rv\xd9\x96" +
+	"K\xbc\xbb\x98e_\xca@\xcd\x07\x87\xcc1\xa8\xba9" +
+	"PA\xdcF\x87\xfb\xe0p\"l\xadU\x0a\x1a\xd4j" +
+	"\x84\x82\"\xc5*h)\x82\x88T?x\xf2\xbe\x97K" +
+	"\xd2\xe4JS\xbf\xbd\xe1\x9e\xf7\xf9\xfdy\xde\xe7\x97=" +
+	"\x1b\xc4\xb8ooh\xb4\x1b\x04\xe5\xbc?`?=\xfe" +
+	"\xd8Rv\xfc\x85\xb3@{\x11\xc0G\x00\x067\x05\x0c" +
+	"\x04\x9f}7B/\xcf\x1f\xef\x7f\x19\xe8\x83\x08\xe0\x17" +
+	"\xd8'\x7f\xe0\x04\x02\xca4P\x04\xb4\xbf\x9c\x8e\x7fs" +
+	"\xef\xb2r\x09\xe8\xd6zA6p\x84\x15\x94x\xc1\xad" +
+	"\x9e\xb3#\x953\xc3o9\x1dx\xefj\xe0\x18\xeb\x1d" +
+	"<\xf7\xc5\xa1O\xce\xc7\xdeqP\x9d\xab\x93\x813\xec" +
+	"j\x85_\xbd\xf6\xf3\xb9\xc3\xbf\x1d\xb9y\x15hT\xb4" +
+	"\x1f>\xf1\xea\xc5\xc5\xbf\x1e\x9a\x01\xc0\xc1\x1dd\x18\xe5" +
+	"\x03\x84\x00\xc8\xfbIY~\x91\x9d\xec\x8f>\xdc<2" +
+	"s\xe3\xab\xeb@#\xa2\x1d\xdb)\xd1\xdf\xaf\x1cX\x00" +
+	"@9K\xfe\x90K\xbc\xb8@\xca\xf2\xa7\xbc\xf8\xc6\x07" +
+	"\xef\xcf\xdd\xff\xeb\x96\x09\xa0\xdb]V\x13\xe4m\xc6\xea" +
+	"\xb6\xf6qli\xfc\xe0\x1d\xe7\x8b\x1f\xd9\xa77\xc95" +
+	"\xc6j\x82\x0c\x01\xda\xc7.]\x9c2_R?\x03\xfa" +
+	"\x80h\xbf\xf7\xdd\xc6\x0b\xfb7\xa6\xdee\xac*D@" +
+	"y\x8e\x03UIY\xde&1\xa0\xc9\xae\xa3\xf9\x9f\x1e" +
+	"\xb90\xeb\xf8\xc3\x81BR\x92\x01=\xa3\x15\xab\xafm" +
+	"\xb8^\x05\xbaY\xb4\xef9\xfc\xfd\xec\xd5\xdb\xf4\x1f\xd6" +
+	"\xe7or\x1f\xcaAv[\xf6Ke\xf9\x10;\xfd\xbb" +
+	"\xeb\xceXey\xecGg\x0c\x9c\xd4\xe3\x12\x1f\xc3\x88" +
+	"\xc4HU\x17\xd5W\xae\xdc\x0a/\x80\xd2\x8b\xf5\x8a\x8c" +
+	"\xc4\xcd,H\xcc\xccXt\xfar\xfc\x89}\xbf4\xeb" +
+	"\xfaZ\xe2\xba\xe6y\x8b\xfc\xb7[\xaa\x9f\x17\xa7\xfe\x04" +
+	"e+\x0a5\xaa\x18\xe4\x93\x0c\x05\x8b\xf0\x83\xad\xe7\xb2" +
+	"\xeah\xe6\xb9\x82O\xdbmZ9C\xdbm\xa8\xe9\xcc" +
+	"\xe9])5\xaf\xe7\x1fM\xf2s:\xa7k}\x89\xa8" +
+	"j\xa8Y\xb3\xbd~\xd4\xc8\xa4k\xe5\x07\xd9\xb1hd" +
+	",\xad/\xa1\x86Y\xb9\"\x89>\x00\x1f\x02\xd0\x1d\x11" +
+	"\x00\xa5ODe\x8f\x80\x14\xb1\x87)\xa2;\x87\x01\x94" +
+	"\xed\"*\xfb\x04\x143:\x86@\xc0\x10\xe0XV\xb3" +
+	"\x8cL\xca\xc4n\x10\xb0\x1b\xb0\x1d\xf5\xa4V\xaa\x81>" +
+	"\xa5\x95\xea\x98\x86*v\x80\xd9\xef\x89\x19\xce\xab\xd6\xf1" +
+	"\xd5\x01[e:\xa6\xa8\x06\xf14\xa5\xddD\x87\xe2P" +
+	"Bm\xb5\xa5\xd7\x8b\xe2@\x83\"9\xa9\x95\\Z\xd1" +
+	"\xe7\xd5S\x05\xcde\xdc\x0e\x9b\xca\xe9\xa6\xa5\xeaV\x0d" +
+	"\xf9\xc9\xdaOH *\x92\xe8\x07\xa8?\x18\xd4o\xde" +
+	"-\x0e\xbeq\xf4u\xbaw\x00\x04\xba\x8d \xd6\xd7\x07" +
+	"\xddm\xa1\x9b\xfaA\xa0!\x12\xe5\xe4\xe3\x18f\xa2\xe3" +
+	"\x98\xc0\x06\xb4\xd0:\x90(\x9fH\x03\xd0\x8d\x12/@" +
+	"w\x8d\xd0}\xa5\x1d\x00\xfa\xd7\xd0\xea=\x98\xcen%" +
+	"53\\8e\x99\x8a\xaf>\x9e\x10\x1b\x8f$\xa2\xd2" +
+	"# \xc9\x15\xac6\xef\xc5U\x1eH\x93\xe7n\xdcz" +
+	"Y\xe0\x06)\x82\x9b\x05k[\xb0\xca\x12\xb8\xc2\xd5," +
+	"\x9a\xed\xf4Z_$\x9en\x10t3\xdb\x8b\xa0\xfb/" +
+	"\x82n\x18\xad\x87\xa0\xe7\xd2\xfc\x1f\x97\xd7J\xa7\xe4\x90" +
+	"f\xf2\x9e\xde\x8b\xe5\xb9WM8\xd1gs\x05=\x8d" +
+	"\x08\x02\"\xac\xe3\xad\xad\xcc\xba&=\x91\x86\x9e\xa6\x88" +
+	"\xe9h\x82I\xa6D\\)e\xa09#\xe2\xedZj" +
+	"\xb9\xd0\x05\x02v\xb5\xaa\xf9/\x00\x00\xff\xffX\"=" +
+	"\x9b"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -410,24 +507,19 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x8184976ded3c974e,
 			0x8b2a68e19c111ac0,
 			0x9b51f810d340c4cf,
-			0x9f121c82bed21c47,
 			0xa1427acd498114b6,
-			0xa255c7daf18803f0,
 			0xa32c90c355cc8c09,
-			0xa837f047051db1c8,
 			0xa9b15aea598ce5aa,
-			0xaaba8258942d9f12,
 			0xabd0aec8491cb8ba,
+			0xad1de917d9b0b5ae,
+			0xbf4797ed2cbc65b9,
 			0xc6618673c2949b62,
-			0xcd53e97d9c1943e9,
-			0xd426bc78ae7e15ff,
+			0xd29236e3705f0bc1,
 			0xd5ab1698d577655d,
 			0xdf7ff8cd7fbf2e00,
-			0xe15b71ee29bec4d7,
-			0xe36a9d22ddb12c38,
 			0xe40fb69e8e61ebd5,
 			0xe6343e409cc41f2c,
-			0xed70dd53be851d5a,
+			0xf4c277cbd51dd470,
 		},
 		Compressed: true,
 	})

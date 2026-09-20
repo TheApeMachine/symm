@@ -11,103 +11,6 @@ import (
 	context "context"
 )
 
-type WireWSJSONMessage capnp.Struct
-
-// WireWSJSONMessage_TypeID is the unique identifier for the type WireWSJSONMessage.
-const WireWSJSONMessage_TypeID = 0xb5784252ea16083e
-
-func NewWireWSJSONMessage(s *capnp.Segment) (WireWSJSONMessage, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireWSJSONMessage(st), err
-}
-
-func NewRootWireWSJSONMessage(s *capnp.Segment) (WireWSJSONMessage, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireWSJSONMessage(st), err
-}
-
-func ReadRootWireWSJSONMessage(msg *capnp.Message) (WireWSJSONMessage, error) {
-	root, err := msg.Root()
-	return WireWSJSONMessage(root.Struct()), err
-}
-
-func (s WireWSJSONMessage) String() string {
-	str, _ := text.Marshal(0xb5784252ea16083e, capnp.Struct(s))
-	return str
-}
-
-func (s WireWSJSONMessage) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWSJSONMessage) DecodeFromPtr(p capnp.Ptr) WireWSJSONMessage {
-	return WireWSJSONMessage(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWSJSONMessage) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWSJSONMessage) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWSJSONMessage) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWSJSONMessage) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWSJSONMessage) Type() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s WireWSJSONMessage) HasType() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWSJSONMessage) TypeBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s WireWSJSONMessage) SetType(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s WireWSJSONMessage) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
-}
-
-func (s WireWSJSONMessage) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireWSJSONMessage) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
-}
-
-// WireWSJSONMessage_List is a list of WireWSJSONMessage.
-type WireWSJSONMessage_List = capnp.StructList[WireWSJSONMessage]
-
-// NewWireWSJSONMessage creates a new list of WireWSJSONMessage.
-func NewWireWSJSONMessage_List(s *capnp.Segment, sz int32) (WireWSJSONMessage_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireWSJSONMessage](l), err
-}
-
-// WireWSJSONMessage_Future is a wrapper for a WireWSJSONMessage promised by a client call.
-type WireWSJSONMessage_Future struct{ *capnp.Future }
-
-func (f WireWSJSONMessage_Future) Struct() (WireWSJSONMessage, error) {
-	p, err := f.Future.Ptr()
-	return WireWSJSONMessage(p.Struct()), err
-}
-func (p WireWSJSONMessage_Future) Payload() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
-
 type WSJSONMessage capnp.Client
 
 // WSJSONMessage_TypeID is the unique identifier for the type WSJSONMessage.
@@ -305,7 +208,7 @@ func (c WSJSONMessage_done) Args() WSJSONMessage_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WSJSONMessage_done) AllocResults() (WSJSONMessage_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSJSONMessage_done_Results(r), err
 }
 
@@ -365,28 +268,17 @@ func (s WSJSONMessage_write_Params) Message() *capnp.Message {
 func (s WSJSONMessage_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WSJSONMessage_write_Params) Payload() (WireWSJSONMessage, error) {
+func (s WSJSONMessage_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWSJSONMessage(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WSJSONMessage_write_Params) HasPayload() bool {
+func (s WSJSONMessage_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WSJSONMessage_write_Params) SetPayload(v WireWSJSONMessage) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireWSJSONMessage struct, preferring placement in s's segment.
-func (s WSJSONMessage_write_Params) NewPayload() (WireWSJSONMessage, error) {
-	ss, err := NewWireWSJSONMessage(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWSJSONMessage{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WSJSONMessage_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // WSJSONMessage_write_Params_List is a list of WSJSONMessage_write_Params.
@@ -404,9 +296,6 @@ type WSJSONMessage_write_Params_Future struct{ *capnp.Future }
 func (f WSJSONMessage_write_Params_Future) Struct() (WSJSONMessage_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WSJSONMessage_write_Params(p.Struct()), err
-}
-func (p WSJSONMessage_write_Params_Future) Payload() WireWSJSONMessage_Future {
-	return WireWSJSONMessage_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WSJSONMessage_done_Params capnp.Struct
@@ -480,12 +369,12 @@ type WSJSONMessage_done_Results capnp.Struct
 const WSJSONMessage_done_Results_TypeID = 0xe8b7e0b110a3c524
 
 func NewWSJSONMessage_done_Results(s *capnp.Segment) (WSJSONMessage_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSJSONMessage_done_Results(st), err
 }
 
 func NewRootWSJSONMessage_done_Results(s *capnp.Segment) (WSJSONMessage_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSJSONMessage_done_Results(st), err
 }
 
@@ -521,13 +410,25 @@ func (s WSJSONMessage_done_Results) Message() *capnp.Message {
 func (s WSJSONMessage_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WSJSONMessage_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WSJSONMessage_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WSJSONMessage_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WSJSONMessage_done_Results_List is a list of WSJSONMessage_done_Results.
 type WSJSONMessage_done_Results_List = capnp.StructList[WSJSONMessage_done_Results]
 
 // NewWSJSONMessage_done_Results creates a new list of WSJSONMessage_done_Results.
 func NewWSJSONMessage_done_Results_List(s *capnp.Segment, sz int32) (WSJSONMessage_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WSJSONMessage_done_Results](l), err
 }
 

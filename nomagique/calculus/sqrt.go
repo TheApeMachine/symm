@@ -4,31 +4,41 @@ import (
 	"context"
 	"math"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type SqrtServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *SqrtServer) Write(ctx context.Context, call Sqrt_write) error {
-	a := call.Args().A()
-	result := math.Sqrt(a)
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
+func (srv *SqrtServer) Write(ctx context.Context, call Sqrt_write) error {
+	inVal := call.Args().In()
+
+	if inVal < 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: sqrt of negative value",
+			nil,
+		))
 	}
+
+	srv.out = math.Sqrt(inVal)
 	return nil
 }
 
-func (s *SqrtServer) Done(ctx context.Context, call Sqrt_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *SqrtServer) Done(ctx context.Context, call Sqrt_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc sqrt results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

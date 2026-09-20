@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireWSBatch capnp.Struct
-
-// WireWSBatch_TypeID is the unique identifier for the type WireWSBatch.
-const WireWSBatch_TypeID = 0x82cfeffa85a15e70
-
-func NewWireWSBatch(s *capnp.Segment) (WireWSBatch, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSBatch(st), err
-}
-
-func NewRootWireWSBatch(s *capnp.Segment) (WireWSBatch, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSBatch(st), err
-}
-
-func ReadRootWireWSBatch(msg *capnp.Message) (WireWSBatch, error) {
-	root, err := msg.Root()
-	return WireWSBatch(root.Struct()), err
-}
-
-func (s WireWSBatch) String() string {
-	str, _ := text.Marshal(0x82cfeffa85a15e70, capnp.Struct(s))
-	return str
-}
-
-func (s WireWSBatch) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWSBatch) DecodeFromPtr(p capnp.Ptr) WireWSBatch {
-	return WireWSBatch(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWSBatch) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWSBatch) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWSBatch) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWSBatch) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWSBatch) Messages() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireWSBatch) HasMessages() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWSBatch) SetMessages(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireWSBatch_List is a list of WireWSBatch.
-type WireWSBatch_List = capnp.StructList[WireWSBatch]
-
-// NewWireWSBatch creates a new list of WireWSBatch.
-func NewWireWSBatch_List(s *capnp.Segment, sz int32) (WireWSBatch_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireWSBatch](l), err
-}
-
-// WireWSBatch_Future is a wrapper for a WireWSBatch promised by a client call.
-type WireWSBatch_Future struct{ *capnp.Future }
-
-func (f WireWSBatch_Future) Struct() (WireWSBatch, error) {
-	p, err := f.Future.Ptr()
-	return WireWSBatch(p.Struct()), err
-}
-func (p WireWSBatch_Future) Messages() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type WSBatch capnp.Client
 
 // WSBatch_TypeID is the unique identifier for the type WSBatch.
@@ -287,7 +208,7 @@ func (c WSBatch_done) Args() WSBatch_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WSBatch_done) AllocResults() (WSBatch_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSBatch_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s WSBatch_write_Params) Message() *capnp.Message {
 func (s WSBatch_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WSBatch_write_Params) Payload() (WireWSBatch, error) {
+func (s WSBatch_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWSBatch(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WSBatch_write_Params) HasPayload() bool {
+func (s WSBatch_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WSBatch_write_Params) SetPayload(v WireWSBatch) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireWSBatch struct, preferring placement in s's segment.
-func (s WSBatch_write_Params) NewPayload() (WireWSBatch, error) {
-	ss, err := NewWireWSBatch(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWSBatch{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WSBatch_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // WSBatch_write_Params_List is a list of WSBatch_write_Params.
@@ -386,9 +296,6 @@ type WSBatch_write_Params_Future struct{ *capnp.Future }
 func (f WSBatch_write_Params_Future) Struct() (WSBatch_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WSBatch_write_Params(p.Struct()), err
-}
-func (p WSBatch_write_Params_Future) Payload() WireWSBatch_Future {
-	return WireWSBatch_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WSBatch_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type WSBatch_done_Results capnp.Struct
 const WSBatch_done_Results_TypeID = 0x867f26c5ca3cf071
 
 func NewWSBatch_done_Results(s *capnp.Segment) (WSBatch_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSBatch_done_Results(st), err
 }
 
 func NewRootWSBatch_done_Results(s *capnp.Segment) (WSBatch_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSBatch_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s WSBatch_done_Results) Message() *capnp.Message {
 func (s WSBatch_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WSBatch_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WSBatch_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WSBatch_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WSBatch_done_Results_List is a list of WSBatch_done_Results.
 type WSBatch_done_Results_List = capnp.StructList[WSBatch_done_Results]
 
 // NewWSBatch_done_Results creates a new list of WSBatch_done_Results.
 func NewWSBatch_done_Results_List(s *capnp.Segment, sz int32) (WSBatch_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WSBatch_done_Results](l), err
 }
 

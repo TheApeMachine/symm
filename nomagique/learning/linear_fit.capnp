@@ -1,14 +1,9 @@
-@0xfb927e5bb5633aca;
-
 using Go = import "/go.capnp";
+@0xa4f8b2c1d3e5f7a9;
 $Go.package("learning");
 $Go.import("github.com/theapemachine/symm/nomagique/learning");
 
-struct LinearFitRow {
-  values @0 :List(Float64);
-}
-
 interface LinearFit {
-  write @0 (rows :List(LinearFitRow)) -> stream;
-  done @1 ();
+  write @0 (x :Float64, y :Float64) -> stream;
+  done @1 () -> (slope :Float64, intercept :Float64, r2 :Float64);
 }

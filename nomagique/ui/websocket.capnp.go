@@ -11,120 +11,6 @@ import (
 	context "context"
 )
 
-type WireWebSocketServer capnp.Struct
-
-// WireWebSocketServer_TypeID is the unique identifier for the type WireWebSocketServer.
-const WireWebSocketServer_TypeID = 0xc6a6a79947a75918
-
-func NewWireWebSocketServer(s *capnp.Segment) (WireWebSocketServer, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
-	return WireWebSocketServer(st), err
-}
-
-func NewRootWireWebSocketServer(s *capnp.Segment) (WireWebSocketServer, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
-	return WireWebSocketServer(st), err
-}
-
-func ReadRootWireWebSocketServer(msg *capnp.Message) (WireWebSocketServer, error) {
-	root, err := msg.Root()
-	return WireWebSocketServer(root.Struct()), err
-}
-
-func (s WireWebSocketServer) String() string {
-	str, _ := text.Marshal(0xc6a6a79947a75918, capnp.Struct(s))
-	return str
-}
-
-func (s WireWebSocketServer) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWebSocketServer) DecodeFromPtr(p capnp.Ptr) WireWebSocketServer {
-	return WireWebSocketServer(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWebSocketServer) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWebSocketServer) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWebSocketServer) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWebSocketServer) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWebSocketServer) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireWebSocketServer) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWebSocketServer) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireWebSocketServer) Addr() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireWebSocketServer) HasAddr() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireWebSocketServer) AddrBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireWebSocketServer) SetAddr(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-func (s WireWebSocketServer) Path() (string, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.Text(), err
-}
-
-func (s WireWebSocketServer) HasPath() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s WireWebSocketServer) PathBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.TextBytes(), err
-}
-
-func (s WireWebSocketServer) SetPath(v string) error {
-	return capnp.Struct(s).SetText(2, v)
-}
-
-// WireWebSocketServer_List is a list of WireWebSocketServer.
-type WireWebSocketServer_List = capnp.StructList[WireWebSocketServer]
-
-// NewWireWebSocketServer creates a new list of WireWebSocketServer.
-func NewWireWebSocketServer_List(s *capnp.Segment, sz int32) (WireWebSocketServer_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
-	return capnp.StructList[WireWebSocketServer](l), err
-}
-
-// WireWebSocketServer_Future is a wrapper for a WireWebSocketServer promised by a client call.
-type WireWebSocketServer_Future struct{ *capnp.Future }
-
-func (f WireWebSocketServer_Future) Struct() (WireWebSocketServer, error) {
-	p, err := f.Future.Ptr()
-	return WireWebSocketServer(p.Struct()), err
-}
-func (p WireWebSocketServer_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type WebSocketServer capnp.Client
 
 // WebSocketServer_TypeID is the unique identifier for the type WebSocketServer.
@@ -140,7 +26,7 @@ func (c WebSocketServer) Write(ctx context.Context, params func(WebSocketServer_
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(WebSocketServer_write_Params(s)) }
 	}
 
@@ -322,7 +208,7 @@ func (c WebSocketServer_done) Args() WebSocketServer_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WebSocketServer_done) AllocResults() (WebSocketServer_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WebSocketServer_done_Results(r), err
 }
 
@@ -341,12 +227,12 @@ type WebSocketServer_write_Params capnp.Struct
 const WebSocketServer_write_Params_TypeID = 0xe2cf10a1990f22cb
 
 func NewWebSocketServer_write_Params(s *capnp.Segment) (WebSocketServer_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return WebSocketServer_write_Params(st), err
 }
 
 func NewRootWebSocketServer_write_Params(s *capnp.Segment) (WebSocketServer_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return WebSocketServer_write_Params(st), err
 }
 
@@ -382,28 +268,53 @@ func (s WebSocketServer_write_Params) Message() *capnp.Message {
 func (s WebSocketServer_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WebSocketServer_write_Params) Server() (WireWebSocketServer, error) {
+func (s WebSocketServer_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWebSocketServer(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WebSocketServer_write_Params) HasServer() bool {
+func (s WebSocketServer_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WebSocketServer_write_Params) SetServer(v WireWebSocketServer) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s WebSocketServer_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewServer sets the server field to a newly
-// allocated WireWebSocketServer struct, preferring placement in s's segment.
-func (s WebSocketServer_write_Params) NewServer() (WireWebSocketServer, error) {
-	ss, err := NewWireWebSocketServer(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWebSocketServer{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WebSocketServer_write_Params) Addr() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s WebSocketServer_write_Params) HasAddr() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s WebSocketServer_write_Params) AddrBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s WebSocketServer_write_Params) SetAddr(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s WebSocketServer_write_Params) Path() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s WebSocketServer_write_Params) HasPath() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s WebSocketServer_write_Params) PathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s WebSocketServer_write_Params) SetPath(v string) error {
+	return capnp.Struct(s).SetText(2, v)
 }
 
 // WebSocketServer_write_Params_List is a list of WebSocketServer_write_Params.
@@ -411,7 +322,7 @@ type WebSocketServer_write_Params_List = capnp.StructList[WebSocketServer_write_
 
 // NewWebSocketServer_write_Params creates a new list of WebSocketServer_write_Params.
 func NewWebSocketServer_write_Params_List(s *capnp.Segment, sz int32) (WebSocketServer_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
 	return capnp.StructList[WebSocketServer_write_Params](l), err
 }
 
@@ -421,9 +332,6 @@ type WebSocketServer_write_Params_Future struct{ *capnp.Future }
 func (f WebSocketServer_write_Params_Future) Struct() (WebSocketServer_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WebSocketServer_write_Params(p.Struct()), err
-}
-func (p WebSocketServer_write_Params_Future) Server() WireWebSocketServer_Future {
-	return WireWebSocketServer_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WebSocketServer_done_Params capnp.Struct
@@ -497,12 +405,12 @@ type WebSocketServer_done_Results capnp.Struct
 const WebSocketServer_done_Results_TypeID = 0x9e4f0a317ef66736
 
 func NewWebSocketServer_done_Results(s *capnp.Segment) (WebSocketServer_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WebSocketServer_done_Results(st), err
 }
 
 func NewRootWebSocketServer_done_Results(s *capnp.Segment) (WebSocketServer_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WebSocketServer_done_Results(st), err
 }
 
@@ -538,13 +446,25 @@ func (s WebSocketServer_done_Results) Message() *capnp.Message {
 func (s WebSocketServer_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WebSocketServer_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WebSocketServer_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WebSocketServer_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WebSocketServer_done_Results_List is a list of WebSocketServer_done_Results.
 type WebSocketServer_done_Results_List = capnp.StructList[WebSocketServer_done_Results]
 
 // NewWebSocketServer_done_Results creates a new list of WebSocketServer_done_Results.
 func NewWebSocketServer_done_Results_List(s *capnp.Segment, sz int32) (WebSocketServer_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WebSocketServer_done_Results](l), err
 }
 

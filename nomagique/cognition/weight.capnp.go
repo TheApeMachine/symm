@@ -3,13 +3,12 @@
 package cognition
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
 )
 
 type Weight capnp.Client
@@ -209,7 +208,7 @@ func (c Weight_done) Args() Weight_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Weight_done) AllocResults() (Weight_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Weight_done_Results(r), err
 }
 
@@ -370,12 +369,12 @@ type Weight_done_Results capnp.Struct
 const Weight_done_Results_TypeID = 0xa3fece7f10e670a0
 
 func NewWeight_done_Results(s *capnp.Segment) (Weight_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Weight_done_Results(st), err
 }
 
 func NewRootWeight_done_Results(s *capnp.Segment) (Weight_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Weight_done_Results(st), err
 }
 
@@ -411,13 +410,36 @@ func (s Weight_done_Results) Message() *capnp.Message {
 func (s Weight_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Weight_done_Results) Count() uint64 {
+	return capnp.Struct(s).Uint64(0)
+}
+
+func (s Weight_done_Results) SetCount(v uint64) {
+	capnp.Struct(s).SetUint64(0, v)
+}
+
+func (s Weight_done_Results) Mass() uint64 {
+	return capnp.Struct(s).Uint64(8)
+}
+
+func (s Weight_done_Results) SetMass(v uint64) {
+	capnp.Struct(s).SetUint64(8, v)
+}
+
+func (s Weight_done_Results) WriteStep() uint64 {
+	return capnp.Struct(s).Uint64(16)
+}
+
+func (s Weight_done_Results) SetWriteStep(v uint64) {
+	capnp.Struct(s).SetUint64(16, v)
+}
 
 // Weight_done_Results_List is a list of Weight_done_Results.
 type Weight_done_Results_List = capnp.StructList[Weight_done_Results]
 
 // NewWeight_done_Results creates a new list of Weight_done_Results.
 func NewWeight_done_Results_List(s *capnp.Segment, sz int32) (Weight_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[Weight_done_Results](l), err
 }
 

@@ -3,11 +3,19 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("nomagique/data");
 
-struct WireSeries {
-  payload @0 :AnyPointer;
-}
-
 interface Series {
-  write @0 (series :WireSeries) -> stream;
-  done @1 ();
+  write @0 (
+    key :Text,
+    sec :Float64,
+    nsec :Float64,
+    value :Float64,
+    query :Bool
+  ) -> stream;
+  done @1 () -> (
+    key :Text,
+    sec :Float64,
+    nsec :Float64,
+    value :Float64,
+    found :Bool
+  );
 }

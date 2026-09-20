@@ -3,39 +3,43 @@ package calculus
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type SignServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *SignServer) Write(ctx context.Context, call Sign_write) error {
-	a := call.Args().A()
-	result := float64(0)
-	if a < 0 {
-		result = -1
+func (srv *SignServer) Write(ctx context.Context, call Sign_write) error {
+	inVal := call.Args().In()
+
+	if inVal < 0 {
+		srv.out = -1
+		return nil
 	}
 
-	if a > 0 {
-		result = 1
+	if inVal > 0 {
+		srv.out = 1
+		return nil
 	}
 
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = 0
 	return nil
 }
 
-func (s *SignServer) Done(ctx context.Context, call Sign_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *SignServer) Done(ctx context.Context, call Sign_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc sign results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

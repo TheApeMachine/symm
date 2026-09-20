@@ -13,92 +13,6 @@ import (
 	math "math"
 )
 
-type WireDecide capnp.Struct
-
-// WireDecide_TypeID is the unique identifier for the type WireDecide.
-const WireDecide_TypeID = 0xfa16d91720a65ab8
-
-func NewWireDecide(s *capnp.Segment) (WireDecide, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return WireDecide(st), err
-}
-
-func NewRootWireDecide(s *capnp.Segment) (WireDecide, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return WireDecide(st), err
-}
-
-func ReadRootWireDecide(msg *capnp.Message) (WireDecide, error) {
-	root, err := msg.Root()
-	return WireDecide(root.Struct()), err
-}
-
-func (s WireDecide) String() string {
-	str, _ := text.Marshal(0xfa16d91720a65ab8, capnp.Struct(s))
-	return str
-}
-
-func (s WireDecide) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireDecide) DecodeFromPtr(p capnp.Ptr) WireDecide {
-	return WireDecide(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireDecide) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireDecide) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireDecide) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireDecide) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireDecide) Eval() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireDecide) HasEval() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireDecide) SetEval(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireDecide) MinContrast() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
-}
-
-func (s WireDecide) SetMinContrast(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
-}
-
-// WireDecide_List is a list of WireDecide.
-type WireDecide_List = capnp.StructList[WireDecide]
-
-// NewWireDecide creates a new list of WireDecide.
-func NewWireDecide_List(s *capnp.Segment, sz int32) (WireDecide_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[WireDecide](l), err
-}
-
-// WireDecide_Future is a wrapper for a WireDecide promised by a client call.
-type WireDecide_Future struct{ *capnp.Future }
-
-func (f WireDecide_Future) Struct() (WireDecide, error) {
-	p, err := f.Future.Ptr()
-	return WireDecide(p.Struct()), err
-}
-func (p WireDecide_Future) Eval() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Decide capnp.Client
 
 // Decide_TypeID is the unique identifier for the type Decide.
@@ -114,7 +28,7 @@ func (c Decide) Write(ctx context.Context, params func(Decide_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Decide_write_Params(s)) }
 	}
 
@@ -296,7 +210,7 @@ func (c Decide_done) Args() Decide_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Decide_done) AllocResults() (Decide_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Decide_done_Results(r), err
 }
 
@@ -315,12 +229,12 @@ type Decide_write_Params capnp.Struct
 const Decide_write_Params_TypeID = 0xea7f4d510c70de85
 
 func NewDecide_write_Params(s *capnp.Segment) (Decide_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
 	return Decide_write_Params(st), err
 }
 
 func NewRootDecide_write_Params(s *capnp.Segment) (Decide_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
 	return Decide_write_Params(st), err
 }
 
@@ -356,28 +270,59 @@ func (s Decide_write_Params) Message() *capnp.Message {
 func (s Decide_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Decide_write_Params) Decide() (WireDecide, error) {
+func (s Decide_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireDecide(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Decide_write_Params) HasDecide() bool {
+func (s Decide_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Decide_write_Params) SetDecide(v WireDecide) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Decide_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewDecide sets the decide field to a newly
-// allocated WireDecide struct, preferring placement in s's segment.
-func (s Decide_write_Params) NewDecide() (WireDecide, error) {
-	ss, err := NewWireDecide(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireDecide{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Decide_write_Params) Winner() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Decide_write_Params) HasWinner() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Decide_write_Params) WinnerBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Decide_write_Params) SetWinner(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Decide_write_Params) Contrast() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Decide_write_Params) SetContrast(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Decide_write_Params) IsBreak() bool {
+	return capnp.Struct(s).Bit(64)
+}
+
+func (s Decide_write_Params) SetIsBreak(v bool) {
+	capnp.Struct(s).SetBit(64, v)
+}
+
+func (s Decide_write_Params) MinContrast() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Decide_write_Params) SetMinContrast(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
 // Decide_write_Params_List is a list of Decide_write_Params.
@@ -385,7 +330,7 @@ type Decide_write_Params_List = capnp.StructList[Decide_write_Params]
 
 // NewDecide_write_Params creates a new list of Decide_write_Params.
 func NewDecide_write_Params_List(s *capnp.Segment, sz int32) (Decide_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2}, sz)
 	return capnp.StructList[Decide_write_Params](l), err
 }
 
@@ -395,9 +340,6 @@ type Decide_write_Params_Future struct{ *capnp.Future }
 func (f Decide_write_Params_Future) Struct() (Decide_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Decide_write_Params(p.Struct()), err
-}
-func (p Decide_write_Params_Future) Decide() WireDecide_Future {
-	return WireDecide_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Decide_done_Params capnp.Struct
@@ -471,12 +413,12 @@ type Decide_done_Results capnp.Struct
 const Decide_done_Results_TypeID = 0xb5e19d4c30fba34b
 
 func NewDecide_done_Results(s *capnp.Segment) (Decide_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Decide_done_Results(st), err
 }
 
 func NewRootDecide_done_Results(s *capnp.Segment) (Decide_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Decide_done_Results(st), err
 }
 
@@ -512,13 +454,30 @@ func (s Decide_done_Results) Message() *capnp.Message {
 func (s Decide_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Decide_done_Results) Out() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s Decide_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Decide_done_Results) OutBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s Decide_done_Results) SetOut(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
 
 // Decide_done_Results_List is a list of Decide_done_Results.
 type Decide_done_Results_List = capnp.StructList[Decide_done_Results]
 
 // NewDecide_done_Results creates a new list of Decide_done_Results.
 func NewDecide_done_Results_List(s *capnp.Segment, sz int32) (Decide_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Decide_done_Results](l), err
 }
 
@@ -530,90 +489,100 @@ func (f Decide_done_Results_Future) Struct() (Decide_done_Results, error) {
 	return Decide_done_Results(p.Struct()), err
 }
 
-const schema_e9fc9395f4800f4b = "x\xda\x94U\x7fh\x1bu\x14\x7f\xef.w7\\K" +
-	"r\xb9\xe1t\xfe\x88\xd5\x88[]\xb7\xd6\xb4N&\xb5" +
-	"5\x9d\xce\xb2\x05s\x9d\"\x0cF\xb9$G9\xc9\x8f" +
-	"\xeerY\x9dN\xea\x06\xa5\xb0\xbf\xd4\xd1A\x85*\xa8" +
-	"\x15-:[\\\xc02\xa7E\x86\"\x05\x87\x8a\x7f\xb4" +
-	"\x16\xb5\x1b\xa2\xb3\x06\x86\xcc\x81Z\xbd\xf1\xfd^.w" +
-	"\x0b\xc9\xd2\xfcw\xf7}\xef}?\xef\xf3\xde\xe7\xbdo" +
-	"k\x81\xe9\xf6\xb45~x\x130\xf2\x11\x8e7O~" +
-	"\xea_\x1e^\xfd\xe3\x18\x88M\xac\xb9\xc7\xfb\xd2\x95\xb1" +
-	"\x13\xab\x97\x000\xd4\xc9\x85Q\x8ap\x02\x80\xd4\xcb\x8d" +
-	"J\xe3\xe4\xcb\xdc8\xb5r\xf4\xfd\xe9\x93\xaf\x83\xd8\x84" +
-	"\xe6\xd8\x95\x89\xfe?\x9f:1\x0d\x1c#\x00\x84\x8er" +
-	"1\x94\xc6h\xc0+\xdc\x10\xa0y\xa8\xe7\xec\xb3\xa6\xff" +
-	"\x8d\xf7@\xdc\x86\x00\x1e\xe2S\xe0\xbeE\xf0\xfc4{" +
-	"\xf9\xcc\x85\xf3\x9b\xa6\xc5\xcd\xf6\xf927\x85\xe01\xef" +
-	"\x9fk\xb9\xef\x8b\x11m\x06\xa8\x85Cb\xfa\x86\x98P" +
-	"Z\xe6\xba\x00M\xfd\x94~\xfb\xcb\xedw~\x04b\x80" +
-	"5;\x8e\x84\x1f\x9ej\x9a5I\xb6\xc8\xdf\x8d\x92\xc8" +
-	"\x13\xf0F~T:@\xbe\xcc=o\xfd\xdb\xbawb" +
-	"9\x0f\x0e\xd0c<\x05Z:;\xe9]]z\xf0\x0c" +
-	"\x88A4'\x02\xef\xbe\xc0\xf1\xf3\x85\"\x8f\x0e\xfeU" +
-	"\x94\"\xf4\xaa^\x9e\xf0(<\xb2\x92\xff|\xf5\xcbs" +
-	"\xb4D%\xd2\x80\xa1I>\x8cR\x9ez\xce\xf0\xa3\x12" +
-	"\x0a\x04t\xefU\xefm\xe3\xf7\xf0\xf3 \x06Y\xe7j" +
-	"\xc0\xd0%^G\xe9?\xea\xfd7?*\xf5R\xef\xd9" +
-	"\x81\x1fN\xef\x7fr\xe1;\x10\x03\xe8\x10\xb2\x98\xb7\x09" +
-	"a\x94\x1e%nR\xa7@\xd8\xc7\xce\x7f\xd2}\xbc#" +
-	"\xf3\xbd\x8b\xcf\x01\xe1M\xc2g\xeb\xdb_\xf9\xae\x06\x7f" +
-	"[\"|\x8a\x96\x88p\x9cXN/\xec\xb8\xf8\xbf\xd4" +
-	"\xff\xb3\xcb\xd2)\x1c#\x96\x83\xe7\x02\x0b-\x17\xe7~" +
-	"u\xb5g\x8b\xb0H,\xfe\xc5\xc8\xe3\x97\xbf\xfe\xabh" +
-	"\xb1\x92\xb9\x83\x98Pj\xa3\x89\x8c\xfc8\xd8 G\x86" +
-	"\x7fw\xf7\xe9i\x81\xf6I\xa5\x0e\x1f\xbc\xd8\xbe\xe3\xc2" +
-	"\xa9'V,T\xcba\x84$\x84\xd2\x18u\x98_\xea" +
-	"Y\xfc\xc5\xf7Y\xc1E%oQ\xf9x\xff;wm" +
-	"\\\xb8\xf9\x1f\x90\x9b\x10\x1dEZwL\x0a1\x94f" +
-	"iI\xf2\xc2\x10<o\xa63)e@;\x98\xf3\xa8" +
-	"\xdb\xd5\xe7\xd4x\xce\xd02\xe9\xed\x095\xae%\xd4m" +
-	"qe0=\xb8s\x17\xfd\x81(\xa2\xbc\x8e\xe5\x00J" +
-	"\xc9czfn(\xf4Z\xff\xb8\xd8\xf6\x000\xe2\xbd" +
-	"\x02:\x15F[:\xe2\xad\xcd\xc0\x88\x8dB`H\xd7" +
-	"\x0c\xb5\x1b\xbd\x89LZ\xed\xc6(be\xe8l.\x96" +
-	"\xd2\x8c\"\xf43\x9a\xae\xee\xcb\xc5\x84\x94fX\xf0\x1e" +
-	"\x00\x0f\x02\x88[v\x02\xc8A\x16\xe5V\x06E\xc4\x0d" +
-	"H\x0e[\xc8\xe1f\x16\xe5v\x06\xbb\x948\xb9\x0e\x1b" +
-	"\x80\xc1\x06\xc0\xae\xec\xe1T,\x93\xb4\x7fK\xd0\xbc\x1b" +
-	"ZW\x07rI\xc5\xc8\xe8E\xf4\xbe\xd2?\xc99\x18" +
-	"Ut%\x85\xd9R,W5\xed}\xd6\x0f\x8d\xeaS" +
-	"\xb3\xde\\\xd2\xa8#\x8c\x16*\x18U\xbc\xba\x92\xca\xca" +
-	"\x9e\x12\xe7FBo\x1d\x8b\xf2\x06\x06\xbb\xac@\xf49" +
-	"\x0b\x05\x10}.f\xac\x1bf@1\xecn\xee\x16\x14" +
-	"Cuzi\xeb\xacR/m\xe5\xa3=\x1ck\xe8%" +
-	"WCFk)Jy\x1f\x88\x0a\xec^\xa0^&\x84" +
-	"p\x0d!\x0c\x0f*\x87\x93\x19%\x81~`\xd0_]" +
-	"\x09\x9e\x1amq\xe9\xdf^\xb2\x95jf\x8f%\xd2\x0d" +
-	"\x0d\x9b\xa6\xeb\xd5\x7f%\x11\x06\xe8\x81\x93\x80\xbd^*" +
-	"%`\xbf\x19ho\xa7z\x13pi\x85\x14~\xb7b" +
-	"X\xb3_E\x88\xd7\xcfY\x9d:\x88*\xba\xa0\xa4\xaa" +
-	"\xc8\xc0-Z\xf2i+\x87\x08\x07\xa0\x14\xd3P3\x86" +
-	"\x0en\x16\xec\x80:F\x9e\xa2\xb1.\x9d\xaeq_\xd8" +
-	"#\xac+\xec\xf5#\xdc\x07 7\xb0(\xdf\xc2\xa0i" +
-	"\x87\x03\xea\xe8s\x1e\xd4\xb29\xaeY\xc85\xad\x0b+" +
-	"\x10}\xce\xe3p#\x98\xf2*:tRY\x007F" +
-	"\xb3\x83\xe1%Q\xe8s\x1e\xe4\x1b!T]\x97\xe5\x8a" +
-	"\xa8\xfe,\x11q\xeeR\xe3\x82\x96P\xcbVB\xb3\xb3" +
-	"\x12J\x1b!\x06 oeQ~\x88A\xafzHI" +
-	"\xda\xeb\xc0Li\xe9\x9eL\xda\xd0AP\xb2\x06\xae\x07" +
-	"\x06\xd7\x03^\x0b\x00\x00\xff\xff\xb7\xc5\x0d\x96"
+const schema_e9fc9395f4800f4b = "x\xda\xacVm\x88\x15e\x14>g\xde\xf9\xb8\xba\xf7" +
+	"\xb2\x8es\x7f\xd4\xf6q\xd1\xae\xb4Y~\xae\"\x18\xe4" +
+	"\xb2[V~\xe0\xbe\xbb\xf9[f\xef}\x93\xa9\x9d\xb9" +
+	"\xeb\xcc\xdc\xd6-eM\x94UQP\xd4h\xa3\xa5\xb0" +
+	"\x82\x14\x12\xa5\x84\xa4/\x09+DH\x0c\xfc\xa1H\xa5" +
+	"\x12i\xba`\xb1\x8a\xd1\xd6\xc4\x99\xbb3wv\xd5v" +
+	"\x85\xfe\xcd{\xee9\xe7}\xce9\xcfy\xde;\xfbS" +
+	"\xd6(\xcf\xc9\xac\x98\x00\x12\xefP\xd4\xe0\x8d/'_" +
+	"\xe8\x19\xba\xb6\x11\xf4),XZ\xbbap\xef\xee\xa1" +
+	"+\x00\xd8\xb0CnB\xa3_\xd6\x00\x8c>\xb9\xd7\xb8" +
+	"B_\xc1+\xcd_\xbc\x14L~g?\xe83\x11\x80" +
+	"L\x0d\xa7\xe5\x1f\x10\xe4\x9f\x8e^\xff\xec\xe2\xa9\xbaC" +
+	"\xbc\x1e\x11@\x09\x7f\xf9F>\x80\x80\x0dg\xe4\x1c\x02" +
+	"\x06\x8f\x1f\x9b\xf1\xe8\xb7\x9b\xad\xc3\xa0\xd7\x93\x87D\x1e" +
+	"W\x14\xf20\xfeT\xba\x00\x03\xf7\xa0\xfb\xe0\xcey\x0f" +
+	"\x7f\x0cz\x8e\x05\xf3\xd75=y`\xca\xd1\x80\x90\xac" +
+	"T\xa7\xa2!TBb\xaa\xbd\xc6a\xfa\x0a\x96\xbe\xf7" +
+	"\xd7\xece\xfd\x17\x8e\x0c\xa7CJ\xd7\xa7\x86\xe9\xf6\xab" +
+	"\x8b\x00\x83\x81\xa7\xae\x1e\xf9z\xe8\xbb\xe3aa{\x07" +
+	"\xfbW\xfd\xf1\xc2\xeeC\x94\xee\x84\xda\x84\xc6\xd90\xdd" +
+	"\x19\xb5\xd7\x98\xa6Q\xbae7k\x1f\xe8{D=\x09" +
+	"z\x9e\x05\xfd\xb9\x0f_S\xd4\x93\x03\xe4\x9d\xd1\\4" +
+	"\xa6\x90\x8f\xf1\x90\xd6k\xd8\xa1w\xfb\xa9\xcf\x1b\xb7\xcd" +
+	"/\x9d\xa9\\\x1e\x16\xbbR\xdb\x87 \x07O\xbc\x7fb" +
+	"\xd2\xcd\xfc\xe5\xf3\xa0\xe7cX\xcfh\xdb\x08\xd6J\x8d" +
+	"`}rv\xc1\xa5\x7f\x8cU?W\x1c\xc2\xd0\xb2\xb6" +
+	"\x91B\xd7\x1c\xcf\x9d\x9dq\xe9\xd8\xaf\xc0g\xa2\x1c\xc5" +
+	"\x9a\xda9\xeaaY\x0b{8\xf9\xdc\xf2\xc5\xd7\xbf\xbf" +
+	"\x11\xba0\x00\x85\x8ah\xd8\x95\x0a]>H\x05\xe4\xb2" +
+	"\xf9\xc7\xce4_\xde\xf3\x1b\xf0\xfa\xd0%\xec\xf3\xfe\x89" +
+	"\xe1$\x8eN\x0c\xb3|\xb4~\xde\x82\x8b\x07\x9f\xbb\x9a" +
+	"\xc4x\xba&\xc4x\xa1\x860\x9e<\xdf|\xee\x97I" +
+	"_\x0d$\xca\xc3\xf4>\x84\xf5\x81S\xb2\xcd\xd5\xd6\x9a" +
+	"\xb2,f\x89\xb5\xa2P\xf6\xad\x923\xab(\x0aVQ" +
+	"\xcc,\x98\x9dN\xe7\xc2\xa7\xc3\x03\xb4 \xf2\x14S\x00" +
+	"b@\xe8\x1c>\xd6\xd5\xf0\xd6\xaa>}\xce\\\x90\xf4" +
+	"i\x1ab\xdcG\x8c\xa6\xa9\xdf?\x1d$=\xa3\xe5\xba" +
+	"\\\xcb\x17\x8dX[,9\xa2\x11[\x10\xe3\xab\xd5\xe4" +
+	"\xd5\xaeX]\xee0\xfd\x92;|{k|\xa6\xc0|" +
+	"\x8b\xe9\x9a6zq\xac\x92\x8c\xf5\xca\xed\xb6\xe5\x0f\x07" +
+	"\xb6U\x0eaT\xab\xf0j\xcb\x1d\xbe\xc7\xb3L\x06\x90" +
+	"\x11@_?\x15\x80\xafe\xc87I\xa8#f\x89\xe4" +
+	"\xfa\xeb\x0b\x01\xf8:\x86|\x8b\x84\xba$eQ\x02\xd0" +
+	"7\x93q\x03C\xbe]B\x9d\xb1,\x0dA\xdfJ\xc6" +
+	"M\x0c\xf9N\x09Q\xce\xd2x\xf5\x1d\xad\x00|;C" +
+	"\xfe\xa6\x84Z\xa9\xecc\x06$\xcc\x00.\xf2\xba\xed\xf6" +
+	"R\x07\xa6A\xc24\xe0\"\xb3@h\xe3\xa3\xe7\x9b~" +
+	"\xd9\x8b\x8e\x81o\xd9\xc2\xf3M\x1b\xb0\x13\x15\x90P\x01" +
+	"\x1c\x7f\xb5a\x93\xf3-f\xadk\xda\x1eO\xc5\xd5>" +
+	"Fp\xf3\x0c\xf9\xecD\xb53\xc8X\xcf\x90\xcf\x93n" +
+	"\x075\x02r\x0c\x80%\x01\xac6\xfd\x88#\xcfj\xa6" +
+	"/\xaa\x0c\x89\xf8x'\x86D\xeb\x82\xd1b\x8d\x83!" +
+	"\xca\x18\xe4\x1c5e9\xae;CSN1\xe4\xd9\xe1" +
+	"\x91\x8c.H\x1e\xa3\xa3\x09\xdaGrw\xa7\xa2\xa2\xfd" +
+	"\xc2P4\xa1\xee\xd08\x8a\x92\xc7\xa2}.4T\x01" +
+	"DZq'\x00\x91\x8cc\xa49\xff[W[LW" +
+	"3\xed\xbbl\\\x92\x02\xf4\x19\xcd\x81\xc6\x00p/\x83" +
+	"H\x8f\x996\\}\x0f\xa2\x80{\x10\x8d\x10\x10\x1b\xb9" +
+	"\xfe\x0b\xab\xeb\x1fo\xff\x92\xc4\xa2KX\xd9\xfe\xads" +
+	"\xab\x8b\xae3\xa9\xb2\xfd;\x96T7]\x97Ye\xfd" +
+	"\xf7\x92q\x0fC\xfe\xaet\xdb\xfe\xac)\x9b\x8eo\xf9" +
+	"\xdd\x00\x805 a\x0d`\xae\xdd\xf4,/:\x05\xc2" +
+	"\xf1\xdd\xee\xc5B$<\x02W\x98\x1d\xd6\xab\xa2\x98\xb4" +
+	"\xdd\xa3hF\x82\xe0\x9a\xcc\xf6x>\xae\x7f\xa0\x0e\x80" +
+	"_f\xc8\x07\x13\x82\xf0{\x13\x00\xbf\xc6\x90\xdfJ\xc8" +
+	"\xdf\x0d\x17\x80\x0f2l\xc5\x84\xfc\xfd=\x1d\x80\xdfb" +
+	"\xd8&c\xac\x7f\x06\"5u\x88a[\x8a|\x15\xcc" +
+	"\xa2\x02`(\xd8\x04\xd0\x8a\x0c\xdb\xd2dV\xa5,\xaa" +
+	"\x00\xc6\x04\x9c\x0a\xd0&\x93}\x12\xd959K\xef\x96" +
+	"\x91\xa1,m)\xb2g\xc9\x9eR\xb2\x98\x020\xf4\xd0" +
+	"\x9e&\xfb}(!\xb3\x8aQw{JnQ\xb8\xcf" +
+	"\xc7\xe7\xa0\xd0a\x09\xc7_\xe1Bn\x84\xbd\xd6\xb3\x8a" +
+	"\"V\xb8B\xd9\xe6~w\xd4\xd7\x9eB\xd9n.y" +
+	"~t\xd6^\x14\"\xfa\x1e\xa5\xd0w\xd3\xc61\xd7i" +
+	"\xa48'\xb8X7\xc6S\x84\xd1K\xb4$\xc9\xc5\xc6" +
+	"a.\xd2\xd0\xb60\xe4{\x88\x8bR\x85\x8b\xbb\xda\x01" +
+	"\xf8N\x86\xfcm\xea\x94\x13\xbfD]\x96\xe3\x08\xb7\xda" +
+	"\xa8\x92\xe3\xbb\xa6\xe7'\x08\xd6cyM\xae0_F" +
+	"\x04\x09\xe9\xbf\x85m9\xcd\xe4\x06\x9aYm\xcf\xf8\xd4" +
+	"\xa0J>{\x94\x1a\xd4U\xd5\x80\xe0\xfdg+\xef\xfa" +
+	"\xaa\x0f+\xd3\xbf\x01\x00\x00\xff\xffS:\xe6\xe0"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
 		String: schema_e9fc9395f4800f4b,
 		Nodes: []uint64{
 			0x82ecfc7fe112be96,
-			0x9e96b0ac81ebaa17,
 			0xa99f12ff6abd4376,
 			0xb01a00cfe2bbf0b9,
 			0xb16985c6272dc02b,
 			0xb31e34901c72ae72,
 			0xb5e19d4c30fba34b,
-			0xbb36dcfc0fa5bddc,
 			0xc4c7fcc2b5eb3eed,
 			0xcb0623991b0ff64c,
-			0xd3d94f5ab4db67b9,
 			0xd56f358a40bccf62,
 			0xdce824f610c9a42c,
 			0xe05f13fee337d9b4,
@@ -622,7 +591,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xea7f4d510c70de85,
 			0xeb48aee237347dad,
 			0xedbf10e5da43dccb,
-			0xfa16d91720a65ab8,
 		},
 		Compressed: true,
 	})

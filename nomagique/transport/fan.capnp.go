@@ -11,99 +11,6 @@ import (
 	context "context"
 )
 
-type WireFan capnp.Struct
-
-// WireFan_TypeID is the unique identifier for the type WireFan.
-const WireFan_TypeID = 0xfe0ac0b4b5b5e5b6
-
-func NewWireFan(s *capnp.Segment) (WireFan, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireFan(st), err
-}
-
-func NewRootWireFan(s *capnp.Segment) (WireFan, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireFan(st), err
-}
-
-func ReadRootWireFan(msg *capnp.Message) (WireFan, error) {
-	root, err := msg.Root()
-	return WireFan(root.Struct()), err
-}
-
-func (s WireFan) String() string {
-	str, _ := text.Marshal(0xfe0ac0b4b5b5e5b6, capnp.Struct(s))
-	return str
-}
-
-func (s WireFan) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireFan) DecodeFromPtr(p capnp.Ptr) WireFan {
-	return WireFan(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireFan) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireFan) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireFan) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireFan) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireFan) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireFan) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireFan) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireFan) Branches() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
-}
-
-func (s WireFan) HasBranches() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireFan) SetBranches(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
-}
-
-// WireFan_List is a list of WireFan.
-type WireFan_List = capnp.StructList[WireFan]
-
-// NewWireFan creates a new list of WireFan.
-func NewWireFan_List(s *capnp.Segment, sz int32) (WireFan_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireFan](l), err
-}
-
-// WireFan_Future is a wrapper for a WireFan promised by a client call.
-type WireFan_Future struct{ *capnp.Future }
-
-func (f WireFan_Future) Struct() (WireFan, error) {
-	p, err := f.Future.Ptr()
-	return WireFan(p.Struct()), err
-}
-func (p WireFan_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-func (p WireFan_Future) Branches() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
-
 type Fan capnp.Client
 
 // Fan_TypeID is the unique identifier for the type Fan.
@@ -301,7 +208,7 @@ func (c Fan_done) Args() Fan_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Fan_done) AllocResults() (Fan_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Fan_done_Results(r), err
 }
 
@@ -361,28 +268,17 @@ func (s Fan_write_Params) Message() *capnp.Message {
 func (s Fan_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Fan_write_Params) Payload() (WireFan, error) {
+func (s Fan_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireFan(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Fan_write_Params) HasPayload() bool {
+func (s Fan_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Fan_write_Params) SetPayload(v WireFan) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireFan struct, preferring placement in s's segment.
-func (s Fan_write_Params) NewPayload() (WireFan, error) {
-	ss, err := NewWireFan(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireFan{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Fan_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Fan_write_Params_List is a list of Fan_write_Params.
@@ -400,9 +296,6 @@ type Fan_write_Params_Future struct{ *capnp.Future }
 func (f Fan_write_Params_Future) Struct() (Fan_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Fan_write_Params(p.Struct()), err
-}
-func (p Fan_write_Params_Future) Payload() WireFan_Future {
-	return WireFan_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Fan_done_Params capnp.Struct
@@ -476,12 +369,12 @@ type Fan_done_Results capnp.Struct
 const Fan_done_Results_TypeID = 0xda8d0b81662df0db
 
 func NewFan_done_Results(s *capnp.Segment) (Fan_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Fan_done_Results(st), err
 }
 
 func NewRootFan_done_Results(s *capnp.Segment) (Fan_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Fan_done_Results(st), err
 }
 
@@ -517,13 +410,25 @@ func (s Fan_done_Results) Message() *capnp.Message {
 func (s Fan_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Fan_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Fan_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Fan_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Fan_done_Results_List is a list of Fan_done_Results.
 type Fan_done_Results_List = capnp.StructList[Fan_done_Results]
 
 // NewFan_done_Results creates a new list of Fan_done_Results.
 func NewFan_done_Results_List(s *capnp.Segment, sz int32) (Fan_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Fan_done_Results](l), err
 }
 

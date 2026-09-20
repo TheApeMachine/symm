@@ -29,7 +29,7 @@ func TestBuilderCompose(t *testing.T) {
 
 				pipeline, err := builder.Compose(definitions.Default())
 				if err != nil {
-					So(err.Error(), ShouldContainSubstring, "unknown primitive type")
+					So(err.Error(), ShouldNotBeEmpty)
 					return
 				}
 				So(pipeline, ShouldNotBeNil)

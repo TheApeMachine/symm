@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireBuyRate capnp.Struct
-
-// WireBuyRate_TypeID is the unique identifier for the type WireBuyRate.
-const WireBuyRate_TypeID = 0x9478089bf2f666c5
-
-func NewWireBuyRate(s *capnp.Segment) (WireBuyRate, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBuyRate(st), err
-}
-
-func NewRootWireBuyRate(s *capnp.Segment) (WireBuyRate, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBuyRate(st), err
-}
-
-func ReadRootWireBuyRate(msg *capnp.Message) (WireBuyRate, error) {
-	root, err := msg.Root()
-	return WireBuyRate(root.Struct()), err
-}
-
-func (s WireBuyRate) String() string {
-	str, _ := text.Marshal(0x9478089bf2f666c5, capnp.Struct(s))
-	return str
-}
-
-func (s WireBuyRate) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireBuyRate) DecodeFromPtr(p capnp.Ptr) WireBuyRate {
-	return WireBuyRate(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireBuyRate) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireBuyRate) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireBuyRate) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireBuyRate) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireBuyRate) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireBuyRate) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireBuyRate) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireBuyRate_List is a list of WireBuyRate.
-type WireBuyRate_List = capnp.StructList[WireBuyRate]
-
-// NewWireBuyRate creates a new list of WireBuyRate.
-func NewWireBuyRate_List(s *capnp.Segment, sz int32) (WireBuyRate_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireBuyRate](l), err
-}
-
-// WireBuyRate_Future is a wrapper for a WireBuyRate promised by a client call.
-type WireBuyRate_Future struct{ *capnp.Future }
-
-func (f WireBuyRate_Future) Struct() (WireBuyRate, error) {
-	p, err := f.Future.Ptr()
-	return WireBuyRate(p.Struct()), err
-}
-func (p WireBuyRate_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type BuyRate capnp.Client
 
 // BuyRate_TypeID is the unique identifier for the type BuyRate.
-const BuyRate_TypeID = 0x8f05c2fd0d336943
+const BuyRate_TypeID = 0xe9d16d4f77ec3453
 
 func (c BuyRate) Write(ctx context.Context, params func(BuyRate_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0x8f05c2fd0d336943,
+			InterfaceID:   0xe9d16d4f77ec3453,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/buy_rate.capnp:BuyRate",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(BuyRate_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c BuyRate) Done(ctx context.Context, params func(BuyRate_done_Params) erro
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0x8f05c2fd0d336943,
+			InterfaceID:   0xe9d16d4f77ec3453,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/buy_rate.capnp:BuyRate",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func BuyRate_Methods(methods []server.Method, s BuyRate_Server) []server.Method 
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0x8f05c2fd0d336943,
+			InterfaceID:   0xe9d16d4f77ec3453,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/buy_rate.capnp:BuyRate",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func BuyRate_Methods(methods []server.Method, s BuyRate_Server) []server.Method 
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0x8f05c2fd0d336943,
+			InterfaceID:   0xe9d16d4f77ec3453,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/buy_rate.capnp:BuyRate",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c BuyRate_done) Args() BuyRate_done_Params {
 
 // AllocResults allocates the results struct.
 func (c BuyRate_done) AllocResults() (BuyRate_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyRate_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewBuyRate_List(s *capnp.Segment, sz int32) (BuyRate_List, error) {
 type BuyRate_write_Params capnp.Struct
 
 // BuyRate_write_Params_TypeID is the unique identifier for the type BuyRate_write_Params.
-const BuyRate_write_Params_TypeID = 0xd248aa8acd22b426
+const BuyRate_write_Params_TypeID = 0xb4d3f51a24686948
 
 func NewBuyRate_write_Params(s *capnp.Segment) (BuyRate_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyRate_write_Params(st), err
 }
 
 func NewRootBuyRate_write_Params(s *capnp.Segment) (BuyRate_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyRate_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootBuyRate_write_Params(msg *capnp.Message) (BuyRate_write_Params, err
 }
 
 func (s BuyRate_write_Params) String() string {
-	str, _ := text.Marshal(0xd248aa8acd22b426, capnp.Struct(s))
+	str, _ := text.Marshal(0xb4d3f51a24686948, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s BuyRate_write_Params) Message() *capnp.Message {
 func (s BuyRate_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BuyRate_write_Params) View() (WireBuyRate, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireBuyRate(p.Struct()), err
+func (s BuyRate_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s BuyRate_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BuyRate_write_Params) SetView(v WireBuyRate) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireBuyRate struct, preferring placement in s's segment.
-func (s BuyRate_write_Params) NewView() (WireBuyRate, error) {
-	ss, err := NewWireBuyRate(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireBuyRate{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s BuyRate_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // BuyRate_write_Params_List is a list of BuyRate_write_Params.
@@ -376,7 +282,7 @@ type BuyRate_write_Params_List = capnp.StructList[BuyRate_write_Params]
 
 // NewBuyRate_write_Params creates a new list of BuyRate_write_Params.
 func NewBuyRate_write_Params_List(s *capnp.Segment, sz int32) (BuyRate_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[BuyRate_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f BuyRate_write_Params_Future) Struct() (BuyRate_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return BuyRate_write_Params(p.Struct()), err
 }
-func (p BuyRate_write_Params_Future) View() WireBuyRate_Future {
-	return WireBuyRate_Future{Future: p.Future.Field(0, nil)}
-}
 
 type BuyRate_done_Params capnp.Struct
 
 // BuyRate_done_Params_TypeID is the unique identifier for the type BuyRate_done_Params.
-const BuyRate_done_Params_TypeID = 0xd06a0b0e2b8a95f9
+const BuyRate_done_Params_TypeID = 0xa1af3a0aeaa03a43
 
 func NewBuyRate_done_Params(s *capnp.Segment) (BuyRate_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootBuyRate_done_Params(msg *capnp.Message) (BuyRate_done_Params, error
 }
 
 func (s BuyRate_done_Params) String() string {
-	str, _ := text.Marshal(0xd06a0b0e2b8a95f9, capnp.Struct(s))
+	str, _ := text.Marshal(0xa1af3a0aeaa03a43, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f BuyRate_done_Params_Future) Struct() (BuyRate_done_Params, error) {
 type BuyRate_done_Results capnp.Struct
 
 // BuyRate_done_Results_TypeID is the unique identifier for the type BuyRate_done_Results.
-const BuyRate_done_Results_TypeID = 0xc3d44f3f7089cc36
+const BuyRate_done_Results_TypeID = 0xdac8ab9c138dffcd
 
 func NewBuyRate_done_Results(s *capnp.Segment) (BuyRate_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyRate_done_Results(st), err
 }
 
 func NewRootBuyRate_done_Results(s *capnp.Segment) (BuyRate_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyRate_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootBuyRate_done_Results(msg *capnp.Message) (BuyRate_done_Results, err
 }
 
 func (s BuyRate_done_Results) String() string {
-	str, _ := text.Marshal(0xc3d44f3f7089cc36, capnp.Struct(s))
+	str, _ := text.Marshal(0xdac8ab9c138dffcd, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s BuyRate_done_Results) Message() *capnp.Message {
 func (s BuyRate_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s BuyRate_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s BuyRate_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // BuyRate_done_Results_List is a list of BuyRate_done_Results.
 type BuyRate_done_Results_List = capnp.StructList[BuyRate_done_Results]
 
 // NewBuyRate_done_Results creates a new list of BuyRate_done_Results.
 func NewBuyRate_done_Results_List(s *capnp.Segment, sz int32) (BuyRate_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[BuyRate_done_Results](l), err
 }
 

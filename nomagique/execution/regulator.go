@@ -3,7 +3,6 @@ package execution
 import (
 	"context"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -39,8 +38,7 @@ type RegulatorServer struct {
 	fee    *decimal.Decimal
 
 	lastOrderID string
-
-	Downstream func(context.Context, *PositionState) error
+	current     *PositionState
 }
 
 func NewRegulator() *RegulatorServer {
@@ -56,45 +54,60 @@ func NewRegulator() *RegulatorServer {
 }
 
 func (s *RegulatorServer) Write(ctx context.Context, call Regulator_write) error {
-	args, err := call.Args().Regulator()
-	if err != nil {
-		return err
-	}
-
+	args := call.Args()
 	sym, err := args.Symbol()
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(errnie.Validation, "failed to read symbol", err))
 	}
 
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
+	id, _ := args.Id()
+	orderId, _ := args.OrderId()
+	clientOrderId, _ := args.ClientOrderId()
+	side, _ := args.Side()
+	status, _ := args.Status()
+
+	cumQty := decimal.NewFromFloat64(args.CumQty())
+	cumCost := decimal.NewFromFloat64(args.CumCost())
+	fee := decimal.NewFromFloat64(args.Fee())
+
+	report := &Fill{
+		ID:            id,
+		OrderID:       orderId,
+		ClientOrderID: clientOrderId,
+		Side:          side,
+		CumQty:        cumQty,
+		CumCost:       cumCost,
+		Fee:           fee,
+		Status:        status,
 	}
 
-	var report *Fill
-	if payloadPtr.IsValid() {
-		data := payloadPtr.Data()
-		if len(data) > 0 {
-			var parsed Fill
-			if err := sonic.Unmarshal(data, &parsed); err == nil {
-				report = &parsed
-			}
-		}
-	}
-
-	state := s.evaluate(sym, report)
-	if state == nil {
-		return nil
-	}
-
-	if s.Downstream == nil {
-		return nil
-	}
-
-	return s.Downstream(ctx, state)
+	s.current = s.evaluate(sym, report)
+	return nil
 }
 
 func (s *RegulatorServer) Done(ctx context.Context, call Regulator_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
+
+	if s.current != nil {
+		results.SetSymbol(s.current.Symbol)
+		if s.current.Quantity != nil {
+			results.SetQuantity(s.current.Quantity.Float64())
+		}
+		if s.current.Basis != nil {
+			results.SetBasis(s.current.Basis.Float64())
+		}
+		if s.current.EntryFee != nil {
+			results.SetEntryFee(s.current.EntryFee.Float64())
+		}
+		if s.current.Realized != nil {
+			results.SetRealized(s.current.Realized.Float64())
+		}
+	}
+
+	s.current = nil
 	return nil
 }
 

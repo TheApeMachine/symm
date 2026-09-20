@@ -11,88 +11,6 @@ import (
 	context "context"
 )
 
-type WireWSConnect capnp.Struct
-
-// WireWSConnect_TypeID is the unique identifier for the type WireWSConnect.
-const WireWSConnect_TypeID = 0xcb57e463124158e2
-
-func NewWireWSConnect(s *capnp.Segment) (WireWSConnect, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSConnect(st), err
-}
-
-func NewRootWireWSConnect(s *capnp.Segment) (WireWSConnect, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSConnect(st), err
-}
-
-func ReadRootWireWSConnect(msg *capnp.Message) (WireWSConnect, error) {
-	root, err := msg.Root()
-	return WireWSConnect(root.Struct()), err
-}
-
-func (s WireWSConnect) String() string {
-	str, _ := text.Marshal(0xcb57e463124158e2, capnp.Struct(s))
-	return str
-}
-
-func (s WireWSConnect) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWSConnect) DecodeFromPtr(p capnp.Ptr) WireWSConnect {
-	return WireWSConnect(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWSConnect) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWSConnect) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWSConnect) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWSConnect) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWSConnect) Url() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s WireWSConnect) HasUrl() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWSConnect) UrlBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s WireWSConnect) SetUrl(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-// WireWSConnect_List is a list of WireWSConnect.
-type WireWSConnect_List = capnp.StructList[WireWSConnect]
-
-// NewWireWSConnect creates a new list of WireWSConnect.
-func NewWireWSConnect_List(s *capnp.Segment, sz int32) (WireWSConnect_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireWSConnect](l), err
-}
-
-// WireWSConnect_Future is a wrapper for a WireWSConnect promised by a client call.
-type WireWSConnect_Future struct{ *capnp.Future }
-
-func (f WireWSConnect_Future) Struct() (WireWSConnect, error) {
-	p, err := f.Future.Ptr()
-	return WireWSConnect(p.Struct()), err
-}
-
 type WSConnect capnp.Client
 
 // WSConnect_TypeID is the unique identifier for the type WSConnect.
@@ -290,7 +208,7 @@ func (c WSConnect_done) Args() WSConnect_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WSConnect_done) AllocResults() (WSConnect_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSConnect_done_Results(r), err
 }
 
@@ -350,28 +268,17 @@ func (s WSConnect_write_Params) Message() *capnp.Message {
 func (s WSConnect_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WSConnect_write_Params) Payload() (WireWSConnect, error) {
+func (s WSConnect_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWSConnect(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WSConnect_write_Params) HasPayload() bool {
+func (s WSConnect_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WSConnect_write_Params) SetPayload(v WireWSConnect) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireWSConnect struct, preferring placement in s's segment.
-func (s WSConnect_write_Params) NewPayload() (WireWSConnect, error) {
-	ss, err := NewWireWSConnect(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWSConnect{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WSConnect_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // WSConnect_write_Params_List is a list of WSConnect_write_Params.
@@ -389,9 +296,6 @@ type WSConnect_write_Params_Future struct{ *capnp.Future }
 func (f WSConnect_write_Params_Future) Struct() (WSConnect_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WSConnect_write_Params(p.Struct()), err
-}
-func (p WSConnect_write_Params_Future) Payload() WireWSConnect_Future {
-	return WireWSConnect_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WSConnect_done_Params capnp.Struct
@@ -465,12 +369,12 @@ type WSConnect_done_Results capnp.Struct
 const WSConnect_done_Results_TypeID = 0xa57a7283a642744f
 
 func NewWSConnect_done_Results(s *capnp.Segment) (WSConnect_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSConnect_done_Results(st), err
 }
 
 func NewRootWSConnect_done_Results(s *capnp.Segment) (WSConnect_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSConnect_done_Results(st), err
 }
 
@@ -506,13 +410,25 @@ func (s WSConnect_done_Results) Message() *capnp.Message {
 func (s WSConnect_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WSConnect_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WSConnect_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WSConnect_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WSConnect_done_Results_List is a list of WSConnect_done_Results.
 type WSConnect_done_Results_List = capnp.StructList[WSConnect_done_Results]
 
 // NewWSConnect_done_Results creates a new list of WSConnect_done_Results.
 func NewWSConnect_done_Results_List(s *capnp.Segment, sz int32) (WSConnect_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WSConnect_done_Results](l), err
 }
 

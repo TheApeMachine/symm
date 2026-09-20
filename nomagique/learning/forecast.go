@@ -3,24 +3,29 @@ package learning
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 type ForecastServer struct {
-	DownstreamForecast func(context.Context, float64, float64, float64, float64) error
-	count              float64
-	mean               float64
-	m2                 float64
-	m3                 float64
-	m4                 float64
+	count float64
+	mean  float64
+	m2    float64
+	m3    float64
+	m4    float64
+
+	outMean     float64
+	outVariance float64
+	outSkewness float64
+	outKurtosis float64
+}
+
+func NewForecast() *ForecastServer {
+	return &ForecastServer{}
 }
 
 func (s *ForecastServer) Write(ctx context.Context, call Forecast_write) error {
-	return s.WriteParams(ctx, call.Args())
-}
-
-func (s *ForecastServer) WriteParams(ctx context.Context, callArgs Forecast_write_Params) error {
-	in := callArgs.In()
+	in := call.Args().In()
 	s.count++
 	n := s.count
 	delta := in - s.mean
@@ -40,21 +45,34 @@ func (s *ForecastServer) WriteParams(ctx context.Context, callArgs Forecast_writ
 	if n > core.Unit {
 		variance = s.m2 / (n - core.Unit)
 	}
+
 	if s.m2 > 0 {
 		skewness = (core.Unit * n * s.m3) / (s.m2 * s.m2)
 		kurtosis = (n * s.m4) / (s.m2 * s.m2)
 	}
 
-	if s.DownstreamForecast != nil {
-		return s.DownstreamForecast(ctx, s.mean, variance, skewness, kurtosis)
-	}
+	s.outMean = s.mean
+	s.outVariance = variance
+	s.outSkewness = skewness
+	s.outKurtosis = kurtosis
 	return nil
 }
 
 func (s *ForecastServer) Done(ctx context.Context, call Forecast_done) error {
-	return nil
-}
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
 
-func NewForecast() *ForecastServer {
-	return &ForecastServer{}
+	results.SetOut(s.outMean)
+	results.SetMean(s.outMean)
+	results.SetVariance(s.outVariance)
+	results.SetSkewness(s.outSkewness)
+	results.SetKurtosis(s.outKurtosis)
+
+	s.outMean = 0
+	s.outVariance = 0
+	s.outSkewness = 0
+	s.outKurtosis = 0
+	return nil
 }

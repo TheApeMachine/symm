@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("nomagique/data");
 
-using import "measurement.capnp".WireMeasurement;
-
 interface Equation {
-  write @0 (measurement :WireMeasurement) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

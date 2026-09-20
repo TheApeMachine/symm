@@ -9,24 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
 
 type LinearPrediction capnp.Client
 
 // LinearPrediction_TypeID is the unique identifier for the type LinearPrediction.
-const LinearPrediction_TypeID = 0xf6049a8bc687e4ea
+const LinearPrediction_TypeID = 0xe098674db0b0a388
 
 func (c LinearPrediction) Write(ctx context.Context, params func(LinearPrediction_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xf6049a8bc687e4ea,
+			InterfaceID:   0xe098674db0b0a388,
 			MethodID:      0,
 			InterfaceName: "nomagique/learning/linear_prediction.capnp:LinearPrediction",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(LinearPrediction_write_Params(s)) }
 	}
 
@@ -38,7 +39,7 @@ func (c LinearPrediction) Done(ctx context.Context, params func(LinearPrediction
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xf6049a8bc687e4ea,
+			InterfaceID:   0xe098674db0b0a388,
 			MethodID:      1,
 			InterfaceName: "nomagique/learning/linear_prediction.capnp:LinearPrediction",
 			MethodName:    "done",
@@ -153,7 +154,7 @@ func LinearPrediction_Methods(methods []server.Method, s LinearPrediction_Server
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xf6049a8bc687e4ea,
+			InterfaceID:   0xe098674db0b0a388,
 			MethodID:      0,
 			InterfaceName: "nomagique/learning/linear_prediction.capnp:LinearPrediction",
 			MethodName:    "write",
@@ -165,7 +166,7 @@ func LinearPrediction_Methods(methods []server.Method, s LinearPrediction_Server
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xf6049a8bc687e4ea,
+			InterfaceID:   0xe098674db0b0a388,
 			MethodID:      1,
 			InterfaceName: "nomagique/learning/linear_prediction.capnp:LinearPrediction",
 			MethodName:    "done",
@@ -208,7 +209,7 @@ func (c LinearPrediction_done) Args() LinearPrediction_done_Params {
 
 // AllocResults allocates the results struct.
 func (c LinearPrediction_done) AllocResults() (LinearPrediction_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return LinearPrediction_done_Results(r), err
 }
 
@@ -224,15 +225,15 @@ func NewLinearPrediction_List(s *capnp.Segment, sz int32) (LinearPrediction_List
 type LinearPrediction_write_Params capnp.Struct
 
 // LinearPrediction_write_Params_TypeID is the unique identifier for the type LinearPrediction_write_Params.
-const LinearPrediction_write_Params_TypeID = 0x889438e051444a10
+const LinearPrediction_write_Params_TypeID = 0xa6500df19e6fe8f0
 
 func NewLinearPrediction_write_Params(s *capnp.Segment) (LinearPrediction_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return LinearPrediction_write_Params(st), err
 }
 
 func NewRootLinearPrediction_write_Params(s *capnp.Segment) (LinearPrediction_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return LinearPrediction_write_Params(st), err
 }
 
@@ -242,7 +243,7 @@ func ReadRootLinearPrediction_write_Params(msg *capnp.Message) (LinearPrediction
 }
 
 func (s LinearPrediction_write_Params) String() string {
-	str, _ := text.Marshal(0x889438e051444a10, capnp.Struct(s))
+	str, _ := text.Marshal(0xa6500df19e6fe8f0, capnp.Struct(s))
 	return str
 }
 
@@ -268,51 +269,28 @@ func (s LinearPrediction_write_Params) Message() *capnp.Message {
 func (s LinearPrediction_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s LinearPrediction_write_Params) Coefficients() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
+func (s LinearPrediction_write_Params) X() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s LinearPrediction_write_Params) HasCoefficients() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s LinearPrediction_write_Params) SetX(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s LinearPrediction_write_Params) SetCoefficients(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s LinearPrediction_write_Params) Slope() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewCoefficients sets the coefficients field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s LinearPrediction_write_Params) NewCoefficients(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s LinearPrediction_write_Params) RawRow() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.Float64List(p.List()), err
+func (s LinearPrediction_write_Params) SetSlope(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s LinearPrediction_write_Params) HasRawRow() bool {
-	return capnp.Struct(s).HasPtr(1)
+func (s LinearPrediction_write_Params) Intercept() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-func (s LinearPrediction_write_Params) SetRawRow(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewRawRow sets the rawRow field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s LinearPrediction_write_Params) NewRawRow(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
+func (s LinearPrediction_write_Params) SetIntercept(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
 // LinearPrediction_write_Params_List is a list of LinearPrediction_write_Params.
@@ -320,7 +298,7 @@ type LinearPrediction_write_Params_List = capnp.StructList[LinearPrediction_writ
 
 // NewLinearPrediction_write_Params creates a new list of LinearPrediction_write_Params.
 func NewLinearPrediction_write_Params_List(s *capnp.Segment, sz int32) (LinearPrediction_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[LinearPrediction_write_Params](l), err
 }
 
@@ -335,7 +313,7 @@ func (f LinearPrediction_write_Params_Future) Struct() (LinearPrediction_write_P
 type LinearPrediction_done_Params capnp.Struct
 
 // LinearPrediction_done_Params_TypeID is the unique identifier for the type LinearPrediction_done_Params.
-const LinearPrediction_done_Params_TypeID = 0xcd2c781a506686d5
+const LinearPrediction_done_Params_TypeID = 0xdb585e34d5313052
 
 func NewLinearPrediction_done_Params(s *capnp.Segment) (LinearPrediction_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -353,7 +331,7 @@ func ReadRootLinearPrediction_done_Params(msg *capnp.Message) (LinearPrediction_
 }
 
 func (s LinearPrediction_done_Params) String() string {
-	str, _ := text.Marshal(0xcd2c781a506686d5, capnp.Struct(s))
+	str, _ := text.Marshal(0xdb585e34d5313052, capnp.Struct(s))
 	return str
 }
 
@@ -400,15 +378,15 @@ func (f LinearPrediction_done_Params_Future) Struct() (LinearPrediction_done_Par
 type LinearPrediction_done_Results capnp.Struct
 
 // LinearPrediction_done_Results_TypeID is the unique identifier for the type LinearPrediction_done_Results.
-const LinearPrediction_done_Results_TypeID = 0xef92384ba37126f8
+const LinearPrediction_done_Results_TypeID = 0xe76a48ce09999176
 
 func NewLinearPrediction_done_Results(s *capnp.Segment) (LinearPrediction_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return LinearPrediction_done_Results(st), err
 }
 
 func NewRootLinearPrediction_done_Results(s *capnp.Segment) (LinearPrediction_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return LinearPrediction_done_Results(st), err
 }
 
@@ -418,7 +396,7 @@ func ReadRootLinearPrediction_done_Results(msg *capnp.Message) (LinearPrediction
 }
 
 func (s LinearPrediction_done_Results) String() string {
-	str, _ := text.Marshal(0xef92384ba37126f8, capnp.Struct(s))
+	str, _ := text.Marshal(0xe76a48ce09999176, capnp.Struct(s))
 	return str
 }
 
@@ -444,13 +422,20 @@ func (s LinearPrediction_done_Results) Message() *capnp.Message {
 func (s LinearPrediction_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s LinearPrediction_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s LinearPrediction_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // LinearPrediction_done_Results_List is a list of LinearPrediction_done_Results.
 type LinearPrediction_done_Results_List = capnp.StructList[LinearPrediction_done_Results]
 
 // NewLinearPrediction_done_Results creates a new list of LinearPrediction_done_Results.
 func NewLinearPrediction_done_Results_List(s *capnp.Segment, sz int32) (LinearPrediction_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[LinearPrediction_done_Results](l), err
 }
 

@@ -12,109 +12,6 @@ import (
 	math "math"
 )
 
-type WireTaskLearnerInput capnp.Struct
-
-// WireTaskLearnerInput_TypeID is the unique identifier for the type WireTaskLearnerInput.
-const WireTaskLearnerInput_TypeID = 0xaa4abcd12c2b83c2
-
-func NewWireTaskLearnerInput(s *capnp.Segment) (WireTaskLearnerInput, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
-	return WireTaskLearnerInput(st), err
-}
-
-func NewRootWireTaskLearnerInput(s *capnp.Segment) (WireTaskLearnerInput, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
-	return WireTaskLearnerInput(st), err
-}
-
-func ReadRootWireTaskLearnerInput(msg *capnp.Message) (WireTaskLearnerInput, error) {
-	root, err := msg.Root()
-	return WireTaskLearnerInput(root.Struct()), err
-}
-
-func (s WireTaskLearnerInput) String() string {
-	str, _ := text.Marshal(0xaa4abcd12c2b83c2, capnp.Struct(s))
-	return str
-}
-
-func (s WireTaskLearnerInput) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireTaskLearnerInput) DecodeFromPtr(p capnp.Ptr) WireTaskLearnerInput {
-	return WireTaskLearnerInput(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireTaskLearnerInput) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireTaskLearnerInput) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireTaskLearnerInput) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireTaskLearnerInput) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireTaskLearnerInput) Features() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s WireTaskLearnerInput) HasFeatures() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireTaskLearnerInput) SetFeatures(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewFeatures sets the features field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s WireTaskLearnerInput) NewFeatures(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s WireTaskLearnerInput) Target() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
-}
-
-func (s WireTaskLearnerInput) SetTarget(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
-}
-
-func (s WireTaskLearnerInput) Observed() bool {
-	return capnp.Struct(s).Bit(64)
-}
-
-func (s WireTaskLearnerInput) SetObserved(v bool) {
-	capnp.Struct(s).SetBit(64, v)
-}
-
-// WireTaskLearnerInput_List is a list of WireTaskLearnerInput.
-type WireTaskLearnerInput_List = capnp.StructList[WireTaskLearnerInput]
-
-// NewWireTaskLearnerInput creates a new list of WireTaskLearnerInput.
-func NewWireTaskLearnerInput_List(s *capnp.Segment, sz int32) (WireTaskLearnerInput_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
-	return capnp.StructList[WireTaskLearnerInput](l), err
-}
-
-// WireTaskLearnerInput_Future is a wrapper for a WireTaskLearnerInput promised by a client call.
-type WireTaskLearnerInput_Future struct{ *capnp.Future }
-
-func (f WireTaskLearnerInput_Future) Struct() (WireTaskLearnerInput, error) {
-	p, err := f.Future.Ptr()
-	return WireTaskLearnerInput(p.Struct()), err
-}
-
 type TaskLearner capnp.Client
 
 // TaskLearner_TypeID is the unique identifier for the type TaskLearner.
@@ -130,7 +27,7 @@ func (c TaskLearner) Write(ctx context.Context, params func(TaskLearner_write_Pa
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(TaskLearner_write_Params(s)) }
 	}
 
@@ -312,7 +209,7 @@ func (c TaskLearner_done) Args() TaskLearner_done_Params {
 
 // AllocResults allocates the results struct.
 func (c TaskLearner_done) AllocResults() (TaskLearner_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return TaskLearner_done_Results(r), err
 }
 
@@ -331,12 +228,12 @@ type TaskLearner_write_Params capnp.Struct
 const TaskLearner_write_Params_TypeID = 0xa963c7a5dbea189d
 
 func NewTaskLearner_write_Params(s *capnp.Segment) (TaskLearner_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return TaskLearner_write_Params(st), err
 }
 
 func NewRootTaskLearner_write_Params(s *capnp.Segment) (TaskLearner_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return TaskLearner_write_Params(st), err
 }
 
@@ -372,28 +269,28 @@ func (s TaskLearner_write_Params) Message() *capnp.Message {
 func (s TaskLearner_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s TaskLearner_write_Params) Input() (WireTaskLearnerInput, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireTaskLearnerInput(p.Struct()), err
+func (s TaskLearner_write_Params) Feature() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s TaskLearner_write_Params) HasInput() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s TaskLearner_write_Params) SetFeature(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s TaskLearner_write_Params) SetInput(v WireTaskLearnerInput) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s TaskLearner_write_Params) Target() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewInput sets the input field to a newly
-// allocated WireTaskLearnerInput struct, preferring placement in s's segment.
-func (s TaskLearner_write_Params) NewInput() (WireTaskLearnerInput, error) {
-	ss, err := NewWireTaskLearnerInput(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireTaskLearnerInput{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s TaskLearner_write_Params) SetTarget(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s TaskLearner_write_Params) Observed() bool {
+	return capnp.Struct(s).Bit(128)
+}
+
+func (s TaskLearner_write_Params) SetObserved(v bool) {
+	capnp.Struct(s).SetBit(128, v)
 }
 
 // TaskLearner_write_Params_List is a list of TaskLearner_write_Params.
@@ -401,7 +298,7 @@ type TaskLearner_write_Params_List = capnp.StructList[TaskLearner_write_Params]
 
 // NewTaskLearner_write_Params creates a new list of TaskLearner_write_Params.
 func NewTaskLearner_write_Params_List(s *capnp.Segment, sz int32) (TaskLearner_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[TaskLearner_write_Params](l), err
 }
 
@@ -411,9 +308,6 @@ type TaskLearner_write_Params_Future struct{ *capnp.Future }
 func (f TaskLearner_write_Params_Future) Struct() (TaskLearner_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return TaskLearner_write_Params(p.Struct()), err
-}
-func (p TaskLearner_write_Params_Future) Input() WireTaskLearnerInput_Future {
-	return WireTaskLearnerInput_Future{Future: p.Future.Field(0, nil)}
 }
 
 type TaskLearner_done_Params capnp.Struct
@@ -487,12 +381,12 @@ type TaskLearner_done_Results capnp.Struct
 const TaskLearner_done_Results_TypeID = 0xca12934ee542fa2f
 
 func NewTaskLearner_done_Results(s *capnp.Segment) (TaskLearner_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return TaskLearner_done_Results(st), err
 }
 
 func NewRootTaskLearner_done_Results(s *capnp.Segment) (TaskLearner_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return TaskLearner_done_Results(st), err
 }
 
@@ -528,13 +422,20 @@ func (s TaskLearner_done_Results) Message() *capnp.Message {
 func (s TaskLearner_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s TaskLearner_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s TaskLearner_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // TaskLearner_done_Results_List is a list of TaskLearner_done_Results.
 type TaskLearner_done_Results_List = capnp.StructList[TaskLearner_done_Results]
 
 // NewTaskLearner_done_Results creates a new list of TaskLearner_done_Results.
 func NewTaskLearner_done_Results_List(s *capnp.Segment, sz int32) (TaskLearner_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[TaskLearner_done_Results](l), err
 }
 

@@ -3,13 +3,12 @@
 package cognition
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
 )
 
 type ParseBasinKey capnp.Client
@@ -209,7 +208,7 @@ func (c ParseBasinKey_done) Args() ParseBasinKey_done_Params {
 
 // AllocResults allocates the results struct.
 func (c ParseBasinKey_done) AllocResults() (ParseBasinKey_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return ParseBasinKey_done_Results(r), err
 }
 
@@ -370,12 +369,12 @@ type ParseBasinKey_done_Results capnp.Struct
 const ParseBasinKey_done_Results_TypeID = 0xb1718ab6df427a24
 
 func NewParseBasinKey_done_Results(s *capnp.Segment) (ParseBasinKey_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return ParseBasinKey_done_Results(st), err
 }
 
 func NewRootParseBasinKey_done_Results(s *capnp.Segment) (ParseBasinKey_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return ParseBasinKey_done_Results(st), err
 }
 
@@ -411,13 +410,46 @@ func (s ParseBasinKey_done_Results) Message() *capnp.Message {
 func (s ParseBasinKey_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s ParseBasinKey_done_Results) Class() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s ParseBasinKey_done_Results) HasClass() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s ParseBasinKey_done_Results) SetClass(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s ParseBasinKey_done_Results) ContextBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
+}
+
+func (s ParseBasinKey_done_Results) HasContextBytes() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s ParseBasinKey_done_Results) SetContextBytes(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
+func (s ParseBasinKey_done_Results) Ok() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s ParseBasinKey_done_Results) SetOk(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
 
 // ParseBasinKey_done_Results_List is a list of ParseBasinKey_done_Results.
 type ParseBasinKey_done_Results_List = capnp.StructList[ParseBasinKey_done_Results]
 
 // NewParseBasinKey_done_Results creates a new list of ParseBasinKey_done_Results.
 func NewParseBasinKey_done_Results_List(s *capnp.Segment, sz int32) (ParseBasinKey_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
 	return capnp.StructList[ParseBasinKey_done_Results](l), err
 }
 

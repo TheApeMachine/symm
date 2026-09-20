@@ -3,14 +3,13 @@
 package calculus
 
 import (
-	context "context"
-	math "math"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type Bound capnp.Client
@@ -28,7 +27,7 @@ func (c Bound) Write(ctx context.Context, params func(Bound_write_Params) error)
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Bound_write_Params(s)) }
 	}
 
@@ -210,7 +209,7 @@ func (c Bound_done) Args() Bound_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Bound_done) AllocResults() (Bound_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Bound_done_Results(r), err
 }
 
@@ -229,12 +228,12 @@ type Bound_write_Params capnp.Struct
 const Bound_write_Params_TypeID = 0xda6d4332a5be715c
 
 func NewBound_write_Params(s *capnp.Segment) (Bound_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Bound_write_Params(st), err
 }
 
 func NewRootBound_write_Params(s *capnp.Segment) (Bound_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Bound_write_Params(st), err
 }
 
@@ -270,12 +269,28 @@ func (s Bound_write_Params) Message() *capnp.Message {
 func (s Bound_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Bound_write_Params) A() float64 {
+func (s Bound_write_Params) In() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Bound_write_Params) SetA(v float64) {
+func (s Bound_write_Params) SetIn(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Bound_write_Params) Min() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Bound_write_Params) SetMin(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Bound_write_Params) Max() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Bound_write_Params) SetMax(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
 // Bound_write_Params_List is a list of Bound_write_Params.
@@ -283,7 +298,7 @@ type Bound_write_Params_List = capnp.StructList[Bound_write_Params]
 
 // NewBound_write_Params creates a new list of Bound_write_Params.
 func NewBound_write_Params_List(s *capnp.Segment, sz int32) (Bound_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[Bound_write_Params](l), err
 }
 
@@ -366,12 +381,12 @@ type Bound_done_Results capnp.Struct
 const Bound_done_Results_TypeID = 0xeeb33167c821924c
 
 func NewBound_done_Results(s *capnp.Segment) (Bound_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Bound_done_Results(st), err
 }
 
 func NewRootBound_done_Results(s *capnp.Segment) (Bound_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Bound_done_Results(st), err
 }
 
@@ -407,13 +422,20 @@ func (s Bound_done_Results) Message() *capnp.Message {
 func (s Bound_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Bound_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Bound_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Bound_done_Results_List is a list of Bound_done_Results.
 type Bound_done_Results_List = capnp.StructList[Bound_done_Results]
 
 // NewBound_done_Results creates a new list of Bound_done_Results.
 func NewBound_done_Results_List(s *capnp.Segment, sz int32) (Bound_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Bound_done_Results](l), err
 }
 

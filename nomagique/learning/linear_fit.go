@@ -2,120 +2,67 @@ package learning
 
 import (
 	"context"
-	"math"
 
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/errnie"
 )
 
 type LinearFitServer struct {
-	DownstreamLinearFit func(context.Context, []float64) error
-	Tolerance           float64
-	Target              int
-	Features            []int
-}
-
-func (s *LinearFitServer) Write(ctx context.Context, call LinearFit_write) error {
-	return s.WriteParams(ctx, call.Args())
-}
-
-func (s *LinearFitServer) WriteParams(ctx context.Context, callArgs LinearFit_write_Params) error {
-	rowsList, _ := callArgs.Rows()
-	rowCount := rowsList.Len()
-	if rowCount == 0 {
-		return nil
-	}
-
-	x := make([][]float64, 0, rowCount)
-	y := make([][]float64, 0, rowCount)
-
-	for r := 0; r < rowCount; r++ {
-		rowItem := rowsList.At(r)
-		rowListVals, _ := rowItem.Values()
-		if s.Target < 0 || s.Target >= rowListVals.Len() {
-			return nil
-		}
-
-		designRow := make([]float64, 1, len(s.Features)+1)
-		designRow[0] = core.Unit
-
-		for _, featureIdx := range s.Features {
-			if featureIdx < 0 || featureIdx >= rowListVals.Len() {
-				return nil
-			}
-			designRow = append(designRow, rowListVals.At(featureIdx))
-		}
-		x = append(x, designRow)
-		y = append(y, []float64{rowListVals.At(s.Target)})
-	}
-
-	// OLS implementation inline to avoid circular deps
-	cols := len(x[0])
-	xtx := make([][]float64, cols)
-	xty := make([][]float64, cols)
-	for i := range xtx {
-		xtx[i] = make([]float64, cols)
-		xty[i] = make([]float64, 1)
-	}
-	for r := 0; r < len(x); r++ {
-		for i := 0; i < cols; i++ {
-			xi := x[r][i]
-			for j := 0; j < cols; j++ {
-				xtx[i][j] += xi * x[r][j]
-			}
-			xty[i][0] += xi * y[r][0]
-		}
-	}
-	tol := s.Tolerance
-	if tol <= 0 {
-		tol = 1e-9
-	}
-	for col := 0; col < cols; col++ {
-		pivotRow := col
-		maxVal := math.Abs(xtx[col][col])
-		for r := col + 1; r < cols; r++ {
-			val := math.Abs(xtx[r][col])
-			if val > maxVal {
-				maxVal = val
-				pivotRow = r
-			}
-		}
-		if maxVal <= tol {
-			return nil
-		}
-		if pivotRow != col {
-			xtx[col], xtx[pivotRow] = xtx[pivotRow], xtx[col]
-			xty[col], xty[pivotRow] = xty[pivotRow], xty[col]
-		}
-		pivot := xtx[col][col]
-		for c := col; c < cols; c++ {
-			xtx[col][c] /= pivot
-		}
-		xty[col][0] /= pivot
-		for r := 0; r < cols; r++ {
-			if r != col {
-				factor := xtx[r][col]
-				for c := col; c < cols; c++ {
-					xtx[r][c] -= factor * xtx[col][c]
-				}
-				xty[r][0] -= factor * xty[col][0]
-			}
-		}
-	}
-	coeffs := make([]float64, cols)
-	for i := 0; i < cols; i++ {
-		coeffs[i] = xty[i][0]
-	}
-
-	if s.DownstreamLinearFit != nil {
-		return s.DownstreamLinearFit(ctx, coeffs)
-	}
-	return nil
-}
-
-func (s *LinearFitServer) Done(ctx context.Context, call LinearFit_done) error {
-	return nil
+	count     float64
+	sumX      float64
+	sumY      float64
+	sumXX     float64
+	sumYY     float64
+	sumXY     float64
+	slope     float64
+	intercept float64
+	r2        float64
 }
 
 func NewLinearFit() *LinearFitServer {
 	return &LinearFitServer{}
+}
+
+func (server *LinearFitServer) Write(ctx context.Context, call LinearFit_write) error {
+	args := call.Args()
+	valX := args.X()
+	valY := args.Y()
+
+	server.count++
+	server.sumX += valX
+	server.sumY += valY
+	server.sumXX += valX * valX
+	server.sumYY += valY * valY
+	server.sumXY += valX * valY
+
+	denom := server.count*server.sumXX - server.sumX*server.sumX
+	if denom != 0 {
+		server.slope = (server.count*server.sumXY - server.sumX*server.sumY) / denom
+		server.intercept = (server.sumY - server.slope*server.sumX) / server.count
+		totalVar := server.count*server.sumYY - server.sumY*server.sumY
+		if totalVar != 0 {
+			server.r2 = (server.slope * server.slope * denom) / totalVar
+		}
+	}
+
+	return nil
+}
+
+func (server *LinearFitServer) Done(ctx context.Context, call LinearFit_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"linear_fit: alloc results failed",
+			err,
+		))
+	}
+
+	results.SetSlope(server.slope)
+	results.SetIntercept(server.intercept)
+	results.SetR2(server.r2)
+
+	server.slope = 0
+	server.intercept = 0
+	server.r2 = 0
+	return nil
 }

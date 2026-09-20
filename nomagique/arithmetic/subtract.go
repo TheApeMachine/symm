@@ -3,32 +3,31 @@ package arithmetic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type SubtractServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *SubtractServer) Write(ctx context.Context, call Subtract_write) error {
-	a := call.Args().A()
-	b := call.Args().B()
-	result := a - b
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (srv *SubtractServer) Write(ctx context.Context, call Subtract_write) error {
+	srv.out = call.Args().A() - call.Args().B()
 	return nil
 }
 
-func (s *SubtractServer) Done(ctx context.Context, call Subtract_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *SubtractServer) Done(ctx context.Context, call Subtract_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"arithmetic: alloc subtract results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

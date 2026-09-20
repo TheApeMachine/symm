@@ -7,6 +7,7 @@ import (
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 )
 
@@ -15,32 +16,11 @@ type Radix capnp.Client
 // Radix_TypeID is the unique identifier for the type Radix.
 const Radix_TypeID = 0xd5ab1698d577655d
 
-func (c Radix) Read(ctx context.Context, params func(Radix_read_Params) error) (Radix_read_Results_Future, capnp.ReleaseFunc) {
-
+func (c Radix) Write(ctx context.Context, params func(Radix_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      0,
-			InterfaceName: "nomagique/store/radix.capnp:Radix",
-			MethodName:    "read",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_read_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Radix_read_Results_Future{Future: ans.Future()}, release
-
-}
-
-func (c Radix) Write(ctx context.Context, params func(Radix_write_Params) error) (Radix_write_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xd5ab1698d577655d,
-			MethodID:      1,
 			InterfaceName: "nomagique/store/radix.capnp:Radix",
 			MethodName:    "write",
 		},
@@ -50,28 +30,27 @@ func (c Radix) Write(ctx context.Context, params func(Radix_write_Params) error)
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_write_Params(s)) }
 	}
 
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Radix_write_Results_Future{Future: ans.Future()}, release
+	return capnp.Client(c).SendStreamCall(ctx, s)
 
 }
 
-func (c Radix) Identify(ctx context.Context, params func(Radix_identify_Params) error) (Radix_identify_Results_Future, capnp.ReleaseFunc) {
+func (c Radix) Done(ctx context.Context, params func(Radix_done_Params) error) (Radix_done_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
-			MethodID:      2,
+			MethodID:      1,
 			InterfaceName: "nomagique/store/radix.capnp:Radix",
-			MethodName:    "identify",
+			MethodName:    "done",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_identify_Params(s)) }
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_done_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Radix_identify_Results_Future{Future: ans.Future()}, release
+	return Radix_done_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -148,11 +127,9 @@ func (c Radix) GetFlowLimiter() fc.FlowLimiter {
 
 // A Radix_Server is a Radix with a local implementation.
 type Radix_Server interface {
-	Read(context.Context, Radix_read) error
-
 	Write(context.Context, Radix_write) error
 
-	Identify(context.Context, Radix_identify) error
+	Done(context.Context, Radix_done) error
 }
 
 // Radix_NewServer creates a new Server from an implementation of Radix_Server.
@@ -171,25 +148,13 @@ func Radix_ServerToClient(s Radix_Server) Radix {
 // This can be used to create a more complicated Server.
 func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 3)
+		methods = make([]server.Method, 0, 2)
 	}
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      0,
-			InterfaceName: "nomagique/store/radix.capnp:Radix",
-			MethodName:    "read",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Read(ctx, Radix_read{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xd5ab1698d577655d,
-			MethodID:      1,
 			InterfaceName: "nomagique/store/radix.capnp:Radix",
 			MethodName:    "write",
 		},
@@ -201,33 +166,16 @@ func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
-			MethodID:      2,
+			MethodID:      1,
 			InterfaceName: "nomagique/store/radix.capnp:Radix",
-			MethodName:    "identify",
+			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Identify(ctx, Radix_identify{call})
+			return s.Done(ctx, Radix_done{call})
 		},
 	})
 
 	return methods
-}
-
-// Radix_read holds the state for a server call to Radix.read.
-// See server.Call for documentation.
-type Radix_read struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c Radix_read) Args() Radix_read_Params {
-	return Radix_read_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c Radix_read) AllocResults() (Radix_read_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Radix_read_Results(r), err
 }
 
 // Radix_write holds the state for a server call to Radix.write.
@@ -242,26 +190,26 @@ func (c Radix_write) Args() Radix_write_Params {
 }
 
 // AllocResults allocates the results struct.
-func (c Radix_write) AllocResults() (Radix_write_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_write_Results(r), err
+func (c Radix_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
 }
 
-// Radix_identify holds the state for a server call to Radix.identify.
+// Radix_done holds the state for a server call to Radix.done.
 // See server.Call for documentation.
-type Radix_identify struct {
+type Radix_done struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Radix_identify) Args() Radix_identify_Params {
-	return Radix_identify_Params(c.Call.Args())
+func (c Radix_done) Args() Radix_done_Params {
+	return Radix_done_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Radix_identify) AllocResults() (Radix_identify_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_identify_Results(r), err
+func (c Radix_done) AllocResults() (Radix_done_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return Radix_done_Results(r), err
 }
 
 // Radix_List is a list of Radix.
@@ -273,173 +221,10 @@ func NewRadix_List(s *capnp.Segment, sz int32) (Radix_List, error) {
 	return capnp.CapList[Radix](l), err
 }
 
-type Radix_read_Params capnp.Struct
-
-// Radix_read_Params_TypeID is the unique identifier for the type Radix_read_Params.
-const Radix_read_Params_TypeID = 0xa32c90c355cc8c09
-
-func NewRadix_read_Params(s *capnp.Segment) (Radix_read_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_read_Params(st), err
-}
-
-func NewRootRadix_read_Params(s *capnp.Segment) (Radix_read_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_read_Params(st), err
-}
-
-func ReadRootRadix_read_Params(msg *capnp.Message) (Radix_read_Params, error) {
-	root, err := msg.Root()
-	return Radix_read_Params(root.Struct()), err
-}
-
-func (s Radix_read_Params) String() string {
-	str, _ := text.Marshal(0xa32c90c355cc8c09, capnp.Struct(s))
-	return str
-}
-
-func (s Radix_read_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Radix_read_Params) DecodeFromPtr(p capnp.Ptr) Radix_read_Params {
-	return Radix_read_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Radix_read_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Radix_read_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Radix_read_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Radix_read_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Radix_read_Params) Key() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s Radix_read_Params) HasKey() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Radix_read_Params) SetKey(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-// Radix_read_Params_List is a list of Radix_read_Params.
-type Radix_read_Params_List = capnp.StructList[Radix_read_Params]
-
-// NewRadix_read_Params creates a new list of Radix_read_Params.
-func NewRadix_read_Params_List(s *capnp.Segment, sz int32) (Radix_read_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Radix_read_Params](l), err
-}
-
-// Radix_read_Params_Future is a wrapper for a Radix_read_Params promised by a client call.
-type Radix_read_Params_Future struct{ *capnp.Future }
-
-func (f Radix_read_Params_Future) Struct() (Radix_read_Params, error) {
-	p, err := f.Future.Ptr()
-	return Radix_read_Params(p.Struct()), err
-}
-
-type Radix_read_Results capnp.Struct
-
-// Radix_read_Results_TypeID is the unique identifier for the type Radix_read_Results.
-const Radix_read_Results_TypeID = 0xed70dd53be851d5a
-
-func NewRadix_read_Results(s *capnp.Segment) (Radix_read_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Radix_read_Results(st), err
-}
-
-func NewRootRadix_read_Results(s *capnp.Segment) (Radix_read_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return Radix_read_Results(st), err
-}
-
-func ReadRootRadix_read_Results(msg *capnp.Message) (Radix_read_Results, error) {
-	root, err := msg.Root()
-	return Radix_read_Results(root.Struct()), err
-}
-
-func (s Radix_read_Results) String() string {
-	str, _ := text.Marshal(0xed70dd53be851d5a, capnp.Struct(s))
-	return str
-}
-
-func (s Radix_read_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Radix_read_Results) DecodeFromPtr(p capnp.Ptr) Radix_read_Results {
-	return Radix_read_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Radix_read_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Radix_read_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Radix_read_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Radix_read_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Radix_read_Results) Value() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s Radix_read_Results) HasValue() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Radix_read_Results) SetValue(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s Radix_read_Results) Found() bool {
-	return capnp.Struct(s).Bit(0)
-}
-
-func (s Radix_read_Results) SetFound(v bool) {
-	capnp.Struct(s).SetBit(0, v)
-}
-
-// Radix_read_Results_List is a list of Radix_read_Results.
-type Radix_read_Results_List = capnp.StructList[Radix_read_Results]
-
-// NewRadix_read_Results creates a new list of Radix_read_Results.
-func NewRadix_read_Results_List(s *capnp.Segment, sz int32) (Radix_read_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[Radix_read_Results](l), err
-}
-
-// Radix_read_Results_Future is a wrapper for a Radix_read_Results promised by a client call.
-type Radix_read_Results_Future struct{ *capnp.Future }
-
-func (f Radix_read_Results_Future) Struct() (Radix_read_Results, error) {
-	p, err := f.Future.Ptr()
-	return Radix_read_Results(p.Struct()), err
-}
-func (p Radix_read_Results_Future) Value() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Radix_write_Params capnp.Struct
 
 // Radix_write_Params_TypeID is the unique identifier for the type Radix_write_Params.
-const Radix_write_Params_TypeID = 0x8184976ded3c974e
+const Radix_write_Params_TypeID = 0xa32c90c355cc8c09
 
 func NewRadix_write_Params(s *capnp.Segment) (Radix_write_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
@@ -457,7 +242,7 @@ func ReadRootRadix_write_Params(msg *capnp.Message) (Radix_write_Params, error) 
 }
 
 func (s Radix_write_Params) String() string {
-	str, _ := text.Marshal(0x8184976ded3c974e, capnp.Struct(s))
+	str, _ := text.Marshal(0xa32c90c355cc8c09, capnp.Struct(s))
 	return str
 }
 
@@ -483,29 +268,35 @@ func (s Radix_write_Params) Message() *capnp.Message {
 func (s Radix_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Radix_write_Params) Key() ([]byte, error) {
+func (s Radix_write_Params) Key() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
+	return p.Text(), err
 }
 
 func (s Radix_write_Params) HasKey() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Radix_write_Params) SetKey(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
+func (s Radix_write_Params) KeyBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-func (s Radix_write_Params) Value() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
+func (s Radix_write_Params) SetKey(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Radix_write_Params) Value() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
 }
 
 func (s Radix_write_Params) HasValue() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s Radix_write_Params) SetValue(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
+func (s Radix_write_Params) SetValue(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
 }
 
 // Radix_write_Params_List is a list of Radix_write_Params.
@@ -524,256 +315,153 @@ func (f Radix_write_Params_Future) Struct() (Radix_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Radix_write_Params(p.Struct()), err
 }
-func (p Radix_write_Params_Future) Value() *capnp.Future {
-	return p.Future.Field(1, nil)
+
+type Radix_done_Params capnp.Struct
+
+// Radix_done_Params_TypeID is the unique identifier for the type Radix_done_Params.
+const Radix_done_Params_TypeID = 0x8184976ded3c974e
+
+func NewRadix_done_Params(s *capnp.Segment) (Radix_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Radix_done_Params(st), err
 }
 
-type Radix_write_Results capnp.Struct
-
-// Radix_write_Results_TypeID is the unique identifier for the type Radix_write_Results.
-const Radix_write_Results_TypeID = 0xe40fb69e8e61ebd5
-
-func NewRadix_write_Results(s *capnp.Segment) (Radix_write_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_write_Results(st), err
+func NewRootRadix_done_Params(s *capnp.Segment) (Radix_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Radix_done_Params(st), err
 }
 
-func NewRootRadix_write_Results(s *capnp.Segment) (Radix_write_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_write_Results(st), err
-}
-
-func ReadRootRadix_write_Results(msg *capnp.Message) (Radix_write_Results, error) {
+func ReadRootRadix_done_Params(msg *capnp.Message) (Radix_done_Params, error) {
 	root, err := msg.Root()
-	return Radix_write_Results(root.Struct()), err
+	return Radix_done_Params(root.Struct()), err
 }
 
-func (s Radix_write_Results) String() string {
+func (s Radix_done_Params) String() string {
+	str, _ := text.Marshal(0x8184976ded3c974e, capnp.Struct(s))
+	return str
+}
+
+func (s Radix_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Radix_done_Params) DecodeFromPtr(p capnp.Ptr) Radix_done_Params {
+	return Radix_done_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Radix_done_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Radix_done_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Radix_done_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Radix_done_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// Radix_done_Params_List is a list of Radix_done_Params.
+type Radix_done_Params_List = capnp.StructList[Radix_done_Params]
+
+// NewRadix_done_Params creates a new list of Radix_done_Params.
+func NewRadix_done_Params_List(s *capnp.Segment, sz int32) (Radix_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Radix_done_Params](l), err
+}
+
+// Radix_done_Params_Future is a wrapper for a Radix_done_Params promised by a client call.
+type Radix_done_Params_Future struct{ *capnp.Future }
+
+func (f Radix_done_Params_Future) Struct() (Radix_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return Radix_done_Params(p.Struct()), err
+}
+
+type Radix_done_Results capnp.Struct
+
+// Radix_done_Results_TypeID is the unique identifier for the type Radix_done_Results.
+const Radix_done_Results_TypeID = 0xe40fb69e8e61ebd5
+
+func NewRadix_done_Results(s *capnp.Segment) (Radix_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return Radix_done_Results(st), err
+}
+
+func NewRootRadix_done_Results(s *capnp.Segment) (Radix_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return Radix_done_Results(st), err
+}
+
+func ReadRootRadix_done_Results(msg *capnp.Message) (Radix_done_Results, error) {
+	root, err := msg.Root()
+	return Radix_done_Results(root.Struct()), err
+}
+
+func (s Radix_done_Results) String() string {
 	str, _ := text.Marshal(0xe40fb69e8e61ebd5, capnp.Struct(s))
 	return str
 }
 
-func (s Radix_write_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Radix_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Radix_write_Results) DecodeFromPtr(p capnp.Ptr) Radix_write_Results {
-	return Radix_write_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Radix_done_Results) DecodeFromPtr(p capnp.Ptr) Radix_done_Results {
+	return Radix_done_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Radix_write_Results) ToPtr() capnp.Ptr {
+func (s Radix_done_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Radix_write_Results) IsValid() bool {
+func (s Radix_done_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Radix_write_Results) Message() *capnp.Message {
+func (s Radix_done_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Radix_write_Results) Segment() *capnp.Segment {
+func (s Radix_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Radix_write_Results) Value() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s Radix_write_Results) HasValue() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Radix_write_Results) SetValue(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// Radix_write_Results_List is a list of Radix_write_Results.
-type Radix_write_Results_List = capnp.StructList[Radix_write_Results]
-
-// NewRadix_write_Results creates a new list of Radix_write_Results.
-func NewRadix_write_Results_List(s *capnp.Segment, sz int32) (Radix_write_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Radix_write_Results](l), err
-}
-
-// Radix_write_Results_Future is a wrapper for a Radix_write_Results promised by a client call.
-type Radix_write_Results_Future struct{ *capnp.Future }
-
-func (f Radix_write_Results_Future) Struct() (Radix_write_Results, error) {
-	p, err := f.Future.Ptr()
-	return Radix_write_Results(p.Struct()), err
-}
-func (p Radix_write_Results_Future) Value() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
-type Radix_identify_Params capnp.Struct
-
-// Radix_identify_Params_TypeID is the unique identifier for the type Radix_identify_Params.
-const Radix_identify_Params_TypeID = 0xa255c7daf18803f0
-
-func NewRadix_identify_Params(s *capnp.Segment) (Radix_identify_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return Radix_identify_Params(st), err
-}
-
-func NewRootRadix_identify_Params(s *capnp.Segment) (Radix_identify_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return Radix_identify_Params(st), err
-}
-
-func ReadRootRadix_identify_Params(msg *capnp.Message) (Radix_identify_Params, error) {
-	root, err := msg.Root()
-	return Radix_identify_Params(root.Struct()), err
-}
-
-func (s Radix_identify_Params) String() string {
-	str, _ := text.Marshal(0xa255c7daf18803f0, capnp.Struct(s))
-	return str
-}
-
-func (s Radix_identify_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Radix_identify_Params) DecodeFromPtr(p capnp.Ptr) Radix_identify_Params {
-	return Radix_identify_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Radix_identify_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Radix_identify_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Radix_identify_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Radix_identify_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Radix_identify_Params) Key() ([]byte, error) {
+func (s Radix_done_Results) Out() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s Radix_identify_Params) HasKey() bool {
+func (s Radix_done_Results) HasOut() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Radix_identify_Params) SetKey(v []byte) error {
+func (s Radix_done_Results) SetOut(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s Radix_identify_Params) Value() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
+func (s Radix_done_Results) Found() bool {
+	return capnp.Struct(s).Bit(0)
 }
 
-func (s Radix_identify_Params) HasValue() bool {
-	return capnp.Struct(s).HasPtr(1)
+func (s Radix_done_Results) SetFound(v bool) {
+	capnp.Struct(s).SetBit(0, v)
 }
 
-func (s Radix_identify_Params) SetValue(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
+// Radix_done_Results_List is a list of Radix_done_Results.
+type Radix_done_Results_List = capnp.StructList[Radix_done_Results]
+
+// NewRadix_done_Results creates a new list of Radix_done_Results.
+func NewRadix_done_Results_List(s *capnp.Segment, sz int32) (Radix_done_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	return capnp.StructList[Radix_done_Results](l), err
 }
 
-// Radix_identify_Params_List is a list of Radix_identify_Params.
-type Radix_identify_Params_List = capnp.StructList[Radix_identify_Params]
+// Radix_done_Results_Future is a wrapper for a Radix_done_Results promised by a client call.
+type Radix_done_Results_Future struct{ *capnp.Future }
 
-// NewRadix_identify_Params creates a new list of Radix_identify_Params.
-func NewRadix_identify_Params_List(s *capnp.Segment, sz int32) (Radix_identify_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[Radix_identify_Params](l), err
-}
-
-// Radix_identify_Params_Future is a wrapper for a Radix_identify_Params promised by a client call.
-type Radix_identify_Params_Future struct{ *capnp.Future }
-
-func (f Radix_identify_Params_Future) Struct() (Radix_identify_Params, error) {
+func (f Radix_done_Results_Future) Struct() (Radix_done_Results, error) {
 	p, err := f.Future.Ptr()
-	return Radix_identify_Params(p.Struct()), err
-}
-func (p Radix_identify_Params_Future) Value() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
-
-type Radix_identify_Results capnp.Struct
-
-// Radix_identify_Results_TypeID is the unique identifier for the type Radix_identify_Results.
-const Radix_identify_Results_TypeID = 0xaaba8258942d9f12
-
-func NewRadix_identify_Results(s *capnp.Segment) (Radix_identify_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_identify_Results(st), err
-}
-
-func NewRootRadix_identify_Results(s *capnp.Segment) (Radix_identify_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Radix_identify_Results(st), err
-}
-
-func ReadRootRadix_identify_Results(msg *capnp.Message) (Radix_identify_Results, error) {
-	root, err := msg.Root()
-	return Radix_identify_Results(root.Struct()), err
-}
-
-func (s Radix_identify_Results) String() string {
-	str, _ := text.Marshal(0xaaba8258942d9f12, capnp.Struct(s))
-	return str
-}
-
-func (s Radix_identify_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (Radix_identify_Results) DecodeFromPtr(p capnp.Ptr) Radix_identify_Results {
-	return Radix_identify_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s Radix_identify_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s Radix_identify_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s Radix_identify_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s Radix_identify_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s Radix_identify_Results) Value() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s Radix_identify_Results) HasValue() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s Radix_identify_Results) SetValue(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// Radix_identify_Results_List is a list of Radix_identify_Results.
-type Radix_identify_Results_List = capnp.StructList[Radix_identify_Results]
-
-// NewRadix_identify_Results creates a new list of Radix_identify_Results.
-func NewRadix_identify_Results_List(s *capnp.Segment, sz int32) (Radix_identify_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Radix_identify_Results](l), err
-}
-
-// Radix_identify_Results_Future is a wrapper for a Radix_identify_Results promised by a client call.
-type Radix_identify_Results_Future struct{ *capnp.Future }
-
-func (f Radix_identify_Results_Future) Struct() (Radix_identify_Results, error) {
-	p, err := f.Future.Ptr()
-	return Radix_identify_Results(p.Struct()), err
-}
-func (p Radix_identify_Results_Future) Value() *capnp.Future {
-	return p.Future.Field(0, nil)
+	return Radix_done_Results(p.Struct()), err
 }

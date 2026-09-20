@@ -4,7 +4,6 @@ $Go.package("store");
 $Go.import("nomagique/store");
 
 interface Radix {
-  read @0 (key :Data) -> (value :AnyPointer, found :Bool);
-  write @1 (key :Data, value :AnyPointer) -> (value :AnyPointer);
-  identify @2 (key :Data, value :AnyPointer) -> (value :AnyPointer);
+  write @0 (key :Text, value :Data) -> stream;
+  done @1 () -> (out :Data, found :Bool);
 }

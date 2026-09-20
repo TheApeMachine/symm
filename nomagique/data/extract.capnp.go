@@ -9,86 +9,8 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireExtract capnp.Struct
-
-// WireExtract_TypeID is the unique identifier for the type WireExtract.
-const WireExtract_TypeID = 0xde4e1deb752f9581
-
-func NewWireExtract(s *capnp.Segment) (WireExtract, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireExtract(st), err
-}
-
-func NewRootWireExtract(s *capnp.Segment) (WireExtract, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireExtract(st), err
-}
-
-func ReadRootWireExtract(msg *capnp.Message) (WireExtract, error) {
-	root, err := msg.Root()
-	return WireExtract(root.Struct()), err
-}
-
-func (s WireExtract) String() string {
-	str, _ := text.Marshal(0xde4e1deb752f9581, capnp.Struct(s))
-	return str
-}
-
-func (s WireExtract) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireExtract) DecodeFromPtr(p capnp.Ptr) WireExtract {
-	return WireExtract(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireExtract) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireExtract) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireExtract) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireExtract) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireExtract) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireExtract) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireExtract) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireExtract_List is a list of WireExtract.
-type WireExtract_List = capnp.StructList[WireExtract]
-
-// NewWireExtract creates a new list of WireExtract.
-func NewWireExtract_List(s *capnp.Segment, sz int32) (WireExtract_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireExtract](l), err
-}
-
-// WireExtract_Future is a wrapper for a WireExtract promised by a client call.
-type WireExtract_Future struct{ *capnp.Future }
-
-func (f WireExtract_Future) Struct() (WireExtract, error) {
-	p, err := f.Future.Ptr()
-	return WireExtract(p.Struct()), err
-}
-func (p WireExtract_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type Extract capnp.Client
 
@@ -105,7 +27,7 @@ func (c Extract) Write(ctx context.Context, params func(Extract_write_Params) er
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Extract_write_Params(s)) }
 	}
 
@@ -287,7 +209,7 @@ func (c Extract_done) Args() Extract_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Extract_done) AllocResults() (Extract_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Extract_done_Results(r), err
 }
 
@@ -306,12 +228,12 @@ type Extract_write_Params capnp.Struct
 const Extract_write_Params_TypeID = 0xac545d062c530bb3
 
 func NewExtract_write_Params(s *capnp.Segment) (Extract_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Extract_write_Params(st), err
 }
 
 func NewRootExtract_write_Params(s *capnp.Segment) (Extract_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Extract_write_Params(st), err
 }
 
@@ -347,28 +269,35 @@ func (s Extract_write_Params) Message() *capnp.Message {
 func (s Extract_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Extract_write_Params) Extract() (WireExtract, error) {
+func (s Extract_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireExtract(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Extract_write_Params) HasExtract() bool {
+func (s Extract_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Extract_write_Params) SetExtract(v WireExtract) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Extract_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewExtract sets the extract field to a newly
-// allocated WireExtract struct, preferring placement in s's segment.
-func (s Extract_write_Params) NewExtract() (WireExtract, error) {
-	ss, err := NewWireExtract(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireExtract{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Extract_write_Params) Path() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Extract_write_Params) HasPath() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Extract_write_Params) PathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Extract_write_Params) SetPath(v string) error {
+	return capnp.Struct(s).SetText(1, v)
 }
 
 // Extract_write_Params_List is a list of Extract_write_Params.
@@ -376,7 +305,7 @@ type Extract_write_Params_List = capnp.StructList[Extract_write_Params]
 
 // NewExtract_write_Params creates a new list of Extract_write_Params.
 func NewExtract_write_Params_List(s *capnp.Segment, sz int32) (Extract_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[Extract_write_Params](l), err
 }
 
@@ -386,9 +315,6 @@ type Extract_write_Params_Future struct{ *capnp.Future }
 func (f Extract_write_Params_Future) Struct() (Extract_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Extract_write_Params(p.Struct()), err
-}
-func (p Extract_write_Params_Future) Extract() WireExtract_Future {
-	return WireExtract_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Extract_done_Params capnp.Struct
@@ -462,12 +388,12 @@ type Extract_done_Results capnp.Struct
 const Extract_done_Results_TypeID = 0x954b77900115ea55
 
 func NewExtract_done_Results(s *capnp.Segment) (Extract_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Extract_done_Results(st), err
 }
 
 func NewRootExtract_done_Results(s *capnp.Segment) (Extract_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Extract_done_Results(st), err
 }
 
@@ -503,13 +429,20 @@ func (s Extract_done_Results) Message() *capnp.Message {
 func (s Extract_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Extract_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Extract_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Extract_done_Results_List is a list of Extract_done_Results.
 type Extract_done_Results_List = capnp.StructList[Extract_done_Results]
 
 // NewExtract_done_Results creates a new list of Extract_done_Results.
 func NewExtract_done_Results_List(s *capnp.Segment, sz int32) (Extract_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Extract_done_Results](l), err
 }
 

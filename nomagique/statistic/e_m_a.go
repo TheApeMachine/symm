@@ -3,59 +3,57 @@ package statistic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type EMAServer struct {
-	Downstream  types.Float64Sink
+	out         float64
 	ema         float64
 	initialized bool
 	Alpha       float64
 }
 
-func (s *EMAServer) Write(ctx context.Context, call EMA_write) error {
-	a := call.Args().A()
-	if s.Alpha <= 0 {
-		if capnp.Client(s.Downstream).IsValid() {
-			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-				p.SetValue(a)
-				return nil
-			})
-		}
+func (srv *EMAServer) Write(ctx context.Context, call EMA_write) error {
+	inVal := call.Args().In()
+
+	if srv.Alpha <= 0 {
+		srv.out = inVal
 		return nil
 	}
 
-	if !s.initialized {
-		s.ema = a
-		s.initialized = true
-		if capnp.Client(s.Downstream).IsValid() {
-			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-				p.SetValue(s.ema)
-				return nil
-			})
-		}
+	if !srv.initialized {
+		srv.ema = inVal
+		srv.initialized = true
+		srv.out = inVal
 		return nil
 	}
 
-	s.ema = (a * s.Alpha) + (s.ema * (1.0 - s.Alpha))
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(s.ema)
-			return nil
-		})
-	}
+	srv.ema = srv.Alpha*inVal + (1-srv.Alpha)*srv.ema
+	srv.out = srv.ema
 	return nil
 }
 
-func (s *EMAServer) Done(ctx context.Context, call EMA_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *EMAServer) Done(ctx context.Context, call EMA_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc ema results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 
-func NewEMA() *EMAServer {
-	return &EMAServer{}
+func NewEMA(alpha ...float64) *EMAServer {
+	val := 0.1
+	if len(alpha) > 0 {
+		val = alpha[0]
+	}
+
+	return &EMAServer{Alpha: val}
 }

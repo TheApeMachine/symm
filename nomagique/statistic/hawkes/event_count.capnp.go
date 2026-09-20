@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireEventCount capnp.Struct
-
-// WireEventCount_TypeID is the unique identifier for the type WireEventCount.
-const WireEventCount_TypeID = 0xea7deeea3c7908bc
-
-func NewWireEventCount(s *capnp.Segment) (WireEventCount, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireEventCount(st), err
-}
-
-func NewRootWireEventCount(s *capnp.Segment) (WireEventCount, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireEventCount(st), err
-}
-
-func ReadRootWireEventCount(msg *capnp.Message) (WireEventCount, error) {
-	root, err := msg.Root()
-	return WireEventCount(root.Struct()), err
-}
-
-func (s WireEventCount) String() string {
-	str, _ := text.Marshal(0xea7deeea3c7908bc, capnp.Struct(s))
-	return str
-}
-
-func (s WireEventCount) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireEventCount) DecodeFromPtr(p capnp.Ptr) WireEventCount {
-	return WireEventCount(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireEventCount) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireEventCount) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireEventCount) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireEventCount) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireEventCount) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireEventCount) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireEventCount) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireEventCount_List is a list of WireEventCount.
-type WireEventCount_List = capnp.StructList[WireEventCount]
-
-// NewWireEventCount creates a new list of WireEventCount.
-func NewWireEventCount_List(s *capnp.Segment, sz int32) (WireEventCount_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireEventCount](l), err
-}
-
-// WireEventCount_Future is a wrapper for a WireEventCount promised by a client call.
-type WireEventCount_Future struct{ *capnp.Future }
-
-func (f WireEventCount_Future) Struct() (WireEventCount, error) {
-	p, err := f.Future.Ptr()
-	return WireEventCount(p.Struct()), err
-}
-func (p WireEventCount_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type EventCount capnp.Client
 
 // EventCount_TypeID is the unique identifier for the type EventCount.
-const EventCount_TypeID = 0xbc3723da00c40277
+const EventCount_TypeID = 0x9a451f17af16f07c
 
 func (c EventCount) Write(ctx context.Context, params func(EventCount_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xbc3723da00c40277,
+			InterfaceID:   0x9a451f17af16f07c,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/event_count.capnp:EventCount",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(EventCount_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c EventCount) Done(ctx context.Context, params func(EventCount_done_Params
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xbc3723da00c40277,
+			InterfaceID:   0x9a451f17af16f07c,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/event_count.capnp:EventCount",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func EventCount_Methods(methods []server.Method, s EventCount_Server) []server.M
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xbc3723da00c40277,
+			InterfaceID:   0x9a451f17af16f07c,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/event_count.capnp:EventCount",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func EventCount_Methods(methods []server.Method, s EventCount_Server) []server.M
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xbc3723da00c40277,
+			InterfaceID:   0x9a451f17af16f07c,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/event_count.capnp:EventCount",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c EventCount_done) Args() EventCount_done_Params {
 
 // AllocResults allocates the results struct.
 func (c EventCount_done) AllocResults() (EventCount_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return EventCount_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewEventCount_List(s *capnp.Segment, sz int32) (EventCount_List, error) {
 type EventCount_write_Params capnp.Struct
 
 // EventCount_write_Params_TypeID is the unique identifier for the type EventCount_write_Params.
-const EventCount_write_Params_TypeID = 0xb13e5085e47bd10e
+const EventCount_write_Params_TypeID = 0xf2582c0a3d69765f
 
 func NewEventCount_write_Params(s *capnp.Segment) (EventCount_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return EventCount_write_Params(st), err
 }
 
 func NewRootEventCount_write_Params(s *capnp.Segment) (EventCount_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return EventCount_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootEventCount_write_Params(msg *capnp.Message) (EventCount_write_Param
 }
 
 func (s EventCount_write_Params) String() string {
-	str, _ := text.Marshal(0xb13e5085e47bd10e, capnp.Struct(s))
+	str, _ := text.Marshal(0xf2582c0a3d69765f, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s EventCount_write_Params) Message() *capnp.Message {
 func (s EventCount_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s EventCount_write_Params) View() (WireEventCount, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireEventCount(p.Struct()), err
+func (s EventCount_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s EventCount_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s EventCount_write_Params) SetView(v WireEventCount) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireEventCount struct, preferring placement in s's segment.
-func (s EventCount_write_Params) NewView() (WireEventCount, error) {
-	ss, err := NewWireEventCount(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireEventCount{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s EventCount_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // EventCount_write_Params_List is a list of EventCount_write_Params.
@@ -376,7 +282,7 @@ type EventCount_write_Params_List = capnp.StructList[EventCount_write_Params]
 
 // NewEventCount_write_Params creates a new list of EventCount_write_Params.
 func NewEventCount_write_Params_List(s *capnp.Segment, sz int32) (EventCount_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[EventCount_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f EventCount_write_Params_Future) Struct() (EventCount_write_Params, error
 	p, err := f.Future.Ptr()
 	return EventCount_write_Params(p.Struct()), err
 }
-func (p EventCount_write_Params_Future) View() WireEventCount_Future {
-	return WireEventCount_Future{Future: p.Future.Field(0, nil)}
-}
 
 type EventCount_done_Params capnp.Struct
 
 // EventCount_done_Params_TypeID is the unique identifier for the type EventCount_done_Params.
-const EventCount_done_Params_TypeID = 0xf4ed4d51a81d4fec
+const EventCount_done_Params_TypeID = 0xc06aec9f34c3f3c8
 
 func NewEventCount_done_Params(s *capnp.Segment) (EventCount_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootEventCount_done_Params(msg *capnp.Message) (EventCount_done_Params,
 }
 
 func (s EventCount_done_Params) String() string {
-	str, _ := text.Marshal(0xf4ed4d51a81d4fec, capnp.Struct(s))
+	str, _ := text.Marshal(0xc06aec9f34c3f3c8, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f EventCount_done_Params_Future) Struct() (EventCount_done_Params, error) 
 type EventCount_done_Results capnp.Struct
 
 // EventCount_done_Results_TypeID is the unique identifier for the type EventCount_done_Results.
-const EventCount_done_Results_TypeID = 0xc2615099963889b9
+const EventCount_done_Results_TypeID = 0xbc73881794e20fcf
 
 func NewEventCount_done_Results(s *capnp.Segment) (EventCount_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return EventCount_done_Results(st), err
 }
 
 func NewRootEventCount_done_Results(s *capnp.Segment) (EventCount_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return EventCount_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootEventCount_done_Results(msg *capnp.Message) (EventCount_done_Result
 }
 
 func (s EventCount_done_Results) String() string {
-	str, _ := text.Marshal(0xc2615099963889b9, capnp.Struct(s))
+	str, _ := text.Marshal(0xbc73881794e20fcf, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s EventCount_done_Results) Message() *capnp.Message {
 func (s EventCount_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s EventCount_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s EventCount_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // EventCount_done_Results_List is a list of EventCount_done_Results.
 type EventCount_done_Results_List = capnp.StructList[EventCount_done_Results]
 
 // NewEventCount_done_Results creates a new list of EventCount_done_Results.
 func NewEventCount_done_Results_List(s *capnp.Segment, sz int32) (EventCount_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[EventCount_done_Results](l), err
 }
 

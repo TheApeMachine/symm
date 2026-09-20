@@ -3,8 +3,6 @@ package learning
 import (
 	context "context"
 	"fmt"
-
-	capnp "capnproto.org/go/capnp/v3"
 )
 
 /*
@@ -142,38 +140,22 @@ func (temporalLedger *TemporalLedgerServer) Write(ctx context.Context, call Temp
 	}
 
 	args := call.Args()
-
 	var cmd LedgerCommand
-	if args.HasIssue() {
-		issueArg, err := args.Issue()
-		if err == nil {
-			featuresList, _ := issueArg.Features()
-			features := make([]float64, featuresList.Len())
-			for i := 0; i < featuresList.Len(); i++ {
-				features[i] = featuresList.At(i)
-			}
-			predictionsList, _ := issueArg.Predictions()
-			predictions := make([]float64, predictionsList.Len())
-			for i := 0; i < predictionsList.Len(); i++ {
-				predictions[i] = predictionsList.At(i)
-			}
-			cmd.Issue = &IssueIntent{
-				Step:        issueArg.Step(),
-				Reference:   issueArg.Reference(),
-				Features:    features,
-				Predictions: predictions,
-				Horizon:     int(issueArg.Horizon()),
-			}
+
+	if args.IssueStep() > 0 {
+		cmd.Issue = &IssueIntent{
+			Step:        args.IssueStep(),
+			Reference:   args.IssueReference(),
+			Features:    []float64{args.IssueReference()},
+			Predictions: []float64{args.IssueReference()},
+			Horizon:     1,
 		}
 	}
 
-	if args.HasResolve() {
-		resolveArg, err := args.Resolve()
-		if err == nil {
-			cmd.Resolve = &ResolveIntent{
-				Step:      resolveArg.Step(),
-				Reference: resolveArg.Reference(),
-			}
+	if args.ResolveStep() > 0 {
+		cmd.Resolve = &ResolveIntent{
+			Step:      args.ResolveStep(),
+			Reference: args.ResolveReference(),
 		}
 	}
 
@@ -182,14 +164,17 @@ func (temporalLedger *TemporalLedgerServer) Write(ctx context.Context, call Temp
 		return err
 	}
 
-	if temporalLedger.DownstreamTemporalLedger != nil {
-		return temporalLedger.DownstreamTemporalLedger(ctx, reading)
-	}
-
+	temporalLedger.out = reading
 	return nil
 }
 
 func (temporalLedger *TemporalLedgerServer) Done(ctx context.Context, call TemporalLedger_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+
+	results.SetOut(float64(temporalLedger.out.Resolved))
 	return nil
 }
 
@@ -366,54 +351,87 @@ func (temporalLedger *TemporalLedgerServer) transform(current, past float64) (fl
 	}
 
 	var val float64
-	_, seg, _ := capnp.NewMessage(capnp.SingleSegment(nil))
 
 	switch temporalLedger.coder.targetName {
 	case "Directional":
 		if temporalLedger.coder.directionalTarget == nil {
 			return 0, fmt.Errorf("ledger: directional target nil")
 		}
-		temporalLedger.coder.directionalTarget.DownstreamDirectionalTarget = func(ctx context.Context, v float64) error { val = v; return nil }
-		args, _ := NewDirectionalTarget_write_Params(seg)
-		args.SetPast(past)
-		args.SetCurrent(current)
-		temporalLedger.coder.directionalTarget.WriteParams(context.Background(), args)
+		client := DirectionalTarget_ServerToClient(temporalLedger.coder.directionalTarget)
+		ctx := context.Background()
+		_ = client.Write(ctx, func(p DirectionalTarget_write_Params) error {
+			p.SetPast(past)
+			p.SetCurrent(current)
+			return nil
+		})
+		_ = client.WaitStreaming()
+		call, release := client.Done(ctx, nil)
+		defer release()
+		res, _ := call.Struct()
+		val = res.Out()
 	case "Binary":
 		if temporalLedger.coder.binaryTarget == nil {
 			return 0, fmt.Errorf("ledger: binary target nil")
 		}
-		temporalLedger.coder.binaryTarget.DownstreamBinaryTarget = func(ctx context.Context, v float64) error { val = v; return nil }
-		args, _ := NewBinaryTarget_write_Params(seg)
-		args.SetPast(past)
-		args.SetCurrent(current)
-		temporalLedger.coder.binaryTarget.WriteParams(context.Background(), args)
+		client := BinaryTarget_ServerToClient(temporalLedger.coder.binaryTarget)
+		ctx := context.Background()
+		_ = client.Write(ctx, func(p BinaryTarget_write_Params) error {
+			p.SetPast(past)
+			p.SetCurrent(current)
+			return nil
+		})
+		_ = client.WaitStreaming()
+		call, release := client.Done(ctx, nil)
+		defer release()
+		res, _ := call.Struct()
+		val = res.Out()
 	case "Identity":
 		if temporalLedger.coder.identityTarget == nil {
 			return 0, fmt.Errorf("ledger: identity target nil")
 		}
-		temporalLedger.coder.identityTarget.DownstreamIdentityTarget = func(ctx context.Context, v float64) error { val = v; return nil }
-		args, _ := NewIdentityTarget_write_Params(seg)
-		args.SetPast(past)
-		args.SetCurrent(current)
-		temporalLedger.coder.identityTarget.WriteParams(context.Background(), args)
+		client := IdentityTarget_ServerToClient(temporalLedger.coder.identityTarget)
+		ctx := context.Background()
+		_ = client.Write(ctx, func(p IdentityTarget_write_Params) error {
+			p.SetCurrent(current)
+			return nil
+		})
+		_ = client.WaitStreaming()
+		call, release := client.Done(ctx, nil)
+		defer release()
+		res, _ := call.Struct()
+		val = res.Out()
 	case "Delta":
 		if temporalLedger.coder.deltaTarget == nil {
 			return 0, fmt.Errorf("ledger: delta target nil")
 		}
-		temporalLedger.coder.deltaTarget.DownstreamDeltaTarget = func(ctx context.Context, v float64) error { val = v; return nil }
-		args, _ := NewDeltaTarget_write_Params(seg)
-		args.SetPast(past)
-		args.SetCurrent(current)
-		temporalLedger.coder.deltaTarget.WriteParams(context.Background(), args)
+		client := DeltaTarget_ServerToClient(temporalLedger.coder.deltaTarget)
+		ctx := context.Background()
+		_ = client.Write(ctx, func(p DeltaTarget_write_Params) error {
+			p.SetPast(past)
+			p.SetCurrent(current)
+			return nil
+		})
+		_ = client.WaitStreaming()
+		call, release := client.Done(ctx, nil)
+		defer release()
+		res, _ := call.Struct()
+		val = res.Out()
 	case "Ratio":
 		if temporalLedger.coder.ratioTarget == nil {
 			return 0, fmt.Errorf("ledger: ratio target nil")
 		}
-		temporalLedger.coder.ratioTarget.DownstreamRatioTarget = func(ctx context.Context, v float64) error { val = v; return nil }
-		args, _ := NewRatioTarget_write_Params(seg)
-		args.SetPast(past)
-		args.SetCurrent(current)
-		temporalLedger.coder.ratioTarget.WriteParams(context.Background(), args)
+		client := RatioTarget_ServerToClient(temporalLedger.coder.ratioTarget)
+		ctx := context.Background()
+		_ = client.Write(ctx, func(p RatioTarget_write_Params) error {
+			p.SetPast(past)
+			p.SetCurrent(current)
+			return nil
+		})
+		_ = client.WaitStreaming()
+		call, release := client.Done(ctx, nil)
+		defer release()
+		res, _ := call.Struct()
+		val = res.Out()
 	default:
 		return 0, fmt.Errorf("ledger: unknown target name")
 	}

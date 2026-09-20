@@ -11,99 +11,6 @@ import (
 	context "context"
 )
 
-type WireParallel capnp.Struct
-
-// WireParallel_TypeID is the unique identifier for the type WireParallel.
-const WireParallel_TypeID = 0x83969fb540814588
-
-func NewWireParallel(s *capnp.Segment) (WireParallel, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireParallel(st), err
-}
-
-func NewRootWireParallel(s *capnp.Segment) (WireParallel, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireParallel(st), err
-}
-
-func ReadRootWireParallel(msg *capnp.Message) (WireParallel, error) {
-	root, err := msg.Root()
-	return WireParallel(root.Struct()), err
-}
-
-func (s WireParallel) String() string {
-	str, _ := text.Marshal(0x83969fb540814588, capnp.Struct(s))
-	return str
-}
-
-func (s WireParallel) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireParallel) DecodeFromPtr(p capnp.Ptr) WireParallel {
-	return WireParallel(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireParallel) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireParallel) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireParallel) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireParallel) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireParallel) Payloads() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireParallel) HasPayloads() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireParallel) SetPayloads(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireParallel) Task() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
-}
-
-func (s WireParallel) HasTask() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireParallel) SetTask(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
-}
-
-// WireParallel_List is a list of WireParallel.
-type WireParallel_List = capnp.StructList[WireParallel]
-
-// NewWireParallel creates a new list of WireParallel.
-func NewWireParallel_List(s *capnp.Segment, sz int32) (WireParallel_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireParallel](l), err
-}
-
-// WireParallel_Future is a wrapper for a WireParallel promised by a client call.
-type WireParallel_Future struct{ *capnp.Future }
-
-func (f WireParallel_Future) Struct() (WireParallel, error) {
-	p, err := f.Future.Ptr()
-	return WireParallel(p.Struct()), err
-}
-func (p WireParallel_Future) Payloads() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-func (p WireParallel_Future) Task() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
-
 type Parallel capnp.Client
 
 // Parallel_TypeID is the unique identifier for the type Parallel.
@@ -301,7 +208,7 @@ func (c Parallel_done) Args() Parallel_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Parallel_done) AllocResults() (Parallel_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Parallel_done_Results(r), err
 }
 
@@ -361,28 +268,17 @@ func (s Parallel_write_Params) Message() *capnp.Message {
 func (s Parallel_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Parallel_write_Params) Payload() (WireParallel, error) {
+func (s Parallel_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireParallel(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Parallel_write_Params) HasPayload() bool {
+func (s Parallel_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Parallel_write_Params) SetPayload(v WireParallel) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireParallel struct, preferring placement in s's segment.
-func (s Parallel_write_Params) NewPayload() (WireParallel, error) {
-	ss, err := NewWireParallel(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireParallel{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Parallel_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Parallel_write_Params_List is a list of Parallel_write_Params.
@@ -400,9 +296,6 @@ type Parallel_write_Params_Future struct{ *capnp.Future }
 func (f Parallel_write_Params_Future) Struct() (Parallel_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Parallel_write_Params(p.Struct()), err
-}
-func (p Parallel_write_Params_Future) Payload() WireParallel_Future {
-	return WireParallel_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Parallel_done_Params capnp.Struct
@@ -476,12 +369,12 @@ type Parallel_done_Results capnp.Struct
 const Parallel_done_Results_TypeID = 0xc44c8e2fe1ccc650
 
 func NewParallel_done_Results(s *capnp.Segment) (Parallel_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Parallel_done_Results(st), err
 }
 
 func NewRootParallel_done_Results(s *capnp.Segment) (Parallel_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Parallel_done_Results(st), err
 }
 
@@ -517,13 +410,25 @@ func (s Parallel_done_Results) Message() *capnp.Message {
 func (s Parallel_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Parallel_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Parallel_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Parallel_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Parallel_done_Results_List is a list of Parallel_done_Results.
 type Parallel_done_Results_List = capnp.StructList[Parallel_done_Results]
 
 // NewParallel_done_Results creates a new list of Parallel_done_Results.
 func NewParallel_done_Results_List(s *capnp.Segment, sz int32) (Parallel_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Parallel_done_Results](l), err
 }
 

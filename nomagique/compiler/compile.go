@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
@@ -38,28 +39,49 @@ type Pipeline struct {
 }
 
 /*
-InputSink returns the typed Float64Sink capability for an input port on a node.
+InputSink returns the generic capnp.Client capability for an input port on a node.
 */
-func (p *Pipeline) InputSink(nodeID, portName string) (types.Float64Sink, error) {
+func (p *Pipeline) InputSink(nodeID, portName string) (capnp.Client, error) {
 	node, exists := p.Nodes[nodeID]
 	if !exists {
-		return types.Float64Sink{}, errnie.Error(errnie.Err(
+		return capnp.Client{}, errnie.Error(errnie.Err(
 			errnie.NotFound,
 			fmt.Sprintf("pipeline: node %q not found", nodeID),
 			nil,
 		))
 	}
-	client, err := node.Assembler.InputSink(portName)
+
+	return node.Assembler.InputSink(portName)
+}
+
+/*
+Float64InputSink returns the typed Float64Sink capability for an input port on a node.
+*/
+func (p *Pipeline) Float64InputSink(nodeID, portName string) (types.Float64Sink, error) {
+	client, err := p.InputSink(nodeID, portName)
 	if err != nil {
 		return types.Float64Sink{}, err
 	}
+
 	return types.Float64Sink(client), nil
 }
 
 /*
-ConnectOutput binds a downstream typed Float64Sink capability to a node's output port.
+DataInputSink returns the typed DataSink capability for an input port on a node.
 */
-func (p *Pipeline) ConnectOutput(nodeID, portName string, sink types.Float64Sink) error {
+func (p *Pipeline) DataInputSink(nodeID, portName string) (types.DataSink, error) {
+	client, err := p.InputSink(nodeID, portName)
+	if err != nil {
+		return types.DataSink{}, err
+	}
+
+	return types.DataSink(client), nil
+}
+
+/*
+ConnectOutput binds a downstream capability to a node's output port.
+*/
+func (p *Pipeline) ConnectOutput(nodeID, portName string, sink capnp.Client) error {
 	node, exists := p.Nodes[nodeID]
 	if !exists {
 		return errnie.Error(errnie.Err(
@@ -68,7 +90,8 @@ func (p *Pipeline) ConnectOutput(nodeID, portName string, sink types.Float64Sink
 			nil,
 		))
 	}
-	node.Downstreams[portName] = append(node.Downstreams[portName], capnp.Client(sink))
+
+	node.Downstreams[portName] = append(node.Downstreams[portName], sink)
 	return node.Descriptor.BindDownstream(node.Server, portName, node.Downstreams[portName])
 }
 
@@ -83,6 +106,7 @@ func (p *Pipeline) WaitStreaming() error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -97,17 +121,261 @@ func (p *Pipeline) WriteFloat64(ctx context.Context, val float64) error {
 			nil,
 		))
 	}
-	sink, err := p.InputSink(p.SourceNode.ID, "in")
+
+	sink, err := p.Float64InputSink(p.SourceNode.ID, "in")
 	if err != nil {
 		return err
 	}
+
+	eval, _ := types.EvaluationIDFromContext(ctx)
 	if err := sink.Write(ctx, func(params types.Float64Sink_write_Params) error {
+		params.SetEvaluation(eval)
 		params.SetValue(val)
 		return nil
 	}); err != nil {
 		return err
 	}
+
 	return p.WaitStreaming()
+}
+
+/*
+Start triggers background execution for runnable nodes (such as the ingress source).
+*/
+func (pipeline *Pipeline) Start(ctx context.Context) {
+	for _, node := range pipeline.Nodes {
+		if node.Server == nil {
+			continue
+		}
+
+		if runner, ok := node.Server.(interface{ Start(context.Context) }); ok {
+			runner.Start(ctx)
+		}
+	}
+}
+
+func isBoundarySource(id string, node Node) bool {
+	return node.Type == "source" || node.Type == "data.Source" || id == "source" || id == "src"
+}
+
+func isBoundarySink(id string, node Node) bool {
+	return node.Type == "sink" || node.Type == "data.Sink" || id == "sink" || strings.HasPrefix(id, "sink")
+}
+
+func expandDefinitions(
+	graph Graph,
+	repo DefinitionRepository,
+) (Graph, error) {
+	if repo == nil {
+		return graph, nil
+	}
+
+	for depth := 0; depth < 64; depth++ {
+		var defID string
+		var defNode Node
+		found := false
+
+		for id, node := range graph.Nodes {
+			if strings.HasPrefix(node.Type, "definition:") {
+				defID = id
+				defNode = node
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			break
+		}
+
+		defName := strings.TrimPrefix(defNode.Type, "definition:")
+		childGraph, err := repo.Load(defName)
+		if err != nil {
+			return Graph{}, errnie.Error(errnie.Err(
+				errnie.NotFound,
+				fmt.Sprintf("compiler: failed to load definition %q for node %q", defName, defID),
+				err,
+			))
+		}
+
+		var childSourceID string
+		var childSourceNode Node
+		var childSinkID string
+		var childSinkNode Node
+
+		for cid, cnode := range childGraph.Nodes {
+			if isBoundarySource(cid, cnode) {
+				childSourceID = cid
+				childSourceNode = cnode
+			}
+
+			if isBoundarySink(cid, cnode) {
+				childSinkID = cid
+				childSinkNode = cnode
+			}
+		}
+
+		prefix := defID + "__"
+
+		childIngressTargets := make(map[string][]ConnectionTarget)
+		if childSourceID != "" {
+			for outPort, targets := range childSourceNode.Connections.Outputs {
+				for _, t := range targets {
+					childIngressTargets[outPort] = append(childIngressTargets[outPort], ConnectionTarget{
+						NodeID:   prefix + t.NodeID,
+						PortName: t.PortName,
+					})
+				}
+			}
+		}
+
+		childEgressSources := make(map[string][]ConnectionTarget)
+		if childSinkID != "" {
+			for inPort, targets := range childSinkNode.Connections.Inputs {
+				for _, t := range targets {
+					childEgressSources[inPort] = append(childEgressSources[inPort], ConnectionTarget{
+						NodeID:   prefix + t.NodeID,
+						PortName: t.PortName,
+					})
+				}
+			}
+		}
+
+		// 1. Add all namespaced child nodes (except boundary source/sink)
+		for cid, cnode := range childGraph.Nodes {
+			if cid == childSourceID || cid == childSinkID {
+				continue
+			}
+
+			namespacedNode := Node{
+				ID:        prefix + cid,
+				Type:      cnode.Type,
+				InputData: cnode.InputData,
+				Connections: Connections{
+					Inputs:  make(map[string][]ConnectionTarget),
+					Outputs: make(map[string][]ConnectionTarget),
+				},
+			}
+
+			for inPort, targets := range cnode.Connections.Inputs {
+				for _, target := range targets {
+					if target.NodeID == childSourceID {
+						parentWires := defNode.Connections.Inputs[inPort]
+						if len(parentWires) == 0 {
+							parentWires = defNode.Connections.Inputs["in"]
+						}
+
+						for _, pw := range parentWires {
+							namespacedNode.Connections.Inputs[inPort] = append(
+								namespacedNode.Connections.Inputs[inPort],
+								ConnectionTarget{
+									NodeID:   pw.NodeID,
+									PortName: pw.PortName,
+								},
+							)
+						}
+					}
+
+					if target.NodeID != childSourceID {
+						namespacedNode.Connections.Inputs[inPort] = append(
+							namespacedNode.Connections.Inputs[inPort],
+							ConnectionTarget{
+								NodeID:   prefix + target.NodeID,
+								PortName: target.PortName,
+							},
+						)
+					}
+				}
+			}
+
+			for outPort, targets := range cnode.Connections.Outputs {
+				for _, target := range targets {
+					if target.NodeID == childSinkID {
+						parentTargets := defNode.Connections.Outputs[outPort]
+						if len(parentTargets) == 0 {
+							parentTargets = defNode.Connections.Outputs["out"]
+						}
+
+						for _, pt := range parentTargets {
+							namespacedNode.Connections.Outputs[outPort] = append(
+								namespacedNode.Connections.Outputs[outPort],
+								ConnectionTarget{
+									NodeID:   pt.NodeID,
+									PortName: pt.PortName,
+								},
+							)
+						}
+					}
+
+					if target.NodeID != childSinkID {
+						namespacedNode.Connections.Outputs[outPort] = append(
+							namespacedNode.Connections.Outputs[outPort],
+							ConnectionTarget{
+								NodeID:   prefix + target.NodeID,
+								PortName: target.PortName,
+							},
+						)
+					}
+				}
+			}
+
+			graph.Nodes[namespacedNode.ID] = namespacedNode
+		}
+
+		// 2. Remove definition node from graph
+		delete(graph.Nodes, defID)
+
+		// 3. Update all existing nodes that referenced defID
+		for nid, n := range graph.Nodes {
+			if strings.HasPrefix(nid, prefix) {
+				continue
+			}
+
+			for outPort, targets := range n.Connections.Outputs {
+				var remapped []ConnectionTarget
+				for _, t := range targets {
+					if t.NodeID == defID {
+						remapTargets := childIngressTargets[t.PortName]
+						if len(remapTargets) == 0 {
+							remapTargets = childIngressTargets["out"]
+						}
+
+						remapped = append(remapped, remapTargets...)
+					}
+
+					if t.NodeID != defID {
+						remapped = append(remapped, t)
+					}
+				}
+
+				n.Connections.Outputs[outPort] = remapped
+			}
+
+			for inPort, targets := range n.Connections.Inputs {
+				var remapped []ConnectionTarget
+				for _, t := range targets {
+					if t.NodeID == defID {
+						remapSources := childEgressSources[t.PortName]
+						if len(remapSources) == 0 {
+							remapSources = childEgressSources["in"]
+						}
+
+						remapped = append(remapped, remapSources...)
+					}
+
+					if t.NodeID != defID {
+						remapped = append(remapped, t)
+					}
+				}
+
+				n.Connections.Inputs[inPort] = remapped
+			}
+
+			graph.Nodes[nid] = n
+		}
+	}
+
+	return graph, nil
 }
 
 /*
@@ -122,6 +390,22 @@ func Compile(
 	if reg == nil {
 		reg = DefaultRegistry()
 	}
+
+	var repo DefinitionRepository
+	if len(repos) > 0 && repos[0] != nil {
+		repo = repos[0]
+	}
+
+	if repo == nil && reg != nil {
+		repo = reg.Repository()
+	}
+
+	expandedGraph, err := expandDefinitions(graph, repo)
+	if err != nil {
+		return nil, err
+	}
+
+	graph = expandedGraph
 
 	if len(graph.Nodes) == 0 {
 		return nil, errnie.Error(errnie.Err(
@@ -194,59 +478,57 @@ func Compile(
 			return nil, errnie.Error(err)
 		}
 
-		assembler := NewInvocationAssembler(
-			node.ID,
-			client,
-			desc.InputPorts,
-			desc.CreateSetter,
-			func(ctx context.Context, setters map[string]func(capnp.Struct)) error {
-				return desc.Invoke(ctx, client, setters)
-			},
-			func(ctx context.Context) error {
-				return desc.Done(ctx, client)
-			},
-		)
-
-		// Populate static inputs from inputData if unwired
-		if node.InputData != nil {
-			for portName, valData := range node.InputData {
-				if _, isInput := desc.InputPorts[portName]; isInput {
-					// Check if port is not wired
-					isWired := false
-					if wires, ok := node.Connections.Inputs[portName]; ok && len(wires) > 0 {
-						isWired = true
-					}
-					if !isWired {
-						if setterGen, ok := desc.CreateSetter[portName]; ok {
-							var val float64
-							switch v := valData.(type) {
-							case float64:
-								val = v
-							case map[string]any:
-								if f, ok := v["float"].(float64); ok {
-									val = f
-								}
-								if f, ok := v["number"].(float64); ok {
-									val = f
-								}
-							}
-							assembler.SetStaticInput(portName, setterGen(val))
-						}
-					}
-				}
-			}
-		}
-
 		compiled := &CompiledNode{
 			ID:          id,
 			Type:        node.Type,
 			Server:      server,
 			Client:      client,
-			Assembler:   assembler,
 			Inputs:      desc.InputPorts,
 			Outputs:     desc.OutputPorts,
 			Descriptor:  desc,
 			Downstreams: make(map[string][]capnp.Client),
+		}
+
+		assembler := NewInvocationAssembler(
+			node.ID,
+			client,
+			desc.InputPorts,
+			desc.CreateInputSink,
+			func(ctx context.Context, setters map[string]func(capnp.Struct)) error {
+				return desc.Invoke(ctx, client, setters, compiled.Downstreams)
+			},
+			func(ctx context.Context) error {
+				return desc.Done(ctx, client, compiled.Downstreams)
+			},
+		)
+
+		compiled.Assembler = assembler
+
+		// Populate static inputs from inputData if unwired
+		if node.InputData != nil {
+			for portName, valData := range node.InputData {
+				if _, isInput := desc.InputPorts[portName]; isInput {
+					isWired := false
+					if wires, ok := node.Connections.Inputs[portName]; ok && len(wires) > 0 {
+						isWired = true
+					}
+
+					if !isWired {
+						if setterGen, ok := desc.CreateStaticSetter[portName]; ok {
+							setter, sErr := setterGen(valData)
+							if sErr != nil {
+								return nil, errnie.Error(errnie.Err(
+									errnie.Validation,
+									"failed to create static setter",
+									sErr,
+								))
+							}
+
+							assembler.SetStaticInput(portName, setter)
+						}
+					}
+				}
+			}
 		}
 
 		nodes[id] = compiled
@@ -294,6 +576,8 @@ func Compile(
 					))
 				}
 
+				toNode.Assembler.MarkWired(target.PortName)
+
 				// Obtain typed input sink capability from target assembler
 				targetSink, err := toNode.Assembler.InputSink(target.PortName)
 				if err != nil {
@@ -321,10 +605,11 @@ func Compile(
 
 	// Identify Source and Sink nodes
 	for _, node := range nodes {
-		if node.Type == "source" || node.Type == "data.Source" {
+		if isBoundarySource(node.ID, Node{Type: node.Type}) {
 			pipeline.SourceNode = node
 		}
-		if node.Type == "sink" || node.Type == "data.Sink" {
+
+		if isBoundarySink(node.ID, Node{Type: node.Type}) {
 			pipeline.SinkNode = node
 		}
 	}
@@ -333,6 +618,7 @@ func Compile(
 	if pipeline.SourceNode == nil && len(execOrder) > 0 {
 		pipeline.SourceNode = nodes[execOrder[0]]
 	}
+
 	// If no explicit SinkNode, pick the last node in topological order
 	if pipeline.SinkNode == nil && len(execOrder) > 0 {
 		pipeline.SinkNode = nodes[execOrder[len(execOrder)-1]]

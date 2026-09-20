@@ -5,6 +5,6 @@ $Go.package("probability");
 $Go.import("github.com/theapemachine/symm/nomagique/probability");
 
 interface Calibrator {
-  write @0 (a :Float64) -> stream;
-  done @1 ();
+  write @0 (in :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

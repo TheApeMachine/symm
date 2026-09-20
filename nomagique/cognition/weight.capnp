@@ -6,5 +6,9 @@ $Go.import("github.com/theapemachine/symm/nomagique/cognition");
 
 interface Weight {
   write @0 (record :Data) -> stream;
-  done @1 ();
+  done @1 () -> (
+    count :UInt64,
+    mass :UInt64,
+    writeStep :UInt64
+  );
 }

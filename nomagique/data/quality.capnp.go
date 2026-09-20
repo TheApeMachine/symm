@@ -7,272 +7,51 @@ import (
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 	math "math"
 )
-
-type WireQualityFacts capnp.Struct
-
-// WireQualityFacts_TypeID is the unique identifier for the type WireQualityFacts.
-const WireQualityFacts_TypeID = 0xdfb4bfcd2b998051
-
-func NewWireQualityFacts(s *capnp.Segment) (WireQualityFacts, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
-	return WireQualityFacts(st), err
-}
-
-func NewRootWireQualityFacts(s *capnp.Segment) (WireQualityFacts, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
-	return WireQualityFacts(st), err
-}
-
-func ReadRootWireQualityFacts(msg *capnp.Message) (WireQualityFacts, error) {
-	root, err := msg.Root()
-	return WireQualityFacts(root.Struct()), err
-}
-
-func (s WireQualityFacts) String() string {
-	str, _ := text.Marshal(0xdfb4bfcd2b998051, capnp.Struct(s))
-	return str
-}
-
-func (s WireQualityFacts) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireQualityFacts) DecodeFromPtr(p capnp.Ptr) WireQualityFacts {
-	return WireQualityFacts(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireQualityFacts) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireQualityFacts) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireQualityFacts) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireQualityFacts) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireQualityFacts) Support() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
-}
-
-func (s WireQualityFacts) SetSupport(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
-}
-
-func (s WireQualityFacts) Divergence() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(8))
-}
-
-func (s WireQualityFacts) SetDivergence(v float64) {
-	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
-}
-
-func (s WireQualityFacts) NoiseVariance() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(16))
-}
-
-func (s WireQualityFacts) SetNoiseVariance(v float64) {
-	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
-}
-
-func (s WireQualityFacts) MahalanobisSNR() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(24))
-}
-
-func (s WireQualityFacts) SetMahalanobisSNR(v float64) {
-	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
-}
-
-func (s WireQualityFacts) Maturity() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(32))
-}
-
-func (s WireQualityFacts) SetMaturity(v float64) {
-	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
-}
-
-func (s WireQualityFacts) HasSupport() bool {
-	return capnp.Struct(s).Bit(320)
-}
-
-func (s WireQualityFacts) SetHasSupport(v bool) {
-	capnp.Struct(s).SetBit(320, v)
-}
-
-func (s WireQualityFacts) HasDivergence() bool {
-	return capnp.Struct(s).Bit(321)
-}
-
-func (s WireQualityFacts) SetHasDivergence(v bool) {
-	capnp.Struct(s).SetBit(321, v)
-}
-
-func (s WireQualityFacts) HasNoise() bool {
-	return capnp.Struct(s).Bit(322)
-}
-
-func (s WireQualityFacts) SetHasNoise(v bool) {
-	capnp.Struct(s).SetBit(322, v)
-}
-
-func (s WireQualityFacts) HasMahalanobis() bool {
-	return capnp.Struct(s).Bit(323)
-}
-
-func (s WireQualityFacts) SetHasMahalanobis(v bool) {
-	capnp.Struct(s).SetBit(323, v)
-}
-
-func (s WireQualityFacts) HasMaturity() bool {
-	return capnp.Struct(s).Bit(324)
-}
-
-func (s WireQualityFacts) SetHasMaturity(v bool) {
-	capnp.Struct(s).SetBit(324, v)
-}
-
-// WireQualityFacts_List is a list of WireQualityFacts.
-type WireQualityFacts_List = capnp.StructList[WireQualityFacts]
-
-// NewWireQualityFacts creates a new list of WireQualityFacts.
-func NewWireQualityFacts_List(s *capnp.Segment, sz int32) (WireQualityFacts_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
-	return capnp.StructList[WireQualityFacts](l), err
-}
-
-// WireQualityFacts_Future is a wrapper for a WireQualityFacts promised by a client call.
-type WireQualityFacts_Future struct{ *capnp.Future }
-
-func (f WireQualityFacts_Future) Struct() (WireQualityFacts, error) {
-	p, err := f.Future.Ptr()
-	return WireQualityFacts(p.Struct()), err
-}
-
-type WireQualityReading capnp.Struct
-
-// WireQualityReading_TypeID is the unique identifier for the type WireQualityReading.
-const WireQualityReading_TypeID = 0x85b2f536ed11f1f7
-
-func NewWireQualityReading(s *capnp.Segment) (WireQualityReading, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
-	return WireQualityReading(st), err
-}
-
-func NewRootWireQualityReading(s *capnp.Segment) (WireQualityReading, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
-	return WireQualityReading(st), err
-}
-
-func ReadRootWireQualityReading(msg *capnp.Message) (WireQualityReading, error) {
-	root, err := msg.Root()
-	return WireQualityReading(root.Struct()), err
-}
-
-func (s WireQualityReading) String() string {
-	str, _ := text.Marshal(0x85b2f536ed11f1f7, capnp.Struct(s))
-	return str
-}
-
-func (s WireQualityReading) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireQualityReading) DecodeFromPtr(p capnp.Ptr) WireQualityReading {
-	return WireQualityReading(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireQualityReading) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireQualityReading) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireQualityReading) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireQualityReading) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireQualityReading) Snr() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
-}
-
-func (s WireQualityReading) SetSnr(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
-}
-
-func (s WireQualityReading) SnrDefined() bool {
-	return capnp.Struct(s).Bit(64)
-}
-
-func (s WireQualityReading) SetSnrDefined(v bool) {
-	capnp.Struct(s).SetBit(64, v)
-}
-
-func (s WireQualityReading) Estimated() bool {
-	return capnp.Struct(s).Bit(65)
-}
-
-func (s WireQualityReading) SetEstimated(v bool) {
-	capnp.Struct(s).SetBit(65, v)
-}
-
-func (s WireQualityReading) Maturity() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(16))
-}
-
-func (s WireQualityReading) SetMaturity(v float64) {
-	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
-}
-
-// WireQualityReading_List is a list of WireQualityReading.
-type WireQualityReading_List = capnp.StructList[WireQualityReading]
-
-// NewWireQualityReading creates a new list of WireQualityReading.
-func NewWireQualityReading_List(s *capnp.Segment, sz int32) (WireQualityReading_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
-	return capnp.StructList[WireQualityReading](l), err
-}
-
-// WireQualityReading_Future is a wrapper for a WireQualityReading promised by a client call.
-type WireQualityReading_Future struct{ *capnp.Future }
-
-func (f WireQualityReading_Future) Struct() (WireQualityReading, error) {
-	p, err := f.Future.Ptr()
-	return WireQualityReading(p.Struct()), err
-}
 
 type Quality capnp.Client
 
 // Quality_TypeID is the unique identifier for the type Quality.
 const Quality_TypeID = 0xb64ac6d30eaf0c55
 
-func (c Quality) Evaluate(ctx context.Context, params func(Quality_evaluate_Params) error) (Quality_evaluate_Results_Future, capnp.ReleaseFunc) {
-
+func (c Quality) Write(ctx context.Context, params func(Quality_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xb64ac6d30eaf0c55,
 			MethodID:      0,
 			InterfaceName: "nomagique/data/quality.capnp:Quality",
-			MethodName:    "evaluate",
+			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(Quality_evaluate_Params(s)) }
+		s.ArgsSize = capnp.ObjectSize{DataSize: 40, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Quality_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c Quality) Done(ctx context.Context, params func(Quality_done_Params) error) (Quality_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xb64ac6d30eaf0c55,
+			MethodID:      1,
+			InterfaceName: "nomagique/data/quality.capnp:Quality",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(Quality_done_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return Quality_evaluate_Results_Future{Future: ans.Future()}, release
+	return Quality_done_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -349,7 +128,9 @@ func (c Quality) GetFlowLimiter() fc.FlowLimiter {
 
 // A Quality_Server is a Quality with a local implementation.
 type Quality_Server interface {
-	Evaluate(context.Context, Quality_evaluate) error
+	Write(context.Context, Quality_write) error
+
+	Done(context.Context, Quality_done) error
 }
 
 // Quality_NewServer creates a new Server from an implementation of Quality_Server.
@@ -368,7 +149,7 @@ func Quality_ServerToClient(s Quality_Server) Quality {
 // This can be used to create a more complicated Server.
 func Quality_Methods(methods []server.Method, s Quality_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 1)
+		methods = make([]server.Method, 0, 2)
 	}
 
 	methods = append(methods, server.Method{
@@ -376,31 +157,60 @@ func Quality_Methods(methods []server.Method, s Quality_Server) []server.Method 
 			InterfaceID:   0xb64ac6d30eaf0c55,
 			MethodID:      0,
 			InterfaceName: "nomagique/data/quality.capnp:Quality",
-			MethodName:    "evaluate",
+			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.Evaluate(ctx, Quality_evaluate{call})
+			return s.Write(ctx, Quality_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xb64ac6d30eaf0c55,
+			MethodID:      1,
+			InterfaceName: "nomagique/data/quality.capnp:Quality",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, Quality_done{call})
 		},
 	})
 
 	return methods
 }
 
-// Quality_evaluate holds the state for a server call to Quality.evaluate.
+// Quality_write holds the state for a server call to Quality.write.
 // See server.Call for documentation.
-type Quality_evaluate struct {
+type Quality_write struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c Quality_evaluate) Args() Quality_evaluate_Params {
-	return Quality_evaluate_Params(c.Call.Args())
+func (c Quality_write) Args() Quality_write_Params {
+	return Quality_write_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c Quality_evaluate) AllocResults() (Quality_evaluate_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Quality_evaluate_Results(r), err
+func (c Quality_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// Quality_done holds the state for a server call to Quality.done.
+// See server.Call for documentation.
+type Quality_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c Quality_done) Args() Quality_done_Params {
+	return Quality_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c Quality_done) AllocResults() (Quality_done_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	return Quality_done_Results(r), err
 }
 
 // Quality_List is a list of Quality.
@@ -412,184 +222,267 @@ func NewQuality_List(s *capnp.Segment, sz int32) (Quality_List, error) {
 	return capnp.CapList[Quality](l), err
 }
 
-type Quality_evaluate_Params capnp.Struct
+type Quality_write_Params capnp.Struct
 
-// Quality_evaluate_Params_TypeID is the unique identifier for the type Quality_evaluate_Params.
-const Quality_evaluate_Params_TypeID = 0xa69f5f56e0911589
+// Quality_write_Params_TypeID is the unique identifier for the type Quality_write_Params.
+const Quality_write_Params_TypeID = 0xa69f5f56e0911589
 
-func NewQuality_evaluate_Params(s *capnp.Segment) (Quality_evaluate_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Quality_evaluate_Params(st), err
+func NewQuality_write_Params(s *capnp.Segment) (Quality_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
+	return Quality_write_Params(st), err
 }
 
-func NewRootQuality_evaluate_Params(s *capnp.Segment) (Quality_evaluate_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Quality_evaluate_Params(st), err
+func NewRootQuality_write_Params(s *capnp.Segment) (Quality_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0})
+	return Quality_write_Params(st), err
 }
 
-func ReadRootQuality_evaluate_Params(msg *capnp.Message) (Quality_evaluate_Params, error) {
+func ReadRootQuality_write_Params(msg *capnp.Message) (Quality_write_Params, error) {
 	root, err := msg.Root()
-	return Quality_evaluate_Params(root.Struct()), err
+	return Quality_write_Params(root.Struct()), err
 }
 
-func (s Quality_evaluate_Params) String() string {
+func (s Quality_write_Params) String() string {
 	str, _ := text.Marshal(0xa69f5f56e0911589, capnp.Struct(s))
 	return str
 }
 
-func (s Quality_evaluate_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Quality_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Quality_evaluate_Params) DecodeFromPtr(p capnp.Ptr) Quality_evaluate_Params {
-	return Quality_evaluate_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (Quality_write_Params) DecodeFromPtr(p capnp.Ptr) Quality_write_Params {
+	return Quality_write_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Quality_evaluate_Params) ToPtr() capnp.Ptr {
+func (s Quality_write_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Quality_evaluate_Params) IsValid() bool {
+func (s Quality_write_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Quality_evaluate_Params) Message() *capnp.Message {
+func (s Quality_write_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Quality_evaluate_Params) Segment() *capnp.Segment {
+func (s Quality_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Quality_evaluate_Params) Facts() (WireQualityFacts, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireQualityFacts(p.Struct()), err
+func (s Quality_write_Params) Support() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Quality_evaluate_Params) HasFacts() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s Quality_write_Params) SetSupport(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s Quality_evaluate_Params) SetFacts(v WireQualityFacts) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Quality_write_Params) Divergence() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewFacts sets the facts field to a newly
-// allocated WireQualityFacts struct, preferring placement in s's segment.
-func (s Quality_evaluate_Params) NewFacts() (WireQualityFacts, error) {
-	ss, err := NewWireQualityFacts(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireQualityFacts{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Quality_write_Params) SetDivergence(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-// Quality_evaluate_Params_List is a list of Quality_evaluate_Params.
-type Quality_evaluate_Params_List = capnp.StructList[Quality_evaluate_Params]
-
-// NewQuality_evaluate_Params creates a new list of Quality_evaluate_Params.
-func NewQuality_evaluate_Params_List(s *capnp.Segment, sz int32) (Quality_evaluate_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Quality_evaluate_Params](l), err
+func (s Quality_write_Params) NoiseVariance() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-// Quality_evaluate_Params_Future is a wrapper for a Quality_evaluate_Params promised by a client call.
-type Quality_evaluate_Params_Future struct{ *capnp.Future }
+func (s Quality_write_Params) SetNoiseVariance(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
 
-func (f Quality_evaluate_Params_Future) Struct() (Quality_evaluate_Params, error) {
+func (s Quality_write_Params) MahalanobisSNR() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s Quality_write_Params) SetMahalanobisSNR(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+func (s Quality_write_Params) Maturity() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s Quality_write_Params) SetMaturity(v float64) {
+	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
+}
+
+// Quality_write_Params_List is a list of Quality_write_Params.
+type Quality_write_Params_List = capnp.StructList[Quality_write_Params]
+
+// NewQuality_write_Params creates a new list of Quality_write_Params.
+func NewQuality_write_Params_List(s *capnp.Segment, sz int32) (Quality_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 0}, sz)
+	return capnp.StructList[Quality_write_Params](l), err
+}
+
+// Quality_write_Params_Future is a wrapper for a Quality_write_Params promised by a client call.
+type Quality_write_Params_Future struct{ *capnp.Future }
+
+func (f Quality_write_Params_Future) Struct() (Quality_write_Params, error) {
 	p, err := f.Future.Ptr()
-	return Quality_evaluate_Params(p.Struct()), err
-}
-func (p Quality_evaluate_Params_Future) Facts() WireQualityFacts_Future {
-	return WireQualityFacts_Future{Future: p.Future.Field(0, nil)}
+	return Quality_write_Params(p.Struct()), err
 }
 
-type Quality_evaluate_Results capnp.Struct
+type Quality_done_Params capnp.Struct
 
-// Quality_evaluate_Results_TypeID is the unique identifier for the type Quality_evaluate_Results.
-const Quality_evaluate_Results_TypeID = 0x85d2c14686c1b0ba
+// Quality_done_Params_TypeID is the unique identifier for the type Quality_done_Params.
+const Quality_done_Params_TypeID = 0xfa8ce107d539707a
 
-func NewQuality_evaluate_Results(s *capnp.Segment) (Quality_evaluate_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Quality_evaluate_Results(st), err
+func NewQuality_done_Params(s *capnp.Segment) (Quality_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Quality_done_Params(st), err
 }
 
-func NewRootQuality_evaluate_Results(s *capnp.Segment) (Quality_evaluate_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return Quality_evaluate_Results(st), err
+func NewRootQuality_done_Params(s *capnp.Segment) (Quality_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return Quality_done_Params(st), err
 }
 
-func ReadRootQuality_evaluate_Results(msg *capnp.Message) (Quality_evaluate_Results, error) {
+func ReadRootQuality_done_Params(msg *capnp.Message) (Quality_done_Params, error) {
 	root, err := msg.Root()
-	return Quality_evaluate_Results(root.Struct()), err
+	return Quality_done_Params(root.Struct()), err
 }
 
-func (s Quality_evaluate_Results) String() string {
-	str, _ := text.Marshal(0x85d2c14686c1b0ba, capnp.Struct(s))
+func (s Quality_done_Params) String() string {
+	str, _ := text.Marshal(0xfa8ce107d539707a, capnp.Struct(s))
 	return str
 }
 
-func (s Quality_evaluate_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Quality_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (Quality_evaluate_Results) DecodeFromPtr(p capnp.Ptr) Quality_evaluate_Results {
-	return Quality_evaluate_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (Quality_done_Params) DecodeFromPtr(p capnp.Ptr) Quality_done_Params {
+	return Quality_done_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s Quality_evaluate_Results) ToPtr() capnp.Ptr {
+func (s Quality_done_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s Quality_evaluate_Results) IsValid() bool {
+func (s Quality_done_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s Quality_evaluate_Results) Message() *capnp.Message {
+func (s Quality_done_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s Quality_evaluate_Results) Segment() *capnp.Segment {
+func (s Quality_done_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Quality_evaluate_Results) Reading() (WireQualityReading, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireQualityReading(p.Struct()), err
+
+// Quality_done_Params_List is a list of Quality_done_Params.
+type Quality_done_Params_List = capnp.StructList[Quality_done_Params]
+
+// NewQuality_done_Params creates a new list of Quality_done_Params.
+func NewQuality_done_Params_List(s *capnp.Segment, sz int32) (Quality_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[Quality_done_Params](l), err
 }
 
-func (s Quality_evaluate_Results) HasReading() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
+// Quality_done_Params_Future is a wrapper for a Quality_done_Params promised by a client call.
+type Quality_done_Params_Future struct{ *capnp.Future }
 
-func (s Quality_evaluate_Results) SetReading(v WireQualityReading) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewReading sets the reading field to a newly
-// allocated WireQualityReading struct, preferring placement in s's segment.
-func (s Quality_evaluate_Results) NewReading() (WireQualityReading, error) {
-	ss, err := NewWireQualityReading(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireQualityReading{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
-}
-
-// Quality_evaluate_Results_List is a list of Quality_evaluate_Results.
-type Quality_evaluate_Results_List = capnp.StructList[Quality_evaluate_Results]
-
-// NewQuality_evaluate_Results creates a new list of Quality_evaluate_Results.
-func NewQuality_evaluate_Results_List(s *capnp.Segment, sz int32) (Quality_evaluate_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[Quality_evaluate_Results](l), err
-}
-
-// Quality_evaluate_Results_Future is a wrapper for a Quality_evaluate_Results promised by a client call.
-type Quality_evaluate_Results_Future struct{ *capnp.Future }
-
-func (f Quality_evaluate_Results_Future) Struct() (Quality_evaluate_Results, error) {
+func (f Quality_done_Params_Future) Struct() (Quality_done_Params, error) {
 	p, err := f.Future.Ptr()
-	return Quality_evaluate_Results(p.Struct()), err
+	return Quality_done_Params(p.Struct()), err
 }
-func (p Quality_evaluate_Results_Future) Reading() WireQualityReading_Future {
-	return WireQualityReading_Future{Future: p.Future.Field(0, nil)}
+
+type Quality_done_Results capnp.Struct
+
+// Quality_done_Results_TypeID is the unique identifier for the type Quality_done_Results.
+const Quality_done_Results_TypeID = 0xfa6a47678e30c61c
+
+func NewQuality_done_Results(s *capnp.Segment) (Quality_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	return Quality_done_Results(st), err
+}
+
+func NewRootQuality_done_Results(s *capnp.Segment) (Quality_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	return Quality_done_Results(st), err
+}
+
+func ReadRootQuality_done_Results(msg *capnp.Message) (Quality_done_Results, error) {
+	root, err := msg.Root()
+	return Quality_done_Results(root.Struct()), err
+}
+
+func (s Quality_done_Results) String() string {
+	str, _ := text.Marshal(0xfa6a47678e30c61c, capnp.Struct(s))
+	return str
+}
+
+func (s Quality_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Quality_done_Results) DecodeFromPtr(p capnp.Ptr) Quality_done_Results {
+	return Quality_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Quality_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Quality_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Quality_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Quality_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Quality_done_Results) Snr() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Quality_done_Results) SetSnr(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Quality_done_Results) SnrDefined() bool {
+	return capnp.Struct(s).Bit(64)
+}
+
+func (s Quality_done_Results) SetSnrDefined(v bool) {
+	capnp.Struct(s).SetBit(64, v)
+}
+
+func (s Quality_done_Results) Estimated() bool {
+	return capnp.Struct(s).Bit(65)
+}
+
+func (s Quality_done_Results) SetEstimated(v bool) {
+	capnp.Struct(s).SetBit(65, v)
+}
+
+func (s Quality_done_Results) Maturity() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Quality_done_Results) SetMaturity(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+// Quality_done_Results_List is a list of Quality_done_Results.
+type Quality_done_Results_List = capnp.StructList[Quality_done_Results]
+
+// NewQuality_done_Results creates a new list of Quality_done_Results.
+func NewQuality_done_Results_List(s *capnp.Segment, sz int32) (Quality_done_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
+	return capnp.StructList[Quality_done_Results](l), err
+}
+
+// Quality_done_Results_Future is a wrapper for a Quality_done_Results promised by a client call.
+type Quality_done_Results_Future struct{ *capnp.Future }
+
+func (f Quality_done_Results_Future) Struct() (Quality_done_Results, error) {
+	p, err := f.Future.Ptr()
+	return Quality_done_Results(p.Struct()), err
 }

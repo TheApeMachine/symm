@@ -9,86 +9,8 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireAssemble capnp.Struct
-
-// WireAssemble_TypeID is the unique identifier for the type WireAssemble.
-const WireAssemble_TypeID = 0xbb10b0c755e451f9
-
-func NewWireAssemble(s *capnp.Segment) (WireAssemble, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireAssemble(st), err
-}
-
-func NewRootWireAssemble(s *capnp.Segment) (WireAssemble, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireAssemble(st), err
-}
-
-func ReadRootWireAssemble(msg *capnp.Message) (WireAssemble, error) {
-	root, err := msg.Root()
-	return WireAssemble(root.Struct()), err
-}
-
-func (s WireAssemble) String() string {
-	str, _ := text.Marshal(0xbb10b0c755e451f9, capnp.Struct(s))
-	return str
-}
-
-func (s WireAssemble) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireAssemble) DecodeFromPtr(p capnp.Ptr) WireAssemble {
-	return WireAssemble(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireAssemble) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireAssemble) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireAssemble) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireAssemble) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireAssemble) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireAssemble) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireAssemble) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireAssemble_List is a list of WireAssemble.
-type WireAssemble_List = capnp.StructList[WireAssemble]
-
-// NewWireAssemble creates a new list of WireAssemble.
-func NewWireAssemble_List(s *capnp.Segment, sz int32) (WireAssemble_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireAssemble](l), err
-}
-
-// WireAssemble_Future is a wrapper for a WireAssemble promised by a client call.
-type WireAssemble_Future struct{ *capnp.Future }
-
-func (f WireAssemble_Future) Struct() (WireAssemble, error) {
-	p, err := f.Future.Ptr()
-	return WireAssemble(p.Struct()), err
-}
-func (p WireAssemble_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type Assemble capnp.Client
 
@@ -105,7 +27,7 @@ func (c Assemble) Write(ctx context.Context, params func(Assemble_write_Params) 
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Assemble_write_Params(s)) }
 	}
 
@@ -287,7 +209,7 @@ func (c Assemble_done) Args() Assemble_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Assemble_done) AllocResults() (Assemble_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Assemble_done_Results(r), err
 }
 
@@ -306,12 +228,12 @@ type Assemble_write_Params capnp.Struct
 const Assemble_write_Params_TypeID = 0x8220460369e7f91d
 
 func NewAssemble_write_Params(s *capnp.Segment) (Assemble_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return Assemble_write_Params(st), err
 }
 
 func NewRootAssemble_write_Params(s *capnp.Segment) (Assemble_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3})
 	return Assemble_write_Params(st), err
 }
 
@@ -347,28 +269,61 @@ func (s Assemble_write_Params) Message() *capnp.Message {
 func (s Assemble_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Assemble_write_Params) Assemble() (WireAssemble, error) {
+func (s Assemble_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireAssemble(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Assemble_write_Params) HasAssemble() bool {
+func (s Assemble_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Assemble_write_Params) SetAssemble(v WireAssemble) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Assemble_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewAssemble sets the assemble field to a newly
-// allocated WireAssemble struct, preferring placement in s's segment.
-func (s Assemble_write_Params) NewAssemble() (WireAssemble, error) {
-	ss, err := NewWireAssemble(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireAssemble{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Assemble_write_Params) Timestamp() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s Assemble_write_Params) SetTimestamp(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s Assemble_write_Params) Side() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Assemble_write_Params) HasSide() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Assemble_write_Params) SideBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Assemble_write_Params) SetSide(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Assemble_write_Params) Symbol() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Assemble_write_Params) HasSymbol() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Assemble_write_Params) SymbolBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Assemble_write_Params) SetSymbol(v string) error {
+	return capnp.Struct(s).SetText(2, v)
 }
 
 // Assemble_write_Params_List is a list of Assemble_write_Params.
@@ -376,7 +331,7 @@ type Assemble_write_Params_List = capnp.StructList[Assemble_write_Params]
 
 // NewAssemble_write_Params creates a new list of Assemble_write_Params.
 func NewAssemble_write_Params_List(s *capnp.Segment, sz int32) (Assemble_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 3}, sz)
 	return capnp.StructList[Assemble_write_Params](l), err
 }
 
@@ -386,9 +341,6 @@ type Assemble_write_Params_Future struct{ *capnp.Future }
 func (f Assemble_write_Params_Future) Struct() (Assemble_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Assemble_write_Params(p.Struct()), err
-}
-func (p Assemble_write_Params_Future) Assemble() WireAssemble_Future {
-	return WireAssemble_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Assemble_done_Params capnp.Struct
@@ -462,12 +414,12 @@ type Assemble_done_Results capnp.Struct
 const Assemble_done_Results_TypeID = 0xa0b9ea562801bd01
 
 func NewAssemble_done_Results(s *capnp.Segment) (Assemble_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Assemble_done_Results(st), err
 }
 
 func NewRootAssemble_done_Results(s *capnp.Segment) (Assemble_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Assemble_done_Results(st), err
 }
 
@@ -503,13 +455,36 @@ func (s Assemble_done_Results) Message() *capnp.Message {
 func (s Assemble_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Assemble_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Assemble_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Assemble_done_Results) Time() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Assemble_done_Results) SetTime(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Assemble_done_Results) Mark() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Assemble_done_Results) SetMark(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
 
 // Assemble_done_Results_List is a list of Assemble_done_Results.
 type Assemble_done_Results_List = capnp.StructList[Assemble_done_Results]
 
 // NewAssemble_done_Results creates a new list of Assemble_done_Results.
 func NewAssemble_done_Results_List(s *capnp.Segment, sz int32) (Assemble_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[Assemble_done_Results](l), err
 }
 

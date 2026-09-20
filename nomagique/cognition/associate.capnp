@@ -6,5 +6,8 @@ $Go.import("github.com/theapemachine/symm/nomagique/cognition");
 
 interface Associate {
   write @0 (current :Data) -> stream;
-  done @1 ();
+  done @1 () -> (
+    precursor :Data,
+    current :Data
+  );
 }

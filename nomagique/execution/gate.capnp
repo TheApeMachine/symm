@@ -3,11 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("execution");
 $Go.import("nomagique/execution");
 
-struct WireGate {
-  action @0 :Text;
-}
-
 interface Gate {
-  write @0 (gate :WireGate) -> stream;
-  done @1 ();
+  write @0 (in :Text) -> stream;
+  done @1 () -> (out :Text);
 }

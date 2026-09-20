@@ -9,112 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type LinearFitRow capnp.Struct
-
-// LinearFitRow_TypeID is the unique identifier for the type LinearFitRow.
-const LinearFitRow_TypeID = 0x8af89f69612d89e9
-
-func NewLinearFitRow(s *capnp.Segment) (LinearFitRow, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return LinearFitRow(st), err
-}
-
-func NewRootLinearFitRow(s *capnp.Segment) (LinearFitRow, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return LinearFitRow(st), err
-}
-
-func ReadRootLinearFitRow(msg *capnp.Message) (LinearFitRow, error) {
-	root, err := msg.Root()
-	return LinearFitRow(root.Struct()), err
-}
-
-func (s LinearFitRow) String() string {
-	str, _ := text.Marshal(0x8af89f69612d89e9, capnp.Struct(s))
-	return str
-}
-
-func (s LinearFitRow) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (LinearFitRow) DecodeFromPtr(p capnp.Ptr) LinearFitRow {
-	return LinearFitRow(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s LinearFitRow) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s LinearFitRow) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s LinearFitRow) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s LinearFitRow) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s LinearFitRow) Values() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s LinearFitRow) HasValues() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s LinearFitRow) SetValues(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewValues sets the values field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s LinearFitRow) NewValues(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-
-// LinearFitRow_List is a list of LinearFitRow.
-type LinearFitRow_List = capnp.StructList[LinearFitRow]
-
-// NewLinearFitRow creates a new list of LinearFitRow.
-func NewLinearFitRow_List(s *capnp.Segment, sz int32) (LinearFitRow_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[LinearFitRow](l), err
-}
-
-// LinearFitRow_Future is a wrapper for a LinearFitRow promised by a client call.
-type LinearFitRow_Future struct{ *capnp.Future }
-
-func (f LinearFitRow_Future) Struct() (LinearFitRow, error) {
-	p, err := f.Future.Ptr()
-	return LinearFitRow(p.Struct()), err
-}
 
 type LinearFit capnp.Client
 
 // LinearFit_TypeID is the unique identifier for the type LinearFit.
-const LinearFit_TypeID = 0xc5659cd7bed064a8
+const LinearFit_TypeID = 0x86c41c60827ca82a
 
 func (c LinearFit) Write(ctx context.Context, params func(LinearFit_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xc5659cd7bed064a8,
+			InterfaceID:   0x86c41c60827ca82a,
 			MethodID:      0,
 			InterfaceName: "nomagique/learning/linear_fit.capnp:LinearFit",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(LinearFit_write_Params(s)) }
 	}
 
@@ -126,7 +39,7 @@ func (c LinearFit) Done(ctx context.Context, params func(LinearFit_done_Params) 
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xc5659cd7bed064a8,
+			InterfaceID:   0x86c41c60827ca82a,
 			MethodID:      1,
 			InterfaceName: "nomagique/learning/linear_fit.capnp:LinearFit",
 			MethodName:    "done",
@@ -241,7 +154,7 @@ func LinearFit_Methods(methods []server.Method, s LinearFit_Server) []server.Met
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xc5659cd7bed064a8,
+			InterfaceID:   0x86c41c60827ca82a,
 			MethodID:      0,
 			InterfaceName: "nomagique/learning/linear_fit.capnp:LinearFit",
 			MethodName:    "write",
@@ -253,7 +166,7 @@ func LinearFit_Methods(methods []server.Method, s LinearFit_Server) []server.Met
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xc5659cd7bed064a8,
+			InterfaceID:   0x86c41c60827ca82a,
 			MethodID:      1,
 			InterfaceName: "nomagique/learning/linear_fit.capnp:LinearFit",
 			MethodName:    "done",
@@ -296,7 +209,7 @@ func (c LinearFit_done) Args() LinearFit_done_Params {
 
 // AllocResults allocates the results struct.
 func (c LinearFit_done) AllocResults() (LinearFit_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return LinearFit_done_Results(r), err
 }
 
@@ -312,15 +225,15 @@ func NewLinearFit_List(s *capnp.Segment, sz int32) (LinearFit_List, error) {
 type LinearFit_write_Params capnp.Struct
 
 // LinearFit_write_Params_TypeID is the unique identifier for the type LinearFit_write_Params.
-const LinearFit_write_Params_TypeID = 0xe637ae4b54bc357a
+const LinearFit_write_Params_TypeID = 0xdfcea473d3245277
 
 func NewLinearFit_write_Params(s *capnp.Segment) (LinearFit_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return LinearFit_write_Params(st), err
 }
 
 func NewRootLinearFit_write_Params(s *capnp.Segment) (LinearFit_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return LinearFit_write_Params(st), err
 }
 
@@ -330,7 +243,7 @@ func ReadRootLinearFit_write_Params(msg *capnp.Message) (LinearFit_write_Params,
 }
 
 func (s LinearFit_write_Params) String() string {
-	str, _ := text.Marshal(0xe637ae4b54bc357a, capnp.Struct(s))
+	str, _ := text.Marshal(0xdfcea473d3245277, capnp.Struct(s))
 	return str
 }
 
@@ -356,28 +269,20 @@ func (s LinearFit_write_Params) Message() *capnp.Message {
 func (s LinearFit_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s LinearFit_write_Params) Rows() (LinearFitRow_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return LinearFitRow_List(p.List()), err
+func (s LinearFit_write_Params) X() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s LinearFit_write_Params) HasRows() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s LinearFit_write_Params) SetX(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s LinearFit_write_Params) SetRows(v LinearFitRow_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s LinearFit_write_Params) Y() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewRows sets the rows field to a newly
-// allocated LinearFitRow_List, preferring placement in s's segment.
-func (s LinearFit_write_Params) NewRows(n int32) (LinearFitRow_List, error) {
-	l, err := NewLinearFitRow_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return LinearFitRow_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
+func (s LinearFit_write_Params) SetY(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
 // LinearFit_write_Params_List is a list of LinearFit_write_Params.
@@ -385,7 +290,7 @@ type LinearFit_write_Params_List = capnp.StructList[LinearFit_write_Params]
 
 // NewLinearFit_write_Params creates a new list of LinearFit_write_Params.
 func NewLinearFit_write_Params_List(s *capnp.Segment, sz int32) (LinearFit_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
 	return capnp.StructList[LinearFit_write_Params](l), err
 }
 
@@ -400,7 +305,7 @@ func (f LinearFit_write_Params_Future) Struct() (LinearFit_write_Params, error) 
 type LinearFit_done_Params capnp.Struct
 
 // LinearFit_done_Params_TypeID is the unique identifier for the type LinearFit_done_Params.
-const LinearFit_done_Params_TypeID = 0x9ea09cce1a96ad85
+const LinearFit_done_Params_TypeID = 0xf30da51ef5f89090
 
 func NewLinearFit_done_Params(s *capnp.Segment) (LinearFit_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -418,7 +323,7 @@ func ReadRootLinearFit_done_Params(msg *capnp.Message) (LinearFit_done_Params, e
 }
 
 func (s LinearFit_done_Params) String() string {
-	str, _ := text.Marshal(0x9ea09cce1a96ad85, capnp.Struct(s))
+	str, _ := text.Marshal(0xf30da51ef5f89090, capnp.Struct(s))
 	return str
 }
 
@@ -465,15 +370,15 @@ func (f LinearFit_done_Params_Future) Struct() (LinearFit_done_Params, error) {
 type LinearFit_done_Results capnp.Struct
 
 // LinearFit_done_Results_TypeID is the unique identifier for the type LinearFit_done_Results.
-const LinearFit_done_Results_TypeID = 0xb4a5cabc9bf889c7
+const LinearFit_done_Results_TypeID = 0xa42e7a0aaa4dd4f3
 
 func NewLinearFit_done_Results(s *capnp.Segment) (LinearFit_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return LinearFit_done_Results(st), err
 }
 
 func NewRootLinearFit_done_Results(s *capnp.Segment) (LinearFit_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return LinearFit_done_Results(st), err
 }
 
@@ -483,7 +388,7 @@ func ReadRootLinearFit_done_Results(msg *capnp.Message) (LinearFit_done_Results,
 }
 
 func (s LinearFit_done_Results) String() string {
-	str, _ := text.Marshal(0xb4a5cabc9bf889c7, capnp.Struct(s))
+	str, _ := text.Marshal(0xa42e7a0aaa4dd4f3, capnp.Struct(s))
 	return str
 }
 
@@ -509,13 +414,36 @@ func (s LinearFit_done_Results) Message() *capnp.Message {
 func (s LinearFit_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s LinearFit_done_Results) Slope() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s LinearFit_done_Results) SetSlope(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s LinearFit_done_Results) Intercept() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s LinearFit_done_Results) SetIntercept(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s LinearFit_done_Results) R2() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s LinearFit_done_Results) SetR2(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
 
 // LinearFit_done_Results_List is a list of LinearFit_done_Results.
 type LinearFit_done_Results_List = capnp.StructList[LinearFit_done_Results]
 
 // NewLinearFit_done_Results creates a new list of LinearFit_done_Results.
 func NewLinearFit_done_Results_List(s *capnp.Segment, sz int32) (LinearFit_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[LinearFit_done_Results](l), err
 }
 

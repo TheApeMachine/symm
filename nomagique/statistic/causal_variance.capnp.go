@@ -3,14 +3,13 @@
 package statistic
 
 import (
-	context "context"
-	math "math"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type CausalVariance capnp.Client
@@ -210,7 +209,7 @@ func (c CausalVariance_done) Args() CausalVariance_done_Params {
 
 // AllocResults allocates the results struct.
 func (c CausalVariance_done) AllocResults() (CausalVariance_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return CausalVariance_done_Results(r), err
 }
 
@@ -270,11 +269,11 @@ func (s CausalVariance_write_Params) Message() *capnp.Message {
 func (s CausalVariance_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s CausalVariance_write_Params) A() float64 {
+func (s CausalVariance_write_Params) In() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s CausalVariance_write_Params) SetA(v float64) {
+func (s CausalVariance_write_Params) SetIn(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
@@ -366,12 +365,12 @@ type CausalVariance_done_Results capnp.Struct
 const CausalVariance_done_Results_TypeID = 0xa498334ff27976f1
 
 func NewCausalVariance_done_Results(s *capnp.Segment) (CausalVariance_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return CausalVariance_done_Results(st), err
 }
 
 func NewRootCausalVariance_done_Results(s *capnp.Segment) (CausalVariance_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return CausalVariance_done_Results(st), err
 }
 
@@ -407,13 +406,20 @@ func (s CausalVariance_done_Results) Message() *capnp.Message {
 func (s CausalVariance_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s CausalVariance_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s CausalVariance_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // CausalVariance_done_Results_List is a list of CausalVariance_done_Results.
 type CausalVariance_done_Results_List = capnp.StructList[CausalVariance_done_Results]
 
 // NewCausalVariance_done_Results creates a new list of CausalVariance_done_Results.
 func NewCausalVariance_done_Results_List(s *capnp.Segment, sz int32) (CausalVariance_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[CausalVariance_done_Results](l), err
 }
 

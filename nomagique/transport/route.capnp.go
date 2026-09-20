@@ -11,102 +11,6 @@ import (
 	context "context"
 )
 
-type WireRoute capnp.Struct
-
-// WireRoute_TypeID is the unique identifier for the type WireRoute.
-const WireRoute_TypeID = 0x9601718c09bb9785
-
-func NewWireRoute(s *capnp.Segment) (WireRoute, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireRoute(st), err
-}
-
-func NewRootWireRoute(s *capnp.Segment) (WireRoute, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireRoute(st), err
-}
-
-func ReadRootWireRoute(msg *capnp.Message) (WireRoute, error) {
-	root, err := msg.Root()
-	return WireRoute(root.Struct()), err
-}
-
-func (s WireRoute) String() string {
-	str, _ := text.Marshal(0x9601718c09bb9785, capnp.Struct(s))
-	return str
-}
-
-func (s WireRoute) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireRoute) DecodeFromPtr(p capnp.Ptr) WireRoute {
-	return WireRoute(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireRoute) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireRoute) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireRoute) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireRoute) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireRoute) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireRoute) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireRoute) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireRoute) Destination() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireRoute) HasDestination() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireRoute) DestinationBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireRoute) SetDestination(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-// WireRoute_List is a list of WireRoute.
-type WireRoute_List = capnp.StructList[WireRoute]
-
-// NewWireRoute creates a new list of WireRoute.
-func NewWireRoute_List(s *capnp.Segment, sz int32) (WireRoute_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireRoute](l), err
-}
-
-// WireRoute_Future is a wrapper for a WireRoute promised by a client call.
-type WireRoute_Future struct{ *capnp.Future }
-
-func (f WireRoute_Future) Struct() (WireRoute, error) {
-	p, err := f.Future.Ptr()
-	return WireRoute(p.Struct()), err
-}
-func (p WireRoute_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Route capnp.Client
 
 // Route_TypeID is the unique identifier for the type Route.
@@ -304,7 +208,7 @@ func (c Route_done) Args() Route_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Route_done) AllocResults() (Route_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Route_done_Results(r), err
 }
 
@@ -364,28 +268,17 @@ func (s Route_write_Params) Message() *capnp.Message {
 func (s Route_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Route_write_Params) Payload() (WireRoute, error) {
+func (s Route_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireRoute(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Route_write_Params) HasPayload() bool {
+func (s Route_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Route_write_Params) SetPayload(v WireRoute) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireRoute struct, preferring placement in s's segment.
-func (s Route_write_Params) NewPayload() (WireRoute, error) {
-	ss, err := NewWireRoute(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireRoute{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Route_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Route_write_Params_List is a list of Route_write_Params.
@@ -403,9 +296,6 @@ type Route_write_Params_Future struct{ *capnp.Future }
 func (f Route_write_Params_Future) Struct() (Route_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Route_write_Params(p.Struct()), err
-}
-func (p Route_write_Params_Future) Payload() WireRoute_Future {
-	return WireRoute_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Route_done_Params capnp.Struct
@@ -479,12 +369,12 @@ type Route_done_Results capnp.Struct
 const Route_done_Results_TypeID = 0xebe51c921b549f17
 
 func NewRoute_done_Results(s *capnp.Segment) (Route_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Route_done_Results(st), err
 }
 
 func NewRootRoute_done_Results(s *capnp.Segment) (Route_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Route_done_Results(st), err
 }
 
@@ -520,13 +410,25 @@ func (s Route_done_Results) Message() *capnp.Message {
 func (s Route_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Route_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Route_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Route_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Route_done_Results_List is a list of Route_done_Results.
 type Route_done_Results_List = capnp.StructList[Route_done_Results]
 
 // NewRoute_done_Results creates a new list of Route_done_Results.
 func NewRoute_done_Results_List(s *capnp.Segment, sz int32) (Route_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Route_done_Results](l), err
 }
 

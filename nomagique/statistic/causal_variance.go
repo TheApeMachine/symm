@@ -3,49 +3,52 @@ package statistic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type CausalVarianceServer struct {
-	Downstream types.Float64Sink
-	count      float64
-	mean       float64
-	m2         float64
-	prevVar    float64
+	out     float64
+	count   float64
+	mean    float64
+	m2      float64
+	prevVar float64
 }
 
-func (s *CausalVarianceServer) Write(ctx context.Context, call CausalVariance_write) error {
-	a := call.Args().A()
-	ret := s.prevVar
-	s.count++
-	delta := a - s.mean
-	s.mean += delta / s.count
-	delta2 := a - s.mean
-	s.m2 += delta * delta2
-	if s.count > 1 {
-		s.prevVar = s.m2 / (s.count - 1)
+func (srv *CausalVarianceServer) Write(ctx context.Context, call CausalVariance_write) error {
+	inVal := call.Args().In()
+	ret := srv.prevVar
+	srv.count++
+	delta := inVal - srv.mean
+	srv.mean += delta / srv.count
+	delta2 := inVal - srv.mean
+	srv.m2 += delta * delta2
+
+	if srv.count > 1 {
+		srv.prevVar = srv.m2 / (srv.count - 1)
 	}
 
 	result := ret
-	if s.count <= 2 {
+	if srv.count == 1 {
 		result = 0
 	}
 
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = result
 	return nil
 }
 
-func (s *CausalVarianceServer) Done(ctx context.Context, call CausalVariance_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *CausalVarianceServer) Done(ctx context.Context, call CausalVariance_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc causal variance results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

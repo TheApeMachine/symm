@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireBuyIntensity capnp.Struct
-
-// WireBuyIntensity_TypeID is the unique identifier for the type WireBuyIntensity.
-const WireBuyIntensity_TypeID = 0xd546127022fabe40
-
-func NewWireBuyIntensity(s *capnp.Segment) (WireBuyIntensity, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBuyIntensity(st), err
-}
-
-func NewRootWireBuyIntensity(s *capnp.Segment) (WireBuyIntensity, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBuyIntensity(st), err
-}
-
-func ReadRootWireBuyIntensity(msg *capnp.Message) (WireBuyIntensity, error) {
-	root, err := msg.Root()
-	return WireBuyIntensity(root.Struct()), err
-}
-
-func (s WireBuyIntensity) String() string {
-	str, _ := text.Marshal(0xd546127022fabe40, capnp.Struct(s))
-	return str
-}
-
-func (s WireBuyIntensity) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireBuyIntensity) DecodeFromPtr(p capnp.Ptr) WireBuyIntensity {
-	return WireBuyIntensity(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireBuyIntensity) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireBuyIntensity) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireBuyIntensity) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireBuyIntensity) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireBuyIntensity) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireBuyIntensity) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireBuyIntensity) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireBuyIntensity_List is a list of WireBuyIntensity.
-type WireBuyIntensity_List = capnp.StructList[WireBuyIntensity]
-
-// NewWireBuyIntensity creates a new list of WireBuyIntensity.
-func NewWireBuyIntensity_List(s *capnp.Segment, sz int32) (WireBuyIntensity_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireBuyIntensity](l), err
-}
-
-// WireBuyIntensity_Future is a wrapper for a WireBuyIntensity promised by a client call.
-type WireBuyIntensity_Future struct{ *capnp.Future }
-
-func (f WireBuyIntensity_Future) Struct() (WireBuyIntensity, error) {
-	p, err := f.Future.Ptr()
-	return WireBuyIntensity(p.Struct()), err
-}
-func (p WireBuyIntensity_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type BuyIntensity capnp.Client
 
 // BuyIntensity_TypeID is the unique identifier for the type BuyIntensity.
-const BuyIntensity_TypeID = 0xf3d3b30ec2c74216
+const BuyIntensity_TypeID = 0x9277396bb69d556d
 
 func (c BuyIntensity) Write(ctx context.Context, params func(BuyIntensity_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xf3d3b30ec2c74216,
+			InterfaceID:   0x9277396bb69d556d,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/buy_intensity.capnp:BuyIntensity",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(BuyIntensity_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c BuyIntensity) Done(ctx context.Context, params func(BuyIntensity_done_Pa
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xf3d3b30ec2c74216,
+			InterfaceID:   0x9277396bb69d556d,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/buy_intensity.capnp:BuyIntensity",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func BuyIntensity_Methods(methods []server.Method, s BuyIntensity_Server) []serv
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xf3d3b30ec2c74216,
+			InterfaceID:   0x9277396bb69d556d,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/buy_intensity.capnp:BuyIntensity",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func BuyIntensity_Methods(methods []server.Method, s BuyIntensity_Server) []serv
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xf3d3b30ec2c74216,
+			InterfaceID:   0x9277396bb69d556d,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/buy_intensity.capnp:BuyIntensity",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c BuyIntensity_done) Args() BuyIntensity_done_Params {
 
 // AllocResults allocates the results struct.
 func (c BuyIntensity_done) AllocResults() (BuyIntensity_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyIntensity_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewBuyIntensity_List(s *capnp.Segment, sz int32) (BuyIntensity_List, error)
 type BuyIntensity_write_Params capnp.Struct
 
 // BuyIntensity_write_Params_TypeID is the unique identifier for the type BuyIntensity_write_Params.
-const BuyIntensity_write_Params_TypeID = 0xa0cc2c1646b1f4a0
+const BuyIntensity_write_Params_TypeID = 0xcf6d57120c054d08
 
 func NewBuyIntensity_write_Params(s *capnp.Segment) (BuyIntensity_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyIntensity_write_Params(st), err
 }
 
 func NewRootBuyIntensity_write_Params(s *capnp.Segment) (BuyIntensity_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyIntensity_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootBuyIntensity_write_Params(msg *capnp.Message) (BuyIntensity_write_P
 }
 
 func (s BuyIntensity_write_Params) String() string {
-	str, _ := text.Marshal(0xa0cc2c1646b1f4a0, capnp.Struct(s))
+	str, _ := text.Marshal(0xcf6d57120c054d08, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s BuyIntensity_write_Params) Message() *capnp.Message {
 func (s BuyIntensity_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BuyIntensity_write_Params) View() (WireBuyIntensity, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireBuyIntensity(p.Struct()), err
+func (s BuyIntensity_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s BuyIntensity_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BuyIntensity_write_Params) SetView(v WireBuyIntensity) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireBuyIntensity struct, preferring placement in s's segment.
-func (s BuyIntensity_write_Params) NewView() (WireBuyIntensity, error) {
-	ss, err := NewWireBuyIntensity(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireBuyIntensity{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s BuyIntensity_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // BuyIntensity_write_Params_List is a list of BuyIntensity_write_Params.
@@ -376,7 +282,7 @@ type BuyIntensity_write_Params_List = capnp.StructList[BuyIntensity_write_Params
 
 // NewBuyIntensity_write_Params creates a new list of BuyIntensity_write_Params.
 func NewBuyIntensity_write_Params_List(s *capnp.Segment, sz int32) (BuyIntensity_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[BuyIntensity_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f BuyIntensity_write_Params_Future) Struct() (BuyIntensity_write_Params, e
 	p, err := f.Future.Ptr()
 	return BuyIntensity_write_Params(p.Struct()), err
 }
-func (p BuyIntensity_write_Params_Future) View() WireBuyIntensity_Future {
-	return WireBuyIntensity_Future{Future: p.Future.Field(0, nil)}
-}
 
 type BuyIntensity_done_Params capnp.Struct
 
 // BuyIntensity_done_Params_TypeID is the unique identifier for the type BuyIntensity_done_Params.
-const BuyIntensity_done_Params_TypeID = 0xd118059b2a15712a
+const BuyIntensity_done_Params_TypeID = 0xfb89030685b87eaf
 
 func NewBuyIntensity_done_Params(s *capnp.Segment) (BuyIntensity_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootBuyIntensity_done_Params(msg *capnp.Message) (BuyIntensity_done_Par
 }
 
 func (s BuyIntensity_done_Params) String() string {
-	str, _ := text.Marshal(0xd118059b2a15712a, capnp.Struct(s))
+	str, _ := text.Marshal(0xfb89030685b87eaf, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f BuyIntensity_done_Params_Future) Struct() (BuyIntensity_done_Params, err
 type BuyIntensity_done_Results capnp.Struct
 
 // BuyIntensity_done_Results_TypeID is the unique identifier for the type BuyIntensity_done_Results.
-const BuyIntensity_done_Results_TypeID = 0xd075b70613c4a82a
+const BuyIntensity_done_Results_TypeID = 0xb336187b5c445ec5
 
 func NewBuyIntensity_done_Results(s *capnp.Segment) (BuyIntensity_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyIntensity_done_Results(st), err
 }
 
 func NewRootBuyIntensity_done_Results(s *capnp.Segment) (BuyIntensity_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return BuyIntensity_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootBuyIntensity_done_Results(msg *capnp.Message) (BuyIntensity_done_Re
 }
 
 func (s BuyIntensity_done_Results) String() string {
-	str, _ := text.Marshal(0xd075b70613c4a82a, capnp.Struct(s))
+	str, _ := text.Marshal(0xb336187b5c445ec5, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s BuyIntensity_done_Results) Message() *capnp.Message {
 func (s BuyIntensity_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s BuyIntensity_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s BuyIntensity_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // BuyIntensity_done_Results_List is a list of BuyIntensity_done_Results.
 type BuyIntensity_done_Results_List = capnp.StructList[BuyIntensity_done_Results]
 
 // NewBuyIntensity_done_Results creates a new list of BuyIntensity_done_Results.
 func NewBuyIntensity_done_Results_List(s *capnp.Segment, sz int32) (BuyIntensity_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[BuyIntensity_done_Results](l), err
 }
 

@@ -11,96 +11,6 @@ import (
 	context "context"
 )
 
-type WireHMACSHA512 capnp.Struct
-
-// WireHMACSHA512_TypeID is the unique identifier for the type WireHMACSHA512.
-const WireHMACSHA512_TypeID = 0xf391420c2798b0a8
-
-func NewWireHMACSHA512(s *capnp.Segment) (WireHMACSHA512, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireHMACSHA512(st), err
-}
-
-func NewRootWireHMACSHA512(s *capnp.Segment) (WireHMACSHA512, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireHMACSHA512(st), err
-}
-
-func ReadRootWireHMACSHA512(msg *capnp.Message) (WireHMACSHA512, error) {
-	root, err := msg.Root()
-	return WireHMACSHA512(root.Struct()), err
-}
-
-func (s WireHMACSHA512) String() string {
-	str, _ := text.Marshal(0xf391420c2798b0a8, capnp.Struct(s))
-	return str
-}
-
-func (s WireHMACSHA512) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireHMACSHA512) DecodeFromPtr(p capnp.Ptr) WireHMACSHA512 {
-	return WireHMACSHA512(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireHMACSHA512) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireHMACSHA512) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireHMACSHA512) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireHMACSHA512) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireHMACSHA512) Message_() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s WireHMACSHA512) HasMessage_() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireHMACSHA512) SetMessage_(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s WireHMACSHA512) Secret() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s WireHMACSHA512) HasSecret() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireHMACSHA512) SetSecret(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-// WireHMACSHA512_List is a list of WireHMACSHA512.
-type WireHMACSHA512_List = capnp.StructList[WireHMACSHA512]
-
-// NewWireHMACSHA512 creates a new list of WireHMACSHA512.
-func NewWireHMACSHA512_List(s *capnp.Segment, sz int32) (WireHMACSHA512_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireHMACSHA512](l), err
-}
-
-// WireHMACSHA512_Future is a wrapper for a WireHMACSHA512 promised by a client call.
-type WireHMACSHA512_Future struct{ *capnp.Future }
-
-func (f WireHMACSHA512_Future) Struct() (WireHMACSHA512, error) {
-	p, err := f.Future.Ptr()
-	return WireHMACSHA512(p.Struct()), err
-}
-
 type HMACSHA512 capnp.Client
 
 // HMACSHA512_TypeID is the unique identifier for the type HMACSHA512.
@@ -298,7 +208,7 @@ func (c HMACSHA512_done) Args() HMACSHA512_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HMACSHA512_done) AllocResults() (HMACSHA512_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HMACSHA512_done_Results(r), err
 }
 
@@ -358,28 +268,17 @@ func (s HMACSHA512_write_Params) Message() *capnp.Message {
 func (s HMACSHA512_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HMACSHA512_write_Params) Payload() (WireHMACSHA512, error) {
+func (s HMACSHA512_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireHMACSHA512(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s HMACSHA512_write_Params) HasPayload() bool {
+func (s HMACSHA512_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HMACSHA512_write_Params) SetPayload(v WireHMACSHA512) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireHMACSHA512 struct, preferring placement in s's segment.
-func (s HMACSHA512_write_Params) NewPayload() (WireHMACSHA512, error) {
-	ss, err := NewWireHMACSHA512(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireHMACSHA512{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s HMACSHA512_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // HMACSHA512_write_Params_List is a list of HMACSHA512_write_Params.
@@ -397,9 +296,6 @@ type HMACSHA512_write_Params_Future struct{ *capnp.Future }
 func (f HMACSHA512_write_Params_Future) Struct() (HMACSHA512_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return HMACSHA512_write_Params(p.Struct()), err
-}
-func (p HMACSHA512_write_Params_Future) Payload() WireHMACSHA512_Future {
-	return WireHMACSHA512_Future{Future: p.Future.Field(0, nil)}
 }
 
 type HMACSHA512_done_Params capnp.Struct
@@ -473,12 +369,12 @@ type HMACSHA512_done_Results capnp.Struct
 const HMACSHA512_done_Results_TypeID = 0xb438a0764394ba2d
 
 func NewHMACSHA512_done_Results(s *capnp.Segment) (HMACSHA512_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HMACSHA512_done_Results(st), err
 }
 
 func NewRootHMACSHA512_done_Results(s *capnp.Segment) (HMACSHA512_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HMACSHA512_done_Results(st), err
 }
 
@@ -514,13 +410,25 @@ func (s HMACSHA512_done_Results) Message() *capnp.Message {
 func (s HMACSHA512_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s HMACSHA512_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s HMACSHA512_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s HMACSHA512_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // HMACSHA512_done_Results_List is a list of HMACSHA512_done_Results.
 type HMACSHA512_done_Results_List = capnp.StructList[HMACSHA512_done_Results]
 
 // NewHMACSHA512_done_Results creates a new list of HMACSHA512_done_Results.
 func NewHMACSHA512_done_Results_List(s *capnp.Segment, sz int32) (HMACSHA512_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[HMACSHA512_done_Results](l), err
 }
 

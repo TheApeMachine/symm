@@ -3,15 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("ui");
 $Go.import("nomagique/ui");
 
-struct WireHTTPServer {
-  payload @0 :AnyPointer;
-  addr @1 :Text;
-  path @2 :Text;
-  templatePath @3 :Text;
-  fsRoot @4 :Text;
-}
-
 interface HTTPServer {
-  write @0 (server :WireHTTPServer) -> stream;
-  done @1 ();
+  write @0 (in :Data, addr :Text, path :Text) -> stream;
+  done @1 () -> (out :Data);
 }

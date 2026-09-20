@@ -3,9 +3,8 @@ package data
 import (
 	"context"
 	"maps"
+	"strconv"
 	"time"
-
-	capnp "capnproto.org/go/capnp/v3"
 )
 
 /*
@@ -248,31 +247,45 @@ func NewFinalizer[Value any]() Finalizer[Value] {
 
 	return func(measurement *Measurement[Value]) *Measurement[Value] {
 		if measurement != nil {
-			var facts WireQualityFacts
-			_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+			var support, divergence, noiseVariance, mahalanobisSNR, maturity float64
+			if val, ok := measurement.Metadata["support"]; ok {
+				support, _ = strconv.ParseFloat(val, 64)
+			}
+			if val, ok := measurement.Metadata["divergence"]; ok {
+				divergence, _ = strconv.ParseFloat(val, 64)
+			}
+			if val, ok := measurement.Metadata["noise_variance"]; ok {
+				noiseVariance, _ = strconv.ParseFloat(val, 64)
+			}
+			if val, ok := measurement.Metadata["mahalanobis_snr"]; ok {
+				mahalanobisSNR, _ = strconv.ParseFloat(val, 64)
+			}
+			if val, ok := measurement.Metadata["maturity"]; ok {
+				maturity, _ = strconv.ParseFloat(val, 64)
+			}
+
+			client := Quality_ServerToClient(server)
+			ctx := context.Background()
+
+			_ = client.Write(ctx, func(p Quality_write_Params) error {
+				p.SetSupport(support)
+				p.SetDivergence(divergence)
+				p.SetNoiseVariance(noiseVariance)
+				p.SetMahalanobisSNR(mahalanobisSNR)
+				p.SetMaturity(maturity)
+				return nil
+			})
+			_ = client.WaitStreaming()
+
+			call, release := client.Done(ctx, nil)
+			defer release()
+
+			res, err := call.Struct()
 			if err == nil {
-				facts, err = NewWireQualityFacts(seg)
-				if err == nil {
-					FactsFromMetadata(measurement.Metadata, facts)
-
-					// Evaluate quality via the capnp server interface locally
-					call, release := Quality_ServerToClient(server).Evaluate(context.Background(), func(p Quality_evaluate_Params) error {
-						p.SetFacts(facts)
-						return nil
-					})
-					defer release()
-
-					res, err := call.Struct()
-					if err == nil {
-						reading, err := res.Reading()
-						if err == nil {
-							measurement.Maturity = reading.Maturity()
-							measurement.SNR = reading.Snr()
-							measurement.SNRDefined = reading.SnrDefined()
-							measurement.Estimated = reading.Estimated()
-						}
-					}
-				}
+				measurement.Maturity = res.Maturity()
+				measurement.SNR = res.Snr()
+				measurement.SNRDefined = res.SnrDefined()
+				measurement.Estimated = res.Estimated()
 			}
 		}
 

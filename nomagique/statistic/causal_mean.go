@@ -3,42 +3,45 @@ package statistic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type CausalMeanServer struct {
-	Downstream types.Float64Sink
-	count      float64
-	sum        float64
-	prevMean   float64
+	out      float64
+	count    float64
+	sum      float64
+	prevMean float64
 }
 
-func (s *CausalMeanServer) Write(ctx context.Context, call CausalMean_write) error {
-	a := call.Args().A()
-	ret := s.prevMean
-	s.count++
-	s.sum += a
-	s.prevMean = s.sum / s.count
+func (srv *CausalMeanServer) Write(ctx context.Context, call CausalMean_write) error {
+	inVal := call.Args().In()
+	ret := srv.prevMean
+	srv.count++
+	srv.sum += inVal
+	srv.prevMean = srv.sum / srv.count
+
 	result := ret
-	if s.count == 1 {
-		result = a
+	if srv.count == 1 {
+		result = inVal
 	}
 
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = result
 	return nil
 }
 
-func (s *CausalMeanServer) Done(ctx context.Context, call CausalMean_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *CausalMeanServer) Done(ctx context.Context, call CausalMean_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc causal mean results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

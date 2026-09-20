@@ -1,13 +1,13 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 
-	"capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
@@ -23,8 +23,8 @@ type HTTPServerImpl struct {
 	upgrader     websocket.Upgrader
 	webrtcAPI    *webrtc.API
 	webrtcCfg    webrtc.Configuration
-	Downstream   func(context.Context, capnp.Ptr) error
 	focusChan    chan string
+	out          []byte
 }
 
 func NewHTTPServer() *HTTPServerImpl {
@@ -57,53 +57,49 @@ func NewHTTPServer() *HTTPServerImpl {
 }
 
 func (s *HTTPServerImpl) Write(ctx context.Context, call HTTPServer_write) error {
-	args, err := call.Args().Server()
-	if err != nil {
-		// fallback to see if it's named something else
-		return err
-	}
+	data, _ := call.Args().In()
 
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	_, err = args.Addr()
-	if err != nil {
-		return err
-	}
-
-	// Server is already started in NewHTTPServer
-
-	if payloadPtr.IsValid() {
-		msg := payloadPtr.Message()
-		if msg != nil {
-			data, err := msg.Marshal()
-			if err == nil {
-				s.wsClients.Range(func(key, _ any) bool {
-					if conn, ok := key.(*websocket.Conn); ok {
-						_ = conn.WriteMessage(websocket.BinaryMessage, data)
-					}
-					return true
-				})
-
-				s.dataChannels.Range(func(key, _ any) bool {
-					if channel, ok := key.(*webrtc.DataChannel); ok {
-						_ = channel.Send(data)
-					}
-					return true
-				})
+	if len(data) > 0 {
+		s.wsClients.Range(func(key, _ any) bool {
+			if conn, ok := key.(*websocket.Conn); ok {
+				_ = conn.WriteMessage(websocket.BinaryMessage, data)
 			}
-		}
+			return true
+		})
+
+		s.dataChannels.Range(func(key, _ any) bool {
+			if channel, ok := key.(*webrtc.DataChannel); ok {
+				_ = channel.Send(data)
+			}
+			return true
+		})
 	}
 
-	if s.Downstream != nil {
-		return s.Downstream(ctx, payloadPtr)
-	}
+	s.out = bytes.Clone(data)
 	return nil
 }
 
 func (s *HTTPServerImpl) Done(ctx context.Context, call HTTPServer_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"http: alloc results failed",
+			err,
+		))
+	}
+
+	if len(s.out) > 0 {
+		if err := results.SetOut(s.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"http: set out failed",
+				err,
+			))
+		}
+	}
+
+	s.out = nil
 	return nil
 }
 

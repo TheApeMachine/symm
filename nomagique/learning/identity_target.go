@@ -2,28 +2,30 @@ package learning
 
 import (
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type IdentityTargetServer struct {
-	DownstreamIdentityTarget func(context.Context, float64) error
-}
-
-func (s *IdentityTargetServer) Write(ctx context.Context, call IdentityTarget_write) error {
-	return s.WriteParams(ctx, call.Args())
-}
-
-func (s *IdentityTargetServer) WriteParams(ctx context.Context, callArgs IdentityTarget_write_Params) error {
-	current := callArgs.Current()
-	if s.DownstreamIdentityTarget != nil {
-		return s.DownstreamIdentityTarget(ctx, current)
-	}
-	return nil
-}
-
-func (s *IdentityTargetServer) Done(ctx context.Context, call IdentityTarget_done) error {
-	return nil
+	out float64
 }
 
 func NewIdentityTarget() *IdentityTargetServer {
 	return &IdentityTargetServer{}
+}
+
+func (s *IdentityTargetServer) Write(ctx context.Context, call IdentityTarget_write) error {
+	s.out = call.Args().Current()
+	return nil
+}
+
+func (s *IdentityTargetServer) Done(ctx context.Context, call IdentityTarget_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
+
+	results.SetOut(s.out)
+	s.out = 0
+	return nil
 }

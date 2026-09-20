@@ -3,103 +3,15 @@
 package algo
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
-
-type GaussJordanRow capnp.Struct
-
-// GaussJordanRow_TypeID is the unique identifier for the type GaussJordanRow.
-const GaussJordanRow_TypeID = 0xb6d726698a8dd6fd
-
-func NewGaussJordanRow(s *capnp.Segment) (GaussJordanRow, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return GaussJordanRow(st), err
-}
-
-func NewRootGaussJordanRow(s *capnp.Segment) (GaussJordanRow, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return GaussJordanRow(st), err
-}
-
-func ReadRootGaussJordanRow(msg *capnp.Message) (GaussJordanRow, error) {
-	root, err := msg.Root()
-	return GaussJordanRow(root.Struct()), err
-}
-
-func (s GaussJordanRow) String() string {
-	str, _ := text.Marshal(0xb6d726698a8dd6fd, capnp.Struct(s))
-	return str
-}
-
-func (s GaussJordanRow) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (GaussJordanRow) DecodeFromPtr(p capnp.Ptr) GaussJordanRow {
-	return GaussJordanRow(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s GaussJordanRow) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s GaussJordanRow) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s GaussJordanRow) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s GaussJordanRow) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s GaussJordanRow) Values() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s GaussJordanRow) HasValues() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s GaussJordanRow) SetValues(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewValues sets the values field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s GaussJordanRow) NewValues(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-
-// GaussJordanRow_List is a list of GaussJordanRow.
-type GaussJordanRow_List = capnp.StructList[GaussJordanRow]
-
-// NewGaussJordanRow creates a new list of GaussJordanRow.
-func NewGaussJordanRow_List(s *capnp.Segment, sz int32) (GaussJordanRow_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[GaussJordanRow](l), err
-}
-
-// GaussJordanRow_Future is a wrapper for a GaussJordanRow promised by a client call.
-type GaussJordanRow_Future struct{ *capnp.Future }
-
-func (f GaussJordanRow_Future) Struct() (GaussJordanRow, error) {
-	p, err := f.Future.Ptr()
-	return GaussJordanRow(p.Struct()), err
-}
 
 type GaussJordan capnp.Client
 
@@ -116,7 +28,7 @@ func (c GaussJordan) Write(ctx context.Context, params func(GaussJordan_write_Pa
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 48, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(GaussJordan_write_Params(s)) }
 	}
 
@@ -298,7 +210,7 @@ func (c GaussJordan_done) Args() GaussJordan_done_Params {
 
 // AllocResults allocates the results struct.
 func (c GaussJordan_done) AllocResults() (GaussJordan_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return GaussJordan_done_Results(r), err
 }
 
@@ -317,12 +229,12 @@ type GaussJordan_write_Params capnp.Struct
 const GaussJordan_write_Params_TypeID = 0x96f45d3ef3811647
 
 func NewGaussJordan_write_Params(s *capnp.Segment) (GaussJordan_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
 	return GaussJordan_write_Params(st), err
 }
 
 func NewRootGaussJordan_write_Params(s *capnp.Segment) (GaussJordan_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
 	return GaussJordan_write_Params(st), err
 }
 
@@ -358,51 +270,52 @@ func (s GaussJordan_write_Params) Message() *capnp.Message {
 func (s GaussJordan_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s GaussJordan_write_Params) Left() (GaussJordanRow_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return GaussJordanRow_List(p.List()), err
+func (s GaussJordan_write_Params) A11() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s GaussJordan_write_Params) HasLeft() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s GaussJordan_write_Params) SetA11(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s GaussJordan_write_Params) SetLeft(v GaussJordanRow_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s GaussJordan_write_Params) A12() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewLeft sets the left field to a newly
-// allocated GaussJordanRow_List, preferring placement in s's segment.
-func (s GaussJordan_write_Params) NewLeft(n int32) (GaussJordanRow_List, error) {
-	l, err := NewGaussJordanRow_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return GaussJordanRow_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s GaussJordan_write_Params) Right() (GaussJordanRow_List, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return GaussJordanRow_List(p.List()), err
+func (s GaussJordan_write_Params) SetA12(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s GaussJordan_write_Params) HasRight() bool {
-	return capnp.Struct(s).HasPtr(1)
+func (s GaussJordan_write_Params) A21() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-func (s GaussJordan_write_Params) SetRight(v GaussJordanRow_List) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+func (s GaussJordan_write_Params) SetA21(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
-// NewRight sets the right field to a newly
-// allocated GaussJordanRow_List, preferring placement in s's segment.
-func (s GaussJordan_write_Params) NewRight(n int32) (GaussJordanRow_List, error) {
-	l, err := NewGaussJordanRow_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return GaussJordanRow_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
+func (s GaussJordan_write_Params) A22() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s GaussJordan_write_Params) SetA22(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+func (s GaussJordan_write_Params) B1() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s GaussJordan_write_Params) SetB1(v float64) {
+	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
+}
+
+func (s GaussJordan_write_Params) B2() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(40))
+}
+
+func (s GaussJordan_write_Params) SetB2(v float64) {
+	capnp.Struct(s).SetUint64(40, math.Float64bits(v))
 }
 
 // GaussJordan_write_Params_List is a list of GaussJordan_write_Params.
@@ -410,7 +323,7 @@ type GaussJordan_write_Params_List = capnp.StructList[GaussJordan_write_Params]
 
 // NewGaussJordan_write_Params creates a new list of GaussJordan_write_Params.
 func NewGaussJordan_write_Params_List(s *capnp.Segment, sz int32) (GaussJordan_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
 	return capnp.StructList[GaussJordan_write_Params](l), err
 }
 
@@ -493,12 +406,12 @@ type GaussJordan_done_Results capnp.Struct
 const GaussJordan_done_Results_TypeID = 0xaf2bc66378c6a862
 
 func NewGaussJordan_done_Results(s *capnp.Segment) (GaussJordan_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return GaussJordan_done_Results(st), err
 }
 
 func NewRootGaussJordan_done_Results(s *capnp.Segment) (GaussJordan_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return GaussJordan_done_Results(st), err
 }
 
@@ -534,13 +447,28 @@ func (s GaussJordan_done_Results) Message() *capnp.Message {
 func (s GaussJordan_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s GaussJordan_done_Results) X1() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s GaussJordan_done_Results) SetX1(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s GaussJordan_done_Results) X2() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s GaussJordan_done_Results) SetX2(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
 
 // GaussJordan_done_Results_List is a list of GaussJordan_done_Results.
 type GaussJordan_done_Results_List = capnp.StructList[GaussJordan_done_Results]
 
 // NewGaussJordan_done_Results creates a new list of GaussJordan_done_Results.
 func NewGaussJordan_done_Results_List(s *capnp.Segment, sz int32) (GaussJordan_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
 	return capnp.StructList[GaussJordan_done_Results](l), err
 }
 
@@ -552,74 +480,76 @@ func (f GaussJordan_done_Results_Future) Struct() (GaussJordan_done_Results, err
 	return GaussJordan_done_Results(p.Struct()), err
 }
 
-const schema_a30d63db64b1f5c7 = "x\xda\xa4V]h\x1cU\x14>\xe7\xde\xb9\x99\xa9u" +
-	"\x8d\xb7\xb3\x86\xac\x10SC\"6Bj~\x04\x09\xd4" +
-	"F\xb1\xa9\x86\x14s\x13\xff\x1aH\xe34\xbb&\xdb&" +
-	"\xb3\xed\xce\xac\xc9\x82\x0f\xf6!\x04\x8b\xad\xa8TL " +
-	"\xb5V\xa1Q\x02&P\xc5V\xc1\x94j,\xda\x07Q" +
-	"P\x88\xed\x83\x05_jK,j)H\x1c\xb93;" +
-	";\xd3fB[\xfb6\x9c\xdf\xef\x9c\xef\xdcs\xe6A" +
-	"\x85\xb6(\xf51g\x15\x10a\xb3\x12\xe7\xc9\xe3\xcf~" +
-	"~\xb8\xae\xf25\xe0\x09\xea\xcc?T\xf6\xe5\xc9c\x07" +
-	"&\x00P\xffM9\xaf_RT\x00\xfd\xa22\xa6o" +
-	"`*\x80sf\xfa\xf1\x99S;\xcf\xbe\x09\xbc\x09\x01" +
-	"\xa4\xb2\xb1\x86\xddF@q\xd6\xb1\xe6\x85\xbe\xb5Co" +
-	"\x01\xaf\xf05\x15\xac\x0dAq6\x97\xed\xf9\xf3\x91\x9e" +
-	"\xbf\xde\x06^\x87\x00\x8cH\xd5*\xb6\x80\x80z\x05\x1b" +
-	"\x06t*\xbbg\x96\xae\xb4\x8e\x1f\x0c\xb9\x8e{\xae\xa7" +
-	"\x12\x17\xae\x94\x8d\x9c>\xe4\xb9\xba\x9aQ\xf6\x83\xd4<" +
-	"6a\x8e6\xbd\xf2\xf2\x11\xe0\x09\x0cP3\x94&y" +
-	"FP\x1f\x95x\xf5=l#\xa0\xb3s\x9f\xfe\xfd\xd7" +
-	"\x1f\xb5N\x85\x12\xcc\xb2N\x19\xe6\xdc\x1f\x89\xa5\x17\x8c" +
-	"\x8bS \x9a\xb0\xa4\xa0\x9a\x94\x05a\xe3'\xec9\x04" +
-	"t\xb6O\xcd\x8f\xf4\xcd?\xf0q\x08BB]\x90\xbe" +
-	"\x97{Z\x07\xe2\xd3U3\xc0\xab\xa8\xf3\xcd\xdf\xb3\xc9" +
-	"_\xfab\xef\x03`cL\xcd\xa2~\xaf*\xf3W\xa8" +
-	"c\xfa\x90\xfcr\x96~\xda\xb77}\xdf\xcf\x9f\x02\xaf" +
-	"\xc2\xc0\xda\x03\xfc\x8c\xba\x17=3=\xadJ\xc0\xc9\xdf" +
-	"\x9f\xef>Z\xb58\x17\xee\x88*\x01\xff\xdb\xbe\x8d^" +
-	":Q\xfe]\xd0\xfeQ\x95\xc8\xf6\xff39\xb6v\x7f" +
-	"\xeb\xfd?z\x1e^\x93\xf3\xd2\x05\xf5QU6\xb93" +
-	"qrbndv\x01x\x0duj_\xb7\x0fn:" +
-	"wdQ\xa2E\xed0\xea\x09M&\xbfK\x1b\xd3S" +
-	"\xf2\xcb\xd9\xddS\x1eK]\xb8g\xb1\x10\xceE\xb9E" +
-	"s\xc3m\xd5$\xc23\x8fNn;\xbb\x7f\xf2\xb2;" +
-	"5\xef\xf2\x9a\xe3\x93[\xeco\xe5\xd4\xbc\xaa\x9d\xd7\x0f" +
-	"\xb8\xd1\xde\xd0\xc6\xf4_5\x15\xf2\x8e\x99\x192\xfa\xd3" +
-	"\xbbs$\xb5\xde\x18\xec\xcf\xac\xcf\x0cZu}\xc6." +
-	"sWi\xf3S\xed]\x1d\x88B\xa3\x0c\xa0X\x04\x9a" +
-	"\xb3s\xc3\x8d\x13\xbd\xe3\xbc\xbe\x01\x08\xafQ1\x18\x12" +
-	"\xf4{\xc3\x13\xb5@xL\xad\x1c\xce\xa6\xedT\x0b\x96" +
-	"&3f\xaa\x05;\x10\x8b\xf9\xd4B\xbe\x01#oX" +
-	"\x03\xe9\xde|\xc6\x1aH'\x0d/w\xf3\x13\x9etk" +
-	"A(\xdd\xab;SVn\xd0\xb6\x00\x8a1\x94B\x8c" +
-	"\xac\x8f\xb9\xb9\xb3\xbd\xcb3\xee0\xb2\xc6P\xd8\xb6\xa4" +
-	"`\xdbo\xe4,\xabwG&\x9b4\xcc\x82\xd3f)" +
-	"j\xf3$.`\xd7\x9b\x0eYB\xa3\x0a\x80\x82\x00|" +
-	"]-\x80\xa8\xa6(Z\x08r\xc48J\xe1\x86\x06\x00" +
-	"\xf10E\xf14\xc1\xd2\xc1\xd4\x8b6\xde\x01\xd8A\x11" +
-	"\xef\x0cF\x0aP\x0a+\xb3\xe9\xfe\x81\x95\xd5\xcb**" +
-	"\xb2 I\xb8\xb5\x8a\x02g\xb4\x8a\xbe4*Ogf" +
-	"\x18$\xe1J\xb1\xeaX3\x80\xd0(\x8aj\x82\x1b_" +
-	"2\x06s)\xcb\xafa5\x90H\xe4\x11\\x\xc4\x85" +
-	"\xb2\xdf\x14\xf7\x01#\xb2zQ^\x047\xbe\x03@\xbc" +
-	"CQ|\x10\xa2\xe4\xbdn\x00q\x88\xa2\x98&\xc8\x09" +
-	"\x89#\x01\xe0\x1fJ\xcb)\x8a\xe2(ANi\x1c)" +
-	"\x00\x9f\x95\x963\x14\xc5\x17\x04\xb9\xa2\xc4Q\x01\xe0\xc7" +
-	"\xda\x00\xc4g\x14\xc5W\x049cqd\x00\xfc\x84\x14" +
-	"\xceQ\x14\xa7\x09:\xdb393iu\xd9Pjd" +
-	"\xedzd@\x90\x81/\xded\x02M^+,\xd86" +
-	"D\xd9\x06\xc2l\xca\xceeM\xab\x1e\x00\xdc\xde\xae\x0e" +
-	"d\x0da\xd9\xffa\xdf%\x80\xda\xd62\xb2Vt\xae" +
-	"tE\xc1\xeb\xf7\xefD\xd4\xeb\xf7\x0f\x01\xfa\xeb\xf8\x06" +
-	"^?\xbb!\xf4r o}\"#\xde\xd2\xb2\x89\xbc" +
-	"\xfd\xa6\xb7Qa \xfd\x00\x91\xb9B\xa3\x8bW-\x93" +
-	"5Q\xcbdM\xb0Lp$X\x15\xc5k\xea\xad\x0a" +
-	"\xcc\xaf\xa8Z\xd6\xdd\xebV\xa3\xa6\x93F@\xb2\x7fp" +
-	"#H\xf6o[\xe8'\xe3\xfa$G\xaf\x84\xab\x9b\x12" +
-	"b\xf6\xee\x80Y\x9a6Wb\x95\\\x1b\xb4TF\x0d" +
-	"\x8a\xf0\xafc\xd4\xa4\xfa\xffA\xe8\xfft\xac\\\xc4\x7f" +
-	"\x01\x00\x00\xff\xff:t\xc5\x95"
+const schema_a30d63db64b1f5c7 = "x\xda\xa4V]l\x14U\x14>\xe7\xde\x99\x9d\xddB" +
+	"\xd3\\fm\xba&X\xd2\xd0\x040\x14v[_\x9a" +
+	"`kB\x0bm\x8a\xf4\xb6F\xa5I\xa9\xd3\xee\xa6?" +
+	"\xb4\xbbtg7\xdd>\xf8\xe0S_\x04\xe3\x0f\xc66" +
+	".\x16\xc4\xd8\x9a\x1a\xba\x09\x0f\x82\x12K\xd0J\x14\x13" +
+	"\xa3OVx!\xe1\x05!\x95\xa8\x84\xc4\xe0\x98\xbb;" +
+	"wf\x0a[\xd3\xc2\xdb\xcdw\xef\xb9\xe7;\xdfw\xe6" +
+	"\x9e\xd9\xfd\"mT\xc2\xa5\x07\x03@\xf8\xb0\xea\xb3Z" +
+	".\xbc\xfc\xe5\xe9\x9a\xca7\x81\x85\xa8\xb5\xf8\\\xf9\xd7" +
+	"\x97\xcf\x9f\x98\x02@\xfd\x98rK\x9fT4\x00\xfd\x84" +
+	"2\xa1\xdf\x14+\xeb\xda\xdc\xde\xf9+G\xae\xbf\x03\xbc" +
+	"\x0e\x11@`\xb5?*%\x04P\xbf\xa94\x00Z\xdb" +
+	"\xd5\xfa\xa5\xbe-#\xef\x02\xdb,\xf7U\xb5\x15A\xb1" +
+	"\xf6\x95\xbf\xf1\xe7\xf3\xdd\x7f\xbd\x0f\xbc\x06}\xf6\xd6]" +
+	"e\x09\x01kU\xf5\x15\x04\xb4*\xbb\xe6\x1f\xdco\x9e" +
+	"<\xe9\x89\xe5\xbe|\xec\x95\xd0\xed\xfb\xe5\x99\xab\xd3\xc0" +
+	"j\xe4\xce\x1e\xdf\xcfb\xe7\xc81\xfd\xa7o?k\x9e" +
+	"\x01\xbe\xd9!\x14\xf6u \xa0\xbe\xc7'\x08\xdd\xf8#" +
+	"\xf4\xe05\xe3\xce\x8c`,\xd3v\xfb\x04\xe3\xda\xb4/" +
+	"\x9f\xb6wf1\xd3\xb7\xf8\xecYA\x8c\xd8'~\xd5" +
+	"\x041\xfd\x8e6\x06h\xdd\xebn\x1e\x08\xceU\xcd\x03" +
+	"\xab\xa2\xd6w\x7f\xe7\xa2\xbf\xf5\x95~\x0c\x80\xb5-\xfe" +
+	"$\xea\xdd~!\xd1!\xff\x84>+VV\xf4\xf7W" +
+	"\xbb\xceU-/x\x19\xbd\xed\xcf3\xca\xfa\x1b\x00\xff" +
+	"m;L\xef^\xaa\xf8\x81\xd5\xc9\xdd\x8b~B@\xb1" +
+	"\xfe\xc9Nl9\xde\xbc\xed\x17\x11(y\xe4\x0a\x81\x17" +
+	"\xfd\x82GG\xe8\xf2\xd4B&\xb7\x04\xac\x9aZ;\xde" +
+	"J\x9dl\xba\xf1\xe9\xb2\xe0\x11\x0a\x9cF=\x1c\x10<" +
+	"v\x06&\xf4\xd7\xc5\xca\x1a\xed\xae(\x8d\xdd~fY" +
+	"\\G\xed\xebb\x81\xfcu\xa3\x81\xb3\x80\xd6\xb5\x17\xb2" +
+	"\x87\xaf\x1f\xcf\xde\xcb\x1b\xff\x11\xab\xbe\x90=\x90\xfa^" +
+	"\x18\x1f(\xb9\xa5?U\"nc%\x13\xbaQ\xa2\xc1" +
+	"\xb8\x15O\x8c\x18\xfd\x83\xa3i\x12\xdbe\x0c\xf7'v" +
+	"%\x86\xcd\x9a>\xe3h\xfchY\xfd\xc1\xb6\xcevD" +
+	"\xee\xa7*\x80S\x04\xc6s\x0bc\xb5S=\x93,\x1c" +
+	"\x01\xc2\xaa5t\xfdE)\x11\x0b\xed\x00\xc2J\xb5\xca" +
+	"\xb1\xe4`*\xd6\x88e\xd1D<\xd6\x88\xed\x88N>" +
+	"\xcd\xce7`\x8c\x1b\xe6\xc0`\xcfx\xc2\x1c\x18\x8c\x1a" +
+	"\x85\xdc\xf5\xfb\x0b\xe8!\x1b\x14\xe1[;bfz8" +
+	"e\x02p\x85*\x00\x0a\x02\xb0\xd2*\x00\xee\xa7\xc8\x83" +
+	"\x04\xb5D:\x85\x1b\x80\xe0\x06p\xd3(v\x9a\xa4," +
+	"\xab\xbe\xa3\xad\xb3p_\xbb\x914FL\x00\xe7\xac\xcf" +
+	">\xdbo\xa4M\xb3g(\x91\x8c\x1aq;h\x9f\x80" +
+	"Z\x0bH\xbe\xa6|4\x1d1y\x85\xc3eRpy" +
+	"\x8f\"\x9f&\xc8\x10\x83\xa2IXV\x80\x1fP\xe4g" +
+	"\x082B\x82\xa2\x01\xd8)\x01~H\x91\xcf\x10d\x94" +
+	"\x06\x85\x8d\xec\x13\x01NS\xe4s\x04\x99\xa2\x04Q\x01" +
+	"`\xb3O\x03\xf03\x14\xf9<A\xa6\xaaAT\x01\xd8" +
+	"\xe7\x02\x9c\xa1\xc8\xcf\x11\xd4\x8cpX\x16\xad\x19\xe1\x88" +
+	"\xbb\x8ex\xf0\x88\x83\xd3\xde\xb0\xbb\x8c\xac*\x97\xd3\x05" +
+	"\xa2\x09\x9eL.7\x18\xcd\xb5\xd8R\xb0\x19\xcd\xf5\xb8" +
+	"\xbc\xaefr\xfd\x13\xe5x\x0d\x1c\xf2x%\x0d<\xd5" +
+	"\xe5\xb1E\x1a8;\xe4:\xe0\x18\x98\x13'\xe7)\xf2" +
+	"\xaf<\x06\x9eo\x05\xe0_P\xe4\xdfx\x0c\xbc$\xc0" +
+	"\x05\x8a\xfc*A\xab7\x91\x8eG\xcd\xce\x14\x94\x19\xc9" +
+	"T\x18U \xa8\x82\x84\x9b\xe2@\xa3\x0f\x83\xf6\xd9H" +
+	"\xb1\xb3.\x98\x8c\xa5\xd2\xc9\xb8\x19\x06\x00G/\x1b\x8b" +
+	"x\xb1\xc7\xb13\xef\x11M\x99\xdc\xef\x88\xb7]4\xe5" +
+	"V\x8a|\xb7G\xbc\x9d\x02\xdcF\x91\xd7\x11\xa4\x19\xb7" +
+	"\xf32\xabw\xde\xaa\xe9+\xf3\x90\xfb \xc9\xb1S\xec" +
+	"A\x92c\x05\xe5\x08X\xc3\x83\xf4?\xad\xff8-\xb9" +
+	"q\xdd\xef\x9b\xdd\x91\xf2\x82\xa2t<\xbd\x8b+\xd4\xdf" +
+	"TL\xfdM\xae\xfa\x98\x91\x0cq\xfc\x11\xae\xeaZ\xb9" +
+	"j\x83Q\xc3u@N\xe0\"\x0e\xc8Y\xe8\xfeW\xac" +
+	"\xc3\x81\x95\x8f\xc2\xca\x927:%7\x89\xea\x1a)\xf2" +
+	"6O\xc9-\xf5\x00|/E\xde\xee\xf9Z\x0f\x08p" +
+	"?E\xfe\x92W\x87\x86\x94\x91\xec\x8f9\xc65\x0c\x1b" +
+	"#\xbdQ\xe3\x11m\xc8\xc3\xa4\xca\x04+W\x049\x8d" +
+	"\x8b\xb5\xa1\xfcgB\xf93\xb3\xba\x08\xff\x05\x00\x00\xff" +
+	"\xff\xcb\xa5\x94\xb5"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -631,12 +561,10 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x96f45d3ef3811647,
 			0x9e9946f8fdb05a1f,
 			0xa0cc7816f8ec19c8,
-			0xa77c8034856e9a42,
 			0xa846aac5d0138d6b,
 			0xa8ed6160fd19f0e2,
 			0xaf2bc66378c6a862,
 			0xb022ac1468465df6,
-			0xb6d726698a8dd6fd,
 			0xc0ef22b45a58eb64,
 			0xcb18c1f1035e4c00,
 			0xd328468e20879dfb,

@@ -4,10 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+
+	"github.com/theapemachine/errnie"
 )
 
 type PackServer struct {
-	Downstream func(context.Context, []byte) error
+	out []byte
+}
+
+func NewPack() *PackServer {
+	return &PackServer{}
 }
 
 func (s *PackServer) Write(ctx context.Context, call Pack_write) error {
@@ -15,17 +21,26 @@ func (s *PackServer) Write(ctx context.Context, call Pack_write) error {
 	pw[0] = call.Args().Count()
 	pw[1] = call.Args().Mass()
 	pw[2] = call.Args().WriteStep()
+
 	var buf bytes.Buffer
 	if err := binary.Write(&buf, binary.LittleEndian, pw); err != nil {
-		return err
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to write binary", err))
 	}
-	return s.Downstream(ctx, buf.Bytes())
-}
 
-func (s *PackServer) Done(ctx context.Context, call Pack_done) error {
+	s.out = buf.Bytes()
 	return nil
 }
 
-func NewPack() *PackServer {
-	return &PackServer{}
+func (s *PackServer) Done(ctx context.Context, call Pack_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
+
+	if err := results.SetOut(s.out); err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to set out", err))
+	}
+
+	s.out = nil
+	return nil
 }

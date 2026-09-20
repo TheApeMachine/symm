@@ -209,7 +209,7 @@ func (c Multiply_done) Args() Multiply_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Multiply_done) AllocResults() (Multiply_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Multiply_done_Results(r), err
 }
 
@@ -373,12 +373,12 @@ type Multiply_done_Results capnp.Struct
 const Multiply_done_Results_TypeID = 0xfb566c996a3cce55
 
 func NewMultiply_done_Results(s *capnp.Segment) (Multiply_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Multiply_done_Results(st), err
 }
 
 func NewRootMultiply_done_Results(s *capnp.Segment) (Multiply_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Multiply_done_Results(st), err
 }
 
@@ -414,13 +414,20 @@ func (s Multiply_done_Results) Message() *capnp.Message {
 func (s Multiply_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Multiply_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Multiply_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Multiply_done_Results_List is a list of Multiply_done_Results.
 type Multiply_done_Results_List = capnp.StructList[Multiply_done_Results]
 
 // NewMultiply_done_Results creates a new list of Multiply_done_Results.
 func NewMultiply_done_Results_List(s *capnp.Segment, sz int32) (Multiply_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Multiply_done_Results](l), err
 }
 

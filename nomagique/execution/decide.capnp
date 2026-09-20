@@ -3,12 +3,13 @@ using Go = import "/go.capnp";
 $Go.package("execution");
 $Go.import("nomagique/execution");
 
-struct WireDecide {
-  eval @0 :AnyPointer;
-  minContrast @1 :Float64;
-}
-
 interface Decide {
-  write @0 (decide :WireDecide) -> stream;
-  done @1 ();
+  write @0 (
+    in :Data,
+    winner :Text,
+    contrast :Float64,
+    isBreak :Bool,
+    minContrast :Float64
+  ) -> stream;
+  done @1 () -> (out :Text);
 }

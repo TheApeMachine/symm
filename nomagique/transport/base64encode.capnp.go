@@ -11,83 +11,6 @@ import (
 	context "context"
 )
 
-type WireBase64Encode capnp.Struct
-
-// WireBase64Encode_TypeID is the unique identifier for the type WireBase64Encode.
-const WireBase64Encode_TypeID = 0xc086ca73b63f6398
-
-func NewWireBase64Encode(s *capnp.Segment) (WireBase64Encode, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBase64Encode(st), err
-}
-
-func NewRootWireBase64Encode(s *capnp.Segment) (WireBase64Encode, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireBase64Encode(st), err
-}
-
-func ReadRootWireBase64Encode(msg *capnp.Message) (WireBase64Encode, error) {
-	root, err := msg.Root()
-	return WireBase64Encode(root.Struct()), err
-}
-
-func (s WireBase64Encode) String() string {
-	str, _ := text.Marshal(0xc086ca73b63f6398, capnp.Struct(s))
-	return str
-}
-
-func (s WireBase64Encode) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireBase64Encode) DecodeFromPtr(p capnp.Ptr) WireBase64Encode {
-	return WireBase64Encode(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireBase64Encode) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireBase64Encode) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireBase64Encode) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireBase64Encode) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireBase64Encode) Data() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s WireBase64Encode) HasData() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireBase64Encode) SetData(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-// WireBase64Encode_List is a list of WireBase64Encode.
-type WireBase64Encode_List = capnp.StructList[WireBase64Encode]
-
-// NewWireBase64Encode creates a new list of WireBase64Encode.
-func NewWireBase64Encode_List(s *capnp.Segment, sz int32) (WireBase64Encode_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireBase64Encode](l), err
-}
-
-// WireBase64Encode_Future is a wrapper for a WireBase64Encode promised by a client call.
-type WireBase64Encode_Future struct{ *capnp.Future }
-
-func (f WireBase64Encode_Future) Struct() (WireBase64Encode, error) {
-	p, err := f.Future.Ptr()
-	return WireBase64Encode(p.Struct()), err
-}
-
 type Base64Encode capnp.Client
 
 // Base64Encode_TypeID is the unique identifier for the type Base64Encode.
@@ -285,7 +208,7 @@ func (c Base64Encode_done) Args() Base64Encode_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Base64Encode_done) AllocResults() (Base64Encode_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Base64Encode_done_Results(r), err
 }
 
@@ -345,28 +268,17 @@ func (s Base64Encode_write_Params) Message() *capnp.Message {
 func (s Base64Encode_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Base64Encode_write_Params) Payload() (WireBase64Encode, error) {
+func (s Base64Encode_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireBase64Encode(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Base64Encode_write_Params) HasPayload() bool {
+func (s Base64Encode_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Base64Encode_write_Params) SetPayload(v WireBase64Encode) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireBase64Encode struct, preferring placement in s's segment.
-func (s Base64Encode_write_Params) NewPayload() (WireBase64Encode, error) {
-	ss, err := NewWireBase64Encode(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireBase64Encode{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Base64Encode_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Base64Encode_write_Params_List is a list of Base64Encode_write_Params.
@@ -384,9 +296,6 @@ type Base64Encode_write_Params_Future struct{ *capnp.Future }
 func (f Base64Encode_write_Params_Future) Struct() (Base64Encode_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Base64Encode_write_Params(p.Struct()), err
-}
-func (p Base64Encode_write_Params_Future) Payload() WireBase64Encode_Future {
-	return WireBase64Encode_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Base64Encode_done_Params capnp.Struct
@@ -460,12 +369,12 @@ type Base64Encode_done_Results capnp.Struct
 const Base64Encode_done_Results_TypeID = 0x85b7ad92e5a4441c
 
 func NewBase64Encode_done_Results(s *capnp.Segment) (Base64Encode_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Base64Encode_done_Results(st), err
 }
 
 func NewRootBase64Encode_done_Results(s *capnp.Segment) (Base64Encode_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Base64Encode_done_Results(st), err
 }
 
@@ -501,13 +410,25 @@ func (s Base64Encode_done_Results) Message() *capnp.Message {
 func (s Base64Encode_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Base64Encode_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Base64Encode_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Base64Encode_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Base64Encode_done_Results_List is a list of Base64Encode_done_Results.
 type Base64Encode_done_Results_List = capnp.StructList[Base64Encode_done_Results]
 
 // NewBase64Encode_done_Results creates a new list of Base64Encode_done_Results.
 func NewBase64Encode_done_Results_List(s *capnp.Segment, sz int32) (Base64Encode_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Base64Encode_done_Results](l), err
 }
 

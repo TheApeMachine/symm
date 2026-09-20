@@ -4,31 +4,41 @@ import (
 	"context"
 	"math"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type LogServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *LogServer) Write(ctx context.Context, call Log_write) error {
-	a := call.Args().A()
-	result := math.Log(a)
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
+func (srv *LogServer) Write(ctx context.Context, call Log_write) error {
+	inVal := call.Args().In()
+
+	if inVal <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: log of non-positive value",
+			nil,
+		))
 	}
+
+	srv.out = math.Log(inVal)
 	return nil
 }
 
-func (s *LogServer) Done(ctx context.Context, call Log_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *LogServer) Done(ctx context.Context, call Log_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc log results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

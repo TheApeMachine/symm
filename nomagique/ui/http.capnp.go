@@ -11,156 +11,6 @@ import (
 	context "context"
 )
 
-type WireHTTPServer capnp.Struct
-
-// WireHTTPServer_TypeID is the unique identifier for the type WireHTTPServer.
-const WireHTTPServer_TypeID = 0xae8f3f65d0a08d17
-
-func NewWireHTTPServer(s *capnp.Segment) (WireHTTPServer, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
-	return WireHTTPServer(st), err
-}
-
-func NewRootWireHTTPServer(s *capnp.Segment) (WireHTTPServer, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5})
-	return WireHTTPServer(st), err
-}
-
-func ReadRootWireHTTPServer(msg *capnp.Message) (WireHTTPServer, error) {
-	root, err := msg.Root()
-	return WireHTTPServer(root.Struct()), err
-}
-
-func (s WireHTTPServer) String() string {
-	str, _ := text.Marshal(0xae8f3f65d0a08d17, capnp.Struct(s))
-	return str
-}
-
-func (s WireHTTPServer) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireHTTPServer) DecodeFromPtr(p capnp.Ptr) WireHTTPServer {
-	return WireHTTPServer(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireHTTPServer) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireHTTPServer) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireHTTPServer) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireHTTPServer) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireHTTPServer) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireHTTPServer) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireHTTPServer) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireHTTPServer) Addr() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireHTTPServer) HasAddr() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireHTTPServer) AddrBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireHTTPServer) SetAddr(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-func (s WireHTTPServer) Path() (string, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.Text(), err
-}
-
-func (s WireHTTPServer) HasPath() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s WireHTTPServer) PathBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.TextBytes(), err
-}
-
-func (s WireHTTPServer) SetPath(v string) error {
-	return capnp.Struct(s).SetText(2, v)
-}
-
-func (s WireHTTPServer) TemplatePath() (string, error) {
-	p, err := capnp.Struct(s).Ptr(3)
-	return p.Text(), err
-}
-
-func (s WireHTTPServer) HasTemplatePath() bool {
-	return capnp.Struct(s).HasPtr(3)
-}
-
-func (s WireHTTPServer) TemplatePathBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(3)
-	return p.TextBytes(), err
-}
-
-func (s WireHTTPServer) SetTemplatePath(v string) error {
-	return capnp.Struct(s).SetText(3, v)
-}
-
-func (s WireHTTPServer) FsRoot() (string, error) {
-	p, err := capnp.Struct(s).Ptr(4)
-	return p.Text(), err
-}
-
-func (s WireHTTPServer) HasFsRoot() bool {
-	return capnp.Struct(s).HasPtr(4)
-}
-
-func (s WireHTTPServer) FsRootBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(4)
-	return p.TextBytes(), err
-}
-
-func (s WireHTTPServer) SetFsRoot(v string) error {
-	return capnp.Struct(s).SetText(4, v)
-}
-
-// WireHTTPServer_List is a list of WireHTTPServer.
-type WireHTTPServer_List = capnp.StructList[WireHTTPServer]
-
-// NewWireHTTPServer creates a new list of WireHTTPServer.
-func NewWireHTTPServer_List(s *capnp.Segment, sz int32) (WireHTTPServer_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 5}, sz)
-	return capnp.StructList[WireHTTPServer](l), err
-}
-
-// WireHTTPServer_Future is a wrapper for a WireHTTPServer promised by a client call.
-type WireHTTPServer_Future struct{ *capnp.Future }
-
-func (f WireHTTPServer_Future) Struct() (WireHTTPServer, error) {
-	p, err := f.Future.Ptr()
-	return WireHTTPServer(p.Struct()), err
-}
-func (p WireHTTPServer_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type HTTPServer capnp.Client
 
 // HTTPServer_TypeID is the unique identifier for the type HTTPServer.
@@ -176,7 +26,7 @@ func (c HTTPServer) Write(ctx context.Context, params func(HTTPServer_write_Para
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 3}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(HTTPServer_write_Params(s)) }
 	}
 
@@ -358,7 +208,7 @@ func (c HTTPServer_done) Args() HTTPServer_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HTTPServer_done) AllocResults() (HTTPServer_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HTTPServer_done_Results(r), err
 }
 
@@ -377,12 +227,12 @@ type HTTPServer_write_Params capnp.Struct
 const HTTPServer_write_Params_TypeID = 0xc3f871968b5639a3
 
 func NewHTTPServer_write_Params(s *capnp.Segment) (HTTPServer_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return HTTPServer_write_Params(st), err
 }
 
 func NewRootHTTPServer_write_Params(s *capnp.Segment) (HTTPServer_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
 	return HTTPServer_write_Params(st), err
 }
 
@@ -418,28 +268,53 @@ func (s HTTPServer_write_Params) Message() *capnp.Message {
 func (s HTTPServer_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HTTPServer_write_Params) Server() (WireHTTPServer, error) {
+func (s HTTPServer_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireHTTPServer(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s HTTPServer_write_Params) HasServer() bool {
+func (s HTTPServer_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HTTPServer_write_Params) SetServer(v WireHTTPServer) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s HTTPServer_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewServer sets the server field to a newly
-// allocated WireHTTPServer struct, preferring placement in s's segment.
-func (s HTTPServer_write_Params) NewServer() (WireHTTPServer, error) {
-	ss, err := NewWireHTTPServer(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireHTTPServer{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s HTTPServer_write_Params) Addr() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s HTTPServer_write_Params) HasAddr() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s HTTPServer_write_Params) AddrBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s HTTPServer_write_Params) SetAddr(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s HTTPServer_write_Params) Path() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s HTTPServer_write_Params) HasPath() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s HTTPServer_write_Params) PathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s HTTPServer_write_Params) SetPath(v string) error {
+	return capnp.Struct(s).SetText(2, v)
 }
 
 // HTTPServer_write_Params_List is a list of HTTPServer_write_Params.
@@ -447,7 +322,7 @@ type HTTPServer_write_Params_List = capnp.StructList[HTTPServer_write_Params]
 
 // NewHTTPServer_write_Params creates a new list of HTTPServer_write_Params.
 func NewHTTPServer_write_Params_List(s *capnp.Segment, sz int32) (HTTPServer_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
 	return capnp.StructList[HTTPServer_write_Params](l), err
 }
 
@@ -457,9 +332,6 @@ type HTTPServer_write_Params_Future struct{ *capnp.Future }
 func (f HTTPServer_write_Params_Future) Struct() (HTTPServer_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return HTTPServer_write_Params(p.Struct()), err
-}
-func (p HTTPServer_write_Params_Future) Server() WireHTTPServer_Future {
-	return WireHTTPServer_Future{Future: p.Future.Field(0, nil)}
 }
 
 type HTTPServer_done_Params capnp.Struct
@@ -533,12 +405,12 @@ type HTTPServer_done_Results capnp.Struct
 const HTTPServer_done_Results_TypeID = 0x84ad3ac078c5a622
 
 func NewHTTPServer_done_Results(s *capnp.Segment) (HTTPServer_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HTTPServer_done_Results(st), err
 }
 
 func NewRootHTTPServer_done_Results(s *capnp.Segment) (HTTPServer_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HTTPServer_done_Results(st), err
 }
 
@@ -574,13 +446,25 @@ func (s HTTPServer_done_Results) Message() *capnp.Message {
 func (s HTTPServer_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s HTTPServer_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s HTTPServer_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s HTTPServer_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // HTTPServer_done_Results_List is a list of HTTPServer_done_Results.
 type HTTPServer_done_Results_List = capnp.StructList[HTTPServer_done_Results]
 
 // NewHTTPServer_done_Results creates a new list of HTTPServer_done_Results.
 func NewHTTPServer_done_Results_List(s *capnp.Segment, sz int32) (HTTPServer_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[HTTPServer_done_Results](l), err
 }
 

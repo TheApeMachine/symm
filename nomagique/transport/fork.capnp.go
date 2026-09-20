@@ -11,108 +11,6 @@ import (
 	context "context"
 )
 
-type WireFork capnp.Struct
-
-// WireFork_TypeID is the unique identifier for the type WireFork.
-const WireFork_TypeID = 0x988da4bbd9ebbbb0
-
-func NewWireFork(s *capnp.Segment) (WireFork, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireFork(st), err
-}
-
-func NewRootWireFork(s *capnp.Segment) (WireFork, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireFork(st), err
-}
-
-func ReadRootWireFork(msg *capnp.Message) (WireFork, error) {
-	root, err := msg.Root()
-	return WireFork(root.Struct()), err
-}
-
-func (s WireFork) String() string {
-	str, _ := text.Marshal(0x988da4bbd9ebbbb0, capnp.Struct(s))
-	return str
-}
-
-func (s WireFork) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireFork) DecodeFromPtr(p capnp.Ptr) WireFork {
-	return WireFork(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireFork) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireFork) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireFork) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireFork) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireFork) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireFork) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireFork) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireFork) Routes() (capnp.TextList, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.TextList(p.List()), err
-}
-
-func (s WireFork) HasRoutes() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireFork) SetRoutes(v capnp.TextList) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewRoutes sets the routes field to a newly
-// allocated capnp.TextList, preferring placement in s's segment.
-func (s WireFork) NewRoutes(n int32) (capnp.TextList, error) {
-	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.TextList{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
-}
-
-// WireFork_List is a list of WireFork.
-type WireFork_List = capnp.StructList[WireFork]
-
-// NewWireFork creates a new list of WireFork.
-func NewWireFork_List(s *capnp.Segment, sz int32) (WireFork_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireFork](l), err
-}
-
-// WireFork_Future is a wrapper for a WireFork promised by a client call.
-type WireFork_Future struct{ *capnp.Future }
-
-func (f WireFork_Future) Struct() (WireFork, error) {
-	p, err := f.Future.Ptr()
-	return WireFork(p.Struct()), err
-}
-func (p WireFork_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Fork capnp.Client
 
 // Fork_TypeID is the unique identifier for the type Fork.
@@ -310,7 +208,7 @@ func (c Fork_done) Args() Fork_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Fork_done) AllocResults() (Fork_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Fork_done_Results(r), err
 }
 
@@ -370,28 +268,17 @@ func (s Fork_write_Params) Message() *capnp.Message {
 func (s Fork_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Fork_write_Params) Payload() (WireFork, error) {
+func (s Fork_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireFork(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Fork_write_Params) HasPayload() bool {
+func (s Fork_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Fork_write_Params) SetPayload(v WireFork) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireFork struct, preferring placement in s's segment.
-func (s Fork_write_Params) NewPayload() (WireFork, error) {
-	ss, err := NewWireFork(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireFork{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Fork_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Fork_write_Params_List is a list of Fork_write_Params.
@@ -409,9 +296,6 @@ type Fork_write_Params_Future struct{ *capnp.Future }
 func (f Fork_write_Params_Future) Struct() (Fork_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Fork_write_Params(p.Struct()), err
-}
-func (p Fork_write_Params_Future) Payload() WireFork_Future {
-	return WireFork_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Fork_done_Params capnp.Struct
@@ -485,12 +369,12 @@ type Fork_done_Results capnp.Struct
 const Fork_done_Results_TypeID = 0xc346b67e47030a8f
 
 func NewFork_done_Results(s *capnp.Segment) (Fork_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Fork_done_Results(st), err
 }
 
 func NewRootFork_done_Results(s *capnp.Segment) (Fork_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Fork_done_Results(st), err
 }
 
@@ -526,13 +410,25 @@ func (s Fork_done_Results) Message() *capnp.Message {
 func (s Fork_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Fork_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Fork_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Fork_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Fork_done_Results_List is a list of Fork_done_Results.
 type Fork_done_Results_List = capnp.StructList[Fork_done_Results]
 
 // NewFork_done_Results creates a new list of Fork_done_Results.
 func NewFork_done_Results_List(s *capnp.Segment, sz int32) (Fork_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Fork_done_Results](l), err
 }
 

@@ -5,45 +5,48 @@ import (
 	"sync/atomic"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/theapemachine/errnie"
 )
-
-type KVPairStruct struct {
-	k []byte
-	v []byte
-}
 
 type MemoryServer struct {
 	Root        *atomic.Pointer[iradix.Tree[[]byte]]
 	StepCounter *atomic.Uint64
+}
 
-	DownstreamGet           func(context.Context, []byte) error
-	DownstreamSeekPrefix    func(context.Context, []KVPairStruct) error
-	DownstreamCas           func(context.Context, bool) error
-	DownstreamGetStep       func(context.Context, uint64) error
-	DownstreamIncrementStep func(context.Context) error
+func NewMemory() *MemoryServer {
+	return &MemoryServer{}
 }
 
 func (s *MemoryServer) Get(ctx context.Context, call Memory_get) error {
-	key, _ := call.Args().Key()
+	key, err := call.Args().Key()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "failed to read key", err))
+	}
+
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
 
 	tree := s.Root.Load()
-	if tree == nil {
-		return nil
-	}
-
-	var result []byte
-	if val, ok := tree.Get(key); ok {
-		result = val
-	}
-
-	if s.DownstreamGet != nil {
-		return s.DownstreamGet(ctx, result)
+	if tree != nil {
+		if val, ok := tree.Get(key); ok {
+			_ = results.SetValue(val)
+		}
 	}
 	return nil
 }
 
 func (s *MemoryServer) SeekPrefix(ctx context.Context, call Memory_seekPrefix) error {
-	prefix, _ := call.Args().Prefix()
+	prefix, err := call.Args().Prefix()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "failed to read prefix", err))
+	}
+
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
 
 	tree := s.Root.Load()
 	if tree == nil {
@@ -53,64 +56,61 @@ func (s *MemoryServer) SeekPrefix(ctx context.Context, call Memory_seekPrefix) e
 	it := tree.Root().Iterator()
 	it.SeekPrefix(prefix)
 
-	var kvs []KVPairStruct
+	var kvs [][2][]byte
 	for k, v, ok := it.Next(); ok; k, v, ok = it.Next() {
-		kvs = append(kvs, KVPairStruct{k, v})
+		kvs = append(kvs, [2][]byte{k, v})
 	}
 
-	if s.DownstreamSeekPrefix != nil {
-		return s.DownstreamSeekPrefix(ctx, kvs)
+	list, err := results.NewPairs(int32(len(kvs)))
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc pairs", err))
+	}
+
+	for i, pair := range kvs {
+		p := list.At(i)
+		_ = p.SetKey(pair[0])
+		_ = p.SetValue(pair[1])
 	}
 	return nil
 }
 
 func (s *MemoryServer) Cas(ctx context.Context, call Memory_cas) error {
-	updates, _ := call.Args().Updates()
-
-	for {
-		oldRoot := s.Root.Load()
-		if oldRoot == nil {
-			return nil
-		}
-		txn := oldRoot.Txn()
-
-		for i := 0; i < updates.Len(); i++ {
-			pair := updates.At(i)
-			k, _ := pair.Key()
-			v, _ := pair.Value()
-			txn.Insert(k, v)
-		}
-
-		newRoot := txn.Commit()
-		if s.Root.CompareAndSwap(oldRoot, newRoot) {
-			if s.DownstreamCas != nil {
-				return s.DownstreamCas(ctx, true)
-			}
-			return nil
-		}
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
 	}
+	results.SetOk(true)
+	return nil
 }
 
 func (s *MemoryServer) GetStep(ctx context.Context, call Memory_getStep) error {
-	step := s.StepCounter.Load()
-	if s.DownstreamGetStep != nil {
-		return s.DownstreamGetStep(ctx, step)
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
 	}
+
+	var step uint64
+	if s.StepCounter != nil {
+		step = s.StepCounter.Load()
+	}
+	results.SetStep(step)
 	return nil
 }
 
 func (s *MemoryServer) IncrementStep(ctx context.Context, call Memory_incrementStep) error {
-	s.StepCounter.Add(1)
-	if s.DownstreamIncrementStep != nil {
-		return s.DownstreamIncrementStep(ctx)
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
 	}
+
+	var step uint64
+	if s.StepCounter != nil {
+		step = s.StepCounter.Add(1)
+	}
+	results.SetStep(step)
 	return nil
 }
 
 func (s *MemoryServer) Done(ctx context.Context, call Memory_done) error {
 	return nil
-}
-
-func NewMemory() *MemoryServer {
-	return &MemoryServer{}
 }

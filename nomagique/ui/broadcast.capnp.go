@@ -12,108 +12,15 @@ import (
 	context "context"
 )
 
-type WireBroadcast capnp.Struct
-
-// WireBroadcast_TypeID is the unique identifier for the type WireBroadcast.
-const WireBroadcast_TypeID = 0xbbd14a0b6137209b
-
-func NewWireBroadcast(s *capnp.Segment) (WireBroadcast, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireBroadcast(st), err
-}
-
-func NewRootWireBroadcast(s *capnp.Segment) (WireBroadcast, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireBroadcast(st), err
-}
-
-func ReadRootWireBroadcast(msg *capnp.Message) (WireBroadcast, error) {
-	root, err := msg.Root()
-	return WireBroadcast(root.Struct()), err
-}
-
-func (s WireBroadcast) String() string {
-	str, _ := text.Marshal(0xbbd14a0b6137209b, capnp.Struct(s))
-	return str
-}
-
-func (s WireBroadcast) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireBroadcast) DecodeFromPtr(p capnp.Ptr) WireBroadcast {
-	return WireBroadcast(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireBroadcast) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireBroadcast) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireBroadcast) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireBroadcast) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireBroadcast) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireBroadcast) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireBroadcast) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireBroadcast) Server() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(1)
-}
-
-func (s WireBroadcast) HasServer() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireBroadcast) SetServer(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(1, v)
-}
-
-// WireBroadcast_List is a list of WireBroadcast.
-type WireBroadcast_List = capnp.StructList[WireBroadcast]
-
-// NewWireBroadcast creates a new list of WireBroadcast.
-func NewWireBroadcast_List(s *capnp.Segment, sz int32) (WireBroadcast_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireBroadcast](l), err
-}
-
-// WireBroadcast_Future is a wrapper for a WireBroadcast promised by a client call.
-type WireBroadcast_Future struct{ *capnp.Future }
-
-func (f WireBroadcast_Future) Struct() (WireBroadcast, error) {
-	p, err := f.Future.Ptr()
-	return WireBroadcast(p.Struct()), err
-}
-func (p WireBroadcast_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-func (p WireBroadcast_Future) Server() *capnp.Future {
-	return p.Future.Field(1, nil)
-}
-
 type Broadcast capnp.Client
 
 // Broadcast_TypeID is the unique identifier for the type Broadcast.
-const Broadcast_TypeID = 0xc180c493f77af1b5
+const Broadcast_TypeID = 0x894731a73fbec816
 
 func (c Broadcast) Write(ctx context.Context, params func(Broadcast_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xc180c493f77af1b5,
+			InterfaceID:   0x894731a73fbec816,
 			MethodID:      0,
 			InterfaceName: "nomagique/ui/broadcast.capnp:Broadcast",
 			MethodName:    "write",
@@ -132,7 +39,7 @@ func (c Broadcast) Done(ctx context.Context, params func(Broadcast_done_Params) 
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xc180c493f77af1b5,
+			InterfaceID:   0x894731a73fbec816,
 			MethodID:      1,
 			InterfaceName: "nomagique/ui/broadcast.capnp:Broadcast",
 			MethodName:    "done",
@@ -247,7 +154,7 @@ func Broadcast_Methods(methods []server.Method, s Broadcast_Server) []server.Met
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xc180c493f77af1b5,
+			InterfaceID:   0x894731a73fbec816,
 			MethodID:      0,
 			InterfaceName: "nomagique/ui/broadcast.capnp:Broadcast",
 			MethodName:    "write",
@@ -259,7 +166,7 @@ func Broadcast_Methods(methods []server.Method, s Broadcast_Server) []server.Met
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xc180c493f77af1b5,
+			InterfaceID:   0x894731a73fbec816,
 			MethodID:      1,
 			InterfaceName: "nomagique/ui/broadcast.capnp:Broadcast",
 			MethodName:    "done",
@@ -302,7 +209,7 @@ func (c Broadcast_done) Args() Broadcast_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Broadcast_done) AllocResults() (Broadcast_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Broadcast_done_Results(r), err
 }
 
@@ -318,7 +225,7 @@ func NewBroadcast_List(s *capnp.Segment, sz int32) (Broadcast_List, error) {
 type Broadcast_write_Params capnp.Struct
 
 // Broadcast_write_Params_TypeID is the unique identifier for the type Broadcast_write_Params.
-const Broadcast_write_Params_TypeID = 0xae1065b760894d4d
+const Broadcast_write_Params_TypeID = 0xba6abb9011f1c0dd
 
 func NewBroadcast_write_Params(s *capnp.Segment) (Broadcast_write_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -336,7 +243,7 @@ func ReadRootBroadcast_write_Params(msg *capnp.Message) (Broadcast_write_Params,
 }
 
 func (s Broadcast_write_Params) String() string {
-	str, _ := text.Marshal(0xae1065b760894d4d, capnp.Struct(s))
+	str, _ := text.Marshal(0xba6abb9011f1c0dd, capnp.Struct(s))
 	return str
 }
 
@@ -362,28 +269,17 @@ func (s Broadcast_write_Params) Message() *capnp.Message {
 func (s Broadcast_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Broadcast_write_Params) Broadcast() (WireBroadcast, error) {
+func (s Broadcast_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireBroadcast(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Broadcast_write_Params) HasBroadcast() bool {
+func (s Broadcast_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Broadcast_write_Params) SetBroadcast(v WireBroadcast) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewBroadcast sets the broadcast field to a newly
-// allocated WireBroadcast struct, preferring placement in s's segment.
-func (s Broadcast_write_Params) NewBroadcast() (WireBroadcast, error) {
-	ss, err := NewWireBroadcast(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireBroadcast{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Broadcast_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Broadcast_write_Params_List is a list of Broadcast_write_Params.
@@ -402,14 +298,11 @@ func (f Broadcast_write_Params_Future) Struct() (Broadcast_write_Params, error) 
 	p, err := f.Future.Ptr()
 	return Broadcast_write_Params(p.Struct()), err
 }
-func (p Broadcast_write_Params_Future) Broadcast() WireBroadcast_Future {
-	return WireBroadcast_Future{Future: p.Future.Field(0, nil)}
-}
 
 type Broadcast_done_Params capnp.Struct
 
 // Broadcast_done_Params_TypeID is the unique identifier for the type Broadcast_done_Params.
-const Broadcast_done_Params_TypeID = 0xf04fea9c31700d5c
+const Broadcast_done_Params_TypeID = 0xabac791800428d54
 
 func NewBroadcast_done_Params(s *capnp.Segment) (Broadcast_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -427,7 +320,7 @@ func ReadRootBroadcast_done_Params(msg *capnp.Message) (Broadcast_done_Params, e
 }
 
 func (s Broadcast_done_Params) String() string {
-	str, _ := text.Marshal(0xf04fea9c31700d5c, capnp.Struct(s))
+	str, _ := text.Marshal(0xabac791800428d54, capnp.Struct(s))
 	return str
 }
 
@@ -474,15 +367,15 @@ func (f Broadcast_done_Params_Future) Struct() (Broadcast_done_Params, error) {
 type Broadcast_done_Results capnp.Struct
 
 // Broadcast_done_Results_TypeID is the unique identifier for the type Broadcast_done_Results.
-const Broadcast_done_Results_TypeID = 0xd378d8c927a26023
+const Broadcast_done_Results_TypeID = 0x9e2849796f8a9623
 
 func NewBroadcast_done_Results(s *capnp.Segment) (Broadcast_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Broadcast_done_Results(st), err
 }
 
 func NewRootBroadcast_done_Results(s *capnp.Segment) (Broadcast_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Broadcast_done_Results(st), err
 }
 
@@ -492,7 +385,7 @@ func ReadRootBroadcast_done_Results(msg *capnp.Message) (Broadcast_done_Results,
 }
 
 func (s Broadcast_done_Results) String() string {
-	str, _ := text.Marshal(0xd378d8c927a26023, capnp.Struct(s))
+	str, _ := text.Marshal(0x9e2849796f8a9623, capnp.Struct(s))
 	return str
 }
 
@@ -518,13 +411,25 @@ func (s Broadcast_done_Results) Message() *capnp.Message {
 func (s Broadcast_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Broadcast_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Broadcast_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Broadcast_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Broadcast_done_Results_List is a list of Broadcast_done_Results.
 type Broadcast_done_Results_List = capnp.StructList[Broadcast_done_Results]
 
 // NewBroadcast_done_Results creates a new list of Broadcast_done_Results.
 func NewBroadcast_done_Results_List(s *capnp.Segment, sz int32) (Broadcast_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Broadcast_done_Results](l), err
 }
 
@@ -536,104 +441,83 @@ func (f Broadcast_done_Results_Future) Struct() (Broadcast_done_Results, error) 
 	return Broadcast_done_Results(p.Struct()), err
 }
 
-const schema_ede5e6e51d5440d7 = "x\xda\xccV]l\x14e\x17>g\xde\x99\x9d\x1dh" +
-	"\xb3}\x99m\xbe\xd2\xa4\x81\x0f0(q\xe9\xcf\x12\x85" +
-	"5\xcd\x16\xb4\xb1\x1a\x1av\xda*\xa11\x91i;\xc2" +
-	"b\xb7\xbb\xdd\x99\xdaB(\xb6\x0d\xa4EK\xb4*j" +
-	"+\x18\xad\x11b\xa2-\\\x14\x8d^X#\x18\x90\x18" +
-	"\x11\x13\x7f.L\xa3\x09\xc6\x90\xd4h4\x02\xc6d\xcc" +
-	";\xd3\x99\x1d\xd6\xdd\xb6x\xe5\xdd\xbc\x7f\xe7\x9c\xe79" +
-	"\xcf9g*jI\x0d_Y8\xb9\x048e\xbf\xe0" +
-	"3\xab\xfeln\xbe\xd1{l\x00\xe8Z\x04\x10P\x04" +
-	"\x08W\x0b\xe3\x08(\xd7\x0bQ@s\xd5\x89s=\xd3" +
-	"\x91w\x0e\x02]\x8d\x00<;O\x08\x03\x08\xbcI\xd5" +
-	"\x8a\xe2\x8b\xb3\xd1\xa3@K\x89\xb9\xf9\xc3;O\xff\xde" +
-	"q\xe9%\x00\x0c\xef\x10\"(\xc7\x05\x11@\xd6\x84A" +
-	"y\x8a}\x99W\xbf\xdd\xb0t{p\xfa8\xd0\x90c" +
-	"\xe7\xb8\xf0)\xb3s\xd7\xae?\x0eT.\xd9\xf6\xaa\xe7" +
-	"dD\xb8\xccN\xce\xf4\x95oZ\xb5\xb2\xffm\xa0\xa5" +
-	"\x98\xf1 \x10v\xe5\x90\xd0\x8c\xf2\xa8\xe5\xe4\xa80\x09" +
-	"h\xd6\xd7\x1f\xde\xf9\xaeV4\xe1E\x12\xf2YH\xaa" +
-	"}\x0c\xc9\xff\x8e\xbcvI\x8b>3\x01\xb4\x04\xcd\xd9" +
-	"\xe5b\xf2l1\x99\x01\x81\x99\x08\xab\xbe\x08\xca\x9d>" +
-	"\x0b\x9do\x05\x02\xce\xcc\xaa\xa5\x07*6\x9e\xb2\x8cY" +
-	"1\xf5\x8b\xe3,&\xa5\xb6\xf1\xab\xa1\x9e\x89\xf7\x80\x96" +
-	"\x90\x8c\x15\xc0p\xa7X\x8ar\xbf\xc8\x02\xea\x15\x07\xe5" +
-	"\xcf\xd8\x97\xf9\xca\xca\xbb\xd5\xa5\x0f~\xf1\x01\xd024" +
-	"\xbf\xaei*\xbb\xf2\xe3\x95Y\x108fpJlF" +
-	"\xf9\x82\xf5\xe0\x9c\xd8\x0dhN\xfd\xba\xef\xda\xf3g\xfb" +
-	">\x02ZF2\x97\x01\xc3\xff\xf7GP\xae\xf4\xb3\x9b" +
-	"!\xff\xa0\xdc\xcb\xbe\xcc76=\xfc\xf4\x8b\x9d\xd7?" +
-	"\xb6\x13c\xe3\xd5\xfc\x03\x0co\xa7\x9f\xe1-\xd9q\xf2" +
-	"\xfe\xd1\x93'>\xb1|\x17\xce\x9e\xa9\xfa\xab\xb8\xf8\xb9" +
-	"9\xf6F\xfcO\xa1\xfc\x96e\xf1M?co\xf5\xce" +
-	"\xf1\xb5\x17\xbe\xe9\xf9\x122\x80\xab%\x0b\xf0w?O" +
-	"\xbe\xffP]\xcb\x8c\xe7$$\x8d\xb1\x93\xad\xf7\x0c\xcb" +
-	"7~z\xf6{\x8f4\xca\xa4}\xec\xe4\xe2\xaa\xc0\xe8" +
-	"\xebE\x9f\xff`\xa7\xd4\x8eM\x92.\xb3\xd8\xca$\x16" +
-	"\xdb#\x85\xa9\xcacW\xb7\xfdr\x93;\xcb\xe8oc" +
-	"\xd7\xcf\xc7{\xce_\xb3Hp\xa3\x06\x0c\x87\xa4=(" +
-	"o\x96X\xc8\xd5\xd2\xa0|D\x12a\xaf\xd9\x91L\xa8" +
-	"\xbb\xe2\x9d]\x82V\xde\x15/\xef\xd6Z\xd2F\xeb\xfa" +
-	"V5\xd5\x91\x8al\xd7Z\x1a\x9a\xeem\xd4\xd2Oh" +
-	"\xe9\xf5\xdd\xe9\xb8\xa1\xad\x89\xa9iQM\xe8\x0aOx" +
-	"\x00\x1e\x01ha\x04@\xf1\x13T\x82\x1cFu\xeb." +
-	"\x16et\x07\x88E\x80\xae\x17\xc9\xf2\xb2\xdb0Rs" +
-	">\xea\x9a\x9abs\x1e\xda\x92\x1d\xda\x9a\x06M\xefj" +
-	"7tp\x1e\xe4\x8b*j?\x8a!*~\"\x00\xb8" +
-	"e\x88\x1d\xa7\xa7\xbb\xc3c\x8f\x8e\xd2\xca*\xe0\xe8m" +
-	"\"\xa2\x9b\x00\xb4$\x09\x1bO\xd1\xe5\xeb\x80\xa3\x85\xe2" +
-	"\x0a\x0bU\x0d\x06\x98\xef\x1a\x8ca&R\x9f\xe3YO" +
-	"\xb6>\xae\x19\x19\xe7\x8d\xd6\xda\x1bsLM\xab\x09\x1d" +
-	"\xe0\xdf\xbc\xb5\xf1\xa2\xee\xbe\xe5s \x8e\xa7\xb5L." +
-	"\x88\x8d\xba\xc0\xcd@\xed\x16\x00\xa5\x86\xa0\xb2\x95C\x8a" +
-	"\x18D\xb6\xf9\xc0:\x00\xe5>\x82J\x8cC\xcaqA" +
-	"\xe4\x00h=\xdb\xac#\xa84q\xf8dJ\xdd\xdb\x9e" +
-	"T\xdbp\x19p\xb8\x0c0\xa0\xb6\xb5\xa5\xb1\x008," +
-	"\x00\x0c\xa4Tc\xb7\xb3\xc8\x92HK:\xa9\xb6\xb5\xaa" +
-	"\xba\x03k\x8b\xbb\xce+\x91\x06\x00\xa5\x80\xa0R\xc2\xa1" +
-	"\xe9<\x074\xb0(S\xddY:!\xd9:a\x1c0" +
-	"\xadx\xf2\x1et\x1d\xf42\x06z\x08*\x07=\x0c\xf4" +
-	"3\xb0\xfb\x09*C\x1e\x06\x0e\xb1\xcd>\x82\xca0\x87" +
-	"\x94\x90 \x12\x00zx\x0f\x802DPy\x81C\xca" +
-	"\xf3A\xe4\x01\xe8\x08\xd3\xf50A\xe5\xe5[\xe2\xca\xd0" +
-	"\x12\xa9v\xd5\xd0 \x10\xf3lG\x1f\xd3\x1b\x92I#" +
-	"\x0f\xa3\xf9\x8b\xce\x95\x88\xd8n\xe8\xf9\xc9q\x8a\x88x" +
-	"\x0b\xc2\xe9n\xb9\x0a\xc2\xe9;\xe8\xcc\xa6E\x14\x04\x9f" +
-	"3\xfb,/s\x0a \xbaa{w\xd2r\x07K\xcb" +
-	"\x1a\x82J\x85'-!\xc6\xeb\xed\x04\x95\x0d\xff\xe4\xd5" +
-	"\xe9\x1fs\xcb,\xc09\x84\x17\xb572\xa0\x9d\x11\x96" +
-	"\x0b\xb4\xd31\xd1\xe9\xd4\x8b\x00-\xcc\xd3\xaf\\\xb9\xb3" +
-	"\xe2_\xb0#\xba\xb33K\xe9B\xee^a\x97\xbc\xb7" +
-	"_\x00\xfcG\xcb>\xb7H\x17%mF\x1eId7" +
-	"\xbfy\xc6C\xd4\xa6\xfb\x16;\xad'S\xb8\xf0\xecr" +
-	"\xa7~\xceL-\xc0CnD\xf3\x04\x18\xb8y\x8c9" +
-	"s?\x97\x80\x9d\x1f@t\xfe\xf7\xf2\x0b\xf8\xef\x00\x00" +
-	"\x00\xff\xff\xb0\xd0\x09\x9f"
+const schema_e0d65bbf11e2f796 = "x\xda\xbcU[h\x1cU\x18\xfe\xff93s\xa2\xcd" +
+	"\xba\x0e\x93H\x13\x101m\xb1\x16\xb6\xed6Uh\x0a" +
+	"\xeeR\x0dM\xa1\xd2\x9df\xb5\x0f\x05u\xb2;\xb4[" +
+	"ww63\xb3n\xd6\x07A\xb1n\xd5\x16\xaa\x0f\x81" +
+	"\x04,x\xc1>xC\x1f\x8a\xb5h\xb7\xd8@j\x1e" +
+	"$\x82\x81\"\xa2\x0d\x08*\x14ZD\xd3\x822r\xce" +
+	"\xec\xcc^\xd8\xb0\xd9\x97>\x9e\xdbw\xfb\xffs\xce\xf6" +
+	"\x8bB\\\x8c\x86\x0e\xdc\x05\x82\x96\x95dw\xe8\xc3\xb9" +
+	"\xa9\xea\xc8'\xaf\x82\xb2\x01\x01$\xa4\x00\xc3\xa7\xc4W" +
+	"\x10P\x9d\x11c\x80\xee}\xf3\xdf\xc4\xceF\xf7\xbe\x0e" +
+	"\xca\xfd\xc4\x9d^YV.\x1e^\xfa\x15\x00\x87\xcf\x8b" +
+	"#\xa8^\x11)\x80:'V\xd4~\x89\x02\xb8\x7f^" +
+	"\xdd\xb9\xeeP_\xf5\x1dP\"\x08\xc0\x16\x87\xff\x13\xbf" +
+	"C\x10\xdd\x0d\xd3o\x98\xe5}\x9b\xcf\x80\xf2P@t" +
+	"S|\x8f\x11\xa1\xc4\x88\x1e=\xf2\xcfK\xd1\xbb\x0f\x9c" +
+	"\xf1\x8ez\x1b\x1e\x94~`\x1b\x1e\xe1\x1b\xc6\x9eY\xf7" +
+	"[\xf6\xb5\xc9\x0f\x1a\x11\x9e\x928\x82\xc16\xac$O" +
+	"\xedY_\xfe\xf8#\xbe\xcc\xa9\x8fK\xb3\x8cZ\x1b\x1d" +
+	"_:1\xf5\xe9\x97\xa0\xac'\xee\xf5\x01j^\xee'" +
+	"\xbf0\x0bEi\x10\xd5\xe3L\xb8\xfa\xb2TQ\x17\xb9" +
+	"\x85\x9f\xab7\x95\xd3\x17\x8e}\xd5Hs\xde\xa3\xb9\xc2" +
+	"u,\xdf(\xdf#\x9e=w\x01\x94A\xe2\xde \x87" +
+	"\x17\xcc(\xbd\xc4\xe0\xfe\x90FP\xbd\xcd\xe1\xfe\x96*" +
+	"\xea\xa8\xcc\xe0\xde\xdf\xf5\xf4\x9b\xd3\x93\xb7\xbe\xad\x05L" +
+	"\x18\\D\xe6\x01\xef\x92?\x03tw\x9f\xdc\xfb\xd6B" +
+	"\xe1\xb9%\xa8\xeb^\x94\xb9\xee\xcb\xc5\x9f\x1e\xfb\xe2\xeb" +
+	"\x13\xd7jJ\x04\xb6tI\xe6J\x16\xe5\x12\xa0\xbb\x7f" +
+	"\xf7I\xf5\xf6\xef\xa7\xafy\xd8\xfch\x84\xbe\xc8\x8e." +
+	"\x0c\x85g\xde\xbd\xf7\xfb\xe5Z\x98\x9cu\x80\xf20#" +
+	"\x94\xb1\xfe5{k>35\xbf\xc2\xcb\x1a\xba~n" +
+	"\xc7\xbf\xfd\xfdo3\x13s\xf4\x18\xaaW)3\xf1#" +
+	"\xad\xa8\x9bz(\x94\xdd\xbc\x99\xd3\x8fd&\x8b\x92\xb1" +
+	"\xad\x98\xd9v\xd4q\x0a[Sz!_\x18\x19K&" +
+	"\x13\xe3\x86\xf5\x82amM\x9byc\xe3A\xc3.f" +
+	"\x1d\x1b4\x91\x88\x00\"\x02(\xa1!\x00\xad\x87\xa0\xd6" +
+	"' 5\x8b\x0e\x86@\xc0\x10`\x00J8\xe8\x84e" +
+	"\xea\xe9\x94n;5\xe4=\x96\x19\xf3&\x12\x88Z\x0f" +
+	"\x91\x1aJ\x83\xf9\xcf\xab\xa5\xe1\xd9gg\x94\xe8\x0e\x10" +
+	"\x94M\x14\x83\xe27\xf4\xd9\xc0\x16\x10\x94\x10}\xa0d" +
+	"e\x1c#\x8ea&0\x8e\x09\xac3\xcb\x9c\xb9dL" +
+	"\xd8f\xeay\xc3g>dL\x8c\xf3q\xa3\xb1\x84n" +
+	"\xe99\x1b\xa0%\x8a6\xaak\xe3 \x0e\x9au\xecn" +
+	"\xe2\xe8B\x94\x976v\x05/\xf9\xf0\x96\x93\xaac\x1f" +
+	"L>\xde\x0a\xdc\xad\xee5\x05\xc2b$9\xbb\xa5\xf6" +
+	"m\x1a\x8a\x18V\xbd\xee\xfe\x1djS\xf7\xe0\x0e\xa0\xff" +
+	"\x92\xad\xa1\xee\x9d\xa4\xf2\x93L+\xd5sM\x19\x0c\xd6" +
+	"3 \x99\xfc*\x9d\xdc&\xdb\x98\x17n\xdd\x91\x7f\xb5" +
+	"\xdb9\xf2\x1f\x04\xf4\x1f\xbc5;j\x7f1\x037\xac" +
+	"\x81\xb5\xde\xc0\xcd(s\x13'\xa8\xed\x17PA\xecC" +
+	"6\xb9o\x0b\x80\xf6\x04A-!\xa0\"\x08}(\x00" +
+	"(O\xb2\xc91\x82Z\xb2\xc9wXO\xa7-\xec\x05" +
+	"\x01{\x01\xc3\x05\xdd9\xea\x0f\xba\xeb\xb6\xd6\xa6\xe8t" +
+	"\xa8\xb9<=\x81\xa1\x87\x99\xa1\x8d\x04\xb5\xed\x0d\x86\"" +
+	"L\xfbf\x82\xda\xce\xd5\xb5\x07\xccb\xa7\xf7-\xe6\xc5" +
+	"\xd8\xe5em\xa8\x00\xdaw\xb8\x02b'\x85\xe1\xe6\xce" +
+	"\xf4\x7f\x8ev\x9d\xe9\xff\xee\xe8\xff\xd5\xabw\xe6\xff\x01" +
+	"\x00\x00\xff\xffe\xfcY\xab"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
-		String: schema_ede5e6e51d5440d7,
+		String: schema_e0d65bbf11e2f796,
 		Nodes: []uint64{
-			0x829c7df95a5afa32,
 			0x84ad3ac078c5a622,
-			0x953fedcb15306111,
+			0x894731a73fbec816,
 			0x9dc014570b34d9ea,
+			0x9e2849796f8a9623,
 			0x9e4f0a317ef66736,
-			0xac812022392f80b6,
-			0xae1065b760894d4d,
-			0xae8f3f65d0a08d17,
-			0xb03800307e1a61ed,
+			0xa471866ce50b5e48,
+			0xabac791800428d54,
 			0xb8ae7888d6534551,
-			0xbbd14a0b6137209b,
-			0xc180c493f77af1b5,
+			0xba6abb9011f1c0dd,
+			0xbbb6a7040e79f0e2,
 			0xc3f871968b5639a3,
-			0xc6a6a79947a75918,
-			0xd378d8c927a26023,
-			0xdf624855baafeedd,
+			0xd66070cb91478c3b,
+			0xe188bdb23edb75c4,
 			0xe190e8f9138c3b4c,
 			0xe2cf10a1990f22cb,
-			0xf04fea9c31700d5c,
 			0xf7c87869c8f89af3,
 		},
 		Compressed: true,

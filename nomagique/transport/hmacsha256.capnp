@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireHMACSHA256 { message @0 :Data; secret @1 :Data; }
-
 interface HMACSHA256 {
-  write @0 (payload :WireHMACSHA256) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

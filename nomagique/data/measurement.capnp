@@ -1,4 +1,7 @@
+using Go = import "/go.capnp";
 @0x85d3acc39d94e0f8;
+$Go.package("data");
+$Go.import("nomagique/data");
 
 using import "metric.capnp".WireMetric;
 

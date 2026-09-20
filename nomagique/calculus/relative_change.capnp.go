@@ -3,14 +3,13 @@
 package calculus
 
 import (
-	context "context"
-	math "math"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type RelativeChange capnp.Client
@@ -28,7 +27,7 @@ func (c RelativeChange) Write(ctx context.Context, params func(RelativeChange_wr
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(RelativeChange_write_Params(s)) }
 	}
 
@@ -210,7 +209,7 @@ func (c RelativeChange_done) Args() RelativeChange_done_Params {
 
 // AllocResults allocates the results struct.
 func (c RelativeChange_done) AllocResults() (RelativeChange_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RelativeChange_done_Results(r), err
 }
 
@@ -229,12 +228,12 @@ type RelativeChange_write_Params capnp.Struct
 const RelativeChange_write_Params_TypeID = 0xbc0fc4fe96d384d0
 
 func NewRelativeChange_write_Params(s *capnp.Segment) (RelativeChange_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return RelativeChange_write_Params(st), err
 }
 
 func NewRootRelativeChange_write_Params(s *capnp.Segment) (RelativeChange_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return RelativeChange_write_Params(st), err
 }
 
@@ -270,12 +269,20 @@ func (s RelativeChange_write_Params) Message() *capnp.Message {
 func (s RelativeChange_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s RelativeChange_write_Params) A() float64 {
+func (s RelativeChange_write_Params) In() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s RelativeChange_write_Params) SetA(v float64) {
+func (s RelativeChange_write_Params) SetIn(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s RelativeChange_write_Params) Prev() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s RelativeChange_write_Params) SetPrev(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
 // RelativeChange_write_Params_List is a list of RelativeChange_write_Params.
@@ -283,7 +290,7 @@ type RelativeChange_write_Params_List = capnp.StructList[RelativeChange_write_Pa
 
 // NewRelativeChange_write_Params creates a new list of RelativeChange_write_Params.
 func NewRelativeChange_write_Params_List(s *capnp.Segment, sz int32) (RelativeChange_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
 	return capnp.StructList[RelativeChange_write_Params](l), err
 }
 
@@ -366,12 +373,12 @@ type RelativeChange_done_Results capnp.Struct
 const RelativeChange_done_Results_TypeID = 0xf98f1ae381805441
 
 func NewRelativeChange_done_Results(s *capnp.Segment) (RelativeChange_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RelativeChange_done_Results(st), err
 }
 
 func NewRootRelativeChange_done_Results(s *capnp.Segment) (RelativeChange_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return RelativeChange_done_Results(st), err
 }
 
@@ -407,13 +414,20 @@ func (s RelativeChange_done_Results) Message() *capnp.Message {
 func (s RelativeChange_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s RelativeChange_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s RelativeChange_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // RelativeChange_done_Results_List is a list of RelativeChange_done_Results.
 type RelativeChange_done_Results_List = capnp.StructList[RelativeChange_done_Results]
 
 // NewRelativeChange_done_Results creates a new list of RelativeChange_done_Results.
 func NewRelativeChange_done_Results_List(s *capnp.Segment, sz int32) (RelativeChange_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[RelativeChange_done_Results](l), err
 }
 

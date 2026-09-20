@@ -11,96 +11,6 @@ import (
 	context "context"
 )
 
-type WireHMACSHA256 capnp.Struct
-
-// WireHMACSHA256_TypeID is the unique identifier for the type WireHMACSHA256.
-const WireHMACSHA256_TypeID = 0x9910f415e6f0b496
-
-func NewWireHMACSHA256(s *capnp.Segment) (WireHMACSHA256, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireHMACSHA256(st), err
-}
-
-func NewRootWireHMACSHA256(s *capnp.Segment) (WireHMACSHA256, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireHMACSHA256(st), err
-}
-
-func ReadRootWireHMACSHA256(msg *capnp.Message) (WireHMACSHA256, error) {
-	root, err := msg.Root()
-	return WireHMACSHA256(root.Struct()), err
-}
-
-func (s WireHMACSHA256) String() string {
-	str, _ := text.Marshal(0x9910f415e6f0b496, capnp.Struct(s))
-	return str
-}
-
-func (s WireHMACSHA256) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireHMACSHA256) DecodeFromPtr(p capnp.Ptr) WireHMACSHA256 {
-	return WireHMACSHA256(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireHMACSHA256) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireHMACSHA256) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireHMACSHA256) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireHMACSHA256) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireHMACSHA256) Message_() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s WireHMACSHA256) HasMessage_() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireHMACSHA256) SetMessage_(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s WireHMACSHA256) Secret() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s WireHMACSHA256) HasSecret() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireHMACSHA256) SetSecret(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-// WireHMACSHA256_List is a list of WireHMACSHA256.
-type WireHMACSHA256_List = capnp.StructList[WireHMACSHA256]
-
-// NewWireHMACSHA256 creates a new list of WireHMACSHA256.
-func NewWireHMACSHA256_List(s *capnp.Segment, sz int32) (WireHMACSHA256_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireHMACSHA256](l), err
-}
-
-// WireHMACSHA256_Future is a wrapper for a WireHMACSHA256 promised by a client call.
-type WireHMACSHA256_Future struct{ *capnp.Future }
-
-func (f WireHMACSHA256_Future) Struct() (WireHMACSHA256, error) {
-	p, err := f.Future.Ptr()
-	return WireHMACSHA256(p.Struct()), err
-}
-
 type HMACSHA256 capnp.Client
 
 // HMACSHA256_TypeID is the unique identifier for the type HMACSHA256.
@@ -298,7 +208,7 @@ func (c HMACSHA256_done) Args() HMACSHA256_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HMACSHA256_done) AllocResults() (HMACSHA256_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HMACSHA256_done_Results(r), err
 }
 
@@ -358,28 +268,17 @@ func (s HMACSHA256_write_Params) Message() *capnp.Message {
 func (s HMACSHA256_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HMACSHA256_write_Params) Payload() (WireHMACSHA256, error) {
+func (s HMACSHA256_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireHMACSHA256(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s HMACSHA256_write_Params) HasPayload() bool {
+func (s HMACSHA256_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HMACSHA256_write_Params) SetPayload(v WireHMACSHA256) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireHMACSHA256 struct, preferring placement in s's segment.
-func (s HMACSHA256_write_Params) NewPayload() (WireHMACSHA256, error) {
-	ss, err := NewWireHMACSHA256(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireHMACSHA256{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s HMACSHA256_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // HMACSHA256_write_Params_List is a list of HMACSHA256_write_Params.
@@ -397,9 +296,6 @@ type HMACSHA256_write_Params_Future struct{ *capnp.Future }
 func (f HMACSHA256_write_Params_Future) Struct() (HMACSHA256_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return HMACSHA256_write_Params(p.Struct()), err
-}
-func (p HMACSHA256_write_Params_Future) Payload() WireHMACSHA256_Future {
-	return WireHMACSHA256_Future{Future: p.Future.Field(0, nil)}
 }
 
 type HMACSHA256_done_Params capnp.Struct
@@ -473,12 +369,12 @@ type HMACSHA256_done_Results capnp.Struct
 const HMACSHA256_done_Results_TypeID = 0x8f24401bfe145d05
 
 func NewHMACSHA256_done_Results(s *capnp.Segment) (HMACSHA256_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HMACSHA256_done_Results(st), err
 }
 
 func NewRootHMACSHA256_done_Results(s *capnp.Segment) (HMACSHA256_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HMACSHA256_done_Results(st), err
 }
 
@@ -514,13 +410,25 @@ func (s HMACSHA256_done_Results) Message() *capnp.Message {
 func (s HMACSHA256_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s HMACSHA256_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s HMACSHA256_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s HMACSHA256_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // HMACSHA256_done_Results_List is a list of HMACSHA256_done_Results.
 type HMACSHA256_done_Results_List = capnp.StructList[HMACSHA256_done_Results]
 
 // NewHMACSHA256_done_Results creates a new list of HMACSHA256_done_Results.
 func NewHMACSHA256_done_Results_List(s *capnp.Segment, sz int32) (HMACSHA256_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[HMACSHA256_done_Results](l), err
 }
 

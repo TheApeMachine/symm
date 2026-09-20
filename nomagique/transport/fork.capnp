@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireFork { payload @0 :AnyPointer; routes @1 :List(Text); }
-
 interface Fork {
-  write @0 (payload :WireFork) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

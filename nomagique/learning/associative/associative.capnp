@@ -3,11 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("associative");
 $Go.import("nomagique/learning/associative");
 
-struct WireGrid {
-  impulse @0 :List(Float64);
-}
-
 interface Grid {
-  write @0 (grid :WireGrid) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

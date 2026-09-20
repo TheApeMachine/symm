@@ -3,8 +3,6 @@ package learning
 import (
 	context "context"
 	"errors"
-
-	capnp "capnproto.org/go/capnp/v3"
 )
 
 /*
@@ -230,14 +228,8 @@ issues a fresh forecast, and yields the PredictiveOutput.
 */
 func (predictiveCoder *PredictiveCoderServer) Write(ctx context.Context, call PredictiveCoder_write) error {
 	args := call.Args()
-	featuresList, _ := args.Features()
-	features := make([]float64, featuresList.Len())
-	for i := 0; i < featuresList.Len(); i++ {
-		features[i] = featuresList.At(i)
-	}
-
 	input := PredictiveInput{
-		Features:     features,
+		Features:     []float64{args.Feature()},
 		Reference:    args.Reference(),
 		HasReference: args.HasReference(),
 		Step:         args.Step(),
@@ -248,13 +240,19 @@ func (predictiveCoder *PredictiveCoderServer) Write(ctx context.Context, call Pr
 		predictiveCoder.err = err
 		return err
 	}
-	if predictiveCoder.DownstreamPredictiveCoder != nil {
-		return predictiveCoder.DownstreamPredictiveCoder(ctx, out)
-	}
+	predictiveCoder.out = out
 	return nil
 }
 
 func (predictiveCoder *PredictiveCoderServer) Done(ctx context.Context, call PredictiveCoder_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+
+	if len(predictiveCoder.out.Forecast) > 0 {
+		results.SetOut(predictiveCoder.out.Forecast[0].Value)
+	}
 	return nil
 }
 
@@ -297,18 +295,17 @@ func (predictiveCoder *PredictiveCoderServer) step(input PredictiveInput) (Predi
 	// own input and sets the learning rate from it, so the rate is derived
 	// rather than configured.
 	if predictiveCoder.pace != nil {
-		var alpha float64
-		predictiveCoder.pace.DownstreamPace = func(c context.Context, v float64) error {
-			alpha = v
+		client := Pace_ServerToClient(predictiveCoder.pace)
+		ctx := context.Background()
+		_ = client.Write(ctx, func(p Pace_write_Params) error {
+			p.SetErrorMagnitude(settled.ReconstructionError)
 			return nil
-		}
-
-		_, seg, _ := capnp.NewMessage(capnp.SingleSegment(nil))
-		args, _ := NewPace_write_Params(seg)
-		args.SetErrorMagnitude(settled.ReconstructionError)
-		predictiveCoder.pace.WriteParams(context.Background(), args)
-
-		predictiveCoder.alpha = alpha
+		})
+		_ = client.WaitStreaming()
+		call, release := client.Done(ctx, nil)
+		defer release()
+		res, _ := call.Struct()
+		predictiveCoder.alpha = res.Out()
 
 		settled, err = predictiveCoder.manifoldExecute(ManifoldCommand{
 			Alpha: &AlphaIntent{Alpha: predictiveCoder.alpha},

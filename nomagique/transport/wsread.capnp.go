@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireWSRead capnp.Struct
-
-// WireWSRead_TypeID is the unique identifier for the type WireWSRead.
-const WireWSRead_TypeID = 0x9483c54d2cfce0f5
-
-func NewWireWSRead(s *capnp.Segment) (WireWSRead, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSRead(st), err
-}
-
-func NewRootWireWSRead(s *capnp.Segment) (WireWSRead, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSRead(st), err
-}
-
-func ReadRootWireWSRead(msg *capnp.Message) (WireWSRead, error) {
-	root, err := msg.Root()
-	return WireWSRead(root.Struct()), err
-}
-
-func (s WireWSRead) String() string {
-	str, _ := text.Marshal(0x9483c54d2cfce0f5, capnp.Struct(s))
-	return str
-}
-
-func (s WireWSRead) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWSRead) DecodeFromPtr(p capnp.Ptr) WireWSRead {
-	return WireWSRead(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWSRead) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWSRead) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWSRead) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWSRead) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWSRead) Connection() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireWSRead) HasConnection() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWSRead) SetConnection(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireWSRead_List is a list of WireWSRead.
-type WireWSRead_List = capnp.StructList[WireWSRead]
-
-// NewWireWSRead creates a new list of WireWSRead.
-func NewWireWSRead_List(s *capnp.Segment, sz int32) (WireWSRead_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireWSRead](l), err
-}
-
-// WireWSRead_Future is a wrapper for a WireWSRead promised by a client call.
-type WireWSRead_Future struct{ *capnp.Future }
-
-func (f WireWSRead_Future) Struct() (WireWSRead, error) {
-	p, err := f.Future.Ptr()
-	return WireWSRead(p.Struct()), err
-}
-func (p WireWSRead_Future) Connection() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type WSRead capnp.Client
 
 // WSRead_TypeID is the unique identifier for the type WSRead.
@@ -287,7 +208,7 @@ func (c WSRead_done) Args() WSRead_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WSRead_done) AllocResults() (WSRead_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSRead_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s WSRead_write_Params) Message() *capnp.Message {
 func (s WSRead_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WSRead_write_Params) Payload() (WireWSRead, error) {
+func (s WSRead_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWSRead(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WSRead_write_Params) HasPayload() bool {
+func (s WSRead_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WSRead_write_Params) SetPayload(v WireWSRead) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireWSRead struct, preferring placement in s's segment.
-func (s WSRead_write_Params) NewPayload() (WireWSRead, error) {
-	ss, err := NewWireWSRead(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWSRead{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WSRead_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // WSRead_write_Params_List is a list of WSRead_write_Params.
@@ -386,9 +296,6 @@ type WSRead_write_Params_Future struct{ *capnp.Future }
 func (f WSRead_write_Params_Future) Struct() (WSRead_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WSRead_write_Params(p.Struct()), err
-}
-func (p WSRead_write_Params_Future) Payload() WireWSRead_Future {
-	return WireWSRead_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WSRead_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type WSRead_done_Results capnp.Struct
 const WSRead_done_Results_TypeID = 0xac365bdd8b8befa6
 
 func NewWSRead_done_Results(s *capnp.Segment) (WSRead_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSRead_done_Results(st), err
 }
 
 func NewRootWSRead_done_Results(s *capnp.Segment) (WSRead_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSRead_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s WSRead_done_Results) Message() *capnp.Message {
 func (s WSRead_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WSRead_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WSRead_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WSRead_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WSRead_done_Results_List is a list of WSRead_done_Results.
 type WSRead_done_Results_List = capnp.StructList[WSRead_done_Results]
 
 // NewWSRead_done_Results creates a new list of WSRead_done_Results.
 func NewWSRead_done_Results_List(s *capnp.Segment, sz int32) (WSRead_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WSRead_done_Results](l), err
 }
 

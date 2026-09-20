@@ -11,97 +11,6 @@ import (
 	context "context"
 )
 
-type WireWSWrite capnp.Struct
-
-// WireWSWrite_TypeID is the unique identifier for the type WireWSWrite.
-const WireWSWrite_TypeID = 0xd605d46c2e4ea961
-
-func NewWireWSWrite(s *capnp.Segment) (WireWSWrite, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireWSWrite(st), err
-}
-
-func NewRootWireWSWrite(s *capnp.Segment) (WireWSWrite, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireWSWrite(st), err
-}
-
-func ReadRootWireWSWrite(msg *capnp.Message) (WireWSWrite, error) {
-	root, err := msg.Root()
-	return WireWSWrite(root.Struct()), err
-}
-
-func (s WireWSWrite) String() string {
-	str, _ := text.Marshal(0xd605d46c2e4ea961, capnp.Struct(s))
-	return str
-}
-
-func (s WireWSWrite) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWSWrite) DecodeFromPtr(p capnp.Ptr) WireWSWrite {
-	return WireWSWrite(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWSWrite) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWSWrite) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWSWrite) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWSWrite) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWSWrite) Connection() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireWSWrite) HasConnection() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWSWrite) SetConnection(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireWSWrite) Payload() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s WireWSWrite) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireWSWrite) SetPayload(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-// WireWSWrite_List is a list of WireWSWrite.
-type WireWSWrite_List = capnp.StructList[WireWSWrite]
-
-// NewWireWSWrite creates a new list of WireWSWrite.
-func NewWireWSWrite_List(s *capnp.Segment, sz int32) (WireWSWrite_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireWSWrite](l), err
-}
-
-// WireWSWrite_Future is a wrapper for a WireWSWrite promised by a client call.
-type WireWSWrite_Future struct{ *capnp.Future }
-
-func (f WireWSWrite_Future) Struct() (WireWSWrite, error) {
-	p, err := f.Future.Ptr()
-	return WireWSWrite(p.Struct()), err
-}
-func (p WireWSWrite_Future) Connection() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type WSWrite capnp.Client
 
 // WSWrite_TypeID is the unique identifier for the type WSWrite.
@@ -299,7 +208,7 @@ func (c WSWrite_done) Args() WSWrite_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WSWrite_done) AllocResults() (WSWrite_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSWrite_done_Results(r), err
 }
 
@@ -359,28 +268,17 @@ func (s WSWrite_write_Params) Message() *capnp.Message {
 func (s WSWrite_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WSWrite_write_Params) Payload() (WireWSWrite, error) {
+func (s WSWrite_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWSWrite(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WSWrite_write_Params) HasPayload() bool {
+func (s WSWrite_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WSWrite_write_Params) SetPayload(v WireWSWrite) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireWSWrite struct, preferring placement in s's segment.
-func (s WSWrite_write_Params) NewPayload() (WireWSWrite, error) {
-	ss, err := NewWireWSWrite(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWSWrite{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WSWrite_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // WSWrite_write_Params_List is a list of WSWrite_write_Params.
@@ -398,9 +296,6 @@ type WSWrite_write_Params_Future struct{ *capnp.Future }
 func (f WSWrite_write_Params_Future) Struct() (WSWrite_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WSWrite_write_Params(p.Struct()), err
-}
-func (p WSWrite_write_Params_Future) Payload() WireWSWrite_Future {
-	return WireWSWrite_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WSWrite_done_Params capnp.Struct
@@ -474,12 +369,12 @@ type WSWrite_done_Results capnp.Struct
 const WSWrite_done_Results_TypeID = 0xaa4ab538f5f249d0
 
 func NewWSWrite_done_Results(s *capnp.Segment) (WSWrite_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSWrite_done_Results(st), err
 }
 
 func NewRootWSWrite_done_Results(s *capnp.Segment) (WSWrite_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSWrite_done_Results(st), err
 }
 
@@ -515,13 +410,25 @@ func (s WSWrite_done_Results) Message() *capnp.Message {
 func (s WSWrite_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WSWrite_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WSWrite_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WSWrite_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WSWrite_done_Results_List is a list of WSWrite_done_Results.
 type WSWrite_done_Results_List = capnp.StructList[WSWrite_done_Results]
 
 // NewWSWrite_done_Results creates a new list of WSWrite_done_Results.
 func NewWSWrite_done_Results_List(s *capnp.Segment, sz int32) (WSWrite_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WSWrite_done_Results](l), err
 }
 

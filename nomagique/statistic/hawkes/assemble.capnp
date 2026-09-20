@@ -3,11 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("hawkes");
 $Go.import("nomagique/statistic/hawkes");
 
-struct WireAssemble {
-  payload @0 :AnyPointer;
-}
-
 interface Assemble {
-  write @0 (assemble :WireAssemble) -> stream;
-  done @1 ();
+  write @0 (in :Data, timestamp :Int64, side :Text, symbol :Text) -> stream;
+  done @1 () -> (out :Float64, time :Float64, mark :Float64);
 }

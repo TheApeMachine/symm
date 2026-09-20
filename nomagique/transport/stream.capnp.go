@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireStream capnp.Struct
-
-// WireStream_TypeID is the unique identifier for the type WireStream.
-const WireStream_TypeID = 0x8b435245829a35ef
-
-func NewWireStream(s *capnp.Segment) (WireStream, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireStream(st), err
-}
-
-func NewRootWireStream(s *capnp.Segment) (WireStream, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireStream(st), err
-}
-
-func ReadRootWireStream(msg *capnp.Message) (WireStream, error) {
-	root, err := msg.Root()
-	return WireStream(root.Struct()), err
-}
-
-func (s WireStream) String() string {
-	str, _ := text.Marshal(0x8b435245829a35ef, capnp.Struct(s))
-	return str
-}
-
-func (s WireStream) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireStream) DecodeFromPtr(p capnp.Ptr) WireStream {
-	return WireStream(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireStream) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireStream) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireStream) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireStream) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireStream) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireStream) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireStream) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireStream_List is a list of WireStream.
-type WireStream_List = capnp.StructList[WireStream]
-
-// NewWireStream creates a new list of WireStream.
-func NewWireStream_List(s *capnp.Segment, sz int32) (WireStream_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireStream](l), err
-}
-
-// WireStream_Future is a wrapper for a WireStream promised by a client call.
-type WireStream_Future struct{ *capnp.Future }
-
-func (f WireStream_Future) Struct() (WireStream, error) {
-	p, err := f.Future.Ptr()
-	return WireStream(p.Struct()), err
-}
-func (p WireStream_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Stream capnp.Client
 
 // Stream_TypeID is the unique identifier for the type Stream.
@@ -287,7 +208,7 @@ func (c Stream_done) Args() Stream_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Stream_done) AllocResults() (Stream_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Stream_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s Stream_write_Params) Message() *capnp.Message {
 func (s Stream_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Stream_write_Params) Payload() (WireStream, error) {
+func (s Stream_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireStream(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Stream_write_Params) HasPayload() bool {
+func (s Stream_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Stream_write_Params) SetPayload(v WireStream) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireStream struct, preferring placement in s's segment.
-func (s Stream_write_Params) NewPayload() (WireStream, error) {
-	ss, err := NewWireStream(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireStream{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Stream_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Stream_write_Params_List is a list of Stream_write_Params.
@@ -386,9 +296,6 @@ type Stream_write_Params_Future struct{ *capnp.Future }
 func (f Stream_write_Params_Future) Struct() (Stream_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Stream_write_Params(p.Struct()), err
-}
-func (p Stream_write_Params_Future) Payload() WireStream_Future {
-	return WireStream_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Stream_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type Stream_done_Results capnp.Struct
 const Stream_done_Results_TypeID = 0x807dc5f537fcab41
 
 func NewStream_done_Results(s *capnp.Segment) (Stream_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Stream_done_Results(st), err
 }
 
 func NewRootStream_done_Results(s *capnp.Segment) (Stream_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Stream_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s Stream_done_Results) Message() *capnp.Message {
 func (s Stream_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Stream_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Stream_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Stream_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Stream_done_Results_List is a list of Stream_done_Results.
 type Stream_done_Results_List = capnp.StructList[Stream_done_Results]
 
 // NewStream_done_Results creates a new list of Stream_done_Results.
 func NewStream_done_Results_List(s *capnp.Segment, sz int32) (Stream_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Stream_done_Results](l), err
 }
 

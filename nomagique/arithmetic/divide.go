@@ -3,32 +3,41 @@ package arithmetic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type DivideServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *DivideServer) Write(ctx context.Context, call Divide_write) error {
-	a := call.Args().A()
-	b := call.Args().B()
-	result := a / b
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
+func (srv *DivideServer) Write(ctx context.Context, call Divide_write) error {
+	divisor := call.Args().B()
+
+	if divisor == 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"arithmetic: division by zero",
+			nil,
+		))
 	}
+
+	srv.out = call.Args().A() / divisor
 	return nil
 }
 
-func (s *DivideServer) Done(ctx context.Context, call Divide_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *DivideServer) Done(ctx context.Context, call Divide_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"arithmetic: alloc divide results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

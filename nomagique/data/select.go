@@ -2,84 +2,64 @@ package data
 
 import (
 	"context"
-	"strings"
 
+	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 )
 
 type SelectServer struct {
-	Downstream func(context.Context, any) error
-	Path       string
+	path string
+	out  float64
 }
 
 func NewSelect() *SelectServer {
 	return &SelectServer{}
 }
 
-func (s *SelectServer) Evaluate(ctx context.Context, in any) (any, error) {
-	segments := strings.Split(s.Path, ".")
-	curr := in
-
-	for _, segment := range segments {
-		if curr == nil {
-			break
-		}
-
-		asMap, ok := curr.(map[string]any)
-		if !ok {
-			curr = nil
-			break
-		}
-
-		curr = asMap[segment]
-	}
-
-	if curr == nil {
-		return nil, nil
-	}
-
-	if s.Downstream != nil {
-		return curr, s.Downstream(ctx, curr)
-	}
-
-	return curr, nil
-}
-
 func (s *SelectServer) Write(ctx context.Context, call Select_write) error {
-	args, err := call.Args().Select()
-	if err != nil {
-		return err
+	pathStr, err := call.Args().Path()
+	if err == nil && len(pathStr) > 0 {
+		s.path = pathStr
 	}
 
-	pathStr, err := args.Path()
-	if err != nil {
-		return err
-	}
-	s.Path = pathStr
-
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	if !payloadPtr.IsValid() {
+	dataBytes, err := call.Args().In()
+	if err != nil || len(dataBytes) == 0 {
 		return nil
 	}
 
-	data := payloadPtr.Data()
-	if len(data) == 0 {
-		return nil
+	// Try reading as Cap'n Proto WireMeasurement message
+	msg, err := capnp.Unmarshal(dataBytes)
+	if err == nil {
+		measurement, err := ReadRootWireMeasurement(msg)
+		if err == nil {
+			metrics, err := measurement.Metrics()
+			if err == nil && metrics.Len() > 0 {
+				s.out = metrics.At(0).Raw()
+				return nil
+			}
+		}
 	}
 
-	var in any
-	if err := sonic.Unmarshal(data, &in); err != nil {
-		return err
+	// Also support JSON map
+	var m map[string]any
+	if err := sonic.Unmarshal(dataBytes, &m); err == nil && m != nil {
+		if val, ok := m[s.path].(float64); ok {
+			s.out = val
+			return nil
+		}
 	}
 
-	_, evalErr := s.Evaluate(ctx, in)
-	return evalErr
+	return nil
 }
 
 func (s *SelectServer) Done(ctx context.Context, call Select_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+	}
+
+	results.SetOut(s.out)
+	s.out = 0
 	return nil
 }

@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/cognition");
 
 interface Reinforce {
   write @0 (contextBytes :Data, classBytes :Data) -> stream;
-  done @1 ();
+  done @1 () -> (out :Data);
 }

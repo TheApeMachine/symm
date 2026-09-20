@@ -4,31 +4,31 @@ import (
 	"context"
 	"math"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type ErfcServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *ErfcServer) Write(ctx context.Context, call Erfc_write) error {
-	a := call.Args().A()
-	result := math.Erfc(a)
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (srv *ErfcServer) Write(ctx context.Context, call Erfc_write) error {
+	srv.out = math.Erfc(call.Args().In())
 	return nil
 }
 
-func (s *ErfcServer) Done(ctx context.Context, call Erfc_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *ErfcServer) Done(ctx context.Context, call Erfc_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc erfc results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireWSClose capnp.Struct
-
-// WireWSClose_TypeID is the unique identifier for the type WireWSClose.
-const WireWSClose_TypeID = 0xbc490ee2fdf200e2
-
-func NewWireWSClose(s *capnp.Segment) (WireWSClose, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSClose(st), err
-}
-
-func NewRootWireWSClose(s *capnp.Segment) (WireWSClose, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireWSClose(st), err
-}
-
-func ReadRootWireWSClose(msg *capnp.Message) (WireWSClose, error) {
-	root, err := msg.Root()
-	return WireWSClose(root.Struct()), err
-}
-
-func (s WireWSClose) String() string {
-	str, _ := text.Marshal(0xbc490ee2fdf200e2, capnp.Struct(s))
-	return str
-}
-
-func (s WireWSClose) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWSClose) DecodeFromPtr(p capnp.Ptr) WireWSClose {
-	return WireWSClose(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWSClose) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWSClose) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWSClose) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWSClose) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWSClose) Connection() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireWSClose) HasConnection() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWSClose) SetConnection(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireWSClose_List is a list of WireWSClose.
-type WireWSClose_List = capnp.StructList[WireWSClose]
-
-// NewWireWSClose creates a new list of WireWSClose.
-func NewWireWSClose_List(s *capnp.Segment, sz int32) (WireWSClose_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireWSClose](l), err
-}
-
-// WireWSClose_Future is a wrapper for a WireWSClose promised by a client call.
-type WireWSClose_Future struct{ *capnp.Future }
-
-func (f WireWSClose_Future) Struct() (WireWSClose, error) {
-	p, err := f.Future.Ptr()
-	return WireWSClose(p.Struct()), err
-}
-func (p WireWSClose_Future) Connection() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type WSClose capnp.Client
 
 // WSClose_TypeID is the unique identifier for the type WSClose.
@@ -287,7 +208,7 @@ func (c WSClose_done) Args() WSClose_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WSClose_done) AllocResults() (WSClose_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSClose_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s WSClose_write_Params) Message() *capnp.Message {
 func (s WSClose_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WSClose_write_Params) Payload() (WireWSClose, error) {
+func (s WSClose_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWSClose(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WSClose_write_Params) HasPayload() bool {
+func (s WSClose_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WSClose_write_Params) SetPayload(v WireWSClose) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireWSClose struct, preferring placement in s's segment.
-func (s WSClose_write_Params) NewPayload() (WireWSClose, error) {
-	ss, err := NewWireWSClose(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWSClose{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WSClose_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // WSClose_write_Params_List is a list of WSClose_write_Params.
@@ -386,9 +296,6 @@ type WSClose_write_Params_Future struct{ *capnp.Future }
 func (f WSClose_write_Params_Future) Struct() (WSClose_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return WSClose_write_Params(p.Struct()), err
-}
-func (p WSClose_write_Params_Future) Payload() WireWSClose_Future {
-	return WireWSClose_Future{Future: p.Future.Field(0, nil)}
 }
 
 type WSClose_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type WSClose_done_Results capnp.Struct
 const WSClose_done_Results_TypeID = 0xeb9b28cb5ab86811
 
 func NewWSClose_done_Results(s *capnp.Segment) (WSClose_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSClose_done_Results(st), err
 }
 
 func NewRootWSClose_done_Results(s *capnp.Segment) (WSClose_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WSClose_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s WSClose_done_Results) Message() *capnp.Message {
 func (s WSClose_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WSClose_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WSClose_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WSClose_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WSClose_done_Results_List is a list of WSClose_done_Results.
 type WSClose_done_Results_List = capnp.StructList[WSClose_done_Results]
 
 // NewWSClose_done_Results creates a new list of WSClose_done_Results.
 func NewWSClose_done_Results_List(s *capnp.Segment, sz int32) (WSClose_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WSClose_done_Results](l), err
 }
 

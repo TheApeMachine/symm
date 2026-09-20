@@ -3,46 +3,43 @@ package temporal
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type ElapsedServer struct {
-	Downstream  types.Float64Sink
+	out         float64
 	previous    int64
 	initialized bool
 }
 
-func (s *ElapsedServer) Write(ctx context.Context, call Elapsed_write) error {
-	a := call.Args().A()
-	if !s.initialized {
-		s.previous = a
-		s.initialized = true
-		if capnp.Client(s.Downstream).IsValid() {
-			return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-				p.SetValue(0)
-				return nil
-			})
-		}
+func (srv *ElapsedServer) Write(ctx context.Context, call Elapsed_write) error {
+	inVal := call.Args().A()
+
+	if !srv.initialized {
+		srv.previous = inVal
+		srv.initialized = true
+		srv.out = 0
 		return nil
 	}
 
-	result := float64(a-s.previous) / 1e9
-	s.previous = a
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = float64(inVal-srv.previous) / 1e9
+	srv.previous = inVal
 	return nil
 }
 
-func (s *ElapsedServer) Done(ctx context.Context, call Elapsed_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *ElapsedServer) Done(ctx context.Context, call Elapsed_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"temporal: alloc elapsed results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

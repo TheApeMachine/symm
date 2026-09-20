@@ -12,94 +12,6 @@ import (
 	context "context"
 )
 
-type WireGrid capnp.Struct
-
-// WireGrid_TypeID is the unique identifier for the type WireGrid.
-const WireGrid_TypeID = 0xac1afae8d063745d
-
-func NewWireGrid(s *capnp.Segment) (WireGrid, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireGrid(st), err
-}
-
-func NewRootWireGrid(s *capnp.Segment) (WireGrid, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireGrid(st), err
-}
-
-func ReadRootWireGrid(msg *capnp.Message) (WireGrid, error) {
-	root, err := msg.Root()
-	return WireGrid(root.Struct()), err
-}
-
-func (s WireGrid) String() string {
-	str, _ := text.Marshal(0xac1afae8d063745d, capnp.Struct(s))
-	return str
-}
-
-func (s WireGrid) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireGrid) DecodeFromPtr(p capnp.Ptr) WireGrid {
-	return WireGrid(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireGrid) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireGrid) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireGrid) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireGrid) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireGrid) Impulse() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s WireGrid) HasImpulse() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireGrid) SetImpulse(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewImpulse sets the impulse field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s WireGrid) NewImpulse(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-
-// WireGrid_List is a list of WireGrid.
-type WireGrid_List = capnp.StructList[WireGrid]
-
-// NewWireGrid creates a new list of WireGrid.
-func NewWireGrid_List(s *capnp.Segment, sz int32) (WireGrid_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireGrid](l), err
-}
-
-// WireGrid_Future is a wrapper for a WireGrid promised by a client call.
-type WireGrid_Future struct{ *capnp.Future }
-
-func (f WireGrid_Future) Struct() (WireGrid, error) {
-	p, err := f.Future.Ptr()
-	return WireGrid(p.Struct()), err
-}
-
 type Grid capnp.Client
 
 // Grid_TypeID is the unique identifier for the type Grid.
@@ -297,7 +209,7 @@ func (c Grid_done) Args() Grid_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Grid_done) AllocResults() (Grid_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Grid_done_Results(r), err
 }
 
@@ -357,28 +269,17 @@ func (s Grid_write_Params) Message() *capnp.Message {
 func (s Grid_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Grid_write_Params) Grid() (WireGrid, error) {
+func (s Grid_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireGrid(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Grid_write_Params) HasGrid() bool {
+func (s Grid_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Grid_write_Params) SetGrid(v WireGrid) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewGrid sets the grid field to a newly
-// allocated WireGrid struct, preferring placement in s's segment.
-func (s Grid_write_Params) NewGrid() (WireGrid, error) {
-	ss, err := NewWireGrid(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireGrid{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Grid_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Grid_write_Params_List is a list of Grid_write_Params.
@@ -396,9 +297,6 @@ type Grid_write_Params_Future struct{ *capnp.Future }
 func (f Grid_write_Params_Future) Struct() (Grid_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Grid_write_Params(p.Struct()), err
-}
-func (p Grid_write_Params_Future) Grid() WireGrid_Future {
-	return WireGrid_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Grid_done_Params capnp.Struct
@@ -472,12 +370,12 @@ type Grid_done_Results capnp.Struct
 const Grid_done_Results_TypeID = 0x8dfbe712fe5112e6
 
 func NewGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Grid_done_Results(st), err
 }
 
 func NewRootGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Grid_done_Results(st), err
 }
 
@@ -513,13 +411,25 @@ func (s Grid_done_Results) Message() *capnp.Message {
 func (s Grid_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Grid_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Grid_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Grid_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Grid_done_Results_List is a list of Grid_done_Results.
 type Grid_done_Results_List = capnp.StructList[Grid_done_Results]
 
 // NewGrid_done_Results creates a new list of Grid_done_Results.
 func NewGrid_done_Results_List(s *capnp.Segment, sz int32) (Grid_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Grid_done_Results](l), err
 }
 
@@ -531,31 +441,27 @@ func (f Grid_done_Results_Future) Struct() (Grid_done_Results, error) {
 	return Grid_done_Results(p.Struct()), err
 }
 
-const schema_c8d7a12b3e4f568a = "x\xda\xa4Q\xbfk\x1aQ\x1c\xff~\xdf\xddyB\xb1" +
-	"\xfa\xbc.\xba\xb8\xe8\xa2\xa0\x9c\x96B\x0bm\xa5\x8bc" +
-	"\xef\x0a\xb6K\xa5\x1c\xfa\x90G\xbd\xd3\xde\x9du\xabc" +
-	"\x7f\xd1?\xa0\xdd\x1c\xa4K\x86$C@B d\xca" +
-	"\x12\x08Y29\x05\xf2\xe3_P\xc8\x85;\x13\xcfQ" +
-	"\x92\xed\x03\xef\xfb>?\x13\xf3\xaa\xa8\xc6\x86\"\x10\xfd" +
-	"\xa9\x14\xf1~\x8cwf\x07g\xdf~\x03}\x86\x00\x12" +
-	"\xca\x00\x95\x1cI\x13@\xe5%y\x0d\xe8\x9d'\xf5\xeb" +
-	"\xe4\xc5\xfc\xcf\xe2@\xf4\xdf\x1b\xfe\xbb\xe8\x8d\x8f>O" +
-	"\xcb?w\xff\x03U\x05\xef\xd7\xfb\xb7\xaf\x0a\xa3\xd3C" +
-	"\x00\xac\xd4\xc96*&\x91\x01\x14N\xbe+\x13\x1fy" +
-	"\x0d\xb7y|9Ko\x00U1\xbc^\x08\x8e\xc8\x09" +
-	"*{\xc1\x87I Z.\xd4S\xcf\xad\xe9\xe6\x8a\xe8" +
-	"\x15I\x12\xf8\xe8Y]\xd3h\xf3/}\x99\x95:\xcc" +
-	"\xb0-n\xb5K\x86\xe3t\x9b\xdcp\xf9W\xb6\x8a\x8b" +
-	"M\xa3g\xf5^\xd4l\xde*\x0el\xee\xb2\xacf\xd8" +
-	"\x86`:\xba(\x88\x00\"\x02\xd0X\x1e@\x8f\x0a\xa8" +
-	"?!\x18o\xdb\xbc\x85\x89\xd0) &\x00\xef+\xd9" +
-	"\xeaZ,\xfb\x8e9\xfd\x8e\xe0:K\x12i]\x92L" +
-	"\xc0\xa2!\xeaQA\x02X\x0e\x85\xd6\xd6\xfe\xa0\xf2\xef" +
-	"\xd3_\xaa\x96\x81\xd0\x9c\x8ca]x7\x16M\xe5\x81" +
-	"\xd0\x98\x9c\x09rW1\xee\x9b\xa9\xa2\x86a\x9a\xc8\xda" +
-	"i>p\x9b\xd5l\x8e\x81\x99\x95\xea\xde\xdcV\x97%" +
-	"8\xe4f\xaf\xdfq\x18>\x06\xd4\x04\xc4G@|\xf8" +
-	"\xa0\xea\xfc\xb1Ltn\x02\x00\x00\xff\xff\x87\x17\xdae"
+const schema_c8d7a12b3e4f568a = "x\xda\x12x\xec\xc0b\xc8\xab\xce\xc2\xc0\x14h\xc0\xca" +
+	"\xf6\xbfc\xe9\xb6_\x87\x1e\xd7u3\x08\x9a120" +
+	"\xb02\xb230\x18\xffd\x94bb`\x14\x16d\xb2" +
+	"g`\xfc\xffL(\xf0\x9f\xd0\xf3\xdf\xbd\xc8\x0a\x0c\x99" +
+	"\xc0\x0a<\xc1\x0a\x96\x9e\xcd\xbek\xd4\xb9{9\x83\xa0" +
+	"!\xf3\xff\xae0\x7f;\xed\x85\xd7O000\x1ag" +
+	"2mb\x14ndbg`\x10\xaeej\x17>\x0b" +
+	"b\xfd7\xd2\x0e\x95\xb4\xcc\xbb\xbb\x01b\x1c\x0b\xc8\xb4" +
+	"\xadLBL\x0c1\xff\xf3\xf2s\x13\xd33\x0bK\xd9" +
+	"S\xf5sR\x13\x8b\xf22\xf3\xd2\xf5\x13\x8b\x8b\xf3\x93" +
+	"3\x13K2\xcbR\x91\xd9z\xc9\x89\x05y\x05V\xee" +
+	"E\x99)z\xe5E\x99%\xa9*\x01\x89E\x89\xcc\xb9" +
+	"\xc5\x81,\xcc,\x0c\x0c,\x8c\x0c\x0c\x82\xbcR\x0c\x0c" +
+	"\x81\x1c\xcc\x8c\x81\"L\x8c\xcc\x99y\x8c\xbc\x0cL\x8c" +
+	"\xbc\x0c\x8c\xe4Z\x93\x92\x9f\x97\xaa\x12\x94Z\\\x9a\xc3" +
+	"\\\x82b\x8d\x12\xc2\x1a\xf6\xfc\xd2\x12\x0c{X\x89\xb5" +
+	"G\x1elQ\x00#c \x073+\x03\x03<f\x18" +
+	"\xf36\x1e(7\x9e\x15?S\xd0\xd0\x88\x81IP\x95" +
+	"\x9d\x91\x11\x1e\x8a\x8c\xb0\xd8\x11\x94\xd4b`\x12\xe4e" +
+	"\x97\x07\x07\x87\x03#?\xc8\xbd\x0e\x8c\x01\x8c\x94y\x18" +
+	"\x14\xac\xb9\x8c\xc5\x80\x00\x00\x00\xff\xff\x88,\xab\xae"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -564,7 +470,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0x8b7ee3c2fab6a588,
 			0x8dfbe712fe5112e6,
 			0xa7bb8932dd6bcda5,
-			0xac1afae8d063745d,
 			0xb0dd6e3919552b32,
 		},
 		Compressed: true,

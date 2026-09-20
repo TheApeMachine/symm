@@ -3,14 +3,13 @@
 package statistic
 
 import (
-	context "context"
-	math "math"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type Mean capnp.Client
@@ -210,7 +209,7 @@ func (c Mean_done) Args() Mean_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Mean_done) AllocResults() (Mean_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Mean_done_Results(r), err
 }
 
@@ -270,11 +269,11 @@ func (s Mean_write_Params) Message() *capnp.Message {
 func (s Mean_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Mean_write_Params) A() float64 {
+func (s Mean_write_Params) In() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Mean_write_Params) SetA(v float64) {
+func (s Mean_write_Params) SetIn(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
@@ -366,12 +365,12 @@ type Mean_done_Results capnp.Struct
 const Mean_done_Results_TypeID = 0xb2bfc1f1828d5f86
 
 func NewMean_done_Results(s *capnp.Segment) (Mean_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Mean_done_Results(st), err
 }
 
 func NewRootMean_done_Results(s *capnp.Segment) (Mean_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Mean_done_Results(st), err
 }
 
@@ -407,13 +406,20 @@ func (s Mean_done_Results) Message() *capnp.Message {
 func (s Mean_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Mean_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Mean_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Mean_done_Results_List is a list of Mean_done_Results.
 type Mean_done_Results_List = capnp.StructList[Mean_done_Results]
 
 // NewMean_done_Results creates a new list of Mean_done_Results.
 func NewMean_done_Results_List(s *capnp.Segment, sz int32) (Mean_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Mean_done_Results](l), err
 }
 

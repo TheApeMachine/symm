@@ -1,25 +1,46 @@
 package transport
 
 import (
+	"bytes"
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type WSPingPongServer struct {
-	Downstream func(context.Context, any) error
+	out []byte
 }
 
 func NewWSPingPong() *WSPingPongServer {
 	return &WSPingPongServer{}
 }
 
-func (s *WSPingPongServer) Write(ctx context.Context, call WSPingPong_write) error {
-	if s.Downstream != nil {
-		return s.Downstream(ctx, nil)
-	}
-
+func (server *WSPingPongServer) Write(ctx context.Context, call WSPingPong_write) error {
+	data, _ := call.Args().In()
+	server.out = bytes.Clone(data)
 	return nil
 }
 
-func (s *WSPingPongServer) Done(ctx context.Context, call WSPingPong_done) error {
+func (server *WSPingPongServer) Done(ctx context.Context, call WSPingPong_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"wspingpong: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"wspingpong: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
 	return nil
 }

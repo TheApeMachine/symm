@@ -6,5 +6,6 @@ $Go.import("github.com/theapemachine/symm/nomagique/arithmetic");
 
 interface Add {
   write @0 (a :Float64, b :Float64) -> stream;
-  done @1 ();
+  done @1 () -> (out :Float64);
 }
+

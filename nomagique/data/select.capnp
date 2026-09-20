@@ -3,12 +3,10 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("nomagique/data");
 
-struct WireSelect {
-  payload @0 :AnyPointer;
-  path @1 :Text;
-}
-
 interface Select {
-  write @0 (select :WireSelect) -> stream;
-  done @1 ();
+  write @0 (
+    in :Data,
+    path :Text
+  ) -> stream;
+  done @1 () -> (out :Float64);
 }

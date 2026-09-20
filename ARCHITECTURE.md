@@ -1,1622 +1,1592 @@
-# SYMM / nomagique — Master Spec
+# SYMM / nomagique — Runtime Architecture
 
-## Goal
+## Status
 
-Make the entire SYMM system constructible from JSON definitions composed exclusively from `nomagique` primitives.
+This document defines the target runtime architecture for SYMM / nomagique.
 
-The core idea is simple:
+It supersedes the previous closure-based `Value` / `Number` execution model, the `StreamNode[any, any]` migration, typed `*Sink` routing for ordinary primitives, and generated per-primitive execution glue.
 
-```go
-system := nomagique.NewNumber(
-    stage1,
-    stage2,
-    stage3,
-)
+The objective is:
 
-system(input)
-```
+> Compile Flume JSON directly into an executable, in-memory Cap'n Proto program that can be replaced safely at runtime when the graph changes.
 
-and recursively:
+There is no generated Go application for a graph.
 
-```go
-system := nomagique.NewNumber(
-    nomagique.NewNumber(
-        stage1,
-        stage2,
-        stage3,
-    ),
-    nomagique.NewNumber(
-        stage4,
-        stage5,
-        nomagique.NewNumber(
-            stage6,
-            stage7,
-            stage8,
-        ),
-    ),
-)
+There is no generic Go payload type.
 
-system(input)
-```
+There is no second RPC/event framework layered over Cap'n Proto.
 
-JSON describes these compositions.
+Cap'n Proto is the object model, invocation protocol, type system, and RPC substrate.
 
-The compiler reads the JSON, constructs the referenced nomagique primitives, recursively composes them, and returns the executable composition **in memory**.
-
-There is one generic compiler.
-
-There is no generated Go implementation for each JSON file.
+Flume JSON is the program.
 
 ---
 
-# 1. The fundamental runtime model
+# 1. Non-negotiable invariants
 
-The execution atom is:
+These rules define the architecture.
 
-```go
-type Value[T, U any] func(T) U
-```
-
-Sequential composition is:
-
-```go
-type Number[T any] types.Value[T, T]
-
-func NewNumber[T any](
-    stages ...types.Value[T, T],
-) Number[T]
-```
-
-Everything should reduce to nomagique primitives composed together.
-
-A signal is a composition.
-
-A logic stage is a composition.
-
-A strategy stage is a composition.
-
-Transport is a composition.
-
-Broker interaction is a composition.
-
-The entire system is a composition.
-
-There is no second application architecture layered above nomagique.
+1. **JSON is the program.** A Flume graph is compiled in memory into an executable `Program`.
+2. **Compilation never generates Go application code.** `foo.json -> foo.go` does not exist.
+3. **The only primitive-specific bootstrap is a small constructor registry.** It maps a node type string to a Cap'n Proto capability constructor.
+4. **The constructor registry returns `capnp.Client`.** The compiler does not retain concrete Go server implementations.
+5. **No graph value is represented as `any` or `interface{}`.** No `WriteAny`, `SetDownstreamAny`, `map[string]any`, payload type assertion, or equivalent belongs in graph execution.
+6. **Cap'n Proto schemas are authoritative for ports and types.** Flume input ports map to `write` parameter fields. Flume output ports map to `done` result fields.
+7. **Ordinary primitives do not know their downstreams.** Graph routing belongs to the compiled `Program`, not to primitive servers.
+8. **Ordinary primitives do not retain state across evaluations.** `Done()` returns the result and resets the primitive.
+9. **Retention is explicit composition.** If state must survive an evaluation, compose a `store.*` primitive.
+10. **A compiled `Program` is immutable.** Editing Flume compiles a candidate program and swaps it in only after successful validation.
+11. **A failed recompile never damages the running program.** The current program continues unchanged.
+12. **Topology is compiled away.** Runtime execution uses numeric node indices, pre-resolved methods, pre-resolved fields, readiness masks, and route tables. It does not interpret JSON.
 
 ---
 
-# 2. What "compile" means
+# 2. Primitive algebra
 
-This is the most important rule.
+An ordinary primitive is a stateful Cap'n Proto object for the duration of one evaluation.
 
-When this spec says:
+Its protocol is:
 
-> compile a JSON graph
+```capnp
+interface Primitive {
+  write @0 (...) -> stream;
+  done @1 () -> (...results...);
+}
+```
 
-it means:
+`write` receives the primitive's inputs.
 
-> Parse the JSON, resolve each node against the nomagique constructor registry, instantiate the primitives, recursively compose them into `Value` / `Number` closures, and return that executable composition in memory.
+`done`:
+
+1. returns the primitive's result;
+2. resets all ephemeral primitive state;
+3. leaves the capability ready for the next evaluation.
+
+Example:
+
+```capnp
+interface Add {
+  write @0 (
+    a :Float64,
+    b :Float64
+  ) -> stream;
+
+  done @1 () -> (
+    out :Float64
+  );
+}
+```
+
+Implementation:
+
+```go
+type AddServer struct {
+    out float64
+}
+
+func (srv *AddServer) Write(
+    ctx context.Context,
+    call Add_write,
+) error {
+    srv.out = call.Args().A() + call.Args().B()
+    return nil
+}
+
+func (srv *AddServer) Done(
+    ctx context.Context,
+    call Add_done,
+) error {
+    result, err := call.AllocResults()
+    if err != nil {
+        return err
+    }
+
+    result.SetOut(srv.out)
+    srv.out = 0
+    return nil
+}
+
+func NewAdd() *AddServer {
+    return &AddServer{}
+}
+```
+
+The primitive has no knowledge of Flume, JSON, node IDs, downstream nodes, graph routing, graph scheduling, `Sink` capabilities, or a generic payload type. It implements only its algebra.
+
+---
+
+# 3. Why `write -> stream` and `done -> result`
+
+The protocol intentionally separates input delivery from result retrieval.
+
+The runtime executes an ordinary node as:
+
+```text
+write(args)
+    |
+    v
+WaitStreaming()
+    |
+    v
+done()
+    |
+    v
+result fields
+```
+
+This uses Cap'n Proto directly:
+
+- `write -> stream` uses the streaming call path;
+- `WaitStreaming()` is the evaluation fence;
+- `done -> (...)` is an ordinary RPC returning a future;
+- the future yields the result struct.
+
+For an ordinary scalar node there will commonly be one `write` per evaluation.
+
+A primitive may accept multiple writes within one evaluation only if its algebra explicitly defines such behavior. The result still appears only at `done`.
+
+`Done()` is the evaluation boundary. It is not persistence and it is not object destruction.
+
+---
+
+# 4. Persistent state is a primitive
+
+Ordinary primitives reset on `Done()`.
+
+If an operation needs information from previous evaluations, that state must be explicit in the graph.
+
+```text
+input
+  |
+  v
+Store
+  |
+  v
+RelativeChange
+```
+
+The retention belongs to `Store`. It does not belong invisibly inside `RelativeChange`.
+
+Resource state is different from algebraic state. A network connection, file handle, HTTP listener, or exchange socket may live across evaluations because it is an external resource owner. It must not be used as a hidden substitute for algebraic storage.
+
+---
+
+# 5. Flume ports map directly to Cap'n Proto fields
+
+A Flume node is an invocation shape.
+
+Input ports are the fields of `write`.
+Output ports are the fields of `done`.
+
+For:
+
+```capnp
+interface Add {
+  write @0 (a :Float64, b :Float64) -> stream;
+  done @1 () -> (out :Float64);
+}
+```
+
+Flume:
+
+```text
+        a ─┐
+           ├── Add ── out
+        b ─┘
+```
+
+The edge:
+
+```text
+foo.out -> add.a
+```
+
+means exactly:
+
+```text
+Foo.done result field "out"
+    ->
+Add.write parameter field "a"
+```
+
+No `AddA` interface exists. No `Float64Sink` is needed for ordinary primitive composition. No handwritten adapter defines what `add.a` means. The schema already defines it.
+
+## 5.1 Naming convention
+
+Prefer schema field names that match Flume port names exactly.
+
+Unary primitive:
+
+```capnp
+write @0 (in :Float64) -> stream;
+done  @1 () -> (out :Float64);
+```
+
+Binary primitive:
+
+```capnp
+write @0 (a :Float64, b :Float64) -> stream;
+done  @1 () -> (out :Float64);
+```
+
+Multi-output primitive:
+
+```capnp
+done @1 () -> (
+  class :Text,
+  confidence :Float64,
+  novelty :Float64
+);
+```
+
+Do not create a permanent alias layer to compensate for inconsistent names. During migration, make schemas and Flume agree.
+
+---
+
+# 6. The constructor registry
+
+Go cannot instantiate an arbitrary concrete implementation from a runtime string without a static bootstrap. That is the only reason the constructor registry exists.
+
+Its responsibility is:
+
+```text
+node type string
+    ->
+construct implementation
+    ->
+ServerToClient
+    ->
+capnp.Client
+```
 
 Conceptually:
 
 ```go
-pipeline, err := compiler.Compile(graph, registry, dependencies)
+type Constructor func(
+    context.Context,
+    json.RawMessage,
+) (capnp.Client, error)
+
+type Factory struct {
+    InterfaceID uint64
+    New         Constructor
+}
+
+type Registry map[string]Factory
 ```
 
-then:
+Example:
 
 ```go
-result := pipeline(input)
+registry["arithmetic.Add"] = Factory{
+    InterfaceID: arithmetic.Add_TypeID,
+    New: func(
+        ctx context.Context,
+        config json.RawMessage,
+    ) (capnp.Client, error) {
+        server := arithmetic.NewAdd()
+        client := arithmetic.Add_ServerToClient(server)
+        return capnp.Client(client), nil
+    },
+}
 ```
 
-Compilation does **not** mean:
+Factories that need typed process dependencies capture them in their closure at application bootstrap. Do not introduce a generic dependency bag containing `any`.
 
-```text
-foo.json → foo.go
-bar.json → bar.go
-system.json → system.go
-```
+The registry must not contain input setters, output readers, input sinks, downstream binders, per-primitive `Invoke` functions, `Done` wrappers, graph routes, or primitive-specific switches.
 
-Do not generate `.go` files for graphs.
-
-Do not generate Go implementations for:
-
-* signals
-* logic
-* strategies
-* execution stages
-* transports
-* broker stages
-* the system itself
-
-The JSON is the program.
+After construction, the compiler sees only the capability. The concrete Go server disappears from compiler ownership.
 
 ---
 
-# 3. Remove the current generated application branch
+# 7. Cap'n Proto schema metadata is the runtime type system
 
-The current repository has drifted into generating application code under:
+The compiler obtains the registered interface schema using the factory's interface/type ID.
+
+From that schema it resolves the protocol methods:
 
 ```text
-generated/
+write
+done
 ```
 
-That is not the desired architecture.
+For each node it compiles:
 
-Remove the generated Go implementations of JSON graphs.
+```text
+write:
+    interface ID
+    method ID
+    argument object size
+    parameter fields
+    parameter field types
 
-In particular, the final system must not depend on:
+done:
+    interface ID
+    method ID
+    result object size
+    result fields
+    result field types
+```
+
+The compiler does not generate per-primitive setters such as:
 
 ```go
-generated.NewTrainingSystem(...)
-generated.NewSystem(...)
-generated.NewSignals(...)
-generated.NewLogic(...)
-generated.NewExecution(...)
+arithmetic.Add_write_Params(s).SetA(...)
 ```
 
-Likewise, `nomagique/compiler/codegen.go` must not generate application `.go` files from JSON.
-
-Any useful validation or graph-reading logic inside that code may be reused inside the in-memory compiler.
-
-The application code-generation path itself should go away.
+The runtime uses Cap'n Proto's generic send plus schema/dynamic APIs. Generated Go bindings remain useful inside primitive implementations, but the graph compiler does not duplicate them.
 
 ---
 
-# 4. The one allowed generated artifact: the primitive constructor registry
+# 8. What "compile" means
 
-The nomagique source scanner already has the right broad purpose.
-
-It scans `nomagique` and discovers graph-buildable primitives.
+`Compile` transforms a Flume graph into an immutable executable plan in memory.
 
 Conceptually:
 
 ```go
-schemas, err := scan.Tree("nomagique")
+program, err := Compile(document, registry, previous)
 ```
 
-From those schemas we may generate:
+Compilation performs all expensive interpretation once.
 
-```text
-nomagique/catalog/primitives.json
-nomagique/compiler/registry.go
-```
+Execution must not repeatedly parse JSON, resolve node type strings, resolve port names, inspect schemas, search maps by node name, infer field types, rebuild adjacency, or decide how to copy a field.
 
-The registry exists because JSON contains names such as:
-
-```text
-statistic.ZScore
-transport.Fan
-cognition.Classification
-```
-
-and the compiler needs a way to turn those names into actual Go constructors such as:
-
-```go
-statistic.NewZScore()
-transport.NewFan(...)
-cognition.NewClassification()
-```
-
-That constructor registry may be generated from Go source.
-
-That is very different from generating the application itself.
-
-Allowed:
-
-```text
-Go primitive source
-→ generated constructor registry
-```
-
-Not allowed:
-
-```text
-JSON graph
-→ generated Go application
-```
+Those are compile-time operations.
 
 ---
 
-# 5. Build the primitive catalog from `nomagique`
+# 9. Compilation pipeline
 
-Scan `nomagique` and every relevant subpackage.
+## Phase 1 — Parse the Flume document
 
-The catalog should capture enough information to construct each primitive:
+Read the selected graph from the editor document.
 
-* operation name
-* package
-* constructor
-* input type
-* output type
-* constructor arguments
-* whether an argument is variadic
-* configuration fields
-* injected runtime dependencies where required
+Layout fields such as `x`, `y`, `width`, `height`, `viewport`, and comments are not execution semantics.
 
-Do not manually maintain a second registry.
-
-Do not hardcode special cases into the compiler when the scanner can describe them correctly.
-
-If the scanner is missing information, improve the scanner/catalog.
-
----
-
-# 6. Flume consumes the same catalog
-
-The Flume editor should display what nomagique actually exposes.
-
-The path is:
+Execution-relevant fields include:
 
 ```text
-nomagique source
-→ catalog scan
-→ primitive schemas
-→ /workbench/primitives
-→ buildFlumeConfigFromSchemas
-→ Flume
+versionKey
+nodes
+node.id
+node.type
+node.inputData
+node.connections
 ```
 
-Do not manually recreate available node types in the frontend.
+The editor version becomes the candidate program version.
 
-If Flume needs metadata the catalog does not provide, add it to the catalog.
+## Phase 2 — Resolve nested definitions
 
-The Flume graph and compiler must agree on exactly the same node vocabulary.
+A node such as:
 
----
-
-# 7. Constructor configuration comes from JSON
-
-A constructor argument is not a streamed port.
-
-For example:
-
-```go
-NewCollect(batchSize int)
+```text
+definition:signals
 ```
 
-should be represented by node configuration:
+is recursively loaded and expanded in memory.
+
+Expanded node IDs are namespaced so stable identity is preserved, for example:
+
+```text
+signals/returns
+signals/corr
+signals/zscore
+```
+
+Definition boundaries may remain as debug metadata but disappear from execution topology.
+
+## Phase 3 — Resolve factories
+
+For each concrete node:
+
+```text
+node.type -> Factory
+```
+
+The factory supplies an interface ID and constructor.
+
+Unknown types fail compilation.
+
+No capability must be constructed yet.
+
+## Phase 4 — Resolve protocol schemas
+
+Using the interface ID, compile the node's Cap'n Proto protocol.
+
+Ordinary nodes must satisfy:
+
+```text
+write -> stream
+done  -> result
+```
+
+The compiler records parameter and result field descriptors.
+
+## Phase 5 — Resolve Flume ports
+
+For each Flume input port:
+
+```text
+port name -> write parameter field
+```
+
+For each Flume output port:
+
+```text
+port name -> done result field
+```
+
+A missing field is a compile error. There is no fallback port and no best-effort inference.
+
+## Phase 6 — Compile static inputs
+
+A `write` parameter may be supplied by an incoming graph edge or by static `inputData`.
+
+Example:
 
 ```json
 {
-  "type": "transport.Collect",
+  "type": "data.Extract",
   "inputData": {
-    "_config": {
-      "batchSize": 32
+    "path": {
+      "string": "last"
     }
   }
 }
 ```
 
-The compiler constructs:
+The compiler validates the static value against the Cap'n Proto field type and writes it into an immutable argument template for the node.
 
-```go
-transport.NewCollect[SomeType](32)
+Static values are not reparsed on every evaluation.
+
+A required field with neither an incoming edge nor a valid static value is a compile error.
+
+## Phase 7 — Validate edges
+
+For each connection:
+
+```text
+fromNode.fromPort -> toNode.toPort
 ```
 
-once.
+resolve:
 
-It does not configure the primitive on every input.
-
-Likewise:
-
-```go
-NewHTTPRequest(method, url)
-NewHTTPHeader(key, value)
-NewHMACSHA512(secret)
-NewWSConnect(endpoint)
+```text
+fromPort -> source done result field
+toPort   -> destination write parameter field
 ```
 
-must be constructible generically from configuration plus runtime dependencies.
-
-The current registry generator skipping constructors with arguments must be fixed.
-
----
-
-# 8. Runtime dependencies are not JSON configuration
-
-Some constructor dependencies are live process resources.
+Then validate Cap'n Proto type compatibility.
 
 Examples:
 
 ```text
-context.Context
-HTTP client
-websocket dialer
-credentials
-store/catalog handles
-other live resource owners
+Float64 -> Float64       valid
+Text    -> Float64       invalid
+FooStruct -> FooStruct   valid
+FooStruct -> BarStruct   invalid unless schema assignability explicitly permits it
 ```
 
-These should be injected into the compiler/factory environment.
+Type mismatch is a compile error.
 
-They should not be serialized into JSON.
+## Phase 8 — Validate topology
 
-Secrets must never be embedded in graph definitions.
+Validate referenced nodes and ports, required inputs, route compatibility, source/terminal semantics, and unsupported cycles.
 
-A node definition describes what primitive should exist.
+Ordinary execution is a DAG.
 
-The dependency environment supplies the live resources required to construct it.
+Feedback must be represented by an explicit temporal/store/delay construct that gives the cycle defined semantics. Do not silently execute arbitrary structural cycles.
 
----
+## Phase 9 — Compile field copy operations
 
-# 9. JSON definitions recursively become executable stages
-
-Every JSON definition compiles into an executable stage.
-
-That stage can then be used inside another JSON definition.
-
-For example:
-
-```text
-cvd_trade.json
-→ compiled Value
-
-hawkes_trade.json
-→ compiled Value
-```
-
-Those may then participate in a higher-level signals graph.
-
-That signals graph compiles into another `Value`.
-
-That can then be composed with logic.
-
-Logic can be composed with strategy.
-
-Strategy can be composed into the root system.
-
-No generated Go file is needed between those levels.
-
----
-
-# 10. Do not manually register compiled stages
-
-The current special registrations such as:
-
-```text
-pipeline.Signals
-pipeline.Logic
-pipeline.Execution
-```
-
-are not the desired architecture.
-
-Do not maintain a handwritten pipeline registry.
-
-A JSON definition should itself become an available composable definition.
-
-If a graph references another graph, the compiler recursively loads and compiles that graph.
-
-For example:
-
-```json
-{
-  "type": "definition:signals"
-}
-```
-
-or whatever clean reference format fits the existing schema.
-
-The exact naming scheme is implementation detail.
-
-The important point is that subgraphs are resolved generically.
-
----
-
-# 11. The compiler constructs composition once
-
-The current `Builder.Compose()` has the correct high-level purpose:
-
-```text
-JSON
-→ executable nomagique pipeline
-```
-
-Keep that idea.
-
-However, it currently still walks the graph for every incoming datum using:
-
-```go
-state := make(map[string]any)
-```
-
-and an execution order.
-
-That is still an interpreter.
-
-The final compiler should inspect the graph once and build the composition once.
-
-After compilation, one input should execute something equivalent to:
-
-```go
-compiled(input)
-```
-
-not:
-
-```text
-allocate state map
-walk nodes
-look up edges
-dispatch node
-repeat
-```
-
-The graph topology should disappear into the constructed closures.
-
----
-
-# 12. Straight chains become `nomagique.NewNumber`
-
-If the graph is:
-
-```text
-A → B → C
-```
-
-and those stages fit `Value[T,T]`, compile it to:
-
-```go
-nomagique.NewNumber(
-    a,
-    b,
-    c,
-)
-```
-
-Do not manually recreate sequential composition.
-
-Use `Number`.
-
----
-
-# 13. Topology is expressed by nomagique primitives
-
-Fan-in, fan-out, branching, joining, routing, batching, etc. are not special runtime graph concepts.
-
-They are nomagique primitives.
-
-The repository already contains useful examples such as:
-
-```text
-Fan
-Fork
-Join
-Route
-Gate
-Tee
-Collect
-Parallel
-Broadcast
-Grid
-IO
-Conn
-```
-
-Review and consolidate them where they overlap.
-
-If JSON contains:
-
-```text
-        A
-       / \
-input       Join → D
-       \ /
-        B
-```
-
-the compiler should construct an appropriate composition involving `Fan`/`Fork` and `Join`.
-
-It should not teach a runtime interpreter what fan-out means.
-
-The rule is:
-
-> Graph topology lowers into nomagique primitives.
-
----
-
-# 14. Nested composition is the whole architecture
-
-Conceptually the system should reduce to:
-
-```go
-signals := ...
-logic := ...
-strategy := ...
-execution := ...
-
-system := nomagique.NewNumber(
-    signals,
-    logic,
-    strategy,
-    execution,
-)
-```
-
-where any one of those may itself be:
-
-```go
-nomagique.NewNumber(
-    stage1,
-    stage2,
-    nomagique.NewNumber(
-        stage3,
-        stage4,
-    ),
-)
-```
-
-or contain topology primitives.
-
-There should be no conceptual difference between a small pipeline and the whole system.
-
-Only scale.
-
----
-
-# 15. Signals remain JSON
-
-The existing files under:
-
-```text
-signal/definitions/
-```
-
-are programs.
-
-Keep them as JSON.
-
-Compile them in memory.
-
-Do not generate:
-
-```text
-generated/correlation_ticker.go
-generated/cvd_trade.go
-generated/hawkes_trade.go
-...
-```
-
-A signal definition should be directly editable and immediately compilable.
-
----
-
-# 16. Logic remains JSON
-
-`logic.json` is a graph.
-
-It should compile through the same compiler as a signal.
-
-There should not be a handwritten:
-
-```go
-NewLogic()
-```
-
-implementation that knows where `logic.json` lives and manually wraps it.
-
-Generic definition resolution should handle it.
-
----
-
-# 17. Strategy and execution become graphs too
-
-As the primitive vocabulary becomes sufficient, strategy and execution orchestration should also move into JSON.
-
-But do not fake external behavior to accomplish this.
-
-For example, current experimental primitives that fabricate:
-
-```text
-BTC/USD
-FILLED
-```
-
-are not acceptable representations of real broker execution.
-
-A primitive must either:
-
-* perform a real transformation; or
-* interact with a real injected external capability.
-
-Never fabricate successful external effects.
-
----
-
-# 18. `nomagique` remains domain-neutral
-
-`nomagique` is not a trading library.
-
-No primitive should fundamentally mean:
-
-```text
-BTC
-Kraken
-long position
-market order
-trade filled
-```
-
-Generic concepts are appropriate:
-
-```text
-HTTP
-websocket
-authentication
-state
-gate
-route
-request
-response
-source
-sink
-store
-statistics
-learning
-transport
-```
-
-SYMM-specific market behavior is built by composing generic primitives.
-
----
-
-# 19. HTTP primitives must be genuinely generic
-
-The generic transport layer should provide reusable pieces such as:
-
-```text
-HTTP request construction
-method
-URL
-path
-query parameter
-header
-body
-execute
-response extraction
-```
-
-Those should work for arbitrary HTTP APIs.
-
-They must not secretly implement Kraken rules.
-
----
-
-# 20. Authentication primitives must be genuinely generic
-
-Expose atomic reusable operations such as:
-
-```text
-nonce
-timestamp
-SHA256
-SHA512
-HMAC
-base64
-bearer auth
-header auth
-query auth
-```
-
-Protocol-specific signing should be a composition of those primitives.
-
-For example, avoid a generic-looking:
-
-```go
-NewSigner(...)
-```
-
-that secretly knows:
-
-```text
-API-Key
-API-Sign
-Nonce
-Kraken payload construction
-```
-
-If Kraken requires those exact steps, express Kraken signing as a JSON composition built from the generic auth primitives.
-
----
-
-# 21. Websocket primitives must be genuinely generic
-
-Provide reusable capabilities such as:
-
-```text
-connect
-read
-write
-close
-ping/pong
-message encode
-message decode
-```
-
-No-op primitives are not acceptable.
-
-The current `NewWSWrite` must either genuinely write to a connection or be redesigned.
-
-Do not claim a capability exists when it does not.
-
----
-
-# 22. External protocols are compositions
-
-Eventually:
-
-```text
-generic websocket primitives
-+
-generic JSON primitives
-+
-generic auth primitives
-+
-Kraken-specific message/config data
-```
-
-should compose into a Kraken connection.
-
-The same generic primitives should also be capable of composing a completely unrelated websocket service.
-
-Likewise for HTTP.
-
----
-
-# 23. The root system JSON is just another graph
-
-`system.json` is not a special language.
-
-It should be compiled by the same compiler.
-
-Today it may contain something simple like:
-
-```text
-signals
-→ logic
-→ execution
-```
-
-Eventually it should describe more of the actual system orchestration as suitable primitives become available.
-
-But there must never be a separate "system compiler".
-
-One graph compiler is enough.
-
----
-
-# 24. The current handwritten root is the migration reference
-
-The old root construction showed the actual relationships that ultimately need to become composition:
-
-```text
-catalog initialization
-
-public websocket
-private websocket
-futures websocket
-
-API
-
-broker desk
-trader
-
-feeds → pipeline
-
-hub
-WebRTC
-
-evaluations → UI
-
-instrument
-price
-balance
-
-subscription
-initialization
-readiness
-```
-
-Do not copy this into a generated Go file.
-
-Use it as the behavioral reference when deciding which generic primitives/compositions are still missing.
-
----
-
-# 25. Minimal bootstrap
-
-The eventual root Go code should do little more than:
-
-```text
-load process config
-create process context
-construct runtime dependency environment
-load root JSON definition
-compile root definition
-run it
-```
+Each edge becomes a precompiled field transfer operation.
 
 Conceptually:
 
 ```go
-definitions := signal.Definitions()
+type Copier func(
+    src capnp.Struct,
+    dst capnp.Struct,
+) error
+```
 
-pipeline, err := compiler.Compile(
-    "system",
-    definitions,
-    compiler.Registry,
-    dependencies,
-)
-if err != nil {
-    return err
+`Copier` is created from Cap'n Proto field descriptors and is generic by Cap'n Proto type kind.
+
+It may handle Bool, signed/unsigned integers, floats, Text, Data, Enum, Struct, List, Interface, and AnyPointer.
+
+No graph value becomes a Go `any`.
+
+## Phase 10 — Compile numeric topology
+
+Replace hot-path strings with compact indices.
+
+Conceptually:
+
+```go
+type NodeID uint32
+type FieldID uint16
+```
+
+Compile:
+
+```text
+"corr"."out" -> "atanh"."in"
+```
+
+into something equivalent to:
+
+```text
+node 4, result field 0
+    ->
+node 7, argument field 0
+```
+
+Human-readable IDs remain only as debug metadata.
+
+## Phase 11 — Reuse or construct capabilities
+
+Only after structural and type validation succeeds do we create resources.
+
+If a previous `Program` exists, reuse a node capability when all of these match:
+
+```text
+stable node ID
+node type
+constructor configuration fingerprint
+interface ID
+```
+
+Topology does not affect capability identity.
+
+Reusing unchanged capabilities avoids needless resource reconnection and lets explicit Store nodes preserve state across topology-only recompiles.
+
+When reusing a capability, the new program acquires its own Cap'n Proto reference.
+
+If a node is new or its construction identity changed, construct a new capability from the small registry.
+
+If construction fails, abort the candidate and keep the active program unchanged.
+
+## Phase 12 — Produce immutable `Program`
+
+After compilation succeeds, freeze the program.
+
+No topology mutation occurs inside a live `Program`.
+
+---
+
+# 10. Compiled program representation
+
+The exact Go types are implementation detail, but ownership should resemble:
+
+```go
+type Program struct {
+    Version string
+
+    Nodes  []CompiledNode
+    Routes []Route
+
+    Roots []NodeID
 }
-
-return runtime.Run(ctx, pipeline)
 ```
 
-Exact APIs are flexible.
+A compiled node contains capability and compiled schema information only:
 
-No generated application package should be imported.
+```go
+type CompiledNode struct {
+    Client capnp.Client
+
+    Write CompiledMethod
+    Done  CompiledMethod
+
+    Inputs  []CompiledInput
+    Outputs []CompiledOutput
+
+    Required InputMask
+    ArgsTemplate capnp.Struct
+
+    Identity NodeIdentity
+}
+```
+
+It does not contain a concrete Go server, `server any`, payload `any`, a primitive-specific invoke function, or a primitive-specific downstream binder.
+
+A route contains resolved indices and a compiled copy operation:
+
+```go
+type Route struct {
+    FromNode  NodeID
+    FromField FieldID
+
+    ToNode    NodeID
+    ToField   FieldID
+
+    Copy Copier
+}
+```
+
+The executor never asks what primitive type a node is.
 
 ---
 
-# 26. `runtime.System` remains the lifecycle mechanism
+# 11. Evaluation frame
 
-Do not invent another lifecycle framework.
+Execution of one graph observation uses an evaluation frame.
 
-Existing concepts such as:
+The frame contains per-node invocation state, not generic graph values.
 
-```text
-READY
-BUSY
-error handling
-context cancellation
-closers
+Conceptually:
+
+```go
+type NodeFrame struct {
+    Args     capnp.Struct
+    Ready    InputMask
+    Executed bool
+}
 ```
 
-remain the lifecycle substrate.
+Each node begins with a copy of its immutable static argument template.
 
-Where lifecycle sequencing is declarative, represent it through primitives/composition.
+Incoming routes fill the remaining Cap'n Proto argument fields.
 
-Do not hardcode domain-specific startup ordering into the compiler.
+Readiness is a bitset.
+
+For `Add.write(a,b)`:
+
+```text
+required = 11
+ready    = 00
+```
+
+After `a` arrives:
+
+```text
+required = 11
+ready    = 01
+```
+
+Do nothing.
+
+After `b` arrives:
+
+```text
+required = 11
+ready    = 11
+```
+
+The node is runnable.
+
+No `map[string]any` exists.
 
 ---
 
-# 27. Unknown nodes are compilation errors
+# 12. Node execution
 
-The compiler must not silently skip a node it cannot construct.
+When a node becomes runnable:
 
-Compile errors include:
+1. send its compiled `write` streaming call using the assembled argument struct;
+2. wait for streaming delivery to complete;
+3. send its compiled `done` call;
+4. await the result struct;
+5. route each connected result field to downstream argument fields;
+6. mark downstream nodes ready;
+7. release result call resources.
+
+Conceptually:
 
 ```text
-unknown primitive
-unknown graph definition
-missing constructor config
+assembled write args
+       |
+       v
+SendStreamCall(write)
+       |
+       v
+WaitStreaming()
+       |
+       v
+SendCall(done)
+       |
+       v
+result struct
+       |
+       +--> route result field 0
+       +--> route result field 1
+       +--> ...
+```
+
+Because `Done()` resets the primitive, the capability is ready for the next evaluation.
+
+---
+
+# 13. Fan-out
+
+Fan-out is a routing property of the compiled plan.
+
+If one output connects to four nodes:
+
+```text
+corr.out
+   |
+   +--> sink_signed_correlation.value
+   +--> abs.in
+   +--> atanh.in
+   +--> zscore.in
+```
+
+compile four routes from the same result field.
+
+At runtime the result field is copied into each destination argument struct.
+
+The producer does not know it has four consumers.
+
+No `BroadcastSink` is necessary.
+
+---
+
+# 14. Fan-in
+
+Fan-in is argument assembly.
+
+For:
+
+```text
+left.out  -> add.a
+right.out -> add.b
+```
+
+the frame waits until both destination fields are ready.
+
+Then and only then does it invoke `Add.write(a,b)`.
+
+No input sink capability is required.
+
+No evaluation ID needs to be embedded into every scalar merely to correlate `a` and `b`, because the evaluation frame already owns both argument slots.
+
+If values cross an asynchronous boundary where multiple evaluations can interleave, that boundary protocol must carry an explicit correlation identity. Do not make every ordinary primitive pay for that boundary requirement.
+
+---
+
+# 15. Execution ordering and concurrency
+
+The primitive protocol stores ephemeral result state between `Write()` and `Done()`.
+
+Therefore overlapping evaluations must not race through the same capability.
+
+The default execution model is:
+
+> One graph evaluation at a time per `Program`.
+
+Within one evaluation, independent DAG branches may execute concurrently.
+
+For:
+
+```text
+             +--> Atanh --+
+input -------+            +--> Add
+             +--> Square -+
+```
+
+`Atanh` and `Square` may execute in parallel because they are independent within the same evaluation.
+
+A second source evaluation does not enter the same program until the first has crossed its `Done()` boundaries.
+
+If higher throughput is later required, concurrency must be explicit through capability pools, `Parallel` composition, sharded programs, or another algebraically visible mechanism.
+
+Do not silently make ordinary node servers handle overlapping evaluations.
+
+---
+
+# 16. Source nodes
+
+A live source is a boundary object, not an ordinary downstream callback.
+
+The graph runtime owns source admission.
+
+A source capability should expose a normal Cap'n Proto operation that yields the next observation, for example:
+
+```capnp
+interface Source {
+  next @0 () -> (
+    out :WireMeasurement
+  );
+}
+```
+
+The implementation may block internally waiting for Kraken, a file, IPC, or another transport.
+
+The runtime loop is conceptually:
+
+```text
+Source.next()
+    |
+    v
+new evaluation
+    |
+    v
+compiled Program
+```
+
+If a source genuinely requires asynchronous callback capabilities, use Cap'n Proto capability passing directly at that boundary. Do not generalize that callback pattern into ordinary primitive composition.
+
+Candidate compilation must not accidentally start duplicate uncontrolled listeners or disturb the active source.
+
+---
+
+# 17. Terminal and side-effect nodes
+
+A terminal node may have no meaningful result.
+
+It can still use:
+
+```capnp
+interface Sink {
+  write @0 (value :WireMeasurement) -> stream;
+  done @1 ();
+}
+```
+
+or return diagnostic data if useful.
+
+A sink is a real side-effect boundary. It is not a generic transport abstraction inserted between ordinary nodes.
+
+---
+
+# 18. Constructor configuration
+
+Invocation inputs and construction configuration are different concepts.
+
+## 18.1 Invocation inputs
+
+Fields of `write(...)` supplied by graph edges or static `inputData`.
+
+## 18.2 Construction configuration
+
+Values required once to construct a capability.
+
+These belong in a dedicated node configuration object rather than streamed arguments.
+
+The constructor registry receives configuration as immutable raw JSON or another non-erased representation and parses it into the primitive's typed constructor configuration.
+
+Do not use `map[string]any`.
+
+Live process dependencies are captured by the registered factory closure.
+
+Secrets and resource handles do not belong in Flume JSON.
+
+---
+
+# 19. Recursive definitions
+
+A JSON definition is syntax, not a second runtime object model.
+
+If the root graph contains:
+
+```text
+definition:signals
+```
+
+the compiler recursively loads and expands it into the candidate program.
+
+Definitions may contain other definitions.
+
+The compiler detects recursive definition cycles.
+
+Definition expansion preserves stable namespaced node identity so nodes can be reused across recompiles.
+
+No generated Go composite is created.
+
+No `pipeline.Signals` pseudo-primitive is registered.
+
+---
+
+# 20. Hot recompilation
+
+Hot recompilation is a first-class requirement.
+
+Editing Flume must not mutate the active execution graph in place.
+
+The runtime owns an active immutable program:
+
+```go
+type Runtime struct {
+    active atomic.Pointer[Program]
+}
+```
+
+The sequence is:
+
+```text
+Flume edit
+    |
+    v
+new JSON/version
+    |
+    v
+Compile candidate while old Program keeps running
+    |
+    +--> compile error
+    |       |
+    |       +--> report error to editor
+    |       +--> keep old Program unchanged
+    |
+    +--> compile success
+            |
+            v
+        activation barrier
+            |
+            v
+        atomic Program swap
+            |
+            v
+        retire old Program
+```
+
+## 20.1 Initial swap policy: quiescent swap
+
+The first implementation should prefer determinism over cleverness.
+
+1. Compile the candidate completely while the current program runs.
+2. Stop admitting a new source evaluation.
+3. Let the currently active evaluation finish.
+4. Activate any new resources needed by the candidate.
+5. Atomically swap the active `Program`.
+6. Retire capabilities owned only by the old program.
+7. Resume source admission.
+
+The pause is only the activation boundary, not compilation time.
+
+This prevents old and new topology from processing the same evaluation and avoids cross-generation races through ephemeral primitive state.
+
+---
+
+# 21. Capability reuse across recompilation
+
+A topology edit should not reconstruct every object.
+
+A candidate compiler receives the previous `Program`.
+
+For each node, build a construction identity from:
+
+```text
+stable node ID
+node type
+interface ID
+constructor config digest
+```
+
+If the identity is unchanged, reuse the previous `capnp.Client` via `AddRef()`.
+
+If it changed, construct a new capability.
+
+Topology does not affect capability identity.
+
+Example:
+
+Old:
+
+```text
+corr.out -> atanh.in
+```
+
+New:
+
+```text
+square.out -> atanh.in
+```
+
+If `atanh` itself did not change, reuse the same Atanh capability. Only the immutable route table changes.
+
+This also lets explicit stores preserve state across topology-only recompiles without a separate state migration framework.
+
+A Store with the same stable node ID, type, interface, and constructor config is the same object and therefore retains its state.
+
+If it is removed, renamed, changes type, or changes construction identity, the old capability is retired.
+
+---
+
+# 22. Program ownership and release
+
+Every `Program` owns references to all capabilities in its node table.
+
+When reusing a capability, the new program acquires its own Cap'n Proto reference.
+
+On candidate failure, release all capabilities created or referenced solely by the failed candidate.
+
+On successful swap, retire the old program and release its references after no evaluation is using it.
+
+Reused capabilities stay alive because the new program owns its own references.
+
+Normal Cap'n Proto capability lifetime rules own object lifetime.
+
+---
+
+# 23. UniConn and remote execution
+
+UniConn is transport only.
+
+```text
+capnp.Client
+    |
+    v
+rpc.Conn
+    |
+    v
+rpc.StreamTransport
+    |
+    v
+UniConn
+    |
+    v
+io.ReadWriteCloser
+```
+
+Do not place UniConn between ordinary local nodes.
+
+Do not turn UniConn into a graph scheduler, node wrapper, type system, generic message bus, or event router.
+
+Local capabilities stay local.
+
+If a capability is remote, the same `capnp.Client` semantics continue across `rpc.Conn`.
+
+The graph compiler should not care whether a capability resolves locally or remotely.
+
+---
+
+# 24. Flume editor contract
+
+Flume is an editor for the source program.
+
+The editor and compiler consume the same Cap'n Proto-derived primitive catalog.
+
+For every primitive, Flume needs descriptive metadata only:
+
+```text
+operation name
+display name
+write input fields
+done output fields
+Cap'n Proto types
+constructor configuration schema
+documentation
+```
+
+The catalog is not executable glue.
+
+When the editor changes a connection, the runtime recompiles the JSON.
+
+Graph fragments such as:
+
+```text
+returns.out -> corr.in
+returns.out -> square.in
+
+corr.out -> abs.in
+corr.out -> atanh.in
+corr.out -> zscore.in
+```
+
+compile into in-memory routing tables.
+
+No primitive is rewritten and no Go source is generated.
+
+---
+
+# 25. Compile errors are editor feedback
+
+Compilation errors are part of the Flume experience.
+
+Examples:
+
+```text
+unknown primitive type
+unknown input port
+unknown output port
+type mismatch
+missing required input
+duplicate binding
+unsupported cycle
+invalid static value
 invalid constructor config
-missing runtime dependency
-incompatible connection
-cycle
-invalid graph
+definition not found
+recursive definition cycle
+capability construction failure
 ```
 
-If the graph cannot be faithfully instantiated, compilation fails.
+A compile error must identify the node ID, node type, port/field when relevant, source graph/definition, and human-readable reason.
+
+The previous program stays active.
+
+A broken editor state is not a broken runtime.
 
 ---
 
-# 28. Do not silently return fake defaults
+# 26. No custom application code generation
 
-Avoid behavior such as:
+Prohibited:
 
 ```text
-missing stage → nil
-invalid primitive → skip
-failed external action → fake success
-unsupported path → zero value
+Flume JSON
+    ->
+generated Go graph
 ```
 
-unless zero/nil is explicitly the mathematical semantic of the primitive.
+Also prohibited:
 
-Construction problems are errors.
+```text
+primitive schemas
+    ->
+generated giant registry containing:
+    - setters
+    - sink builders
+    - invokers
+    - downstream adapters
+    - primitive-specific switches
+```
 
-External failures are real failures/results.
+Cap'n Proto already generates its language bindings.
+
+SYMM must not generate a shadow binding layer.
+
+If automatic constructor registration is desired, the maximum acceptable custom generation is a boring constructor table containing only:
+
+```text
+operation name
+interface ID
+func(...) capnp.Client
+```
+
+Manual constructor registration is also acceptable.
 
 ---
 
-# 29. Stateful primitives are instantiated once
+# 27. No `any`
 
-If a primitive owns state, the compiler constructs it once.
+The execution ownership path must contain no Go `any` / `interface{}` payloads.
 
-For example:
-
-```text
-running mean
-variance
-collector
-learner
-state store
-```
-
-must preserve state across repeated calls to the compiled graph.
-
-Do not reconstruct primitives per input.
-
----
-
-# 30. Improve the scanner rather than guessing
-
-The current scanner has started discovering things like:
-
-```text
-constructor parameters
-statefulness
-injected dependencies
-```
-
-Good direction.
-
-But do not infer architectural semantics from fragile heuristics such as:
+Specifically prohibited:
 
 ```go
-len(function.Body.List) > 1
+WriteAny(...)
+SetDownstreamAny(...)
+map[string]any
+[]any
+func(any)
+payload.(float64)
+server any
+server.(*ConcreteServer)
 ```
 
-to decide whether something is stateful.
+The compiler may parse arbitrary JSON using a streaming/token/raw-message representation, but it must convert values into typed Cap'n Proto fields during compilation.
 
-Use real type/source information or explicit metadata where required.
-
-The catalog must describe the primitive accurately.
-
----
-
-# 31. The frontend should receive the real catalog
-
-`/workbench/primitives` should expose actual schema information.
-
-Do not reduce it to:
-
-```json
-{
-  "inputs": [],
-  "outputs": []
-}
-```
-
-The frontend already builds Flume nodes from schemas.
-
-Feed it the real schemas.
-
-The UI and compiler should therefore share the same source of truth.
-
----
-
-# 32. The graph schema should stay simple
-
-Do not add a complicated IR unless there is an actual need.
-
-The existing graph concepts are already sufficient at a high level:
+The runtime operates on:
 
 ```text
-id
-type
-connections
-inputData / config
-subgraphs where applicable
+capnp.Client
+capnp.Struct
+Cap'n Proto schema descriptors
+compiled field copy operations
+numeric indices
+bit masks
 ```
 
-The compiler's job is to lower those into nomagique composition.
-
-Keep the JSON understandable and editable by Flume.
+Graph values do not leave the Cap'n Proto type system.
 
 ---
 
-# 33. Do not introduce another runtime graph engine
+# 28. Generic runtime logic is allowed; primitive-specific runtime logic is not
 
-This includes avoiding a "temporary" interpreter as the final architecture.
-
-A builder that:
+The compiler/executor may switch on Cap'n Proto type kind:
 
 ```text
-walks every node
-maintains per-call state maps
-dynamically routes values through edges
+Bool
+Int
+UInt
+Float
+Text
+Data
+Enum
+Struct
+List
+Interface
+AnyPointer
 ```
 
-is useful as a prototype but is not the desired endpoint.
+because those are properties of the type system.
 
-Compilation should produce direct closure composition.
-
-The runtime executes the composition.
-
----
-
-# 34. Future dynamic editing is a design constraint
-
-Later, Flume should be able to change a running system.
-
-The desired future flow is:
+It must not switch on primitive identity:
 
 ```text
-edit graph in Flume
-→ save JSON
-→ compile new graph in memory
-→ validate
-→ swap compiled Value
+if op == "arithmetic.Add"
+if op == "cognition.Associate"
+if op == "execution.Decide"
 ```
 
-not:
+If a primitive requires special runtime behavior that cannot be described by its Cap'n Proto protocol, the schema/protocol is incomplete.
+
+Fix the protocol instead of adding a compiler special case.
+
+---
+
+# 29. Constructors must be safe for candidate compilation
+
+A constructor creates a capability object. It must not unexpectedly mutate global runtime state.
+
+Candidate compilation must not steal a live port from the active program, replace the active source connection, start duplicate uncontrolled listeners, mutate a reused store, or shut down an active resource.
+
+External resource owners should separate construction from activation when necessary.
+
+The hot-recompile guarantee is:
+
+> A candidate that never activates must not alter the behavior of the active program.
+
+---
+
+# 30. Example: compiling the current Flume shape
+
+Given:
 
 ```text
-edit graph
-→ generate Go
-→ rebuild binary
-→ restart
+source.out -> lastPrice.in
+lastPrice.out -> returns.in
+returns.out -> corr.in
+returns.out -> square.in
+corr.out -> abs.in
+corr.out -> atanh.in
+corr.out -> zscore.in
+square.out -> energy_mean.in
+square.out -> energy_zscore.in
 ```
 
-Do not solve hot-swapping now.
-
-But do not make architectural decisions that prevent it.
-
----
-
-# 35. The future swappable unit is a compiled composition
-
-A JSON definition should compile into a self-contained executable object.
-
-That makes the future replacement unit conceptually:
+compile routes conceptually equivalent to:
 
 ```text
-old compiled Value
-        ↓
-atomic replacement
-        ↑
-new compiled Value
+Route 0:
+Source result out
+    -> Extract.write.in
+
+Route 1:
+Extract.done.out
+    -> LogReturns.write.in
+
+Route 2:
+LogReturns.done.out
+    -> Tanh.write.in
+
+Route 3:
+LogReturns.done.out
+    -> Square.write.in
+
+Route 4:
+Tanh.done.out
+    -> Absolute.write.in
+
+Route 5:
+Tanh.done.out
+    -> Atanh.write.in
+
+Route 6:
+Tanh.done.out
+    -> ZScore.write.in
+
+Route 7:
+Square.done.out
+    -> Mean.write.in
+
+Route 8:
+Square.done.out
+    -> ZScore.write.in
 ```
 
-State migration and safe handoff are future concerns.
+`Extract.path = "last"` is compiled into Extract's static argument template.
 
-The important part today is that compilation already happens entirely in memory.
+At runtime none of these route names need to be resolved again.
 
 ---
 
-# 36. Immediate implementation direction
+# 31. Example execution
 
-Work in this order:
+One source observation enters the active program.
 
 ```text
-A. Delete the per-graph Go-generation path.
-
-B. Remove `generated/*` application implementations.
-
-C. Restore root startup to runtime compilation of system JSON.
-
-D. Keep and improve the nomagique source scanner.
-
-E. Keep and improve constructor registry generation.
-
-F. Make constructor registry support configured constructors.
-
-G. Replace handwritten `pipeline.Signals/Logic/Execution`.
-
-H. Add generic graph-definition resolution.
-
-I. Rework Builder.Compose into a real compile-once lowering step.
-
-J. Lower straight chains into NewNumber.
-
-K. Lower topology into nomagique topology primitives.
-
-L. Compile existing signal JSON definitions directly.
-
-M. Compile logic JSON directly.
-
-N. Compile execution/strategy JSON directly.
-
-O. Compile system JSON recursively.
-
-P. Continue extracting generic transport/auth/broker capabilities until the handwritten root collapses naturally.
+Source.next()
+    |
+    v
+WireMeasurement
+    |
+    v
+Extract.write(in=measurement, path="last")
+WaitStreaming()
+Extract.done() -> out=price
+    |
+    v
+LogReturns.write(in=price)
+WaitStreaming()
+LogReturns.done() -> out=return
+    |
+    +----------------------+
+    |                      |
+    v                      v
+Tanh.write(in=return)   Square.write(in=return)
+...                    ...
 ```
+
+Independent branches may execute concurrently.
+
+After all terminal work for the evaluation completes, the runtime admits the next source observation.
 
 ---
 
-# 37. Required tests
+# 32. Testing requirements
 
-Tests should prove at least:
+Tests must prove the architecture, not merely object construction.
+
+## 32.1 Primitive protocol
+
+For `Add`:
 
 ```text
-linear JSON graph compiles into executable composition
-
-nested JSON definition compiles recursively
-
-configured constructor receives correct values
-
-stateful primitive is instantiated once
-
-Fan/Fork executes all branches
-
-Join combines branch output
-
-Route selects the intended branch
-
-compiled child definition works inside a parent
-
-unknown primitive fails compilation
-
-missing config fails compilation
-
-cycle fails compilation
-
-missing runtime dependency fails compilation
-
-system JSON compiles in memory
-
-repeated system execution does not reparse/reconstruct graph
-
-compiling JSON creates no .go files
+Write(a=1,b=2)
+WaitStreaming()
+Done()
 ```
 
----
+must return `out=3`.
 
-# 38. Definition of done
-
-The architecture is correct when the system path is:
+Then a second evaluation:
 
 ```text
-nomagique Go primitives
-        ↓
-catalog scan
-        ↓
-constructor registry
-        ↓
-JSON / Flume graph
-        ↓
-generic in-memory compiler
-        ↓
-nested nomagique Values / Numbers
-        ↓
-execute
+Write(a=4,b=5)
+Done()
 ```
 
-and there is no:
+must return `out=9` with no dependency on the previous result.
+
+## 32.2 Schema-derived ports
+
+Compile a graph using `Add.a`, `Add.b`, and `Add.out` and prove those ports came from Cap'n Proto schema metadata rather than a handwritten descriptor.
+
+## 32.3 Type mismatch
+
+Compile `Text -> Add.a(Float64)` and assert compile failure before capability activation.
+
+## 32.4 Static input
+
+Compile `Extract.path = "last"` as a static typed argument and verify execution does not parse JSON again.
+
+## 32.5 Fan-out
+
+One result connected to multiple consumers must feed every consumer.
+
+## 32.6 Fan-in
+
+A multi-input node must not execute until every required dynamic/static argument is ready.
+
+## 32.7 Recursive definition
+
+Compile the real root graph with nested `definition:*` nodes.
+
+## 32.8 Hot recompile success
+
+Run Program A, compile Program B while A remains active, swap at the quiescent boundary, and verify subsequent observations use B.
+
+## 32.9 Hot recompile failure
+
+Run Program A, attempt invalid Program B, and verify A remains active and unchanged.
+
+## 32.10 Capability reuse
+
+Reconnect an unchanged node and verify the candidate reuses the same capability identity via an additional reference.
+
+## 32.11 Store preservation
+
+Populate a Store, perform a topology-only recompile preserving node identity/configuration, and verify the Store state survives.
+
+## 32.12 No `any`
+
+Add an AST architecture test over compiler/runtime ownership that rejects `any` / `interface{}` in graph execution structures and APIs.
+
+## 32.13 No generated execution glue
+
+Add an architecture test preventing generated setters, downstream binders, per-primitive invokers, or giant primitive switches.
+
+---
+
+# 33. Migration plan
+
+Do not perform another repository-wide mechanical rewrite before the execution core is proven.
+
+## Stage 1 — Freeze the primitive protocol
+
+Migrate only a tiny vertical slice:
 
 ```text
-JSON
-→ generated application Go
+Source fixture
+Atanh
+Add
+terminal fixture
 ```
 
-layer.
+Use:
+
+```text
+write -> stream
+done  -> typed result + reset
+```
+
+No sinks. No downstream fields. No `any`.
+
+## Stage 2 — Build the tiny constructor registry
+
+Implement:
+
+```text
+string -> Factory{InterfaceID, New}
+```
+
+Nothing else.
+
+Delete per-primitive runtime descriptors.
+
+## Stage 3 — Build schema compilation
+
+Given a capability interface ID:
+
+- resolve `write`;
+- resolve `done`;
+- resolve input fields;
+- resolve output fields;
+- resolve Cap'n Proto types;
+- compile field-copy operations.
+
+No primitive-specific code.
+
+## Stage 4 — Build immutable Program
+
+Compile nodes, static argument templates, readiness masks, routes, and execution dependencies.
+
+Prove `Atanh -> Add` executes.
+
+## Stage 5 — Add fan-out and fan-in
+
+Prove real branch topology.
+
+## Stage 6 — Add candidate recompilation and quiescent swap
+
+Prove good edits activate and bad edits do not disturb the running program.
+
+## Stage 7 — Add capability reuse
+
+Reuse unchanged nodes by stable node identity plus construction fingerprint.
+
+Prove explicit Store state survives topology-only edits.
+
+## Stage 8 — Restore recursive definitions
+
+Compile `definition:*` graphs into the same immutable Program.
+
+## Stage 9 — Migrate the real source boundary
+
+Use the real market-data capability and remove test ingress from production.
+
+## Stage 10 — Migrate remaining primitives
+
+Only after the runtime has proven the protocol and hot-recompile behavior.
+
+Each migrated primitive should become simpler:
+
+```text
+write inputs
+compute / accumulate ephemeral result
+done returns result and resets
+```
+
+Delete old downstream callback fields as each primitive migrates.
+
+Do not preserve parallel execution paths.
 
 ---
 
-# 39. The rules to remember
+# 34. Things to delete from the current migration
 
-> `Value[T,U]` is the atom.
+When replaced, remove:
 
-> `Number` is sequential composition.
+```text
+StreamNode
+WriteAny
+SetDownstreamAny
+NewStreamNode
+Float64Sink for ordinary node composition
+Int64Sink for ordinary node composition
+TextSink for ordinary node composition
+BoolSink for ordinary node composition
+DataSink for ordinary node composition
+Broadcast*Sink used only for graph fan-out
+InvocationAssembler designs that accept generic Go values
+server fields retained by compiler
+BindDownstream
+CreateInputSink
+CreateSetter
+CreateStaticSetter execution glue
+per-primitive Invoke callbacks
+generated per-primitive registry execution code
+primitive-specific switches in registry generation
+fake production Float64 source
+```
 
-> Fan-in, fan-out, routing, joining, batching, etc. are nomagique primitives.
+Do not delete a capability interface if it has a genuine boundary use unrelated to ordinary graph composition.
 
-> JSON describes composition.
+The architectural rule is not "Sink is a forbidden word".
 
-> Flume edits JSON composition.
+The rule is:
 
-> The registry maps JSON node names to real constructors.
-
-> Compilation constructs the closures once, in memory.
-
-> Execution calls those closures.
-
-> A compiled JSON definition can itself be composed.
-
-> The system graph is not special.
-
-> Do not generate Go files for graphs.
-
-> nomagique is general-purpose.
-
-> SYMM is simply one graph built with it.
-
-> The graph is the program.
+> Ordinary node-to-node graph composition is request/result routing performed by the compiled Program, not callback/sink wiring embedded into primitives.
 
 ---
 
-Listed directory fanapp
-Searched for "FlumeConfig"
-Searched for "flume"
-Listed directory frontend
-Searched for "FlumeConfig"
-Viewed build-config-from-schemas.ts:60-120
-Viewed build-config-from-schemas.ts:1-50
+# 35. Definition of done
 
-Look at that JSON graph—that is the exact, canonical Flume runtime format:
+The migration is complete when all of the following are true.
 
-```json
-"connections": {
-    "inputs": {
-        "in": [ { "nodeId": "16fbf205...", "portName": "value" } ]
-    }
-},
-"inputData": {
-    "open": { "open": true }
-}
+1. The current Flume JSON compiles directly into an in-memory `Program`.
+2. No Go application code is generated from that graph.
+3. The compiler retains no concrete primitive servers.
+4. The runtime graph data path contains no `any` / `interface{}`.
+5. Input ports come from `write` schema fields.
+6. Output ports come from `done` result fields.
+7. Ordinary primitives have no downstream graph references.
+8. `Done()` returns the current result and resets ordinary primitives.
+9. Persistence is represented by explicit Store composition.
+10. Fan-in and fan-out are compiled route behavior.
+11. Execution uses pre-resolved fields and numeric topology rather than JSON interpretation.
+12. Nested definitions compile recursively in memory.
+13. A Flume edit can compile a candidate while the old program runs.
+14. Invalid edits leave the active program untouched.
+15. Valid edits replace the active program at a deterministic evaluation boundary.
+16. Unchanged capabilities can be reused across recompiles.
+17. The real production source feeds the compiled program.
+18. UniConn exists only beneath Cap'n Proto RPC at real transport boundaries.
+19. There is no generated shadow execution layer around Cap'n Proto.
+20. The runtime is, in practical terms:
+
+```text
+Flume JSON
+    |
+    v
+in-memory compiler
+    |
+    v
+immutable Program
+    |
+    +--> capnp.Client
+    +--> compiled method descriptors
+    +--> compiled field descriptors
+    +--> static argument templates
+    +--> readiness masks
+    +--> numeric route table
+    |
+    v
+Cap'n Proto execution
 ```
 
-Notice the crucial pattern Flume uses:
-1. **When a port is wired:** Flume populates `connections.inputs[portName]`.
-2. **When a port is unwired:** Flume populates `inputData[portName]` with the control's value (e.g. `{ "open": true }` or `{ "string": "GET" }`).
-
-Here is how making `method` and `rawURL` into `types.Value` bridges Flume's JSON directly into Go:
-
----
-
-### 1. Port Types in Go Mirror Flume Port Types
-
-In Flume, you define ports like:
-```ts
-config
-  .addPortType({ type: "string", ... })
-  .addPortType({ type: "number", ... })
-  .addPortType({ type: "map",    ... })
-```
-
-In [nomagique/types/value.go](file:///Users/theapemachine/go/src/github.com/theapemachine/symm/nomagique/types/value.go), the Go port types are simply closures that produce those types from the incoming frame:
-
-```go
-type Value[T, U any] func(T) U
-
-type String  types.Value[any, string]
-type Integer types.Value[any, int]
-type Float   types.Value[any, float64]
-type Boolean types.Value[any, bool]
-type Map     types.Value[any, map[string]any]
-type Any     types.Value[any, any]
-```
-
-A `types.String` is simply: *a function that, given the current context `in`, yields a `string`*.
-
----
-
-### 2. Constructor Arguments ARE the Input Ports
-
-Look at how `NewHTTPRequest` is declared in Go:
-
-```go
-func NewHTTPRequest(
-    method types.String,
-    rawURL types.String,
-) types.Map {
-    cc := client.New()
-
-    return func(in any) map[string]any {
-        // Sample the input ports against the incoming frame:
-        m := "GET"
-        if method != nil {
-            m = method(in)
-        }
-
-        u := ""
-        if rawURL != nil {
-            u = rawURL(in)
-        }
-
-        // Execute request using Fiber client
-        ...
-        return out
-    }
-}
-```
-
-Look at the beauty of this constructor signature:
-* `method types.String` $\rightarrow$ Flume Input Port: `"method"` (`type: "string"` with `Controls.text`)
-* `rawURL types.String` $\rightarrow$ Flume Input Port: `"rawURL"` (`type: "string"` with `Controls.text`)
-* Return type `types.Map` $\rightarrow$ Streaming node with Input Port `"in"` (`map`) and Output Port `"out"` (`map`)
-
-The Go AST of the constructor **directly defines the Flume node schema**. There is zero duplication.
-
----
-
-### 3. How the Compiler Resolves Both Cases
-
-When the compiler instantiates `NewHTTPRequest`, it resolves each argument port by inspecting Flume's JSON:
-
-```go
-func resolveStringPort(node FlumeNode, portName string, registry Registry) types.String {
-    // 1. Is the port wired to an upstream node?
-    if wires := node.Connections.Inputs[portName]; len(wires) > 0 {
-        upstreamClosure := registry.Get(wires[0].NodeID)
-        return func(in any) string {
-            return fmt.Sprint(upstreamClosure(in))
-        }
-    }
-
-    // 2. Is the port unwired with a control value in inputData?
-    if controlData, ok := node.InputData[portName]; ok {
-        // e.g. inputData["method"] = { "string": "GET" }
-        staticVal := extractControlValue(controlData)
-        return func(any) string {
-            return staticVal
-        }
-    }
-
-    // 3. Fallback / Default
-    return func(any) string { return "" }
-}
-```
-
-Look at what this accomplishes:
-* If the user **types** `"https://api.kraken.com/..."` into Flume's text control, the compiler wraps it in a constant closure `func(any) string { return "https://api.kraken.com/..." }`.
-* If the user **drags a wire** from an upstream URL-builder node, the compiler passes that upstream node's closure.
-* `NewHTTPRequest` executes identically in both cases: `u := rawURL(in)`. It never knows or cares whether the port was wired or configured via a control.
-
----
-
-### 4. Why This Works Everywhere
-
-Every primitive with parameters follows this exact contract:
-
-1. **`Gate` (from your JSON above):**
-   ```go
-   func NewGate(open types.Boolean) types.Any
-   ```
-   - In Flume, `open` has a checkbox control (`"open": { "open": true }`).
-   - If unwired, it reads the static checkbox.
-   - If wired, a logic / regime node controls whether the gate is open dynamically.
-
-2. **`Process` (Shell node):**
-   ```go
-   func NewProcess(binary types.String, args types.Value[any, []string]) types.Any
-   ```
-   - If unwired: runs `kraken paper` from text controls.
-   - If wired: can execute dynamic CLI commands generated by the graph.
-
-3. **`EMA`:**
-   ```go
-   func NewEMA(alpha types.Float) types.Float
-   ```
-   - If unwired: fixed period (e.g. `0.05`).
-   - If wired: adaptive alpha driven by market volatility.
-
-This gives you a 1:1, mathematically closed mapping: **every Flume port is a `types.Value`, every node constructor takes its ports as `types.Value`, and every primitive composes into `nomagique.NewNumber`.**
-
-## What the FlumeConfig Looks Like
-
-Remember, the type of the port is something we control, and for Flume just means what can connect to what, it is not actually typed in any way on the frontend. So we need to have one PortType for any unique input and output type of nomagique primitives.
-
-```js
-import { FlumeConfig, Colors, Controls } from 'flume'
-
-const config = new FlumeConfig()
-config
-  .addPortType({
-    type: "string",
-    name: "string",
-    label: "Text",
-    color: Colors.green,
-    controls: [
-      Controls.text({
-        name: "string",
-        label: "Text"
-      })
-    ]
-  })
-  .addNodeType({
-    type: "string",
-    label: "Text",
-    description: "Outputs a string of text",
-    inputs: ports => [
-      ports.string()
-    ],
-    outputs: ports => [
-      ports.string()
-    ]
-  })
-```
-
-So the idea is that any things like "config" are essentially individual input nodes. In Flume an input node that is not connected will have a manual control (text field, check box, select, etc.), but you can also connect any compatible output to it and it will be used instead.
-
-## What a Flume Compatible JSON Looks Like
-
-```json
-{
-    "s:local-default": {
-        "versionKey": "66704a4f-87fb-4a20-b15a-b09609a6ebc0",
-        "data": {
-            "id": "local-default",
-            "project_id": null,
-            "schema_version": 1,
-            "nodes": {
-                "15e80914-aa01-45a1-944a-372c717d39f8": {
-                    "id": "15e80914-aa01-45a1-944a-372c717d39f8",
-                    "x": -737.2435848238741,
-                    "y": -668.4491574642204,
-                    "type": "gate",
-                    "width": 300,
-                    "connections": {
-                        "inputs": {
-                            "in": [
-                                {
-                                    "nodeId": "16fbf205-b374-460e-ab25-8e1fdebfefbf",
-                                    "portName": "value"
-                                }
-                            ]
-                        },
-                        "outputs": {
-                            "out": [
-                                {
-                                    "nodeId": "f9b5ea26-23e9-4bcf-90b0-324428be021c",
-                                    "portName": "value"
-                                },
-                                {
-                                    "nodeId": "c565c6d0-acc4-44bb-9345-8bc28cc53cef",
-                                    "portName": "value"
-                                },
-                                {
-                                    "nodeId": "ac95b659-64b5-42da-b773-85ee0572036c",
-                                    "portName": "value"
-                                },
-                                {
-                                    "nodeId": "aae2f1e8-dfd4-4005-9188-68fd11fb56fc",
-                                    "portName": "value"
-                                }
-                            ]
-                        }
-                    },
-                    "inputData": {
-                        "in": {},
-                        "open": {
-                            "open": true
-                        }
-                    },
-                    "height": 140
-                },
-                "f9b5ea26-23e9-4bcf-90b0-324428be021c": {
-                    "id": "f9b5ea26-23e9-4bcf-90b0-324428be021c",
-                    "x": -285.56630595957046,
-                    "y": -787.0325601618924,
-                    "type": "sink",
-                    "width": 280,
-                    "connections": {
-                        "inputs": {
-                            "value": [
-                                {
-                                    "nodeId": "15e80914-aa01-45a1-944a-372c717d39f8",
-                                    "portName": "out"
-                                }
-                            ]
-                        },
-                        "outputs": {}
-                    },
-                    "inputData": {
-                        "value": {}
-                    },
-                    "height": 93
-                },
-                "16fbf205-b374-460e-ab25-8e1fdebfefbf": {
-                    "id": "16fbf205-b374-460e-ab25-8e1fdebfefbf",
-                    "x": -1170.165538473203,
-                    "y": -677.1452335181216,
-                    "type": "source",
-                    "width": 280,
-                    "connections": {
-                        "inputs": {},
-                        "outputs": {
-                            "value": [
-                                {
-                                    "nodeId": "15e80914-aa01-45a1-944a-372c717d39f8",
-                                    "portName": "in"
-                                }
-                            ]
-                        }
-                    },
-                    "inputData": {},
-                    "height": 101
-                },
-                "c565c6d0-acc4-44bb-9345-8bc28cc53cef": {
-                    "id": "c565c6d0-acc4-44bb-9345-8bc28cc53cef",
-                    "x": -285.59653679535063,
-                    "y": -665.0646556421777,
-                    "type": "sink",
-                    "width": 280,
-                    "connections": {
-                        "inputs": {
-                            "value": [
-                                {
-                                    "nodeId": "15e80914-aa01-45a1-944a-372c717d39f8",
-                                    "portName": "out"
-                                }
-                            ]
-                        },
-                        "outputs": {}
-                    },
-                    "inputData": {
-                        "value": {}
-                    },
-                    "height": 93
-                },
-                "ac95b659-64b5-42da-b773-85ee0572036c": {
-                    "id": "ac95b659-64b5-42da-b773-85ee0572036c",
-                    "x": -281.5696911577668,
-                    "y": -525.4673811691282,
-                    "type": "sink",
-                    "width": 280,
-                    "connections": {
-                        "inputs": {
-                            "value": [
-                                {
-                                    "nodeId": "15e80914-aa01-45a1-944a-372c717d39f8",
-                                    "portName": "out"
-                                }
-                            ]
-                        },
-                        "outputs": {}
-                    },
-                    "inputData": {
-                        "value": {}
-                    },
-                    "height": 93
-                },
-                "aae2f1e8-dfd4-4005-9188-68fd11fb56fc": {
-                    "id": "aae2f1e8-dfd4-4005-9188-68fd11fb56fc",
-                    "x": -284.2594982047466,
-                    "y": -396.6083207664436,
-                    "type": "sink",
-                    "width": 280,
-                    "connections": {
-                        "inputs": {
-                            "value": [
-                                {
-                                    "nodeId": "15e80914-aa01-45a1-944a-372c717d39f8",
-                                    "portName": "out"
-                                }
-                            ]
-                        },
-                        "outputs": {}
-                    },
-                    "inputData": {
-                        "value": {}
-                    },
-                    "height": 93
-                }
-            },
-            "comments": {},
-            "viewport": {
-                "scale": 0.745,
-                "translate": {
-                    "x": -393.47254491253625,
-                    "y": -340.9731989710005
-                }
-            },
-            "updated_at": "2026-09-19T16:18:20.450Z"
-        }
-    }
-}
-```
-
-## GOAL
-
-1. Make sure everything in nomagique is properly Value primitive compatible.
-2. Make sure that things in nomagique are generic building blocks, and not application specifics (that should be defined in the JSON definitions as node inputs)
-   TO MAKE THIS MORE CLEAR, CONSIDER THE FOLLOWING EXAMPLES:
-   - Don't have a "WSSubscribe" node to do the Kraken Instrument subscriptions, instead have a WSMessage node you can configure and can be written to a generic WSConnection.
-   - Don't have a Kraken CLI Paper node, instead have a Shell Execution node, with Command and Params inputs, that can be set in the JSON definition.
-   - Don't have IcebergTable nodes with SYMM specific schema data, instead have generics IcebergTable storage (and related) nodes with the schema as inputs coming from the JSON definition files.
-3. Make sure your JSON definitions are actualy correct, they could have been written when the system was still different because of misunderstandings! They live in signal/definitions.
-3. Make sure that in root.go you compile one single JSON graph into dynamically built (nested) nomagique.Number pipelines (it is fine to have everything in separate JSON files, but in the end they will have to be combined into a single graph).
-4. Make sure the top-level (system) pipeline can be executed and the system comes to life.
-5. Make sure the Pipeline Editor can show the full graph in the Flume Nodegraph Editor.
-6. Make sure that all other Frontend UI components are hooked up to real data again, and for newly introduced components that still use mocked/syntheically generated data, make sure those are hooked up to real data too.
-
-/Users/theapemachine/go/src/github.com/fanfactory/phoneapp <- I already built a system on this once, an API integration system with data transformation and various data store sinks.
-
-https://flume.dev/docs/basic-config
-https://flume.dev/docs/root-node
-https://flume.dev/docs/logic-nodes
-https://flume.dev/docs/saving-nodes
-https://flume.dev/docs/dynamic-nodes
-https://flume.dev/docs/NodeEditor
-https://flume.dev/docs/flume-config
-https://flume.dev/docs/controls
-
-Please do not allow yourself to be lazy, take shortcuts, or allow "fake tests" to be green. We have to make this work now, and we need real tests that are seriously testing things thoroughly, including adverserial scenarios, edge cases, memory leaks, race conditions, etc. 
-
-Now, I need you to understand something, I have no more time, or patience to wait on this. It has been MONTHS. You need to get this finished, and stop being lazy and just chase lint errors, or trust in your fake tests being green. Time is UP!!
+That is the architecture.

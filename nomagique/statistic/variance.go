@@ -3,43 +3,46 @@ package statistic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type VarianceServer struct {
-	Downstream types.Float64Sink
-	count      float64
-	mean       float64
-	m2         float64
+	out   float64
+	count float64
+	mean  float64
+	m2    float64
 }
 
-func (s *VarianceServer) Write(ctx context.Context, call Variance_write) error {
-	a := call.Args().A()
-	s.count++
-	delta := a - s.mean
-	s.mean += delta / s.count
-	delta2 := a - s.mean
-	s.m2 += delta * delta2
+func (srv *VarianceServer) Write(ctx context.Context, call Variance_write) error {
+	inVal := call.Args().In()
+	srv.count++
+	delta := inVal - srv.mean
+	srv.mean += delta / srv.count
+	delta2 := inVal - srv.mean
+	srv.m2 += delta * delta2
+
 	result := float64(0)
-	if s.count > 1 {
-		result = s.m2 / (s.count - 1)
+	if srv.count > 1 {
+		result = srv.m2 / (srv.count - 1)
 	}
 
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = result
 	return nil
 }
 
-func (s *VarianceServer) Done(ctx context.Context, call Variance_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *VarianceServer) Done(ctx context.Context, call Variance_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc variance results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

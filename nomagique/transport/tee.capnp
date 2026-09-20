@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireTee { payload @0 :AnyPointer; offramps @1 :AnyPointer; }
-
 interface Tee {
-  write @0 (payload :WireTee) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

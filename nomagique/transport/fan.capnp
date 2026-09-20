@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireFan { payload @0 :AnyPointer; branches @1 :AnyPointer; }
-
 interface Fan {
-  write @0 (payload :WireFan) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

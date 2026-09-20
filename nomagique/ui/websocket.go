@@ -1,36 +1,50 @@
 package ui
 
 import (
-	"capnproto.org/go/capnp/v3"
+	"bytes"
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type WebSocketServerImpl struct {
-	Downstream func(context.Context, capnp.Ptr) error
+	out []byte
 }
 
 func NewWebSocketServer() *WebSocketServerImpl {
 	return &WebSocketServerImpl{}
 }
 
-func (s *WebSocketServerImpl) Write(ctx context.Context, call WebSocketServer_write) error {
-	args, err := call.Args().Server()
-	if err != nil {
-		// fallback to see if it's named something else
-		return err
-	}
+func NewWebSocketServerImpl() *WebSocketServerImpl {
+	return &WebSocketServerImpl{}
+}
 
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	if s.Downstream != nil {
-		return s.Downstream(ctx, payloadPtr)
-	}
+func (server *WebSocketServerImpl) Write(ctx context.Context, call WebSocketServer_write) error {
+	data, _ := call.Args().In()
+	server.out = bytes.Clone(data)
 	return nil
 }
 
-func (s *WebSocketServerImpl) Done(ctx context.Context, call WebSocketServer_done) error {
+func (server *WebSocketServerImpl) Done(ctx context.Context, call WebSocketServer_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"websocket: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"websocket: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
 	return nil
 }

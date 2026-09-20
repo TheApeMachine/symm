@@ -11,83 +11,6 @@ import (
 	context "context"
 )
 
-type WireSHA256 capnp.Struct
-
-// WireSHA256_TypeID is the unique identifier for the type WireSHA256.
-const WireSHA256_TypeID = 0x9cbcc34b6695d31b
-
-func NewWireSHA256(s *capnp.Segment) (WireSHA256, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSHA256(st), err
-}
-
-func NewRootWireSHA256(s *capnp.Segment) (WireSHA256, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSHA256(st), err
-}
-
-func ReadRootWireSHA256(msg *capnp.Message) (WireSHA256, error) {
-	root, err := msg.Root()
-	return WireSHA256(root.Struct()), err
-}
-
-func (s WireSHA256) String() string {
-	str, _ := text.Marshal(0x9cbcc34b6695d31b, capnp.Struct(s))
-	return str
-}
-
-func (s WireSHA256) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireSHA256) DecodeFromPtr(p capnp.Ptr) WireSHA256 {
-	return WireSHA256(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireSHA256) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireSHA256) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireSHA256) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireSHA256) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireSHA256) Data() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s WireSHA256) HasData() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireSHA256) SetData(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-// WireSHA256_List is a list of WireSHA256.
-type WireSHA256_List = capnp.StructList[WireSHA256]
-
-// NewWireSHA256 creates a new list of WireSHA256.
-func NewWireSHA256_List(s *capnp.Segment, sz int32) (WireSHA256_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireSHA256](l), err
-}
-
-// WireSHA256_Future is a wrapper for a WireSHA256 promised by a client call.
-type WireSHA256_Future struct{ *capnp.Future }
-
-func (f WireSHA256_Future) Struct() (WireSHA256, error) {
-	p, err := f.Future.Ptr()
-	return WireSHA256(p.Struct()), err
-}
-
 type SHA256 capnp.Client
 
 // SHA256_TypeID is the unique identifier for the type SHA256.
@@ -285,7 +208,7 @@ func (c SHA256_done) Args() SHA256_done_Params {
 
 // AllocResults allocates the results struct.
 func (c SHA256_done) AllocResults() (SHA256_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return SHA256_done_Results(r), err
 }
 
@@ -345,28 +268,17 @@ func (s SHA256_write_Params) Message() *capnp.Message {
 func (s SHA256_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s SHA256_write_Params) Payload() (WireSHA256, error) {
+func (s SHA256_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireSHA256(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s SHA256_write_Params) HasPayload() bool {
+func (s SHA256_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s SHA256_write_Params) SetPayload(v WireSHA256) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireSHA256 struct, preferring placement in s's segment.
-func (s SHA256_write_Params) NewPayload() (WireSHA256, error) {
-	ss, err := NewWireSHA256(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireSHA256{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s SHA256_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // SHA256_write_Params_List is a list of SHA256_write_Params.
@@ -384,9 +296,6 @@ type SHA256_write_Params_Future struct{ *capnp.Future }
 func (f SHA256_write_Params_Future) Struct() (SHA256_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return SHA256_write_Params(p.Struct()), err
-}
-func (p SHA256_write_Params_Future) Payload() WireSHA256_Future {
-	return WireSHA256_Future{Future: p.Future.Field(0, nil)}
 }
 
 type SHA256_done_Params capnp.Struct
@@ -460,12 +369,12 @@ type SHA256_done_Results capnp.Struct
 const SHA256_done_Results_TypeID = 0xa08f050e2e3af49f
 
 func NewSHA256_done_Results(s *capnp.Segment) (SHA256_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return SHA256_done_Results(st), err
 }
 
 func NewRootSHA256_done_Results(s *capnp.Segment) (SHA256_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return SHA256_done_Results(st), err
 }
 
@@ -501,13 +410,25 @@ func (s SHA256_done_Results) Message() *capnp.Message {
 func (s SHA256_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s SHA256_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s SHA256_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s SHA256_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // SHA256_done_Results_List is a list of SHA256_done_Results.
 type SHA256_done_Results_List = capnp.StructList[SHA256_done_Results]
 
 // NewSHA256_done_Results creates a new list of SHA256_done_Results.
 func NewSHA256_done_Results_List(s *capnp.Segment, sz int32) (SHA256_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[SHA256_done_Results](l), err
 }
 

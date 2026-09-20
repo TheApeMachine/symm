@@ -3,13 +3,12 @@
 package cognition
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
 )
 
 type BasinKey capnp.Client
@@ -209,7 +208,7 @@ func (c BasinKey_done) Args() BasinKey_done_Params {
 
 // AllocResults allocates the results struct.
 func (c BasinKey_done) AllocResults() (BasinKey_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return BasinKey_done_Results(r), err
 }
 
@@ -383,12 +382,12 @@ type BasinKey_done_Results capnp.Struct
 const BasinKey_done_Results_TypeID = 0xca3096e5529821d9
 
 func NewBasinKey_done_Results(s *capnp.Segment) (BasinKey_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return BasinKey_done_Results(st), err
 }
 
 func NewRootBasinKey_done_Results(s *capnp.Segment) (BasinKey_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return BasinKey_done_Results(st), err
 }
 
@@ -424,13 +423,25 @@ func (s BasinKey_done_Results) Message() *capnp.Message {
 func (s BasinKey_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s BasinKey_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s BasinKey_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s BasinKey_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // BasinKey_done_Results_List is a list of BasinKey_done_Results.
 type BasinKey_done_Results_List = capnp.StructList[BasinKey_done_Results]
 
 // NewBasinKey_done_Results creates a new list of BasinKey_done_Results.
 func NewBasinKey_done_Results_List(s *capnp.Segment, sz int32) (BasinKey_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[BasinKey_done_Results](l), err
 }
 

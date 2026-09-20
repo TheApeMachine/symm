@@ -5,6 +5,6 @@ $Go.package("calculus");
 $Go.import("github.com/theapemachine/symm/nomagique/calculus");
 
 interface RelativeChange {
-  write @0 (a :Float64) -> stream;
-  done @1 ();
+  write @0 (in :Float64, prev :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

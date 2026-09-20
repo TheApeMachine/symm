@@ -209,7 +209,7 @@ func (c DeltaTarget_done) Args() DeltaTarget_done_Params {
 
 // AllocResults allocates the results struct.
 func (c DeltaTarget_done) AllocResults() (DeltaTarget_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return DeltaTarget_done_Results(r), err
 }
 
@@ -373,12 +373,12 @@ type DeltaTarget_done_Results capnp.Struct
 const DeltaTarget_done_Results_TypeID = 0xcc9fd82b5ffe78b8
 
 func NewDeltaTarget_done_Results(s *capnp.Segment) (DeltaTarget_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return DeltaTarget_done_Results(st), err
 }
 
 func NewRootDeltaTarget_done_Results(s *capnp.Segment) (DeltaTarget_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return DeltaTarget_done_Results(st), err
 }
 
@@ -414,13 +414,20 @@ func (s DeltaTarget_done_Results) Message() *capnp.Message {
 func (s DeltaTarget_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s DeltaTarget_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s DeltaTarget_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // DeltaTarget_done_Results_List is a list of DeltaTarget_done_Results.
 type DeltaTarget_done_Results_List = capnp.StructList[DeltaTarget_done_Results]
 
 // NewDeltaTarget_done_Results creates a new list of DeltaTarget_done_Results.
 func NewDeltaTarget_done_Results_List(s *capnp.Segment, sz int32) (DeltaTarget_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[DeltaTarget_done_Results](l), err
 }
 

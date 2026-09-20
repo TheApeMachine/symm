@@ -3,13 +3,13 @@
 package temporal
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type Elapsed capnp.Client
@@ -209,7 +209,7 @@ func (c Elapsed_done) Args() Elapsed_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Elapsed_done) AllocResults() (Elapsed_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Elapsed_done_Results(r), err
 }
 
@@ -365,12 +365,12 @@ type Elapsed_done_Results capnp.Struct
 const Elapsed_done_Results_TypeID = 0xf757b56c00077688
 
 func NewElapsed_done_Results(s *capnp.Segment) (Elapsed_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Elapsed_done_Results(st), err
 }
 
 func NewRootElapsed_done_Results(s *capnp.Segment) (Elapsed_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Elapsed_done_Results(st), err
 }
 
@@ -406,13 +406,20 @@ func (s Elapsed_done_Results) Message() *capnp.Message {
 func (s Elapsed_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Elapsed_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Elapsed_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Elapsed_done_Results_List is a list of Elapsed_done_Results.
 type Elapsed_done_Results_List = capnp.StructList[Elapsed_done_Results]
 
 // NewElapsed_done_Results creates a new list of Elapsed_done_Results.
 func NewElapsed_done_Results_List(s *capnp.Segment, sz int32) (Elapsed_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Elapsed_done_Results](l), err
 }
 

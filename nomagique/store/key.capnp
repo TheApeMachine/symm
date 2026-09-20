@@ -4,5 +4,6 @@ $Go.package("store");
 $Go.import("nomagique/store");
 
 interface Key {
-  extract @0 (payload :AnyPointer) -> (value :Float64, found :Bool);
+  write @0 (in :Data, path :Text) -> stream;
+  done @1 () -> (value :Float64, found :Bool);
 }

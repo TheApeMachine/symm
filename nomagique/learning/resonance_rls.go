@@ -10,12 +10,11 @@ import (
 TaskLearnerServer forecasts or updates a task-head RLS model using the streaming pattern.
 */
 type TaskLearnerServer struct {
-	Downstream func(context.Context, algo.RLSPosterior) error
-
 	state   algo.RLSState
 	predict *algo.RLSPredictionServer
 	update  *algo.RLSUpdateServer
 	lambda  float64
+	out     float64
 }
 
 func NewTaskLearnerServer(dim int, lambda float64) *TaskLearnerServer {
@@ -45,28 +44,21 @@ func NewTaskLearner() *TaskLearnerServer {
 }
 
 func (s *TaskLearnerServer) Evaluate(features []float64, target float64, observed bool) algo.RLSPosterior {
-	// Prepare state design
-	if len(s.state.Design) == len(features)+1 {
-		copy(s.state.Design, features)
-		s.state.Design[len(features)] = 1.0 // Bias
-	}
-	if len(s.state.Design) == len(features) {
-		copy(s.state.Design, features)
-	}
-
+	s.state.Design = features
 	forecast := s.predict.Forecast(s.state)
 
-	var posterior algo.RLSPosterior
 	if !observed {
-		posterior = algo.RLSPosterior{RLSForecast: forecast}
+		return algo.RLSPosterior{RLSForecast: forecast}
 	}
-	if observed {
-		obs := algo.RLSObservation{
-			RLSForecast: forecast,
-			Lambda:      s.lambda,
-			Target:      target,
-		}
-		posterior = s.update.Update(obs)
+
+	obs := algo.RLSObservation{
+		RLSForecast: forecast,
+		Lambda:      s.lambda,
+		Target:      target,
+	}
+	posterior := s.update.Update(obs)
+	if !posterior.Ready {
+		return algo.RLSPosterior{RLSForecast: forecast}
 	}
 
 	s.state = posterior.RLSForecast.RLSState
@@ -74,34 +66,23 @@ func (s *TaskLearnerServer) Evaluate(features []float64, target float64, observe
 }
 
 func (s *TaskLearnerServer) Write(ctx context.Context, call TaskLearner_write) error {
-	args, err := call.Args().Input()
-	if err != nil {
-		return err
-	}
-
-	featuresList, err := args.Features()
-	if err != nil {
-		return err
-	}
-
-	n := featuresList.Len()
-	features := make([]float64, n)
-	for i := 0; i < n; i++ {
-		features[i] = featuresList.At(i)
-	}
-
+	args := call.Args()
+	feature := args.Feature()
 	target := args.Target()
 	observed := args.Observed()
 
-	posterior := s.Evaluate(features, target, observed)
-
-	if s.Downstream != nil {
-		return s.Downstream(ctx, posterior)
-	}
-
+	posterior := s.Evaluate([]float64{feature}, target, observed)
+	s.out = posterior.Innovation
 	return nil
 }
 
 func (s *TaskLearnerServer) Done(ctx context.Context, call TaskLearner_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+
+	results.SetOut(s.out)
+	s.out = 0
 	return nil
 }

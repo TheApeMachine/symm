@@ -11,71 +11,6 @@ import (
 	context "context"
 )
 
-type WireTimestamp capnp.Struct
-
-// WireTimestamp_TypeID is the unique identifier for the type WireTimestamp.
-const WireTimestamp_TypeID = 0xe1eef9c4801ede59
-
-func NewWireTimestamp(s *capnp.Segment) (WireTimestamp, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return WireTimestamp(st), err
-}
-
-func NewRootWireTimestamp(s *capnp.Segment) (WireTimestamp, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return WireTimestamp(st), err
-}
-
-func ReadRootWireTimestamp(msg *capnp.Message) (WireTimestamp, error) {
-	root, err := msg.Root()
-	return WireTimestamp(root.Struct()), err
-}
-
-func (s WireTimestamp) String() string {
-	str, _ := text.Marshal(0xe1eef9c4801ede59, capnp.Struct(s))
-	return str
-}
-
-func (s WireTimestamp) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireTimestamp) DecodeFromPtr(p capnp.Ptr) WireTimestamp {
-	return WireTimestamp(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireTimestamp) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireTimestamp) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireTimestamp) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireTimestamp) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-
-// WireTimestamp_List is a list of WireTimestamp.
-type WireTimestamp_List = capnp.StructList[WireTimestamp]
-
-// NewWireTimestamp creates a new list of WireTimestamp.
-func NewWireTimestamp_List(s *capnp.Segment, sz int32) (WireTimestamp_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[WireTimestamp](l), err
-}
-
-// WireTimestamp_Future is a wrapper for a WireTimestamp promised by a client call.
-type WireTimestamp_Future struct{ *capnp.Future }
-
-func (f WireTimestamp_Future) Struct() (WireTimestamp, error) {
-	p, err := f.Future.Ptr()
-	return WireTimestamp(p.Struct()), err
-}
-
 type Timestamp capnp.Client
 
 // Timestamp_TypeID is the unique identifier for the type Timestamp.
@@ -273,7 +208,7 @@ func (c Timestamp_done) Args() Timestamp_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Timestamp_done) AllocResults() (Timestamp_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Timestamp_done_Results(r), err
 }
 
@@ -333,28 +268,17 @@ func (s Timestamp_write_Params) Message() *capnp.Message {
 func (s Timestamp_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Timestamp_write_Params) Payload() (WireTimestamp, error) {
+func (s Timestamp_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireTimestamp(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Timestamp_write_Params) HasPayload() bool {
+func (s Timestamp_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Timestamp_write_Params) SetPayload(v WireTimestamp) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireTimestamp struct, preferring placement in s's segment.
-func (s Timestamp_write_Params) NewPayload() (WireTimestamp, error) {
-	ss, err := NewWireTimestamp(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireTimestamp{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Timestamp_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Timestamp_write_Params_List is a list of Timestamp_write_Params.
@@ -372,9 +296,6 @@ type Timestamp_write_Params_Future struct{ *capnp.Future }
 func (f Timestamp_write_Params_Future) Struct() (Timestamp_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Timestamp_write_Params(p.Struct()), err
-}
-func (p Timestamp_write_Params_Future) Payload() WireTimestamp_Future {
-	return WireTimestamp_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Timestamp_done_Params capnp.Struct
@@ -448,12 +369,12 @@ type Timestamp_done_Results capnp.Struct
 const Timestamp_done_Results_TypeID = 0xf43cc18b24047478
 
 func NewTimestamp_done_Results(s *capnp.Segment) (Timestamp_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Timestamp_done_Results(st), err
 }
 
 func NewRootTimestamp_done_Results(s *capnp.Segment) (Timestamp_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Timestamp_done_Results(st), err
 }
 
@@ -489,13 +410,25 @@ func (s Timestamp_done_Results) Message() *capnp.Message {
 func (s Timestamp_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Timestamp_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Timestamp_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Timestamp_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Timestamp_done_Results_List is a list of Timestamp_done_Results.
 type Timestamp_done_Results_List = capnp.StructList[Timestamp_done_Results]
 
 // NewTimestamp_done_Results creates a new list of Timestamp_done_Results.
 func NewTimestamp_done_Results_List(s *capnp.Segment, sz int32) (Timestamp_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Timestamp_done_Results](l), err
 }
 

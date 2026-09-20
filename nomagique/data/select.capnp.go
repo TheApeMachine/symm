@@ -9,103 +9,8 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireSelect capnp.Struct
-
-// WireSelect_TypeID is the unique identifier for the type WireSelect.
-const WireSelect_TypeID = 0xf32a99d388e16fbb
-
-func NewWireSelect(s *capnp.Segment) (WireSelect, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireSelect(st), err
-}
-
-func NewRootWireSelect(s *capnp.Segment) (WireSelect, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireSelect(st), err
-}
-
-func ReadRootWireSelect(msg *capnp.Message) (WireSelect, error) {
-	root, err := msg.Root()
-	return WireSelect(root.Struct()), err
-}
-
-func (s WireSelect) String() string {
-	str, _ := text.Marshal(0xf32a99d388e16fbb, capnp.Struct(s))
-	return str
-}
-
-func (s WireSelect) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireSelect) DecodeFromPtr(p capnp.Ptr) WireSelect {
-	return WireSelect(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireSelect) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireSelect) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireSelect) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireSelect) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireSelect) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireSelect) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireSelect) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireSelect) Path() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireSelect) HasPath() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireSelect) PathBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireSelect) SetPath(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-// WireSelect_List is a list of WireSelect.
-type WireSelect_List = capnp.StructList[WireSelect]
-
-// NewWireSelect creates a new list of WireSelect.
-func NewWireSelect_List(s *capnp.Segment, sz int32) (WireSelect_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireSelect](l), err
-}
-
-// WireSelect_Future is a wrapper for a WireSelect promised by a client call.
-type WireSelect_Future struct{ *capnp.Future }
-
-func (f WireSelect_Future) Struct() (WireSelect, error) {
-	p, err := f.Future.Ptr()
-	return WireSelect(p.Struct()), err
-}
-func (p WireSelect_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type Select capnp.Client
 
@@ -122,7 +27,7 @@ func (c Select) Write(ctx context.Context, params func(Select_write_Params) erro
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Select_write_Params(s)) }
 	}
 
@@ -304,7 +209,7 @@ func (c Select_done) Args() Select_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Select_done) AllocResults() (Select_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Select_done_Results(r), err
 }
 
@@ -323,12 +228,12 @@ type Select_write_Params capnp.Struct
 const Select_write_Params_TypeID = 0x9b30bf5d2c99c66f
 
 func NewSelect_write_Params(s *capnp.Segment) (Select_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Select_write_Params(st), err
 }
 
 func NewRootSelect_write_Params(s *capnp.Segment) (Select_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return Select_write_Params(st), err
 }
 
@@ -364,28 +269,35 @@ func (s Select_write_Params) Message() *capnp.Message {
 func (s Select_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Select_write_Params) Select() (WireSelect, error) {
+func (s Select_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireSelect(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Select_write_Params) HasSelect() bool {
+func (s Select_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Select_write_Params) SetSelect(v WireSelect) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s Select_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewSelect sets the select field to a newly
-// allocated WireSelect struct, preferring placement in s's segment.
-func (s Select_write_Params) NewSelect() (WireSelect, error) {
-	ss, err := NewWireSelect(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireSelect{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Select_write_Params) Path() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Select_write_Params) HasPath() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Select_write_Params) PathBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Select_write_Params) SetPath(v string) error {
+	return capnp.Struct(s).SetText(1, v)
 }
 
 // Select_write_Params_List is a list of Select_write_Params.
@@ -393,7 +305,7 @@ type Select_write_Params_List = capnp.StructList[Select_write_Params]
 
 // NewSelect_write_Params creates a new list of Select_write_Params.
 func NewSelect_write_Params_List(s *capnp.Segment, sz int32) (Select_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[Select_write_Params](l), err
 }
 
@@ -403,9 +315,6 @@ type Select_write_Params_Future struct{ *capnp.Future }
 func (f Select_write_Params_Future) Struct() (Select_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Select_write_Params(p.Struct()), err
-}
-func (p Select_write_Params_Future) Select() WireSelect_Future {
-	return WireSelect_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Select_done_Params capnp.Struct
@@ -479,12 +388,12 @@ type Select_done_Results capnp.Struct
 const Select_done_Results_TypeID = 0xcecf644a32eab8ec
 
 func NewSelect_done_Results(s *capnp.Segment) (Select_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Select_done_Results(st), err
 }
 
 func NewRootSelect_done_Results(s *capnp.Segment) (Select_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Select_done_Results(st), err
 }
 
@@ -520,13 +429,20 @@ func (s Select_done_Results) Message() *capnp.Message {
 func (s Select_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Select_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Select_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Select_done_Results_List is a list of Select_done_Results.
 type Select_done_Results_List = capnp.StructList[Select_done_Results]
 
 // NewSelect_done_Results creates a new list of Select_done_Results.
 func NewSelect_done_Results_List(s *capnp.Segment, sz int32) (Select_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Select_done_Results](l), err
 }
 

@@ -1,13 +1,9 @@
 using Go = import "/go.capnp";
-@0xded56e7128c04418;
+@0xf017a47b19b7d519;
 $Go.package("hawkes");
 $Go.import("nomagique/statistic/hawkes");
 
-struct WireSellIntensity {
-  payload @0 :AnyPointer;
-}
-
 interface SellIntensity {
-  write @0 (view :WireSellIntensity) -> stream;
-  done @1 ();
+  write @0 (in :Float64) -> stream;
+  done @1 () -> (out :Float64);
 }

@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireWSWrite { connection @0 :AnyPointer; payload @1 :Data; }
-
 interface WSWrite {
-  write @0 (payload :WireWSWrite) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

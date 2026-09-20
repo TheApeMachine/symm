@@ -11,108 +11,6 @@ import (
 	context "context"
 )
 
-type WireBroadcast capnp.Struct
-
-// WireBroadcast_TypeID is the unique identifier for the type WireBroadcast.
-const WireBroadcast_TypeID = 0xc79541301ef98b17
-
-func NewWireBroadcast(s *capnp.Segment) (WireBroadcast, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireBroadcast(st), err
-}
-
-func NewRootWireBroadcast(s *capnp.Segment) (WireBroadcast, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireBroadcast(st), err
-}
-
-func ReadRootWireBroadcast(msg *capnp.Message) (WireBroadcast, error) {
-	root, err := msg.Root()
-	return WireBroadcast(root.Struct()), err
-}
-
-func (s WireBroadcast) String() string {
-	str, _ := text.Marshal(0xc79541301ef98b17, capnp.Struct(s))
-	return str
-}
-
-func (s WireBroadcast) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireBroadcast) DecodeFromPtr(p capnp.Ptr) WireBroadcast {
-	return WireBroadcast(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireBroadcast) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireBroadcast) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireBroadcast) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireBroadcast) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireBroadcast) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireBroadcast) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireBroadcast) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireBroadcast) Channels() (capnp.TextList, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.TextList(p.List()), err
-}
-
-func (s WireBroadcast) HasChannels() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireBroadcast) SetChannels(v capnp.TextList) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewChannels sets the channels field to a newly
-// allocated capnp.TextList, preferring placement in s's segment.
-func (s WireBroadcast) NewChannels(n int32) (capnp.TextList, error) {
-	l, err := capnp.NewTextList(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.TextList{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
-}
-
-// WireBroadcast_List is a list of WireBroadcast.
-type WireBroadcast_List = capnp.StructList[WireBroadcast]
-
-// NewWireBroadcast creates a new list of WireBroadcast.
-func NewWireBroadcast_List(s *capnp.Segment, sz int32) (WireBroadcast_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireBroadcast](l), err
-}
-
-// WireBroadcast_Future is a wrapper for a WireBroadcast promised by a client call.
-type WireBroadcast_Future struct{ *capnp.Future }
-
-func (f WireBroadcast_Future) Struct() (WireBroadcast, error) {
-	p, err := f.Future.Ptr()
-	return WireBroadcast(p.Struct()), err
-}
-func (p WireBroadcast_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Broadcast capnp.Client
 
 // Broadcast_TypeID is the unique identifier for the type Broadcast.
@@ -310,7 +208,7 @@ func (c Broadcast_done) Args() Broadcast_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Broadcast_done) AllocResults() (Broadcast_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Broadcast_done_Results(r), err
 }
 
@@ -370,28 +268,17 @@ func (s Broadcast_write_Params) Message() *capnp.Message {
 func (s Broadcast_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Broadcast_write_Params) Payload() (WireBroadcast, error) {
+func (s Broadcast_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireBroadcast(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Broadcast_write_Params) HasPayload() bool {
+func (s Broadcast_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Broadcast_write_Params) SetPayload(v WireBroadcast) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireBroadcast struct, preferring placement in s's segment.
-func (s Broadcast_write_Params) NewPayload() (WireBroadcast, error) {
-	ss, err := NewWireBroadcast(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireBroadcast{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Broadcast_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Broadcast_write_Params_List is a list of Broadcast_write_Params.
@@ -409,9 +296,6 @@ type Broadcast_write_Params_Future struct{ *capnp.Future }
 func (f Broadcast_write_Params_Future) Struct() (Broadcast_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Broadcast_write_Params(p.Struct()), err
-}
-func (p Broadcast_write_Params_Future) Payload() WireBroadcast_Future {
-	return WireBroadcast_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Broadcast_done_Params capnp.Struct
@@ -485,12 +369,12 @@ type Broadcast_done_Results capnp.Struct
 const Broadcast_done_Results_TypeID = 0xf38121de37cbe206
 
 func NewBroadcast_done_Results(s *capnp.Segment) (Broadcast_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Broadcast_done_Results(st), err
 }
 
 func NewRootBroadcast_done_Results(s *capnp.Segment) (Broadcast_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Broadcast_done_Results(st), err
 }
 
@@ -526,13 +410,25 @@ func (s Broadcast_done_Results) Message() *capnp.Message {
 func (s Broadcast_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Broadcast_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Broadcast_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Broadcast_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Broadcast_done_Results_List is a list of Broadcast_done_Results.
 type Broadcast_done_Results_List = capnp.StructList[Broadcast_done_Results]
 
 // NewBroadcast_done_Results creates a new list of Broadcast_done_Results.
 func NewBroadcast_done_Results_List(s *capnp.Segment, sz int32) (Broadcast_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Broadcast_done_Results](l), err
 }
 

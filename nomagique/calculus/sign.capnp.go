@@ -3,14 +3,13 @@
 package calculus
 
 import (
-	context "context"
-	math "math"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
 
 type Sign capnp.Client
@@ -210,7 +209,7 @@ func (c Sign_done) Args() Sign_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Sign_done) AllocResults() (Sign_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Sign_done_Results(r), err
 }
 
@@ -270,11 +269,11 @@ func (s Sign_write_Params) Message() *capnp.Message {
 func (s Sign_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Sign_write_Params) A() float64 {
+func (s Sign_write_Params) In() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Sign_write_Params) SetA(v float64) {
+func (s Sign_write_Params) SetIn(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
@@ -366,12 +365,12 @@ type Sign_done_Results capnp.Struct
 const Sign_done_Results_TypeID = 0xf64bb4700a45d20d
 
 func NewSign_done_Results(s *capnp.Segment) (Sign_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Sign_done_Results(st), err
 }
 
 func NewRootSign_done_Results(s *capnp.Segment) (Sign_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Sign_done_Results(st), err
 }
 
@@ -407,13 +406,20 @@ func (s Sign_done_Results) Message() *capnp.Message {
 func (s Sign_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Sign_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Sign_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // Sign_done_Results_List is a list of Sign_done_Results.
 type Sign_done_Results_List = capnp.StructList[Sign_done_Results]
 
 // NewSign_done_Results creates a new list of Sign_done_Results.
 func NewSign_done_Results_List(s *capnp.Segment, sz int32) (Sign_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Sign_done_Results](l), err
 }
 

@@ -2,101 +2,75 @@ package data
 
 import (
 	"context"
-	"strconv"
+
+	"github.com/theapemachine/errnie"
 )
 
-// QualityServer implements Quality_Server from the capnp schema.
-type QualityServer struct{}
+type QualityServer struct {
+	support        float64
+	divergence     float64
+	noiseVariance  float64
+	mahalanobisSNR float64
+	maturity       float64
+}
 
 func NewQuality() *QualityServer {
 	return &QualityServer{}
 }
 
-func (s *QualityServer) Evaluate(ctx context.Context, call Quality_evaluate) error {
-	facts, err := call.Args().Facts()
+func (server *QualityServer) Write(ctx context.Context, call Quality_write) error {
+	args := call.Args()
+	server.support = args.Support()
+	server.divergence = args.Divergence()
+	server.noiseVariance = args.NoiseVariance()
+	server.mahalanobisSNR = args.MahalanobisSNR()
+	server.maturity = args.Maturity()
+	return nil
+}
+
+func (server *QualityServer) Done(ctx context.Context, call Quality_done) error {
+	results, err := call.AllocResults()
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"quality: alloc results failed",
+			err,
+		))
 	}
 
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
+	estimated := server.support > 0 || server.divergence != 0 || server.mahalanobisSNR > 0
+	results.SetEstimated(estimated)
+
+	mat := 1.0
+	var snr float64
+	var snrDefined bool
+
+	if server.noiseVariance > 0 {
+		snr = server.divergence * server.divergence / server.noiseVariance
+		snrDefined = true
 	}
 
-	reading, err := res.NewReading()
-	if err != nil {
-		return err
-	}
+	if server.support > 0 {
+		mat = 0.0
 
-	reading.SetEstimated(facts.HasSupport() || facts.HasDivergence() || facts.HasMahalanobis())
-	reading.SetMaturity(1.0)
+		if server.support > 1 {
+			mat = 1.0 - 1.0/server.support
 
-	if facts.HasDivergence() && facts.HasNoise() && facts.NoiseVariance() > 0 {
-		reading.SetSnr(facts.Divergence() * facts.Divergence() / facts.NoiseVariance())
-		reading.SetSnrDefined(true)
-	}
-
-	if facts.HasSupport() {
-		reading.SetMaturity(0.0)
-
-		if facts.Support() > 1 {
-			reading.SetMaturity(1.0 - 1.0/facts.Support())
-
-			if facts.HasMahalanobis() && facts.MahalanobisSNR() >= 0 {
-				reading.SetSnr(facts.MahalanobisSNR())
-				reading.SetSnrDefined(true)
+			if server.mahalanobisSNR > 0 {
+				snr = server.mahalanobisSNR
+				snrDefined = true
 			}
 		}
 	}
 
-	if !facts.HasSupport() && facts.HasMaturity() {
-		reading.SetMaturity(facts.Maturity())
+	if server.support == 0 && server.maturity > 0 {
+		mat = server.maturity
 	}
 
-	return nil
-}
+	results.SetMaturity(mat)
+	results.SetSnr(snr)
+	results.SetSnrDefined(snrDefined)
 
-// FactsFromMetadata constructs WireQualityFacts from a string metadata map.
-// This is typically called prior to dispatching to the QualityServer.
-func FactsFromMetadata(metadata map[string]string, facts WireQualityFacts) error {
-	if metadata == nil {
-		return nil
-	}
-
-	if val, ok := metadata["support"]; ok {
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.SetSupport(parsed)
-			facts.SetHasSupport(true)
-		}
-	}
-
-	if val, ok := metadata["divergence"]; ok {
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.SetDivergence(parsed)
-			facts.SetHasDivergence(true)
-		}
-	}
-
-	if val, ok := metadata["noise_variance"]; ok {
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.SetNoiseVariance(parsed)
-			facts.SetHasNoise(true)
-		}
-	}
-
-	if val, ok := metadata["mahalanobis_snr"]; ok {
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.SetMahalanobisSNR(parsed)
-			facts.SetHasMahalanobis(true)
-		}
-	}
-
-	if val, ok := metadata["maturity"]; ok {
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			facts.SetMaturity(parsed)
-			facts.SetHasMaturity(true)
-		}
-	}
-
+	*server = QualityServer{}
 	return nil
 }

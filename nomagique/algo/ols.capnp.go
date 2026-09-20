@@ -3,102 +3,14 @@
 package algo
 
 import (
-	context "context"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
-
-type OLSRow capnp.Struct
-
-// OLSRow_TypeID is the unique identifier for the type OLSRow.
-const OLSRow_TypeID = 0xa77c8034856e9a42
-
-func NewOLSRow(s *capnp.Segment) (OLSRow, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return OLSRow(st), err
-}
-
-func NewRootOLSRow(s *capnp.Segment) (OLSRow, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return OLSRow(st), err
-}
-
-func ReadRootOLSRow(msg *capnp.Message) (OLSRow, error) {
-	root, err := msg.Root()
-	return OLSRow(root.Struct()), err
-}
-
-func (s OLSRow) String() string {
-	str, _ := text.Marshal(0xa77c8034856e9a42, capnp.Struct(s))
-	return str
-}
-
-func (s OLSRow) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (OLSRow) DecodeFromPtr(p capnp.Ptr) OLSRow {
-	return OLSRow(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s OLSRow) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s OLSRow) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s OLSRow) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s OLSRow) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s OLSRow) Values() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s OLSRow) HasValues() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s OLSRow) SetValues(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewValues sets the values field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s OLSRow) NewValues(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-
-// OLSRow_List is a list of OLSRow.
-type OLSRow_List = capnp.StructList[OLSRow]
-
-// NewOLSRow creates a new list of OLSRow.
-func NewOLSRow_List(s *capnp.Segment, sz int32) (OLSRow_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[OLSRow](l), err
-}
-
-// OLSRow_Future is a wrapper for a OLSRow promised by a client call.
-type OLSRow_Future struct{ *capnp.Future }
-
-func (f OLSRow_Future) Struct() (OLSRow, error) {
-	p, err := f.Future.Ptr()
-	return OLSRow(p.Struct()), err
-}
 
 type OLS capnp.Client
 
@@ -115,7 +27,7 @@ func (c OLS) Write(ctx context.Context, params func(OLS_write_Params) error) err
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(OLS_write_Params(s)) }
 	}
 
@@ -297,7 +209,7 @@ func (c OLS_done) Args() OLS_done_Params {
 
 // AllocResults allocates the results struct.
 func (c OLS_done) AllocResults() (OLS_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return OLS_done_Results(r), err
 }
 
@@ -316,12 +228,12 @@ type OLS_write_Params capnp.Struct
 const OLS_write_Params_TypeID = 0xd328468e20879dfb
 
 func NewOLS_write_Params(s *capnp.Segment) (OLS_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return OLS_write_Params(st), err
 }
 
 func NewRootOLS_write_Params(s *capnp.Segment) (OLS_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return OLS_write_Params(st), err
 }
 
@@ -357,51 +269,20 @@ func (s OLS_write_Params) Message() *capnp.Message {
 func (s OLS_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s OLS_write_Params) X() (OLSRow_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return OLSRow_List(p.List()), err
+func (s OLS_write_Params) X() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s OLS_write_Params) HasX() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s OLS_write_Params) SetX(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s OLS_write_Params) SetX(v OLSRow_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s OLS_write_Params) Y() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewX sets the x field to a newly
-// allocated OLSRow_List, preferring placement in s's segment.
-func (s OLS_write_Params) NewX(n int32) (OLSRow_List, error) {
-	l, err := NewOLSRow_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return OLSRow_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s OLS_write_Params) Y() (OLSRow_List, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return OLSRow_List(p.List()), err
-}
-
-func (s OLS_write_Params) HasY() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s OLS_write_Params) SetY(v OLSRow_List) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewY sets the y field to a newly
-// allocated OLSRow_List, preferring placement in s's segment.
-func (s OLS_write_Params) NewY(n int32) (OLSRow_List, error) {
-	l, err := NewOLSRow_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return OLSRow_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
+func (s OLS_write_Params) SetY(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
 // OLS_write_Params_List is a list of OLS_write_Params.
@@ -409,7 +290,7 @@ type OLS_write_Params_List = capnp.StructList[OLS_write_Params]
 
 // NewOLS_write_Params creates a new list of OLS_write_Params.
 func NewOLS_write_Params_List(s *capnp.Segment, sz int32) (OLS_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
 	return capnp.StructList[OLS_write_Params](l), err
 }
 
@@ -492,12 +373,12 @@ type OLS_done_Results capnp.Struct
 const OLS_done_Results_TypeID = 0xc0ef22b45a58eb64
 
 func NewOLS_done_Results(s *capnp.Segment) (OLS_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return OLS_done_Results(st), err
 }
 
 func NewRootOLS_done_Results(s *capnp.Segment) (OLS_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return OLS_done_Results(st), err
 }
 
@@ -533,13 +414,20 @@ func (s OLS_done_Results) Message() *capnp.Message {
 func (s OLS_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s OLS_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s OLS_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // OLS_done_Results_List is a list of OLS_done_Results.
 type OLS_done_Results_List = capnp.StructList[OLS_done_Results]
 
 // NewOLS_done_Results creates a new list of OLS_done_Results.
 func NewOLS_done_Results_List(s *capnp.Segment, sz int32) (OLS_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[OLS_done_Results](l), err
 }
 

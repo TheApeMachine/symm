@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/physics");
 
 interface Simulation {
   write @0 (data :Data) -> stream;
-  done @1 ();
+  done @1 () -> (out :Data);
 }

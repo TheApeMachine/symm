@@ -3,46 +3,48 @@ package temporal
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type DelayServer struct {
-	Downstream types.Float64Sink
-	horizon    int
-	buffer     []float64
-	idx        int
+	out     float64
+	horizon int
+	buffer  []float64
+	idx     int
 }
 
-func (s *DelayServer) Write(ctx context.Context, call Delay_write) error {
-	val := call.Args().A()
-	if s.horizon <= 0 {
-		s.horizon = 1
+func (srv *DelayServer) Write(ctx context.Context, call Delay_write) error {
+	inVal := call.Args().In()
+	if srv.horizon <= 0 {
+		srv.horizon = 1
 	}
 
-	if len(s.buffer) < s.horizon {
-		s.buffer = append(s.buffer, val)
+	if len(srv.buffer) < srv.horizon {
+		srv.buffer = append(srv.buffer, inVal)
+		srv.out = inVal
 		return nil
 	}
 
-	delayed := s.buffer[s.idx]
-	s.buffer[s.idx] = val
-	s.idx = (s.idx + 1) % s.horizon
-
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(delayed)
-			return nil
-		})
-	}
+	delayed := srv.buffer[srv.idx]
+	srv.buffer[srv.idx] = inVal
+	srv.idx = (srv.idx + 1) % srv.horizon
+	srv.out = delayed
 	return nil
 }
 
-func (s *DelayServer) Done(ctx context.Context, call Delay_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *DelayServer) Done(ctx context.Context, call Delay_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"temporal: alloc delay results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

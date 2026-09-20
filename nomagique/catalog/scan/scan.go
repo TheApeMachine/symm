@@ -74,9 +74,11 @@ func Tree(directory string) (map[string]catalog.Schema, error) {
 }
 
 type primitiveType struct {
-	Name string
-	T    string
-	U    string
+	Name           string
+	T              string
+	U              string
+	HasDownstream  bool
+	DownstreamKind string
 }
 
 func collect(
@@ -97,11 +99,64 @@ func collect(
 					continue
 				}
 
-				if strings.HasSuffix(typeSpec.Name.Name, "Server") {
+				if strings.HasSuffix(typeSpec.Name.Name, "Server") || strings.HasSuffix(typeSpec.Name.Name, "Impl") {
+					outType := "Float64"
+					inType := "Float64"
+					hasDownstream := false
+					downstreamKind := ""
+
+					if structType, ok := typeSpec.Type.(*ast.StructType); ok && structType.Fields != nil {
+						for _, field := range structType.Fields.List {
+							for _, fieldName := range field.Names {
+								if fieldName.Name == "Downstream" {
+									hasDownstream = true
+									switch ft := field.Type.(type) {
+									case *ast.SelectorExpr:
+										if ft.Sel != nil {
+											selName := ft.Sel.Name
+											downstreamKind = selName
+											if strings.HasPrefix(selName, "Data") {
+												outType = "Data"
+											} else if strings.HasPrefix(selName, "Bool") {
+												outType = "Bool"
+											} else if strings.HasPrefix(selName, "Int64") {
+												outType = "Int64"
+											} else if strings.HasPrefix(selName, "Text") {
+												outType = "Text"
+											} else if strings.HasPrefix(selName, "Float64") {
+												outType = "Float64"
+											}
+										}
+									case *ast.FuncType:
+										outType = "Data"
+										downstreamKind = "func"
+										if ft.Params != nil && len(ft.Params.List) > 1 {
+											firstValParam := ft.Params.List[1]
+											if pt, ok := firstValParam.Type.(*ast.Ident); ok {
+												switch pt.Name {
+												case "float64":
+													outType = "Float64"
+												case "bool":
+													outType = "Bool"
+												case "int64", "int", "uint64":
+													outType = "Int64"
+												case "string":
+													outType = "Text"
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+
 					serverTypes[typeSpec.Name.Name] = primitiveType{
-						Name: typeSpec.Name.Name,
-						T:    "Float64",
-						U:    "Float64",
+						Name:           typeSpec.Name.Name,
+						T:              inType,
+						U:              outType,
+						HasDownstream:  hasDownstream,
+						DownstreamKind: downstreamKind,
 					}
 					continue
 				}
@@ -132,6 +187,26 @@ func collect(
 							U:    simplifyType(uType.String()),
 						}
 					}
+				}
+			}
+		}
+	}
+
+	// Collect receiver methods
+	serverMethods := make(map[string]map[string]bool)
+	for _, file := range loadedPackage.Syntax {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Recv != nil && len(function.Recv.List) > 0 {
+				recvType := function.Recv.List[0].Type
+				if star, ok := recvType.(*ast.StarExpr); ok {
+					recvType = star.X
+				}
+				if ident, ok := recvType.(*ast.Ident); ok {
+					if serverMethods[ident.Name] == nil {
+						serverMethods[ident.Name] = make(map[string]bool)
+					}
+					serverMethods[ident.Name][function.Name.Name] = true
 				}
 			}
 		}
@@ -192,6 +267,21 @@ func collect(
 					dir = filepath.Dir(loadedPackage.GoFiles[0])
 				}
 
+				thing := function.Name.Name
+				if after, ok := strings.CutPrefix(thing, constructorStart); ok {
+					thing = after
+				}
+				hasServer := false
+				if _, ok := serverTypes[thing+"Server"]; ok {
+					hasServer = true
+				}
+				hasImpl := false
+				if _, ok := serverTypes[thing+"Impl"]; ok {
+					hasImpl = true
+				}
+
+				hasWriteMethod := serverMethods[thing+"Server"]["Write"] || serverMethods[thing+"Impl"]["Write"]
+
 				schema := describe(
 					loadedPackage.Name,
 					loadedPackage.PkgPath,
@@ -205,6 +295,11 @@ func collect(
 					stateful,
 					returnsError,
 					injected,
+					primType.HasDownstream,
+					primType.DownstreamKind,
+					hasServer,
+					hasImpl,
+					hasWriteMethod,
 				)
 				into[schema.Op] = schema
 			}
@@ -252,6 +347,11 @@ func describe(
 	stateful bool,
 	returnsError bool,
 	injected []string,
+	hasDownstream bool,
+	downstreamKind string,
+	hasServer bool,
+	hasImpl bool,
+	hasWriteMethod bool,
 ) catalog.Schema {
 	thing := function.Name.Name
 	if after, ok := strings.CutPrefix(thing, constructorStart); ok {
@@ -275,14 +375,34 @@ func describe(
 				}
 			}
 		}
+
+		if capnpPath == "" {
+			for _, f := range files {
+				if strings.HasSuffix(f.Name(), ".capnp") {
+					content, err := os.ReadFile(filepath.Join(dir, f.Name()))
+					if err == nil {
+						cStr := string(content)
+						if strings.Contains(cStr, "interface "+thing+" ") ||
+							strings.Contains(cStr, "interface "+thing+"{") ||
+							strings.Contains(cStr, "interface "+thing+"\n") ||
+							strings.Contains(cStr, "interface "+thing+"\r") {
+							capnpPath = filepath.Join(dir, f.Name())
+							break
+						}
+					}
+				}
+			}
+		}
 	}
 
 	var inputs []catalog.Port
+	capnpWrite := false
+	var outputs []catalog.Port
 	if capnpPath != "" {
 		content, err := os.ReadFile(capnpPath)
 		if err == nil {
-			re := regexp.MustCompile(`write\s+@\d+\s*\((.*?)\)\s*->`)
-			matches := re.FindStringSubmatch(string(content))
+			reMethod := regexp.MustCompile(`(?s)(?:write|poke)\s+@\d+\s*\((.*?)\)\s*->\s*([^;]+);?`)
+			matches := reMethod.FindStringSubmatch(string(content))
 			if len(matches) > 1 {
 				paramsStr := matches[1]
 				parts := strings.Split(paramsStr, ",")
@@ -297,13 +417,80 @@ func describe(
 					if strings.Contains(part, ":") {
 						portType = strings.TrimSpace(strings.Split(part, ":")[1])
 					}
+					rawType := portType
+					if strings.HasPrefix(portType, "Wire") || portType == "AnyPointer" || strings.HasPrefix(portType, "List") {
+						portType = "Data"
+					} else if strings.HasPrefix(portType, "UInt") || strings.HasPrefix(portType, "Int") {
+						portType = "Int64"
+					} else if strings.HasPrefix(portType, "Float") {
+						portType = "Float64"
+					} else if portType == "Text" {
+						portType = "Text"
+					} else if portType == "Bool" {
+						portType = "Bool"
+					} else {
+						portType = "Data"
+					}
 
 					inputs = append(inputs, catalog.Port{
 						Name:        name,
 						Type:        portType,
+						RawType:     rawType,
 						Description: "The " + name + " stream this primitive reads",
 					})
 				}
+
+				if len(matches) > 2 {
+					retStr := strings.TrimSpace(matches[2])
+					if strings.Contains(retStr, "List") || strings.Contains(retStr, "Cell") || strings.Contains(retStr, "Data") || strings.Contains(retStr, "AnyPointer") {
+						outType = "Data"
+					}
+				}
+			}
+
+			reDone := regexp.MustCompile(`(?s)done\s+@\d+\s*\([^)]*\)\s*->\s*\(([^)]+)\)`)
+			matchesDone := reDone.FindStringSubmatch(string(content))
+			if len(matchesDone) > 1 {
+				returnsStr := matchesDone[1]
+				parts := strings.Split(returnsStr, ",")
+				for _, part := range parts {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					name := strings.Split(part, ":")[0]
+					name = strings.TrimSpace(name)
+					portType := outType
+					if strings.Contains(part, ":") {
+						portType = strings.TrimSpace(strings.Split(part, ":")[1])
+					}
+					rawType := portType
+					if strings.HasPrefix(portType, "Wire") || portType == "AnyPointer" || strings.HasPrefix(portType, "List") {
+						portType = "Data"
+					} else if strings.HasPrefix(portType, "UInt") || strings.HasPrefix(portType, "Int") {
+						portType = "Int64"
+					} else if strings.HasPrefix(portType, "Float") {
+						portType = "Float64"
+					} else if portType == "Text" {
+						portType = "Text"
+					} else if portType == "Bool" {
+						portType = "Bool"
+					} else {
+						portType = "Data"
+					}
+
+					outputs = append(outputs, catalog.Port{
+						Name:        name,
+						Type:        portType,
+						RawType:     rawType,
+						Description: "The " + name + " this primitive produces",
+					})
+				}
+			}
+
+			reWrite := regexp.MustCompile(`(?s)write\s+@\d+\s*\((.*?)\)\s*->\s*stream`)
+			if reWrite.MatchString(string(content)) && hasWriteMethod {
+				capnpWrite = true
 			}
 		}
 	}
@@ -376,12 +563,22 @@ func describe(
 		Stateful:          stateful,
 		ReturnsError:      returnsError,
 		InjectedDeps:      injected,
+		CapnpWrite:        capnpWrite,
+		HasDownstream:     hasDownstream,
+		DownstreamKind:    downstreamKind,
+		HasServer:         hasServer,
+		HasImpl:           hasImpl,
 		Inputs:            inputs,
-		Outputs: []catalog.Port{{
-			Name:        "out",
-			Type:        outType,
-			Description: "The run this primitive produces",
-		}},
+		Outputs: func() []catalog.Port {
+			if len(outputs) > 0 {
+				return outputs
+			}
+			return []catalog.Port{{
+				Name:        "out",
+				Type:        outType,
+				Description: "The run this primitive produces",
+			}}
+		}(),
 	}
 
 	return schema

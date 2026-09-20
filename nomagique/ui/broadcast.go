@@ -1,44 +1,46 @@
 package ui
 
 import (
-	"capnproto.org/go/capnp/v3"
+	"bytes"
 	"context"
+
+	"github.com/theapemachine/errnie"
 )
 
 type BroadcastServer struct {
-	Downstream func(context.Context, capnp.Ptr) error
-}
-
-func NewBroadcastServer() *BroadcastServer {
-	return &BroadcastServer{}
-}
-
-func (s *BroadcastServer) Write(ctx context.Context, call Broadcast_write) error {
-	args, err := call.Args().Broadcast()
-	if err != nil {
-		// fallback to see if it's named something else
-		return err
-	}
-
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	var out capnp.Ptr
-	if payloadPtr.IsValid() {
-		out = payloadPtr
-	}
-	if s.Downstream != nil {
-		return s.Downstream(ctx, out)
-	}
-	return nil
-}
-
-func (s *BroadcastServer) Done(ctx context.Context, call Broadcast_done) error {
-	return nil
+	out []byte
 }
 
 func NewBroadcast() *BroadcastServer {
 	return &BroadcastServer{}
+}
+
+func (server *BroadcastServer) Write(ctx context.Context, call Broadcast_write) error {
+	data, _ := call.Args().In()
+	server.out = bytes.Clone(data)
+	return nil
+}
+
+func (server *BroadcastServer) Done(ctx context.Context, call Broadcast_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"broadcast: alloc results failed",
+			err,
+		))
+	}
+
+	if len(server.out) > 0 {
+		if err := results.SetOut(server.out); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"broadcast: set out failed",
+				err,
+			))
+		}
+	}
+
+	server.out = nil
+	return nil
 }

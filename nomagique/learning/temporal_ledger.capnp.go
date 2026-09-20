@@ -12,220 +12,6 @@ import (
 	math "math"
 )
 
-type IssueAction capnp.Struct
-
-// IssueAction_TypeID is the unique identifier for the type IssueAction.
-const IssueAction_TypeID = 0xbe6d3890f5403ca7
-
-func NewIssueAction(s *capnp.Segment) (IssueAction, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
-	return IssueAction(st), err
-}
-
-func NewRootIssueAction(s *capnp.Segment) (IssueAction, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
-	return IssueAction(st), err
-}
-
-func ReadRootIssueAction(msg *capnp.Message) (IssueAction, error) {
-	root, err := msg.Root()
-	return IssueAction(root.Struct()), err
-}
-
-func (s IssueAction) String() string {
-	str, _ := text.Marshal(0xbe6d3890f5403ca7, capnp.Struct(s))
-	return str
-}
-
-func (s IssueAction) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (IssueAction) DecodeFromPtr(p capnp.Ptr) IssueAction {
-	return IssueAction(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s IssueAction) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s IssueAction) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s IssueAction) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s IssueAction) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s IssueAction) Step() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
-}
-
-func (s IssueAction) SetStep(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
-}
-
-func (s IssueAction) Reference() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(8))
-}
-
-func (s IssueAction) SetReference(v float64) {
-	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
-}
-
-func (s IssueAction) Features() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s IssueAction) HasFeatures() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s IssueAction) SetFeatures(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewFeatures sets the features field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s IssueAction) NewFeatures(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s IssueAction) Predictions() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s IssueAction) HasPredictions() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s IssueAction) SetPredictions(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewPredictions sets the predictions field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s IssueAction) NewPredictions(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
-}
-func (s IssueAction) Horizon() int64 {
-	return int64(capnp.Struct(s).Uint64(16))
-}
-
-func (s IssueAction) SetHorizon(v int64) {
-	capnp.Struct(s).SetUint64(16, uint64(v))
-}
-
-// IssueAction_List is a list of IssueAction.
-type IssueAction_List = capnp.StructList[IssueAction]
-
-// NewIssueAction creates a new list of IssueAction.
-func NewIssueAction_List(s *capnp.Segment, sz int32) (IssueAction_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2}, sz)
-	return capnp.StructList[IssueAction](l), err
-}
-
-// IssueAction_Future is a wrapper for a IssueAction promised by a client call.
-type IssueAction_Future struct{ *capnp.Future }
-
-func (f IssueAction_Future) Struct() (IssueAction, error) {
-	p, err := f.Future.Ptr()
-	return IssueAction(p.Struct()), err
-}
-
-type ResolveAction capnp.Struct
-
-// ResolveAction_TypeID is the unique identifier for the type ResolveAction.
-const ResolveAction_TypeID = 0xc932333df0941309
-
-func NewResolveAction(s *capnp.Segment) (ResolveAction, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return ResolveAction(st), err
-}
-
-func NewRootResolveAction(s *capnp.Segment) (ResolveAction, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
-	return ResolveAction(st), err
-}
-
-func ReadRootResolveAction(msg *capnp.Message) (ResolveAction, error) {
-	root, err := msg.Root()
-	return ResolveAction(root.Struct()), err
-}
-
-func (s ResolveAction) String() string {
-	str, _ := text.Marshal(0xc932333df0941309, capnp.Struct(s))
-	return str
-}
-
-func (s ResolveAction) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (ResolveAction) DecodeFromPtr(p capnp.Ptr) ResolveAction {
-	return ResolveAction(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s ResolveAction) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s ResolveAction) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s ResolveAction) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s ResolveAction) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s ResolveAction) Step() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
-}
-
-func (s ResolveAction) SetStep(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
-}
-
-func (s ResolveAction) Reference() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(8))
-}
-
-func (s ResolveAction) SetReference(v float64) {
-	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
-}
-
-// ResolveAction_List is a list of ResolveAction.
-type ResolveAction_List = capnp.StructList[ResolveAction]
-
-// NewResolveAction creates a new list of ResolveAction.
-func NewResolveAction_List(s *capnp.Segment, sz int32) (ResolveAction_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
-	return capnp.StructList[ResolveAction](l), err
-}
-
-// ResolveAction_Future is a wrapper for a ResolveAction promised by a client call.
-type ResolveAction_Future struct{ *capnp.Future }
-
-func (f ResolveAction_Future) Struct() (ResolveAction, error) {
-	p, err := f.Future.Ptr()
-	return ResolveAction(p.Struct()), err
-}
-
 type TemporalLedger capnp.Client
 
 // TemporalLedger_TypeID is the unique identifier for the type TemporalLedger.
@@ -241,7 +27,7 @@ func (c TemporalLedger) Write(ctx context.Context, params func(TemporalLedger_wr
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 32, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(TemporalLedger_write_Params(s)) }
 	}
 
@@ -423,7 +209,7 @@ func (c TemporalLedger_done) Args() TemporalLedger_done_Params {
 
 // AllocResults allocates the results struct.
 func (c TemporalLedger_done) AllocResults() (TemporalLedger_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return TemporalLedger_done_Results(r), err
 }
 
@@ -442,12 +228,12 @@ type TemporalLedger_write_Params capnp.Struct
 const TemporalLedger_write_Params_TypeID = 0xca5f55fae8e13058
 
 func NewTemporalLedger_write_Params(s *capnp.Segment) (TemporalLedger_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 0})
 	return TemporalLedger_write_Params(st), err
 }
 
 func NewRootTemporalLedger_write_Params(s *capnp.Segment) (TemporalLedger_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 0})
 	return TemporalLedger_write_Params(st), err
 }
 
@@ -483,52 +269,36 @@ func (s TemporalLedger_write_Params) Message() *capnp.Message {
 func (s TemporalLedger_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s TemporalLedger_write_Params) Issue() (IssueAction, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return IssueAction(p.Struct()), err
+func (s TemporalLedger_write_Params) IssueStep() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s TemporalLedger_write_Params) HasIssue() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s TemporalLedger_write_Params) SetIssueStep(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
-func (s TemporalLedger_write_Params) SetIssue(v IssueAction) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s TemporalLedger_write_Params) IssueReference() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewIssue sets the issue field to a newly
-// allocated IssueAction struct, preferring placement in s's segment.
-func (s TemporalLedger_write_Params) NewIssue() (IssueAction, error) {
-	ss, err := NewIssueAction(capnp.Struct(s).Segment())
-	if err != nil {
-		return IssueAction{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s TemporalLedger_write_Params) SetIssueReference(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s TemporalLedger_write_Params) Resolve() (ResolveAction, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return ResolveAction(p.Struct()), err
+func (s TemporalLedger_write_Params) ResolveStep() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
 }
 
-func (s TemporalLedger_write_Params) HasResolve() bool {
-	return capnp.Struct(s).HasPtr(1)
+func (s TemporalLedger_write_Params) SetResolveStep(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
 }
 
-func (s TemporalLedger_write_Params) SetResolve(v ResolveAction) error {
-	return capnp.Struct(s).SetPtr(1, capnp.Struct(v).ToPtr())
+func (s TemporalLedger_write_Params) ResolveReference() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
 }
 
-// NewResolve sets the resolve field to a newly
-// allocated ResolveAction struct, preferring placement in s's segment.
-func (s TemporalLedger_write_Params) NewResolve() (ResolveAction, error) {
-	ss, err := NewResolveAction(capnp.Struct(s).Segment())
-	if err != nil {
-		return ResolveAction{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s TemporalLedger_write_Params) SetResolveReference(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
 }
 
 // TemporalLedger_write_Params_List is a list of TemporalLedger_write_Params.
@@ -536,7 +306,7 @@ type TemporalLedger_write_Params_List = capnp.StructList[TemporalLedger_write_Pa
 
 // NewTemporalLedger_write_Params creates a new list of TemporalLedger_write_Params.
 func NewTemporalLedger_write_Params_List(s *capnp.Segment, sz int32) (TemporalLedger_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 0}, sz)
 	return capnp.StructList[TemporalLedger_write_Params](l), err
 }
 
@@ -546,12 +316,6 @@ type TemporalLedger_write_Params_Future struct{ *capnp.Future }
 func (f TemporalLedger_write_Params_Future) Struct() (TemporalLedger_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return TemporalLedger_write_Params(p.Struct()), err
-}
-func (p TemporalLedger_write_Params_Future) Issue() IssueAction_Future {
-	return IssueAction_Future{Future: p.Future.Field(0, nil)}
-}
-func (p TemporalLedger_write_Params_Future) Resolve() ResolveAction_Future {
-	return ResolveAction_Future{Future: p.Future.Field(1, nil)}
 }
 
 type TemporalLedger_done_Params capnp.Struct
@@ -625,12 +389,12 @@ type TemporalLedger_done_Results capnp.Struct
 const TemporalLedger_done_Results_TypeID = 0xc49863ac90f88d6f
 
 func NewTemporalLedger_done_Results(s *capnp.Segment) (TemporalLedger_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return TemporalLedger_done_Results(st), err
 }
 
 func NewRootTemporalLedger_done_Results(s *capnp.Segment) (TemporalLedger_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return TemporalLedger_done_Results(st), err
 }
 
@@ -666,13 +430,20 @@ func (s TemporalLedger_done_Results) Message() *capnp.Message {
 func (s TemporalLedger_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s TemporalLedger_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s TemporalLedger_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // TemporalLedger_done_Results_List is a list of TemporalLedger_done_Results.
 type TemporalLedger_done_Results_List = capnp.StructList[TemporalLedger_done_Results]
 
 // NewTemporalLedger_done_Results creates a new list of TemporalLedger_done_Results.
 func NewTemporalLedger_done_Results_List(s *capnp.Segment, sz int32) (TemporalLedger_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[TemporalLedger_done_Results](l), err
 }
 

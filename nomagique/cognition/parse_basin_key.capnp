@@ -6,5 +6,9 @@ $Go.import("github.com/theapemachine/symm/nomagique/cognition");
 
 interface ParseBasinKey {
   write @0 (key :Data) -> stream;
-  done @1 ();
+  done @1 () -> (
+    class :Data,
+    contextBytes :Data,
+    ok :Bool
+  );
 }

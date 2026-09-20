@@ -11,136 +11,22 @@ import (
 	context "context"
 )
 
-type WireWebRTCServer capnp.Struct
-
-// WireWebRTCServer_TypeID is the unique identifier for the type WireWebRTCServer.
-const WireWebRTCServer_TypeID = 0xac812022392f80b6
-
-func NewWireWebRTCServer(s *capnp.Segment) (WireWebRTCServer, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
-	return WireWebRTCServer(st), err
-}
-
-func NewRootWireWebRTCServer(s *capnp.Segment) (WireWebRTCServer, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
-	return WireWebRTCServer(st), err
-}
-
-func ReadRootWireWebRTCServer(msg *capnp.Message) (WireWebRTCServer, error) {
-	root, err := msg.Root()
-	return WireWebRTCServer(root.Struct()), err
-}
-
-func (s WireWebRTCServer) String() string {
-	str, _ := text.Marshal(0xac812022392f80b6, capnp.Struct(s))
-	return str
-}
-
-func (s WireWebRTCServer) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireWebRTCServer) DecodeFromPtr(p capnp.Ptr) WireWebRTCServer {
-	return WireWebRTCServer(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireWebRTCServer) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireWebRTCServer) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireWebRTCServer) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireWebRTCServer) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireWebRTCServer) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireWebRTCServer) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireWebRTCServer) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireWebRTCServer) Addr() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireWebRTCServer) HasAddr() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireWebRTCServer) AddrBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireWebRTCServer) SetAddr(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-func (s WireWebRTCServer) Path() (string, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.Text(), err
-}
-
-func (s WireWebRTCServer) HasPath() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s WireWebRTCServer) PathBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return p.TextBytes(), err
-}
-
-func (s WireWebRTCServer) SetPath(v string) error {
-	return capnp.Struct(s).SetText(2, v)
-}
-
-// WireWebRTCServer_List is a list of WireWebRTCServer.
-type WireWebRTCServer_List = capnp.StructList[WireWebRTCServer]
-
-// NewWireWebRTCServer creates a new list of WireWebRTCServer.
-func NewWireWebRTCServer_List(s *capnp.Segment, sz int32) (WireWebRTCServer_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3}, sz)
-	return capnp.StructList[WireWebRTCServer](l), err
-}
-
-// WireWebRTCServer_Future is a wrapper for a WireWebRTCServer promised by a client call.
-type WireWebRTCServer_Future struct{ *capnp.Future }
-
-func (f WireWebRTCServer_Future) Struct() (WireWebRTCServer, error) {
-	p, err := f.Future.Ptr()
-	return WireWebRTCServer(p.Struct()), err
-}
-func (p WireWebRTCServer_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type WebRTCServer capnp.Client
 
 // WebRTCServer_TypeID is the unique identifier for the type WebRTCServer.
-const WebRTCServer_TypeID = 0x953fedcb15306111
+const WebRTCServer_TypeID = 0xbbb6a7040e79f0e2
 
 func (c WebRTCServer) Write(ctx context.Context, params func(WebRTCServer_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0x953fedcb15306111,
+			InterfaceID:   0xbbb6a7040e79f0e2,
 			MethodID:      0,
 			InterfaceName: "nomagique/ui/webrtc.capnp:WebRTCServer",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(WebRTCServer_write_Params(s)) }
 	}
 
@@ -152,7 +38,7 @@ func (c WebRTCServer) Done(ctx context.Context, params func(WebRTCServer_done_Pa
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0x953fedcb15306111,
+			InterfaceID:   0xbbb6a7040e79f0e2,
 			MethodID:      1,
 			InterfaceName: "nomagique/ui/webrtc.capnp:WebRTCServer",
 			MethodName:    "done",
@@ -267,7 +153,7 @@ func WebRTCServer_Methods(methods []server.Method, s WebRTCServer_Server) []serv
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0x953fedcb15306111,
+			InterfaceID:   0xbbb6a7040e79f0e2,
 			MethodID:      0,
 			InterfaceName: "nomagique/ui/webrtc.capnp:WebRTCServer",
 			MethodName:    "write",
@@ -279,7 +165,7 @@ func WebRTCServer_Methods(methods []server.Method, s WebRTCServer_Server) []serv
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0x953fedcb15306111,
+			InterfaceID:   0xbbb6a7040e79f0e2,
 			MethodID:      1,
 			InterfaceName: "nomagique/ui/webrtc.capnp:WebRTCServer",
 			MethodName:    "done",
@@ -322,7 +208,7 @@ func (c WebRTCServer_done) Args() WebRTCServer_done_Params {
 
 // AllocResults allocates the results struct.
 func (c WebRTCServer_done) AllocResults() (WebRTCServer_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WebRTCServer_done_Results(r), err
 }
 
@@ -338,15 +224,15 @@ func NewWebRTCServer_List(s *capnp.Segment, sz int32) (WebRTCServer_List, error)
 type WebRTCServer_write_Params capnp.Struct
 
 // WebRTCServer_write_Params_TypeID is the unique identifier for the type WebRTCServer_write_Params.
-const WebRTCServer_write_Params_TypeID = 0x829c7df95a5afa32
+const WebRTCServer_write_Params_TypeID = 0xe188bdb23edb75c4
 
 func NewWebRTCServer_write_Params(s *capnp.Segment) (WebRTCServer_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return WebRTCServer_write_Params(st), err
 }
 
 func NewRootWebRTCServer_write_Params(s *capnp.Segment) (WebRTCServer_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
 	return WebRTCServer_write_Params(st), err
 }
 
@@ -356,7 +242,7 @@ func ReadRootWebRTCServer_write_Params(msg *capnp.Message) (WebRTCServer_write_P
 }
 
 func (s WebRTCServer_write_Params) String() string {
-	str, _ := text.Marshal(0x829c7df95a5afa32, capnp.Struct(s))
+	str, _ := text.Marshal(0xe188bdb23edb75c4, capnp.Struct(s))
 	return str
 }
 
@@ -382,28 +268,35 @@ func (s WebRTCServer_write_Params) Message() *capnp.Message {
 func (s WebRTCServer_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WebRTCServer_write_Params) Server() (WireWebRTCServer, error) {
+func (s WebRTCServer_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireWebRTCServer(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s WebRTCServer_write_Params) HasServer() bool {
+func (s WebRTCServer_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WebRTCServer_write_Params) SetServer(v WireWebRTCServer) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+func (s WebRTCServer_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
-// NewServer sets the server field to a newly
-// allocated WireWebRTCServer struct, preferring placement in s's segment.
-func (s WebRTCServer_write_Params) NewServer() (WireWebRTCServer, error) {
-	ss, err := NewWireWebRTCServer(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireWebRTCServer{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s WebRTCServer_write_Params) Addr() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s WebRTCServer_write_Params) HasAddr() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s WebRTCServer_write_Params) AddrBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s WebRTCServer_write_Params) SetAddr(v string) error {
+	return capnp.Struct(s).SetText(1, v)
 }
 
 // WebRTCServer_write_Params_List is a list of WebRTCServer_write_Params.
@@ -411,7 +304,7 @@ type WebRTCServer_write_Params_List = capnp.StructList[WebRTCServer_write_Params
 
 // NewWebRTCServer_write_Params creates a new list of WebRTCServer_write_Params.
 func NewWebRTCServer_write_Params_List(s *capnp.Segment, sz int32) (WebRTCServer_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
 	return capnp.StructList[WebRTCServer_write_Params](l), err
 }
 
@@ -422,14 +315,11 @@ func (f WebRTCServer_write_Params_Future) Struct() (WebRTCServer_write_Params, e
 	p, err := f.Future.Ptr()
 	return WebRTCServer_write_Params(p.Struct()), err
 }
-func (p WebRTCServer_write_Params_Future) Server() WireWebRTCServer_Future {
-	return WireWebRTCServer_Future{Future: p.Future.Field(0, nil)}
-}
 
 type WebRTCServer_done_Params capnp.Struct
 
 // WebRTCServer_done_Params_TypeID is the unique identifier for the type WebRTCServer_done_Params.
-const WebRTCServer_done_Params_TypeID = 0xdf624855baafeedd
+const WebRTCServer_done_Params_TypeID = 0xd66070cb91478c3b
 
 func NewWebRTCServer_done_Params(s *capnp.Segment) (WebRTCServer_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -447,7 +337,7 @@ func ReadRootWebRTCServer_done_Params(msg *capnp.Message) (WebRTCServer_done_Par
 }
 
 func (s WebRTCServer_done_Params) String() string {
-	str, _ := text.Marshal(0xdf624855baafeedd, capnp.Struct(s))
+	str, _ := text.Marshal(0xd66070cb91478c3b, capnp.Struct(s))
 	return str
 }
 
@@ -494,15 +384,15 @@ func (f WebRTCServer_done_Params_Future) Struct() (WebRTCServer_done_Params, err
 type WebRTCServer_done_Results capnp.Struct
 
 // WebRTCServer_done_Results_TypeID is the unique identifier for the type WebRTCServer_done_Results.
-const WebRTCServer_done_Results_TypeID = 0xb03800307e1a61ed
+const WebRTCServer_done_Results_TypeID = 0xa471866ce50b5e48
 
 func NewWebRTCServer_done_Results(s *capnp.Segment) (WebRTCServer_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WebRTCServer_done_Results(st), err
 }
 
 func NewRootWebRTCServer_done_Results(s *capnp.Segment) (WebRTCServer_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return WebRTCServer_done_Results(st), err
 }
 
@@ -512,7 +402,7 @@ func ReadRootWebRTCServer_done_Results(msg *capnp.Message) (WebRTCServer_done_Re
 }
 
 func (s WebRTCServer_done_Results) String() string {
-	str, _ := text.Marshal(0xb03800307e1a61ed, capnp.Struct(s))
+	str, _ := text.Marshal(0xa471866ce50b5e48, capnp.Struct(s))
 	return str
 }
 
@@ -538,13 +428,25 @@ func (s WebRTCServer_done_Results) Message() *capnp.Message {
 func (s WebRTCServer_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s WebRTCServer_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s WebRTCServer_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s WebRTCServer_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // WebRTCServer_done_Results_List is a list of WebRTCServer_done_Results.
 type WebRTCServer_done_Results_List = capnp.StructList[WebRTCServer_done_Results]
 
 // NewWebRTCServer_done_Results creates a new list of WebRTCServer_done_Results.
 func NewWebRTCServer_done_Results_List(s *capnp.Segment, sz int32) (WebRTCServer_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[WebRTCServer_done_Results](l), err
 }
 

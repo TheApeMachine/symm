@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestAddPrimitive(t *testing.T) {
@@ -14,46 +13,46 @@ func TestAddPrimitive(t *testing.T) {
 		server := arithmetic.NewAdd()
 		So(server, ShouldNotBeNil)
 
-		var (
-			receivedVal  float64
-			receivedDone bool
-		)
-
-		sink := types.NewFloat64Sink(
-			func(ctx context.Context, val float64) error {
-				receivedVal = val
-				return nil
-			},
-			func(ctx context.Context) error {
-				receivedDone = true
-				return nil
-			},
-		)
-
-		server.Downstream = sink
-
 		client := arithmetic.Add_ServerToClient(server)
 		So(client.IsValid(), ShouldBeTrue)
 
 		Convey("When invoking Write with a and b", func() {
-			ctx, _ := types.NextEvaluationContext(context.Background())
+			ctx := context.Background()
 
-			err := client.Write(ctx, func(p arithmetic.Add_write_Params) error {
-				p.SetA(2.5)
-				p.SetB(3.5)
+			err := client.Write(ctx, func(params arithmetic.Add_write_Params) error {
+				params.SetA(2.5)
+				params.SetB(3.5)
 				return nil
 			})
 			So(err, ShouldBeNil)
 
 			err = client.WaitStreaming()
 			So(err, ShouldBeNil)
-			_ = types.Float64Sink(sink).WaitStreaming()
-			So(receivedVal, ShouldEqual, 6.0)
 
-			Convey("When invoking Done, completion propagates downstream", func() {
-				_, release := client.Done(ctx, nil)
-				release()
-				So(receivedDone, ShouldBeTrue)
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+			So(results.Out(), ShouldEqual, 6.0)
+
+			Convey("When performing a second evaluation, previous state is reset", func() {
+				err = client.Write(ctx, func(params arithmetic.Add_write_Params) error {
+					params.SetA(4.0)
+					params.SetB(5.0)
+					return nil
+				})
+				So(err, ShouldBeNil)
+
+				err = client.WaitStreaming()
+				So(err, ShouldBeNil)
+
+				secondFuture, secondRelease := client.Done(ctx, nil)
+				defer secondRelease()
+
+				secondResults, err := secondFuture.Struct()
+				So(err, ShouldBeNil)
+				So(secondResults.Out(), ShouldEqual, 9.0)
 			})
 		})
 	})

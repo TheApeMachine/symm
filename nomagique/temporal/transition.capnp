@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/temporal");
 
 interface Transition {
   write @0 (a :Data) -> stream;
-  done @1 ();
+  done @1 () -> (out :Data);
 }

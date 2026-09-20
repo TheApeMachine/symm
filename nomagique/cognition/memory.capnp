@@ -10,10 +10,10 @@ struct KVPair {
 }
 
 interface Memory {
-  get @0 (key :Data) -> stream;
-  seekPrefix @1 (prefix :Data) -> stream;
-  cas @2 (updates :List(KVPair)) -> stream;
-  getStep @3 () -> stream;
-  incrementStep @4 () -> stream;
+  get @0 (key :Data) -> (value :Data);
+  seekPrefix @1 (prefix :Data) -> (pairs :List(KVPair));
+  cas @2 (updates :List(KVPair)) -> (ok :Bool);
+  getStep @3 () -> (step :UInt64);
+  incrementStep @4 () -> (step :UInt64);
   done @5 ();
 }

@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/learning");
 
 interface IdentityTarget {
   write @0 (past :Float64, current :Float64) -> stream;
-  done @1 ();
+  done @1 () -> (out :Float64);
 }

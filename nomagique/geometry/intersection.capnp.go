@@ -208,7 +208,7 @@ func (c Intersection_done) Args() Intersection_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Intersection_done) AllocResults() (Intersection_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Intersection_done_Results(r), err
 }
 
@@ -388,12 +388,12 @@ type Intersection_done_Results capnp.Struct
 const Intersection_done_Results_TypeID = 0xf847115a7ea16b15
 
 func NewIntersection_done_Results(s *capnp.Segment) (Intersection_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Intersection_done_Results(st), err
 }
 
 func NewRootIntersection_done_Results(s *capnp.Segment) (Intersection_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return Intersection_done_Results(st), err
 }
 
@@ -429,13 +429,20 @@ func (s Intersection_done_Results) Message() *capnp.Message {
 func (s Intersection_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Intersection_done_Results) Out() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Intersection_done_Results) SetOut(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
 
 // Intersection_done_Results_List is a list of Intersection_done_Results.
 type Intersection_done_Results_List = capnp.StructList[Intersection_done_Results]
 
 // NewIntersection_done_Results creates a new list of Intersection_done_Results.
 func NewIntersection_done_Results_List(s *capnp.Segment, sz int32) (Intersection_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[Intersection_done_Results](l), err
 }
 

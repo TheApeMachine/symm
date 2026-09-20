@@ -11,85 +11,6 @@ import (
 	context "context"
 )
 
-type WireDiscard capnp.Struct
-
-// WireDiscard_TypeID is the unique identifier for the type WireDiscard.
-const WireDiscard_TypeID = 0xa19886259287da52
-
-func NewWireDiscard(s *capnp.Segment) (WireDiscard, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireDiscard(st), err
-}
-
-func NewRootWireDiscard(s *capnp.Segment) (WireDiscard, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireDiscard(st), err
-}
-
-func ReadRootWireDiscard(msg *capnp.Message) (WireDiscard, error) {
-	root, err := msg.Root()
-	return WireDiscard(root.Struct()), err
-}
-
-func (s WireDiscard) String() string {
-	str, _ := text.Marshal(0xa19886259287da52, capnp.Struct(s))
-	return str
-}
-
-func (s WireDiscard) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireDiscard) DecodeFromPtr(p capnp.Ptr) WireDiscard {
-	return WireDiscard(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireDiscard) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireDiscard) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireDiscard) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireDiscard) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireDiscard) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireDiscard) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireDiscard) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireDiscard_List is a list of WireDiscard.
-type WireDiscard_List = capnp.StructList[WireDiscard]
-
-// NewWireDiscard creates a new list of WireDiscard.
-func NewWireDiscard_List(s *capnp.Segment, sz int32) (WireDiscard_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireDiscard](l), err
-}
-
-// WireDiscard_Future is a wrapper for a WireDiscard promised by a client call.
-type WireDiscard_Future struct{ *capnp.Future }
-
-func (f WireDiscard_Future) Struct() (WireDiscard, error) {
-	p, err := f.Future.Ptr()
-	return WireDiscard(p.Struct()), err
-}
-func (p WireDiscard_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Discard capnp.Client
 
 // Discard_TypeID is the unique identifier for the type Discard.
@@ -287,7 +208,7 @@ func (c Discard_done) Args() Discard_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Discard_done) AllocResults() (Discard_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Discard_done_Results(r), err
 }
 
@@ -347,28 +268,17 @@ func (s Discard_write_Params) Message() *capnp.Message {
 func (s Discard_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Discard_write_Params) Payload() (WireDiscard, error) {
+func (s Discard_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireDiscard(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Discard_write_Params) HasPayload() bool {
+func (s Discard_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Discard_write_Params) SetPayload(v WireDiscard) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireDiscard struct, preferring placement in s's segment.
-func (s Discard_write_Params) NewPayload() (WireDiscard, error) {
-	ss, err := NewWireDiscard(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireDiscard{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Discard_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Discard_write_Params_List is a list of Discard_write_Params.
@@ -386,9 +296,6 @@ type Discard_write_Params_Future struct{ *capnp.Future }
 func (f Discard_write_Params_Future) Struct() (Discard_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Discard_write_Params(p.Struct()), err
-}
-func (p Discard_write_Params_Future) Payload() WireDiscard_Future {
-	return WireDiscard_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Discard_done_Params capnp.Struct
@@ -462,12 +369,12 @@ type Discard_done_Results capnp.Struct
 const Discard_done_Results_TypeID = 0xb607e008dde3a535
 
 func NewDiscard_done_Results(s *capnp.Segment) (Discard_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Discard_done_Results(st), err
 }
 
 func NewRootDiscard_done_Results(s *capnp.Segment) (Discard_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Discard_done_Results(st), err
 }
 
@@ -503,13 +410,25 @@ func (s Discard_done_Results) Message() *capnp.Message {
 func (s Discard_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Discard_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Discard_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Discard_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Discard_done_Results_List is a list of Discard_done_Results.
 type Discard_done_Results_List = capnp.StructList[Discard_done_Results]
 
 // NewDiscard_done_Results creates a new list of Discard_done_Results.
 func NewDiscard_done_Results_List(s *capnp.Segment, sz int32) (Discard_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Discard_done_Results](l), err
 }
 

@@ -2,34 +2,54 @@ package statistic
 
 import (
 	"context"
+	"math"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type ZScoreServer struct {
-	Downstream types.Float64Sink
-	causalMean *CausalMeanServer
-	causalVar  *CausalVarianceServer
+	out   float64
+	mean  float64
+	m2    float64
+	count float64
 }
 
-func (s *ZScoreServer) Write(ctx context.Context, call ZScore_write) error {
-	a := call.Args().A()
-	result := a
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
+func (srv *ZScoreServer) Write(ctx context.Context, call ZScore_write) error {
+	inVal := call.Args().In()
+	srv.count++
+	delta := inVal - srv.mean
+	srv.mean += delta / srv.count
+	delta2 := inVal - srv.mean
+	srv.m2 += delta * delta2
+
+	if srv.count <= 1 {
+		srv.out = 0
+		return nil
 	}
+
+	variance := srv.m2 / (srv.count - 1)
+	if variance <= 0 {
+		srv.out = 0
+		return nil
+	}
+
+	srv.out = (inVal - srv.mean) / math.Sqrt(variance)
 	return nil
 }
 
-func (s *ZScoreServer) Done(ctx context.Context, call ZScore_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *ZScoreServer) Done(ctx context.Context, call ZScore_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc z_score results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

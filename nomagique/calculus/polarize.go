@@ -3,47 +3,50 @@ package calculus
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type PolarizeServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *PolarizeServer) Write(ctx context.Context, call Polarize_write) error {
-	a := call.Args().A()
-	b := call.Args().B()
-	alpha := a
+func (srv *PolarizeServer) Write(ctx context.Context, call Polarize_write) error {
+	alpha := call.Args().A()
+
 	if alpha < 0 {
 		alpha = 0
 	}
 
-	beta := -a
+	beta := -call.Args().A()
+
 	if beta < 0 {
 		beta = 0
 	}
 
-	if b > 0 {
-		alpha = alpha / (alpha + b)
-		beta = beta / (beta + b)
+	smoothing := call.Args().B()
+
+	if smoothing > 0 {
+		alpha = alpha / (alpha + smoothing)
+		beta = beta / (beta + smoothing)
 	}
 
-	result := alpha - beta
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+	srv.out = alpha - beta
 	return nil
 }
 
-func (s *PolarizeServer) Done(ctx context.Context, call Polarize_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *PolarizeServer) Done(ctx context.Context, call Polarize_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc polarize results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

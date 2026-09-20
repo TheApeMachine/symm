@@ -23,7 +23,7 @@ func TestCompileFlume(t *testing.T) {
 				Nodes: map[string]compiler.Node{
 					"left": {
 						ID:   "left",
-						Type: "data.Source",
+						Type: "test.Float64Source",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
 								"out": {{NodeID: "add", PortName: "a"}},
@@ -32,7 +32,7 @@ func TestCompileFlume(t *testing.T) {
 					},
 					"right": {
 						ID:   "right",
-						Type: "data.Source",
+						Type: "test.Float64Source",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
 								"out": {{NodeID: "add", PortName: "b"}},
@@ -61,19 +61,19 @@ func TestCompileFlume(t *testing.T) {
 
 			var receivedResult float64
 			sinkCapability := types.NewFloat64Sink(
-				func(ctx context.Context, val float64) error {
+				func(ctx context.Context, eval uint64, val float64) error {
 					receivedResult = val
 					return nil
 				},
 				nil,
 			)
-			err = pipeline.ConnectOutput("sink", "out", sinkCapability)
+			err = pipeline.ConnectOutput("sink", "out", capnp.Client(sinkCapability))
 			So(err, ShouldBeNil)
 
 			ctx, _ := types.NextEvaluationContext(context.Background())
-			leftSink, err := pipeline.InputSink("left", "in")
+			leftSink, err := pipeline.Float64InputSink("left", "in")
 			So(err, ShouldBeNil)
-			rightSink, err := pipeline.InputSink("right", "in")
+			rightSink, err := pipeline.Float64InputSink("right", "in")
 			So(err, ShouldBeNil)
 
 			err = leftSink.Write(ctx, func(p types.Float64Sink_write_Params) error {
@@ -178,10 +178,10 @@ func TestCompileFlume(t *testing.T) {
 				Nodes: map[string]compiler.Node{
 					"src": {
 						ID:   "src",
-						Type: "data.Source",
+						Type: "test.Float64Source",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
-								"out": {{NodeID: "atanh", PortName: "a"}},
+								"out": {{NodeID: "atanh", PortName: "in"}},
 							},
 						},
 					},
@@ -219,13 +219,13 @@ func TestCompileFlume(t *testing.T) {
 
 			var finalResult float64
 			sinkCapability := types.NewFloat64Sink(
-				func(ctx context.Context, val float64) error {
+				func(ctx context.Context, eval uint64, val float64) error {
 					finalResult = val
 					return nil
 				},
 				nil,
 			)
-			err = pipeline.ConnectOutput("sink", "out", sinkCapability)
+			err = pipeline.ConnectOutput("sink", "out", capnp.Client(sinkCapability))
 			So(err, ShouldBeNil)
 
 			inputVal := 0.5

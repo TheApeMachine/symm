@@ -11,134 +11,6 @@ import (
 	context "context"
 )
 
-type WireHTTPRequest capnp.Struct
-
-// WireHTTPRequest_TypeID is the unique identifier for the type WireHTTPRequest.
-const WireHTTPRequest_TypeID = 0xcc6113b7fa1b8cf3
-
-func NewWireHTTPRequest(s *capnp.Segment) (WireHTTPRequest, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
-	return WireHTTPRequest(st), err
-}
-
-func NewRootWireHTTPRequest(s *capnp.Segment) (WireHTTPRequest, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
-	return WireHTTPRequest(st), err
-}
-
-func ReadRootWireHTTPRequest(msg *capnp.Message) (WireHTTPRequest, error) {
-	root, err := msg.Root()
-	return WireHTTPRequest(root.Struct()), err
-}
-
-func (s WireHTTPRequest) String() string {
-	str, _ := text.Marshal(0xcc6113b7fa1b8cf3, capnp.Struct(s))
-	return str
-}
-
-func (s WireHTTPRequest) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireHTTPRequest) DecodeFromPtr(p capnp.Ptr) WireHTTPRequest {
-	return WireHTTPRequest(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireHTTPRequest) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireHTTPRequest) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireHTTPRequest) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireHTTPRequest) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireHTTPRequest) Url() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s WireHTTPRequest) HasUrl() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireHTTPRequest) UrlBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s WireHTTPRequest) SetUrl(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s WireHTTPRequest) Method() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireHTTPRequest) HasMethod() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireHTTPRequest) MethodBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireHTTPRequest) SetMethod(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-func (s WireHTTPRequest) Body() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return []byte(p.Data()), err
-}
-
-func (s WireHTTPRequest) HasBody() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s WireHTTPRequest) SetBody(v []byte) error {
-	return capnp.Struct(s).SetData(2, v)
-}
-
-func (s WireHTTPRequest) Headers() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(3)
-}
-
-func (s WireHTTPRequest) HasHeaders() bool {
-	return capnp.Struct(s).HasPtr(3)
-}
-
-func (s WireHTTPRequest) SetHeaders(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(3, v)
-}
-
-// WireHTTPRequest_List is a list of WireHTTPRequest.
-type WireHTTPRequest_List = capnp.StructList[WireHTTPRequest]
-
-// NewWireHTTPRequest creates a new list of WireHTTPRequest.
-func NewWireHTTPRequest_List(s *capnp.Segment, sz int32) (WireHTTPRequest_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4}, sz)
-	return capnp.StructList[WireHTTPRequest](l), err
-}
-
-// WireHTTPRequest_Future is a wrapper for a WireHTTPRequest promised by a client call.
-type WireHTTPRequest_Future struct{ *capnp.Future }
-
-func (f WireHTTPRequest_Future) Struct() (WireHTTPRequest, error) {
-	p, err := f.Future.Ptr()
-	return WireHTTPRequest(p.Struct()), err
-}
-func (p WireHTTPRequest_Future) Headers() *capnp.Future {
-	return p.Future.Field(3, nil)
-}
-
 type HTTPRequest capnp.Client
 
 // HTTPRequest_TypeID is the unique identifier for the type HTTPRequest.
@@ -336,7 +208,7 @@ func (c HTTPRequest_done) Args() HTTPRequest_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HTTPRequest_done) AllocResults() (HTTPRequest_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HTTPRequest_done_Results(r), err
 }
 
@@ -396,28 +268,17 @@ func (s HTTPRequest_write_Params) Message() *capnp.Message {
 func (s HTTPRequest_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HTTPRequest_write_Params) Payload() (WireHTTPRequest, error) {
+func (s HTTPRequest_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireHTTPRequest(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s HTTPRequest_write_Params) HasPayload() bool {
+func (s HTTPRequest_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HTTPRequest_write_Params) SetPayload(v WireHTTPRequest) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireHTTPRequest struct, preferring placement in s's segment.
-func (s HTTPRequest_write_Params) NewPayload() (WireHTTPRequest, error) {
-	ss, err := NewWireHTTPRequest(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireHTTPRequest{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s HTTPRequest_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // HTTPRequest_write_Params_List is a list of HTTPRequest_write_Params.
@@ -435,9 +296,6 @@ type HTTPRequest_write_Params_Future struct{ *capnp.Future }
 func (f HTTPRequest_write_Params_Future) Struct() (HTTPRequest_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return HTTPRequest_write_Params(p.Struct()), err
-}
-func (p HTTPRequest_write_Params_Future) Payload() WireHTTPRequest_Future {
-	return WireHTTPRequest_Future{Future: p.Future.Field(0, nil)}
 }
 
 type HTTPRequest_done_Params capnp.Struct
@@ -511,12 +369,12 @@ type HTTPRequest_done_Results capnp.Struct
 const HTTPRequest_done_Results_TypeID = 0xdd6a3aefd37c668f
 
 func NewHTTPRequest_done_Results(s *capnp.Segment) (HTTPRequest_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HTTPRequest_done_Results(st), err
 }
 
 func NewRootHTTPRequest_done_Results(s *capnp.Segment) (HTTPRequest_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return HTTPRequest_done_Results(st), err
 }
 
@@ -552,13 +410,25 @@ func (s HTTPRequest_done_Results) Message() *capnp.Message {
 func (s HTTPRequest_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s HTTPRequest_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s HTTPRequest_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s HTTPRequest_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // HTTPRequest_done_Results_List is a list of HTTPRequest_done_Results.
 type HTTPRequest_done_Results_List = capnp.StructList[HTTPRequest_done_Results]
 
 // NewHTTPRequest_done_Results creates a new list of HTTPRequest_done_Results.
 func NewHTTPRequest_done_Results_List(s *capnp.Segment, sz int32) (HTTPRequest_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[HTTPRequest_done_Results](l), err
 }
 

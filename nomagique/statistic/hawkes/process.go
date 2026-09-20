@@ -4,40 +4,25 @@ import (
 	"context"
 	"time"
 
-	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
 type ProcessServer struct {
-	state      *path
-	Downstream func(context.Context, *Reading) error
+	state   *path
+	reading Reading
+}
+
+func NewProcess() *ProcessServer {
+	return &ProcessServer{
+		state: &path{samples: make([]sample, 0)},
+	}
 }
 
 func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
-	args, err := call.Args().Process()
-	if err != nil {
-		return err
-	}
-
-	payloadPtr, err := args.Payload()
-	if err != nil {
-		return err
-	}
-
-	if s.Downstream == nil {
-		return nil
-	}
-
-	var event [2]float64
-	if payloadPtr.IsValid() {
-		data := payloadPtr.Data()
-		if len(data) > 0 {
-			_ = sonic.Unmarshal(data, &event)
-		}
-	}
-
-	atNano := int64(event[0])
-	markRaw := event[1]
+	args := call.Args()
+	atNano := int64(args.Time())
+	markRaw := args.Mark()
 
 	if atNano <= 0 {
 		return nil
@@ -61,6 +46,7 @@ func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
 	if mark > 0 {
 		countBuy++
 	}
+
 	if mark <= 0 {
 		countSell++
 	}
@@ -100,15 +86,29 @@ func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
 	s.state.remember(at, atSec, mark)
 	s.state.refit(atSec)
 
-	return s.Downstream(ctx, &reading)
-}
-
-func (s *ProcessServer) Done(ctx context.Context, call Process_done) error {
+	s.reading = reading
 	return nil
 }
 
-func NewProcess() *ProcessServer {
-	return &ProcessServer{
-		state: &path{samples: make([]sample, 0)},
+func (s *ProcessServer) Done(ctx context.Context, call Process_done) error {
+	results, err := call.AllocResults()
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
 	}
+
+	results.SetEventCount(s.reading.EventCount)
+	results.SetBuyCount(s.reading.BuyCount)
+	results.SetSellCount(s.reading.SellCount)
+	results.SetBuyFraction(s.reading.BuyFraction)
+	results.SetSellFraction(s.reading.SellFraction)
+	results.SetArrivalRate(s.reading.ArrivalRate)
+	results.SetBuyRate(s.reading.BuyRate)
+	results.SetSellRate(s.reading.SellRate)
+	results.SetLambda(s.reading.Lambda)
+	results.SetLambdaBuy(s.reading.LambdaBuy)
+	results.SetLambdaSell(s.reading.LambdaSell)
+	results.SetSpectralRadius(s.reading.SpectralRadius)
+
+	s.reading = Reading{}
+	return nil
 }

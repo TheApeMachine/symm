@@ -3,9 +3,7 @@ using Go = import "/go.capnp";
 $Go.package("transport");
 $Go.import("nomagique/transport");
 
-struct WireJSONEncode { payload @0 :AnyPointer; }
-
 interface JSONEncode {
-  write @0 (payload :WireJSONEncode) -> stream;
-  done @1 ();
+  write @0 (in :Data) -> stream;
+  done @1 () -> (out :Data);
 }

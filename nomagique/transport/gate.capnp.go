@@ -11,102 +11,6 @@ import (
 	context "context"
 )
 
-type WireGate capnp.Struct
-
-// WireGate_TypeID is the unique identifier for the type WireGate.
-const WireGate_TypeID = 0xe4e70e1c99b35217
-
-func NewWireGate(s *capnp.Segment) (WireGate, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireGate(st), err
-}
-
-func NewRootWireGate(s *capnp.Segment) (WireGate, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireGate(st), err
-}
-
-func ReadRootWireGate(msg *capnp.Message) (WireGate, error) {
-	root, err := msg.Root()
-	return WireGate(root.Struct()), err
-}
-
-func (s WireGate) String() string {
-	str, _ := text.Marshal(0xe4e70e1c99b35217, capnp.Struct(s))
-	return str
-}
-
-func (s WireGate) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireGate) DecodeFromPtr(p capnp.Ptr) WireGate {
-	return WireGate(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireGate) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireGate) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireGate) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireGate) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireGate) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireGate) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireGate) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-func (s WireGate) Condition() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s WireGate) HasCondition() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s WireGate) ConditionBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s WireGate) SetCondition(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
-// WireGate_List is a list of WireGate.
-type WireGate_List = capnp.StructList[WireGate]
-
-// NewWireGate creates a new list of WireGate.
-func NewWireGate_List(s *capnp.Segment, sz int32) (WireGate_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireGate](l), err
-}
-
-// WireGate_Future is a wrapper for a WireGate promised by a client call.
-type WireGate_Future struct{ *capnp.Future }
-
-func (f WireGate_Future) Struct() (WireGate, error) {
-	p, err := f.Future.Ptr()
-	return WireGate(p.Struct()), err
-}
-func (p WireGate_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
-
 type Gate capnp.Client
 
 // Gate_TypeID is the unique identifier for the type Gate.
@@ -304,7 +208,7 @@ func (c Gate_done) Args() Gate_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Gate_done) AllocResults() (Gate_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Gate_done_Results(r), err
 }
 
@@ -364,28 +268,17 @@ func (s Gate_write_Params) Message() *capnp.Message {
 func (s Gate_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Gate_write_Params) Payload() (WireGate, error) {
+func (s Gate_write_Params) In() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireGate(p.Struct()), err
+	return []byte(p.Data()), err
 }
 
-func (s Gate_write_Params) HasPayload() bool {
+func (s Gate_write_Params) HasIn() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Gate_write_Params) SetPayload(v WireGate) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewPayload sets the payload field to a newly
-// allocated WireGate struct, preferring placement in s's segment.
-func (s Gate_write_Params) NewPayload() (WireGate, error) {
-	ss, err := NewWireGate(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireGate{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s Gate_write_Params) SetIn(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 // Gate_write_Params_List is a list of Gate_write_Params.
@@ -403,9 +296,6 @@ type Gate_write_Params_Future struct{ *capnp.Future }
 func (f Gate_write_Params_Future) Struct() (Gate_write_Params, error) {
 	p, err := f.Future.Ptr()
 	return Gate_write_Params(p.Struct()), err
-}
-func (p Gate_write_Params_Future) Payload() WireGate_Future {
-	return WireGate_Future{Future: p.Future.Field(0, nil)}
 }
 
 type Gate_done_Params capnp.Struct
@@ -479,12 +369,12 @@ type Gate_done_Results capnp.Struct
 const Gate_done_Results_TypeID = 0x9f5cc6256a489aff
 
 func NewGate_done_Results(s *capnp.Segment) (Gate_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Gate_done_Results(st), err
 }
 
 func NewRootGate_done_Results(s *capnp.Segment) (Gate_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Gate_done_Results(st), err
 }
 
@@ -520,13 +410,25 @@ func (s Gate_done_Results) Message() *capnp.Message {
 func (s Gate_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Gate_done_Results) Out() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s Gate_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Gate_done_Results) SetOut(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
 
 // Gate_done_Results_List is a list of Gate_done_Results.
 type Gate_done_Results_List = capnp.StructList[Gate_done_Results]
 
 // NewGate_done_Results creates a new list of Gate_done_Results.
 func NewGate_done_Results_List(s *capnp.Segment, sz int32) (Gate_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Gate_done_Results](l), err
 }
 

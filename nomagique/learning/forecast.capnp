@@ -6,5 +6,11 @@ $Go.import("github.com/theapemachine/symm/nomagique/learning");
 
 interface Forecast {
   write @0 (in :Float64) -> stream;
-  done @1 ();
+  done @1 () -> (
+    out :Float64,
+    mean :Float64,
+    variance :Float64,
+    skewness :Float64,
+    kurtosis :Float64
+  );
 }

@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/calculus");
 
 interface Minimum {
   write @0 (a :Float64, b :Float64) -> stream;
-  done @1 ();
+  done @1 () -> (out :Float64);
 }

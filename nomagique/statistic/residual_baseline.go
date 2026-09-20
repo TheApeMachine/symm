@@ -3,31 +3,31 @@ package statistic
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type ResidualBaselineServer struct {
-	Downstream types.Float64Sink
+	out float64
 }
 
-func (s *ResidualBaselineServer) Write(ctx context.Context, call ResidualBaseline_write) error {
-	a := call.Args().A()
-	result := a
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (srv *ResidualBaselineServer) Write(ctx context.Context, call ResidualBaseline_write) error {
+	srv.out = call.Args().In()
 	return nil
 }
 
-func (s *ResidualBaselineServer) Done(ctx context.Context, call ResidualBaseline_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *ResidualBaselineServer) Done(ctx context.Context, call ResidualBaseline_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"statistic: alloc residual baseline results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

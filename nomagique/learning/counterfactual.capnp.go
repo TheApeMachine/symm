@@ -9,112 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type CounterfactualRow capnp.Struct
-
-// CounterfactualRow_TypeID is the unique identifier for the type CounterfactualRow.
-const CounterfactualRow_TypeID = 0xeac362d56431ae4d
-
-func NewCounterfactualRow(s *capnp.Segment) (CounterfactualRow, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return CounterfactualRow(st), err
-}
-
-func NewRootCounterfactualRow(s *capnp.Segment) (CounterfactualRow, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return CounterfactualRow(st), err
-}
-
-func ReadRootCounterfactualRow(msg *capnp.Message) (CounterfactualRow, error) {
-	root, err := msg.Root()
-	return CounterfactualRow(root.Struct()), err
-}
-
-func (s CounterfactualRow) String() string {
-	str, _ := text.Marshal(0xeac362d56431ae4d, capnp.Struct(s))
-	return str
-}
-
-func (s CounterfactualRow) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (CounterfactualRow) DecodeFromPtr(p capnp.Ptr) CounterfactualRow {
-	return CounterfactualRow(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s CounterfactualRow) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s CounterfactualRow) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s CounterfactualRow) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s CounterfactualRow) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s CounterfactualRow) Values() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.Float64List(p.List()), err
-}
-
-func (s CounterfactualRow) HasValues() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s CounterfactualRow) SetValues(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewValues sets the values field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s CounterfactualRow) NewValues(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-
-// CounterfactualRow_List is a list of CounterfactualRow.
-type CounterfactualRow_List = capnp.StructList[CounterfactualRow]
-
-// NewCounterfactualRow creates a new list of CounterfactualRow.
-func NewCounterfactualRow_List(s *capnp.Segment, sz int32) (CounterfactualRow_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[CounterfactualRow](l), err
-}
-
-// CounterfactualRow_Future is a wrapper for a CounterfactualRow promised by a client call.
-type CounterfactualRow_Future struct{ *capnp.Future }
-
-func (f CounterfactualRow_Future) Struct() (CounterfactualRow, error) {
-	p, err := f.Future.Ptr()
-	return CounterfactualRow(p.Struct()), err
-}
 
 type Counterfactual capnp.Client
 
 // Counterfactual_TypeID is the unique identifier for the type Counterfactual.
-const Counterfactual_TypeID = 0xb1f6b02bfe09e9e8
+const Counterfactual_TypeID = 0xa151fb8da907cc98
 
 func (c Counterfactual) Write(ctx context.Context, params func(Counterfactual_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xb1f6b02bfe09e9e8,
+			InterfaceID:   0xa151fb8da907cc98,
 			MethodID:      0,
 			InterfaceName: "nomagique/learning/counterfactual.capnp:Counterfactual",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 24, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Counterfactual_write_Params(s)) }
 	}
 
@@ -126,7 +39,7 @@ func (c Counterfactual) Done(ctx context.Context, params func(Counterfactual_don
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xb1f6b02bfe09e9e8,
+			InterfaceID:   0xa151fb8da907cc98,
 			MethodID:      1,
 			InterfaceName: "nomagique/learning/counterfactual.capnp:Counterfactual",
 			MethodName:    "done",
@@ -241,7 +154,7 @@ func Counterfactual_Methods(methods []server.Method, s Counterfactual_Server) []
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xb1f6b02bfe09e9e8,
+			InterfaceID:   0xa151fb8da907cc98,
 			MethodID:      0,
 			InterfaceName: "nomagique/learning/counterfactual.capnp:Counterfactual",
 			MethodName:    "write",
@@ -253,7 +166,7 @@ func Counterfactual_Methods(methods []server.Method, s Counterfactual_Server) []
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xb1f6b02bfe09e9e8,
+			InterfaceID:   0xa151fb8da907cc98,
 			MethodID:      1,
 			InterfaceName: "nomagique/learning/counterfactual.capnp:Counterfactual",
 			MethodName:    "done",
@@ -296,7 +209,7 @@ func (c Counterfactual_done) Args() Counterfactual_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Counterfactual_done) AllocResults() (Counterfactual_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return Counterfactual_done_Results(r), err
 }
 
@@ -312,15 +225,15 @@ func NewCounterfactual_List(s *capnp.Segment, sz int32) (Counterfactual_List, er
 type Counterfactual_write_Params capnp.Struct
 
 // Counterfactual_write_Params_TypeID is the unique identifier for the type Counterfactual_write_Params.
-const Counterfactual_write_Params_TypeID = 0x9e64210d2e7f3db5
+const Counterfactual_write_Params_TypeID = 0x8fc119999dc29fa3
 
 func NewCounterfactual_write_Params(s *capnp.Segment) (Counterfactual_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Counterfactual_write_Params(st), err
 }
 
 func NewRootCounterfactual_write_Params(s *capnp.Segment) (Counterfactual_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
 	return Counterfactual_write_Params(st), err
 }
 
@@ -330,7 +243,7 @@ func ReadRootCounterfactual_write_Params(msg *capnp.Message) (Counterfactual_wri
 }
 
 func (s Counterfactual_write_Params) String() string {
-	str, _ := text.Marshal(0x9e64210d2e7f3db5, capnp.Struct(s))
+	str, _ := text.Marshal(0x8fc119999dc29fa3, capnp.Struct(s))
 	return str
 }
 
@@ -356,51 +269,28 @@ func (s Counterfactual_write_Params) Message() *capnp.Message {
 func (s Counterfactual_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Counterfactual_write_Params) History() (CounterfactualRow_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return CounterfactualRow_List(p.List()), err
+func (s Counterfactual_write_Params) Treatment() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s Counterfactual_write_Params) HasHistory() bool {
-	return capnp.Struct(s).HasPtr(0)
+func (s Counterfactual_write_Params) SetTreatment(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s Counterfactual_write_Params) SetHistory(v CounterfactualRow_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+func (s Counterfactual_write_Params) Outcome() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-// NewHistory sets the history field to a newly
-// allocated CounterfactualRow_List, preferring placement in s's segment.
-func (s Counterfactual_write_Params) NewHistory(n int32) (CounterfactualRow_List, error) {
-	l, err := NewCounterfactualRow_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return CounterfactualRow_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s Counterfactual_write_Params) FactualRow() (capnp.Float64List, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.Float64List(p.List()), err
+func (s Counterfactual_write_Params) SetOutcome(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s Counterfactual_write_Params) HasFactualRow() bool {
-	return capnp.Struct(s).HasPtr(1)
+func (s Counterfactual_write_Params) Confounder() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-func (s Counterfactual_write_Params) SetFactualRow(v capnp.Float64List) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewFactualRow sets the factualRow field to a newly
-// allocated capnp.Float64List, preferring placement in s's segment.
-func (s Counterfactual_write_Params) NewFactualRow(n int32) (capnp.Float64List, error) {
-	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.Float64List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
+func (s Counterfactual_write_Params) SetConfounder(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
 // Counterfactual_write_Params_List is a list of Counterfactual_write_Params.
@@ -408,7 +298,7 @@ type Counterfactual_write_Params_List = capnp.StructList[Counterfactual_write_Pa
 
 // NewCounterfactual_write_Params creates a new list of Counterfactual_write_Params.
 func NewCounterfactual_write_Params_List(s *capnp.Segment, sz int32) (Counterfactual_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
 	return capnp.StructList[Counterfactual_write_Params](l), err
 }
 
@@ -423,7 +313,7 @@ func (f Counterfactual_write_Params_Future) Struct() (Counterfactual_write_Param
 type Counterfactual_done_Params capnp.Struct
 
 // Counterfactual_done_Params_TypeID is the unique identifier for the type Counterfactual_done_Params.
-const Counterfactual_done_Params_TypeID = 0x8cfdf57707baf562
+const Counterfactual_done_Params_TypeID = 0x90d80cdc63f70571
 
 func NewCounterfactual_done_Params(s *capnp.Segment) (Counterfactual_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -441,7 +331,7 @@ func ReadRootCounterfactual_done_Params(msg *capnp.Message) (Counterfactual_done
 }
 
 func (s Counterfactual_done_Params) String() string {
-	str, _ := text.Marshal(0x8cfdf57707baf562, capnp.Struct(s))
+	str, _ := text.Marshal(0x90d80cdc63f70571, capnp.Struct(s))
 	return str
 }
 
@@ -488,15 +378,15 @@ func (f Counterfactual_done_Params_Future) Struct() (Counterfactual_done_Params,
 type Counterfactual_done_Results capnp.Struct
 
 // Counterfactual_done_Results_TypeID is the unique identifier for the type Counterfactual_done_Results.
-const Counterfactual_done_Results_TypeID = 0xc3b317cd65d9ab22
+const Counterfactual_done_Results_TypeID = 0xd4200e177bbed93e
 
 func NewCounterfactual_done_Results(s *capnp.Segment) (Counterfactual_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return Counterfactual_done_Results(st), err
 }
 
 func NewRootCounterfactual_done_Results(s *capnp.Segment) (Counterfactual_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return Counterfactual_done_Results(st), err
 }
 
@@ -506,7 +396,7 @@ func ReadRootCounterfactual_done_Results(msg *capnp.Message) (Counterfactual_don
 }
 
 func (s Counterfactual_done_Results) String() string {
-	str, _ := text.Marshal(0xc3b317cd65d9ab22, capnp.Struct(s))
+	str, _ := text.Marshal(0xd4200e177bbed93e, capnp.Struct(s))
 	return str
 }
 
@@ -532,13 +422,28 @@ func (s Counterfactual_done_Results) Message() *capnp.Message {
 func (s Counterfactual_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s Counterfactual_done_Results) Effect() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Counterfactual_done_Results) SetEffect(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Counterfactual_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Counterfactual_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
 
 // Counterfactual_done_Results_List is a list of Counterfactual_done_Results.
 type Counterfactual_done_Results_List = capnp.StructList[Counterfactual_done_Results]
 
 // NewCounterfactual_done_Results creates a new list of Counterfactual_done_Results.
 func NewCounterfactual_done_Results_List(s *capnp.Segment, sz int32) (Counterfactual_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
 	return capnp.StructList[Counterfactual_done_Results](l), err
 }
 

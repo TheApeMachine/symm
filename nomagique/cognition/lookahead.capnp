@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/cognition");
 
 interface Lookahead {
   write @0 (prefix :Data) -> stream;
-  done @1 ();
+  done @1 () -> (seq :Data, logP :Float64);
 }

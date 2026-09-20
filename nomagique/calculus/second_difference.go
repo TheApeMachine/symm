@@ -3,43 +3,31 @@ package calculus
 import (
 	"context"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type SecondDifferenceServer struct {
-	Downstream types.Float64Sink
-	v1         float64
-	v2         float64
-	count      int
+	out float64
 }
 
-func (s *SecondDifferenceServer) Write(ctx context.Context, call SecondDifference_write) error {
-	a := call.Args().A()
-	s.count++
-	d := a - s.v1
-	d2 := d - s.v2
-	s.v2 = d
-	s.v1 = a
-	result := float64(0)
-	if s.count > 2 {
-		result = d2
-	}
-
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (srv *SecondDifferenceServer) Write(ctx context.Context, call SecondDifference_write) error {
+	srv.out = (call.Args().In() - call.Args().Prev1()) - (call.Args().Prev1() - call.Args().Prev2())
 	return nil
 }
 
-func (s *SecondDifferenceServer) Done(ctx context.Context, call SecondDifference_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *SecondDifferenceServer) Done(ctx context.Context, call SecondDifference_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc second_difference results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

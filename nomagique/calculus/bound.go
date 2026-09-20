@@ -4,33 +4,31 @@ import (
 	"context"
 	"math"
 
-	capnp "capnproto.org/go/capnp/v3"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/errnie"
 )
 
 type BoundServer struct {
-	Downstream types.Float64Sink
-	Min        float64
-	Max        float64
+	out float64
 }
 
-func (s *BoundServer) Write(ctx context.Context, call Bound_write) error {
-	a := call.Args().A()
-	result := math.Max(s.Min, math.Min(s.Max, a))
-	if capnp.Client(s.Downstream).IsValid() {
-		return s.Downstream.Write(ctx, func(p types.Float64Sink_write_Params) error {
-			p.SetValue(result)
-			return nil
-		})
-	}
+func (srv *BoundServer) Write(ctx context.Context, call Bound_write) error {
+	srv.out = math.Max(call.Args().Min(), math.Min(call.Args().Max(), call.Args().In()))
 	return nil
 }
 
-func (s *BoundServer) Done(ctx context.Context, call Bound_done) error {
-	if capnp.Client(s.Downstream).IsValid() {
-		_, release := s.Downstream.Done(ctx, nil)
-		release()
+func (srv *BoundServer) Done(ctx context.Context, call Bound_done) error {
+	res, err := call.AllocResults()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"calculus: alloc bound results failed",
+			err,
+		))
 	}
+
+	res.SetOut(srv.out)
+	srv.out = 0
 	return nil
 }
 

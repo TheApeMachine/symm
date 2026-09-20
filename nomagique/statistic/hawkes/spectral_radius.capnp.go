@@ -9,103 +9,25 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	math "math"
 )
-
-type WireSpectralRadius capnp.Struct
-
-// WireSpectralRadius_TypeID is the unique identifier for the type WireSpectralRadius.
-const WireSpectralRadius_TypeID = 0xc349116ee0fca12f
-
-func NewWireSpectralRadius(s *capnp.Segment) (WireSpectralRadius, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSpectralRadius(st), err
-}
-
-func NewRootWireSpectralRadius(s *capnp.Segment) (WireSpectralRadius, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireSpectralRadius(st), err
-}
-
-func ReadRootWireSpectralRadius(msg *capnp.Message) (WireSpectralRadius, error) {
-	root, err := msg.Root()
-	return WireSpectralRadius(root.Struct()), err
-}
-
-func (s WireSpectralRadius) String() string {
-	str, _ := text.Marshal(0xc349116ee0fca12f, capnp.Struct(s))
-	return str
-}
-
-func (s WireSpectralRadius) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (WireSpectralRadius) DecodeFromPtr(p capnp.Ptr) WireSpectralRadius {
-	return WireSpectralRadius(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s WireSpectralRadius) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s WireSpectralRadius) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s WireSpectralRadius) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s WireSpectralRadius) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s WireSpectralRadius) Payload() (capnp.Ptr, error) {
-	return capnp.Struct(s).Ptr(0)
-}
-
-func (s WireSpectralRadius) HasPayload() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s WireSpectralRadius) SetPayload(v capnp.Ptr) error {
-	return capnp.Struct(s).SetPtr(0, v)
-}
-
-// WireSpectralRadius_List is a list of WireSpectralRadius.
-type WireSpectralRadius_List = capnp.StructList[WireSpectralRadius]
-
-// NewWireSpectralRadius creates a new list of WireSpectralRadius.
-func NewWireSpectralRadius_List(s *capnp.Segment, sz int32) (WireSpectralRadius_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireSpectralRadius](l), err
-}
-
-// WireSpectralRadius_Future is a wrapper for a WireSpectralRadius promised by a client call.
-type WireSpectralRadius_Future struct{ *capnp.Future }
-
-func (f WireSpectralRadius_Future) Struct() (WireSpectralRadius, error) {
-	p, err := f.Future.Ptr()
-	return WireSpectralRadius(p.Struct()), err
-}
-func (p WireSpectralRadius_Future) Payload() *capnp.Future {
-	return p.Future.Field(0, nil)
-}
 
 type SpectralRadius capnp.Client
 
 // SpectralRadius_TypeID is the unique identifier for the type SpectralRadius.
-const SpectralRadius_TypeID = 0xfddfb8e076c4ed82
+const SpectralRadius_TypeID = 0x9b6c237fe6efc953
 
 func (c SpectralRadius) Write(ctx context.Context, params func(SpectralRadius_write_Params) error) error {
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xfddfb8e076c4ed82,
+			InterfaceID:   0x9b6c237fe6efc953,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/spectral_radius.capnp:SpectralRadius",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(SpectralRadius_write_Params(s)) }
 	}
 
@@ -117,7 +39,7 @@ func (c SpectralRadius) Done(ctx context.Context, params func(SpectralRadius_don
 
 	s := capnp.Send{
 		Method: capnp.Method{
-			InterfaceID:   0xfddfb8e076c4ed82,
+			InterfaceID:   0x9b6c237fe6efc953,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/spectral_radius.capnp:SpectralRadius",
 			MethodName:    "done",
@@ -232,7 +154,7 @@ func SpectralRadius_Methods(methods []server.Method, s SpectralRadius_Server) []
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xfddfb8e076c4ed82,
+			InterfaceID:   0x9b6c237fe6efc953,
 			MethodID:      0,
 			InterfaceName: "nomagique/statistic/hawkes/spectral_radius.capnp:SpectralRadius",
 			MethodName:    "write",
@@ -244,7 +166,7 @@ func SpectralRadius_Methods(methods []server.Method, s SpectralRadius_Server) []
 
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
-			InterfaceID:   0xfddfb8e076c4ed82,
+			InterfaceID:   0x9b6c237fe6efc953,
 			MethodID:      1,
 			InterfaceName: "nomagique/statistic/hawkes/spectral_radius.capnp:SpectralRadius",
 			MethodName:    "done",
@@ -287,7 +209,7 @@ func (c SpectralRadius_done) Args() SpectralRadius_done_Params {
 
 // AllocResults allocates the results struct.
 func (c SpectralRadius_done) AllocResults() (SpectralRadius_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SpectralRadius_done_Results(r), err
 }
 
@@ -303,15 +225,15 @@ func NewSpectralRadius_List(s *capnp.Segment, sz int32) (SpectralRadius_List, er
 type SpectralRadius_write_Params capnp.Struct
 
 // SpectralRadius_write_Params_TypeID is the unique identifier for the type SpectralRadius_write_Params.
-const SpectralRadius_write_Params_TypeID = 0xa8f02577b9bcf77e
+const SpectralRadius_write_Params_TypeID = 0xa3b1bedc4d80f9ed
 
 func NewSpectralRadius_write_Params(s *capnp.Segment) (SpectralRadius_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SpectralRadius_write_Params(st), err
 }
 
 func NewRootSpectralRadius_write_Params(s *capnp.Segment) (SpectralRadius_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SpectralRadius_write_Params(st), err
 }
 
@@ -321,7 +243,7 @@ func ReadRootSpectralRadius_write_Params(msg *capnp.Message) (SpectralRadius_wri
 }
 
 func (s SpectralRadius_write_Params) String() string {
-	str, _ := text.Marshal(0xa8f02577b9bcf77e, capnp.Struct(s))
+	str, _ := text.Marshal(0xa3b1bedc4d80f9ed, capnp.Struct(s))
 	return str
 }
 
@@ -347,28 +269,12 @@ func (s SpectralRadius_write_Params) Message() *capnp.Message {
 func (s SpectralRadius_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s SpectralRadius_write_Params) View() (WireSpectralRadius, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return WireSpectralRadius(p.Struct()), err
+func (s SpectralRadius_write_Params) In() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s SpectralRadius_write_Params) HasView() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s SpectralRadius_write_Params) SetView(v WireSpectralRadius) error {
-	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
-}
-
-// NewView sets the view field to a newly
-// allocated WireSpectralRadius struct, preferring placement in s's segment.
-func (s SpectralRadius_write_Params) NewView() (WireSpectralRadius, error) {
-	ss, err := NewWireSpectralRadius(capnp.Struct(s).Segment())
-	if err != nil {
-		return WireSpectralRadius{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
-	return ss, err
+func (s SpectralRadius_write_Params) SetIn(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
 // SpectralRadius_write_Params_List is a list of SpectralRadius_write_Params.
@@ -376,7 +282,7 @@ type SpectralRadius_write_Params_List = capnp.StructList[SpectralRadius_write_Pa
 
 // NewSpectralRadius_write_Params creates a new list of SpectralRadius_write_Params.
 func NewSpectralRadius_write_Params_List(s *capnp.Segment, sz int32) (SpectralRadius_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[SpectralRadius_write_Params](l), err
 }
 
@@ -387,14 +293,11 @@ func (f SpectralRadius_write_Params_Future) Struct() (SpectralRadius_write_Param
 	p, err := f.Future.Ptr()
 	return SpectralRadius_write_Params(p.Struct()), err
 }
-func (p SpectralRadius_write_Params_Future) View() WireSpectralRadius_Future {
-	return WireSpectralRadius_Future{Future: p.Future.Field(0, nil)}
-}
 
 type SpectralRadius_done_Params capnp.Struct
 
 // SpectralRadius_done_Params_TypeID is the unique identifier for the type SpectralRadius_done_Params.
-const SpectralRadius_done_Params_TypeID = 0xb91fe44a9f1f68f1
+const SpectralRadius_done_Params_TypeID = 0x9d2629ca66593875
 
 func NewSpectralRadius_done_Params(s *capnp.Segment) (SpectralRadius_done_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -412,7 +315,7 @@ func ReadRootSpectralRadius_done_Params(msg *capnp.Message) (SpectralRadius_done
 }
 
 func (s SpectralRadius_done_Params) String() string {
-	str, _ := text.Marshal(0xb91fe44a9f1f68f1, capnp.Struct(s))
+	str, _ := text.Marshal(0x9d2629ca66593875, capnp.Struct(s))
 	return str
 }
 
@@ -459,15 +362,15 @@ func (f SpectralRadius_done_Params_Future) Struct() (SpectralRadius_done_Params,
 type SpectralRadius_done_Results capnp.Struct
 
 // SpectralRadius_done_Results_TypeID is the unique identifier for the type SpectralRadius_done_Results.
-const SpectralRadius_done_Results_TypeID = 0xa2914bccce54db4c
+const SpectralRadius_done_Results_TypeID = 0xac93a8b9ac13e939
 
 func NewSpectralRadius_done_Results(s *capnp.Segment) (SpectralRadius_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SpectralRadius_done_Results(st), err
 }
 
 func NewRootSpectralRadius_done_Results(s *capnp.Segment) (SpectralRadius_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
 	return SpectralRadius_done_Results(st), err
 }
 
@@ -477,7 +380,7 @@ func ReadRootSpectralRadius_done_Results(msg *capnp.Message) (SpectralRadius_don
 }
 
 func (s SpectralRadius_done_Results) String() string {
-	str, _ := text.Marshal(0xa2914bccce54db4c, capnp.Struct(s))
+	str, _ := text.Marshal(0xac93a8b9ac13e939, capnp.Struct(s))
 	return str
 }
 
@@ -503,13 +406,20 @@ func (s SpectralRadius_done_Results) Message() *capnp.Message {
 func (s SpectralRadius_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s SpectralRadius_done_Results) Out() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s SpectralRadius_done_Results) SetOut(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
 
 // SpectralRadius_done_Results_List is a list of SpectralRadius_done_Results.
 type SpectralRadius_done_Results_List = capnp.StructList[SpectralRadius_done_Results]
 
 // NewSpectralRadius_done_Results creates a new list of SpectralRadius_done_Results.
 func NewSpectralRadius_done_Results_List(s *capnp.Segment, sz int32) (SpectralRadius_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
 	return capnp.StructList[SpectralRadius_done_Results](l), err
 }
 
