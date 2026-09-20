@@ -115,7 +115,7 @@ export const ensureLineageLoaded = (): void => {
 			lineageStore.setState(() => ({ report, error: null, byKey }));
 		})
 		.catch((err) => {
-			lineageStore.setState((state) => ({ ...state, error: String(err) }));
+			lineageStore.setState((state: any) => ({ ...state, error: String(err) }));
 		});
 };
 

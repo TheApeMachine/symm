@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *HMACSHA512Server) Write(ctx context.Context, call HMACSHA512_write) err
 
 func (s *HMACSHA512Server) Done(ctx context.Context, call HMACSHA512_done) error {
 	return nil
+}
+
+
+
+type HMACSHA512Node types.StreamNode[any, any]
+
+func NewHMACSHA512() HMACSHA512Node {
+	server := &HMACSHA512Server{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

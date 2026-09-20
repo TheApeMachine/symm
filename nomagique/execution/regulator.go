@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/bytedance/sonic"
@@ -188,4 +189,19 @@ func (s *RegulatorServer) evaluate(sym string, report *Fill) *PositionState {
 		EntryFee: s.entryFee,
 		Realized: s.realized,
 	}
+}
+
+
+
+type RegulatorNode types.StreamNode[any, any]
+
+func NewRegulator() RegulatorNode {
+	server := &RegulatorServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

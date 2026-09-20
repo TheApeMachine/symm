@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *DiscardServer) Write(ctx context.Context, call Discard_write) error {
 
 func (s *DiscardServer) Done(ctx context.Context, call Discard_done) error {
 	return nil
+}
+
+
+
+type DiscardNode types.StreamNode[any, any]
+
+func NewDiscard() DiscardNode {
+	server := &DiscardServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

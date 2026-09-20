@@ -3,15 +3,134 @@
 package probability
 
 import (
-	context "context"
-	math "math"
-
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
+	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	math "math"
 )
+
+type Reading capnp.Struct
+
+// Reading_TypeID is the unique identifier for the type Reading.
+const Reading_TypeID = 0x84430daef03ecfa8
+
+func NewReading(s *capnp.Segment) (Reading, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
+	return Reading(st), err
+}
+
+func NewRootReading(s *capnp.Segment) (Reading, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
+	return Reading(st), err
+}
+
+func ReadRootReading(msg *capnp.Message) (Reading, error) {
+	root, err := msg.Root()
+	return Reading(root.Struct()), err
+}
+
+func (s Reading) String() string {
+	str, _ := text.Marshal(0x84430daef03ecfa8, capnp.Struct(s))
+	return str
+}
+
+func (s Reading) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Reading) DecodeFromPtr(p capnp.Ptr) Reading {
+	return Reading(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Reading) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Reading) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Reading) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Reading) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Reading) Probabilities() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return capnp.Float64List(p.List()), err
+}
+
+func (s Reading) HasProbabilities() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Reading) SetProbabilities(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewProbabilities sets the probabilities field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s Reading) NewProbabilities(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s Reading) Winner() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s Reading) SetWinner(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s Reading) Confidence() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Reading) SetConfidence(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Reading) Ambiguity() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Reading) SetAmbiguity(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s Reading) Sharpness() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s Reading) SetSharpness(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+// Reading_List is a list of Reading.
+type Reading_List = capnp.StructList[Reading]
+
+// NewReading creates a new list of Reading.
+func NewReading_List(s *capnp.Segment, sz int32) (Reading_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1}, sz)
+	return capnp.StructList[Reading](l), err
+}
+
+// Reading_Future is a wrapper for a Reading promised by a client call.
+type Reading_Future struct{ *capnp.Future }
+
+func (f Reading_Future) Struct() (Reading, error) {
+	p, err := f.Future.Ptr()
+	return Reading(p.Struct()), err
+}
 
 type Distribution capnp.Client
 
@@ -28,7 +147,7 @@ func (c Distribution) Write(ctx context.Context, params func(Distribution_write_
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Distribution_write_Params(s)) }
 	}
 
@@ -229,12 +348,12 @@ type Distribution_write_Params capnp.Struct
 const Distribution_write_Params_TypeID = 0xc7034d51103284c6
 
 func NewDistribution_write_Params(s *capnp.Segment) (Distribution_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Distribution_write_Params(st), err
 }
 
 func NewRootDistribution_write_Params(s *capnp.Segment) (Distribution_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return Distribution_write_Params(st), err
 }
 
@@ -270,12 +389,28 @@ func (s Distribution_write_Params) Message() *capnp.Message {
 func (s Distribution_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Distribution_write_Params) A() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+func (s Distribution_write_Params) In() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return capnp.Float64List(p.List()), err
 }
 
-func (s Distribution_write_Params) SetA(v float64) {
-	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+func (s Distribution_write_Params) HasIn() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Distribution_write_Params) SetIn(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewIn sets the in field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s Distribution_write_Params) NewIn(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
 }
 
 // Distribution_write_Params_List is a list of Distribution_write_Params.
@@ -283,7 +418,7 @@ type Distribution_write_Params_List = capnp.StructList[Distribution_write_Params
 
 // NewDistribution_write_Params creates a new list of Distribution_write_Params.
 func NewDistribution_write_Params_List(s *capnp.Segment, sz int32) (Distribution_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[Distribution_write_Params](l), err
 }
 
@@ -423,4 +558,51 @@ type Distribution_done_Results_Future struct{ *capnp.Future }
 func (f Distribution_done_Results_Future) Struct() (Distribution_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return Distribution_done_Results(p.Struct()), err
+}
+
+const schema_df012110ce3ce448 = "x\xda\xa4\x92\xc1KT_\x14\xc7\xbf\xdf{\xde\xfb\x8d" +
+	" \xf3\xcb\xdb\xcc&!\x86@\x17\xb6\xc8\xd4j!\xa1" +
+	"B-\xda\x04s\x85\x02\xdb\xc4\x1b\xe7i\x17\x9c;\xe3" +
+	"{o\x1a\x84\"\x04!h\xd5&\xd0h\xa1``\x11" +
+	"A\xe1\"\x08\xa1E\x14\xb4(\\\xb4nQ\xeb\xf0?" +
+	"x\xf1\xc6\x1c\x876Q\xed\x0e\x1f.\x9f{\xce\xf9\x9e" +
+	"\xd3\x13\x9c\xf2F\xf2w<(s\xc6\xff/\xdd\x9c\xfb" +
+	"\xbc\xfb\xfa\xca\xe02\xf49\x02^\x0e\x18\x1bT\xfd\x0a" +
+	"^\xba\xf5ib\xefy\xfe\xc2\x0a\xcc\x10\xbd\xf4\xd2\xb7" +
+	"\xf3\x1f\xfbN\xf0\x0b|fo\x8e\xab{,\x9cUY" +
+	"9\xa2J\x04\xd3\xb9\xafo\xe3\xf5\xefO7\xbaD\x81" +
+	"\x1c\xcdD{\xbb\xaf\x96?\\\xbd\xb9\x0d=$\x87\x1e" +
+	"plF^\xb2\xb0(9\xa0P\x93\xbb\x85\x9d\xacJ" +
+	"\xdf\xad\x8c\xf6\x99\xcb\xf2~\xdf\xb3\xff\xdbc\xe9W`" +
+	"aG&1\x93\xbaz-\x98\xb7\x8b\xcd\\8\xdc\x88" +
+	"\xea\x95\xa0b\x17l\xb24\\\xb5q\x12\xd9J3\xb1" +
+	"uwj6h\xb8\xc6\xf8\xc5nT\xad\xbbp`:" +
+	"\x8c\x9b\x0b\x92\xc4\x1d\x89\xff[\xc9t\x18T\xad\x9b\x07" +
+	"\xca\xa4)\x8a\x07x\x04\xf4\xed\x080\xb7\x84fU\x91" +
+	",2c\x0f\xc6\x01s_h\x1e)j\xc5\"\x15\xa0" +
+	"\xd7\xae\x01fUh6\x15\xb5\xa8\"\x05\xd0\x1b\xd3\x80" +
+	"Y\x17\x9ag\x8a\xda\x93\"=@?\xc9\xe0\x96\xd0l" +
+	"+\xa6\x07]\xa1d\x13\x1b\xc6\xfc\x1f,\x0b\xd9\x0b\x95" +
+	"\x95\x93-\xeb\\\x18\xd1\x87\xa2\x0f\xa6\xb3u7g\xab" +
+	"\xa1\x83\xcc\x86\xed7\xbd`\x1a\xd4*v\xbei\x13p" +
+	"\xa9\xc3\xe2\x1bA\xd4pa\x0c\xc6\x1d\xf6/\x0b-\x07" +
+	"QP\xe3\x9f\xec\xf3\xa7\xa3\xd4f\xd9N{\xc4\xef\x8a" +
+	"\x9d\xee\xc5\x9b\xd6\xd8\xc3\xebkzd\x14J\x0f\xe6x" +
+	"xZ<8V}\xec$\x94\xce\xe7J\xad\xc8&\xe1" +
+	"\x14\x8fd\xbdL\xb1\xcc\xbf\x1e\xa6-jO#\xb5\xd8" +
+	"x\x9d\x98\xf3\xfd\x80\xe9\x11\x9a\x01E\xb1\xee\x97\x18~" +
+	"\x04\x00\x00\xff\xffP.\xf1g"
+
+func RegisterSchemaDistribution(reg *schemas.Registry) {
+	reg.Register(&schemas.Schema{
+		String: schema_df012110ce3ce448,
+		Nodes: []uint64{
+			0x812555bbd1d566a4,
+			0x84430daef03ecfa8,
+			0xa1aaeea073c4e366,
+			0xb47656ca81b8d1f0,
+			0xc7034d51103284c6,
+		},
+		Compressed: true,
+	})
 }

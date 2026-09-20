@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *JSONEncodeServer) Write(ctx context.Context, call JSONEncode_write) err
 
 func (s *JSONEncodeServer) Done(ctx context.Context, call JSONEncode_done) error {
 	return nil
+}
+
+
+
+type JSONEncodeNode types.StreamNode[any, any]
+
+func NewJSONEncode() JSONEncodeNode {
+	server := &JSONEncodeServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

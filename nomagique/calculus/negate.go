@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -17,4 +18,19 @@ func (s *NegateServer) Write(ctx context.Context, call Negate_write) error {
 
 func (s *NegateServer) Done(ctx context.Context, call Negate_done) error {
 	return nil
+}
+
+
+
+type NegateNode types.StreamNode[any, any]
+
+func NewNegate() NegateNode {
+	server := &NegateServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

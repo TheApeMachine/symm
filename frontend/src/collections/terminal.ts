@@ -39,28 +39,28 @@ export const terminalStore = createStore(
 	},
 	({ setState }) => ({
 		toggleScanlines: () =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				scanlines: !prev.scanlines,
 			})),
 		selectSource: (selectedSource: string) =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				selectedSource,
 			})),
 		inspectSource: (source: string) =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				selectedSource: source,
 				inspectorSource: source,
 			})),
 		closeInspect: () =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				inspectorSource: null,
 			})),
 		openPalette: () =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				paletteOpen: true,
 				paletteMode: "all",
@@ -68,7 +68,7 @@ export const terminalStore = createStore(
 				paletteIndex: 0,
 			})),
 		openSymbolPalette: () =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				paletteOpen: true,
 				paletteMode: "symbols",
@@ -76,33 +76,33 @@ export const terminalStore = createStore(
 				paletteIndex: 0,
 			})),
 		closePalette: () =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				paletteOpen: false,
 			})),
 		setPaletteQuery: (paletteQuery: string) =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				paletteQuery,
 				paletteIndex: 0,
 			})),
 		bumpPaletteIndex: (delta: number) =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				paletteIndex: prev.paletteIndex + delta,
 			})),
 		selectFocusSymbol: (focusSymbol: string) =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				focusSymbol,
 			})),
 		openThesis: (thesisSymbol: string) =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				thesisSymbol,
 			})),
 		closeThesis: () =>
-			setState((prev) => ({
+			setState((prev: any) => ({
 				...prev,
 				thesisSymbol: null,
 			})),

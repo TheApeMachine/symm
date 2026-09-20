@@ -1,6 +1,7 @@
 package temporal
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -25,4 +26,19 @@ func (s *ElapsedServer) Write(ctx context.Context, call Elapsed_write) error {
 
 func (s *ElapsedServer) Done(ctx context.Context, call Elapsed_done) error {
 	return nil
+}
+
+
+
+type ElapsedNode types.StreamNode[any, any]
+
+func NewElapsed() ElapsedNode {
+	server := &ElapsedServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

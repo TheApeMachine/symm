@@ -1,6 +1,7 @@
 package temporal
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -33,4 +34,19 @@ func (s *VelocityServer) Write(ctx context.Context, call Velocity_write) error {
 
 func (s *VelocityServer) Done(ctx context.Context, call Velocity_done) error {
 	return nil
+}
+
+
+
+type VelocityNode types.StreamNode[any, any]
+
+func NewVelocity() VelocityNode {
+	server := &VelocityServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

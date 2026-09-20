@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
 
 func (s *ProcessServer) Done(ctx context.Context, call Process_done) error {
 	return nil
+}
+
+
+
+type ProcessNode types.StreamNode[any, any]
+
+func NewProcess() ProcessNode {
+	server := &ProcessServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

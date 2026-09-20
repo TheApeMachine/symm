@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
-import { positionStore, tradeHistoryStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import type { TradeRecord } from "#/collections/types";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
@@ -150,8 +150,8 @@ const fromRecord = (record: TradeRecord): JournalTradeEntry | null => {
 
 /*
 JournalSurface is the record of what the desk actually did. Closed trades are
-merged from two sources: the live positionStore ring buffer (frames still
-in the last-50-publishes window) and tradeHistoryStore (the full persisted
+merged from two sources: the live signals.position ring buffer (frames still
+in the last-50-publishes window) and signals.trades (the full persisted
 position_trades table, fetched once on mount from GET /trades) — so a trade
 survives on screen long after its live frame has been evicted, and history
 from prior sessions shows up immediately.
@@ -167,7 +167,7 @@ export const JournalSurface = () => {
 
 				const trades = (await response.json()) as TradeRecord[] | null;
 				if (!cancelled && trades) {
-					tradeHistoryStore.setState(() => trades);
+					signals.trades.setState(() => trades as any);
 				}
 			} catch {
 				// The hub may still be booting; a later mount re-fetches.
@@ -183,9 +183,9 @@ export const JournalSurface = () => {
 		};
 	}, []);
 
-	const history = useSelector(tradeHistoryStore, (state) => state);
+	const history = useSelector(signals.trades, (state) => state);
 
-	const { activeLots, closedTrades } = useSelector(positionStore, (state) => {
+	const { activeLots, closedTrades } = useSelector(signals.position, (state) => {
 		const activeMap = new Map<string, ActiveLotEntry>();
 		const closedMap = new Map<string, JournalTradeEntry>();
 

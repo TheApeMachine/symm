@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { strategyStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	setDecisionsPendingFocus,
@@ -21,7 +21,7 @@ type DecisionRow = {
 };
 
 export const Decisions = () => {
-	const decisions = useSelector(strategyStore, (stratState: any) => {
+	const decisions = useSelector(signals.strategy, (stratState: any) => {
 		const merged = new Map<string, DecisionRow>();
 		const frames =
 			typeof stratState?.toArray === "function"

@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -19,4 +20,19 @@ func (s *ResidualBaselineServer) Write(ctx context.Context, call ResidualBaselin
 
 func (s *ResidualBaselineServer) Done(ctx context.Context, call ResidualBaseline_done) error {
 	return nil
+}
+
+
+
+type ResidualBaselineNode types.StreamNode[any, any]
+
+func NewResidualBaseline() ResidualBaselineNode {
+	server := &ResidualBaselineServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

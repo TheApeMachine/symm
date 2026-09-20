@@ -38,7 +38,7 @@ func (s *AtServer) Execute(ctx context.Context, call At_execute) error {
 
 type AtNode types.StreamNode[any, any]
 
-func NewAtNode(index types.Integer) AtNode {
+func NewAt(index types.Integer) AtNode {
 	server := NewAtServer()
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		_, err := server.Evaluate(ctx, in)
@@ -49,3 +49,5 @@ func NewAtNode(index types.Integer) AtNode {
 		}
 	})
 }
+
+

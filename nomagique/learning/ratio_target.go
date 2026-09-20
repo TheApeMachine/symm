@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -30,4 +31,19 @@ func (s *RatioTargetServer) WriteParams(ctx context.Context, callArgs RatioTarge
 
 func (s *RatioTargetServer) Done(ctx context.Context, call RatioTarget_done) error {
 	return nil
+}
+
+
+
+type RatioTargetNode types.StreamNode[any, any]
+
+func NewRatioTarget() RatioTargetNode {
+	server := &RatioTargetServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

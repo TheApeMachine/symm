@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -24,4 +25,19 @@ func (s *DeltaTargetServer) WriteParams(ctx context.Context, callArgs DeltaTarge
 
 func (s *DeltaTargetServer) Done(ctx context.Context, call DeltaTarget_done) error {
 	return nil
+}
+
+
+
+type DeltaTargetNode types.StreamNode[any, any]
+
+func NewDeltaTarget() DeltaTargetNode {
+	server := &DeltaTargetServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

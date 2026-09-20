@@ -1,6 +1,6 @@
 import * as flatbuffers from "flatbuffers";
 import { describe, expect, it } from "vitest";
-import { resonanceStore, symbolsAtom } from "#/collections/app";
+import { signals, symbolsAtom } from "#/collections/app";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
 import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrameT } from "#/providers/telemetry/telemetry/measurements-frame";
@@ -10,7 +10,7 @@ import { ResonanceFrameT } from "#/providers/telemetry/telemetry/resonance-frame
 import { dispatchResonanceBuffer, dispatchResonanceRow } from "./rtc";
 
 describe("rtc dispatchResonanceRow", () => {
-	it("stores a ringbuffer per symbol in resonanceStore and tracks symbols", () => {
+	it("stores a ringbuffer per symbol in signals.resonance and tracks symbols", () => {
 		const mockMeasurement = new MeasurementT(
 			"m1",
 			"resonance",
@@ -36,9 +36,9 @@ describe("rtc dispatchResonanceRow", () => {
 
 		dispatchResonanceRow(mockRow);
 
-		expect(resonanceStore.state["BTC/USD"]).toBeDefined();
-		expect(resonanceStore.state["BTC/USD"].getBufferLength()).toBe(1);
-		expect(resonanceStore.state["BTC/USD"].toArray()[0]).toEqual(mockMeasurement);
+		expect(signals.resonance.state["BTC/USD"]).toBeDefined();
+		expect(signals.resonance.state["BTC/USD"].getBufferLength()).toBe(1);
+		expect(signals.resonance.state["BTC/USD"].toArray()[0]).toEqual(mockMeasurement);
 		expect(symbolsAtom.get()).toContain("BTC/USD");
 	});
 
@@ -68,9 +68,9 @@ describe("rtc dispatchResonanceRow", () => {
 
 		dispatchResonanceRow(mockRow);
 
-		expect(resonanceStore.state["ETH/USD"]).toBeDefined();
-		expect(resonanceStore.state["ETH/USD"].getBufferLength()).toBe(1);
-		expect(resonanceStore.state["ETH/USD"].toArray()[0]).toEqual(ethMeasurement);
+		expect(signals.resonance.state["ETH/USD"]).toBeDefined();
+		expect(signals.resonance.state["ETH/USD"].getBufferLength()).toBe(1);
+		expect(signals.resonance.state["ETH/USD"].toArray()[0]).toEqual(ethMeasurement);
 		expect(symbolsAtom.get()).toContain("ETH/USD");
 	});
 
@@ -102,8 +102,8 @@ describe("rtc dispatchResonanceRow", () => {
 		const buffer = new flatbuffers.ByteBuffer(builder.asUint8Array());
 		dispatchResonanceBuffer(buffer);
 
-		expect(resonanceStore.state["SOL/USD"]).toBeDefined();
-		expect(resonanceStore.state["SOL/USD"].toArray().find((r) => r.symbol === "SOL/USD")).toBeDefined();
+		expect(signals.resonance.state["SOL/USD"]).toBeDefined();
+		expect(signals.resonance.state["SOL/USD"].toArray().find((r: any) => r.symbol === "SOL/USD")).toBeDefined();
 		expect(symbolsAtom.get()).toContain("SOL/USD");
 	});
 
@@ -124,8 +124,8 @@ describe("rtc dispatchResonanceRow", () => {
 		const buffer = new flatbuffers.ByteBuffer(builder.asUint8Array());
 		dispatchResonanceBuffer(buffer);
 
-		expect(resonanceStore.state["AVAX/USD"]).toBeDefined();
-		expect(resonanceStore.state["AVAX/USD"].toArray().find((r) => r.symbol === "AVAX/USD")).toBeDefined();
+		expect(signals.resonance.state["AVAX/USD"]).toBeDefined();
+		expect(signals.resonance.state["AVAX/USD"].toArray().find((r: any) => r.symbol === "AVAX/USD")).toBeDefined();
 		expect(symbolsAtom.get()).toContain("AVAX/USD");
 	});
 });

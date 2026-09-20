@@ -1,12 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import {
-	candidatesStore,
-	onlineStore,
-	phaseStore,
-	positionCountStore,
-	tickCountStore,
-} from "#/collections/app";
+import { candidatesAtom, onlineAtom, phaseAtom, positionCountAtom, tickCountAtom } from "#/collections/app";
 import { Engine } from "#/components/engine";
 
 describe("Engine", () => {
@@ -22,11 +16,11 @@ describe("Engine", () => {
 	});
 
 	it("reads observations, decisions and phase from the live telemetry stores", () => {
-		tickCountStore.setState(100);
-		candidatesStore.setState(20);
-		positionCountStore.setState(3);
-		phaseStore.setState("learning");
-		onlineStore.setState("ONLINE");
+		tickCountAtom.set(100);
+		candidatesAtom.set(20);
+		positionCountAtom.set(3);
+		phaseAtom.set("learning");
+		onlineAtom.set("ONLINE");
 
 		const markup = renderToStaticMarkup(<Engine />);
 		expect(markup).toContain(">100<");
@@ -34,7 +28,7 @@ describe("Engine", () => {
 		expect(markup).toContain(">3<");
 		expect(markup).toContain(">learning<");
 
-		onlineStore.setState("OFFLINE");
+		onlineAtom.set("OFFLINE");
 		expect(renderToStaticMarkup(<Engine />)).toContain(">offline<");
 	});
 });

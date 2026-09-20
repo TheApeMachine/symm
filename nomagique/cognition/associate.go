@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"bytes"
 	"context"
 )
@@ -27,4 +28,19 @@ func (s *AssociateServer) Write(ctx context.Context, call Associate_write) error
 
 func (s *AssociateServer) Done(ctx context.Context, call Associate_done) error {
 	return nil
+}
+
+
+
+type AssociateNode types.StreamNode[any, any]
+
+func NewAssociate() AssociateNode {
+	server := &AssociateServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

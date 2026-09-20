@@ -1,11 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-	candidatesAtom,
-	phaseAtom,
-	positionCountAtom,
-	tickCountAtom,
-} from "#/collections/app";
+import { candidatesAtom, phaseAtom, positionCountAtom, tickCountAtom } from "#/collections/app";
 import { Pulse } from "#/components/pulse";
 
 describe("Pulse", () => {

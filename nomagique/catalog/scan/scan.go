@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -27,7 +30,7 @@ func Tree(directory string) (map[string]catalog.Schema, error) {
 	errnie.Debug(fmt.Sprintf("[scan.Tree] scanning directory %s with packages.Load...", directory))
 	loaded, err := packages.Load(&packages.Config{
 		Mode: packages.NeedName | packages.NeedTypes | packages.NeedSyntax |
-			packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
+			packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports | packages.NeedFiles,
 		Dir: directory,
 	}, "./...")
 
@@ -98,21 +101,21 @@ func collect(
 				if !ok {
 					continue
 				}
-				
+
 				selExpr, ok := indexExpr.X.(*ast.SelectorExpr)
 				if !ok {
 					continue
 				}
-				
+
 				ident, ok := selExpr.X.(*ast.Ident)
 				if !ok || ident.Name != "types" || (selExpr.Sel.Name != "StreamNode" && selExpr.Sel.Name != "Value") {
 					continue
 				}
-				
+
 				if len(indexExpr.Indices) == 2 {
 					tType := loadedPackage.TypesInfo.TypeOf(indexExpr.Indices[0])
 					uType := loadedPackage.TypesInfo.TypeOf(indexExpr.Indices[1])
-					
+
 					if tType != nil && uType != nil {
 						serverTypes[typeSpec.Name.Name] = primitiveType{
 							Name: typeSpec.Name.Name,
@@ -143,9 +146,9 @@ func collect(
 			if !ok {
 				continue
 			}
-			
+
 			retTypeName := namedType.Obj().Name()
-			
+
 			if primType, found := serverTypes[retTypeName]; found {
 				params := make([]catalog.Param, signature.Params().Len())
 				injected := make([]string, 0)
@@ -165,9 +168,22 @@ func collect(
 
 				stateful := function.Body != nil && len(function.Body.List) > 1
 
+				returnsError := false
+				if signature.Results() != nil && signature.Results().Len() == 2 {
+					if signature.Results().At(1).Type().String() == "error" {
+						returnsError = true
+					}
+				}
+
+				var dir string
+				if len(loadedPackage.GoFiles) > 0 {
+					dir = filepath.Dir(loadedPackage.GoFiles[0])
+				}
+
 				schema := describe(
 					loadedPackage.Name,
 					loadedPackage.PkgPath,
+					dir,
 					function,
 					primType.T,
 					primType.U,
@@ -175,6 +191,7 @@ func collect(
 					signature.TypeParams().Len(),
 					params,
 					stateful,
+					returnsError,
 					injected,
 				)
 				into[schema.Op] = schema
@@ -213,6 +230,7 @@ func simplifyType(t string) string {
 func describe(
 	category string,
 	pkgPath string,
+	pkgDir string,
 	function *ast.FuncDecl,
 	inType string,
 	outType string,
@@ -220,6 +238,7 @@ func describe(
 	typeParamCount int,
 	params []catalog.Param,
 	stateful bool,
+	returnsError bool,
 	injected []string,
 ) catalog.Schema {
 	thing := function.Name.Name
@@ -227,11 +246,59 @@ func describe(
 		thing = after
 	}
 
-	inputs := []catalog.Port{{
-		Name:        "in",
-		Type:        inType,
-		Description: "The run this primitive reads",
-	}}
+	var dir string
+	if len(function.Name.Name) > 0 && len(pkgDir) > 0 {
+		dir = pkgDir
+	}
+
+	// Find the matching .capnp file
+	var capnpPath string
+	if files, err := os.ReadDir(dir); err == nil {
+		for _, f := range files {
+			if strings.HasSuffix(f.Name(), ".capnp") {
+				stripped := strings.ReplaceAll(strings.ToLower(f.Name()), "_", "")
+				if stripped == strings.ToLower(thing)+".capnp" {
+					capnpPath = filepath.Join(dir, f.Name())
+					break
+				}
+			}
+		}
+	}
+
+	var inputs []catalog.Port
+	if capnpPath != "" {
+		content, err := os.ReadFile(capnpPath)
+		if err == nil {
+			re := regexp.MustCompile(`write\s+@\d+\s*\((.*?)\)\s*->`)
+			matches := re.FindStringSubmatch(string(content))
+			if len(matches) > 1 {
+				paramsStr := matches[1]
+				parts := strings.Split(paramsStr, ",")
+				for _, part := range parts {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					name := strings.Split(part, ":")[0]
+					name = strings.TrimSpace(name)
+
+					inputs = append(inputs, catalog.Port{
+						Name:        name,
+						Type:        inType,
+						Description: "The " + name + " stream this primitive reads",
+					})
+				}
+			}
+		}
+	}
+
+	if len(inputs) == 0 {
+		inputs = []catalog.Port{{
+			Name:        "in",
+			Type:        inType,
+			Description: "The run this primitive reads",
+		}}
+	}
 
 	for _, p := range params {
 		if strings.Contains(p.Type, "context.Context") || strings.Contains(p.Type, "Config") {
@@ -291,6 +358,7 @@ func describe(
 		TypeParamCount:    typeParamCount,
 		ConstructorParams: params,
 		Stateful:          stateful,
+		ReturnsError:      returnsError,
 		InjectedDeps:      injected,
 		Inputs:            inputs,
 		Outputs: []catalog.Port{{

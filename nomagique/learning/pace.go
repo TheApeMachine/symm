@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 	"sort"
@@ -103,4 +104,19 @@ func (s *PaceServer) WriteParams(ctx context.Context, callArgs Pace_write_Params
 
 func (s *PaceServer) Done(ctx context.Context, call Pace_done) error {
 	return nil
+}
+
+
+
+type PaceNode types.StreamNode[any, any]
+
+func NewPace() PaceNode {
+	server := &PaceServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

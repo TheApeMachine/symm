@@ -1,6 +1,7 @@
 package arithmetic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -17,4 +18,19 @@ func (s *DivideServer) Write(ctx context.Context, call Divide_write) error {
 
 func (s *DivideServer) Done(ctx context.Context, call Divide_done) error {
 	return nil
+}
+
+
+
+type DivideNode types.StreamNode[any, any]
+
+func NewDivide() DivideNode {
+	server := &DivideServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

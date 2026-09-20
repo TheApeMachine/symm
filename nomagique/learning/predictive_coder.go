@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	context "context"
 	"errors"
 
@@ -484,4 +485,19 @@ func (predictiveCoder *PredictiveCoderServer) ledgerExecute(
 		return LedgerReading{}, errors.New("learning: predictive coder has no ledger")
 	}
 	return predictiveCoder.ledger.Execute(command)
+}
+
+
+
+type PredictiveCoderNode types.StreamNode[any, any]
+
+func NewPredictiveCoder() PredictiveCoderNode {
+	server := &PredictiveCoderServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

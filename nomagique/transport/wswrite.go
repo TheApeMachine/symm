@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *WSWriteServer) Write(ctx context.Context, call WSWrite_write) error {
 
 func (s *WSWriteServer) Done(ctx context.Context, call WSWrite_done) error {
 	return nil
+}
+
+
+
+type WSWriteNode types.StreamNode[any, any]
+
+func NewWSWrite() WSWriteNode {
+	server := &WSWriteServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

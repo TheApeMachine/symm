@@ -1,6 +1,7 @@
 package physics
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
@@ -24,4 +25,19 @@ func (s *SimulationServer) Write(ctx context.Context, call Simulation_write) err
 
 func (s *SimulationServer) Done(ctx context.Context, call Simulation_done) error {
 	return nil
+}
+
+
+
+type SimulationNode types.StreamNode[any, any]
+
+func NewSimulation() SimulationNode {
+	server := &SimulationServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

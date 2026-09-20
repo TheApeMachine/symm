@@ -1,6 +1,7 @@
 package store
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -120,4 +121,19 @@ func (s *GridServer) Register(ctx context.Context, call Grid_register) error {
 	}
 
 	return nil
+}
+
+
+
+type GridNode types.StreamNode[any, any]
+
+func NewGrid() GridNode {
+	server := &GridServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

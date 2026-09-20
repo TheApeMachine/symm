@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { cognitionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
@@ -17,8 +17,8 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 	const [predictions, setPredictions] = useState<PredictionEntry[]>([]);
 
 	useEffect(() => {
-		const apply = (state: typeof cognitionStore.state) => {
-			const targetRow = state.getLast(symbol);
+		const apply = (state: typeof signals.cognition.state) => {
+			const targetRow = state[symbol]?.getLast();
 
 			if (!targetRow) return;
 
@@ -52,8 +52,8 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 			);
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		apply(signals.cognition.state);
+		const subscription = signals.cognition.subscribe(apply);
 		return () => subscription.unsubscribe();
 	}, [symbol]);
 

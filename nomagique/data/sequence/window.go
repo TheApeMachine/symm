@@ -59,7 +59,7 @@ func (s *WindowServer) Execute(ctx context.Context, call Window_execute) error {
 
 type WindowNode types.StreamNode[any, any]
 
-func NewWindowNode(size types.Integer) WindowNode {
+func NewWindow(size types.Integer) WindowNode {
 	sz := 10
 	if size != nil {
 		sz = size(nil)
@@ -74,3 +74,5 @@ func NewWindowNode(size types.Integer) WindowNode {
 		}
 	})
 }
+
+

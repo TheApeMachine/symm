@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -53,4 +54,19 @@ func (s *ForecastServer) WriteParams(ctx context.Context, callArgs Forecast_writ
 
 func (s *ForecastServer) Done(ctx context.Context, call Forecast_done) error {
 	return nil
+}
+
+
+
+type ForecastNode types.StreamNode[any, any]
+
+func NewForecast() ForecastNode {
+	server := &ForecastServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

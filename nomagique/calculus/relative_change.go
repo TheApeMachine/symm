@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -25,4 +26,19 @@ func (s *RelativeChangeServer) Write(ctx context.Context, call RelativeChange_wr
 
 func (s *RelativeChangeServer) Done(ctx context.Context, call RelativeChange_done) error {
 	return nil
+}
+
+
+
+type RelativeChangeNode types.StreamNode[any, any]
+
+func NewRelativeChange() RelativeChangeNode {
+	server := &RelativeChangeServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

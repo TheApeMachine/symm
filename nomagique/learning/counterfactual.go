@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 
@@ -142,4 +143,19 @@ func (s *CounterfactualServer) WriteParams(ctx context.Context, callArgs Counter
 
 func (s *CounterfactualServer) Done(ctx context.Context, call Counterfactual_done) error {
 	return nil
+}
+
+
+
+type CounterfactualNode types.StreamNode[any, any]
+
+func NewCounterfactual() CounterfactualNode {
+	server := &CounterfactualServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

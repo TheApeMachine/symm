@@ -1,6 +1,7 @@
 package compiler_test
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -8,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique/compiler"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestArchitecturalInvariants(t *testing.T) {
@@ -112,8 +112,15 @@ func TestArchitecturalInvariants(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(compiled, ShouldNotBeNil)
 
-			out := compiled("test_value")
-			So(out, ShouldEqual, "test_value")
+			var captured any
+			compiled.SetDownstreamAny(func(ctx context.Context, payload any) error {
+				captured = payload
+				return nil
+			})
+
+			out := compiled.WriteAny(context.Background(), "test_value")
+			So(out, ShouldBeNil)
+			So(captured, ShouldEqual, "test_value")
 		})
 
 		Convey("Broken metric definition fails compilation of referencing graph", func() {
@@ -133,24 +140,21 @@ func TestArchitecturalInvariants(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "not found")
 		})
 
-		Convey("Websocket and shell execution primitives use pure types.Value", func() {
-			connect := transport.NewWSConnect(types.Const("wss://test"))
-			So(reflect.TypeOf(connect).Kind(), ShouldEqual, reflect.Func)
+		Convey("Websocket and shell execution primitives use types.StreamNode", func() {
+			connect := transport.NewWSConnect()
+			So(connect, ShouldNotBeNil)
 
 			read := transport.NewWSRead()
-			So(reflect.TypeOf(read).Kind(), ShouldEqual, reflect.Func)
+			So(read, ShouldNotBeNil)
 
-			write := transport.NewWSWrite(nil)
-			So(reflect.TypeOf(write).Kind(), ShouldEqual, reflect.Func)
+			write := transport.NewWSWrite()
+			So(write, ShouldNotBeNil)
 
 			closeConn := transport.NewWSClose()
-			So(reflect.TypeOf(closeConn).Kind(), ShouldEqual, reflect.Func)
+			So(closeConn, ShouldNotBeNil)
 
-			msg := transport.NewJSONMessage(nil)
-			So(reflect.TypeOf(msg).Kind(), ShouldEqual, reflect.Func)
-
-			proc := transport.NewProcess(types.Const("echo"))
-			So(reflect.TypeOf(proc).Kind(), ShouldEqual, reflect.Func)
+			proc := transport.NewProcess()
+			So(proc, ShouldNotBeNil)
 		})
 
 		Convey("No machine-specific paths exist in transport or compiler", func() {

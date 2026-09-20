@@ -1,11 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	candidatesAtom,
-	measurementSourcesAtom,
-	phaseAtom,
-	positionCountAtom,
-	tickCountAtom,
-} from "#/collections/app";
+import { candidatesAtom, measurementSourcesAtom, phaseAtom, positionCountAtom, tickCountAtom } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
 

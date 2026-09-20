@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -18,4 +19,19 @@ func (s *TanhServer) Write(ctx context.Context, call Tanh_write) error {
 
 func (s *TanhServer) Done(ctx context.Context, call Tanh_done) error {
 	return nil
+}
+
+
+
+type TanhNode types.StreamNode[any, any]
+
+func NewTanh() TanhNode {
+	server := &TanhServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

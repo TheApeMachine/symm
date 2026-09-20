@@ -1,6 +1,7 @@
 package associative
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"math"
@@ -113,4 +114,19 @@ func (s *GridServer) Write(ctx context.Context, call Grid_write) error {
 
 func (s *GridServer) Done(ctx context.Context, call Grid_done) error {
 	return nil
+}
+
+
+
+type GridNode types.StreamNode[any, any]
+
+func NewGrid() GridNode {
+	server := &GridServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

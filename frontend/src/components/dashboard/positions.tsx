@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
-import { positionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
@@ -135,7 +135,7 @@ const positionsEqual = (
 };
 
 export const Positions = () => {
-	const positions = useSelector(positionStore, selectPositions, {
+	const positions = useSelector(signals.position, selectPositions, {
 		compare: positionsEqual,
 	});
 	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(

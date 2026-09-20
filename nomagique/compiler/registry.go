@@ -10,8 +10,24 @@ import (
 	"github.com/theapemachine/symm/nomagique/catalog"
 	"github.com/theapemachine/symm/nomagique/types"
 	algo "github.com/theapemachine/symm/nomagique/algo"
+	arithmetic "github.com/theapemachine/symm/nomagique/arithmetic"
+	associative "github.com/theapemachine/symm/nomagique/learning/associative"
+	calculus "github.com/theapemachine/symm/nomagique/calculus"
+	cognition "github.com/theapemachine/symm/nomagique/cognition"
 	data "github.com/theapemachine/symm/nomagique/data"
+	execution "github.com/theapemachine/symm/nomagique/execution"
+	geometry "github.com/theapemachine/symm/nomagique/geometry"
+	hawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
+	learning "github.com/theapemachine/symm/nomagique/learning"
+	physics "github.com/theapemachine/symm/nomagique/physics"
+	probability "github.com/theapemachine/symm/nomagique/probability"
 	sequence "github.com/theapemachine/symm/nomagique/data/sequence"
+	statistic "github.com/theapemachine/symm/nomagique/statistic"
+	store "github.com/theapemachine/symm/nomagique/store"
+	tables "github.com/theapemachine/symm/nomagique/store/tables"
+	temporal "github.com/theapemachine/symm/nomagique/temporal"
+	transport "github.com/theapemachine/symm/nomagique/transport"
+	ui "github.com/theapemachine/symm/nomagique/ui"
 )
 
 type Factory func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error)
@@ -114,10 +130,6 @@ func passThroughNode() types.StreamNode[any, any] {
 }
 
 func (r *Registry) Resolve(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-	if node.Type == "data.Source" || node.Type == "source" {
-		return passThroughNode(), nil
-	}
-
 	if node.Type == "data.Sink" || node.Type == "sink" {
 		return passThroughNode(), nil
 	}
@@ -296,24 +308,24 @@ DefaultPrimitiveFactories maps string types to factory functions
 that instantiate their `Value[any, any]` wrappers.
 */
 var DefaultPrimitiveFactories = map[string]Factory{
-	"algo.GaussJordanNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+	"algo.GaussJordan": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_tolerance types.Float
 		port_tolerance, err = resolveFloatPort(node, "tolerance")
 		if err != nil { return nil, err }
-		return algo.NewGaussJordanNode(port_tolerance), nil
+		return algo.NewGaussJordan(port_tolerance), nil
 	},
-	"algo.HayashiYoshidaNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-		return algo.NewHayashiYoshidaNode(), nil
+	"algo.HayashiYoshida": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return algo.NewHayashiYoshida(), nil
 	},
-	"algo.OLSNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+	"algo.OLS": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_tolerance types.Float
 		port_tolerance, err = resolveFloatPort(node, "tolerance")
 		if err != nil { return nil, err }
-		return algo.NewOLSNode(port_tolerance), nil
+		return algo.NewOLS(port_tolerance), nil
 	},
 	"algo.RLSPrediction": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		return algo.NewRLSPrediction(), nil
@@ -321,59 +333,480 @@ var DefaultPrimitiveFactories = map[string]Factory{
 	"algo.RLSUpdate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		return algo.NewRLSUpdate(), nil
 	},
-	"data.EquationNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-		return data.NewEquationNode(), nil
+	"arithmetic.Add": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return arithmetic.NewAdd(), nil
 	},
-	"data.ExtractNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-		return data.NewExtractNode(), nil
+	"arithmetic.Divide": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return arithmetic.NewDivide(), nil
 	},
-	"data.SelectNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+	"arithmetic.Multiply": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return arithmetic.NewMultiply(), nil
+	},
+	"arithmetic.Subtract": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return arithmetic.NewSubtract(), nil
+	},
+	"associative.Grid": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return associative.NewGrid(), nil
+	},
+	"calculus.Absolute": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewAbsolute(), nil
+	},
+	"calculus.Atanh": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewAtanh(), nil
+	},
+	"calculus.Bound": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewBound(), nil
+	},
+	"calculus.Erfc": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewErfc(), nil
+	},
+	"calculus.Exp": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewExp(), nil
+	},
+	"calculus.Floor": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewFloor(), nil
+	},
+	"calculus.Log": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewLog(), nil
+	},
+	"calculus.Maximum": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewMaximum(), nil
+	},
+	"calculus.Minimum": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewMinimum(), nil
+	},
+	"calculus.Negate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewNegate(), nil
+	},
+	"calculus.Polarize": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewPolarize(), nil
+	},
+	"calculus.Reciprocal": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewReciprocal(), nil
+	},
+	"calculus.RelativeChange": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewRelativeChange(), nil
+	},
+	"calculus.SecondDifference": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewSecondDifference(), nil
+	},
+	"calculus.Sign": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewSign(), nil
+	},
+	"calculus.Sqrt": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewSqrt(), nil
+	},
+	"calculus.Square": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewSquare(), nil
+	},
+	"calculus.Tanh": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return calculus.NewTanh(), nil
+	},
+	"cognition.Associate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewAssociate(), nil
+	},
+	"cognition.Attractor": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewAttractor(), nil
+	},
+	"cognition.BasinKey": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewBasinKey(), nil
+	},
+	"cognition.Classification": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewClassification(), nil
+	},
+	"cognition.Lookahead": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewLookahead(), nil
+	},
+	"cognition.Memory": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewMemory(), nil
+	},
+	"cognition.Pack": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewPack(), nil
+	},
+	"cognition.ParseBasinKey": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewParseBasinKey(), nil
+	},
+	"cognition.Reinforce": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewReinforce(), nil
+	},
+	"cognition.SensoryKey": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewSensoryKey(), nil
+	},
+	"cognition.Surprisal": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewSurprisal(), nil
+	},
+	"cognition.Weight": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return cognition.NewWeight(), nil
+	},
+	"data.Equation": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return data.NewEquation(), nil
+	},
+	"data.Extract": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_path types.String
 		port_path, err = resolveStringPort(node, "path")
 		if err != nil { return nil, err }
-		return data.NewSelectNode(port_path), nil
+		return data.NewExtract(port_path)
 	},
-	"data.SeriesNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+	"data.Quality": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return data.NewQuality(), nil
+	},
+	"data.Select": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		var err error
+		_ = err
+		var port_path types.String
+		port_path, err = resolveStringPort(node, "path")
+		if err != nil { return nil, err }
+		return data.NewSelect(port_path), nil
+	},
+	"data.Series": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_capacity types.Integer
 		port_capacity, err = resolveIntegerPort(node, "capacity")
 		if err != nil { return nil, err }
-		return data.NewSeriesNode(port_capacity), nil
+		return data.NewSeries(port_capacity), nil
 	},
-	"sequence.AppendNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-		return sequence.NewAppendNode(), nil
+	"data.Source": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return data.NewSource(), nil
 	},
-	"sequence.AtNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+	"execution.Decide": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return execution.NewDecide(), nil
+	},
+	"execution.Gate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return execution.NewGate(), nil
+	},
+	"execution.Regulator": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return execution.NewRegulator(), nil
+	},
+	"execution.Submit": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return execution.NewSubmit(), nil
+	},
+	"geometry.Corpus": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return geometry.NewCorpus(), nil
+	},
+	"geometry.Intersection": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return geometry.NewIntersection(), nil
+	},
+	"geometry.Normalize": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return geometry.NewNormalize(), nil
+	},
+	"geometry.Overlap": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return geometry.NewOverlap(), nil
+	},
+	"geometry.PhasePath": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return geometry.NewPhasePath(), nil
+	},
+	"hawkes.ArrivalRate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewArrivalRate(), nil
+	},
+	"hawkes.Assemble": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewAssemble(), nil
+	},
+	"hawkes.BuyCount": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewBuyCount(), nil
+	},
+	"hawkes.BuyFraction": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewBuyFraction(), nil
+	},
+	"hawkes.BuyIntensity": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewBuyIntensity(), nil
+	},
+	"hawkes.BuyRate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewBuyRate(), nil
+	},
+	"hawkes.ConditionalIntensity": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewConditionalIntensity(), nil
+	},
+	"hawkes.EventCount": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewEventCount(), nil
+	},
+	"hawkes.Process": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewProcess(), nil
+	},
+	"hawkes.SellCount": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewSellCount(), nil
+	},
+	"hawkes.SellFraction": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewSellFraction(), nil
+	},
+	"hawkes.SellIntensity": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewSellIntensity(), nil
+	},
+	"hawkes.SellRate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewSellRate(), nil
+	},
+	"hawkes.SpectralRadius": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return hawkes.NewSpectralRadius(), nil
+	},
+	"learning.Backdoor": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewBackdoor(), nil
+	},
+	"learning.BinaryTarget": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewBinaryTarget(), nil
+	},
+	"learning.Counterfactual": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewCounterfactual(), nil
+	},
+	"learning.DeltaTarget": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewDeltaTarget(), nil
+	},
+	"learning.DirectionalTarget": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewDirectionalTarget(), nil
+	},
+	"learning.Forecast": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewForecast(), nil
+	},
+	"learning.IdentityTarget": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewIdentityTarget(), nil
+	},
+	"learning.LinearFit": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewLinearFit(), nil
+	},
+	"learning.LinearPrediction": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewLinearPrediction(), nil
+	},
+	"learning.Pace": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewPace(), nil
+	},
+	"learning.PredictiveCoder": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewPredictiveCoder(), nil
+	},
+	"learning.RatioTarget": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewRatioTarget(), nil
+	},
+	"learning.ResonanceManifold": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewResonanceManifold(), nil
+	},
+	"learning.TaskLearner": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewTaskLearner(), nil
+	},
+	"learning.TemporalLedger": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return learning.NewTemporalLedger(), nil
+	},
+	"physics.Simulation": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return physics.NewSimulation(), nil
+	},
+	"probability.Concentration": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return probability.NewConcentration(), nil
+	},
+	"probability.Distribution": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return probability.NewDistribution(), nil
+	},
+	"probability.Entropy": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return probability.NewEntropy(), nil
+	},
+	"probability.Geomean": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return probability.NewGeomean(), nil
+	},
+	"probability.KolmogorovSmirnov": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return probability.NewKolmogorovSmirnov(), nil
+	},
+	"probability.ShannonAmbiguity": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return probability.NewShannonAmbiguity(), nil
+	},
+	"sequence.Append": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return sequence.NewAppend(), nil
+	},
+	"sequence.At": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_index types.Integer
 		port_index, err = resolveIntegerPort(node, "index")
 		if err != nil { return nil, err }
-		return sequence.NewAtNode(port_index), nil
+		return sequence.NewAt(port_index), nil
 	},
-	"sequence.OrderNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-		return sequence.NewOrderNode(), nil
-	},
-	"sequence.TailNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+	"sequence.Tail": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_size types.Integer
 		port_size, err = resolveIntegerPort(node, "size")
 		if err != nil { return nil, err }
-		return sequence.NewTailNode(port_size), nil
+		return sequence.NewTail(port_size), nil
 	},
-	"sequence.ValuesNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-		return sequence.NewValuesNode(), nil
+	"sequence.Values": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return sequence.NewValues(), nil
 	},
-	"sequence.WindowNode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+	"sequence.Window": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
 		var err error
 		_ = err
 		var port_size types.Integer
 		port_size, err = resolveIntegerPort(node, "size")
 		if err != nil { return nil, err }
-		return sequence.NewWindowNode(port_size), nil
+		return sequence.NewWindow(port_size), nil
+	},
+	"statistic.CausalMean": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewCausalMean(), nil
+	},
+	"statistic.CausalVariance": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewCausalVariance(), nil
+	},
+	"statistic.EMA": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewEMA(), nil
+	},
+	"statistic.Mean": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewMean(), nil
+	},
+	"statistic.ResidualBaseline": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewResidualBaseline(), nil
+	},
+	"statistic.ResidualDivergence": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewResidualDivergence(), nil
+	},
+	"statistic.Threshold": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewThreshold(), nil
+	},
+	"statistic.Variance": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewVariance(), nil
+	},
+	"statistic.ZScore": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return statistic.NewZScore(), nil
+	},
+	"store.Constant": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return store.NewConstant(), nil
+	},
+	"store.Grid": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return store.NewGrid(), nil
+	},
+	"store.Key": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return store.NewKey(), nil
+	},
+	"store.Radix": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return store.NewRadix(), nil
+	},
+	"tables.IcebergScan": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return tables.NewIcebergScan(), nil
+	},
+	"tables.IcebergTable": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return tables.NewIcebergTable(), nil
+	},
+	"temporal.Delay": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		var err error
+		_ = err
+		var port_horizon types.Integer
+		port_horizon, err = resolveIntegerPort(node, "horizon")
+		if err != nil { return nil, err }
+		return temporal.NewDelay(port_horizon)
+	},
+	"temporal.Elapsed": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return temporal.NewElapsed(), nil
+	},
+	"temporal.LogReturns": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return temporal.NewLogReturns(), nil
+	},
+	"temporal.Transition": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return temporal.NewTransition(), nil
+	},
+	"temporal.Velocity": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return temporal.NewVelocity(), nil
+	},
+	"transport.Base64Decode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewBase64Decode(), nil
+	},
+	"transport.Base64Encode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewBase64Encode(), nil
+	},
+	"transport.BearerAuth": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewBearerAuth(), nil
+	},
+	"transport.Broadcast": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewBroadcast(), nil
+	},
+	"transport.Discard": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewDiscard(), nil
+	},
+	"transport.Fan": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewFan(), nil
+	},
+	"transport.Fork": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewFork(), nil
+	},
+	"transport.Gate": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewGate(), nil
+	},
+	"transport.HMACSHA256": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewHMACSHA256(), nil
+	},
+	"transport.HMACSHA512": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewHMACSHA512(), nil
+	},
+	"transport.HTTPRequest": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewHTTPRequest(), nil
+	},
+	"transport.HeaderAuth": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewHeaderAuth(), nil
+	},
+	"transport.JSONDecode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewJSONDecode(), nil
+	},
+	"transport.JSONEncode": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewJSONEncode(), nil
+	},
+	"transport.Join": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewJoin(), nil
+	},
+	"transport.Nonce": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewNonce(), nil
+	},
+	"transport.Pace": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewPace(), nil
+	},
+	"transport.Parallel": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewParallel(), nil
+	},
+	"transport.Process": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewProcess(), nil
+	},
+	"transport.Route": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewRoute(), nil
+	},
+	"transport.SHA256": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewSHA256(), nil
+	},
+	"transport.Stream": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewStream(), nil
+	},
+	"transport.Tee": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewTee(), nil
+	},
+	"transport.Timestamp": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewTimestamp(), nil
+	},
+	"transport.WSBatch": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSBatch(), nil
+	},
+	"transport.WSClose": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSClose(), nil
+	},
+	"transport.WSConnect": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSConnect(), nil
+	},
+	"transport.WSDecodeJSON": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSDecodeJSON(), nil
+	},
+	"transport.WSEncodeJSON": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSEncodeJSON(), nil
+	},
+	"transport.WSJSONMessage": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSJSONMessage(), nil
+	},
+	"transport.WSPingPong": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSPingPong(), nil
+	},
+	"transport.WSRead": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSRead(), nil
+	},
+	"transport.WSWrite": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return transport.NewWSWrite(), nil
+	},
+	"ui.Broadcast": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return ui.NewBroadcast(), nil
+	},
+	"ui.HTTPServer": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return ui.NewHTTPServer(), nil
+	},
+	"ui.WebSocketServer": func(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
+		return ui.NewWebSocketServer(), nil
 	},
 }

@@ -181,10 +181,6 @@ func passThroughNode() types.StreamNode[any, any] {
 }
 
 func (r *Registry) Resolve(node Node, instances map[string]types.StreamNode[any, any]) (types.StreamNode[any, any], error) {
-	if node.Type == "data.Source" || node.Type == "source" {
-		return passThroughNode(), nil
-	}
-
 	if node.Type == "data.Sink" || node.Type == "sink" {
 		return passThroughNode(), nil
 	}
@@ -484,9 +480,17 @@ func resolveBytesPort(node Node, portName string) (types.Bytes, error) {
 				}
 				firstArg = false
 			}
-			buf.WriteString("), nil\n")
+			if entry.ReturnsError {
+				buf.WriteString(")\n")
+			} else {
+				buf.WriteString("), nil\n")
+			}
 		} else {
-			fmt.Fprintf(&buf, "\t\treturn %s.%s%s(), nil\n", entry.Category, entry.Builder, typeParam)
+			if entry.ReturnsError {
+				fmt.Fprintf(&buf, "\t\treturn %s.%s%s()\n", entry.Category, entry.Builder, typeParam)
+			} else {
+				fmt.Fprintf(&buf, "\t\treturn %s.%s%s(), nil\n", entry.Category, entry.Builder, typeParam)
+			}
 		}
 		fmt.Fprintf(&buf, "\t},\n")
 	}

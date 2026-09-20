@@ -3,7 +3,7 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { ComponentType } from "react";
 import { RingBuffer } from "#/collections/ring";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { focusAtom, resonanceStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	clearRetainedTelemetry,
@@ -32,7 +32,7 @@ const publish = (symbol: string, embedding: number[]) => {
 	row.embedding = embedding;
 	const ring = new RingBuffer<ResonanceT>(1);
 	ring.add(row);
-	resonanceStore.setState((state) => ({ ...state, [symbol]: ring }));
+	signals.resonance.setState((state: any) => ({ ...state, [symbol]: ring }));
 };
 
 const points = () => {
@@ -43,7 +43,7 @@ const points = () => {
 describe("XrayPaintBridge", () => {
 	beforeEach(() => {
 		clearRetainedTelemetry();
-		resonanceStore.setState(() => ({}));
+		signals.resonance.setState(() => ({}));
 		focusAtom.set("BTC/USD");
 		vi.clearAllMocks();
 	});

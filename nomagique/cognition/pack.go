@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -22,4 +23,19 @@ func (s *PackServer) Write(ctx context.Context, call Pack_write) error {
 
 func (s *PackServer) Done(ctx context.Context, call Pack_done) error {
 	return nil
+}
+
+
+
+type PackNode types.StreamNode[any, any]
+
+func NewPack() PackNode {
+	server := &PackServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

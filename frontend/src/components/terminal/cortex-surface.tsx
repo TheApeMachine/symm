@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { cognitionStore, focusStore } from "#/collections/app";
+import { signals, focusAtom } from "#/collections/app";
 import { CortexBeamShell } from "./cortex-beam-shell";
 import { CortexCanvas } from "./cortex-canvas";
 import { CortexPanelsShell } from "./cortex-panels-shell";
@@ -10,12 +10,12 @@ import { Rail } from "#/components/ui/rail";
 import { Typography } from "#/components/ui/typography";
 
 export const CortexSurface = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 
 	const rootRef = usePaintStore(
-		cognitionStore,
+		signals.cognition,
 		(state) => {
-			const targetRow = state.getLast?.(focusSymbol) ?? null;
+			const targetRow = state[focusSymbol]?.getLast() ?? null;
 			return {
 				fields: {
 					winner: targetRow?.winner() ?? "—",

@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -37,4 +38,19 @@ func (s *ArrivalRateServer) Write(ctx context.Context, call ArrivalRate_write) e
 
 func (s *ArrivalRateServer) Done(ctx context.Context, call ArrivalRate_done) error {
 	return nil
+}
+
+
+
+type ArrivalRateNode types.StreamNode[any, any]
+
+func NewArrivalRate() ArrivalRateNode {
+	server := &ArrivalRateServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

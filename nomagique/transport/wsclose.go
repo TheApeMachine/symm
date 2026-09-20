@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *WSCloseServer) Write(ctx context.Context, call WSClose_write) error {
 
 func (s *WSCloseServer) Done(ctx context.Context, call WSClose_done) error {
 	return nil
+}
+
+
+
+type WSCloseNode types.StreamNode[any, any]
+
+func NewWSClose() WSCloseNode {
+	server := &WSCloseServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

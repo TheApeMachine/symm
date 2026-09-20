@@ -1,4 +1,4 @@
-import { cognitionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Chip } from "#/components/ui/chip";
 import { Flex } from "#/components/ui/flex";
@@ -11,9 +11,9 @@ import { Typography } from "#/components/ui/typography";
 
 export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 	const rootRef = usePaintStore(
-		cognitionStore,
+		signals.cognition,
 		(state) => {
-			const targetRow = state.getLast(symbol) ?? null;
+			const targetRow = state[symbol]?.getLast() ?? null;
 			const conf = targetRow?.confidence();
 			const entropyBits = targetRow?.entropyBits();
 

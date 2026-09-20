@@ -38,7 +38,7 @@ func (s *OrderServer) Execute(ctx context.Context, call Order_execute) error {
 
 type OrderNode types.StreamNode[any, any]
 
-func NewOrderNode() OrderNode {
+func NewOrder() OrderNode {
 	server := NewOrderServer()
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		_, err := server.Evaluate(ctx, in)

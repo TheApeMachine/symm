@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -20,4 +21,19 @@ func (s *ReciprocalServer) Write(ctx context.Context, call Reciprocal_write) err
 
 func (s *ReciprocalServer) Done(ctx context.Context, call Reciprocal_done) error {
 	return nil
+}
+
+
+
+type ReciprocalNode types.StreamNode[any, any]
+
+func NewReciprocal() ReciprocalNode {
+	server := &ReciprocalServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

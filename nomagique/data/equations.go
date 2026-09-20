@@ -36,7 +36,7 @@ func (s *EquationServer) Done(ctx context.Context, call Equation_done) error {
 
 type EquationNode types.StreamNode[WireMeasurement, WireMeasurement]
 
-func NewEquationNode() EquationNode {
+func NewEquation() EquationNode {
 	server := &EquationServer{}
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		input := in.(WireMeasurement)

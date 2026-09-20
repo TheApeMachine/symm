@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { positionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Callout } from "#/components/ui/callout";
 import { DataRow } from "#/components/ui/data-row";
 import { Flex } from "#/components/ui/flex";
@@ -255,7 +255,7 @@ export const EntryDecisionSnapshotView = ({
 
 export const EntryDecisionSnapshot = ({ symbol }: { symbol: string }) => {
 	const decision = useSelector(
-		positionStore,
+		signals.position,
 		(state) => readEntryDecision(state, symbol),
 		{ compare: (previous, next) => previous?.id === next?.id },
 	);

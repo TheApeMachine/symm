@@ -1,17 +1,14 @@
 import { batch as storeBatch } from "@tanstack/react-store";
-import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
+import { MessageReader } from "@naeemo/capnp";
 import {
 	evictStaleSymbols,
 	evictSymbol,
 	focusAtom,
-	manifoldStore,
-	observeSymbols,
 	onlineAtom,
 	RingBuffer,
 	routeAtom,
 	signals,
-	strategyStore,
 	symbolsAtom,
 	tickCountAtom,
 	updateClock,
@@ -19,7 +16,7 @@ import {
 } from "#/collections/app";
 
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
+import type { MetricT } from "#/providers/telemetry/telemetry/metric";
 
 let globalWsWorker: Worker | null = null;
 
@@ -46,118 +43,171 @@ const defaultWsUrl = () => {
 	return `${protocol}//${host}:8765/ws`;
 };
 
-/*
-Dispatches one decoded MeasurementsFrame into per-measurement rings.
-Each Measurement row carries its own source, symbol, tick, snr, and metrics.
-*/
-function dispatchMeasurements(frame: MeasurementsFrame) {
-	const count = frame.rowsLength();
-	const touched = new Set<string>();
+const SOURCE_TYPES = ['manifold', 'decision', 'strategy', 'equity', 'balance', 'stream'];
 
-	for (let i = 0; i < count; i++) {
-		const row = frame.rows(i);
-		if (!row) continue;
+function decodeWireMeasurement(buffer: ArrayBuffer): MeasurementT {
+	const reader = new MessageReader(buffer);
+	const root = reader.getRoot(7, 4); 
 
-		const rawSource = (row.source() ?? "").toLowerCase();
-		const source = rawSource.includes(":")
-			? rawSource.split(":")[0]
-			: rawSource;
-		const symbol = row.symbol() ?? "";
+	const idData = root.getData(0);
+	const id = new TextDecoder().decode(idData);
 
-		if (symbol && !symbolsAtom.get().includes(symbol)) {
-			observeSymbols([symbol]);
+	const symbolData = root.getData(1);
+	const symbol = new TextDecoder().decode(symbolData);
+
+	const tick = root.getInt64(8);
+	const at = root.getInt64(0);
+	const timestamp = root.getInt64(16);
+	const snr = root.getFloat64(32);
+	const maturity = root.getFloat64(40);
+	const separation = root.getFloat64(48);
+
+	const sourceIdx = root.getUint16(26);
+	const source = SOURCE_TYPES[sourceIdx] || 'unknown';
+
+	// Parse metrics
+	const metrics: MetricT[] = [];
+	const metricsList = root.getList(2);
+	if (metricsList) {
+		const mCount = metricsList.length;
+		for (let i = 0; i < mCount; i++) {
+			const mStruct = metricsList.getStruct(i);
+			if (!mStruct) continue;
+			metrics.push({
+				raw: mStruct.getFloat64(0),
+				normalized: mStruct.getFloat64(8),
+				standardized: mStruct.getFloat64(16),
+				center: mStruct.getFloat64(24),
+				support: mStruct.getFloat64(32),
+				variance: mStruct.getFloat64(40),
+				snr: mStruct.getFloat64(48),
+				hasNormalized: true,
+			});
 		}
+	}
 
-		const at = row.at();
-		if (at > 0n) {
-			updateClock(at);
-		}
-		const tick = row.tick();
-		if (tick > 0n) {
-			tickCountAtom.set(Number(tick));
-		}
+	// Parse metadata map
+	const metadata: Record<string, string | number | boolean> = {};
+	const metadataStruct = root.getStruct(3);
+	if (metadataStruct) {
+		const entriesList = metadataStruct.getList(0);
+		if (entriesList) {
+			const eCount = entriesList.length;
+			for (let i = 0; i < eCount; i++) {
+				const entryStruct = entriesList.getStruct(i);
+				if (!entryStruct) continue;
+				
+				const keyData = entryStruct.getText(0);
+				const key = keyData || "";
 
-		if (source === "manifold") {
-			manifoldStore.setState((prev: Record<string, unknown>) => ({
-				...prev,
-				[symbol]: row.unpack(),
-			}));
-			touched.add(source);
-			continue;
-		}
-
-		if (source === "decision" || source === "strategy") {
-			let action = "wait";
-			let reason = "attractor transition basin";
-			let confidence = row.snr();
-
-			const metricCount = row.metricsLength();
-			for (let mi = 0; mi < metricCount; mi++) {
-				const met = row.metrics(mi);
-				if (!met) continue;
-				const name = met.name();
-				if (name === "action") {
-					action = met.unit() || "wait";
-				} else if (name === "reason") {
-					reason = met.unit() || "attractor transition basin";
-				} else if (name === "confidence") {
-					confidence = met.raw();
+				const valueStruct = entryStruct.getStruct(1);
+				if (valueStruct) {
+					const tag = valueStruct.getUint16(0);
+					if (tag === 1) { // text
+						metadata[key] = valueStruct.getText(0) || "";
+					} else if (tag === 2) { // int
+						metadata[key] = Number(valueStruct.getInt64(8));
+					} else if (tag === 3) { // float
+						metadata[key] = valueStruct.getFloat64(8);
+					} else if (tag === 4) { // bool
+						metadata[key] = valueStruct.getUint8(8) !== 0;
+					}
 				}
 			}
-
-			strategyStore.setState(() => [{
-				decisions: [{
-					id: `dec-${symbol}`,
-					symbol,
-					action,
-					confidence,
-					reason,
-				}],
-			}]);
-			continue;
-		}
-
-		if (source === "equity" || source === "balance") {
-			let cashVal = "";
-			let unrealizedVal = "";
-			let equityVal = "";
-			const metricCount = row.metricsLength();
-			for (let mi = 0; mi < metricCount; mi++) {
-				const met = row.metrics(mi);
-				if (!met) continue;
-				const name = met.name();
-				if (name === "cash") cashVal = met.unit() || String(met.raw());
-				if (name === "unrealized") unrealizedVal = met.unit() || String(met.raw());
-				if (name === "equity") equityVal = met.unit() || String(met.raw());
-			}
-			updateEquity(cashVal, unrealizedVal, equityVal);
-			continue;
-		}
-
-		const signalStore = signals[source];
-		if (!signalStore) {
-			continue;
-		}
-
-		let ring = signalStore.state[symbol];
-
-		if (!ring) {
-			ring = new RingBuffer<MeasurementT>(50);
-			signalStore.state[symbol] = ring;
-		}
-
-		ring.add(row.unpack());
-		touched.add(source);
-
-		if (source === "training") {
-			signalStore.state[""] = ring;
-			signalStore.state["learner"] = ring;
 		}
 	}
 
-	for (const source of touched) {
-		signals[source]?.setState((prev) => ({ ...prev }));
+	return {
+		id,
+		source,
+		symbol,
+		tick,
+		at,
+		snr,
+		maturity,
+		separation,
+		metrics,
+		metadata: metadata as any,
+	};
+}
+
+function dispatchMeasurement(row: MeasurementT) {
+	const source = row.source;
+	const symbol = row.symbol;
+
+	const symbolStr = (row.symbol as string) || "";
+	if (symbolStr && !symbolsAtom.get().includes(symbolStr)) {
+		symbolsAtom.set(Array.from(new Set([...symbolsAtom.get(), symbolStr])));
 	}
+
+	if (row.at > 0n) {
+		updateClock(row.at);
+	}
+	if (row.tick > 0n) {
+		tickCountAtom.set(Number(row.tick));
+	}
+
+	if (source === "manifold") {
+		signals.manifold.setState((prev: any) => ({
+			...prev,
+			[symbolStr]: row,
+		}));
+		signals.manifold.setState((prev: any) => ({ ...prev }));
+		return;
+	}
+
+	if (source === "decision" || source === "strategy") {
+		const meta = (row as any).metadata || {};
+		let action = String(meta["action"] || "wait");
+		let reason = String(meta["reason"] || "attractor transition basin");
+		let confidence = meta["confidence"] !== undefined ? Number(meta["confidence"]) : row.snr;
+
+		signals.strategy.setState(() => [
+			{
+				decisions: [
+					{
+						id: `dec-${symbolStr}`,
+						symbol: symbolStr,
+						action,
+						confidence,
+						reason,
+					},
+				],
+			},
+		]);
+		return;
+	}
+
+	if (source === "equity" || source === "balance") {
+		const meta = (row as any).metadata || {};
+		let cashVal = String(meta["cash"] || "");
+		let unrealizedVal = String(meta["unrealized"] || "");
+		let equityVal = String(meta["equity"] || "");
+		updateEquity(cashVal, unrealizedVal, equityVal);
+		return;
+	}
+
+	const sourceStr = (row.source as string) || "";
+	const signalStore = signals[sourceStr as keyof typeof signals];
+	if (!signalStore) {
+		return;
+	}
+
+	let ring = signalStore.state[symbolStr as string];
+
+	if (!ring) {
+		ring = new RingBuffer<MeasurementT>(50);
+		signalStore.state[symbolStr as string] = ring;
+	}
+
+	ring.add(row);
+	
+	if (source === "training") {
+		signalStore.state[""] = ring;
+		signalStore.state["learner"] = ring;
+	}
+	
+	signals[sourceStr as keyof typeof signals]?.setState((prev: any) => ({ ...prev }));
 }
 
 export const WsFeed = () => {
@@ -193,13 +243,9 @@ export const WsFeed = () => {
 
 			if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
 				try {
-					const bytes = new Uint8Array(data.buffer);
-					const buffer = new flatbuffers.ByteBuffer(bytes);
-
-					const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
-
+					const row = decodeWireMeasurement(data.buffer);
 					storeBatch(() => {
-						dispatchMeasurements(frame);
+						dispatchMeasurement(row);
 					});
 				} catch (err) {
 					console.error("WS message processing error:", err);

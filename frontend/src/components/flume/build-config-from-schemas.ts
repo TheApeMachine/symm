@@ -3,7 +3,7 @@ import { Colors, Controls, FlumeConfig, getPortBuilders } from "./typeBuilders";
 import type { Control } from "./types";
 
 const PORT_PALETTE: Record<string, (typeof Colors)[keyof typeof Colors]> = {
-	any: Colors.grey,
+	any: Colors.yellow,
 	bool: Colors.green,
 	number: Colors.blue,
 	string: Colors.orange,
@@ -36,8 +36,12 @@ export const normalizePortType = (raw: string): keyof typeof PORT_PALETTE => {
 		case "scalar":
 			return "number";
 		case "primitive":
+		case "data.wiremeasurement":
+		case "wiremeasurement":
 			return "tensor";
 		default:
+			// Heuristic: If it's a matrix or slice of floats, make it a tensor (purple)
+			if (raw.includes("float")) return "tensor";
 			return "any";
 	}
 };
@@ -103,7 +107,7 @@ const registerPortTypes = (config: FlumeConfig) => {
 };
 
 const registerBuiltinNodeTypes = (config: FlumeConfig) => {
-	// Source nodes
+	// Source nodes (must keep custom UI signature for existing graphs)
 	const registerSource = (type: string, label: string) => {
 		config.addNodeType({
 			type,
@@ -121,7 +125,7 @@ const registerBuiltinNodeTypes = (config: FlumeConfig) => {
 	registerSource("data.Source", "Source");
 	registerSource("source", "Source");
 
-	// Sink nodes
+	// Sink nodes (must hide outputs and keep custom UI signature for existing graphs)
 	const registerSink = (type: string, label: string) => {
 		config.addNodeType({
 			type,
@@ -138,8 +142,7 @@ const registerBuiltinNodeTypes = (config: FlumeConfig) => {
 	};
 	registerSink("data.Sink", "Sink");
 	registerSink("sink", "Sink");
-
-	// Master pipeline orchestration stages
+	// Master pipeline orchestration stages (structural nodes that don't exist in primitives.json)
 	const stages: Array<{ type: string; label: string; desc: string }> = [
 		{
 			type: "pipeline.Signals",
@@ -162,16 +165,6 @@ const registerBuiltinNodeTypes = (config: FlumeConfig) => {
 			desc: "Associative cognition & attractor basin logic",
 		},
 		{
-			type: "ui.Broadcast",
-			label: "UI Broadcast",
-			desc: "Telemetry binary frame broadcast to UI hub",
-		},
-		{
-			type: "ui",
-			label: "UI Broadcast",
-			desc: "Telemetry binary frame broadcast to UI hub",
-		},
-		{
 			type: "pipeline.Execution",
 			label: "Execution",
 			desc: "Execution policy and paper/live order submission",
@@ -180,86 +173,6 @@ const registerBuiltinNodeTypes = (config: FlumeConfig) => {
 			type: "execution",
 			label: "Execution",
 			desc: "Execution policy and paper/live order submission",
-		},
-		{
-			type: "data.Extract",
-			label: "Extract",
-			desc: "Extracts a scalar path from structured data",
-		},
-		{
-			type: "data.Select",
-			label: "Select",
-			desc: "Selects nested data properties",
-		},
-		{
-			type: "associative.Grid",
-			label: "Associative Grid",
-			desc: "Associative memory grid",
-		},
-		{
-			type: "temporal.Transition",
-			label: "Transition",
-			desc: "Temporal transition operator",
-		},
-		{
-			type: "cognition.Associate",
-			label: "Associate",
-			desc: "Associative feature mapping",
-		},
-		{
-			type: "cognition.Reinforce",
-			label: "Reinforce",
-			desc: "Cognitive reward reinforcement",
-		},
-		{
-			type: "cognition.Attractor",
-			label: "Attractor",
-			desc: "Attractor basin dynamics",
-		},
-		{
-			type: "cognition.Classification",
-			label: "Classification",
-			desc: "Attractor state classification",
-		},
-		{
-			type: "execution.Decide",
-			label: "Decide",
-			desc: "Execution decision logic",
-		},
-		{
-			type: "execution.Gate",
-			label: "Gate",
-			desc: "Risk and threshold gating",
-		},
-		{
-			type: "execution.Submit",
-			label: "Submit",
-			desc: "Order execution submission",
-		},
-		{
-			type: "transport.Collect",
-			label: "Collect",
-			desc: "Collects items into batches",
-		},
-		{
-			type: "transport.Discard",
-			label: "Discard",
-			desc: "Discards stream data",
-		},
-		{
-			type: "transport.Pace",
-			label: "Pace",
-			desc: "Rate limits stream throughput",
-		},
-		{
-			type: "transport.Process",
-			label: "Process",
-			desc: "External subprocess execution",
-		},
-		{
-			type: "temporal.Delay",
-			label: "Delay",
-			desc: "Temporal lookback delay buffer",
 		},
 	];
 
@@ -273,11 +186,9 @@ const registerBuiltinNodeTypes = (config: FlumeConfig) => {
 				initialWidth: 280,
 				inputs: (ports) => [
 					ports.any({ name: "in", label: "In" }),
-					ports.any({ name: "value", label: "Value" }),
 				],
 				outputs: (ports) => [
 					ports.any({ name: "out", label: "Out" }),
-					ports.any({ name: "value", label: "Value" }),
 				],
 			});
 		}
@@ -416,11 +327,9 @@ export const ensureNodeType = (
 		initialWidth: 280,
 		inputs: [
 			ports.any({ name: "in", label: "In" }),
-			ports.any({ name: "value", label: "Value" }),
 		],
 		outputs: [
 			ports.any({ name: "out", label: "Out" }),
-			ports.any({ name: "value", label: "Value" }),
 		],
 	});
 };

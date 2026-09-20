@@ -1,12 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import {
-	focusStore,
-	getMeasurementStore,
-	kernelDetailStore,
-	measurementSourcesStore,
-	symbolsStore,
-} from "#/collections/app";
+import {  focusAtom, kernelDetailAtom, measurementSourcesAtom, symbolsAtom , signals } from "#/collections/app";
 import {
 	kernelCopy,
 	metricLabel,
@@ -16,9 +10,9 @@ import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
 export const SignalDetail = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
-	const selected = useSelector(kernelDetailStore, (state) => state);
-	const symbols = useSelector(symbolsStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const selected = useSelector(kernelDetailAtom, (state) => state);
+	const symbols = useSelector(symbolsAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	const source = selected || "cvd";
@@ -30,7 +24,7 @@ export const SignalDetail = () => {
 
 	useEffect(() => {
 		if (source === "") return;
-		const sourceStore = getMeasurementStore(source, focusSymbol);
+		const sourceStore = (signals[source as keyof typeof signals] || signals.cvd);
 
 		const applyState = () => {
 			if (!root.current) return;
@@ -54,7 +48,7 @@ export const SignalDetail = () => {
 				row?.maturity === undefined ? "—" : row.maturity.toFixed(3),
 			);
 			set("peer", "—");
-			set("epoch", String(measurementSourcesStore.state.length));
+			set("epoch", String(measurementSourcesAtom.get().length));
 
 			if (row && Array.isArray(row.metrics)) {
 				for (const m of row.metrics) {
@@ -113,7 +107,7 @@ export const SignalDetail = () => {
 			</Typography.Paragraph>
 
 			<div className="mt-4.5 grid grid-cols-2 gap-x-5.5 gap-y-3">
-				{metrics.map((metric) => (
+				{metrics.map((metric: any) => (
 					<div key={metric}>
 						<Flex.Row justify="between" align="center" className="mb-1.5 gap-2">
 							<Typography.Label size="xxs" tone="f3" weight="normal">

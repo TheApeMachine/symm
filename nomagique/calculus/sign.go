@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *SignServer) Write(ctx context.Context, call Sign_write) error {
 
 func (s *SignServer) Done(ctx context.Context, call Sign_done) error {
 	return nil
+}
+
+
+
+type SignNode types.StreamNode[any, any]
+
+func NewSign() SignNode {
+	server := &SignServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

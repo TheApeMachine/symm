@@ -1,6 +1,7 @@
 package store
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"sync/atomic"
 
@@ -126,4 +127,19 @@ func (s *RadixServer) Identify(ctx context.Context, call Radix_identify) error {
 	}
 
 	return nil
+}
+
+
+
+type RadixNode types.StreamNode[any, any]
+
+func NewRadix() RadixNode {
+	server := &RadixServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

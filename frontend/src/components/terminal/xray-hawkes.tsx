@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { clockAtom, focusStore, signals } from "#/collections/app";
+import { clockAtom, focusAtom, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { type HawkesTraceSample, hawkesTrace } from "./xray-hawkes-trace";
@@ -12,7 +12,7 @@ A declared zero decay has not been fitted and supplies no intensity curve.
 */
 export const hawkesSample = (row: MeasurementT): HawkesTraceSample | null => {
 	const metrics = Object.fromEntries(
-		row.metrics.map((metric) => [String(metric.name), metric.raw]),
+		row.metrics.map((metric: any) => [String(metric.name), metric.raw]),
 	);
 	const side = row.provenance.find((value) => value.name === "side")?.value;
 	const decay = metrics.excitation_decay;
@@ -47,7 +47,7 @@ export const hawkesSample = (row: MeasurementT): HawkesTraceSample | null => {
 };
 
 export const XrayHawkesPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -163,7 +163,7 @@ export const XrayHawkesPanel = () => {
 			});
 			const latest = rows.at(-1);
 			const metrics = Object.fromEntries(
-				latest?.metrics.map((metric) => [String(metric.name), metric.raw]) ??
+				latest?.metrics.map((metric: any) => [String(metric.name), metric.raw]) ??
 					[],
 			);
 			const fitted = samples.at(-1);

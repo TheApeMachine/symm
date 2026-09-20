@@ -1,6 +1,7 @@
 package algo_test
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -27,7 +28,9 @@ func TestRLS(t *testing.T) {
 		}
 
 		Convey("When predicting prior to update", func() {
-			forecast := predict(state)
+			var forecast algo.RLSForecast
+			predict.SetDownstreamAny(func(ctx context.Context, out any) error { forecast = out.(algo.RLSForecast); return nil })
+			predict.WriteAny(context.Background(), state)
 			So(forecast.Prediction, ShouldEqual, 0.0) // initial beta is 0
 			So(forecast.Ready, ShouldBeTrue)
 			So(forecast.PredictiveVariance, ShouldBeGreaterThan, 0.0)
@@ -39,7 +42,9 @@ func TestRLS(t *testing.T) {
 					Target:      8.0,
 				}
 
-				posterior := update(obs)
+				var posterior algo.RLSPosterior
+				update.SetDownstreamAny(func(ctx context.Context, out any) error { posterior = out.(algo.RLSPosterior); return nil })
+				update.WriteAny(context.Background(), obs)
 				So(posterior.Innovation, ShouldEqual, 8.0)
 				So(posterior.Beta[0], ShouldBeGreaterThan, 0.0)
 				So(posterior.Beta[1], ShouldBeGreaterThan, 0.0)
@@ -47,7 +52,9 @@ func TestRLS(t *testing.T) {
 				Convey("When predicting next step with updated posterior", func() {
 					nextState := posterior.RLSState
 					nextState.Design = []float64{core.Unit, 2.0}
-					nextForecast := predict(nextState)
+					var nextForecast algo.RLSForecast
+					predict.SetDownstreamAny(func(ctx context.Context, out any) error { nextForecast = out.(algo.RLSForecast); return nil })
+					predict.WriteAny(context.Background(), nextState)
 					So(nextForecast.Prediction, ShouldBeGreaterThan, 0.0)
 				})
 			})

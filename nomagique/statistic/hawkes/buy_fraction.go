@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -37,4 +38,19 @@ func (s *BuyFractionServer) Write(ctx context.Context, call BuyFraction_write) e
 
 func (s *BuyFractionServer) Done(ctx context.Context, call BuyFraction_done) error {
 	return nil
+}
+
+
+
+type BuyFractionNode types.StreamNode[any, any]
+
+func NewBuyFraction() BuyFractionNode {
+	server := &BuyFractionServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

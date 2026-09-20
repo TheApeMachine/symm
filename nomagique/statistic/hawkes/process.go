@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"time"
 	"github.com/bytedance/sonic"
@@ -110,4 +111,25 @@ func (s *ProcessServer) Write(ctx context.Context, call Process_write) error {
 
 func (s *ProcessServer) Done(ctx context.Context, call Process_done) error {
 	return nil
+}
+
+
+
+type ProcessNode types.StreamNode[any, any]
+
+func NewProcess() ProcessNode {
+	server := &ProcessServer{}
+	var nativeDownstream func(context.Context, any) error
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			if nativeDownstream != nil {
+				return nativeDownstream(ctx, &Reading{})
+			}
+			return nil
+		},
+		func(next func(context.Context, any) error) {
+			nativeDownstream = next
+		},
+	)
 }

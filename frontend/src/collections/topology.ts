@@ -97,7 +97,7 @@ export const topologyStore = createStore(
 		ingest: (stamps: BoundaryStamp[]) => {
 			if (stamps.length === 0) return;
 
-			setState((prev) => {
+			setState((prev: any) => {
 				for (const stamp of stamps) {
 					const label = stamp.label() ?? "";
 					if (!label) continue;

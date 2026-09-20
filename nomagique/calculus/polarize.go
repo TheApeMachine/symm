@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -30,4 +31,19 @@ func (s *PolarizeServer) Write(ctx context.Context, call Polarize_write) error {
 
 func (s *PolarizeServer) Done(ctx context.Context, call Polarize_done) error {
 	return nil
+}
+
+
+
+type PolarizeNode types.StreamNode[any, any]
+
+func NewPolarize() PolarizeNode {
+	server := &PolarizeServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

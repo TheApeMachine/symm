@@ -36,5 +36,6 @@ type Schema struct {
 	TypeParamCount    int      `json:"typeParamCount,omitempty"`
 	ConstructorParams []Param  `json:"constructorParams,omitempty"`
 	Stateful          bool     `json:"stateful,omitempty"`
+	ReturnsError      bool     `json:"returnsError,omitempty"`
 	InjectedDeps      []string `json:"injectedDeps,omitempty"`
 }

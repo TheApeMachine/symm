@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *IdentityTargetServer) WriteParams(ctx context.Context, callArgs Identit
 
 func (s *IdentityTargetServer) Done(ctx context.Context, call IdentityTarget_done) error {
 	return nil
+}
+
+
+
+type IdentityTargetNode types.StreamNode[any, any]
+
+func NewIdentityTarget() IdentityTargetNode {
+	server := &IdentityTargetServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

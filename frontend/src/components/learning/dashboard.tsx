@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef, useState } from "react";
-import { focusStore, type RingBuffer, trainingStore } from "#/collections/app";
+import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
@@ -23,7 +23,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 ];
 
 export const LearningDashboard = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const [tab, setTab] = useState<Tab>("forward");
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -229,12 +229,12 @@ export const LearningDashboard = () => {
 			);
 		};
 
-		const initial = getTrainingRing(trainingStore?.state);
+		const initial = getTrainingRing(signals.training?.state);
 		if (initial) {
 			update(initial);
 		}
 
-		const unsub = trainingStore.subscribe((state) => {
+		const unsub = signals.training.subscribe((state: any) => {
 			const ring = getTrainingRing(state);
 			if (ring) {
 				update(ring);

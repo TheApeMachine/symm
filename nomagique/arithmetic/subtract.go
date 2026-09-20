@@ -1,6 +1,7 @@
 package arithmetic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -17,4 +18,19 @@ func (s *SubtractServer) Write(ctx context.Context, call Subtract_write) error {
 
 func (s *SubtractServer) Done(ctx context.Context, call Subtract_done) error {
 	return nil
+}
+
+
+
+type SubtractNode types.StreamNode[any, any]
+
+func NewSubtract() SubtractNode {
+	server := &SubtractServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

@@ -46,7 +46,7 @@ if (typeof window !== "undefined") {
 }
 
 export const setRoutingMode = (mode: FlumeRoutingMode): void => {
-	flumeEditorStore.setState((previous) =>
+	flumeEditorStore.setState((previous: any) =>
 		previous.routingMode === mode
 			? previous
 			: { ...previous, routingMode: mode },
@@ -60,7 +60,7 @@ export const setDragOverride = (
 	editorId: string,
 	override: Record<string, DragOverride> | null,
 ): void => {
-	flumeEditorStore.setState((previous) => {
+	flumeEditorStore.setState((previous: any) => {
 		const next = { ...previous.dragOverrideByEditorId };
 
 		if (override === null || Object.keys(override).length === 0) {

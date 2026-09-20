@@ -1,6 +1,7 @@
 package temporal
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -26,4 +27,23 @@ func (s *LogReturnsServer) Write(ctx context.Context, call LogReturns_write) err
 
 func (s *LogReturnsServer) Done(ctx context.Context, call LogReturns_done) error {
 	return nil
+}
+
+
+
+type LogReturnsNode types.StreamNode[any, any]
+
+func NewLogReturns() LogReturnsNode {
+	server := &LogReturnsServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {
+			server.Downstream = func(c context.Context, val float64) error {
+				return next(c, val)
+			}
+		},
+	)
 }

@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"bytes"
 	"context"
 	"sync/atomic"
@@ -26,4 +27,19 @@ func (s *ReinforceServer) Write(ctx context.Context, call Reinforce_write) error
 
 func (s *ReinforceServer) Done(ctx context.Context, call Reinforce_done) error {
 	return nil
+}
+
+
+
+type ReinforceNode types.StreamNode[any, any]
+
+func NewReinforce() ReinforceNode {
+	server := &ReinforceServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

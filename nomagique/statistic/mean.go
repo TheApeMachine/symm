@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -21,4 +22,19 @@ func (s *MeanServer) Write(ctx context.Context, call Mean_write) error {
 
 func (s *MeanServer) Done(ctx context.Context, call Mean_done) error {
 	return nil
+}
+
+
+
+type MeanNode types.StreamNode[any, any]
+
+func NewMean() MeanNode {
+	server := &MeanServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

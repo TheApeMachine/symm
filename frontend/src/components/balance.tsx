@@ -1,10 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
-import {
-	cashAtom,
-	equityAtom,
-	unrealizedAtom,
-} from "#/collections/app";
+import { cashAtom, equityAtom, unrealizedAtom } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 

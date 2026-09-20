@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/bytedance/sonic"
@@ -62,4 +63,19 @@ func (s *DecideServer) Write(ctx context.Context, call Decide_write) error {
 
 func (s *DecideServer) Done(ctx context.Context, call Decide_done) error {
 	return nil
+}
+
+
+
+type DecideNode types.StreamNode[any, any]
+
+func NewDecide() DecideNode {
+	server := &DecideServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

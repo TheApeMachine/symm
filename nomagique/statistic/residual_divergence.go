@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -19,4 +20,19 @@ func (s *ResidualDivergenceServer) Write(ctx context.Context, call ResidualDiver
 
 func (s *ResidualDivergenceServer) Done(ctx context.Context, call ResidualDivergence_done) error {
 	return nil
+}
+
+
+
+type ResidualDivergenceNode types.StreamNode[any, any]
+
+func NewResidualDivergence() ResidualDivergenceNode {
+	server := &ResidualDivergenceServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

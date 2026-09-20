@@ -1,6 +1,7 @@
 package geometry
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"math"
@@ -473,4 +474,64 @@ func rankMatches(matches []CorpusMatch) {
 		}
 		return matches[left].At.Before(matches[right].At)
 	})
+}
+
+
+
+type PhasePathNode types.StreamNode[any, any]
+
+func NewPhasePath() PhasePathNode {
+	server := &PhasePathServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
+}
+
+
+
+type NormalizeNode types.StreamNode[any, any]
+
+func NewNormalize() NormalizeNode {
+	server := &NormalizeServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
+}
+
+
+
+type OverlapNode types.StreamNode[any, any]
+
+func NewOverlap() OverlapNode {
+	server := &OverlapServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
+}
+
+
+
+type CorpusNode types.StreamNode[any, any]
+
+func NewCorpus() CorpusNode {
+	server := &CorpusServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

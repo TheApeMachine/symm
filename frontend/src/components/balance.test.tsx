@@ -1,12 +1,7 @@
 import * as flatbuffers from "flatbuffers";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-	cashAtom,
-	equityAtom,
-	unrealizedAtom,
-	updateEquity,
-} from "#/collections/app";
+import { cashAtom, equityAtom, unrealizedAtom, updateEquity } from "#/collections/app";
 import { Balance } from "#/components/balance";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 

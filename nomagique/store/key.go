@@ -1,6 +1,7 @@
 package store
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -29,4 +30,19 @@ func (s *KeyServer) Extract(ctx context.Context, call Key_extract) error {
 	res.SetValue(0.0)
 
 	return nil
+}
+
+
+
+type KeyNode types.StreamNode[any, any]
+
+func NewKey() KeyNode {
+	server := &KeyServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

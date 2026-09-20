@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	context "context"
 	"fmt"
 
@@ -445,4 +446,19 @@ func (temporalLedger *TemporalLedgerServer) prune() {
 			delete(temporalLedger.references, key)
 		}
 	}
+}
+
+
+
+type TemporalLedgerNode types.StreamNode[any, any]
+
+func NewTemporalLedger() TemporalLedgerNode {
+	server := &TemporalLedgerServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

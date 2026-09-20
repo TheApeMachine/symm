@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"bytes"
 	"context"
 )
@@ -24,4 +25,19 @@ func (s *ParseBasinKeyServer) Write(ctx context.Context, call ParseBasinKey_writ
 
 func (s *ParseBasinKeyServer) Done(ctx context.Context, call ParseBasinKey_done) error {
 	return nil
+}
+
+
+
+type ParseBasinKeyNode types.StreamNode[any, any]
+
+func NewParseBasinKey() ParseBasinKeyNode {
+	server := &ParseBasinKeyServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

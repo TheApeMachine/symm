@@ -1,22 +1,22 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { positionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Positions } from "./positions";
 
 describe("Positions", () => {
-	it("renders without error when positionStore is in default fallback state", () => {
+	it("renders without error when signals.position is in default fallback state", () => {
 		const markup = renderToStaticMarkup(<Positions />);
 		expect(markup).toContain("no open positions");
 	});
 
-	it("renders without error when positionStore state does not have findLast function", () => {
-		const originalState = positionStore.state;
+	it("renders without error when signals.position state does not have findLast function", () => {
+		const originalState = signals.position.state;
 		try {
-			positionStore.setState({} as any);
+			signals.position.setState({} as any);
 			const markup = renderToStaticMarkup(<Positions />);
 			expect(markup).toContain("no open positions");
 		} finally {
-			positionStore.setState(originalState);
+			signals.position.setState(originalState);
 		}
 	});
 });

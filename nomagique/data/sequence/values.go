@@ -38,7 +38,7 @@ func (s *ValuesServer) Execute(ctx context.Context, call Values_execute) error {
 
 type ValuesNode types.StreamNode[any, any]
 
-func NewValuesNode() ValuesNode {
+func NewValues() ValuesNode {
 	server := NewValuesServer()
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		_, err := server.Evaluate(ctx, in)

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *WSReadServer) Write(ctx context.Context, call WSRead_write) error {
 
 func (s *WSReadServer) Done(ctx context.Context, call WSRead_done) error {
 	return nil
+}
+
+
+
+type WSReadNode types.StreamNode[any, any]
+
+func NewWSRead() WSReadNode {
+	server := &WSReadServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

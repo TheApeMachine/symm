@@ -1,4 +1,4 @@
-import type { positionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { EntryCost } from "#/providers/telemetry/telemetry/entry-cost";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
@@ -49,7 +49,7 @@ export type FrozenEntryDecision = {
 	evidence: DecisionEvidence[];
 };
 
-type PositionState = ReturnType<typeof positionStore.get>;
+type PositionState = typeof signals.position.state;
 
 const text = (value: string | null): string => value ?? "";
 

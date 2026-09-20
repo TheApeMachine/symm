@@ -117,7 +117,7 @@ func (s *OLSServer) Done(ctx context.Context, call OLS_done) error {
 
 type OLSNode types.StreamNode[[2][][]float64, []float64]
 
-func NewOLSNode(tolerance types.Float) OLSNode {
+func NewOLS(tolerance types.Float) OLSNode {
 	server := &OLSServer{}
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		input := in.([2][][]float64)
@@ -133,3 +133,5 @@ func NewOLSNode(tolerance types.Float) OLSNode {
 		}
 	})
 }
+
+

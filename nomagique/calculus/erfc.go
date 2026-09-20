@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -18,4 +19,19 @@ func (s *ErfcServer) Write(ctx context.Context, call Erfc_write) error {
 
 func (s *ErfcServer) Done(ctx context.Context, call Erfc_done) error {
 	return nil
+}
+
+
+
+type ErfcNode types.StreamNode[any, any]
+
+func NewErfc() ErfcNode {
+	server := &ErfcServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

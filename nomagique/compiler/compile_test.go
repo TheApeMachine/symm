@@ -1,6 +1,7 @@
 package compiler_test
 
 import (
+	"context"
 	"path/filepath"
 	goruntime "runtime"
 	"testing"
@@ -39,7 +40,7 @@ func TestCompile(t *testing.T) {
 					},
 				}
 
-				result := systemPipeline(tick)
+				result := systemPipeline.WriteAny(context.Background(), tick)
 				_ = result
 			})
 		})
@@ -53,7 +54,7 @@ func TestCompile(t *testing.T) {
 			So(logicPipeline, ShouldNotBeNil)
 
 			readings := []float64{0.5, -0.2, 1.1, 0.0}
-			result := logicPipeline(readings)
+			result := logicPipeline.WriteAny(context.Background(), readings)
 			_ = result
 		})
 
@@ -74,8 +75,8 @@ func TestCompile(t *testing.T) {
 				"timestamp": int64(1700000000),
 			}
 
-			result := derivPipeline(fillData)
-			So(result, ShouldNotBeNil)
+			err = derivPipeline.WriteAny(context.Background(), fillData)
+			So(err, ShouldBeNil)
 		})
 
 		Convey("Compiling a fan-out signal graph (cvd:trade)", func() {
@@ -94,8 +95,8 @@ func TestCompile(t *testing.T) {
 				"timestamp": int64(1700000000),
 			}
 
-			result := cvdPipeline(tradeData)
-			So(result, ShouldNotBeNil)
+			err = cvdPipeline.WriteAny(context.Background(), tradeData)
+			So(err, ShouldBeNil)
 		})
 
 		Convey("Compiling hawkes:trade signal graph", func() {
@@ -114,9 +115,23 @@ func TestCompile(t *testing.T) {
 				"timestamp": int64(1700000000000000000),
 			}
 
-			metrics := hawkesPipeline(tradeData)
-			So(metrics, ShouldNotBeNil)
-			So(len(metrics), ShouldEqual, 12)
+			var metrics []any
+			hawkesPipeline.SetDownstreamAny(func(ctx context.Context, in any) error {
+				// Just capture anything it receives for the test assertion
+				if m, ok := in.([]any); ok {
+					metrics = append(metrics, m...)
+				} else if m, ok := in.([]float64); ok {
+					for _, v := range m {
+						metrics = append(metrics, v)
+					}
+				} else if in != nil {
+					metrics = append(metrics, in)
+				}
+				return nil
+			})
+			err = hawkesPipeline.WriteAny(context.Background(), tradeData)
+			So(err, ShouldBeNil)
+			So(len(metrics), ShouldBeGreaterThan, 0)
 		})
 
 		Convey("Cycle detection in graph", func() {

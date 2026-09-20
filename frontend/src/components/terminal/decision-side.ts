@@ -21,7 +21,7 @@ export const setDecisionsScopeSymbol = (symbol: string | undefined): void => {
 		return;
 	}
 
-	decisionSideStore.setState((previous) => ({
+	decisionSideStore.setState((previous: any) => ({
 		...previous,
 		scopeSymbol: symbol,
 	}));
@@ -58,7 +58,7 @@ matches — then clears it, so later live repaints of the same row don't keep
 forcing it back open after the trader has collapsed or picked a different one.
 */
 export const setDecisionsPendingFocus = (symbol: string): void => {
-	decisionSideStore.setState((previous) => ({
+	decisionSideStore.setState((previous: any) => ({
 		...previous,
 		pendingFocusSymbol: symbol,
 	}));
@@ -73,7 +73,7 @@ export const consumeDecisionsPendingFocus = (symbol: string): boolean => {
 		return false;
 	}
 
-	decisionSideStore.setState((previous) => ({
+	decisionSideStore.setState((previous: any) => ({
 		...previous,
 		pendingFocusSymbol: undefined,
 	}));

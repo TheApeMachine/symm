@@ -1,38 +1,63 @@
 {
-	"algo.HayashiYoshidaNode": {
+	"transport.Base64Encode": {
 		"kind": "primitive",
-		"category": "algo",
-		"op": "algo.HayashiYoshidaNode",
-		"name": "HayashiYoshidaNode",
-		"label": "Hayashi Yoshida Node",
+		"category": "transport",
+		"op": "transport.Base64Encode",
+		"name": "Base64Encode",
+		"label": "Base64 Encode",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/algo",
-		"builder": "NewHayashiYoshidaNode",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewBase64Encode",
 		"inputs": [
 			{
-				"name": "in",
-				"type": "[2][2]int64",
-				"description": "The run this primitive reads"
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
 			}
 		],
 		"outputs": [
 			{
 				"name": "out",
-				"type": "float64",
+				"type": "any",
 				"description": "The run this primitive produces"
 			}
 		],
 		"stateful": true
 	},
-	"data.ExtractNode": {
+	"transport.WSEncodeJSON": {
 		"kind": "primitive",
-		"category": "data",
-		"op": "data.ExtractNode",
-		"name": "ExtractNode",
-		"label": "Extract Node",
+		"category": "transport",
+		"op": "transport.WSEncodeJSON",
+		"name": "WSEncodeJSON",
+		"label": "W S Encode J S O N",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data",
-		"builder": "NewExtractNode",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSEncodeJSON",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"store.Key": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Key",
+		"name": "Key",
+		"label": "Key",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewKey",
 		"inputs": [
 			{
 				"name": "in",
@@ -43,108 +68,21 @@
 		"outputs": [
 			{
 				"name": "out",
-				"type": "float64",
+				"type": "any",
 				"description": "The run this primitive produces"
 			}
 		],
 		"stateful": true
 	},
-	"data.SeriesNode": {
-		"kind": "primitive",
-		"category": "data",
-		"op": "data.SeriesNode",
-		"name": "SeriesNode",
-		"label": "Series Node",
-		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data",
-		"builder": "NewSeriesNode",
-		"inputs": [
-			{
-				"name": "in",
-				"type": "data.SeriesInput",
-				"description": "The run this primitive reads"
-			},
-			{
-				"name": "capacity",
-				"type": "int",
-				"description": "Port for capacity"
-			}
-		],
-		"outputs": [
-			{
-				"name": "out",
-				"type": "data.SeriesReading",
-				"description": "The run this primitive produces"
-			}
-		],
-		"paramCount": 1,
-		"constructorParams": [
-			{
-				"name": "capacity",
-				"type": "types.Integer"
-			}
-		],
-		"stateful": true
-	},
-	"sequence.AppendNode": {
+	"sequence.Window": {
 		"kind": "primitive",
 		"category": "sequence",
-		"op": "sequence.AppendNode",
-		"name": "AppendNode",
-		"label": "Append Node",
+		"op": "sequence.Window",
+		"name": "Window",
+		"label": "Window",
 		"description": "",
 		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
-		"builder": "NewAppendNode",
-		"inputs": [
-			{
-				"name": "in",
-				"type": "any",
-				"description": "The run this primitive reads"
-			}
-		],
-		"outputs": [
-			{
-				"name": "out",
-				"type": "any",
-				"description": "The run this primitive produces"
-			}
-		],
-		"stateful": true
-	},
-	"sequence.OrderNode": {
-		"kind": "primitive",
-		"category": "sequence",
-		"op": "sequence.OrderNode",
-		"name": "OrderNode",
-		"label": "Order Node",
-		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
-		"builder": "NewOrderNode",
-		"inputs": [
-			{
-				"name": "in",
-				"type": "any",
-				"description": "The run this primitive reads"
-			}
-		],
-		"outputs": [
-			{
-				"name": "out",
-				"type": "any",
-				"description": "The run this primitive produces"
-			}
-		],
-		"stateful": true
-	},
-	"sequence.TailNode": {
-		"kind": "primitive",
-		"category": "sequence",
-		"op": "sequence.TailNode",
-		"name": "TailNode",
-		"label": "Tail Node",
-		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
-		"builder": "NewTailNode",
+		"builder": "NewWindow",
 		"inputs": [
 			{
 				"name": "in",
@@ -173,15 +111,15 @@
 		],
 		"stateful": true
 	},
-	"sequence.ValuesNode": {
+	"geometry.Overlap": {
 		"kind": "primitive",
-		"category": "sequence",
-		"op": "sequence.ValuesNode",
-		"name": "ValuesNode",
-		"label": "Values Node",
+		"category": "geometry",
+		"op": "geometry.Overlap",
+		"name": "Overlap",
+		"label": "Overlap",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
-		"builder": "NewValuesNode",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewOverlap",
 		"inputs": [
 			{
 				"name": "in",
@@ -198,20 +136,125 @@
 		],
 		"stateful": true
 	},
-	"algo.GaussJordanNode": {
+	"probability.ShannonAmbiguity": {
 		"kind": "primitive",
-		"category": "algo",
-		"op": "algo.GaussJordanNode",
-		"name": "GaussJordanNode",
-		"label": "Gauss Jordan Node",
+		"category": "probability",
+		"op": "probability.ShannonAmbiguity",
+		"name": "ShannonAmbiguity",
+		"label": "Shannon Ambiguity",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/algo",
-		"builder": "NewGaussJordanNode",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewShannonAmbiguity",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.CausalVariance": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.CausalVariance",
+		"name": "CausalVariance",
+		"label": "Causal Variance",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewCausalVariance",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"store.Grid": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Grid",
+		"name": "Grid",
+		"label": "Grid",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewGrid",
 		"inputs": [
 			{
 				"name": "in",
-				"type": "[2][][]float64",
+				"type": "any",
 				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Broadcast": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Broadcast",
+		"name": "Broadcast",
+		"label": "Broadcast",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewBroadcast",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"algo.OLS": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.OLS",
+		"name": "OLS",
+		"label": "O L S",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewOLS",
+		"inputs": [
+			{
+				"name": "x",
+				"type": "[2][][]float64",
+				"description": "The x stream this primitive reads"
+			},
+			{
+				"name": "y",
+				"type": "[2][][]float64",
+				"description": "The y stream this primitive reads"
 			},
 			{
 				"name": "tolerance",
@@ -222,7 +265,7 @@
 		"outputs": [
 			{
 				"name": "out",
-				"type": "[][]float64",
+				"type": "[]float64",
 				"description": "The run this primitive produces"
 			}
 		],
@@ -247,52 +290,1048 @@
 		"inputs": [
 			{
 				"name": "in",
-				"type": "algo.RLSObservation",
+				"type": "any",
 				"description": "The run this primitive reads"
 			}
 		],
 		"outputs": [
 			{
 				"name": "out",
-				"type": "algo.RLSPosterior",
-				"description": "The run this primitive produces"
-			}
-		]
-	},
-	"data.EquationNode": {
-		"kind": "primitive",
-		"category": "data",
-		"op": "data.EquationNode",
-		"name": "EquationNode",
-		"label": "Equation Node",
-		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data",
-		"builder": "NewEquationNode",
-		"inputs": [
-			{
-				"name": "in",
-				"type": "data.WireMeasurement",
-				"description": "The run this primitive reads"
-			}
-		],
-		"outputs": [
-			{
-				"name": "out",
-				"type": "data.WireMeasurement",
+				"type": "any",
 				"description": "The run this primitive produces"
 			}
 		],
 		"stateful": true
 	},
-	"data.SelectNode": {
+	"calculus.Tanh": {
 		"kind": "primitive",
-		"category": "data",
-		"op": "data.SelectNode",
-		"name": "SelectNode",
-		"label": "Select Node",
+		"category": "calculus",
+		"op": "calculus.Tanh",
+		"name": "Tanh",
+		"label": "Tanh",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data",
-		"builder": "NewSelectNode",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewTanh",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"geometry.Normalize": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Normalize",
+		"name": "Normalize",
+		"label": "Normalize",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewNormalize",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"probability.KolmogorovSmirnov": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.KolmogorovSmirnov",
+		"name": "KolmogorovSmirnov",
+		"label": "Kolmogorov Smirnov",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewKolmogorovSmirnov",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Base64Decode": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Base64Decode",
+		"name": "Base64Decode",
+		"label": "Base64 Decode",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewBase64Decode",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.SHA256": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.SHA256",
+		"name": "SHA256",
+		"label": "S H A256",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewSHA256",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Attractor": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Attractor",
+		"name": "Attractor",
+		"label": "Attractor",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewAttractor",
+		"inputs": [
+			{
+				"name": "contextBytes",
+				"type": "any",
+				"description": "The contextBytes stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.ZScore": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.ZScore",
+		"name": "ZScore",
+		"label": "Z Score",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewZScore",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Discard": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Discard",
+		"name": "Discard",
+		"label": "Discard",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewDiscard",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Negate": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Negate",
+		"name": "Negate",
+		"label": "Negate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewNegate",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.Threshold": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.Threshold",
+		"name": "Threshold",
+		"label": "Threshold",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewThreshold",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.EventCount": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.EventCount",
+		"name": "EventCount",
+		"label": "Event Count",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewEventCount",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Join": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Join",
+		"name": "Join",
+		"label": "Join",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewJoin",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSClose": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSClose",
+		"name": "WSClose",
+		"label": "W S Close",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSClose",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Reciprocal": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Reciprocal",
+		"name": "Reciprocal",
+		"label": "Reciprocal",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewReciprocal",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"geometry.PhasePath": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.PhasePath",
+		"name": "PhasePath",
+		"label": "Phase Path",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewPhasePath",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"geometry.Corpus": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Corpus",
+		"name": "Corpus",
+		"label": "Corpus",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewCorpus",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.IdentityTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.IdentityTarget",
+		"name": "IdentityTarget",
+		"label": "Identity Target",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewIdentityTarget",
+		"inputs": [
+			{
+				"name": "past",
+				"type": "any",
+				"description": "The past stream this primitive reads"
+			},
+			{
+				"name": "current",
+				"type": "any",
+				"description": "The current stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.CausalMean": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.CausalMean",
+		"name": "CausalMean",
+		"label": "Causal Mean",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewCausalMean",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.BuyFraction": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.BuyFraction",
+		"name": "BuyFraction",
+		"label": "Buy Fraction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyFraction",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"execution.Decide": {
+		"kind": "primitive",
+		"category": "execution",
+		"op": "execution.Decide",
+		"name": "Decide",
+		"label": "Decide",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/execution",
+		"builder": "NewDecide",
+		"inputs": [
+			{
+				"name": "decide",
+				"type": "any",
+				"description": "The decide stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"probability.Entropy": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Entropy",
+		"name": "Entropy",
+		"label": "Entropy",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewEntropy",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.ResidualBaseline": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.ResidualBaseline",
+		"name": "ResidualBaseline",
+		"label": "Residual Baseline",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewResidualBaseline",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSWrite": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSWrite",
+		"name": "WSWrite",
+		"label": "W S Write",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSWrite",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.DeltaTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.DeltaTarget",
+		"name": "DeltaTarget",
+		"label": "Delta Target",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewDeltaTarget",
+		"inputs": [
+			{
+				"name": "past",
+				"type": "any",
+				"description": "The past stream this primitive reads"
+			},
+			{
+				"name": "current",
+				"type": "any",
+				"description": "The current stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"physics.Simulation": {
+		"kind": "primitive",
+		"category": "physics",
+		"op": "physics.Simulation",
+		"name": "Simulation",
+		"label": "Simulation",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/physics",
+		"builder": "NewSimulation",
+		"inputs": [
+			{
+				"name": "data",
+				"type": "any",
+				"description": "The data stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.BuyCount": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.BuyCount",
+		"name": "BuyCount",
+		"label": "Buy Count",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyCount",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"temporal.Velocity": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Velocity",
+		"name": "Velocity",
+		"label": "Velocity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewVelocity",
+		"inputs": [
+			{
+				"name": "val",
+				"type": "any",
+				"description": "The val stream this primitive reads"
+			},
+			{
+				"name": "ts",
+				"type": "any",
+				"description": "The ts stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSBatch": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSBatch",
+		"name": "WSBatch",
+		"label": "W S Batch",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSBatch",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Erfc": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Erfc",
+		"name": "Erfc",
+		"label": "Erfc",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewErfc",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Exp": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Exp",
+		"name": "Exp",
+		"label": "Exp",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewExp",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Polarize": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Polarize",
+		"name": "Polarize",
+		"label": "Polarize",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewPolarize",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "b",
+				"type": "any",
+				"description": "The b stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"sequence.Append": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Append",
+		"name": "Append",
+		"label": "Append",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewAppend",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"sequence.Values": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Values",
+		"name": "Values",
+		"label": "Values",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewValues",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"associative.Grid": {
+		"kind": "primitive",
+		"category": "associative",
+		"op": "associative.Grid",
+		"name": "Grid",
+		"label": "Grid",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning/associative",
+		"builder": "NewGrid",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.EMA": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.EMA",
+		"name": "EMA",
+		"label": "E M A",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewEMA",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.SpectralRadius": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SpectralRadius",
+		"name": "SpectralRadius",
+		"label": "Spectral Radius",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSpectralRadius",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"algo.RLSPrediction": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.RLSPrediction",
+		"name": "RLSPrediction",
+		"label": "R L S Prediction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewRLSPrediction",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.TaskLearner": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.TaskLearner",
+		"name": "TaskLearner",
+		"label": "Task Learner",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewTaskLearner",
+		"inputs": [
+			{
+				"name": "input",
+				"type": "any",
+				"description": "The input stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.ArrivalRate": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.ArrivalRate",
+		"name": "ArrivalRate",
+		"label": "Arrival Rate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewArrivalRate",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Floor": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Floor",
+		"name": "Floor",
+		"label": "Floor",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewFloor",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"sequence.At": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.At",
+		"name": "At",
+		"label": "At",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewAt",
 		"inputs": [
 			{
 				"name": "in",
@@ -300,9 +1339,9 @@
 				"description": "The run this primitive reads"
 			},
 			{
-				"name": "path",
-				"type": "string",
-				"description": "Port for path"
+				"name": "index",
+				"type": "int",
+				"description": "Port for index"
 			}
 		],
 		"outputs": [
@@ -315,21 +1354,988 @@
 		"paramCount": 1,
 		"constructorParams": [
 			{
-				"name": "path",
-				"type": "types.String"
+				"name": "index",
+				"type": "types.Integer"
 			}
 		],
 		"stateful": true
 	},
-	"sequence.WindowNode": {
+	"hawkes.SellFraction": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellFraction",
+		"name": "SellFraction",
+		"label": "Sell Fraction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellFraction",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSRead": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSRead",
+		"name": "WSRead",
+		"label": "W S Read",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSRead",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Bound": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Bound",
+		"name": "Bound",
+		"label": "Bound",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewBound",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"data.Series": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Series",
+		"name": "Series",
+		"label": "Series",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewSeries",
+		"inputs": [
+			{
+				"name": "series",
+				"type": "data.SeriesInput",
+				"description": "The series stream this primitive reads"
+			},
+			{
+				"name": "capacity",
+				"type": "int",
+				"description": "Port for capacity"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "data.SeriesReading",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"constructorParams": [
+			{
+				"name": "capacity",
+				"type": "types.Integer"
+			}
+		],
+		"stateful": true
+	},
+	"data.Source": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Source",
+		"name": "Source",
+		"label": "Source",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewSource",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.Forecast": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Forecast",
+		"name": "Forecast",
+		"label": "Forecast",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewForecast",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The in stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.TemporalLedger": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.TemporalLedger",
+		"name": "TemporalLedger",
+		"label": "Temporal Ledger",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewTemporalLedger",
+		"inputs": [
+			{
+				"name": "issue",
+				"type": "any",
+				"description": "The issue stream this primitive reads"
+			},
+			{
+				"name": "resolve",
+				"type": "any",
+				"description": "The resolve stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Route": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Route",
+		"name": "Route",
+		"label": "Route",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewRoute",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"algo.HayashiYoshida": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.HayashiYoshida",
+		"name": "HayashiYoshida",
+		"label": "Hayashi Yoshida",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewHayashiYoshida",
+		"inputs": [
+			{
+				"name": "boundsStart1",
+				"type": "[2][2]int64",
+				"description": "The boundsStart1 stream this primitive reads"
+			},
+			{
+				"name": "boundsEnd1",
+				"type": "[2][2]int64",
+				"description": "The boundsEnd1 stream this primitive reads"
+			},
+			{
+				"name": "boundsStart2",
+				"type": "[2][2]int64",
+				"description": "The boundsStart2 stream this primitive reads"
+			},
+			{
+				"name": "boundsEnd2",
+				"type": "[2][2]int64",
+				"description": "The boundsEnd2 stream this primitive reads"
+			},
+			{
+				"name": "returns1",
+				"type": "[2][2]int64",
+				"description": "The returns1 stream this primitive reads"
+			},
+			{
+				"name": "returns2",
+				"type": "[2][2]int64",
+				"description": "The returns2 stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Reinforce": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Reinforce",
+		"name": "Reinforce",
+		"label": "Reinforce",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewReinforce",
+		"inputs": [
+			{
+				"name": "contextBytes",
+				"type": "any",
+				"description": "The contextBytes stream this primitive reads"
+			},
+			{
+				"name": "classBytes",
+				"type": "any",
+				"description": "The classBytes stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.ConditionalIntensity": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.ConditionalIntensity",
+		"name": "ConditionalIntensity",
+		"label": "Conditional Intensity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewConditionalIntensity",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.HMACSHA512": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.HMACSHA512",
+		"name": "HMACSHA512",
+		"label": "H M A C S H A512",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewHMACSHA512",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Timestamp": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Timestamp",
+		"name": "Timestamp",
+		"label": "Timestamp",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewTimestamp",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.SecondDifference": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.SecondDifference",
+		"name": "SecondDifference",
+		"label": "Second Difference",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSecondDifference",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Sign": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Sign",
+		"name": "Sign",
+		"label": "Sign",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSign",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.Counterfactual": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Counterfactual",
+		"name": "Counterfactual",
+		"label": "Counterfactual",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewCounterfactual",
+		"inputs": [
+			{
+				"name": "history",
+				"type": "any",
+				"description": "The history stream this primitive reads"
+			},
+			{
+				"name": "factualRow",
+				"type": "any",
+				"description": "The factualRow stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.ResonanceManifold": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.ResonanceManifold",
+		"name": "ResonanceManifold",
+		"label": "Resonance Manifold",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewResonanceManifold",
+		"inputs": [
+			{
+				"name": "command",
+				"type": "any",
+				"description": "The command stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.BuyRate": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.BuyRate",
+		"name": "BuyRate",
+		"label": "Buy Rate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyRate",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"store.Constant": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Constant",
+		"name": "Constant",
+		"label": "Constant",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewConstant",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.JSONEncode": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.JSONEncode",
+		"name": "JSONEncode",
+		"label": "J S O N Encode",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewJSONEncode",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSPingPong": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSPingPong",
+		"name": "WSPingPong",
+		"label": "W S Ping Pong",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSPingPong",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"probability.Concentration": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Concentration",
+		"name": "Concentration",
+		"label": "Concentration",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewConcentration",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.BearerAuth": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.BearerAuth",
+		"name": "BearerAuth",
+		"label": "Bearer Auth",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewBearerAuth",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Nonce": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Nonce",
+		"name": "Nonce",
+		"label": "Nonce",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewNonce",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Tee": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Tee",
+		"name": "Tee",
+		"label": "Tee",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewTee",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Maximum": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Maximum",
+		"name": "Maximum",
+		"label": "Maximum",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewMaximum",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "b",
+				"type": "any",
+				"description": "The b stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.Backdoor": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Backdoor",
+		"name": "Backdoor",
+		"label": "Backdoor",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewBackdoor",
+		"inputs": [
+			{
+				"name": "history",
+				"type": "any",
+				"description": "The history stream this primitive reads"
+			},
+			{
+				"name": "factualRow",
+				"type": "any",
+				"description": "The factualRow stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.DirectionalTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.DirectionalTarget",
+		"name": "DirectionalTarget",
+		"label": "Directional Target",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewDirectionalTarget",
+		"inputs": [
+			{
+				"name": "past",
+				"type": "any",
+				"description": "The past stream this primitive reads"
+			},
+			{
+				"name": "current",
+				"type": "any",
+				"description": "The current stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Gate": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Gate",
+		"name": "Gate",
+		"label": "Gate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewGate",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.JSONDecode": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.JSONDecode",
+		"name": "JSONDecode",
+		"label": "J S O N Decode",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewJSONDecode",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Associate": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Associate",
+		"name": "Associate",
+		"label": "Associate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewAssociate",
+		"inputs": [
+			{
+				"name": "current",
+				"type": "any",
+				"description": "The current stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"execution.Regulator": {
+		"kind": "primitive",
+		"category": "execution",
+		"op": "execution.Regulator",
+		"name": "Regulator",
+		"label": "Regulator",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/execution",
+		"builder": "NewRegulator",
+		"inputs": [
+			{
+				"name": "regulator",
+				"type": "any",
+				"description": "The regulator stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.SellCount": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellCount",
+		"name": "SellCount",
+		"label": "Sell Count",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellCount",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Parallel": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Parallel",
+		"name": "Parallel",
+		"label": "Parallel",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewParallel",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSConnect": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSConnect",
+		"name": "WSConnect",
+		"label": "W S Connect",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSConnect",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.ParseBasinKey": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.ParseBasinKey",
+		"name": "ParseBasinKey",
+		"label": "Parse Basin Key",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewParseBasinKey",
+		"inputs": [
+			{
+				"name": "key",
+				"type": "any",
+				"description": "The key stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"sequence.Tail": {
 		"kind": "primitive",
 		"category": "sequence",
-		"op": "sequence.WindowNode",
-		"name": "WindowNode",
-		"label": "Window Node",
+		"op": "sequence.Tail",
+		"name": "Tail",
+		"label": "Tail",
 		"description": "",
 		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
-		"builder": "NewWindowNode",
+		"builder": "NewTail",
 		"inputs": [
 			{
 				"name": "in",
@@ -358,20 +2364,1668 @@
 		],
 		"stateful": true
 	},
-	"algo.OLSNode": {
+	"transport.Fork": {
 		"kind": "primitive",
-		"category": "algo",
-		"op": "algo.OLSNode",
-		"name": "OLSNode",
-		"label": "O L S Node",
+		"category": "transport",
+		"op": "transport.Fork",
+		"name": "Fork",
+		"label": "Fork",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/algo",
-		"builder": "NewOLSNode",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewFork",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"geometry.Intersection": {
+		"kind": "primitive",
+		"category": "geometry",
+		"op": "geometry.Intersection",
+		"name": "Intersection",
+		"label": "Intersection",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/geometry",
+		"builder": "NewIntersection",
+		"inputs": [
+			{
+				"name": "leftStart",
+				"type": "any",
+				"description": "The leftStart stream this primitive reads"
+			},
+			{
+				"name": "leftEnd",
+				"type": "any",
+				"description": "The leftEnd stream this primitive reads"
+			},
+			{
+				"name": "rightStart",
+				"type": "any",
+				"description": "The rightStart stream this primitive reads"
+			},
+			{
+				"name": "rightEnd",
+				"type": "any",
+				"description": "The rightEnd stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.LinearFit": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.LinearFit",
+		"name": "LinearFit",
+		"label": "Linear Fit",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewLinearFit",
+		"inputs": [
+			{
+				"name": "rows",
+				"type": "any",
+				"description": "The rows stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.Pace": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.Pace",
+		"name": "Pace",
+		"label": "Pace",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewPace",
+		"inputs": [
+			{
+				"name": "errorMagnitude",
+				"type": "any",
+				"description": "The errorMagnitude stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Fan": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Fan",
+		"name": "Fan",
+		"label": "Fan",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewFan",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"data.Quality": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Quality",
+		"name": "Quality",
+		"label": "Quality",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewQuality",
 		"inputs": [
 			{
 				"name": "in",
-				"type": "[2][][]float64",
+				"type": "any",
 				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"data.Select": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Select",
+		"name": "Select",
+		"label": "Select",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewSelect",
+		"inputs": [
+			{
+				"name": "select",
+				"type": "any",
+				"description": "The select stream this primitive reads"
+			},
+			{
+				"name": "path",
+				"type": "string",
+				"description": "Port for path"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"constructorParams": [
+			{
+				"name": "path",
+				"type": "types.String"
+			}
+		],
+		"stateful": true
+	},
+	"transport.HeaderAuth": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.HeaderAuth",
+		"name": "HeaderAuth",
+		"label": "Header Auth",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewHeaderAuth",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Pace": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Pace",
+		"name": "Pace",
+		"label": "Pace",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewPace",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.BasinKey": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.BasinKey",
+		"name": "BasinKey",
+		"label": "Basin Key",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewBasinKey",
+		"inputs": [
+			{
+				"name": "class",
+				"type": "any",
+				"description": "The class stream this primitive reads"
+			},
+			{
+				"name": "contextBytes",
+				"type": "any",
+				"description": "The contextBytes stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Pack": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Pack",
+		"name": "Pack",
+		"label": "Pack",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewPack",
+		"inputs": [
+			{
+				"name": "count",
+				"type": "any",
+				"description": "The count stream this primitive reads"
+			},
+			{
+				"name": "mass",
+				"type": "any",
+				"description": "The mass stream this primitive reads"
+			},
+			{
+				"name": "writeStep",
+				"type": "any",
+				"description": "The writeStep stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"ui.WebSocketServer": {
+		"kind": "primitive",
+		"category": "ui",
+		"op": "ui.WebSocketServer",
+		"name": "WebSocketServer",
+		"label": "Web Socket Server",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/ui",
+		"builder": "NewWebSocketServer",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"arithmetic.Divide": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Divide",
+		"name": "Divide",
+		"label": "Divide",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewDivide",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "b",
+				"type": "any",
+				"description": "The b stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"arithmetic.Multiply": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Multiply",
+		"name": "Multiply",
+		"label": "Multiply",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewMultiply",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "b",
+				"type": "any",
+				"description": "The b stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Surprisal": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Surprisal",
+		"name": "Surprisal",
+		"label": "Surprisal",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewSurprisal",
+		"inputs": [
+			{
+				"name": "contextBytes",
+				"type": "any",
+				"description": "The contextBytes stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"tables.IcebergTable": {
+		"kind": "primitive",
+		"category": "tables",
+		"op": "tables.IcebergTable",
+		"name": "IcebergTable",
+		"label": "Iceberg Table",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store/tables",
+		"builder": "NewIcebergTable",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"temporal.Transition": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Transition",
+		"name": "Transition",
+		"label": "Transition",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewTransition",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Lookahead": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Lookahead",
+		"name": "Lookahead",
+		"label": "Lookahead",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewLookahead",
+		"inputs": [
+			{
+				"name": "prefix",
+				"type": "any",
+				"description": "The prefix stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"sequence.Order": {
+		"kind": "primitive",
+		"category": "sequence",
+		"op": "sequence.Order",
+		"name": "Order",
+		"label": "Order",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
+		"builder": "NewOrder",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.Process": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Process",
+		"name": "Process",
+		"label": "Process",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewProcess",
+		"inputs": [
+			{
+				"name": "process",
+				"type": "any",
+				"description": "The process stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"ui.HTTPServer": {
+		"kind": "primitive",
+		"category": "ui",
+		"op": "ui.HTTPServer",
+		"name": "HTTPServer",
+		"label": "H T T P Server",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/ui",
+		"builder": "NewHTTPServer",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"arithmetic.Add": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Add",
+		"name": "Add",
+		"label": "Add",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewAdd",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "b",
+				"type": "any",
+				"description": "The b stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"arithmetic.Subtract": {
+		"kind": "primitive",
+		"category": "arithmetic",
+		"op": "arithmetic.Subtract",
+		"name": "Subtract",
+		"label": "Subtract",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/arithmetic",
+		"builder": "NewSubtract",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "b",
+				"type": "any",
+				"description": "The b stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Minimum": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Minimum",
+		"name": "Minimum",
+		"label": "Minimum",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewMinimum",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "b",
+				"type": "any",
+				"description": "The b stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Square": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Square",
+		"name": "Square",
+		"label": "Square",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSquare",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Weight": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Weight",
+		"name": "Weight",
+		"label": "Weight",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewWeight",
+		"inputs": [
+			{
+				"name": "record",
+				"type": "any",
+				"description": "The record stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"probability.Distribution": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Distribution",
+		"name": "Distribution",
+		"label": "Distribution",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewDistribution",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The in stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.SellRate": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellRate",
+		"name": "SellRate",
+		"label": "Sell Rate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellRate",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.HTTPRequest": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.HTTPRequest",
+		"name": "HTTPRequest",
+		"label": "H T T P Request",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewHTTPRequest",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"execution.Submit": {
+		"kind": "primitive",
+		"category": "execution",
+		"op": "execution.Submit",
+		"name": "Submit",
+		"label": "Submit",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/execution",
+		"builder": "NewSubmit",
+		"inputs": [
+			{
+				"name": "submit",
+				"type": "any",
+				"description": "The submit stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Log": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Log",
+		"name": "Log",
+		"label": "Log",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewLog",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Classification": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Classification",
+		"name": "Classification",
+		"label": "Classification",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewClassification",
+		"inputs": [
+			{
+				"name": "class",
+				"type": "any",
+				"description": "The class stream this primitive reads"
+			},
+			{
+				"name": "prob",
+				"type": "any",
+				"description": "The prob stream this primitive reads"
+			},
+			{
+				"name": "support",
+				"type": "any",
+				"description": "The support stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"probability.Geomean": {
+		"kind": "primitive",
+		"category": "probability",
+		"op": "probability.Geomean",
+		"name": "Geomean",
+		"label": "Geomean",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/probability",
+		"builder": "NewGeomean",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"temporal.Delay": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Delay",
+		"name": "Delay",
+		"label": "Delay",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewDelay",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			},
+			{
+				"name": "horizon",
+				"type": "int",
+				"description": "Port for horizon"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"constructorParams": [
+			{
+				"name": "horizon",
+				"type": "types.Integer"
+			}
+		],
+		"stateful": true,
+		"returnsError": true
+	},
+	"calculus.Atanh": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Atanh",
+		"name": "Atanh",
+		"label": "Atanh",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewAtanh",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.BinaryTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.BinaryTarget",
+		"name": "BinaryTarget",
+		"label": "Binary Target",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewBinaryTarget",
+		"inputs": [
+			{
+				"name": "past",
+				"type": "any",
+				"description": "The past stream this primitive reads"
+			},
+			{
+				"name": "current",
+				"type": "any",
+				"description": "The current stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.LinearPrediction": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.LinearPrediction",
+		"name": "LinearPrediction",
+		"label": "Linear Prediction",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewLinearPrediction",
+		"inputs": [
+			{
+				"name": "coefficients",
+				"type": "any",
+				"description": "The coefficients stream this primitive reads"
+			},
+			{
+				"name": "rawRow",
+				"type": "any",
+				"description": "The rawRow stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"tables.IcebergScan": {
+		"kind": "primitive",
+		"category": "tables",
+		"op": "tables.IcebergScan",
+		"name": "IcebergScan",
+		"label": "Iceberg Scan",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store/tables",
+		"builder": "NewIcebergScan",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.HMACSHA256": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.HMACSHA256",
+		"name": "HMACSHA256",
+		"label": "H M A C S H A256",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewHMACSHA256",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"ui.Broadcast": {
+		"kind": "primitive",
+		"category": "ui",
+		"op": "ui.Broadcast",
+		"name": "Broadcast",
+		"label": "Broadcast",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/ui",
+		"builder": "NewBroadcast",
+		"inputs": [
+			{
+				"name": "broadcast",
+				"type": "any",
+				"description": "The broadcast stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.Absolute": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.Absolute",
+		"name": "Absolute",
+		"label": "Absolute",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewAbsolute",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"execution.Gate": {
+		"kind": "primitive",
+		"category": "execution",
+		"op": "execution.Gate",
+		"name": "Gate",
+		"label": "Gate",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/execution",
+		"builder": "NewGate",
+		"inputs": [
+			{
+				"name": "gate",
+				"type": "any",
+				"description": "The gate stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.ResidualDivergence": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.ResidualDivergence",
+		"name": "ResidualDivergence",
+		"label": "Residual Divergence",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewResidualDivergence",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.Assemble": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.Assemble",
+		"name": "Assemble",
+		"label": "Assemble",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewAssemble",
+		"inputs": [
+			{
+				"name": "assemble",
+				"type": "any",
+				"description": "The assemble stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"store.Radix": {
+		"kind": "primitive",
+		"category": "store",
+		"op": "store.Radix",
+		"name": "Radix",
+		"label": "Radix",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/store",
+		"builder": "NewRadix",
+		"inputs": [
+			{
+				"name": "key",
+				"type": "any",
+				"description": "The key stream this primitive reads"
+			},
+			{
+				"name": "value",
+				"type": "any",
+				"description": "The value stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Process": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Process",
+		"name": "Process",
+		"label": "Process",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewProcess",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSJSONMessage": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSJSONMessage",
+		"name": "WSJSONMessage",
+		"label": "W S J S O N Message",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSJSONMessage",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"calculus.RelativeChange": {
+		"kind": "primitive",
+		"category": "calculus",
+		"op": "calculus.RelativeChange",
+		"name": "RelativeChange",
+		"label": "Relative Change",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewRelativeChange",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"hawkes.SellIntensity": {
+		"kind": "primitive",
+		"category": "hawkes",
+		"op": "hawkes.SellIntensity",
+		"name": "SellIntensity",
+		"label": "Sell Intensity",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewSellIntensity",
+		"inputs": [
+			{
+				"name": "view",
+				"type": "any",
+				"description": "The view stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.SensoryKey": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.SensoryKey",
+		"name": "SensoryKey",
+		"label": "Sensory Key",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewSensoryKey",
+		"inputs": [
+			{
+				"name": "contextBytes",
+				"type": "any",
+				"description": "The contextBytes stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"data.Extract": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Extract",
+		"name": "Extract",
+		"label": "Extract",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewExtract",
+		"inputs": [
+			{
+				"name": "extract",
+				"type": "any",
+				"description": "The extract stream this primitive reads"
+			},
+			{
+				"name": "path",
+				"type": "string",
+				"description": "Port for path"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "float64",
+				"description": "The run this primitive produces"
+			}
+		],
+		"paramCount": 1,
+		"constructorParams": [
+			{
+				"name": "path",
+				"type": "types.String"
+			}
+		],
+		"stateful": true,
+		"returnsError": true
+	},
+	"statistic.Mean": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.Mean",
+		"name": "Mean",
+		"label": "Mean",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewMean",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"statistic.Variance": {
+		"kind": "primitive",
+		"category": "statistic",
+		"op": "statistic.Variance",
+		"name": "Variance",
+		"label": "Variance",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/statistic",
+		"builder": "NewVariance",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.Stream": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.Stream",
+		"name": "Stream",
+		"label": "Stream",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewStream",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"transport.WSDecodeJSON": {
+		"kind": "primitive",
+		"category": "transport",
+		"op": "transport.WSDecodeJSON",
+		"name": "WSDecodeJSON",
+		"label": "W S Decode J S O N",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/transport",
+		"builder": "NewWSDecodeJSON",
+		"inputs": [
+			{
+				"name": "payload",
+				"type": "any",
+				"description": "The payload stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"cognition.Memory": {
+		"kind": "primitive",
+		"category": "cognition",
+		"op": "cognition.Memory",
+		"name": "Memory",
+		"label": "Memory",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/cognition",
+		"builder": "NewMemory",
+		"inputs": [
+			{
+				"name": "in",
+				"type": "any",
+				"description": "The run this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"data.Equation": {
+		"kind": "primitive",
+		"category": "data",
+		"op": "data.Equation",
+		"name": "Equation",
+		"label": "Equation",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/data",
+		"builder": "NewEquation",
+		"inputs": [
+			{
+				"name": "measurement",
+				"type": "data.WireMeasurement",
+				"description": "The measurement stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "data.WireMeasurement",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"temporal.Elapsed": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.Elapsed",
+		"name": "Elapsed",
+		"label": "Elapsed",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewElapsed",
+		"inputs": [
+			{
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.PredictiveCoder": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.PredictiveCoder",
+		"name": "PredictiveCoder",
+		"label": "Predictive Coder",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewPredictiveCoder",
+		"inputs": [
+			{
+				"name": "features",
+				"type": "any",
+				"description": "The features stream this primitive reads"
+			},
+			{
+				"name": "reference",
+				"type": "any",
+				"description": "The reference stream this primitive reads"
+			},
+			{
+				"name": "hasReference",
+				"type": "any",
+				"description": "The hasReference stream this primitive reads"
+			},
+			{
+				"name": "step",
+				"type": "any",
+				"description": "The step stream this primitive reads"
+			},
+			{
+				"name": "time",
+				"type": "any",
+				"description": "The time stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"learning.RatioTarget": {
+		"kind": "primitive",
+		"category": "learning",
+		"op": "learning.RatioTarget",
+		"name": "RatioTarget",
+		"label": "Ratio Target",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/learning",
+		"builder": "NewRatioTarget",
+		"inputs": [
+			{
+				"name": "past",
+				"type": "any",
+				"description": "The past stream this primitive reads"
+			},
+			{
+				"name": "current",
+				"type": "any",
+				"description": "The current stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
+			}
+		],
+		"stateful": true
+	},
+	"algo.GaussJordan": {
+		"kind": "primitive",
+		"category": "algo",
+		"op": "algo.GaussJordan",
+		"name": "GaussJordan",
+		"label": "Gauss Jordan",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/algo",
+		"builder": "NewGaussJordan",
+		"inputs": [
+			{
+				"name": "left",
+				"type": "[2][][]float64",
+				"description": "The left stream this primitive reads"
+			},
+			{
+				"name": "right",
+				"type": "[2][][]float64",
+				"description": "The right stream this primitive reads"
 			},
 			{
 				"name": "tolerance",
@@ -382,7 +4036,7 @@
 		"outputs": [
 			{
 				"name": "out",
-				"type": "[]float64",
+				"type": "[][]float64",
 				"description": "The run this primitive produces"
 			}
 		],
@@ -395,49 +4049,45 @@
 		],
 		"stateful": true
 	},
-	"algo.RLSPrediction": {
+	"calculus.Sqrt": {
 		"kind": "primitive",
-		"category": "algo",
-		"op": "algo.RLSPrediction",
-		"name": "RLSPrediction",
-		"label": "R L S Prediction",
+		"category": "calculus",
+		"op": "calculus.Sqrt",
+		"name": "Sqrt",
+		"label": "Sqrt",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/algo",
-		"builder": "NewRLSPrediction",
+		"package": "github.com/theapemachine/symm/nomagique/calculus",
+		"builder": "NewSqrt",
 		"inputs": [
 			{
-				"name": "in",
-				"type": "algo.RLSState",
-				"description": "The run this primitive reads"
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
 			}
 		],
 		"outputs": [
 			{
 				"name": "out",
-				"type": "algo.RLSForecast",
+				"type": "any",
 				"description": "The run this primitive produces"
 			}
-		]
+		],
+		"stateful": true
 	},
-	"sequence.AtNode": {
+	"hawkes.BuyIntensity": {
 		"kind": "primitive",
-		"category": "sequence",
-		"op": "sequence.AtNode",
-		"name": "AtNode",
-		"label": "At Node",
+		"category": "hawkes",
+		"op": "hawkes.BuyIntensity",
+		"name": "BuyIntensity",
+		"label": "Buy Intensity",
 		"description": "",
-		"package": "github.com/theapemachine/symm/nomagique/data/sequence",
-		"builder": "NewAtNode",
+		"package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
+		"builder": "NewBuyIntensity",
 		"inputs": [
 			{
-				"name": "in",
+				"name": "view",
 				"type": "any",
-				"description": "The run this primitive reads"
-			},
-			{
-				"name": "index",
-				"type": "int",
-				"description": "Port for index"
+				"description": "The view stream this primitive reads"
 			}
 		],
 		"outputs": [
@@ -447,11 +4097,29 @@
 				"description": "The run this primitive produces"
 			}
 		],
-		"paramCount": 1,
-		"constructorParams": [
+		"stateful": true
+	},
+	"temporal.LogReturns": {
+		"kind": "primitive",
+		"category": "temporal",
+		"op": "temporal.LogReturns",
+		"name": "LogReturns",
+		"label": "Log Returns",
+		"description": "",
+		"package": "github.com/theapemachine/symm/nomagique/temporal",
+		"builder": "NewLogReturns",
+		"inputs": [
 			{
-				"name": "index",
-				"type": "types.Integer"
+				"name": "a",
+				"type": "any",
+				"description": "The a stream this primitive reads"
+			}
+		],
+		"outputs": [
+			{
+				"name": "out",
+				"type": "any",
+				"description": "The run this primitive produces"
 			}
 		],
 		"stateful": true

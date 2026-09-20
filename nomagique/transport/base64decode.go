@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *Base64DecodeServer) Write(ctx context.Context, call Base64Decode_write)
 
 func (s *Base64DecodeServer) Done(ctx context.Context, call Base64Decode_done) error {
 	return nil
+}
+
+
+
+type Base64DecodeNode types.StreamNode[any, any]
+
+func NewBase64Decode() Base64DecodeNode {
+	server := &Base64DecodeServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

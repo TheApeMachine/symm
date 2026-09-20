@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -19,4 +20,19 @@ func (s *BoundServer) Write(ctx context.Context, call Bound_write) error {
 
 func (s *BoundServer) Done(ctx context.Context, call Bound_done) error {
 	return nil
+}
+
+
+
+type BoundNode types.StreamNode[any, any]
+
+func NewBound() BoundNode {
+	server := &BoundServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

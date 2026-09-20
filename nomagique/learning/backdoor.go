@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 
@@ -137,4 +138,19 @@ func (s *BackdoorServer) WriteParams(ctx context.Context, callArgs Backdoor_writ
 
 func (s *BackdoorServer) Done(ctx context.Context, call Backdoor_done) error {
 	return nil
+}
+
+
+
+type BackdoorNode types.StreamNode[any, any]
+
+func NewBackdoor() BackdoorNode {
+	server := &BackdoorServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

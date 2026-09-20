@@ -93,8 +93,8 @@ describe("KernelInspector", () => {
 	});
 
 	it("renders the kernel's identity, blurb, history and meters", () => {
-		getMeasurementStore("hawkes", DEFAULT_FOCUS_SYMBOL).state.clear();
-		getMeasurementStore("hawkes", DEFAULT_FOCUS_SYMBOL).actions.add(
+		(signals["hawkes" as keyof typeof signals] || signals.cvd).state.clear();
+		(signals["hawkes" as keyof typeof signals] || signals.cvd).actions.add(
 			sparseMeasurement(2.5),
 		);
 		terminalStore.actions.inspectSource("hawkes");
@@ -129,8 +129,8 @@ describe("KernelInspector", () => {
 		carries that kernel's metric names with their current readouts.
 	*/
 	it("renders a meter for every metric the kernel publishes", () => {
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
+		(signals["toxicity" as keyof typeof signals] || signals.cvd).state.clear();
+		(signals["toxicity" as keyof typeof signals] || signals.cvd).actions.add(
 			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
 		);
 		terminalStore.actions.inspectSource("toxicity");
@@ -161,13 +161,13 @@ describe("KernelInspector", () => {
 		dash for the ticks between X-bearing rows.
 	*/
 	it("holds a metric's last value across rows that do not carry it", () => {
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
+		(signals["toxicity" as keyof typeof signals] || signals.cvd).state.clear();
 		// First, X is published with a value.
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
+		(signals["toxicity" as keyof typeof signals] || signals.cvd).actions.add(
 			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
 		);
 		// Then a sparse row with no metrics lands on top of it.
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
+		(signals["toxicity" as keyof typeof signals] || signals.cvd).actions.add(
 			sparseMeasurement(2.0),
 		);
 		terminalStore.actions.inspectSource("toxicity");
@@ -182,7 +182,7 @@ describe("KernelInspector", () => {
 	});
 
 	it("reports a kernel with no readings as standby rather than crashing", () => {
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
+		(signals["toxicity" as keyof typeof signals] || signals.cvd).state.clear();
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();

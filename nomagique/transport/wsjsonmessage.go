@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *WSJSONMessageServer) Write(ctx context.Context, call WSJSONMessage_writ
 
 func (s *WSJSONMessageServer) Done(ctx context.Context, call WSJSONMessage_done) error {
 	return nil
+}
+
+
+
+type WSJSONMessageNode types.StreamNode[any, any]
+
+func NewWSJSONMessage() WSJSONMessageNode {
+	server := &WSJSONMessageServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

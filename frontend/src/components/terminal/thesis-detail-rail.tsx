@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
-import { positionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Callout } from "#/components/ui/callout";
 import { DataRow } from "#/components/ui/data-row";
 import { Flex } from "#/components/ui/flex";
@@ -9,7 +9,7 @@ import { Typography } from "#/components/ui/typography";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 
-type PositionState = ReturnType<typeof positionStore.get>;
+type PositionState = ReturnType<typeof signals.position.get>;
 
 const value = (raw: string | null): string => raw || "—";
 
@@ -55,7 +55,7 @@ const currentPosition = (state: PositionState, symbol: string) => {
 
 export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 	const position = useSelector(
-		positionStore,
+		signals.position,
 		(state) => currentPosition(state, symbol),
 		{ compare: shallow },
 	);

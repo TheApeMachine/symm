@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { focusStore, type RingBuffer, trainingStore } from "#/collections/app";
+import { useEffect, useRef } from "react";
+import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
@@ -9,7 +9,7 @@ import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { basis, percent } from "./format";
 
 export const AgentSkill = () => {
-	const symbol = useSelector(focusStore, (s) => s);
+	const symbol = useSelector(focusAtom, (s) => s);
 	const ref = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
@@ -27,11 +27,14 @@ export const AgentSkill = () => {
 				for (const metric of m.metrics ?? []) {
 					if (metric?.name) metricMap[String(metric.name)] = metric.raw ?? 0;
 				}
-				const edge = metricMap["edge"] ?? 0;
-				const winRate = metricMap["win_rate"] ?? 0;
-				const resolved = metricMap["resolved"] ?? 0;
+				const edge = metricMap.edge ?? 0;
+				const winRate = metricMap.win_rate ?? 0;
+				const resolved = metricMap.resolved ?? 0;
 
-				const winRateEl = memoizedQuery(root, '[data-a="winrate"]') as HTMLElement;
+				const winRateEl = memoizedQuery(
+					root,
+					'[data-a="winrate"]',
+				) as HTMLElement;
 				if (winRateEl) {
 					winRateEl.innerText = resolved > 0 ? percent(winRate) : "—";
 				}
@@ -52,19 +55,19 @@ export const AgentSkill = () => {
 
 			return (
 				records[symbol] ??
-				records["learner"] ??
+				records.learner ??
 				records[""] ??
 				Object.values(records)[0] ??
 				null
 			);
 		};
 
-		const initial = getTrainingRing(trainingStore?.state);
+		const initial = getTrainingRing(signals.training?.state);
 		if (initial) {
 			update(initial);
 		}
 
-		const unsub = trainingStore.subscribe((state) => {
+		const unsub = signals.training.subscribe((state: any) => {
 			const activeRing = getTrainingRing(state);
 			if (activeRing) {
 				update(activeRing);

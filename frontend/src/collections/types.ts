@@ -482,7 +482,7 @@ export type MeasurementEpoch = {
 TradeRecord mirrors the JSON shape of wire.PositionT as returned by the hub's
 GET /trades endpoint (broker.PositionStore.RecentTrades, backed by the
 position_trades SQLite table) — the durable trade journal, independent of the
-live positionStore ring buffer.
+live signals.position ring buffer.
 */
 export type TradeRecord = {
 	status: string;

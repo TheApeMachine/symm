@@ -1,6 +1,7 @@
 package compiler_test
 
 import (
+	"context"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -38,7 +39,7 @@ func TestSystemOrchestration(t *testing.T) {
 			}
 
 			// Execute tick through the master pipeline
-			result := systemPipeline(tick)
+			result := systemPipeline.WriteAny(context.Background(), tick)
 
 			// An immature/empty context produces nil execution, which is the correct mathematical behavior
 			_ = result

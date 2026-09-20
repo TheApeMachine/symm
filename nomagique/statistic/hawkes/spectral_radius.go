@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -37,4 +38,19 @@ func (s *SpectralRadiusServer) Write(ctx context.Context, call SpectralRadius_wr
 
 func (s *SpectralRadiusServer) Done(ctx context.Context, call SpectralRadius_done) error {
 	return nil
+}
+
+
+
+type SpectralRadiusNode types.StreamNode[any, any]
+
+func NewSpectralRadius() SpectralRadiusNode {
+	server := &SpectralRadiusServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

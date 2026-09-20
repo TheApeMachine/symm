@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -19,4 +20,19 @@ func (s *MinimumServer) Write(ctx context.Context, call Minimum_write) error {
 
 func (s *MinimumServer) Done(ctx context.Context, call Minimum_done) error {
 	return nil
+}
+
+
+
+type MinimumNode types.StreamNode[any, any]
+
+func NewMinimum() MinimumNode {
+	server := &MinimumServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

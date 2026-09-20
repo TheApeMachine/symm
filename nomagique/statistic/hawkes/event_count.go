@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -37,4 +38,19 @@ func (s *EventCountServer) Write(ctx context.Context, call EventCount_write) err
 
 func (s *EventCountServer) Done(ctx context.Context, call EventCount_done) error {
 	return nil
+}
+
+
+
+type EventCountNode types.StreamNode[any, any]
+
+func NewEventCount() EventCountNode {
+	server := &EventCountServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

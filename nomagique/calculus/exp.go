@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -18,4 +19,19 @@ func (s *ExpServer) Write(ctx context.Context, call Exp_write) error {
 
 func (s *ExpServer) Done(ctx context.Context, call Exp_done) error {
 	return nil
+}
+
+
+
+type ExpNode types.StreamNode[any, any]
+
+func NewExp() ExpNode {
+	server := &ExpServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

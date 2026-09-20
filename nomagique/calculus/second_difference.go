@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -27,4 +28,19 @@ func (s *SecondDifferenceServer) Write(ctx context.Context, call SecondDifferenc
 
 func (s *SecondDifferenceServer) Done(ctx context.Context, call SecondDifference_done) error {
 	return nil
+}
+
+
+
+type SecondDifferenceNode types.StreamNode[any, any]
+
+func NewSecondDifference() SecondDifferenceNode {
+	server := &SecondDifferenceServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

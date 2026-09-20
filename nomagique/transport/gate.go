@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *GateServer) Write(ctx context.Context, call Gate_write) error {
 
 func (s *GateServer) Done(ctx context.Context, call Gate_done) error {
 	return nil
+}
+
+
+
+type GateNode types.StreamNode[any, any]
+
+func NewGate() GateNode {
+	server := &GateServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

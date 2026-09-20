@@ -1,6 +1,7 @@
 package geometry
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *IntersectionServer) Write(ctx context.Context, call Intersection_write)
 
 func (s *IntersectionServer) Done(ctx context.Context, call Intersection_done) error {
 	return nil
+}
+
+
+
+type IntersectionNode types.StreamNode[any, any]
+
+func NewIntersection() IntersectionNode {
+	server := &IntersectionServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

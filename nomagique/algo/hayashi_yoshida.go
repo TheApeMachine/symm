@@ -66,7 +66,7 @@ func (s *HayashiYoshidaServer) Done(ctx context.Context, call HayashiYoshida_don
 
 type HayashiYoshidaNode types.StreamNode[[2][2]int64, float64]
 
-func NewHayashiYoshidaNode() HayashiYoshidaNode {
+func NewHayashiYoshida() HayashiYoshidaNode {
 	server := &HayashiYoshidaServer{}
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		input := in.([2][2]int64)
@@ -78,3 +78,5 @@ func NewHayashiYoshidaNode() HayashiYoshidaNode {
 		}
 	})
 }
+
+

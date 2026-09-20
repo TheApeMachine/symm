@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusStore, getMeasurementStore } from "#/collections/app";
+import {  focusAtom , signals } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
 import { Radar } from "#/components/ui/radar";
 import { applyPaintMap } from "#/components/ui/paint";
@@ -48,12 +48,12 @@ const readNormalizedMetric = (row: any, metricName: string): number => {
 };
 
 export const RadarPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		const subscriptions = radarAxes.map((axis) => {
-			const store = getMeasurementStore(axis.source, focusSymbol);
+			const store = (signals[axis.source as keyof typeof signals] || signals.cvd);
 
 			const apply = (state: any) => {
 				if (!root.current || !state || typeof state.getLast !== "function") return;

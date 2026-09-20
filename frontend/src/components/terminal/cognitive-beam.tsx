@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { cognitionStore, focusStore } from "#/collections/app";
+import { signals, focusAtom } from "#/collections/app";
 import type { CognitiveReading } from "#/collections/types";
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { meterTrackVariants } from "#/components/ui/meter";
@@ -60,15 +60,15 @@ const METERS = [
 
 export const CognitiveBeam = () => {
 	const scope = useDecisionsScopeSymbol();
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const symbol = isConcreteSymbol(scope) ? scope : focusSymbol;
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const apply = (state: typeof cognitionStore.state) => {
+		const apply = (state: typeof signals.cognition.state) => {
 			if (!root.current) return;
 
-			const targetRow: Cognition | undefined = state.getLast(symbol);
+			const targetRow: Cognition | undefined = state[symbol]?.getLast();
 
 			const set = (q: string, value: string) => {
 				const els = root.current?.querySelectorAll<HTMLElement>(
@@ -104,8 +104,8 @@ export const CognitiveBeam = () => {
 			}
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		apply(signals.cognition.state);
+		const subscription = signals.cognition.subscribe(apply);
 		return () => subscription.unsubscribe();
 	}, [symbol]);
 

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,7 +30,11 @@ var (
 			}
 
 			errnie.Info("[root] system ready; running pipeline")
-			go pipeline(ctx)
+			
+			focusChan := make(chan string, 100)
+			ctx = context.WithValue(ctx, "focusChan", focusChan)
+			
+			go pipeline.WriteAny(ctx, nil)
 
 			<-ctx.Done()
 			errnie.Info("[root] system terminated cleanly")

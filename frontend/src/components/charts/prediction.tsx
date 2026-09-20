@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
-import { focusStore, resonanceStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { ResonanceLayer } from "#/providers/telemetry/telemetry/resonance-layer";
 
@@ -39,9 +39,9 @@ symbol across the cross-section — so the focused symbol is selected here, the
 same way the other resonance surfaces do it.
 */
 const useArtifact = (): any => {
-	const symbol = useSelector(focusStore, (state) => state);
+	const symbol = useSelector(focusAtom, (state) => state);
 
-	const row = useSelector(resonanceStore, (state) => {
+	const row = useSelector(signals.resonance, (state) => {
 		const ring = state[symbol];
 		return ring && !ring.isEmpty() ? (ring.getLast() as any) : undefined;
 	});

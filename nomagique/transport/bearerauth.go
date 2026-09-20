@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *BearerAuthServer) Write(ctx context.Context, call BearerAuth_write) err
 
 func (s *BearerAuthServer) Done(ctx context.Context, call BearerAuth_done) error {
 	return nil
+}
+
+
+
+type BearerAuthNode types.StreamNode[any, any]
+
+func NewBearerAuth() BearerAuthNode {
+	server := &BearerAuthServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

@@ -1,4 +1,4 @@
-import { tickCountStore } from "#/collections/app";
+import { tickCountAtom } from "#/collections/app";
 import type { Measurement } from "#/collections/types";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
@@ -83,7 +83,7 @@ export const terminalHealthSummary = (
 };
 
 export const HealthPanel = () => {
-	const rootRef = usePaintStore(tickCountStore, (tick) => ({
+	const rootRef = usePaintStore(tickCountAtom, (tick) => ({
 		fields: {
 			tick: String(tick),
 		},

@@ -1,6 +1,7 @@
 package arithmetic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -17,4 +18,19 @@ func (s *MultiplyServer) Write(ctx context.Context, call Multiply_write) error {
 
 func (s *MultiplyServer) Done(ctx context.Context, call Multiply_done) error {
 	return nil
+}
+
+
+
+type MultiplyNode types.StreamNode[any, any]
+
+func NewMultiply() MultiplyNode {
+	server := &MultiplyServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

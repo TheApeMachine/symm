@@ -1,6 +1,7 @@
 package tables
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"sync"
@@ -105,4 +106,34 @@ func (s *IcebergScanServer) Execute(ctx context.Context, call IcebergScan_execut
 func toJSON(v any) string {
 	data, _ := sonic.Marshal(v)
 	return string(data)
+}
+
+
+
+type IcebergTableNode types.StreamNode[any, any]
+
+func NewIcebergTable() IcebergTableNode {
+	server := &IcebergTableServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
+}
+
+
+
+type IcebergScanNode types.StreamNode[any, any]
+
+func NewIcebergScan() IcebergScanNode {
+	server := &IcebergScanServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

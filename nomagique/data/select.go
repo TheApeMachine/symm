@@ -87,7 +87,7 @@ func (s *SelectServer) Done(ctx context.Context, call Select_done) error {
 
 type SelectNode types.StreamNode[any, any]
 
-func NewSelectNode(path types.String) SelectNode {
+func NewSelect(path types.String) SelectNode {
 	server := &SelectServer{}
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		p := ""
@@ -103,3 +103,5 @@ func NewSelectNode(path types.String) SelectNode {
 		}
 	})
 }
+
+

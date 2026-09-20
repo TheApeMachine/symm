@@ -428,7 +428,7 @@ export const MetricLineage = () => {
 					})}
 
 					{layout.consumerPoints.map((c) => {
-						const row = relevantConsumers.find((r) => r.consumer === c.id);
+						const row = relevantConsumers.find((r: any) => r.consumer === c.id);
 						return (
 							<g key={c.id} transform={`translate(${c.x},${c.y})`}>
 								<circle
@@ -449,7 +449,7 @@ export const MetricLineage = () => {
 				</svg>
 
 				{layout.consumerPoints.map((c) => {
-					const row = relevantConsumers.find((r) => r.consumer === c.id);
+					const row = relevantConsumers.find((r: any) => r.consumer === c.id);
 					return (
 						<div
 							key={`label-${c.id}`}

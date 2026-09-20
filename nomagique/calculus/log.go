@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -18,4 +19,19 @@ func (s *LogServer) Write(ctx context.Context, call Log_write) error {
 
 func (s *LogServer) Done(ctx context.Context, call Log_done) error {
 	return nil
+}
+
+
+
+type LogNode types.StreamNode[any, any]
+
+func NewLog() LogNode {
+	server := &LogServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

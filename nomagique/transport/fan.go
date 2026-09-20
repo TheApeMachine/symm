@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *FanServer) Write(ctx context.Context, call Fan_write) error {
 
 func (s *FanServer) Done(ctx context.Context, call Fan_done) error {
 	return nil
+}
+
+
+
+type FanNode types.StreamNode[any, any]
+
+func NewFan() FanNode {
+	server := &FanServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

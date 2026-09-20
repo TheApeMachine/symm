@@ -17,6 +17,7 @@
     "check:tokens": "./scripts/check-design-tokens.sh"
   },
   "dependencies": {
+    "@naeemo/capnp": "^0.9.3",
     "@perspective-dev/client": "5.3.1",
     "@perspective-dev/react": "5.3.1",
     "@perspective-dev/server": "5.3.1",
@@ -40,6 +41,7 @@
     "d3-shape": "^3.2.0",
     "dagre": "^0.8.5",
     "flatbuffers": "^25.9.23",
+    "install": "^0.13.0",
     "lucide-react": "^1.27.0",
     "motion": "^11.18.2",
     "react": "^19.2.0",
@@ -50,6 +52,7 @@
     "tailwindcss": "^4.1.18",
     "three": "^0.185.1",
     "tw-animate-css": "^1.3.6",
+    "vite-plugin-node-polyfills": "^0.28.0",
     "zod": "^4.6.0"
   },
   "devDependencies": {

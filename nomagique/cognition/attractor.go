@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"bytes"
 	"context"
 	"sync/atomic"
@@ -56,4 +57,19 @@ func (s *AttractorServer) Write(ctx context.Context, call Attractor_write) error
 
 func (s *AttractorServer) Done(ctx context.Context, call Attractor_done) error {
 	return nil
+}
+
+
+
+type AttractorNode types.StreamNode[any, any]
+
+func NewAttractor() AttractorNode {
+	server := &AttractorServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

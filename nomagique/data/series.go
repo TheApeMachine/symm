@@ -170,7 +170,7 @@ func (s *SeriesServer) asOf(
 
 type SeriesNode types.StreamNode[SeriesInput, SeriesReading]
 
-func NewSeriesNode(capacity types.Integer) SeriesNode {
+func NewSeries(capacity types.Integer) SeriesNode {
 	c := 100
 	if capacity != nil {
 		c = capacity(0)
@@ -186,3 +186,5 @@ func NewSeriesNode(capacity types.Integer) SeriesNode {
 		}
 	})
 }
+
+

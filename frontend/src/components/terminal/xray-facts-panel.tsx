@@ -1,16 +1,16 @@
 import { useSelector } from "@tanstack/react-store";
-import { cognitionStore, focusStore } from "#/collections/app";
+import { signals, focusAtom } from "#/collections/app";
 import { DataRow } from "#/components/ui/data-row";
 import { Flex } from "#/components/ui/flex";
 import { usePaintStore } from "#/components/ui/paint";
 
 export const XrayFactsPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 
 	const rootRef = usePaintStore(
-		cognitionStore,
+		signals.cognition,
 		(state) => {
-			const targetRow = state.getLast(focusSymbol);
+			const targetRow = state[focusSymbol]?.getLast();
 			return {
 				fields: {
 					winner: targetRow ? targetRow.winner() || "none named" : "—",

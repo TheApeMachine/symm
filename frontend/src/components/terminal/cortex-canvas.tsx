@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { cognitionStore } from "#/collections/app";
+import { signals } from "#/collections/app";
 import {
 	CortexLeafRoster,
 	drawCortexTree,
@@ -120,15 +120,15 @@ export const CortexCanvas = ({
 			draw();
 		};
 
-		const apply = (state: typeof cognitionStore.state) => {
-			const targetRow: Cognition | undefined = state.getLast(symbol);
+		const apply = (state: typeof signals.cognition.state) => {
+			const targetRow: Cognition | undefined = state[symbol]?.getLast();
 
 			if (!targetRow) return;
 			paint(cognitionToRecord(targetRow));
 		};
 
-		apply(cognitionStore.state);
-		const subscription = cognitionStore.subscribe(apply);
+		apply(signals.cognition.state);
+		const subscription = signals.cognition.subscribe(apply);
 
 		const observer = new ResizeObserver(draw);
 		const canvas = canvasRef.current;

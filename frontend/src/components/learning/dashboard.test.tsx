@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { focusStore, RingBuffer, trainingStore } from "#/collections/app";
+import { focusAtom, RingBuffer, signals } from "#/collections/app";
 import { LearningDevelopmentT } from "#/providers/telemetry/telemetry/learning-development";
 import { LearningQuantityT } from "#/providers/telemetry/telemetry/learning-quantity";
 import { LearningRegionT } from "#/providers/telemetry/telemetry/learning-region";
@@ -10,12 +10,12 @@ import { LearningDashboard } from "./dashboard";
 
 afterEach(() => {
 	cleanup();
-	trainingStore.setState(() => ({}));
+	signals.training.setState(() => ({}));
 });
 
 describe("LearningDashboard", () => {
 	it("renders received coordinates and basin IDs instead of grouping sources", () => {
-		focusStore.setState("BTC/USD");
+		focusAtom.set("BTC/USD");
 		const measurement = new MeasurementT();
 		measurement.source = "training";
 		measurement.symbol = "BTC/USD";
@@ -47,7 +47,7 @@ describe("LearningDashboard", () => {
 		measurement.grid.regions = [basin];
 		const ring = new RingBuffer<MeasurementT>(4);
 		ring.add(measurement);
-		trainingStore.setState(() => ({ "BTC/USD": ring }));
+		signals.training.setState(() => ({ "BTC/USD": ring }));
 		const { container } = render(<LearningDashboard />);
 		expect(
 			container.querySelector<HTMLElement>('[data-metric="action"]')?.innerText,
@@ -68,7 +68,7 @@ describe("LearningDashboard", () => {
 		left.x = 0;
 		act(() => {
 			ring.add(measurement);
-			trainingStore.setState((state) => ({ ...state }));
+			signals.training.setState((state: any) => ({ ...state }));
 		});
 		expect(circles[0].getAttribute("cx")).not.toEqual(previous);
 	});

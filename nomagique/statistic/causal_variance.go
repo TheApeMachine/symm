@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -33,4 +34,19 @@ func (s *CausalVarianceServer) Write(ctx context.Context, call CausalVariance_wr
 
 func (s *CausalVarianceServer) Done(ctx context.Context, call CausalVariance_done) error {
 	return nil
+}
+
+
+
+type CausalVarianceNode types.StreamNode[any, any]
+
+func NewCausalVariance() CausalVarianceNode {
+	server := &CausalVarianceServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

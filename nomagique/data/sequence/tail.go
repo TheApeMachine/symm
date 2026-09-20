@@ -39,7 +39,7 @@ func (s *TailServer) Execute(ctx context.Context, call Tail_execute) error {
 
 type TailNode types.StreamNode[any, any]
 
-func NewTailNode(size types.Integer) TailNode {
+func NewTail(size types.Integer) TailNode {
 	sz := 10
 	if size != nil {
 		sz = size(nil)
@@ -54,3 +54,5 @@ func NewTailNode(size types.Integer) TailNode {
 		}
 	})
 }
+
+

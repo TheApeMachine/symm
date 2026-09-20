@@ -22,7 +22,7 @@ func TestExecute(t *testing.T) {
 
 			done := make(chan struct{})
 			go func() {
-				pipeline(ctx)
+				pipeline.WriteAny(ctx, nil)
 				close(done)
 			}()
 

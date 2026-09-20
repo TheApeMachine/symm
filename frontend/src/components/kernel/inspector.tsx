@@ -1,10 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import {
-	focusStore,
-	getMeasurementStore,
-	getResonanceReadingStore,
-} from "#/collections/app";
+import {  focusAtom, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -141,23 +137,20 @@ const metricValues = (
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const { closeInspect, selectSource } = terminalStore.actions;
 
 	const active = source !== null && source !== "";
 	const resonance = active && isResonance(source);
 
-	const resonanceReadings = useSelector(
-		getResonanceReadingStore(focusSymbol),
-		(state) => state,
-	);
+	const resonanceReadings = useSelector(signals.resonance, (state) => state);
 	// The metric grid holds each metric's most recent value across the whole
 	// buffer, not just the latest row: backend rows are sparse, so metric X may
 	// be absent from the newest update while still carrying a real, current
 	// value in a slightly older row. Reading the latest row alone would flicker
 	// X to a dash and back whenever a row without it lands.
 	const measurementState = useSelector(
-		getMeasurementStore(active && !resonance ? source : "", focusSymbol),
+		(signals[active && !resonance ? source : "" as keyof typeof signals] || signals.cvd),
 		(state) => state,
 	);
 
@@ -166,19 +159,6 @@ export const KernelInspector = () => {
 	}
 
 	const copy = kernelCopy(source, "");
-	const points = resonance
-		? readingsFromNumbers(resonanceReadings)
-		: readingsFromMeasurements(measurementState);
-	const latest = points.length > 0 ? points[points.length - 1] : null;
-	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
-	const badge = kernelStatusMeta(status);
-
-	// Confidence is already a real [0,1] quantity; only unbounded SNR needs
-	// scaling against its own observed range before it reads as a trace.
-	const relativePoints = resonance ? points : relativeToOwnRange(points);
-	const paths = kernelSparkPaths(relativePoints, status);
-	const level =
-		relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
 
 	// Resonance is a presentation surface with no measurement vocabulary, so it
 	// has no metric grid. Every measurement source names the metrics it
@@ -215,12 +195,6 @@ export const KernelInspector = () => {
 	const headline = resonance
 		? "predictive confidence"
 		: (sourceHeadline(source) ?? "");
-
-	const valueLabel = resonance
-		? `${(level * 100).toFixed(0)}%`
-		: latest === null
-			? "—"
-			: latest.toFixed(2);
 
 	const openInSignalInsight = () => {
 		selectSource(source);
@@ -316,7 +290,7 @@ export const KernelInspector = () => {
 							</Typography.Mono>
 						</Flex.Row>
 						<div className="grid grid-cols-2 gap-x-3 gap-y-2">
-							{metricReadouts.map((metric) => (
+							{metricReadouts.map((metric: any) => (
 								<Meter
 									key={metric.name}
 									percent={metric.raw === null ? 0 : metric.normalized * 100}

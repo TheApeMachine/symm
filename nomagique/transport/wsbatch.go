@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *WSBatchServer) Write(ctx context.Context, call WSBatch_write) error {
 
 func (s *WSBatchServer) Done(ctx context.Context, call WSBatch_done) error {
 	return nil
+}
+
+
+
+type WSBatchNode types.StreamNode[any, any]
+
+func NewWSBatch() WSBatchNode {
+	server := &WSBatchServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

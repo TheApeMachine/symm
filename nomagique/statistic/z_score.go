@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -20,4 +21,19 @@ func (s *ZScoreServer) Write(ctx context.Context, call ZScore_write) error {
 
 func (s *ZScoreServer) Done(ctx context.Context, call ZScore_done) error {
 	return nil
+}
+
+
+
+type ZScoreNode types.StreamNode[any, any]
+
+func NewZScore() ZScoreNode {
+	server := &ZScoreServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

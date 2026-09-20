@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusStore, resonanceStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 
 const readMetric = (obj: any, key: string): number | null => {
@@ -17,8 +17,8 @@ const readMetric = (obj: any, key: string): number | null => {
 };
 
 export const LiveResonanceTitle = () => {
-	const symbol = useSelector(focusStore, (state) => state);
-	const artifact = useSelector(resonanceStore, (state) => {
+	const symbol = useSelector(focusAtom, (state) => state);
+	const artifact = useSelector(signals.resonance, (state) => {
 		const ring = state[symbol];
 		return ring && !ring.isEmpty() ? (ring.getLast() as any) : null;
 	});

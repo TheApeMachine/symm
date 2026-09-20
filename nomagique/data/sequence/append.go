@@ -38,7 +38,7 @@ func (s *AppendServer) Execute(ctx context.Context, call Append_execute) error {
 
 type AppendNode types.StreamNode[any, any]
 
-func NewAppendNode() AppendNode {
+func NewAppend() AppendNode {
 	server := NewAppendServer()
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		_, err := server.Evaluate(ctx, in)

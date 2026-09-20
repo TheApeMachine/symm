@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusStore, getMeasurementStore } from "#/collections/app";
+import {  focusAtom , signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
@@ -31,8 +31,8 @@ const STATS = [
 ] as const;
 
 export const CrossSectionPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
-	const store = getMeasurementStore("liquidity", focusSymbol);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const store = (signals["liquidity" as keyof typeof signals] || signals.cvd);
 
 	const rootRef = usePaintStore(
 		store,

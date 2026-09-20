@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 
 	"github.com/theapemachine/symm/nomagique/algo"
@@ -13,8 +14,8 @@ type TaskLearnerServer struct {
 	Downstream func(context.Context, algo.RLSPosterior) error
 	
 	state   algo.RLSState
-	predict func(algo.RLSState) algo.RLSForecast
-	update  func(algo.RLSObservation) algo.RLSPosterior
+	predict types.StreamNode[any, any]
+	update  types.StreamNode[any, any]
 	lambda  float64
 }
 
@@ -49,7 +50,12 @@ func (s *TaskLearnerServer) Evaluate(features []float64, target float64, observe
 		copy(s.state.Design, features)
 	}
 
-	forecast := s.predict(s.state)
+	var forecast algo.RLSForecast
+	s.predict.SetDownstreamAny(func(ctx context.Context, in any) error {
+		forecast = in.(algo.RLSForecast)
+		return nil
+	})
+	_ = s.predict.WriteAny(context.Background(), s.state)
 	
 	var posterior algo.RLSPosterior
 	if !observed {
@@ -60,10 +66,14 @@ func (s *TaskLearnerServer) Evaluate(features []float64, target float64, observe
 			Lambda:      s.lambda,
 			Target:      target,
 		}
-
-		posterior = s.update(obs)
-		s.state = posterior.RLSForecast.RLSState
+		s.update.SetDownstreamAny(func(ctx context.Context, in any) error {
+			posterior = in.(algo.RLSPosterior)
+			return nil
+		})
+		_ = s.update.WriteAny(context.Background(), obs)
 	}
+
+	s.state = posterior.RLSForecast.RLSState
 	return posterior
 }
 
@@ -97,4 +107,19 @@ func (s *TaskLearnerServer) Write(ctx context.Context, call TaskLearner_write) e
 
 func (s *TaskLearnerServer) Done(ctx context.Context, call TaskLearner_done) error {
 	return nil
+}
+
+
+
+type TaskLearnerNode types.StreamNode[any, any]
+
+func NewTaskLearner() TaskLearnerNode {
+	server := &TaskLearnerServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

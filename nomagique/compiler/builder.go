@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -33,11 +33,11 @@ func NewBuilder(jsonPath string) (*Builder, error) {
 Compose dynamically wires the graph at runtime into a nomagique.Number pipeline.
 It delegates to Compile using the DefaultRegistry.
 */
-func (b *Builder) Compose(repos ...DefinitionRepository) (nomagique.Number[any], error) {
+func (b *Builder) Compose(repos ...DefinitionRepository) (types.StreamNode[any, any], error) {
 	compiled, err := Compile[any, any](b.graph, DefaultRegistry(), repos...)
 	if err != nil {
 		return nil, err
 	}
 
-	return nomagique.Number[any](compiled), nil
+	return types.StreamNode[any, any](compiled), nil
 }

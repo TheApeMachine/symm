@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"math"
 )
@@ -30,4 +31,19 @@ func (s *DirectionalTargetServer) WriteParams(ctx context.Context, callArgs Dire
 
 func (s *DirectionalTargetServer) Done(ctx context.Context, call DirectionalTarget_done) error {
 	return nil
+}
+
+
+
+type DirectionalTargetNode types.StreamNode[any, any]
+
+func NewDirectionalTarget() DirectionalTargetNode {
+	server := &DirectionalTargetServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

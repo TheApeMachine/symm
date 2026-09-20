@@ -1,6 +1,7 @@
 package calculus
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -17,4 +18,19 @@ func (s *SquareServer) Write(ctx context.Context, call Square_write) error {
 
 func (s *SquareServer) Done(ctx context.Context, call Square_done) error {
 	return nil
+}
+
+
+
+type SquareNode types.StreamNode[any, any]
+
+func NewSquare() SquareNode {
+	server := &SquareServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

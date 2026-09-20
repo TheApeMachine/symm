@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"capnproto.org/go/capnp/v3"
 )
@@ -37,4 +38,25 @@ func (s *BroadcastServer) Write(ctx context.Context, call Broadcast_write) error
 
 func (s *BroadcastServer) Done(ctx context.Context, call Broadcast_done) error {
 	return nil
+}
+
+
+
+type BroadcastNode types.StreamNode[any, any]
+
+func NewBroadcast() BroadcastNode {
+	server := &BroadcastServer{}
+	var nativeDownstream func(context.Context, any) error
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			if nativeDownstream != nil {
+				return nativeDownstream(ctx, payload)
+			}
+			return nil
+		},
+		func(next func(context.Context, any) error) {
+			nativeDownstream = next
+		},
+	)
 }

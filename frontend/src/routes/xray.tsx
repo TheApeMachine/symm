@@ -1,14 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
-import {
-	DEFAULT_FOCUS_SYMBOL,
-	focusAtom,
-	focusStore,
-	observeSymbols,
-	resonanceStore,
-	symbolsStore,
-} from "#/collections/app";
+import { DEFAULT_FOCUS_SYMBOL, focusAtom, signals, symbolsAtom } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
@@ -26,10 +19,10 @@ import {
 import { Flex } from "#/components/ui";
 
 const XrayPaintBridge = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 
 	useEffect(() => {
-		const updatePaint = (state: typeof resonanceStore.state) => {
+		const updatePaint = (state: typeof signals.resonance.state) => {
 			for (const ring of Object.values(state)) {
 				const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
@@ -42,7 +35,7 @@ const XrayPaintBridge = () => {
 
 				if (sym) {
 					retainResonanceRow(sym, row);
-					observeSymbols([sym]);
+					symbolsAtom.set(Array.from(new Set([...symbolsAtom.get(), sym])));
 				}
 			}
 
@@ -51,8 +44,8 @@ const XrayPaintBridge = () => {
 			paintXrayLatent(universe, focusSymbol);
 		};
 
-		updatePaint(resonanceStore.state);
-		const subscription = resonanceStore.subscribe((state) => {
+		updatePaint(signals.resonance.state);
+		const subscription = signals.resonance.subscribe((state: any) => {
 			updatePaint(state);
 		});
 
@@ -65,9 +58,9 @@ const XrayPaintBridge = () => {
 };
 
 const XrayCarrierBar = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const [symbols, setSymbols] = useState<string[]>(() => {
-		const initial = new Set<string>(symbolsStore.state);
+		const initial = new Set<string>(symbolsAtom.get());
 		for (const row of getAllRetainedResonance()) {
 			if (row.symbol) initial.add(row.symbol as string);
 		}
@@ -77,7 +70,7 @@ const XrayCarrierBar = () => {
 
 	useEffect(() => {
 		const syncSymbols = () => {
-			const current = new Set<string>(symbolsStore.state);
+			const current = new Set<string>(symbolsAtom.get());
 			for (const row of getAllRetainedResonance()) {
 				if (row.symbol) current.add(row.symbol as string);
 			}
@@ -87,8 +80,8 @@ const XrayCarrierBar = () => {
 		};
 
 		syncSymbols();
-		const sub1 = symbolsStore.subscribe(syncSymbols);
-		const sub2 = resonanceStore.subscribe(syncSymbols);
+		const sub1 = symbolsAtom.subscribe(syncSymbols);
+		const sub2 = signals.resonance.subscribe(syncSymbols);
 
 		return () => {
 			sub1.unsubscribe();

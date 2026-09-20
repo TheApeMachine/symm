@@ -57,29 +57,39 @@ export const positionCountAtom = createAtom<number>(0);
 export const measurementSourcesAtom = createAtom<string[]>(SIGNALS);
 export const kernelDetailAtom = createAtom<string>("cvd");
 
-export type SignalsRegistry = Record<
-	string,
-	Store<Record<string, RingBuffer<MeasurementT>>>
->;
+export type SignalsRegistry = Record<string, Store<Record<string, any>>>;
 
 export const signals: SignalsRegistry = {
-	category: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	correlation: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	cvd: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	depthflow: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	derivatives: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	hawkes: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	leadlag: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	liquidity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	morphology: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	pumpdump: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	resonance: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	sentiment: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	toxicity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	training: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	strategy: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	position: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	manifold: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	trades: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	cognition: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
+	category: createStore({}),
+	correlation: createStore({}),
+	cvd: createStore({}),
+	depthflow: createStore({}),
+	derivatives: createStore({}),
+	hawkes: createStore({}),
+	leadlag: createStore({}),
+	liquidity: createStore({}),
+	morphology: createStore({}),
+	pumpdump: createStore({}),
+	resonance: createStore({}),
+	sentiment: createStore({}),
+	toxicity: createStore({}),
+	training: createStore({}),
+	strategy: createStore({}),
+	position: createStore({}),
+	manifold: createStore({}),
+	trades: createStore({}),
+	cognition: createStore({}),
 };
+
+export const evictSymbol = (symbol: string) => {
+	const current = new Set(symbolsAtom.get());
+	current.delete(symbol);
+	symbolsAtom.set(Array.from(current));
+};
+
+export const evictStaleSymbols = () => {
+	const current = new Set(symbolsAtom.get());
+	symbolsAtom.set(Array.from(current));
+};
+
+export const updateEquity = (cash: string, unrealized: string, equity: string) => { cashAtom.set(cash); unrealizedAtom.set(unrealized); equityAtom.set(equity); };

@@ -1,12 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import {
-	focusMetric,
-	focusStore,
-	type RingBuffer,
-	SIGNALS,
-	signals,
-} from "#/collections/app";
+import { focusMetricAtom, focusAtom, type RingBuffer, SIGNALS, signals } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -30,7 +24,7 @@ const KernelRow = ({
 	source: string;
 	compact: boolean;
 }) => {
-	const symbol = useSelector(focusStore, (s) => s);
+	const symbol = useSelector(focusAtom, (s) => s);
 	const rowRef = useRef<HTMLButtonElement>(null);
 
 	useEffect(() => {
@@ -89,7 +83,7 @@ const KernelRow = ({
 			update(initial);
 		}
 
-		const unsubSignal = signals[source]?.subscribe((state) => {
+		const unsubSignal = signals[source]?.subscribe((state: any) => {
 			const r = state[symbol] ?? state[""];
 
 			if (r !== undefined) {
@@ -110,7 +104,7 @@ const KernelRow = ({
 			className="border-(--line) border-b"
 			data-kernel={source}
 			onClick={() => {
-				focusMetric.setState(() => source);
+				focusMetricAtom.set(() => source);
 				terminalStore.actions.inspectSource(source);
 			}}
 		>

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *PaceServer) Write(ctx context.Context, call Pace_write) error {
 
 func (s *PaceServer) Done(ctx context.Context, call Pace_done) error {
 	return nil
+}
+
+
+
+type PaceNode types.StreamNode[any, any]
+
+func NewPace() PaceNode {
+	server := &PaceServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

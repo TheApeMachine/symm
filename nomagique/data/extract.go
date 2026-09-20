@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -53,7 +54,12 @@ func (s *ExtractServer) Done(ctx context.Context, call Extract_done) error {
 
 type ExtractNode types.StreamNode[any, float64]
 
-func NewExtractNode() ExtractNode {
+func NewExtract(path types.String) (ExtractNode, error) {
+	p := path(nil)
+	if p == "" {
+		return nil, errors.New("requires 'path' or 'key' configuration")
+	}
+	
 	server := &ExtractServer{}
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		_, err := server.Evaluate(ctx, in)
@@ -62,5 +68,5 @@ func NewExtractNode() ExtractNode {
 		server.Downstream = func(ctx context.Context, res float64) error {
 			return next(ctx, res)
 		}
-	})
+	}), nil
 }

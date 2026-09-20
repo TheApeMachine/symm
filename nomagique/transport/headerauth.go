@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *HeaderAuthServer) Write(ctx context.Context, call HeaderAuth_write) err
 
 func (s *HeaderAuthServer) Done(ctx context.Context, call HeaderAuth_done) error {
 	return nil
+}
+
+
+
+type HeaderAuthNode types.StreamNode[any, any]
+
+func NewHeaderAuth() HeaderAuthNode {
+	server := &HeaderAuthServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

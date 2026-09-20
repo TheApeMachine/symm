@@ -2,6 +2,7 @@ package probability
 
 import (
 	"context"
+	"github.com/theapemachine/symm/nomagique/types"
 	"math"
 )
 
@@ -32,4 +33,17 @@ func (s *ShannonAmbiguityServer) Write(ctx context.Context, call ShannonAmbiguit
 
 func (s *ShannonAmbiguityServer) Done(ctx context.Context, call ShannonAmbiguity_done) error {
 	return nil
+}
+
+type ShannonAmbiguityNode types.StreamNode[any, any]
+
+func NewShannonAmbiguity() ShannonAmbiguityNode {
+	server := &ShannonAmbiguityServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

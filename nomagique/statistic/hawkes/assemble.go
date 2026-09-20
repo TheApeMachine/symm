@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"github.com/bytedance/sonic"
@@ -69,4 +70,49 @@ func (s *AssembleServer) Write(ctx context.Context, call Assemble_write) error {
 
 func (s *AssembleServer) Done(ctx context.Context, call Assemble_done) error {
 	return nil
+}
+
+
+
+type AssembleNode types.StreamNode[any, any]
+
+func NewAssemble() AssembleNode {
+	server := &AssembleServer{}
+	var nativeDownstream func(context.Context, any) error
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			var in map[string]any
+			if m, ok := payload.(map[string]any); ok {
+				in = m
+			}
+			
+			ts := 0.0
+			sideStr := ""
+			
+			if in != nil {
+				if t, ok := in["timestamp"].(float64); ok {
+					ts = t
+				} else if t, ok := in["timestamp"].(int64); ok {
+					ts = float64(t)
+				}
+				if sv, ok := in["side"].(string); ok {
+					sideStr = sv
+				}
+			}
+			
+			mark := 1.0
+			if sideStr == "sell" || sideStr == "s" {
+				mark = -1.0
+			}
+			
+			if nativeDownstream != nil {
+				return nativeDownstream(ctx, [2]float64{ts, mark})
+			}
+			return nil
+		},
+		func(next func(context.Context, any) error) {
+			nativeDownstream = next
+		},
+	)
 }

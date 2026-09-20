@@ -63,7 +63,7 @@
     },
     "ui": {
       "id": "ui",
-      "type": "ui.WebSocketServer",
+      "type": "ui.HTTPServer",
       "connections": {
         "inputs": {
           "in": [

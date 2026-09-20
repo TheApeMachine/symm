@@ -18,6 +18,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
+	"context"
 	"github.com/theapemachine/symm/nomagique/types"
 
 	"gonum.org/v1/gonum/floats"
@@ -1627,4 +1628,19 @@ func (resonanceManifold *ResonanceManifoldServer) buildLearnPipeline() types.Val
 		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](precisionUpdate),
 		types.Value[*ResonanceManifoldServer, *ResonanceManifoldServer](advance),
 	))
+}
+
+
+
+type ResonanceManifoldNode types.StreamNode[any, any]
+
+func NewResonanceManifold() ResonanceManifoldNode {
+	server := &ResonanceManifoldServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"github.com/theapemachine/symm/nomagique/types"
 	"context"
 )
 
@@ -22,4 +23,19 @@ func (s *HTTPRequestServer) Write(ctx context.Context, call HTTPRequest_write) e
 
 func (s *HTTPRequestServer) Done(ctx context.Context, call HTTPRequest_done) error {
 	return nil
+}
+
+
+
+type HTTPRequestNode types.StreamNode[any, any]
+
+func NewHTTPRequest() HTTPRequestNode {
+	server := &HTTPRequestServer{}
+	return types.NewStreamNode(
+		server,
+		func(ctx context.Context, payload any) error {
+			return nil
+		},
+		func(next func(context.Context, any) error) {},
+	)
 }

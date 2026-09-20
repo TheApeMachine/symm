@@ -125,7 +125,7 @@ func (s *GaussJordanServer) Done(ctx context.Context, call GaussJordan_done) err
 
 type GaussJordanNode types.StreamNode[[2][][]float64, [][]float64]
 
-func NewGaussJordanNode(tolerance types.Float) GaussJordanNode {
+func NewGaussJordan(tolerance types.Float) GaussJordanNode {
 	server := &GaussJordanServer{}
 	return types.NewStreamNode(server, func(ctx context.Context, in any) error {
 		input := in.([2][][]float64)

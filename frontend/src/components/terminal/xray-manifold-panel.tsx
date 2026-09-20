@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusStore, resonanceStore } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import {
 	getRetainedResonance,
 	retainResonanceRow,
@@ -123,10 +123,10 @@ const DYNAMICS_FIELDS = [
 ] as const;
 
 export const XrayManifoldPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 
 	const rootRef = usePaintStore(
-		resonanceStore,
+		signals.resonance,
 		(state) => {
 			const ring = state[focusSymbol];
 			const last = ring && !ring.isEmpty() ? ring.getLast() : null;

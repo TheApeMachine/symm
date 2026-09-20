@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 import { act, render } from "@testing-library/react";
-import {
-	clockAtom,
-	focusStore,
-	getMeasurementStore,
-	signals,
-} from "#/collections/app";
+import {  clockAtom, focusAtom, signals , DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
@@ -100,9 +95,9 @@ describe("XrayHawkesPanel market clock", () => {
 		const height = vi
 			.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get")
 			.mockReturnValue(240);
-		const symbol = focusStore.state;
-		const store = getMeasurementStore("hawkes", symbol);
-		store.state.clear();
+		const symbol = focusAtom.get();
+		const store = (signals["hawkes" as keyof typeof signals] || signals.cvd);
+		store.state[DEFAULT_FOCUS_SYMBOL]?.clear();
 		const measurement = new MeasurementT();
 		measurement.at = 1_000_000_000n;
 		measurement.provenance = [new NamedStringT("side", "buy")];
@@ -113,7 +108,7 @@ describe("XrayHawkesPanel market clock", () => {
 			"excitation_amplitude:buy_from_buy": 0.4,
 			"excitation_amplitude:sell_from_buy": 0.1,
 		}).map(([name, value]) => new MetricT(name, value));
-		store.state.add(measurement);
+		store.state[typeof symbol !== "undefined" ? symbol : DEFAULT_FOCUS_SYMBOL]?.add(measurement);
 		const view = render(<XrayHawkesPanel />);
 
 		try {
@@ -126,7 +121,7 @@ describe("XrayHawkesPanel market clock", () => {
 			expect(
 				view.container.querySelector('[data-f="lambda"]')?.textContent,
 			).toBe("0.5033 /s");
-			expect(store.state.getBufferLength()).toBe(1);
+			expect((store.state[typeof symbol !== "undefined" ? symbol : DEFAULT_FOCUS_SYMBOL]?.getBufferLength() ?? 0)).toBe(1);
 			const baselineY = context.moveTo.mock.calls[0][1];
 			context.moveTo.mockClear();
 			act(() => clockAtom.set(5500));
@@ -136,8 +131,8 @@ describe("XrayHawkesPanel market clock", () => {
 			const next = new MeasurementT();
 			Object.assign(next, measurement, { at: 5_500_000_000n });
 			act(() => {
-				store.state.add(next);
-				signals.hawkes.setState((previous) => ({ ...previous }));
+				store.state[typeof symbol !== "undefined" ? symbol : DEFAULT_FOCUS_SYMBOL]?.add(next);
+				signals.hawkes.setState((previous: any) => ({ ...previous }));
 			});
 			act(() => repaint?.(3));
 			expect(
@@ -151,7 +146,7 @@ describe("XrayHawkesPanel market clock", () => {
 			).toBe("0.7000 /s");
 		} finally {
 			view.unmount();
-			store.state.clear();
+			store.state[DEFAULT_FOCUS_SYMBOL]?.clear();
 			canvas.mockRestore();
 			width.mockRestore();
 			height.mockRestore();
