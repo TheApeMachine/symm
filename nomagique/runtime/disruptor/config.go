@@ -132,3 +132,16 @@ type defaultDisruptor struct {
 	ListenCloser
 	Sequencer
 }
+
+/*
+Option is one ring setting. It is exported so a caller outside this package
+can collect the settings for a ring before building it.
+*/
+type Option = option
+
+/*
+NewOptions collects ring settings into a slice a caller can append to.
+*/
+func NewOptions(options ...Option) []Option {
+	return options
+}
