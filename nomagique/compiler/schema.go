@@ -22,6 +22,9 @@ type FieldInfo struct {
 	InUnion            bool
 	DiscriminantValue  uint16
 	DiscriminantOffset uint32
+	// InterfaceID names the interface a capability field requires, and is
+	// zero for every field carrying a value.
+	InterfaceID uint64
 }
 
 /*
@@ -167,6 +170,7 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 							InUnion:            discVal != schema.Field_noDiscriminant,
 							DiscriminantValue:  discVal,
 							DiscriminantOffset: st.DiscriminantOffset(),
+							InterfaceID:        requiredInterface(t),
 						}
 					}
 				}
@@ -214,6 +218,7 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 							InUnion:            discVal != schema.Field_noDiscriminant,
 							DiscriminantValue:  discVal,
 							DiscriminantOffset: st.DiscriminantOffset(),
+							InterfaceID:        requiredInterface(t),
 						}
 					}
 				}
@@ -406,4 +411,75 @@ func SetStaticField(target capnp.Struct, field FieldInfo, rawVal string) error {
 			nil,
 		))
 	}
+}
+
+/*
+requiredInterface names the interface a field requires when it carries a
+capability, and reports zero for a field carrying a value.
+*/
+func requiredInterface(fieldType schema.Type) uint64 {
+	if fieldType.Which() != schema.Type_Which_interface {
+		return 0
+	}
+
+	return fieldType.Interface().TypeId()
+}
+
+/*
+Implements reports whether an interface satisfies a required one, which it
+does when they are the same interface or when the required interface is among
+its superclasses. Cap'n Proto interfaces are nominally typed, so a node is
+wired into a capability port by declaring that it extends what the port
+requires, never by happening to carry matching methods.
+*/
+func Implements(interfaceID, required uint64) bool {
+	if required == 0 || interfaceID == required {
+		return true
+	}
+
+	raw, err := schemas.DefaultRegistry.Find(interfaceID)
+
+	if err != nil {
+		return false
+	}
+
+	message, err := capnp.Unmarshal(raw)
+
+	if err != nil {
+		return false
+	}
+
+	root, err := schema.ReadRootCodeGeneratorRequest(message)
+
+	if err != nil {
+		return false
+	}
+
+	nodes, err := root.Nodes()
+
+	if err != nil {
+		return false
+	}
+
+	for index := 0; index < nodes.Len(); index++ {
+		node := nodes.At(index)
+
+		if node.Id() != interfaceID || node.Which() != schema.Node_Which_interface {
+			continue
+		}
+
+		superclasses, err := node.Interface().Superclasses()
+
+		if err != nil {
+			return false
+		}
+
+		for position := 0; position < superclasses.Len(); position++ {
+			if superclasses.At(position).Id() == required {
+				return true
+			}
+		}
+	}
+
+	return false
 }

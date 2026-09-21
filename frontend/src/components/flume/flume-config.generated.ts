@@ -86,6 +86,13 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			],
 		})
 		.addPortType({
+			type: "Capability",
+			name: "Capability",
+			label: "Capability",
+			color: Colors.purple,
+			acceptTypes: ["Capability"],
+		})
+		.addPortType({
 			type: "Status",
 			name: "Status",
 			label: "Status",
@@ -924,6 +931,18 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "data.Map",
+		label: "Map",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "factor", label: "factor" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "factor", label: "factor" }),
+		],
+	});
+	config.addNodeType({
 		type: "data.Quality",
 		label: "Quality",
 		category: "data",
@@ -957,6 +976,19 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.int64({ name: "count", label: "count" }),
 			ports.bool({ name: "ready", label: "ready" }),
 			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
+		type: "data.Scale",
+		label: "Scale",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "factor", label: "factor" }),
+		],
+		outputs: (ports) => [
+			ports.float64({ name: "factor", label: "factor" }),
+			ports.Capability({ name: "self", label: "self" }),
 		],
 	});
 	config.addNodeType({

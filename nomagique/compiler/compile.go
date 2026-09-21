@@ -232,6 +232,7 @@ func CompileWithPrevious(
 
 	// 5. Phase 7, 9 & 10: Validate edges, compile routes and readiness masks
 	var routes []Route
+	var capabilityEdges []capabilityEdge
 
 	for uIdx, uID := range execOrder {
 		uNode := graph.Nodes[uID]
@@ -260,6 +261,32 @@ func CompileWithPrevious(
 						fmt.Sprintf("compiler: node %q (%s) has no input port %q", vID, vNode.Type, target.PortName),
 						nil,
 					))
+				}
+
+				// A port typed as an interface carries a capability, not a
+				// value. Wiring a node into one binds the node itself, so the
+				// consumer calls it back as a function; there is no output to
+				// read, and the source port only names the connection.
+				if !isSink && toField.Which == schema.Type_Which_interface {
+					if !Implements(uSchema.InterfaceID, toField.InterfaceID) {
+						return nil, errnie.Error(errnie.Err(
+							errnie.Validation,
+							fmt.Sprintf(
+								"compiler: node %q (%s) does not implement the interface port %q of node %q requires",
+								uID, uNode.Type, target.PortName, vID,
+							),
+							nil,
+						))
+					}
+
+					capabilityEdges = append(capabilityEdges, capabilityEdge{
+						provider: NodeID(uIdx),
+						consumer: NodeID(vIdx),
+						field:    uint16(toField.Offset),
+						port:     target.PortName,
+					})
+
+					continue
 				}
 
 				fromField, exists := resolveOutputField(uSchema, outPort)
@@ -374,6 +401,13 @@ func CompileWithPrevious(
 		}
 
 		compiledNodes[i].Client = client
+	}
+
+	// 6b. Bind capability edges now that every node owns a client. A
+	// capability is bound into the consumer's argument template, so it is
+	// present on every call rather than arriving with one observation.
+	if err := bindCapabilities(compiledNodes, capabilityEdges); err != nil {
+		return nil, err
 	}
 
 	// 7. Find root nodes (in-degree 0)
@@ -768,4 +802,70 @@ func expandDefinitions(
 	}
 
 	return graph, nil
+}
+
+/*
+capabilityEdge records a wire whose consumer port is typed as an interface.
+The provider is bound into the consumer's arguments as a live reference, so
+the consumer invokes it as a function instead of reading a copied value.
+*/
+type capabilityEdge struct {
+	provider NodeID
+	consumer NodeID
+	field    uint16
+	port     string
+}
+
+/*
+bindCapabilities places each provider's client into its consumer's argument
+template. A capability is a reference, so the consumer holds its own
+reference for as long as the program does, and releasing the program releases
+it.
+*/
+func bindCapabilities(nodes []CompiledNode, edges []capabilityEdge) error {
+	for _, edge := range edges {
+		provider := &nodes[edge.provider]
+		consumer := &nodes[edge.consumer]
+
+		if !provider.Client.IsValid() {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"compiler: node %q cannot be wired to port %q because it owns no capability",
+					provider.ID, edge.port,
+				),
+				nil,
+			))
+		}
+
+		if !consumer.ArgsTemplate.IsValid() {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"compiler: node %q has no arguments to carry the capability on port %q",
+					consumer.ID, edge.port,
+				),
+				nil,
+			))
+		}
+
+		message := consumer.ArgsTemplate.Message()
+		interfaceID := message.CapTable().Add(provider.Client.AddRef())
+		segment := consumer.ArgsTemplate.Segment()
+
+		if err := consumer.ArgsTemplate.SetPtr(
+			edge.field, capnp.NewInterface(segment, interfaceID).ToPtr(),
+		); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"compiler: failed to bind capability from %q to %q port %q",
+					provider.ID, consumer.ID, edge.port,
+				),
+				err,
+			))
+		}
+	}
+
+	return nil
 }

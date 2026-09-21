@@ -436,6 +436,7 @@ func describePrimitive(
 						cStr := string(content)
 						if strings.Contains(cStr, "interface "+thing+" ") ||
 							strings.Contains(cStr, "interface "+thing+"{") ||
+							strings.Contains(cStr, "interface "+thing+"(") ||
 							strings.Contains(cStr, "interface "+thing+"\n") ||
 							strings.Contains(cStr, "interface "+thing+"\r") {
 							capnpPath = filepath.Join(dir, f.Name())
@@ -489,6 +490,9 @@ func describePrimitive(
 					if portType == "Status" || strings.HasSuffix(portType, ".Status") {
 						portType = "Status"
 					}
+					if isCapabilityType(portType) {
+						portType = "Capability"
+					}
 
 					inputs = append(inputs, Port{
 						Name:        name,
@@ -541,6 +545,9 @@ func describePrimitive(
 					if portType == "Status" || strings.HasSuffix(portType, ".Status") {
 						portType = "Status"
 					}
+					if isCapabilityType(portType) {
+						portType = "Capability"
+					}
 
 					outputs = append(outputs, Port{
 						Name:        name,
@@ -549,6 +556,19 @@ func describePrimitive(
 						Description: "The " + name + " this primitive produces",
 					})
 				}
+			}
+
+			reExtends := regexp.MustCompile(
+				`interface\s+` + regexp.QuoteMeta(thing) + `\s+extends\s*\(\s*([A-Za-z0-9_.]+)\s*\)`,
+			)
+
+			if extended := reExtends.FindStringSubmatch(string(content)); len(extended) > 1 {
+				outputs = append(outputs, Port{
+					Name:        "self",
+					Type:        "Capability",
+					RawType:     extended[1],
+					Description: "This primitive as a " + extended[1] + ", to wire into a capability port",
+				})
 			}
 
 			reWrite := regexp.MustCompile(`(?s)write\s+@\d+\s*\((.*?)\)\s*->\s*stream`)
@@ -646,4 +666,22 @@ func spacedName(s string) string {
 		result.WriteRune(r)
 	}
 	return result.String()
+}
+
+/*
+isCapabilityType reports whether a port carries a live reference to another
+node rather than a value. Cap'n Proto interfaces are first-class, so a port
+typed as one is wired to a node that the holder calls back as a function.
+
+Every value type the schemas use is named here, so anything left over is an
+interface: a new value type must be added rather than silently becoming a
+capability.
+*/
+func isCapabilityType(portType string) bool {
+	switch portType {
+	case "Data", "Text", "Bool", "Int64", "Float64", "Status", "Void", "":
+		return false
+	}
+
+	return true
 }

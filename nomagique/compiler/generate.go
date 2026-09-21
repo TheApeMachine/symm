@@ -211,6 +211,8 @@ func tsPortBuilder(portType string) string {
 		return "ports[\"[]byte\"]"
 	case "status":
 		return "ports.Status"
+	case "capability":
+		return "ports.Capability"
 	default:
 		return "ports.float64"
 	}
@@ -301,6 +303,13 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 	buf.WriteString("\t\t\t\t\tdefaultValue: \"\",\n")
 	buf.WriteString("\t\t\t\t}),\n")
 	buf.WriteString("\t\t\t],\n")
+	buf.WriteString("\t\t})\n")
+	buf.WriteString("\t\t.addPortType({\n")
+	buf.WriteString("\t\t\ttype: \"Capability\",\n")
+	buf.WriteString("\t\t\tname: \"Capability\",\n")
+	buf.WriteString("\t\t\tlabel: \"Capability\",\n")
+	buf.WriteString("\t\t\tcolor: Colors.purple,\n")
+	buf.WriteString("\t\t\tacceptTypes: [\"Capability\"],\n")
 	buf.WriteString("\t\t})\n")
 	buf.WriteString("\t\t.addPortType({\n")
 	buf.WriteString("\t\t\ttype: \"Status\",\n")
