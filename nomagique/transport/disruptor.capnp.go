@@ -22,7 +22,7 @@ func (c Disruptor) Write(ctx context.Context, params func(Disruptor_write_Params
 		Method: capnp.Method{
 			InterfaceID:   0x80fd92fad0bb4268,
 			MethodID:      0,
-			InterfaceName: "transport/disruptor.capnp:Disruptor",
+			InterfaceName: "nomagique/transport/disruptor.capnp:Disruptor",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +41,7 @@ func (c Disruptor) Done(ctx context.Context, params func(Disruptor_done_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0x80fd92fad0bb4268,
 			MethodID:      1,
-			InterfaceName: "transport/disruptor.capnp:Disruptor",
+			InterfaceName: "nomagique/transport/disruptor.capnp:Disruptor",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +156,7 @@ func Disruptor_Methods(methods []server.Method, s Disruptor_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0x80fd92fad0bb4268,
 			MethodID:      0,
-			InterfaceName: "transport/disruptor.capnp:Disruptor",
+			InterfaceName: "nomagique/transport/disruptor.capnp:Disruptor",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +168,7 @@ func Disruptor_Methods(methods []server.Method, s Disruptor_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0x80fd92fad0bb4268,
 			MethodID:      1,
-			InterfaceName: "transport/disruptor.capnp:Disruptor",
+			InterfaceName: "nomagique/transport/disruptor.capnp:Disruptor",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

@@ -128,3 +128,81 @@ func TestUIRouteServer(t *testing.T) {
 		})
 	})
 }
+
+/*
+A UI graph is a tree: what a parent renders is what its children are, resolved
+when the parent is assembled rather than copied in beforehand.
+*/
+func TestUIComponentChildren(t *testing.T) {
+	Convey("Given a panel with two components wired into it", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		badge := UIComponent_ServerToClient(NewUIComponent())
+		defer badge.Release()
+
+		meter := UIComponent_ServerToClient(NewUIComponent())
+		defer meter.Release()
+
+		panel := UIComponent_ServerToClient(NewUIComponent())
+		defer panel.Release()
+
+		describe := func(client UIComponent, name string) {
+			err := client.Write(ctx, func(params UIComponent_write_Params) error {
+				return params.SetName(name)
+			})
+			So(err, ShouldBeNil)
+		}
+
+		describe(badge, "Badge")
+		describe(meter, "Meter")
+
+		err := panel.Write(ctx, func(params UIComponent_write_Params) error {
+			if err := params.SetName("Panel"); err != nil {
+				return err
+			}
+
+			children, err := params.NewComponents(2)
+
+			if err != nil {
+				return err
+			}
+
+			if err := children.Set(0, badge); err != nil {
+				return err
+			}
+
+			return children.Set(1, meter)
+		})
+		So(err, ShouldBeNil)
+
+		future, release := panel.Done(ctx, nil)
+		defer release()
+
+		results, err := future.Struct()
+		So(err, ShouldBeNil)
+
+		out, err := results.Out()
+		So(err, ShouldBeNil)
+
+		Convey("Then the parent renders as itself", func() {
+			name, err := out.Name()
+			So(err, ShouldBeNil)
+			So(name, ShouldEqual, "Panel")
+		})
+
+		Convey("Then every wired child is nested under it, in order", func() {
+			nested, err := out.Components()
+			So(err, ShouldBeNil)
+			So(nested.Len(), ShouldEqual, 2)
+
+			first, err := nested.At(0).Name()
+			So(err, ShouldBeNil)
+			So(first, ShouldEqual, "Badge")
+
+			second, err := nested.At(1).Name()
+			So(err, ShouldBeNil)
+			So(second, ShouldEqual, "Meter")
+		})
+	})
+}

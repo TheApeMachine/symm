@@ -21,7 +21,7 @@ func (c Timestamp) Write(ctx context.Context, params func(Timestamp_write_Params
 		Method: capnp.Method{
 			InterfaceID:   0xc7e46260ace0160d,
 			MethodID:      0,
-			InterfaceName: "types/timestamp.capnp:Timestamp",
+			InterfaceName: "nomagique/types/timestamp.capnp:Timestamp",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Timestamp) Done(ctx context.Context, params func(Timestamp_done_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0xc7e46260ace0160d,
 			MethodID:      1,
-			InterfaceName: "types/timestamp.capnp:Timestamp",
+			InterfaceName: "nomagique/types/timestamp.capnp:Timestamp",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Timestamp_Methods(methods []server.Method, s Timestamp_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0xc7e46260ace0160d,
 			MethodID:      0,
-			InterfaceName: "types/timestamp.capnp:Timestamp",
+			InterfaceName: "nomagique/types/timestamp.capnp:Timestamp",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Timestamp_Methods(methods []server.Method, s Timestamp_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0xc7e46260ace0160d,
 			MethodID:      1,
-			InterfaceName: "types/timestamp.capnp:Timestamp",
+			InterfaceName: "nomagique/types/timestamp.capnp:Timestamp",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

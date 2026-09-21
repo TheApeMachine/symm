@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xc7b508f5d023b3a3;
 $Go.package("geometry");
-$Go.import("nomagique/geometry");
+$Go.import("github.com/theapemachine/symm/nomagique/geometry");
 
 struct WirePhaseDial {
   # Representing []complex128 as a list of float64 pairs (real, imag)

@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xcab1cd23a8e74561;
 $Go.package("sequence");
-$Go.import("nomagique/data/sequence");
+$Go.import("github.com/theapemachine/symm/nomagique/data/sequence");
 
 struct WireWindow {
   payload @0 :AnyPointer;

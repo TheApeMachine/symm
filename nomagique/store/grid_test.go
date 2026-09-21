@@ -10,29 +10,22 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
-func TestGrid(t *testing.T) {
+func TestGridWrite(t *testing.T) {
 	ctx := context.Background()
 
-	Convey("Given a Grid metrics register with", t, func() {
+	Convey("Given a grid told which fields to deliver", t, func() {
 		client := store.Grid_ServerToClient(store.NewGrid(ctx))
+		defer client.Release()
 
-		register := func(metric, interests string) error {
+		declare := func(interests string) {
 			err := client.Write(ctx, func(params store.Grid_write_Params) error {
-				if err := params.SetMetric(metric); err != nil {
-					return err
-				}
-
 				return params.SetInterests(interests)
 			})
-
-			if err != nil {
-				return err
-			}
-
-			return client.WaitStreaming()
+			So(err, ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
 		}
 
-		publish := func(payload []byte) (out []byte, metric string, registered int64) {
+		publish := func(payload []byte) (out []byte, delivered int64) {
 			err := client.Write(ctx, func(params store.Grid_write_Params) error {
 				return params.SetData(payload)
 			})
@@ -45,114 +38,63 @@ func TestGrid(t *testing.T) {
 			results, err := future.Struct()
 			So(err, ShouldBeNil)
 
-			delivered, err := results.Out()
+			resolved, err := results.Out()
 			So(err, ShouldBeNil)
 
-			name, err := results.Metric()
-			So(err, ShouldBeNil)
-
-			return bytes.Clone(delivered), name, results.Metrics()
+			return bytes.Clone(resolved), results.Delivered()
 		}
 
-		Convey("It delivers a metric only the fields it declared", func() {
-			So(register("cvd", "trade.price,trade.qty"), ShouldBeNil)
+		Convey("When data carrying every declared field is written", func() {
+			declare("trade.price,trade.qty")
 
 			payload, err := sonic.Marshal(map[string]any{
-				"trade": map[string]any{
-					"price": 100.0, "qty": 2.0, "side": "buy",
-				},
+				"trade":     map[string]any{"price": 100.0, "qty": 2.0, "side": "buy"},
 				"unrelated": 1.0,
 			})
 			So(err, ShouldBeNil)
 
-			out, metric, registered := publish(payload)
-			So(metric, ShouldEqual, "cvd")
-			So(registered, ShouldEqual, 1)
+			out, delivered := publish(payload)
 
-			var delivered map[string]any
-			So(sonic.Unmarshal(out, &delivered), ShouldBeNil)
+			Convey("Then only the declared fields are delivered", func() {
+				So(delivered, ShouldEqual, 2)
 
-			So(delivered["trade.price"], ShouldEqual, 100.0)
-			So(delivered["trade.qty"], ShouldEqual, 2.0)
-			So(delivered, ShouldNotContainKey, "trade.side")
-			So(delivered, ShouldNotContainKey, "unrelated")
+				var resolved map[string]any
+				So(sonic.Unmarshal(out, &resolved), ShouldBeNil)
+				So(resolved, ShouldResemble, map[string]any{
+					"trade.price": 100.0,
+					"trade.qty":   2.0,
+				})
+			})
 		})
 
-		Convey("It delivers nothing to a metric the data cannot satisfy", func() {
-			So(register("depth", "book.bids.0.price"), ShouldBeNil)
+		Convey("When data is missing one of the declared fields", func() {
+			declare("trade.price,trade.qty")
 
 			payload, err := sonic.Marshal(map[string]any{
 				"trade": map[string]any{"price": 100.0},
 			})
 			So(err, ShouldBeNil)
 
-			out, metric, _ := publish(payload)
-			So(len(out), ShouldEqual, 0)
-			So(metric, ShouldEqual, "")
+			out, delivered := publish(payload)
+
+			Convey("Then nothing is delivered, because a partial reading is not a reading", func() {
+				So(delivered, ShouldEqual, 0)
+				So(len(out), ShouldEqual, 0)
+			})
 		})
 
-		Convey("It resolves an interest indexing a collection", func() {
-			So(register("depth", "book.bids.0.price"), ShouldBeNil)
+		Convey("When no metric has been wired into the grid", func() {
+			declare("trade.price")
 
-			payload, err := sonic.Marshal(map[string]any{
-				"book": map[string]any{
-					"bids": []any{
-						map[string]any{"price": 99.0},
-						map[string]any{"price": 98.0},
-					},
-				},
-			})
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
 			So(err, ShouldBeNil)
 
-			out, metric, _ := publish(payload)
-			So(metric, ShouldEqual, "depth")
-
-			var delivered map[string]any
-			So(sonic.Unmarshal(out, &delivered), ShouldBeNil)
-			So(delivered["book.bids.0.price"], ShouldEqual, 99.0)
-		})
-
-		Convey("It counts every metric registered with it", func() {
-			So(register("cvd", "trade.price"), ShouldBeNil)
-			So(register("hawkes", "trade.timestamp"), ShouldBeNil)
-			So(register("liquidity", "book.bid"), ShouldBeNil)
-
-			payload, err := sonic.Marshal(map[string]any{
-				"trade": map[string]any{"price": 1.0},
+			Convey("Then the grid reports that it is serving none", func() {
+				So(results.Metrics(), ShouldEqual, 0)
 			})
-			So(err, ShouldBeNil)
-
-			_, metric, registered := publish(payload)
-			So(registered, ShouldEqual, 3)
-			So(metric, ShouldEqual, "cvd")
-		})
-
-		Convey("It replaces what a metric asked for when it registers again", func() {
-			So(register("cvd", "trade.price"), ShouldBeNil)
-			So(register("cvd", "trade.qty"), ShouldBeNil)
-
-			payload, err := sonic.Marshal(map[string]any{
-				"trade": map[string]any{"price": 100.0, "qty": 5.0},
-			})
-			So(err, ShouldBeNil)
-
-			out, _, registered := publish(payload)
-			So(registered, ShouldEqual, 1)
-
-			var delivered map[string]any
-			So(sonic.Unmarshal(out, &delivered), ShouldBeNil)
-			So(delivered, ShouldContainKey, "trade.qty")
-			So(delivered, ShouldNotContainKey, "trade.price")
-		})
-
-		Convey("It reports data that is not a structure", func() {
-			So(register("cvd", "trade.price"), ShouldBeNil)
-
-			err := client.Write(ctx, func(params store.Grid_write_Params) error {
-				return params.SetData([]byte("not json"))
-			})
-			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldNotBeNil)
 		})
 	})
 }

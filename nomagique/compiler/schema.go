@@ -25,6 +25,10 @@ type FieldInfo struct {
 	// InterfaceID names the interface a capability field requires, and is
 	// zero for every field carrying a value.
 	InterfaceID uint64
+	// CapabilityList marks a field that carries a list of capabilities rather
+	// than one, so every node wired into it is kept instead of replacing the
+	// node wired before it.
+	CapabilityList bool
 }
 
 /*
@@ -175,6 +179,7 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 							DiscriminantValue:  discVal,
 							DiscriminantOffset: st.DiscriminantOffset(),
 							InterfaceID:        requiredInterface(t),
+							CapabilityList:     isCapabilityList(t),
 						}
 					}
 				}
@@ -223,6 +228,7 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 							DiscriminantValue:  discVal,
 							DiscriminantOffset: st.DiscriminantOffset(),
 							InterfaceID:        requiredInterface(t),
+							CapabilityList:     isCapabilityList(t),
 						}
 					}
 				}
@@ -422,11 +428,35 @@ requiredInterface names the interface a field requires when it carries a
 capability, and reports zero for a field carrying a value.
 */
 func requiredInterface(fieldType schema.Type) uint64 {
-	if fieldType.Which() != schema.Type_Which_interface {
+	if fieldType.Which() == schema.Type_Which_interface {
+		return fieldType.Interface().TypeId()
+	}
+
+	element, listed := capabilityElement(fieldType)
+
+	if !listed {
 		return 0
 	}
 
-	return fieldType.Interface().TypeId()
+	return element
+}
+
+/*
+capabilityElement names the interface a list field carries, reporting false for
+a list of values and for anything that is not a list.
+*/
+func capabilityElement(fieldType schema.Type) (uint64, bool) {
+	if fieldType.Which() != schema.Type_Which_list {
+		return 0, false
+	}
+
+	element, err := fieldType.List().ElementType()
+
+	if err != nil || element.Which() != schema.Type_Which_interface {
+		return 0, false
+	}
+
+	return element.Interface().TypeId(), true
 }
 
 /*
@@ -486,4 +516,12 @@ func Implements(interfaceID, required uint64) bool {
 	}
 
 	return false
+}
+
+/*
+isCapabilityList reports a field that carries a list of capabilities.
+*/
+func isCapabilityList(fieldType schema.Type) bool {
+	_, listed := capabilityElement(fieldType)
+	return listed
 }

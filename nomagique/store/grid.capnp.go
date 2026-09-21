@@ -9,6 +9,7 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	data "github.com/theapemachine/symm/nomagique/data"
 	runtime "github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -209,7 +210,7 @@ func (c Grid_done) Args() Grid_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Grid_done) AllocResults() (Grid_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 2})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return Grid_done_Results(r), err
 }
 
@@ -282,40 +283,46 @@ func (s Grid_write_Params) SetData(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s Grid_write_Params) Metric() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s Grid_write_Params) HasMetric() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Grid_write_Params) MetricBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s Grid_write_Params) SetMetric(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
 func (s Grid_write_Params) Interests() (string, error) {
-	p, err := capnp.Struct(s).Ptr(2)
+	p, err := capnp.Struct(s).Ptr(1)
 	return p.Text(), err
 }
 
 func (s Grid_write_Params) HasInterests() bool {
-	return capnp.Struct(s).HasPtr(2)
+	return capnp.Struct(s).HasPtr(1)
 }
 
 func (s Grid_write_Params) InterestsBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
+	p, err := capnp.Struct(s).Ptr(1)
 	return p.TextBytes(), err
 }
 
 func (s Grid_write_Params) SetInterests(v string) error {
-	return capnp.Struct(s).SetText(2, v)
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Grid_write_Params) Metrics() (data.MetricService_List, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return data.MetricService_List(p.List()), err
+}
+
+func (s Grid_write_Params) HasMetrics() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Grid_write_Params) SetMetrics(v data.MetricService_List) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewMetrics sets the metrics field to a newly
+// allocated data.MetricService_List, preferring placement in s's segment.
+func (s Grid_write_Params) NewMetrics(n int32) (data.MetricService_List, error) {
+	l, err := data.NewMetricService_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return data.MetricService_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
 }
 
 // Grid_write_Params_List is a list of Grid_write_Params.
@@ -406,12 +413,12 @@ type Grid_done_Results capnp.Struct
 const Grid_done_Results_TypeID = 0xdf7ff8cd7fbf2e00
 
 func NewGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return Grid_done_Results(st), err
 }
 
 func NewRootGrid_done_Results(s *capnp.Segment) (Grid_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return Grid_done_Results(st), err
 }
 
@@ -460,24 +467,6 @@ func (s Grid_done_Results) SetOut(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s Grid_done_Results) Metric() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s Grid_done_Results) HasMetric() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s Grid_done_Results) MetricBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s Grid_done_Results) SetMetric(v string) error {
-	return capnp.Struct(s).SetText(1, v)
-}
-
 func (s Grid_done_Results) Delivered() int64 {
 	return int64(capnp.Struct(s).Uint64(0))
 }
@@ -507,7 +496,7 @@ type Grid_done_Results_List = capnp.StructList[Grid_done_Results]
 
 // NewGrid_done_Results creates a new list of Grid_done_Results.
 func NewGrid_done_Results_List(s *capnp.Segment, sz int32) (Grid_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1}, sz)
 	return capnp.StructList[Grid_done_Results](l), err
 }
 

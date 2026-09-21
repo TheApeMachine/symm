@@ -68,14 +68,8 @@ func (server *UIRouteServer) Write(ctx context.Context, call UIRoute_write) erro
 		))
 	}
 
-	if components.IsValid() {
-		if err := route.SetComponents(components); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"ui: set route components failed",
-				err,
-			))
-		}
+	if err := nestRoute(ctx, route, components); err != nil {
+		return err
 	}
 
 	server.route = route
@@ -128,4 +122,42 @@ func newDetachedRoute() (Route, error) {
 	}
 
 	return route, nil
+}
+
+/*
+nestRoute renders the components a route points at, so the route carries the
+tree it renders rather than a reference to it.
+*/
+func nestRoute(ctx context.Context, route Route, children UIComponent_List) error {
+	if !children.IsValid() || children.Len() == 0 {
+		return nil
+	}
+
+	nested, err := route.NewComponents(int32(children.Len()))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"ui: allocate route components failed",
+			err,
+		))
+	}
+
+	for index := range children.Len() {
+		child, err := children.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"ui: read child component failed",
+				err,
+			))
+		}
+
+		if err := renderInto(ctx, child, nested, index); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xa1caaeef47f4fc66;
 $Go.package("hawkes");
-$Go.import("nomagique/statistic/hawkes");
+$Go.import("github.com/theapemachine/symm/nomagique/statistic/hawkes");
 
 interface SellRate {
   write @0 (value :Float64) -> stream;

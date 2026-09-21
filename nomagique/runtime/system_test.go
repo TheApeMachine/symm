@@ -88,4 +88,3 @@ func TestSystemLogging(t *testing.T) {
 		So(len(system.Logs()), ShouldEqual, 0)
 	})
 }
-

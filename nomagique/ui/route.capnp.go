@@ -428,25 +428,25 @@ func (s UIRoute_write_Params) SetTitle(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
-func (s UIRoute_write_Params) Components() (Component_List, error) {
+func (s UIRoute_write_Params) Components() (UIComponent_List, error) {
 	p, err := capnp.Struct(s).Ptr(2)
-	return Component_List(p.List()), err
+	return UIComponent_List(p.List()), err
 }
 
 func (s UIRoute_write_Params) HasComponents() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s UIRoute_write_Params) SetComponents(v Component_List) error {
+func (s UIRoute_write_Params) SetComponents(v UIComponent_List) error {
 	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
 // NewComponents sets the components field to a newly
-// allocated Component_List, preferring placement in s's segment.
-func (s UIRoute_write_Params) NewComponents(n int32) (Component_List, error) {
-	l, err := NewComponent_List(capnp.Struct(s).Segment(), n)
+// allocated UIComponent_List, preferring placement in s's segment.
+func (s UIRoute_write_Params) NewComponents(n int32) (UIComponent_List, error) {
+	l, err := NewUIComponent_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return Component_List{}, err
+		return UIComponent_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err

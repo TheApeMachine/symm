@@ -781,8 +781,16 @@ func portTypeOf(field FieldInfo) string {
 		return "Bool"
 	case schema.Type_Which_text:
 		return "Text"
+	case schema.Type_Which_list:
+		// A list of capabilities is drawn as capabilities, because what the
+		// graph wires into it are nodes rather than values.
+		if field.CapabilityList {
+			return "CapabilityList"
+		}
+
+		return "Data"
 	case schema.Type_Which_data, schema.Type_Which_structType,
-		schema.Type_Which_list, schema.Type_Which_anyPointer:
+		schema.Type_Which_anyPointer:
 		return "Data"
 	case schema.Type_Which_float32, schema.Type_Which_float64:
 		return "Float64"

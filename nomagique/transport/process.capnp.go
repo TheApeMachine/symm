@@ -21,7 +21,7 @@ func (c Process) Write(ctx context.Context, params func(Process_write_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xce43d9e98127eff8,
 			MethodID:      0,
-			InterfaceName: "transport/process.capnp:Process",
+			InterfaceName: "nomagique/transport/process.capnp:Process",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Process) Done(ctx context.Context, params func(Process_done_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xce43d9e98127eff8,
 			MethodID:      1,
-			InterfaceName: "transport/process.capnp:Process",
+			InterfaceName: "nomagique/transport/process.capnp:Process",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Process_Methods(methods []server.Method, s Process_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xce43d9e98127eff8,
 			MethodID:      0,
-			InterfaceName: "transport/process.capnp:Process",
+			InterfaceName: "nomagique/transport/process.capnp:Process",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Process_Methods(methods []server.Method, s Process_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xce43d9e98127eff8,
 			MethodID:      1,
-			InterfaceName: "transport/process.capnp:Process",
+			InterfaceName: "nomagique/transport/process.capnp:Process",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

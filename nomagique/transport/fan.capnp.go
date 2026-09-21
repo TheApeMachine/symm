@@ -21,7 +21,7 @@ func (c Fan) Write(ctx context.Context, params func(Fan_write_Params) error) err
 		Method: capnp.Method{
 			InterfaceID:   0xcaa29224cac1bb39,
 			MethodID:      0,
-			InterfaceName: "transport/fan.capnp:Fan",
+			InterfaceName: "nomagique/transport/fan.capnp:Fan",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Fan) Done(ctx context.Context, params func(Fan_done_Params) error) (Fan_
 		Method: capnp.Method{
 			InterfaceID:   0xcaa29224cac1bb39,
 			MethodID:      1,
-			InterfaceName: "transport/fan.capnp:Fan",
+			InterfaceName: "nomagique/transport/fan.capnp:Fan",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Fan_Methods(methods []server.Method, s Fan_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xcaa29224cac1bb39,
 			MethodID:      0,
-			InterfaceName: "transport/fan.capnp:Fan",
+			InterfaceName: "nomagique/transport/fan.capnp:Fan",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Fan_Methods(methods []server.Method, s Fan_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xcaa29224cac1bb39,
 			MethodID:      1,
-			InterfaceName: "transport/fan.capnp:Fan",
+			InterfaceName: "nomagique/transport/fan.capnp:Fan",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

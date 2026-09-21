@@ -59,8 +59,8 @@ func TestWorkbenchCompileAndRun(t *testing.T) {
 					},
 				},
 				"sq_1": map[string]any{
-					"id":   "sq_1",
-					"type": "calculus.Square",
+					"id":        "sq_1",
+					"type":      "calculus.Square",
 					"inputData": map[string]any{},
 					"connections": map[string]any{
 						"inputs": map[string]any{

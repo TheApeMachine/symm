@@ -11,12 +11,15 @@ struct Component {
 	components @3 :List(Component);
 }
 
+# Children are graph structure, so a parent is wired to the components
+# themselves rather than to copies of what they rendered. Wiring one more in is
+# what makes a parent wider.
 interface UIComponent {
 	write @0 (
 		name       :Text,
 		className  :Text,
 		propsJson  :Text,
-		components :List(Component)
+		components :List(UIComponent)
 	) -> stream;
 	done @1 () -> (out :Component);
 }

@@ -346,7 +346,14 @@
       },
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:trade_count",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "trade_count:buy": {
@@ -370,7 +377,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:trade_count:buy",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "trade_count:sell": {
@@ -394,7 +408,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:trade_count:sell",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "executed_quantity:buy": {
@@ -418,7 +439,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:executed_quantity:buy",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "executed_quantity:sell": {
@@ -442,7 +470,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:executed_quantity:sell",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "gross_executed_quantity": {
@@ -459,7 +494,14 @@
       },
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:gross_executed_quantity",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_executed_quantity": {
@@ -483,7 +525,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_executed_quantity",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "aggressive_notional:buy": {
@@ -507,7 +556,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:aggressive_notional:buy",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "aggressive_notional:sell": {
@@ -531,7 +587,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:aggressive_notional:sell",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "gross_notional": {
@@ -555,7 +618,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:gross_notional",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_notional": {
@@ -579,7 +649,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_notional",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "mean_trade_notional": {
@@ -603,7 +680,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:mean_trade_notional",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "cumulative_volume_delta": {
@@ -627,7 +711,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:cumulative_volume_delta",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "cumulative_notional_delta": {
@@ -647,6 +738,279 @@
           "value": [
             {
               "nodeId": "signedNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:cumulative_notional_delta",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:trade_count": {
+      "id": "metric:trade_count",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "trade_count",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:trade_count:buy": {
+      "id": "metric:trade_count:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "trade_count:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:trade_count:sell": {
+      "id": "metric:trade_count:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "trade_count:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:executed_quantity:buy": {
+      "id": "metric:executed_quantity:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "executed_quantity:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:executed_quantity:sell": {
+      "id": "metric:executed_quantity:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "executed_quantity:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:gross_executed_quantity": {
+      "id": "metric:gross_executed_quantity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "gross_executed_quantity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_executed_quantity": {
+      "id": "metric:net_executed_quantity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_executed_quantity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:aggressive_notional:buy": {
+      "id": "metric:aggressive_notional:buy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "aggressive_notional:buy",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:aggressive_notional:sell": {
+      "id": "metric:aggressive_notional:sell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "aggressive_notional:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:gross_notional": {
+      "id": "metric:gross_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "gross_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_notional": {
+      "id": "metric:net_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2750.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:mean_trade_notional": {
+      "id": "metric:mean_trade_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 3050.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "mean_trade_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:cumulative_volume_delta": {
+      "id": "metric:cumulative_volume_delta",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 3350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "cumulative_volume_delta",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:cumulative_notional_delta": {
+      "id": "metric:cumulative_notional_delta",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 3650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "cumulative_notional_delta",
               "portName": "out"
             }
           ]

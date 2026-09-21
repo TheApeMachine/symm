@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xb6ad448353121c47;
 $Go.package("hawkes");
-$Go.import("nomagique/statistic/hawkes");
+$Go.import("github.com/theapemachine/symm/nomagique/statistic/hawkes");
 
 interface Process {
   write @0 (time :Float64, mark :Float64) -> stream;

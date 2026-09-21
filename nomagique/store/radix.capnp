@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xfa11b9a9d2dc590e;
 $Go.package("store");
-$Go.import("nomagique/store");
+$Go.import("github.com/theapemachine/symm/nomagique/store");
 
 # Radix retains one value per key and reads it back, which is how a metric
 # keeps its own local state for each symbol it observes.

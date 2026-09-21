@@ -267,7 +267,7 @@ func CompileWithPrevious(
 				// value. Wiring a node into one binds the node itself, so the
 				// consumer calls it back as a function; there is no output to
 				// read, and the source port only names the connection.
-				if !isSink && toField.Which == schema.Type_Which_interface {
+				if !isSink && (toField.Which == schema.Type_Which_interface || toField.CapabilityList) {
 					if !Implements(uSchema.InterfaceID, toField.InterfaceID) {
 						return nil, errnie.Error(errnie.Err(
 							errnie.Validation,
@@ -284,6 +284,7 @@ func CompileWithPrevious(
 						consumer: NodeID(vIdx),
 						field:    uint16(toField.Offset),
 						port:     target.PortName,
+						listed:   toField.CapabilityList,
 					})
 
 					continue
@@ -793,6 +794,15 @@ func expandDefinitions(
 			graph.Nodes[namespacedNode.ID] = namespacedNode
 		}
 
+		// 1b. Wire the parent through the definition's own ports. A boundary
+		// node is not needed to name them: a port is "<node>.<field>", which is
+		// the field of a child node the enclosing graph reaches directly.
+		if err := wireDefinitionPorts(
+			graph, defID, defNode, prefix, childIngressTargets, childEgressSources,
+		); err != nil {
+			return Graph{}, err
+		}
+
 		// 2. Remove definition node from graph
 		delete(graph.Nodes, defID)
 
@@ -859,6 +869,9 @@ type capabilityEdge struct {
 	consumer NodeID
 	field    uint16
 	port     string
+	// listed marks an edge into a port that carries several capabilities, so
+	// the providers accumulate instead of replacing one another.
+	listed bool
 }
 
 /*
@@ -868,48 +881,291 @@ reference for as long as the program does, and releasing the program releases
 it.
 */
 func bindCapabilities(nodes []CompiledNode, edges []capabilityEdge) error {
+	single, listed := partitionCapabilities(edges)
+
+	for _, edge := range single {
+		if err := bindCapability(nodes, edge); err != nil {
+			return err
+		}
+	}
+
+	for slot, group := range listed {
+		if err := bindCapabilityList(nodes, slot, group); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+/*
+capabilitySlot names one consumer port that capabilities are wired into.
+*/
+type capabilitySlot struct {
+	consumer NodeID
+	field    uint16
+}
+
+/*
+partitionCapabilities separates the wires that carry one capability from those
+that accumulate into a list, grouping the latter by the port they feed.
+*/
+func partitionCapabilities(
+	edges []capabilityEdge,
+) ([]capabilityEdge, map[capabilitySlot][]capabilityEdge) {
+	single := make([]capabilityEdge, 0, len(edges))
+	listed := make(map[capabilitySlot][]capabilityEdge)
+
 	for _, edge := range edges {
-		provider := &nodes[edge.provider]
-		consumer := &nodes[edge.consumer]
-
-		if !provider.Client.IsValid() {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"compiler: node %q cannot be wired to port %q because it owns no capability",
-					provider.ID, edge.port,
-				),
-				nil,
-			))
+		if !edge.listed {
+			single = append(single, edge)
+			continue
 		}
 
-		if !consumer.ArgsTemplate.IsValid() {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"compiler: node %q has no arguments to carry the capability on port %q",
-					consumer.ID, edge.port,
-				),
-				nil,
-			))
+		slot := capabilitySlot{consumer: edge.consumer, field: edge.field}
+		listed[slot] = append(listed[slot], edge)
+	}
+
+	return single, listed
+}
+
+/*
+bindCapability places one provider's client into its consumer's arguments.
+*/
+func bindCapability(nodes []CompiledNode, edge capabilityEdge) error {
+	provider, consumer, err := capabilityEnds(nodes, edge)
+
+	if err != nil {
+		return err
+	}
+
+	message := consumer.ArgsTemplate.Message()
+	interfaceID := message.CapTable().Add(provider.Client.AddRef())
+	segment := consumer.ArgsTemplate.Segment()
+
+	if err := consumer.ArgsTemplate.SetPtr(
+		edge.field, capnp.NewInterface(segment, interfaceID).ToPtr(),
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"compiler: failed to bind capability onto port %q of node %q",
+				edge.port, consumer.ID,
+			),
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+bindCapabilityList places every provider wired into one port as a capability
+list, which is how a node that serves many others holds all of them.
+
+The providers are ordered by the port name the graph used, so the list a
+consumer reads is the order the graph shows rather than the order the compiler
+happened to walk the nodes in.
+*/
+func bindCapabilityList(
+	nodes []CompiledNode,
+	slot capabilitySlot,
+	group []capabilityEdge,
+) error {
+	sort.Slice(group, func(left, right int) bool {
+		return group[left].port < group[right].port
+	})
+
+	consumer := &nodes[slot.consumer]
+
+	if !consumer.ArgsTemplate.IsValid() {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"compiler: node %q has no arguments to carry the capabilities on port %q",
+				consumer.ID, group[0].port,
+			),
+			nil,
+		))
+	}
+
+	segment := consumer.ArgsTemplate.Segment()
+	message := consumer.ArgsTemplate.Message()
+
+	// A capability list is a pointer list whose entries are interfaces.
+	list, err := capnp.NewPointerList(segment, int32(len(group)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"compiler: failed to allocate capability list for port %q of node %q",
+				group[0].port, consumer.ID,
+			),
+			err,
+		))
+	}
+
+	for index, edge := range group {
+		provider, _, err := capabilityEnds(nodes, edge)
+
+		if err != nil {
+			return err
 		}
 
-		message := consumer.ArgsTemplate.Message()
 		interfaceID := message.CapTable().Add(provider.Client.AddRef())
-		segment := consumer.ArgsTemplate.Segment()
 
-		if err := consumer.ArgsTemplate.SetPtr(
-			edge.field, capnp.NewInterface(segment, interfaceID).ToPtr(),
-		); err != nil {
+		if err := list.Set(index, capnp.NewInterface(segment, interfaceID).ToPtr()); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf(
-					"compiler: failed to bind capability from %q to %q port %q",
-					provider.ID, consumer.ID, edge.port,
+					"compiler: failed to place capability %q into port %q of node %q",
+					provider.ID, edge.port, consumer.ID,
 				),
 				err,
 			))
 		}
+	}
+
+	if err := consumer.ArgsTemplate.SetPtr(slot.field, list.ToPtr()); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"compiler: failed to bind capability list onto port %q of node %q",
+				group[0].port, consumer.ID,
+			),
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+capabilityEnds resolves the provider and consumer of a capability wire,
+refusing a provider that owns no capability to hand over.
+*/
+func capabilityEnds(
+	nodes []CompiledNode,
+	edge capabilityEdge,
+) (*CompiledNode, *CompiledNode, error) {
+	provider := &nodes[edge.provider]
+	consumer := &nodes[edge.consumer]
+
+	if !provider.Client.IsValid() {
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"compiler: node %q cannot be wired to port %q because it owns no capability",
+				provider.ID, edge.port,
+			),
+			nil,
+		))
+	}
+
+	if !consumer.ArgsTemplate.IsValid() {
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"compiler: node %q has no arguments to carry the capability on port %q",
+				consumer.ID, edge.port,
+			),
+			nil,
+		))
+	}
+
+	return provider, consumer, nil
+}
+
+/*
+wireDefinitionPorts connects a parent to the fields a definition exposes.
+
+A sub-graph declares no boundary: what it needs are the inputs nothing inside
+it feeds, and what it publishes are the outputs nothing inside it consumes.
+Both are addressed as "<node>.<field>", so the enclosing graph reaches straight
+into the child rather than through a pseudo-node that only forwards.
+*/
+func wireDefinitionPorts(
+	graph Graph,
+	defID string,
+	defNode Node,
+	prefix string,
+	ingress map[string][]ConnectionTarget,
+	egress map[string][]ConnectionTarget,
+) error {
+	for port, targets := range defNode.Connections.Inputs {
+		childID, field, addressed := strings.Cut(port, ".")
+
+		// A port that names no node belongs to a graph that still declares an
+		// explicit boundary, which is wired separately.
+		if !addressed {
+			continue
+		}
+
+		child, known := graph.Nodes[prefix+childID]
+
+		if !known {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"compiler: definition node %q has no node %q to carry input port %q",
+					defID, childID, port,
+				),
+				nil,
+			))
+		}
+
+		for _, target := range targets {
+			child.Connections.Inputs[field] = append(
+				child.Connections.Inputs[field], target,
+			)
+		}
+
+		// The enclosing graph still points at the definition, so the port has
+		// to resolve to the field it stood for when those references are
+		// rewritten.
+		ingress[port] = append(ingress[port], ConnectionTarget{
+			NodeID:   prefix + childID,
+			PortName: field,
+		})
+
+		graph.Nodes[prefix+childID] = child
+	}
+
+	for port, targets := range defNode.Connections.Outputs {
+		childID, field, addressed := strings.Cut(port, ".")
+
+		// A port that names no node belongs to a graph that still declares an
+		// explicit boundary, which is wired separately.
+		if !addressed {
+			continue
+		}
+
+		child, known := graph.Nodes[prefix+childID]
+
+		if !known {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"compiler: definition node %q has no node %q to carry output port %q",
+					defID, childID, port,
+				),
+				nil,
+			))
+		}
+
+		for _, target := range targets {
+			child.Connections.Outputs[field] = append(
+				child.Connections.Outputs[field], target,
+			)
+		}
+
+		egress[port] = append(egress[port], ConnectionTarget{
+			NodeID:   prefix + childID,
+			PortName: field,
+		})
+
+		graph.Nodes[prefix+childID] = child
 	}
 
 	return nil

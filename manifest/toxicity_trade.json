@@ -108,7 +108,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:fill_fraction:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "fill_fraction:ask": {
@@ -133,7 +140,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:fill_fraction:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "bracket_quantity": {
@@ -154,6 +168,70 @@
           "b": [
             {
               "nodeId": "matched_quantity:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:bracket_quantity",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:fill_fraction:bid": {
+      "id": "metric:fill_fraction:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "fill_fraction:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:fill_fraction:ask": {
+      "id": "metric:fill_fraction:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "fill_fraction:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:bracket_quantity": {
+      "id": "metric:bracket_quantity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "bracket_quantity",
               "portName": "out"
             }
           ]

@@ -33,6 +33,12 @@
               "nodeId": "stage_1",
               "portName": "mark"
             }
+          ],
+          "out": [
+            {
+              "nodeId": "metric:stage_0",
+              "portName": "raw"
+            }
           ]
         }
       }
@@ -55,6 +61,326 @@
             {
               "nodeId": "stage_0",
               "portName": "mark"
+            }
+          ]
+        },
+        "outputs": {
+          "arrivalRate": [
+            {
+              "nodeId": "metric:stage_1_arrivalRate",
+              "portName": "raw"
+            }
+          ],
+          "buyCount": [
+            {
+              "nodeId": "metric:stage_1_buyCount",
+              "portName": "raw"
+            }
+          ],
+          "buyFraction": [
+            {
+              "nodeId": "metric:stage_1_buyFraction",
+              "portName": "raw"
+            }
+          ],
+          "buyRate": [
+            {
+              "nodeId": "metric:stage_1_buyRate",
+              "portName": "raw"
+            }
+          ],
+          "eventCount": [
+            {
+              "nodeId": "metric:stage_1_eventCount",
+              "portName": "raw"
+            }
+          ],
+          "lambda": [
+            {
+              "nodeId": "metric:stage_1_lambda",
+              "portName": "raw"
+            }
+          ],
+          "lambdaBuy": [
+            {
+              "nodeId": "metric:stage_1_lambdaBuy",
+              "portName": "raw"
+            }
+          ],
+          "lambdaSell": [
+            {
+              "nodeId": "metric:stage_1_lambdaSell",
+              "portName": "raw"
+            }
+          ],
+          "sellCount": [
+            {
+              "nodeId": "metric:stage_1_sellCount",
+              "portName": "raw"
+            }
+          ],
+          "sellFraction": [
+            {
+              "nodeId": "metric:stage_1_sellFraction",
+              "portName": "raw"
+            }
+          ],
+          "sellRate": [
+            {
+              "nodeId": "metric:stage_1_sellRate",
+              "portName": "raw"
+            }
+          ],
+          "spectralRadius": [
+            {
+              "nodeId": "metric:stage_1_spectralRadius",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:stage_0": {
+      "id": "metric:stage_0",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_0",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_arrivalRate": {
+      "id": "metric:stage_1_arrivalRate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "arrivalRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_buyCount": {
+      "id": "metric:stage_1_buyCount",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "buyCount"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_buyFraction": {
+      "id": "metric:stage_1_buyFraction",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "buyFraction"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_buyRate": {
+      "id": "metric:stage_1_buyRate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "buyRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_eventCount": {
+      "id": "metric:stage_1_eventCount",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "eventCount"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_lambda": {
+      "id": "metric:stage_1_lambda",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "lambda"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_lambdaBuy": {
+      "id": "metric:stage_1_lambdaBuy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "lambdaBuy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_lambdaSell": {
+      "id": "metric:stage_1_lambdaSell",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "lambdaSell"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_sellCount": {
+      "id": "metric:stage_1_sellCount",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "sellCount"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_sellFraction": {
+      "id": "metric:stage_1_sellFraction",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "sellFraction"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_sellRate": {
+      "id": "metric:stage_1_sellRate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "sellRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:stage_1_spectralRadius": {
+      "id": "metric:stage_1_spectralRadius",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "stage_1",
+              "portName": "spectralRadius"
             }
           ]
         },

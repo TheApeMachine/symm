@@ -21,7 +21,7 @@ func (c Tee) Write(ctx context.Context, params func(Tee_write_Params) error) err
 		Method: capnp.Method{
 			InterfaceID:   0xfa53225f23155529,
 			MethodID:      0,
-			InterfaceName: "transport/tee.capnp:Tee",
+			InterfaceName: "nomagique/transport/tee.capnp:Tee",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Tee) Done(ctx context.Context, params func(Tee_done_Params) error) (Tee_
 		Method: capnp.Method{
 			InterfaceID:   0xfa53225f23155529,
 			MethodID:      1,
-			InterfaceName: "transport/tee.capnp:Tee",
+			InterfaceName: "nomagique/transport/tee.capnp:Tee",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Tee_Methods(methods []server.Method, s Tee_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xfa53225f23155529,
 			MethodID:      0,
-			InterfaceName: "transport/tee.capnp:Tee",
+			InterfaceName: "nomagique/transport/tee.capnp:Tee",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Tee_Methods(methods []server.Method, s Tee_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xfa53225f23155529,
 			MethodID:      1,
-			InterfaceName: "transport/tee.capnp:Tee",
+			InterfaceName: "nomagique/transport/tee.capnp:Tee",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

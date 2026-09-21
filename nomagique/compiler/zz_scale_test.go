@@ -33,13 +33,17 @@ func TestScaling(t *testing.T) {
 	ctx := context.Background()
 	for _, chains := range []int{10, 100, 500, 1000} {
 		p, err := Compile(buildGraph(chains), nil, DefaultRepository())
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		// warm
 		p.Execute(ctx, nil)
 		start := time.Now()
 		const iters = 20
 		for i := 0; i < iters; i++ {
-			if err := p.Execute(ctx, nil); err != nil { t.Fatal(err) }
+			if err := p.Execute(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
 		}
 		per := time.Since(start) / iters
 		t.Logf("nodes=%5d  per-evaluation=%v  => max evals/sec=%.0f", len(p.Nodes), per, float64(time.Second)/float64(per))

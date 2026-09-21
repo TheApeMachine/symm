@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xc626270c60f00576;
 $Go.package("data");
-$Go.import("nomagique/data");
+$Go.import("github.com/theapemachine/symm/nomagique/data");
 
 interface Series {
   write @0 (

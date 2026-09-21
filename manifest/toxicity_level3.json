@@ -50,7 +50,14 @@
       "y": -600.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:touch_price_log_change:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "unfilled_residual_quantity:bid": {
@@ -211,7 +218,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_withdrawal_fraction:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_withdrawal_rate:bid": {
@@ -236,7 +250,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_withdrawal_rate:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_replenishment_fraction:bid": {
@@ -255,7 +276,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_replenishment_fraction:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_replenishment_rate:bid": {
@@ -280,7 +308,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_replenishment_rate:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "retreat_fraction:bid": {
@@ -299,7 +334,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:retreat_fraction:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "retreat_rate:bid": {
@@ -324,7 +366,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:retreat_rate:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "touch_price_log_change:ask": {
@@ -336,7 +385,14 @@
       "y": 200.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:touch_price_log_change:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "unfilled_residual_quantity:ask": {
@@ -497,7 +553,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_withdrawal_fraction:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_withdrawal_rate:ask": {
@@ -522,7 +585,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_withdrawal_rate:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_replenishment_fraction:ask": {
@@ -541,7 +611,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_replenishment_fraction:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "net_replenishment_rate:ask": {
@@ -566,7 +643,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:net_replenishment_rate:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "retreat_fraction:ask": {
@@ -585,7 +669,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:retreat_fraction:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "retreat_rate:ask": {
@@ -606,6 +697,279 @@
           "b": [
             {
               "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:retreat_rate:ask",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:touch_price_log_change:bid": {
+      "id": "metric:touch_price_log_change:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "touch_price_log_change:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_withdrawal_fraction:bid": {
+      "id": "metric:net_withdrawal_fraction:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_withdrawal_fraction:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_withdrawal_rate:bid": {
+      "id": "metric:net_withdrawal_rate:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_withdrawal_rate:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_replenishment_fraction:bid": {
+      "id": "metric:net_replenishment_fraction:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_replenishment_fraction:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_replenishment_rate:bid": {
+      "id": "metric:net_replenishment_rate:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_replenishment_rate:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:retreat_fraction:bid": {
+      "id": "metric:retreat_fraction:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "retreat_fraction:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:retreat_rate:bid": {
+      "id": "metric:retreat_rate:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "retreat_rate:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:touch_price_log_change:ask": {
+      "id": "metric:touch_price_log_change:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "touch_price_log_change:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_withdrawal_fraction:ask": {
+      "id": "metric:net_withdrawal_fraction:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_withdrawal_fraction:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_withdrawal_rate:ask": {
+      "id": "metric:net_withdrawal_rate:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_withdrawal_rate:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_replenishment_fraction:ask": {
+      "id": "metric:net_replenishment_fraction:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_replenishment_fraction:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_replenishment_rate:ask": {
+      "id": "metric:net_replenishment_rate:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_replenishment_rate:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:retreat_fraction:ask": {
+      "id": "metric:retreat_fraction:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "retreat_fraction:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:retreat_rate:ask": {
+      "id": "metric:retreat_rate:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "retreat_rate:ask",
               "portName": "out"
             }
           ]

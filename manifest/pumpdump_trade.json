@@ -180,7 +180,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:volume_rate",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "notional_rate": {
@@ -253,7 +260,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:trade_rate",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "notional_rate_baseline": {
@@ -298,7 +312,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:notional_rate_divergence",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "notional_rate_zscore": {
@@ -317,7 +338,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:notional_rate_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "notional_rate_velocity": {
@@ -336,7 +364,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:notional_rate_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "notional_rate_ratio": {
@@ -357,6 +392,127 @@
           "b": [
             {
               "nodeId": "notional_rate_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:notional_rate_ratio",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:volume_rate": {
+      "id": "metric:volume_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "volume_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:trade_rate": {
+      "id": "metric:trade_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "trade_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:notional_rate_divergence": {
+      "id": "metric:notional_rate_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "notional_rate_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:notional_rate_zscore": {
+      "id": "metric:notional_rate_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "notional_rate_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:notional_rate_velocity": {
+      "id": "metric:notional_rate_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "notional_rate_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:notional_rate_ratio": {
+      "id": "metric:notional_rate_ratio",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "notional_rate_ratio",
               "portName": "out"
             }
           ]

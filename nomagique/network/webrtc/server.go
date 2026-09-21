@@ -29,9 +29,9 @@ type WebRTCServerServer struct {
 
 func NewWebRTCServer(ctx context.Context) *WebRTCServerServer {
 	server := &WebRTCServerServer{
-		System:    runtime.NewSystem(ctx, "webrtc.server"),
-		api:       pionwebrtc.NewAPI(),
-		incoming:  lf.NewQueue[[]byte](),
+		System:   runtime.NewSystem(ctx, "webrtc.server"),
+		api:      pionwebrtc.NewAPI(),
+		incoming: lf.NewQueue[[]byte](),
 		cfg: pionwebrtc.Configuration{
 			ICEServers: []pionwebrtc.ICEServer{
 				{URLs: []string{"stun:stun.l.google.com:19302"}},

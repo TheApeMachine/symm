@@ -102,6 +102,28 @@
             {
               "nodeId": "atanh",
               "portName": "value"
+            },
+            {
+              "nodeId": "metric:signed_correlation",
+              "portName": "raw"
+            }
+          ],
+          "state": [
+            {
+              "nodeId": "pairHistory",
+              "portName": "value"
+            }
+          ],
+          "covariance": [
+            {
+              "nodeId": "metric:covariance",
+              "portName": "raw"
+            }
+          ],
+          "support": [
+            {
+              "nodeId": "metric:overlap_pair_count",
+              "portName": "raw"
             }
           ]
         }
@@ -123,7 +145,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:absolute_correlation",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "atanh": {
@@ -206,7 +235,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:correlation_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "divergence": {
@@ -225,7 +261,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:correlation_divergence",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "zscore": {
@@ -244,7 +287,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:correlation_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "velocity": {
@@ -263,7 +313,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:correlation_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "prevReferenceTimestamp": {
@@ -283,6 +340,177 @@
             }
           ]
         }
+      }
+    },
+    "pairHistory": {
+      "id": "pairHistory",
+      "type": "store.Radix",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": 360.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "hy",
+              "portName": "state"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:signed_correlation": {
+      "id": "metric:signed_correlation",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "correlation"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:covariance": {
+      "id": "metric:covariance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "covariance"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:overlap_pair_count": {
+      "id": "metric:overlap_pair_count",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "support"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:absolute_correlation": {
+      "id": "metric:absolute_correlation",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "absolute",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:correlation_baseline": {
+      "id": "metric:correlation_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "baselineCorrelation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:correlation_divergence": {
+      "id": "metric:correlation_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:correlation_zscore": {
+      "id": "metric:correlation_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:correlation_velocity": {
+      "id": "metric:correlation_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1100.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
       }
     }
   }

@@ -144,7 +144,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:mutation_activity_imbalance",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "elapsed": {
@@ -222,7 +229,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_imbalance_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "observed_notional_imbalance_divergence": {
@@ -241,7 +255,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_imbalance_divergence",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "observed_notional_imbalance_zscore": {
@@ -260,7 +281,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_imbalance_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "observed_notional_rate_baseline": {
@@ -279,7 +307,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_rate_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "observed_notional_rate_divergence": {
@@ -298,7 +333,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_rate_divergence",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "observed_notional_rate_zscore": {
@@ -313,6 +355,146 @@
           "value": [
             {
               "nodeId": "observed_notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:observed_notional_rate_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:mutation_activity_imbalance": {
+      "id": "metric:mutation_activity_imbalance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "mutation_activity_imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance_baseline": {
+      "id": "metric:observed_notional_imbalance_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance_divergence": {
+      "id": "metric:observed_notional_imbalance_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance_zscore": {
+      "id": "metric:observed_notional_imbalance_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate_baseline": {
+      "id": "metric:observed_notional_rate_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate_divergence": {
+      "id": "metric:observed_notional_rate_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate_zscore": {
+      "id": "metric:observed_notional_rate_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate_zscore",
               "portName": "out"
             }
           ]

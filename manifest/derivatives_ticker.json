@@ -68,7 +68,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:log_basis",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "basis_change": {
@@ -142,7 +149,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:basis_rate",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "open_interest_change": {
@@ -154,7 +168,14 @@
       "y": 220.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:open_interest_change",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "open_interest_log_change": {
@@ -310,7 +331,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:basis_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "basis_zscore": {
@@ -329,7 +357,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:basis_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "basis_velocity": {
@@ -348,7 +383,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:basis_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "open_interest_growth_baseline": {
@@ -367,7 +409,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:open_interest_growth_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "open_interest_growth_zscore": {
@@ -386,7 +435,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:open_interest_growth_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "open_interest_growth_velocity": {
@@ -405,7 +461,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:open_interest_growth_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "return_gap_baseline": {
@@ -424,7 +487,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:return_gap_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "return_gap_zscore": {
@@ -443,7 +513,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:return_gap_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "return_gap_velocity": {
@@ -458,6 +535,241 @@
           "val": [
             {
               "nodeId": "return_gap",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:return_gap_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:log_basis": {
+      "id": "metric:log_basis",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "log_basis",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:basis_rate": {
+      "id": "metric:basis_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "basis_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:open_interest_change": {
+      "id": "metric:open_interest_change",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "open_interest_change",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:basis_baseline": {
+      "id": "metric:basis_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "basis_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:basis_zscore": {
+      "id": "metric:basis_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "basis_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:basis_velocity": {
+      "id": "metric:basis_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "basis_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:open_interest_growth_baseline": {
+      "id": "metric:open_interest_growth_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "open_interest_growth_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:open_interest_growth_zscore": {
+      "id": "metric:open_interest_growth_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "open_interest_growth_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:open_interest_growth_velocity": {
+      "id": "metric:open_interest_growth_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "open_interest_growth_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_gap_baseline": {
+      "id": "metric:return_gap_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "return_gap_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_gap_zscore": {
+      "id": "metric:return_gap_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "return_gap_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_gap_velocity": {
+      "id": "metric:return_gap_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "return_gap_velocity",
               "portName": "out"
             }
           ]

@@ -21,7 +21,7 @@ func (c Stream) Write(ctx context.Context, params func(Stream_write_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xa4abc883f189a637,
 			MethodID:      0,
-			InterfaceName: "transport/stream.capnp:Stream",
+			InterfaceName: "nomagique/transport/stream.capnp:Stream",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Stream) Done(ctx context.Context, params func(Stream_done_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0xa4abc883f189a637,
 			MethodID:      1,
-			InterfaceName: "transport/stream.capnp:Stream",
+			InterfaceName: "nomagique/transport/stream.capnp:Stream",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Stream_Methods(methods []server.Method, s Stream_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xa4abc883f189a637,
 			MethodID:      0,
-			InterfaceName: "transport/stream.capnp:Stream",
+			InterfaceName: "nomagique/transport/stream.capnp:Stream",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Stream_Methods(methods []server.Method, s Stream_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xa4abc883f189a637,
 			MethodID:      1,
-			InterfaceName: "transport/stream.capnp:Stream",
+			InterfaceName: "nomagique/transport/stream.capnp:Stream",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

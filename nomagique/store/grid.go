@@ -3,42 +3,37 @@ package store
 import (
 	"context"
 	"strings"
-	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
-GridServer is the virtual grid. Raw market data is written to it, and the
-metrics registered with it receive only the fields they declared an interest
-in.
+GridServer is the virtual grid. Raw market data is written to it and the
+metrics wired into it observe the fields the grid was told to deliver.
 
-The grid holds no values of its own: a metric is not a cell holding a number
-but a registration saying which fields it needs, and the grid's work is
-deciding what to deliver to whom. A metric whose interests the written data
-does not carry observes nothing, so a metric is never handed a frame it
-cannot read, and never has to recognise one it should ignore.
+The grid holds no values of its own. A metric is not a cell holding a number
+but a capability the grid can call, so reading the grid is asking the metrics
+wired into it for their current state. Wiring another metric in is what makes
+the grid wider, which is why nothing here enumerates them by name.
 
-Registration and delivery are concurrent because the sources writing to a
-grid read on their own goroutines, so the registry is guarded. The guard
-covers the registry, never a metric's own work.
+A metric that asked for a field the written data does not carry observes
+nothing, so a metric is never handed a frame it cannot read and never has to
+recognise one it should ignore.
 */
 type GridServer struct {
 	*runtime.System
-	mutex     sync.RWMutex
-	metrics   map[string][]string
-	order     []string
+	interests []string
+	metrics   data.MetricService_List
 	out       []byte
-	metric    string
 	delivered int64
 }
 
 func NewGrid(ctx context.Context) *GridServer {
 	server := &GridServer{
-		System:  runtime.NewSystem(ctx, "store.grid"),
-		metrics: make(map[string][]string),
+		System: runtime.NewSystem(ctx, "store.grid"),
 	}
 
 	server.Transition(runtime.READY)
@@ -46,20 +41,9 @@ func NewGrid(ctx context.Context) *GridServer {
 }
 
 /*
-Write registers a metric's interests, distributes written data to the metrics
-that declared an interest in it, or both.
+Write resolves the written data against the fields this grid delivers.
 */
 func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
-	metric, err := call.Args().Metric()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.BadRequest,
-			"[store.grid.Write] failed to read metric argument",
-			err,
-		))
-	}
-
 	interests, err := call.Args().Interests()
 
 	if err != nil {
@@ -70,8 +54,22 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		))
 	}
 
-	if metric != "" && interests != "" {
-		server.register(metric, interests)
+	if interests != "" {
+		server.declare(interests)
+	}
+
+	metrics, err := call.Args().Metrics()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadRequest,
+			"[store.grid.Write] failed to read metrics argument",
+			err,
+		))
+	}
+
+	if metrics.IsValid() {
+		server.metrics = metrics
 	}
 
 	payload, err := call.Args().Data()
@@ -85,18 +83,17 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 	}
 
 	server.out = nil
-	server.metric = ""
 	server.delivered = 0
 
 	if len(payload) == 0 {
 		return nil
 	}
 
-	return server.distribute(payload)
+	return server.resolve(payload)
 }
 
 /*
-Done reports what the grid resolved for the metric it delivered to.
+Done reports what the grid resolved and how many metrics are wired into it.
 */
 func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 	results, err := call.AllocResults()
@@ -109,21 +106,9 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 		))
 	}
 
-	server.mutex.RLock()
-	registered := int64(len(server.metrics))
-	server.mutex.RUnlock()
-
 	results.SetStatus(runtime.Status(server.Status()))
-	results.SetMetrics(registered)
 	results.SetDelivered(server.delivered)
-
-	if err := results.SetMetric(server.metric); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[store.grid.Done] failed to set metric",
-			err,
-		))
-	}
+	results.SetMetrics(int64(server.metrics.Len()))
 
 	if len(server.out) == 0 {
 		return nil
@@ -142,10 +127,10 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 }
 
 /*
-register records the fields one metric needs. Registering again replaces what
-that metric asked for, so a metric's interests are whatever it last declared.
+declare records the fields this grid delivers. Declaring again replaces what
+it delivers, so a grid's interests are whatever it was last told.
 */
-func (server *GridServer) register(metric, interests string) {
+func (server *GridServer) declare(interests string) {
 	declared := make([]string, 0, 4)
 
 	for _, interest := range strings.Split(interests, ",") {
@@ -160,66 +145,50 @@ func (server *GridServer) register(metric, interests string) {
 		return
 	}
 
-	server.mutex.Lock()
-	defer server.mutex.Unlock()
-
-	if _, known := server.metrics[metric]; !known {
-		server.order = append(server.order, metric)
-		server.Info("metric %s registered %d interests", metric, len(declared))
-	}
-
-	server.metrics[metric] = declared
+	server.interests = declared
+	server.Info("delivering %d fields to %d metrics", len(declared), server.metrics.Len())
 }
 
 /*
-distribute resolves the written data against every registration and retains
-what the first satisfied metric asked for.
+resolve collects the declared fields out of the written data.
 */
-func (server *GridServer) distribute(payload []byte) error {
+func (server *GridServer) resolve(payload []byte) error {
 	var document any
 
 	if err := sonic.Unmarshal(payload, &document); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"[store.grid.distribute] written data is not a structure",
+			"[store.grid.resolve] written data is not a structure",
 			err,
 		))
 	}
 
-	server.mutex.RLock()
-	defer server.mutex.RUnlock()
+	resolved, satisfied := resolveInterests(document, server.interests)
 
-	for _, metric := range server.order {
-		resolved, satisfied := resolveInterests(document, server.metrics[metric])
-
-		if !satisfied {
-			continue
-		}
-
-		encoded, err := sonic.Marshal(resolved)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"[store.grid.distribute] failed to encode delivery",
-				err,
-			))
-		}
-
-		server.out = encoded
-		server.metric = metric
-		server.delivered++
-
+	if !satisfied {
 		return nil
 	}
+
+	encoded, err := sonic.Marshal(resolved)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[store.grid.resolve] failed to encode delivery",
+			err,
+		))
+	}
+
+	server.out = encoded
+	server.delivered = int64(len(resolved))
 
 	return nil
 }
 
 /*
-resolveInterests collects the fields one metric declared, reporting whether
-the data carried all of them. A metric that asked for a field the data does
-not carry is not delivered to, because a partial reading is not a reading.
+resolveInterests collects the fields the grid declared, reporting whether the
+data carried all of them. Data missing a declared field is not delivered,
+because a partial reading is not a reading.
 */
 func resolveInterests(document any, interests []string) (map[string]any, bool) {
 	resolved := make(map[string]any, len(interests))
@@ -236,10 +205,6 @@ func resolveInterests(document any, interests []string) (map[string]any, bool) {
 
 	return resolved, len(resolved) > 0
 }
-
-/*
-walkInterest resolves one dotted interest key against the written data.
-*/
 func walkInterest(document any, segments []string) (any, bool) {
 	current := document
 
@@ -270,7 +235,6 @@ func walkInterest(document any, segments []string) (any, bool) {
 
 	return current, true
 }
-
 func interestIndex(segment string) (int, bool) {
 	position := 0
 

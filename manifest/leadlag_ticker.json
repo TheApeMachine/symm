@@ -185,6 +185,24 @@
               "nodeId": "overlap_pair_count",
               "portName": "value"
             }
+          ],
+          "covariance": [
+            {
+              "nodeId": "metric:contemporaneous_covariance",
+              "portName": "raw"
+            }
+          ],
+          "leftEnergy": [
+            {
+              "nodeId": "metric:contemporaneous_leftEnergy",
+              "portName": "raw"
+            }
+          ],
+          "rightEnergy": [
+            {
+              "nodeId": "metric:contemporaneous_rightEnergy",
+              "portName": "raw"
+            }
           ]
         }
       }
@@ -234,6 +252,30 @@
             {
               "nodeId": "best_lag_correlation",
               "portName": "value"
+            }
+          ],
+          "covariance": [
+            {
+              "nodeId": "metric:lagged_covariance",
+              "portName": "raw"
+            }
+          ],
+          "leftEnergy": [
+            {
+              "nodeId": "metric:lagged_leftEnergy",
+              "portName": "raw"
+            }
+          ],
+          "rightEnergy": [
+            {
+              "nodeId": "metric:lagged_rightEnergy",
+              "portName": "raw"
+            }
+          ],
+          "support": [
+            {
+              "nodeId": "metric:lagged_support",
+              "portName": "raw"
             }
           ]
         }
@@ -313,7 +355,14 @@
             }
           ]
         },
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:absolute_correlation_gain",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "overlap_pair_count": {
@@ -334,6 +383,184 @@
             {
               "nodeId": "contemporaneous",
               "portName": "support"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:overlap_pair_count",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:contemporaneous_covariance": {
+      "id": "metric:contemporaneous_covariance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "contemporaneous",
+              "portName": "covariance"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:contemporaneous_leftEnergy": {
+      "id": "metric:contemporaneous_leftEnergy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "contemporaneous",
+              "portName": "leftEnergy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:contemporaneous_rightEnergy": {
+      "id": "metric:contemporaneous_rightEnergy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "contemporaneous",
+              "portName": "rightEnergy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:lagged_covariance": {
+      "id": "metric:lagged_covariance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "lagged",
+              "portName": "covariance"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:lagged_leftEnergy": {
+      "id": "metric:lagged_leftEnergy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "lagged",
+              "portName": "leftEnergy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:lagged_rightEnergy": {
+      "id": "metric:lagged_rightEnergy",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "lagged",
+              "portName": "rightEnergy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:lagged_support": {
+      "id": "metric:lagged_support",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "lagged",
+              "portName": "support"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:absolute_correlation_gain": {
+      "id": "metric:absolute_correlation_gain",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "absolute_correlation_gain",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:overlap_pair_count": {
+      "id": "metric:overlap_pair_count",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "overlap_pair_count",
+              "portName": "out"
             }
           ]
         },

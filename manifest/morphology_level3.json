@@ -30,7 +30,14 @@
       "y": -140.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:entropy:bid",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "concentration:ask": {
@@ -42,7 +49,14 @@
       "y": 100.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:concentration:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "entropy:ask": {
@@ -54,7 +68,14 @@
       "y": 260.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:entropy:ask",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "book_shape_ks": {
@@ -66,7 +87,14 @@
       "y": -300.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:book_shape_ks",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "book_shape_distance": {
@@ -78,7 +106,32 @@
       "y": -120.0,
       "connections": {
         "inputs": {},
-        "outputs": {}
+        "outputs": {
+          "ambiguity": [
+            {
+              "nodeId": "metric:book_shape_distance_ambiguity",
+              "portName": "raw"
+            }
+          ],
+          "confidence": [
+            {
+              "nodeId": "metric:book_shape_distance_confidence",
+              "portName": "raw"
+            }
+          ],
+          "out": [
+            {
+              "nodeId": "metric:book_shape_distance",
+              "portName": "raw"
+            }
+          ],
+          "sharpness": [
+            {
+              "nodeId": "metric:book_shape_distance_sharpness",
+              "portName": "raw"
+            }
+          ]
+        }
       }
     },
     "morphology_change": {
@@ -93,6 +146,184 @@
           "value": [
             {
               "nodeId": "concentration:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:morphology_change",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:entropy:bid": {
+      "id": "metric:entropy:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "entropy:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:concentration:ask": {
+      "id": "metric:concentration:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "concentration:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:entropy:ask": {
+      "id": "metric:entropy:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "entropy:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:book_shape_ks": {
+      "id": "metric:book_shape_ks",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "book_shape_ks",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:book_shape_distance_ambiguity": {
+      "id": "metric:book_shape_distance_ambiguity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "book_shape_distance",
+              "portName": "ambiguity"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:book_shape_distance_confidence": {
+      "id": "metric:book_shape_distance_confidence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "book_shape_distance",
+              "portName": "confidence"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:book_shape_distance": {
+      "id": "metric:book_shape_distance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "book_shape_distance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:book_shape_distance_sharpness": {
+      "id": "metric:book_shape_distance_sharpness",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "book_shape_distance",
+              "portName": "sharpness"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:morphology_change": {
+      "id": "metric:morphology_change",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "morphology_change",
               "portName": "out"
             }
           ]

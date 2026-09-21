@@ -22,7 +22,7 @@ func (c Float64Sink) Write(ctx context.Context, params func(Float64Sink_write_Pa
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:Float64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +41,7 @@ func (c Float64Sink) Done(ctx context.Context, params func(Float64Sink_done_Para
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:Float64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +156,7 @@ func Float64Sink_Methods(methods []server.Method, s Float64Sink_Server) []server
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:Float64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +168,7 @@ func Float64Sink_Methods(methods []server.Method, s Float64Sink_Server) []server
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:Float64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -442,7 +442,7 @@ func (c Int64Sink) Write(ctx context.Context, params func(Int64Sink_write_Params
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:Int64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
 			MethodName:    "write",
 		},
 	}
@@ -461,7 +461,7 @@ func (c Int64Sink) Done(ctx context.Context, params func(Int64Sink_done_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:Int64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
 			MethodName:    "done",
 		},
 	}
@@ -576,7 +576,7 @@ func Int64Sink_Methods(methods []server.Method, s Int64Sink_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:Int64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -588,7 +588,7 @@ func Int64Sink_Methods(methods []server.Method, s Int64Sink_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:Int64Sink",
+			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -862,7 +862,7 @@ func (c TextSink) Write(ctx context.Context, params func(TextSink_write_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:TextSink",
+			InterfaceName: "nomagique/types/sink.capnp:TextSink",
 			MethodName:    "write",
 		},
 	}
@@ -881,7 +881,7 @@ func (c TextSink) Done(ctx context.Context, params func(TextSink_done_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:TextSink",
+			InterfaceName: "nomagique/types/sink.capnp:TextSink",
 			MethodName:    "done",
 		},
 	}
@@ -996,7 +996,7 @@ func TextSink_Methods(methods []server.Method, s TextSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:TextSink",
+			InterfaceName: "nomagique/types/sink.capnp:TextSink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1008,7 +1008,7 @@ func TextSink_Methods(methods []server.Method, s TextSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:TextSink",
+			InterfaceName: "nomagique/types/sink.capnp:TextSink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1292,7 +1292,7 @@ func (c BoolSink) Write(ctx context.Context, params func(BoolSink_write_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:BoolSink",
+			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
 			MethodName:    "write",
 		},
 	}
@@ -1311,7 +1311,7 @@ func (c BoolSink) Done(ctx context.Context, params func(BoolSink_done_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:BoolSink",
+			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
 			MethodName:    "done",
 		},
 	}
@@ -1426,7 +1426,7 @@ func BoolSink_Methods(methods []server.Method, s BoolSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:BoolSink",
+			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1438,7 +1438,7 @@ func BoolSink_Methods(methods []server.Method, s BoolSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:BoolSink",
+			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1712,7 +1712,7 @@ func (c DataSink) Write(ctx context.Context, params func(DataSink_write_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:DataSink",
+			InterfaceName: "nomagique/types/sink.capnp:DataSink",
 			MethodName:    "write",
 		},
 	}
@@ -1731,7 +1731,7 @@ func (c DataSink) Done(ctx context.Context, params func(DataSink_done_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:DataSink",
+			InterfaceName: "nomagique/types/sink.capnp:DataSink",
 			MethodName:    "done",
 		},
 	}
@@ -1846,7 +1846,7 @@ func DataSink_Methods(methods []server.Method, s DataSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      0,
-			InterfaceName: "types/sink.capnp:DataSink",
+			InterfaceName: "nomagique/types/sink.capnp:DataSink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1858,7 +1858,7 @@ func DataSink_Methods(methods []server.Method, s DataSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      1,
-			InterfaceName: "types/sink.capnp:DataSink",
+			InterfaceName: "nomagique/types/sink.capnp:DataSink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

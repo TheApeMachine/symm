@@ -21,7 +21,7 @@ func (c Join) Write(ctx context.Context, params func(Join_write_Params) error) e
 		Method: capnp.Method{
 			InterfaceID:   0x82363dd6623bd8c6,
 			MethodID:      0,
-			InterfaceName: "transport/join.capnp:Join",
+			InterfaceName: "nomagique/transport/join.capnp:Join",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Join) Done(ctx context.Context, params func(Join_done_Params) error) (Jo
 		Method: capnp.Method{
 			InterfaceID:   0x82363dd6623bd8c6,
 			MethodID:      1,
-			InterfaceName: "transport/join.capnp:Join",
+			InterfaceName: "nomagique/transport/join.capnp:Join",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Join_Methods(methods []server.Method, s Join_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x82363dd6623bd8c6,
 			MethodID:      0,
-			InterfaceName: "transport/join.capnp:Join",
+			InterfaceName: "nomagique/transport/join.capnp:Join",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Join_Methods(methods []server.Method, s Join_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x82363dd6623bd8c6,
 			MethodID:      1,
-			InterfaceName: "transport/join.capnp:Join",
+			InterfaceName: "nomagique/transport/join.capnp:Join",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

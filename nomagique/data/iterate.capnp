@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xd58b06f2c9143ae7;
 $Go.package("data");
-$Go.import("nomagique/data");
+$Go.import("github.com/theapemachine/symm/nomagique/data");
 
 using import "../runtime/status.capnp".Status;
 

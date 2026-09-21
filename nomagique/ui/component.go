@@ -87,17 +87,97 @@ func (server *UIComponentServer) Write(ctx context.Context, call UIComponent_wri
 		))
 	}
 
-	if children.IsValid() {
-		if err := component.SetComponents(children); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"ui: set child components failed",
-				err,
-			))
-		}
+	if err := nest(ctx, component, children); err != nil {
+		return err
 	}
 
 	server.component = component
+	return nil
+}
+
+/*
+nest renders each wired child and places it under its parent.
+
+Children are capabilities rather than values, so a parent asks each one what it
+is at the moment it is assembled. That is what makes the authored graph's
+parent/child relationships the rendered nesting.
+*/
+func nest(ctx context.Context, parent Component, children UIComponent_List) error {
+	if !children.IsValid() || children.Len() == 0 {
+		return nil
+	}
+
+	nested, err := parent.NewComponents(int32(children.Len()))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"ui: allocate child components failed",
+			err,
+		))
+	}
+
+	for index := range children.Len() {
+		child, err := children.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"ui: read child component failed",
+				err,
+			))
+		}
+
+		if err := renderInto(ctx, child, nested, index); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+/*
+renderInto asks one child component what it currently is and places it under
+its parent while the answer is still alive, because a Cap'n Proto result does
+not outlive the call that produced it.
+*/
+func renderInto(
+	ctx context.Context,
+	child UIComponent,
+	nested Component_List,
+	index int,
+) error {
+	future, release := child.Done(ctx, nil)
+	defer release()
+
+	results, err := future.Struct()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"ui: child component did not render",
+			err,
+		))
+	}
+
+	rendered, err := results.Out()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ui: child component carried no result",
+			err,
+		))
+	}
+
+	if err := nested.Set(index, rendered); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"ui: place child component failed",
+			err,
+		))
+	}
+
 	return nil
 }
 

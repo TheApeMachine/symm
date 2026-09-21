@@ -555,7 +555,6 @@ func (resonanceManifold *ResonanceManifoldServer) retentionVector() []float64 {
 	return nil
 }
 
-
 /*
 energy is the variational free energy combining precision-weighted error,
 multi-timescale temporal priors, $L_2$ decay, and $L_1$ dictionary sparsity.
@@ -1238,7 +1237,6 @@ func (resonanceManifold *ResonanceManifoldServer) readoutVector() []float64 {
 	resonanceManifold.readoutVectorInto(vector)
 	return vector
 }
-
 
 /*
 rolloutTaskForecast returns one forecast per task row, evaluated at the current

@@ -98,8 +98,8 @@ func (w *WorkbenchRunnerImpl) SaveDefinition(id string, rawJSON []byte) error {
 
 func parseGraphPayload(rawJSON []byte, repo DefinitionRepository) (Graph, string, error) {
 	var payload struct {
-		ID    string `json:"id"`
-		Graph *Graph `json:"graph"`
+		ID    string          `json:"id"`
+		Graph *Graph          `json:"graph"`
 		Nodes map[string]Node `json:"nodes"`
 	}
 

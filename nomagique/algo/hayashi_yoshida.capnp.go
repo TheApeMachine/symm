@@ -13,6 +13,306 @@ import (
 	math "math"
 )
 
+type Interval capnp.Struct
+
+// Interval_TypeID is the unique identifier for the type Interval.
+const Interval_TypeID = 0xae1e7cf710c5c006
+
+func NewInterval(s *capnp.Segment) (Interval, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	return Interval(st), err
+}
+
+func NewRootInterval(s *capnp.Segment) (Interval, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	return Interval(st), err
+}
+
+func ReadRootInterval(msg *capnp.Message) (Interval, error) {
+	root, err := msg.Root()
+	return Interval(root.Struct()), err
+}
+
+func (s Interval) String() string {
+	str, _ := text.Marshal(0xae1e7cf710c5c006, capnp.Struct(s))
+	return str
+}
+
+func (s Interval) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Interval) DecodeFromPtr(p capnp.Ptr) Interval {
+	return Interval(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Interval) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Interval) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Interval) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Interval) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Interval) From() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s Interval) SetFrom(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s Interval) To() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Interval) SetTo(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Interval) Value() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Interval) SetValue(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+// Interval_List is a list of Interval.
+type Interval_List = capnp.StructList[Interval]
+
+// NewInterval creates a new list of Interval.
+func NewInterval_List(s *capnp.Segment, sz int32) (Interval_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
+	return capnp.StructList[Interval](l), err
+}
+
+// Interval_Future is a wrapper for a Interval promised by a client call.
+type Interval_Future struct{ *capnp.Future }
+
+func (f Interval_Future) Struct() (Interval, error) {
+	p, err := f.Future.Ptr()
+	return Interval(p.Struct()), err
+}
+
+type Accumulation capnp.Struct
+
+// Accumulation_TypeID is the unique identifier for the type Accumulation.
+const Accumulation_TypeID = 0xc9d1602d3447ab1f
+
+func NewAccumulation(s *capnp.Segment) (Accumulation, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 4})
+	return Accumulation(st), err
+}
+
+func NewRootAccumulation(s *capnp.Segment) (Accumulation, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 4})
+	return Accumulation(st), err
+}
+
+func ReadRootAccumulation(msg *capnp.Message) (Accumulation, error) {
+	root, err := msg.Root()
+	return Accumulation(root.Struct()), err
+}
+
+func (s Accumulation) String() string {
+	str, _ := text.Marshal(0xc9d1602d3447ab1f, capnp.Struct(s))
+	return str
+}
+
+func (s Accumulation) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (Accumulation) DecodeFromPtr(p capnp.Ptr) Accumulation {
+	return Accumulation(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s Accumulation) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s Accumulation) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s Accumulation) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s Accumulation) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s Accumulation) Left() (Interval_List, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return Interval_List(p.List()), err
+}
+
+func (s Accumulation) HasLeft() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s Accumulation) SetLeft(v Interval_List) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewLeft sets the left field to a newly
+// allocated Interval_List, preferring placement in s's segment.
+func (s Accumulation) NewLeft(n int32) (Interval_List, error) {
+	l, err := NewInterval_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return Interval_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s Accumulation) Right() (Interval_List, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return Interval_List(p.List()), err
+}
+
+func (s Accumulation) HasRight() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Accumulation) SetRight(v Interval_List) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewRight sets the right field to a newly
+// allocated Interval_List, preferring placement in s's segment.
+func (s Accumulation) NewRight(n int32) (Interval_List, error) {
+	l, err := NewInterval_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return Interval_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+func (s Accumulation) LastLeft() (Interval, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return Interval(p.Struct()), err
+}
+
+func (s Accumulation) HasLastLeft() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Accumulation) SetLastLeft(v Interval) error {
+	return capnp.Struct(s).SetPtr(2, capnp.Struct(v).ToPtr())
+}
+
+// NewLastLeft sets the lastLeft field to a newly
+// allocated Interval struct, preferring placement in s's segment.
+func (s Accumulation) NewLastLeft() (Interval, error) {
+	ss, err := NewInterval(capnp.Struct(s).Segment())
+	if err != nil {
+		return Interval{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, capnp.Struct(ss).ToPtr())
+	return ss, err
+}
+
+func (s Accumulation) LastRight() (Interval, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return Interval(p.Struct()), err
+}
+
+func (s Accumulation) HasLastRight() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s Accumulation) SetLastRight(v Interval) error {
+	return capnp.Struct(s).SetPtr(3, capnp.Struct(v).ToPtr())
+}
+
+// NewLastRight sets the lastRight field to a newly
+// allocated Interval struct, preferring placement in s's segment.
+func (s Accumulation) NewLastRight() (Interval, error) {
+	ss, err := NewInterval(capnp.Struct(s).Segment())
+	if err != nil {
+		return Interval{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, capnp.Struct(ss).ToPtr())
+	return ss, err
+}
+
+func (s Accumulation) LeftSeen() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Accumulation) SetLeftSeen(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
+func (s Accumulation) RightSeen() bool {
+	return capnp.Struct(s).Bit(1)
+}
+
+func (s Accumulation) SetRightSeen(v bool) {
+	capnp.Struct(s).SetBit(1, v)
+}
+
+func (s Accumulation) Covariance() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s Accumulation) SetCovariance(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s Accumulation) Support() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s Accumulation) SetSupport(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s Accumulation) LeftEnergy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s Accumulation) SetLeftEnergy(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+func (s Accumulation) RightEnergy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s Accumulation) SetRightEnergy(v float64) {
+	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
+}
+
+// Accumulation_List is a list of Accumulation.
+type Accumulation_List = capnp.StructList[Accumulation]
+
+// NewAccumulation creates a new list of Accumulation.
+func NewAccumulation_List(s *capnp.Segment, sz int32) (Accumulation_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 4}, sz)
+	return capnp.StructList[Accumulation](l), err
+}
+
+// Accumulation_Future is a wrapper for a Accumulation promised by a client call.
+type Accumulation_Future struct{ *capnp.Future }
+
+func (f Accumulation_Future) Struct() (Accumulation, error) {
+	p, err := f.Future.Ptr()
+	return Accumulation(p.Struct()), err
+}
+func (p Accumulation_Future) LastLeft() Interval_Future {
+	return Interval_Future{Future: p.Future.Field(2, nil)}
+}
+func (p Accumulation_Future) LastRight() Interval_Future {
+	return Interval_Future{Future: p.Future.Field(3, nil)}
+}
+
 type HayashiYoshida capnp.Client
 
 // HayashiYoshida_TypeID is the unique identifier for the type HayashiYoshida.
@@ -28,7 +328,7 @@ func (c HayashiYoshida) Write(ctx context.Context, params func(HayashiYoshida_wr
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 48, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 48, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(HayashiYoshida_write_Params(s)) }
 	}
 
@@ -210,7 +510,7 @@ func (c HayashiYoshida_done) Args() HayashiYoshida_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HayashiYoshida_done) AllocResults() (HayashiYoshida_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 48, PointerCount: 1})
 	return HayashiYoshida_done_Results(r), err
 }
 
@@ -229,12 +529,12 @@ type HayashiYoshida_write_Params capnp.Struct
 const HayashiYoshida_write_Params_TypeID = 0xa8ed6160fd19f0e2
 
 func NewHayashiYoshida_write_Params(s *capnp.Segment) (HayashiYoshida_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1})
 	return HayashiYoshida_write_Params(st), err
 }
 
 func NewRootHayashiYoshida_write_Params(s *capnp.Segment) (HayashiYoshida_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1})
 	return HayashiYoshida_write_Params(st), err
 }
 
@@ -270,40 +570,17 @@ func (s HayashiYoshida_write_Params) Message() *capnp.Message {
 func (s HayashiYoshida_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HayashiYoshida_write_Params) Symbol1() (string, error) {
+func (s HayashiYoshida_write_Params) State() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
+	return []byte(p.Data()), err
 }
 
-func (s HayashiYoshida_write_Params) HasSymbol1() bool {
+func (s HayashiYoshida_write_Params) HasState() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HayashiYoshida_write_Params) Symbol1Bytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s HayashiYoshida_write_Params) SetSymbol1(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-func (s HayashiYoshida_write_Params) Symbol2() (string, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.Text(), err
-}
-
-func (s HayashiYoshida_write_Params) HasSymbol2() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s HayashiYoshida_write_Params) Symbol2Bytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return p.TextBytes(), err
-}
-
-func (s HayashiYoshida_write_Params) SetSymbol2(v string) error {
-	return capnp.Struct(s).SetText(1, v)
+func (s HayashiYoshida_write_Params) SetState(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
 }
 
 func (s HayashiYoshida_write_Params) BoundsStart1() float64 {
@@ -359,7 +636,7 @@ type HayashiYoshida_write_Params_List = capnp.StructList[HayashiYoshida_write_Pa
 
 // NewHayashiYoshida_write_Params creates a new list of HayashiYoshida_write_Params.
 func NewHayashiYoshida_write_Params_List(s *capnp.Segment, sz int32) (HayashiYoshida_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1}, sz)
 	return capnp.StructList[HayashiYoshida_write_Params](l), err
 }
 
@@ -442,12 +719,12 @@ type HayashiYoshida_done_Results capnp.Struct
 const HayashiYoshida_done_Results_TypeID = 0x92dd6bc8b044acdc
 
 func NewHayashiYoshida_done_Results(s *capnp.Segment) (HayashiYoshida_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1})
 	return HayashiYoshida_done_Results(st), err
 }
 
 func NewRootHayashiYoshida_done_Results(s *capnp.Segment) (HayashiYoshida_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1})
 	return HayashiYoshida_done_Results(st), err
 }
 
@@ -483,6 +760,19 @@ func (s HayashiYoshida_done_Results) Message() *capnp.Message {
 func (s HayashiYoshida_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s HayashiYoshida_done_Results) State() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s HayashiYoshida_done_Results) HasState() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s HayashiYoshida_done_Results) SetState(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
 func (s HayashiYoshida_done_Results) Correlation() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
@@ -536,7 +826,7 @@ type HayashiYoshida_done_Results_List = capnp.StructList[HayashiYoshida_done_Res
 
 // NewHayashiYoshida_done_Results creates a new list of HayashiYoshida_done_Results.
 func NewHayashiYoshida_done_Results_List(s *capnp.Segment, sz int32) (HayashiYoshida_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1}, sz)
 	return capnp.StructList[HayashiYoshida_done_Results](l), err
 }
 

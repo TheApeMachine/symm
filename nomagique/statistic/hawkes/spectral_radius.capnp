@@ -1,7 +1,7 @@
 using Go = import "/go.capnp";
 @0xb93a7eb06bcecc4f;
 $Go.package("hawkes");
-$Go.import("nomagique/statistic/hawkes");
+$Go.import("github.com/theapemachine/symm/nomagique/statistic/hawkes");
 
 interface SpectralRadius {
   write @0 (value :Float64) -> stream;
