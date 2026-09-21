@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"capnproto.org/go/capnp/v3/std/capnp/schema"
@@ -106,10 +107,118 @@ func (p *Program) Release() {
 }
 
 /*
-Start begins running the compiled program until context is cancelled.
+Start evaluates the compiled program continuously until the context is
+cancelled. Each pass is one observation through the graph: sources publish
+what they have, every node downstream of them steps once, and the pass ends.
+
+An evaluation that fails is reported and the run continues, because a single
+bad observation must not take the graph down; a cancelled context ends the
+run cleanly.
 */
 func (p *Program) Start(ctx context.Context) {
-	<-ctx.Done()
+	var idle time.Duration
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if err := p.Execute(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"compiler: graph evaluation failed",
+				err,
+			))
+		}
+
+		// A node that owns external I/O reports what it has without blocking,
+		// so an evaluation over idle sources returns immediately. Back off
+		// when a pass carried no payload, so a graph waiting on its venues
+		// releases the processor instead of spinning on empty reads.
+		//
+		// The backoff paces the scheduler, never market time: it bounds how
+		// long an arrived observation waits to be noticed, and every horizon,
+		// window and baseline a graph measures still comes from the
+		// observations themselves.
+		if p.carriedPayload() {
+			idle = 0
+			continue
+		}
+
+		idle = nextBackoff(idle)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(idle):
+		}
+	}
+}
+
+/*
+carriedPayload reports whether the last evaluation moved any bytes out of a
+node that owns an external source.
+*/
+func (p *Program) carriedPayload() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for index := range p.Nodes {
+		node := &p.Nodes[index]
+
+		if !node.Client.IsValid() {
+			continue
+		}
+
+		result, found := p.results[node.ID]
+
+		if !found || !result.IsValid() {
+			continue
+		}
+
+		for _, field := range node.Outputs {
+			if field.Which != schema.Type_Which_data {
+				continue
+			}
+
+			pointer, err := result.Ptr(uint16(field.Offset))
+
+			if err == nil && pointer.IsValid() && len(pointer.Data()) > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+/*
+nextBackoff doubles an idle wait up to a ceiling, so a quiet graph settles
+into infrequent polling while a graph that just went quiet reacts promptly.
+*/
+func nextBackoff(current time.Duration) time.Duration {
+	const (
+		minimum = time.Millisecond
+		maximum = 64 * time.Millisecond
+	)
+
+	if current <= 0 {
+		return minimum
+	}
+
+	doubled := current * 2
+
+	if doubled > maximum {
+		return maximum
+	}
+
+	return doubled
 }
 
 /*

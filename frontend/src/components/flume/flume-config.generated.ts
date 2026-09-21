@@ -869,6 +869,23 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 		outputs: (ports) => [
 			ports.float64({ name: "out", label: "out" }),
+			ports.bool({ name: "found", label: "found" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
+		type: "data.Insert",
+		label: "Insert",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+			ports.string({ name: "path", label: "path" }),
+			ports.float64({ name: "value", label: "value" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Status({ name: "status", label: "status" }),
 		],
 	});
 	config.addNodeType({
@@ -888,19 +905,6 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports.bool({ name: "snrDefined", label: "snrDefined" }),
 			ports.bool({ name: "estimated", label: "estimated" }),
 			ports.float64({ name: "maturity", label: "maturity" }),
-		],
-	});
-	config.addNodeType({
-		type: "data.Select",
-		label: "Select",
-		category: "data",
-		initialWidth: 340,
-		inputs: (ports) => [
-			ports["[]byte"]({ name: "data", label: "data" }),
-			ports.string({ name: "path", label: "path" }),
-		],
-		outputs: (ports) => [
-			ports.float64({ name: "out", label: "out" }),
 		],
 	});
 	config.addNodeType({

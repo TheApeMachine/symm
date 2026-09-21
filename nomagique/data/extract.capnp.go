@@ -9,6 +9,7 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	runtime "github.com/theapemachine/symm/nomagique/runtime"
 	math "math"
 )
 
@@ -22,7 +23,7 @@ func (c Extract) Write(ctx context.Context, params func(Extract_write_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      0,
-			InterfaceName: "nomagique/data/extract.capnp:Extract",
+			InterfaceName: "data/extract.capnp:Extract",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +42,7 @@ func (c Extract) Done(ctx context.Context, params func(Extract_done_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      1,
-			InterfaceName: "nomagique/data/extract.capnp:Extract",
+			InterfaceName: "data/extract.capnp:Extract",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +157,7 @@ func Extract_Methods(methods []server.Method, s Extract_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      0,
-			InterfaceName: "nomagique/data/extract.capnp:Extract",
+			InterfaceName: "data/extract.capnp:Extract",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +169,7 @@ func Extract_Methods(methods []server.Method, s Extract_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      1,
-			InterfaceName: "nomagique/data/extract.capnp:Extract",
+			InterfaceName: "data/extract.capnp:Extract",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -209,7 +210,7 @@ func (c Extract_done) Args() Extract_done_Params {
 
 // AllocResults allocates the results struct.
 func (c Extract_done) AllocResults() (Extract_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return Extract_done_Results(r), err
 }
 
@@ -388,12 +389,12 @@ type Extract_done_Results capnp.Struct
 const Extract_done_Results_TypeID = 0x954b77900115ea55
 
 func NewExtract_done_Results(s *capnp.Segment) (Extract_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return Extract_done_Results(st), err
 }
 
 func NewRootExtract_done_Results(s *capnp.Segment) (Extract_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0})
 	return Extract_done_Results(st), err
 }
 
@@ -437,12 +438,28 @@ func (s Extract_done_Results) SetOut(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
+func (s Extract_done_Results) Found() bool {
+	return capnp.Struct(s).Bit(64)
+}
+
+func (s Extract_done_Results) SetFound(v bool) {
+	capnp.Struct(s).SetBit(64, v)
+}
+
+func (s Extract_done_Results) Status() runtime.Status {
+	return runtime.Status(capnp.Struct(s).Uint16(10))
+}
+
+func (s Extract_done_Results) SetStatus(v runtime.Status) {
+	capnp.Struct(s).SetUint16(10, uint16(v))
+}
+
 // Extract_done_Results_List is a list of Extract_done_Results.
 type Extract_done_Results_List = capnp.StructList[Extract_done_Results]
 
 // NewExtract_done_Results creates a new list of Extract_done_Results.
 func NewExtract_done_Results_List(s *capnp.Segment, sz int32) (Extract_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 0}, sz)
 	return capnp.StructList[Extract_done_Results](l), err
 }
 

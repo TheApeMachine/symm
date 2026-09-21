@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	capnp "capnproto.org/go/capnp/v3"
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -13,64 +13,65 @@ func TestDataPrimitives(t *testing.T) {
 	ctx := context.Background()
 
 	Convey("Given data primitives", t, func() {
-		Convey("Extract extracts raw metric value from Data", func() {
-			server := data.NewExtract()
-			client := data.Extract_ServerToClient(server)
+		Convey("Extract reads a scalar at a dotted path", func() {
+			client := data.Extract_ServerToClient(data.NewExtract(ctx))
 			So(client.IsValid(), ShouldBeTrue)
 
-			msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-			So(err, ShouldBeNil)
-
-			measurement, err := data.NewRootWireMeasurement(seg)
-			So(err, ShouldBeNil)
-
-			metrics, err := measurement.NewMetrics(1)
-			So(err, ShouldBeNil)
-			metrics.At(0).SetRaw(42.5)
-
-			dataBytes, err := msg.Marshal()
-			So(err, ShouldBeNil)
-
-			err = client.Write(ctx, func(params data.Extract_write_Params) error {
-				params.SetPath("price")
-				return params.SetData(dataBytes)
+			payload, err := sonic.Marshal(map[string]any{
+				"trade": map[string]any{"price": 42.5, "qty": "1.25"},
+				"levels": []any{
+					map[string]any{"price": 99.0},
+					map[string]any{"price": 98.0},
+				},
 			})
 			So(err, ShouldBeNil)
-			So(client.WaitStreaming(), ShouldBeNil)
 
-			future, release := client.Done(ctx, nil)
-			defer release()
+			read := func(path string) (float64, bool) {
+				err := client.Write(ctx, func(params data.Extract_write_Params) error {
+					if err := params.SetPath(path); err != nil {
+						return err
+					}
 
-			results, err := future.Struct()
-			So(err, ShouldBeNil)
-			So(results.Out(), ShouldEqual, 42.5)
-
-			Convey("When evaluating second observation, state is reset", func() {
-				secondMsg, secondSeg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-				So(err, ShouldBeNil)
-
-				secondM, err := data.NewRootWireMeasurement(secondSeg)
-				So(err, ShouldBeNil)
-
-				secondMetrics, err := secondM.NewMetrics(1)
-				So(err, ShouldBeNil)
-				secondMetrics.At(0).SetRaw(100.0)
-
-				secondBytes, err := secondMsg.Marshal()
-				So(err, ShouldBeNil)
-
-				err = client.Write(ctx, func(params data.Extract_write_Params) error {
-					return params.SetData(secondBytes)
+					return params.SetData(payload)
 				})
 				So(err, ShouldBeNil)
 				So(client.WaitStreaming(), ShouldBeNil)
 
-				secondFuture, secondRelease := client.Done(ctx, nil)
-				defer secondRelease()
+				future, release := client.Done(ctx, nil)
+				defer release()
 
-				secondResults, err := secondFuture.Struct()
+				results, err := future.Struct()
 				So(err, ShouldBeNil)
-				So(secondResults.Out(), ShouldEqual, 100.0)
+
+				return results.Out(), results.Found()
+			}
+
+			Convey("It resolves a nested path", func() {
+				value, found := read("trade.price")
+				So(found, ShouldBeTrue)
+				So(value, ShouldEqual, 42.5)
+			})
+
+			Convey("It parses a venue decimal carried as a string", func() {
+				value, found := read("trade.qty")
+				So(found, ShouldBeTrue)
+				So(value, ShouldEqual, 1.25)
+			})
+
+			Convey("It indexes an array segment", func() {
+				value, found := read("levels.1.price")
+				So(found, ShouldBeTrue)
+				So(value, ShouldEqual, 98.0)
+			})
+
+			Convey("It reports an absent path as not found rather than zero", func() {
+				_, found := read("trade.missing")
+				So(found, ShouldBeFalse)
+			})
+
+			Convey("It reports an out of range index as not found", func() {
+				_, found := read("levels.9.price")
+				So(found, ShouldBeFalse)
 			})
 		})
 

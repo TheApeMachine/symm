@@ -2,64 +2,230 @@ package data
 
 import (
 	"context"
+	"strconv"
+	"strings"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
+/*
+ExtractServer reads one scalar out of a structure at a dotted path, and is the
+exact inverse of InsertServer. A path segment that parses as an integer
+indexes an array; every other segment keys an object.
+
+An absent path is reported as found=false rather than as a zero, so that a
+value the structure does not carry stays distinguishable from a value it
+carries as zero.
+*/
 type ExtractServer struct {
-	path string
-	out  float64
+	*runtime.System
+	path  string
+	out   float64
+	found bool
 }
 
-func NewExtract() *ExtractServer {
-	return &ExtractServer{}
-}
-
-func (s *ExtractServer) Write(ctx context.Context, call Extract_write) error {
-	pathStr, err := call.Args().Path()
-	if err == nil && len(pathStr) > 0 {
-		s.path = pathStr
+func NewExtract(ctx context.Context) *ExtractServer {
+	server := &ExtractServer{
+		System: runtime.NewSystem(ctx, "data.extract"),
 	}
 
-	dataBytes, err := call.Args().Data()
-	if err != nil || len(dataBytes) == 0 {
+	server.Transition(runtime.READY)
+	return server
+}
+
+/*
+Write reads the value at the configured path out of the inbound structure.
+*/
+func (server *ExtractServer) Write(ctx context.Context, call Extract_write) error {
+	path, err := call.Args().Path()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadRequest,
+			"[data.extract.Write] failed to read path argument",
+			err,
+		))
+	}
+
+	if len(path) > 0 {
+		server.path = path
+	}
+
+	if server.path == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.extract.Write] path is not defined",
+			nil,
+		))
+	}
+
+	payload, err := call.Args().Data()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadRequest,
+			"[data.extract.Write] failed to read data argument",
+			err,
+		))
+	}
+
+	if len(payload) == 0 {
+		server.found = false
 		return nil
 	}
 
-	// Try reading as Cap'n Proto WireMeasurement message
-	msg, err := capnp.Unmarshal(dataBytes)
-	if err == nil {
-		measurement, err := ReadRootWireMeasurement(msg)
-		if err == nil {
-			metrics, err := measurement.Metrics()
-			if err == nil && metrics.Len() > 0 {
-				s.out = metrics.At(0).Raw()
-				return nil
-			}
-		}
+	value, found, err := server.read(payload)
+
+	if err != nil {
+		return err
 	}
 
-	// Also support JSON map
-	var m map[string]any
-	if err := sonic.Unmarshal(dataBytes, &m); err == nil && m != nil {
-		if val, ok := m[s.path].(float64); ok {
-			s.out = val
-			return nil
-		}
-	}
+	server.out = value
+	server.found = found
 
 	return nil
 }
 
-func (s *ExtractServer) Done(ctx context.Context, call Extract_done) error {
+/*
+Done emits the extracted value and whether the path was present.
+*/
+func (server *ExtractServer) Done(ctx context.Context, call Extract_done) error {
 	results, err := call.AllocResults()
+
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[data.extract.Done] failed to allocate results",
+			err,
+		))
 	}
 
-	results.SetOut(s.out)
-	s.out = 0
+	results.SetStatus(runtime.Status(server.Status()))
+	results.SetFound(server.found)
+
+	if server.found {
+		results.SetOut(server.out)
+	}
+
+	server.found = false
 	return nil
+}
+
+/*
+read resolves the path against a JSON structure, falling back to the wire
+measurement encoding the capture path emits.
+*/
+func (server *ExtractServer) read(payload []byte) (float64, bool, error) {
+	var document any
+
+	if err := sonic.Unmarshal(payload, &document); err == nil {
+		value, found := extractAt(document, strings.Split(server.path, "."))
+		return value, found, nil
+	}
+
+	msg, err := capnp.Unmarshal(payload)
+
+	if err != nil {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.extract.read] payload is neither a structure nor a measurement",
+			err,
+		))
+	}
+
+	measurement, err := ReadRootWireMeasurement(msg)
+
+	if err != nil {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.extract.read] payload is not a measurement",
+			err,
+		))
+	}
+
+	metrics, err := measurement.Metrics()
+
+	if err != nil {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.extract.read] measurement carries no metrics",
+			err,
+		))
+	}
+
+	// WireMetric carries no label, so a measurement's metrics are addressed
+	// positionally. Any other path cannot be resolved against this encoding.
+	index, indexed := arrayIndex(server.path)
+
+	if !indexed || index >= metrics.Len() {
+		return 0, false, nil
+	}
+
+	return metrics.At(index).Raw(), true, nil
+}
+
+/*
+extractAt walks segments through the decoded structure.
+*/
+func extractAt(document any, segments []string) (float64, bool) {
+	current := document
+
+	for _, segment := range segments {
+		index, indexed := arrayIndex(segment)
+
+		if indexed {
+			elements, ok := current.([]any)
+
+			if !ok || index >= len(elements) {
+				return 0, false
+			}
+
+			current = elements[index]
+			continue
+		}
+
+		object, ok := current.(map[string]any)
+
+		if !ok {
+			return 0, false
+		}
+
+		current, ok = object[segment]
+
+		if !ok {
+			return 0, false
+		}
+	}
+
+	return numeric(current)
+}
+
+/*
+numeric reads a terminal value as a number, accepting the strings venues use
+to carry exact decimals.
+*/
+func numeric(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case string:
+		parsed, err := strconv.ParseFloat(typed, 64)
+
+		if err != nil {
+			return 0, false
+		}
+
+		return parsed, true
+	case bool:
+		if typed {
+			return 1, true
+		}
+
+		return 0, true
+	}
+
+	return 0, false
 }
