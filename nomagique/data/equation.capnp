@@ -4,6 +4,6 @@ $Go.package("data");
 $Go.import("nomagique/data");
 
 interface Equation {
-  write @0 (in :Data) -> stream;
+  write @0 (data :Data) -> stream;
   done @1 () -> (out :Data);
 }

@@ -269,11 +269,11 @@ func (s Elapsed_write_Params) Message() *capnp.Message {
 func (s Elapsed_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Elapsed_write_Params) A() int64 {
+func (s Elapsed_write_Params) Timestamp() int64 {
 	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s Elapsed_write_Params) SetA(v int64) {
+func (s Elapsed_write_Params) SetTimestamp(v int64) {
 	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 

@@ -11,7 +11,7 @@ type SecondDifferenceServer struct {
 }
 
 func (srv *SecondDifferenceServer) Write(ctx context.Context, call SecondDifference_write) error {
-	srv.out = (call.Args().In() - call.Args().Prev1()) - (call.Args().Prev1() - call.Args().Prev2())
+	srv.out = (call.Args().Value() - call.Args().Prev1()) - (call.Args().Prev1() - call.Args().Prev2())
 	return nil
 }
 

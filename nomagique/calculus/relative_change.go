@@ -18,7 +18,7 @@ func (srv *RelativeChangeServer) Write(ctx context.Context, call RelativeChange_
 		return nil
 	}
 
-	srv.out = (call.Args().In() - prev) / prev
+	srv.out = (call.Args().Value() - prev) / prev
 	return nil
 }
 

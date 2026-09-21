@@ -6,6 +6,8 @@ import {
 	CacheContext,
 	ConnectionRecalculateContext,
 	ContextContext,
+	type CompilerDiagnostic,
+	DiagnosticsContext,
 	EdgeRoutingContext,
 	EditorIdContext,
 	FlumeGraphWorkerContext,
@@ -14,6 +16,7 @@ import {
 	NodeActionsContext,
 	NodeDragOverrideContext,
 	NodeMapContext,
+	NodeResultsContext,
 	NodeTypesContext,
 	PortTypesContext,
 	RecalculateStageRectContext,
@@ -59,6 +62,8 @@ export type FlumeProvidersValue = {
 	graphId: string;
 	editorId: string;
 	recalculateStageRect: () => void;
+	diagnostics?: CompilerDiagnostic[];
+	results?: Record<string, Record<string, any>>;
 };
 
 export const FlumeProviders = ({
@@ -69,44 +74,48 @@ export const FlumeProviders = ({
 	children: React.ReactNode;
 }): React.ReactElement => {
 	return (
-		<ObstacleIndexContext.Provider value={value.indexRef}>
-			<PortLayoutRegistrationContext.Provider value={value.registerPortLayout}>
-				<FlumeGraphWorkerContext.Provider value={value.graphWorker}>
-					<NodeDragOverrideContext.Provider value={value.dragOverride}>
-						<NodeMapContext.Provider value={value.nodes}>
-							<EdgeRoutingContext.Provider value={value.edgeRoutingMode}>
-								<PortTypesContext.Provider value={value.portTypes}>
-									<NodeTypesContext.Provider value={value.nodeTypes}>
-										<NodeActionsContext.Provider value={value.nodeActions}>
-											<ConnectionRecalculateContext.Provider
-												value={value.triggerRecalculation}
-											>
-												<ContextContext.Provider value={value.context}>
-													<StageContext.Provider value={value.stageState}>
-														<CacheContext.Provider value={value.cache}>
-															<GraphIdContext.Provider value={value.graphId}>
-																<EditorIdContext.Provider
-																	value={value.editorId}
-																>
-																	<RecalculateStageRectContext.Provider
-																		value={value.recalculateStageRect}
-																	>
-																		{children}
-																	</RecalculateStageRectContext.Provider>
-																</EditorIdContext.Provider>
-															</GraphIdContext.Provider>
-														</CacheContext.Provider>
-													</StageContext.Provider>
-												</ContextContext.Provider>
-											</ConnectionRecalculateContext.Provider>
-										</NodeActionsContext.Provider>
-									</NodeTypesContext.Provider>
-								</PortTypesContext.Provider>
-							</EdgeRoutingContext.Provider>
-						</NodeMapContext.Provider>
-					</NodeDragOverrideContext.Provider>
-				</FlumeGraphWorkerContext.Provider>
-			</PortLayoutRegistrationContext.Provider>
-		</ObstacleIndexContext.Provider>
+		<DiagnosticsContext.Provider value={value.diagnostics ?? []}>
+			<NodeResultsContext.Provider value={value.results ?? {}}>
+				<ObstacleIndexContext.Provider value={value.indexRef}>
+					<PortLayoutRegistrationContext.Provider value={value.registerPortLayout}>
+						<FlumeGraphWorkerContext.Provider value={value.graphWorker}>
+							<NodeDragOverrideContext.Provider value={value.dragOverride}>
+								<NodeMapContext.Provider value={value.nodes}>
+									<EdgeRoutingContext.Provider value={value.edgeRoutingMode}>
+										<PortTypesContext.Provider value={value.portTypes}>
+											<NodeTypesContext.Provider value={value.nodeTypes}>
+												<NodeActionsContext.Provider value={value.nodeActions}>
+													<ConnectionRecalculateContext.Provider
+														value={value.triggerRecalculation}
+													>
+														<ContextContext.Provider value={value.context}>
+															<StageContext.Provider value={value.stageState}>
+																<CacheContext.Provider value={value.cache}>
+																	<GraphIdContext.Provider value={value.graphId}>
+																		<EditorIdContext.Provider
+																			value={value.editorId}
+																		>
+																			<RecalculateStageRectContext.Provider
+																				value={value.recalculateStageRect}
+																			>
+																				{children}
+																			</RecalculateStageRectContext.Provider>
+																		</EditorIdContext.Provider>
+																	</GraphIdContext.Provider>
+																</CacheContext.Provider>
+															</StageContext.Provider>
+														</ContextContext.Provider>
+													</ConnectionRecalculateContext.Provider>
+												</NodeActionsContext.Provider>
+											</NodeTypesContext.Provider>
+										</PortTypesContext.Provider>
+									</EdgeRoutingContext.Provider>
+								</NodeMapContext.Provider>
+							</NodeDragOverrideContext.Provider>
+						</FlumeGraphWorkerContext.Provider>
+					</PortLayoutRegistrationContext.Provider>
+				</ObstacleIndexContext.Provider>
+			</NodeResultsContext.Provider>
+		</DiagnosticsContext.Provider>
 	);
 };

@@ -11,7 +11,7 @@ type SquareServer struct {
 }
 
 func (srv *SquareServer) Write(ctx context.Context, call Square_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	srv.out = inVal * inVal
 	return nil
 }

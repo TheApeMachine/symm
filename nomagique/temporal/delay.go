@@ -14,7 +14,7 @@ type DelayServer struct {
 }
 
 func (srv *DelayServer) Write(ctx context.Context, call Delay_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	if srv.horizon <= 0 {
 		srv.horizon = 1
 	}

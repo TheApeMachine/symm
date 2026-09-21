@@ -15,23 +15,27 @@ type GaussJordanServer struct {
 
 func (server *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64, right [][]float64) ([][]float64, error) {
 	rows := len(left)
+
 	if rows == 0 {
 		return nil, nil
 	}
 
 	tol := server.Tolerance
+
 	if tol <= 0 {
 		tol = 1e-9
 	}
 
 	rightCols := 0
+
 	if rows > 0 && len(right) > 0 {
 		rightCols = len(right[0])
 	}
 
 	matA := make([][]float64, rows)
 	matB := make([][]float64, rows)
-	for index := 0; index < rows; index++ {
+
+	for index := range rows {
 		matA[index] = make([]float64, rows)
 		copy(matA[index], left[index])
 
@@ -39,11 +43,13 @@ func (server *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64,
 		copy(matB[index], right[index])
 	}
 
-	for col := 0; col < rows; col++ {
+	for col := range rows {
 		pivotRow := col
 		maxVal := math.Abs(matA[col][col])
+
 		for row := col + 1; row < rows; row++ {
 			val := math.Abs(matA[row][col])
+
 			if val > maxVal {
 				maxVal = val
 				pivotRow = row
@@ -60,6 +66,7 @@ func (server *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64,
 		}
 
 		pivot := matA[col][col]
+
 		for index := col; index < rows; index++ {
 			matA[col][index] /= pivot
 		}
@@ -68,9 +75,10 @@ func (server *GaussJordanServer) Evaluate(ctx context.Context, left [][]float64,
 			matB[col][index] /= pivot
 		}
 
-		for row := 0; row < rows; row++ {
+		for row := range rows {
 			if row != col {
 				factor := matA[row][col]
+
 				for index := col; index < rows; index++ {
 					matA[row][index] -= factor * matA[col][index]
 				}
@@ -96,8 +104,9 @@ func (server *GaussJordanServer) Write(ctx context.Context, call GaussJordan_wri
 
 	det := a11*a22 - a12*a21
 	tol := server.Tolerance
+
 	if tol <= 0 {
-		tol = 1e-9
+		tol = server.Tolerance
 	}
 
 	if math.Abs(det) > tol {
@@ -110,6 +119,7 @@ func (server *GaussJordanServer) Write(ctx context.Context, call GaussJordan_wri
 
 func (server *GaussJordanServer) Done(ctx context.Context, call GaussJordan_done) error {
 	results, err := call.AllocResults()
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -122,6 +132,7 @@ func (server *GaussJordanServer) Done(ctx context.Context, call GaussJordan_done
 	results.SetX2(server.x2)
 	server.x1 = 0
 	server.x2 = 0
+
 	return nil
 }
 

@@ -65,7 +65,7 @@ func (s *AttractorServer) Done(ctx context.Context, call Attractor_done) error {
 
 	_ = results.SetClass(s.class)
 	results.SetProb(s.prob)
-	results.SetCount(s.count)
+	results.SetCount(int64(s.count))
 
 	s.class = nil
 	s.prob = 0

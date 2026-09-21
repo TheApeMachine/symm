@@ -13,7 +13,7 @@ interface Memory {
   get @0 (key :Data) -> (value :Data);
   seekPrefix @1 (prefix :Data) -> (pairs :List(KVPair));
   cas @2 (updates :List(KVPair)) -> (ok :Bool);
-  getStep @3 () -> (step :UInt64);
-  incrementStep @4 () -> (step :UInt64);
+  getStep @3 () -> (step :Int64);
+  incrementStep @4 () -> (step :Int64);
   done @5 ();
 }

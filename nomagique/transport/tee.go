@@ -16,7 +16,7 @@ func NewTee() *TeeServer {
 }
 
 func (server *TeeServer) Write(ctx context.Context, call Tee_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

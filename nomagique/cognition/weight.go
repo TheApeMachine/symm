@@ -39,9 +39,9 @@ func (s *WeightServer) Done(ctx context.Context, call Weight_done) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc results", err))
 	}
 
-	results.SetCount(s.count)
-	results.SetMass(s.mass)
-	results.SetWriteStep(s.writeStep)
+	results.SetCount(int64(s.count))
+	results.SetMass(int64(s.mass))
+	results.SetWriteStep(int64(s.writeStep))
 
 	s.count = 0
 	s.mass = 0

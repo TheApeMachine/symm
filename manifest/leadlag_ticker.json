@@ -29,7 +29,7 @@
           "out": [
             {
               "nodeId": "extract_last",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -40,7 +40,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -51,7 +51,7 @@
           "out": [
             {
               "nodeId": "returns",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -67,7 +67,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_last",
               "portName": "out"
@@ -78,11 +78,11 @@
           "out": [
             {
               "nodeId": "contemporaneous",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "delay",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -93,7 +93,7 @@
       "type": "calculus.Tanh",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"
@@ -108,7 +108,7 @@
             },
             {
               "nodeId": "zscore",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -144,7 +144,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"
@@ -155,7 +155,7 @@
           "out": [
             {
               "nodeId": "lagged_corr",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -166,7 +166,7 @@
       "type": "calculus.Tanh",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "delay",
               "portName": "out"
@@ -181,7 +181,7 @@
             },
             {
               "nodeId": "prominence",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -212,7 +212,7 @@
       "type": "calculus.Absolute",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "lagged_corr",
               "portName": "out"
@@ -254,7 +254,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "contemporaneous",
               "portName": "out"

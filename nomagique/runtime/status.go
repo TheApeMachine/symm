@@ -61,9 +61,9 @@ var transitions = map[Stage][]Stage{
 }
 
 /*
-Status is a general indicator of lifecycle stages.
+StatusTracker is a general indicator of lifecycle stages.
 */
-type Status struct {
+type StatusTracker struct {
 	err     error
 	current atomic.Value
 }
@@ -71,22 +71,22 @@ type Status struct {
 /*
 NewStatus intializes a new status management object.
 */
-func NewStatus() *Status {
-	status := &Status{}
-	status.current.Store(INIT)
-	return status
+func NewStatus() *StatusTracker {
+	tracker := &StatusTracker{}
+	tracker.current.Store(INIT)
+	return tracker
 }
 
 /*
 Transition the state into one of the legal follow-up states,
 determined by the transition mapping. Thread-safe.
 */
-func (status *Status) Transition(stage Stage) *Status {
+func (tracker *StatusTracker) Transition(stage Stage) *StatusTracker {
 	for {
-		current, ok := status.current.Load().(Stage)
+		current, ok := tracker.current.Load().(Stage)
 
 		if !ok {
-			return status
+			return tracker
 		}
 
 		// Re-entering the current stage is a benign no-op, not an error: every
@@ -94,24 +94,24 @@ func (status *Status) Transition(stage Stage) *Status {
 		// rejection, a repeated ERROR) calls Transition with the state already
 		// held. Treating that as illegal wedges callers and floods the log.
 		if current == stage {
-			return status
+			return tracker
 		}
 
 		valid := slices.Contains(transitions[current], stage)
 
 		if !valid {
-			status.err = errnie.Error(errnie.Err(
+			tracker.err = errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"status: illegal transition",
 				nil,
 			))
 
-			return status
+			return tracker
 		}
 
 		// Atomically swap only if another goroutine hasn't modified it in the meantime
-		if status.current.CompareAndSwap(current, stage) {
-			return status
+		if tracker.current.CompareAndSwap(current, stage) {
+			return tracker
 		}
 	}
 }
@@ -119,6 +119,6 @@ func (status *Status) Transition(stage Stage) *Status {
 /*
 Current status.
 */
-func (status *Status) Current() Stage {
-	return status.current.Load().(Stage)
+func (tracker *StatusTracker) Current() Stage {
+	return tracker.current.Load().(Stage)
 }

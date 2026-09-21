@@ -15,7 +15,7 @@ func NewBuyRate() *BuyRateServer {
 }
 
 func (server *BuyRateServer) Write(ctx context.Context, call BuyRate_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

@@ -18,7 +18,7 @@ func NewDistribution() *DistributionServer {
 }
 
 func (server *DistributionServer) Write(ctx context.Context, call Distribution_write) error {
-	val := call.Args().In()
+	val := call.Args().Value()
 	server.winner = 0
 	server.confidence = val
 	server.sharpness = val

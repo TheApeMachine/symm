@@ -4,6 +4,6 @@ $Go.package("transport");
 $Go.import("nomagique/transport");
 
 interface Process {
-  write @0 (in :Data, binary :Text, args :Text) -> stream;
+  write @0 (data :Data, binary :Text, args :Text) -> stream;
   done @1 () -> (out :Data);
 }

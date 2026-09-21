@@ -18,7 +18,7 @@ func NewGeomean() *GeomeanServer {
 }
 
 func (s *GeomeanServer) Write(ctx context.Context, call Geomean_write) error {
-	val := call.Args().In()
+	val := call.Args().Value()
 	if val <= 0 {
 		return nil
 	}

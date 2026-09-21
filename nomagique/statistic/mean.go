@@ -13,7 +13,7 @@ type MeanServer struct {
 }
 
 func (srv *MeanServer) Write(ctx context.Context, call Mean_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	srv.count++
 	srv.sum += inVal
 	srv.out = srv.sum / srv.count

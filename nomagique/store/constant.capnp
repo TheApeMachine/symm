@@ -4,6 +4,6 @@ $Go.package("store");
 $Go.import("nomagique/store");
 
 interface Constant {
-  write @0 (in :Data) -> stream;
+  write @0 (data :Data) -> stream;
   done @1 () -> (out :Data);
 }

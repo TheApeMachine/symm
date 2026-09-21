@@ -16,7 +16,7 @@ func NewEntropy() *EntropyServer {
 }
 
 func (s *EntropyServer) Write(ctx context.Context, call Entropy_write) error {
-	val := call.Args().In()
+	val := call.Args().Value()
 	if val > 0 {
 		s.out += -val * math.Log(val)
 	}

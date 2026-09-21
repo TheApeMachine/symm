@@ -11,6 +11,7 @@ import type {
 	PortTypeConfig,
 	SelectControl,
 	TextControl,
+	TextareaControl,
 } from "./types";
 
 const define = <T>(value: T, defaultValue: T): T =>
@@ -44,6 +45,27 @@ const buildTextControl = (
 				? defaultConfig.defaultValue
 				: "",
 		type: "text",
+	};
+};
+
+const buildTextareaControl = (
+	config: Omit<Partial<TextareaControl>, "type"> = {},
+): TextareaControl => {
+	const defaultConfig = buildDefaultConfig(
+		{
+			name: "textarea",
+			defaultValue: "",
+		},
+		config,
+	);
+	return {
+		...defaultConfig,
+		defaultValue:
+			typeof defaultConfig.defaultValue === "string"
+				? defaultConfig.defaultValue
+				: "",
+		type: "textarea",
+		placeholder: config.placeholder,
 	};
 };
 
@@ -152,6 +174,7 @@ const buildCustomControl = (
 
 export const Controls = {
 	text: buildTextControl,
+	textarea: buildTextareaControl,
 	select: buildSelectControl,
 	number: buildNumberControl,
 	checkbox: buildCheckboxControl,

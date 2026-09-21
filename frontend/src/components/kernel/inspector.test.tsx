@@ -14,7 +14,7 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => () => {},
 }));
 
-const { DEFAULT_FOCUS_SYMBOL, getMeasurementStore } =
+const { DEFAULT_FOCUS_SYMBOL, signals } =
 	(await import("#/collections/app")) as any;
 const { KernelInspector } = await import("#/components/kernel/inspector");
 

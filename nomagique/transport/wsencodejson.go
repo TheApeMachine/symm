@@ -16,7 +16,7 @@ func NewWSEncodeJSON() *WSEncodeJSONServer {
 }
 
 func (server *WSEncodeJSONServer) Write(ctx context.Context, call WSEncodeJSON_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

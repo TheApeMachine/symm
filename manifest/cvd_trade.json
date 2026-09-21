@@ -39,11 +39,11 @@
           "out": [
             {
               "nodeId": "extract_price",
-              "portName": "in"
+              "portName": "data"
             },
             {
               "nodeId": "extract_qty",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -59,7 +59,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -70,11 +70,11 @@
           "out": [
             {
               "nodeId": "trade_notional",
-              "portName": "in"
+              "portName": "a"
             },
             {
               "nodeId": "returns",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "sink_price",
@@ -114,7 +114,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -125,15 +125,15 @@
           "out": [
             {
               "nodeId": "trade_notional",
-              "portName": "in"
+              "portName": "b"
             },
             {
               "nodeId": "qty_zscore",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "qty_mean",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "sink_qty",
@@ -168,11 +168,13 @@
       "type": "arithmetic.Multiply",
       "connections": {
         "inputs": {
-          "in": [
+          "a": [
             {
               "nodeId": "extract_price",
               "portName": "out"
-            },
+            }
+          ],
+          "b": [
             {
               "nodeId": "extract_qty",
               "portName": "out"
@@ -187,11 +189,11 @@
             },
             {
               "nodeId": "notional_zscore",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "notional_mean",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -222,7 +224,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_price",
               "portName": "out"
@@ -264,7 +266,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_qty",
               "portName": "out"
@@ -306,7 +308,7 @@
       "type": "statistic.Mean",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_qty",
               "portName": "out"
@@ -348,7 +350,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "trade_notional",
               "portName": "out"
@@ -390,7 +392,7 @@
       "type": "statistic.Mean",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "trade_notional",
               "portName": "out"

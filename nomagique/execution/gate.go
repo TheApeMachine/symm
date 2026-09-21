@@ -18,7 +18,7 @@ func NewGate() *GateServer {
 }
 
 func (s *GateServer) Write(ctx context.Context, call Gate_write) error {
-	action, err := call.Args().In()
+	action, err := call.Args().Text()
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "failed to read in arg", err))
 	}

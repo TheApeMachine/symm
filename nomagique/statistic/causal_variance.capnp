@@ -5,6 +5,6 @@ $Go.package("statistic");
 $Go.import("github.com/theapemachine/symm/nomagique/statistic");
 
 interface CausalVariance {
-  write @0 (in :Float64) -> stream;
+  write @0 (value :Float64) -> stream;
   done @1 () -> (out :Float64);
 }

@@ -29,7 +29,7 @@
           "out": [
             {
               "nodeId": "extract_last",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -40,7 +40,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -51,7 +51,7 @@
           "out": [
             {
               "nodeId": "returns",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -87,7 +87,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_last",
               "portName": "out"
@@ -98,11 +98,11 @@
           "out": [
             {
               "nodeId": "sign",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "zscore",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -133,7 +133,7 @@
       "type": "calculus.Sign",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"
@@ -168,7 +168,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"

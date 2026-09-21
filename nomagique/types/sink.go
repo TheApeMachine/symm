@@ -59,11 +59,13 @@ func (h *Float64SinkHandler) Write(ctx context.Context, call Float64Sink_write) 
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	if h.onWrite != nil {
-		return h.onWrite(ctx, eval, call.Args().Value())
+		return h.onWrite(ctx, uint64(eval), call.Args().Value())
 	}
 
 	return nil
@@ -101,7 +103,9 @@ func (b *BroadcastFloat64Sink) Write(ctx context.Context, call Float64Sink_write
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	val := call.Args().Value()
@@ -154,11 +158,13 @@ func (h *Int64SinkHandler) Write(ctx context.Context, call Int64Sink_write) erro
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	if h.onWrite != nil {
-		return h.onWrite(ctx, eval, call.Args().Value())
+		return h.onWrite(ctx, uint64(eval), call.Args().Value())
 	}
 
 	return nil
@@ -190,7 +196,9 @@ func (b *BroadcastInt64Sink) Write(ctx context.Context, call Int64Sink_write) er
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	val := call.Args().Value()
@@ -240,7 +248,9 @@ func (h *TextSinkHandler) Write(ctx context.Context, call TextSink_write) error 
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	val, err := call.Args().Value()
@@ -249,7 +259,7 @@ func (h *TextSinkHandler) Write(ctx context.Context, call TextSink_write) error 
 	}
 
 	if h.onWrite != nil {
-		return h.onWrite(ctx, eval, val)
+		return h.onWrite(ctx, uint64(eval), val)
 	}
 
 	return nil
@@ -281,7 +291,9 @@ func (b *BroadcastTextSink) Write(ctx context.Context, call TextSink_write) erro
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	val, err := call.Args().Value()
@@ -333,11 +345,13 @@ func (h *BoolSinkHandler) Write(ctx context.Context, call BoolSink_write) error 
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	if h.onWrite != nil {
-		return h.onWrite(ctx, eval, call.Args().Value())
+		return h.onWrite(ctx, uint64(eval), call.Args().Value())
 	}
 
 	return nil
@@ -369,7 +383,9 @@ func (b *BroadcastBoolSink) Write(ctx context.Context, call BoolSink_write) erro
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	val := call.Args().Value()
@@ -419,7 +435,9 @@ func (h *DataSinkHandler) Write(ctx context.Context, call DataSink_write) error 
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	val, err := call.Args().Value()
@@ -428,7 +446,7 @@ func (h *DataSinkHandler) Write(ctx context.Context, call DataSink_write) error 
 	}
 
 	if h.onWrite != nil {
-		return h.onWrite(ctx, eval, val)
+		return h.onWrite(ctx, uint64(eval), val)
 	}
 
 	return nil
@@ -460,7 +478,9 @@ func (b *BroadcastDataSink) Write(ctx context.Context, call DataSink_write) erro
 	eval := call.Args().Evaluation()
 
 	if eval == 0 {
-		eval, _ = EvaluationIDFromContext(ctx)
+		if id, ok := EvaluationIDFromContext(ctx); ok {
+			eval = int64(id)
+		}
 	}
 
 	val, err := call.Args().Value()

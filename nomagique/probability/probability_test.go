@@ -20,7 +20,7 @@ func TestProbabilityPrimitives(t *testing.T) {
 
 			p := 0.5
 			err := client.Write(ctx, func(params probability.Entropy_write_Params) error {
-				params.SetIn(p)
+				params.SetValue(p)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -36,7 +36,7 @@ func TestProbabilityPrimitives(t *testing.T) {
 
 			Convey("When evaluating again, state was reset", func() {
 				err = client.Write(ctx, func(params probability.Entropy_write_Params) error {
-					params.SetIn(1.0)
+					params.SetValue(1.0)
 					return nil
 				})
 				So(err, ShouldBeNil)
@@ -57,7 +57,7 @@ func TestProbabilityPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params probability.Concentration_write_Params) error {
-				params.SetIn(0.5)
+				params.SetValue(0.5)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -77,7 +77,7 @@ func TestProbabilityPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params probability.Distribution_write_Params) error {
-				params.SetIn(0.7)
+				params.SetValue(0.7)
 				return nil
 			})
 			So(err, ShouldBeNil)

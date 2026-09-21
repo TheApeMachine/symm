@@ -16,7 +16,7 @@ func NewBase64Decode() *Base64DecodeServer {
 }
 
 func (server *Base64DecodeServer) Write(ctx context.Context, call Base64Decode_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

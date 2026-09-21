@@ -72,6 +72,7 @@ const IoPorts = ({
 			{resolvedInputs.length ? (
 				<Flex.Column
 					align="stretch"
+					justify="start"
 					data-flume-component="ports-inputs"
 					fullWidth
 					gap={3}
@@ -92,11 +93,10 @@ const IoPorts = ({
 				</Flex.Column>
 			) : null}
 			{resolvedOutputs.length ? (
-				<Flex.Row
-					align="center"
-					justify="end"
+				<Flex.Column
+					align="end"
+					gap={2}
 					data-flume-component="ports-outputs"
-					fullWidth
 				>
 					{resolvedOutputs.map((output) => (
 						<Output
@@ -107,7 +107,7 @@ const IoPorts = ({
 							key={output.name}
 						/>
 					))}
-				</Flex.Row>
+				</Flex.Column>
 			) : null}
 		</Flex.Column>
 	);

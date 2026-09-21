@@ -19,7 +19,7 @@ func TestTemporalPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params temporal.LogReturns_write_Params) error {
-				params.SetA(100.0)
+				params.SetValue(100.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -33,7 +33,7 @@ func TestTemporalPrimitives(t *testing.T) {
 			So(results.Out(), ShouldEqual, 0.0)
 
 			err = client.Write(ctx, func(params temporal.LogReturns_write_Params) error {
-				params.SetA(110.0)
+				params.SetValue(110.0)
 				return nil
 			})
 			So(err, ShouldBeNil)

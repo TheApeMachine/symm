@@ -262,7 +262,7 @@ func CompileCopier(fromField FieldInfo, toField FieldInfo) (Copier, error) {
 			return nil
 		}, nil
 
-	case schema.Type_Which_int16, schema.Type_Which_uint16:
+	case schema.Type_Which_int16, schema.Type_Which_uint16, schema.Type_Which_enum:
 		fromOff := capnp.DataOffset(fromOffset * 2)
 		toOff := capnp.DataOffset(toOffset * 2)
 		return func(src, dst capnp.Struct) error {
@@ -383,6 +383,14 @@ func SetStaticField(target capnp.Struct, field FieldInfo, rawVal string) error {
 			return err
 		}
 		target.SetUint32(capnp.DataOffset(field.Offset*4), uint32(u))
+		return nil
+
+	case schema.Type_Which_int16, schema.Type_Which_uint16, schema.Type_Which_enum:
+		u, err := strconv.ParseUint(rawVal, 10, 16)
+		if err != nil {
+			return err
+		}
+		target.SetUint16(capnp.DataOffset(field.Offset*2), uint16(u))
 		return nil
 
 	case schema.Type_Which_text:

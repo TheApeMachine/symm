@@ -15,7 +15,7 @@ func NewSpectralRadius() *SpectralRadiusServer {
 }
 
 func (server *SpectralRadiusServer) Write(ctx context.Context, call SpectralRadius_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

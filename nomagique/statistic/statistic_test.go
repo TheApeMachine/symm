@@ -18,7 +18,7 @@ func TestStatisticPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params statistic.Mean_write_Params) error {
-				params.SetIn(10.0)
+				params.SetValue(10.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -33,7 +33,7 @@ func TestStatisticPrimitives(t *testing.T) {
 
 			Convey("When performing a second evaluation", func() {
 				err = client.Write(ctx, func(params statistic.Mean_write_Params) error {
-					params.SetIn(20.0)
+					params.SetValue(20.0)
 					return nil
 				})
 				So(err, ShouldBeNil)
@@ -54,7 +54,7 @@ func TestStatisticPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params statistic.Variance_write_Params) error {
-				params.SetIn(2.0)
+				params.SetValue(2.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -68,7 +68,7 @@ func TestStatisticPrimitives(t *testing.T) {
 			So(results.Out(), ShouldEqual, 0.0)
 
 			err = client.Write(ctx, func(params statistic.Variance_write_Params) error {
-				params.SetIn(4.0)
+				params.SetValue(4.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -88,7 +88,7 @@ func TestStatisticPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params statistic.Threshold_write_Params) error {
-				params.SetIn(0.1)
+				params.SetValue(0.1)
 				return nil
 			})
 			So(err, ShouldBeNil)

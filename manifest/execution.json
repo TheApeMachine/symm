@@ -11,7 +11,7 @@
           "out": [
             {
               "nodeId": "decide",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -22,7 +22,7 @@
       "type": "execution.Decide",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -33,7 +33,7 @@
           "out": [
             {
               "nodeId": "gate",
-              "portName": "in"
+              "portName": "text"
             }
           ]
         }
@@ -44,7 +44,7 @@
       "type": "execution.Gate",
       "connections": {
         "inputs": {
-          "in": [
+          "text": [
             {
               "nodeId": "decide",
               "portName": "out"
@@ -55,7 +55,7 @@
           "out": [
             {
               "nodeId": "submit",
-              "portName": "in"
+              "portName": "action"
             }
           ]
         }
@@ -66,7 +66,7 @@
       "type": "execution.Submit",
       "connections": {
         "inputs": {
-          "in": [
+          "action": [
             {
               "nodeId": "gate",
               "portName": "out"
@@ -77,7 +77,7 @@
           "out": [
             {
               "nodeId": "shell",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -96,7 +96,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "submit",
               "portName": "out"
@@ -107,7 +107,7 @@
           "out": [
             {
               "nodeId": "sink",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -118,7 +118,7 @@
       "type": "sink",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "shell",
               "portName": "out"

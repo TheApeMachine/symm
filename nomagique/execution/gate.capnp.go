@@ -268,21 +268,21 @@ func (s Gate_write_Params) Message() *capnp.Message {
 func (s Gate_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Gate_write_Params) In() (string, error) {
+func (s Gate_write_Params) Text() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.Text(), err
 }
 
-func (s Gate_write_Params) HasIn() bool {
+func (s Gate_write_Params) HasText() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Gate_write_Params) InBytes() ([]byte, error) {
+func (s Gate_write_Params) TextBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.TextBytes(), err
 }
 
-func (s Gate_write_Params) SetIn(v string) error {
+func (s Gate_write_Params) SetText(v string) error {
 	return capnp.Struct(s).SetText(0, v)
 }
 

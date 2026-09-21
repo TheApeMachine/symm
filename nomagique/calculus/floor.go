@@ -12,7 +12,7 @@ type FloorServer struct {
 }
 
 func (srv *FloorServer) Write(ctx context.Context, call Floor_write) error {
-	srv.out = math.Floor(call.Args().In())
+	srv.out = math.Floor(call.Args().Value())
 	return nil
 }
 

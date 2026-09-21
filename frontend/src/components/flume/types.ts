@@ -6,6 +6,7 @@ export type InputData = { [portName: string]: ControlData };
 
 export type ControlTypes =
 	| "text"
+	| "textarea"
 	| "number"
 	| "select"
 	| "checkbox"
@@ -25,6 +26,12 @@ export interface GenericControl {
 export interface TextControl extends GenericControl {
 	type: "text";
 	defaultValue: string;
+}
+
+export interface TextareaControl extends GenericControl {
+	type: "textarea";
+	defaultValue: string;
+	placeholder?: string;
 }
 
 export interface SelectOption {
@@ -88,6 +95,7 @@ export interface CustomControl extends GenericControl {
 
 export type Control =
 	| TextControl
+	| TextareaControl
 	| SelectControl
 	| NumberControl
 	| CheckboxControl

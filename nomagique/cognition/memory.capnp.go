@@ -1107,12 +1107,12 @@ func (s Memory_getStep_Results) Message() *capnp.Message {
 func (s Memory_getStep_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Memory_getStep_Results) Step() uint64 {
-	return capnp.Struct(s).Uint64(0)
+func (s Memory_getStep_Results) Step() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s Memory_getStep_Results) SetStep(v uint64) {
-	capnp.Struct(s).SetUint64(0, v)
+func (s Memory_getStep_Results) SetStep(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
 // Memory_getStep_Results_List is a list of Memory_getStep_Results.
@@ -1244,12 +1244,12 @@ func (s Memory_incrementStep_Results) Message() *capnp.Message {
 func (s Memory_incrementStep_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Memory_incrementStep_Results) Step() uint64 {
-	return capnp.Struct(s).Uint64(0)
+func (s Memory_incrementStep_Results) Step() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s Memory_incrementStep_Results) SetStep(v uint64) {
-	capnp.Struct(s).SetUint64(0, v)
+func (s Memory_incrementStep_Results) SetStep(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
 // Memory_incrementStep_Results_List is a list of Memory_incrementStep_Results.

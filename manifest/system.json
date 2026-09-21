@@ -55,7 +55,7 @@
           "out": [
             {
               "nodeId": "ui",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -63,10 +63,10 @@
     },
     "ui": {
       "id": "ui",
-      "type": "ui.HTTPServer",
+      "type": "http.HTTPServer",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "logic",
               "portName": "out"

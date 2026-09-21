@@ -29,11 +29,11 @@
           "out": [
             {
               "nodeId": "extract_bids",
-              "portName": "in"
+              "portName": "data"
             },
             {
               "nodeId": "extract_asks",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -44,7 +44,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -55,7 +55,7 @@
           "out": [
             {
               "nodeId": "bid_dist",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -71,7 +71,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -82,7 +82,7 @@
           "out": [
             {
               "nodeId": "ask_dist",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -98,7 +98,7 @@
       "type": "probability.Distribution",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_bids",
               "portName": "out"
@@ -109,11 +109,11 @@
           "out": [
             {
               "nodeId": "bid_entropy",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "bid_concentration",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -124,7 +124,7 @@
       "type": "probability.Distribution",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_asks",
               "portName": "out"
@@ -135,15 +135,15 @@
           "out": [
             {
               "nodeId": "ask_entropy",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "ask_concentration",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "ks",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -154,7 +154,7 @@
       "type": "probability.Entropy",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "bid_dist",
               "portName": "out"
@@ -189,7 +189,7 @@
       "type": "probability.Entropy",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "ask_dist",
               "portName": "out"
@@ -224,7 +224,7 @@
       "type": "probability.Concentration",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "bid_dist",
               "portName": "out"
@@ -259,7 +259,7 @@
       "type": "probability.Concentration",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "ask_dist",
               "portName": "out"
@@ -294,7 +294,7 @@
       "type": "probability.KolmogorovSmirnov",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "ask_dist",
               "portName": "out"

@@ -16,7 +16,7 @@ func NewJSONDecode() *JSONDecodeServer {
 }
 
 func (server *JSONDecodeServer) Write(ctx context.Context, call JSONDecode_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

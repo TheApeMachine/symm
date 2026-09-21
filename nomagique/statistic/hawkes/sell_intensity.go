@@ -15,7 +15,7 @@ func NewSellIntensity() *SellIntensityServer {
 }
 
 func (server *SellIntensityServer) Write(ctx context.Context, call SellIntensity_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

@@ -3,7 +3,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pipelineGraphCollection } from "#/collections/pipeline_graph";
-import { buildFlumeConfigFromSchemas } from "./build-config-from-schemas";
+import { createFlumeConfig } from "./flume-config.generated";
 import { useNodesState } from "./useNodesState";
 
 const clearCollection = () => {
@@ -21,7 +21,7 @@ const clearCollection = () => {
 };
 
 const renderUseNodesState = (graphId: string) => {
-	const { nodeTypes, portTypes } = buildFlumeConfigFromSchemas({});
+	const { nodeTypes, portTypes } = createFlumeConfig();
 	const getEnvironment = () => ({
 		nodeTypes,
 		portTypes,

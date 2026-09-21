@@ -12,7 +12,7 @@ type BoundServer struct {
 }
 
 func (srv *BoundServer) Write(ctx context.Context, call Bound_write) error {
-	srv.out = math.Max(call.Args().Min(), math.Min(call.Args().Max(), call.Args().In()))
+	srv.out = math.Max(call.Args().Min(), math.Min(call.Args().Max(), call.Args().Value()))
 	return nil
 }
 

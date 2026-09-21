@@ -3,8 +3,6 @@ import { createStore, type Store } from "@tanstack/store";
 import { RingBuffer } from "./ring";
 export { RingBuffer };
 
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-
 export const SIGNALS = [
 	"correlation",
 	"cvd",

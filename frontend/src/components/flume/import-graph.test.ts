@@ -46,7 +46,7 @@ describe("import-graph", () => {
 			},
 			ui: {
 				id: "ui",
-				type: "ui.Broadcast",
+				type: "transport.Broadcast",
 				connections: {
 					inputs: {
 						in: [{ nodeId: "logic", portName: "out" }],

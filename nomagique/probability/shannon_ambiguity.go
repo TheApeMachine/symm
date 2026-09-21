@@ -17,7 +17,7 @@ func NewShannonAmbiguity() *ShannonAmbiguityServer {
 }
 
 func (s *ShannonAmbiguityServer) Write(ctx context.Context, call ShannonAmbiguity_write) error {
-	val := call.Args().In()
+	val := call.Args().Value()
 	s.vals = append(s.vals, val)
 	s.total += val
 	return nil

@@ -15,7 +15,7 @@ func NewSellFraction() *SellFractionServer {
 }
 
 func (server *SellFractionServer) Write(ctx context.Context, call SellFraction_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

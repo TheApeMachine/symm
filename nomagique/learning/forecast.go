@@ -25,7 +25,7 @@ func NewForecast() *ForecastServer {
 }
 
 func (s *ForecastServer) Write(ctx context.Context, call Forecast_write) error {
-	in := call.Args().In()
+	in := call.Args().Value()
 	s.count++
 	n := s.count
 	delta := in - s.mean

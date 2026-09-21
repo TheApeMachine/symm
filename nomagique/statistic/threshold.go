@@ -15,7 +15,7 @@ type ThresholdServer struct {
 }
 
 func (srv *ThresholdServer) Write(ctx context.Context, call Threshold_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	result := srv.Rest
 
 	if inVal < srv.Band {

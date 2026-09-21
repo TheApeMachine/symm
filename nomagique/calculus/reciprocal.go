@@ -11,7 +11,7 @@ type ReciprocalServer struct {
 }
 
 func (srv *ReciprocalServer) Write(ctx context.Context, call Reciprocal_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 
 	if inVal == 0 {
 		return errnie.Error(errnie.Err(

@@ -4,6 +4,6 @@ $Go.package("hawkes");
 $Go.import("nomagique/statistic/hawkes");
 
 interface Assemble {
-  write @0 (in :Data, timestamp :Int64, side :Text, symbol :Text) -> stream;
+  write @0 (data :Data, timestamp :Int64, side :Text, symbol :Text) -> stream;
   done @1 () -> (out :Float64, time :Float64, mark :Float64);
 }

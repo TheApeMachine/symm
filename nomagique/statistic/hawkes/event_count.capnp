@@ -4,6 +4,6 @@ $Go.package("hawkes");
 $Go.import("nomagique/statistic/hawkes");
 
 interface EventCount {
-  write @0 (in :Float64) -> stream;
+  write @0 (value :Float64) -> stream;
   done @1 () -> (out :Float64);
 }

@@ -16,7 +16,7 @@ func NewStream() *StreamServer {
 }
 
 func (server *StreamServer) Write(ctx context.Context, call Stream_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

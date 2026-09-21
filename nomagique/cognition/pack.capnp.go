@@ -268,28 +268,28 @@ func (s Pack_write_Params) Message() *capnp.Message {
 func (s Pack_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Pack_write_Params) Count() uint64 {
-	return capnp.Struct(s).Uint64(0)
+func (s Pack_write_Params) Count() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s Pack_write_Params) SetCount(v uint64) {
-	capnp.Struct(s).SetUint64(0, v)
+func (s Pack_write_Params) SetCount(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
-func (s Pack_write_Params) Mass() uint64 {
-	return capnp.Struct(s).Uint64(8)
+func (s Pack_write_Params) Mass() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
 }
 
-func (s Pack_write_Params) SetMass(v uint64) {
-	capnp.Struct(s).SetUint64(8, v)
+func (s Pack_write_Params) SetMass(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
-func (s Pack_write_Params) WriteStep() uint64 {
-	return capnp.Struct(s).Uint64(16)
+func (s Pack_write_Params) WriteStep() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
 }
 
-func (s Pack_write_Params) SetWriteStep(v uint64) {
-	capnp.Struct(s).SetUint64(16, v)
+func (s Pack_write_Params) SetWriteStep(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
 }
 
 // Pack_write_Params_List is a list of Pack_write_Params.

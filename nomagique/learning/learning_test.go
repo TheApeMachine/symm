@@ -81,7 +81,7 @@ func TestLearningPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params learning.Forecast_write_Params) error {
-				params.SetIn(10.0)
+				params.SetValue(10.0)
 				return nil
 			})
 			So(err, ShouldBeNil)

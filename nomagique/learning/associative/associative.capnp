@@ -4,6 +4,6 @@ $Go.package("associative");
 $Go.import("nomagique/learning/associative");
 
 interface Grid {
-  write @0 (in :Data) -> stream;
+  write @0 (data :Data) -> stream;
   done @1 () -> (out :Data);
 }

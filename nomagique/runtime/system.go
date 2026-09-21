@@ -24,7 +24,7 @@ type System struct {
 	cancel  context.CancelFunc
 	err     error
 	name    string
-	status  *Status
+	status  *StatusTracker
 	closers []io.Closer
 }
 

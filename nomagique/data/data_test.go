@@ -33,7 +33,7 @@ func TestDataPrimitives(t *testing.T) {
 
 			err = client.Write(ctx, func(params data.Extract_write_Params) error {
 				params.SetPath("price")
-				return params.SetIn(dataBytes)
+				return params.SetData(dataBytes)
 			})
 			So(err, ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
@@ -60,7 +60,7 @@ func TestDataPrimitives(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				err = client.Write(ctx, func(params data.Extract_write_Params) error {
-					return params.SetIn(secondBytes)
+					return params.SetData(secondBytes)
 				})
 				So(err, ShouldBeNil)
 				So(client.WaitStreaming(), ShouldBeNil)

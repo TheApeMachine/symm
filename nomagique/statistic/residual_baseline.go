@@ -11,7 +11,7 @@ type ResidualBaselineServer struct {
 }
 
 func (srv *ResidualBaselineServer) Write(ctx context.Context, call ResidualBaseline_write) error {
-	srv.out = call.Args().In()
+	srv.out = call.Args().Value()
 	return nil
 }
 

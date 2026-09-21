@@ -15,7 +15,7 @@ func NewEventCount() *EventCountServer {
 }
 
 func (server *EventCountServer) Write(ctx context.Context, call EventCount_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

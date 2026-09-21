@@ -12,7 +12,7 @@ type TanhServer struct {
 }
 
 func (srv *TanhServer) Write(ctx context.Context, call Tanh_write) error {
-	srv.out = math.Tanh(call.Args().In())
+	srv.out = math.Tanh(call.Args().Value())
 	return nil
 }
 

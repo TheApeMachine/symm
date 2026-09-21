@@ -5,7 +5,7 @@ $Go.import("nomagique/execution");
 
 interface Decide {
   write @0 (
-    in :Data,
+    data :Data,
     winner :Text,
     contrast :Float64,
     isBreak :Bool,

@@ -27,10 +27,7 @@ const isResonance = (source: string) => source === "resonance";
 /*
 readings collects the accumulated values for one kernel directly from its store.
 */
-const readingsFromMeasurements = (ring: {
-	getBufferLength: () => number;
-	get: (index: number) => any;
-}) => {
+const readingsFromMeasurements = (ring: any) => {
 	const points: number[] = [];
 	if (!ring || typeof ring.getBufferLength !== "function") return points;
 	const len = ring.getBufferLength();
@@ -49,10 +46,7 @@ const readingsFromMeasurements = (ring: {
 	return points;
 };
 
-const readingsFromNumbers = (ring: {
-	getBufferLength: () => number;
-	get: (index: number) => any;
-}) => {
+const readingsFromNumbers = (ring: any) => {
 	const points: number[] = [];
 	if (!ring || typeof ring.getBufferLength !== "function") return points;
 	const len = ring.getBufferLength();
@@ -195,6 +189,26 @@ export const KernelInspector = () => {
 	const headline = resonance
 		? "predictive confidence"
 		: (sourceHeadline(source) ?? "");
+
+	const points = resonance
+		? readingsFromNumbers(resonanceReadings)
+		: readingsFromMeasurements(measurementState);
+	const latest = points.length > 0 ? points[points.length - 1] : null;
+	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
+	const badge = kernelStatusMeta(status);
+
+	// Confidence is already a real [0,1] quantity; only unbounded SNR needs
+	// scaling against its own observed range before it reads as a trace.
+	const relativePoints = resonance ? points : relativeToOwnRange(points);
+	const paths = kernelSparkPaths(relativePoints, status);
+	const level =
+		relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
+
+	const valueLabel = resonance
+		? `${(level * 100).toFixed(0)}%`
+		: latest === null
+			? "—"
+			: latest.toFixed(2);
 
 	const openInSignalInsight = () => {
 		selectSource(source);

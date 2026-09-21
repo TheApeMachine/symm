@@ -14,7 +14,7 @@ type LogReturnsServer struct {
 }
 
 func (srv *LogReturnsServer) Write(ctx context.Context, call LogReturns_write) error {
-	inVal := call.Args().A()
+	inVal := call.Args().Value()
 
 	if !srv.initialized || srv.previous <= 0 || inVal <= 0 {
 		srv.previous = inVal

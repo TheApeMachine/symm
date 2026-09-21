@@ -29,7 +29,7 @@
           "out": [
             {
               "nodeId": "lastPrice",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -45,7 +45,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -60,7 +60,7 @@
             },
             {
               "nodeId": "returns",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -91,7 +91,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "lastPrice",
               "portName": "out"
@@ -102,11 +102,11 @@
           "out": [
             {
               "nodeId": "corr",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "square",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -117,7 +117,7 @@
       "type": "calculus.Tanh",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"
@@ -132,15 +132,15 @@
             },
             {
               "nodeId": "abs",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "atanh",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "zscore",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -171,7 +171,7 @@
       "type": "calculus.Absolute",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "corr",
               "portName": "out"
@@ -213,7 +213,7 @@
       "type": "calculus.Atanh",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "corr",
               "portName": "out"
@@ -255,7 +255,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "corr",
               "portName": "out"
@@ -297,7 +297,7 @@
       "type": "calculus.Square",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"
@@ -312,11 +312,11 @@
             },
             {
               "nodeId": "energy_mean",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "energy_zscore",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -347,7 +347,7 @@
       "type": "statistic.Mean",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "square",
               "portName": "out"
@@ -389,7 +389,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "square",
               "portName": "out"

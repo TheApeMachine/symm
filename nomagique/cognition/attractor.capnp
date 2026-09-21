@@ -6,5 +6,5 @@ $Go.import("github.com/theapemachine/symm/nomagique/cognition");
 
 interface Attractor {
   write @0 (contextBytes :Data) -> stream;
-  done @1 () -> (class :Data, prob :Float64, count :UInt64);
+  done @1 () -> (class :Data, prob :Float64, count :Int64);
 }

@@ -15,7 +15,7 @@ type CausalVarianceServer struct {
 }
 
 func (srv *CausalVarianceServer) Write(ctx context.Context, call CausalVariance_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	ret := srv.prevVar
 	srv.count++
 	delta := inVal - srv.mean

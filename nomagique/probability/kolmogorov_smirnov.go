@@ -18,7 +18,7 @@ func NewKolmogorovSmirnov() *KolmogorovSmirnovServer {
 }
 
 func (s *KolmogorovSmirnovServer) Write(ctx context.Context, call KolmogorovSmirnov_write) error {
-	val := call.Args().In()
+	val := call.Args().Value()
 	s.window = append(s.window, val)
 	if s.maxSize > 0 && len(s.window) > s.maxSize {
 		s.window = s.window[1:]

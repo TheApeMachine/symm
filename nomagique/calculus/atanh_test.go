@@ -22,7 +22,7 @@ func TestAtanhPrimitive(t *testing.T) {
 			ctx := context.Background()
 
 			err := client.Write(ctx, func(params calculus.Atanh_write_Params) error {
-				params.SetIn(input)
+				params.SetValue(input)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -41,7 +41,7 @@ func TestAtanhPrimitive(t *testing.T) {
 				secondInput := 0.25
 
 				err = client.Write(ctx, func(params calculus.Atanh_write_Params) error {
-					params.SetIn(secondInput)
+					params.SetValue(secondInput)
 					return nil
 				})
 				So(err, ShouldBeNil)

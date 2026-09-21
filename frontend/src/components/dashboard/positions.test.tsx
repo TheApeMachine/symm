@@ -16,7 +16,7 @@ describe("Positions", () => {
 			const markup = renderToStaticMarkup(<Positions />);
 			expect(markup).toContain("no open positions");
 		} finally {
-			signals.position.setState(originalState);
+			signals.position.setState(() => originalState);
 		}
 	});
 });

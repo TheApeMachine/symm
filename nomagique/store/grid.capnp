@@ -4,6 +4,6 @@ $Go.package("store");
 $Go.import("nomagique/store");
 
 interface Grid {
-  write @0 (in :Data, metrics :Text) -> stream;
+  write @0 (data :Data, metrics :Text) -> stream;
   done @1 () -> (out :Data);
 }

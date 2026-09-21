@@ -11,7 +11,7 @@
           "out": [
             {
               "nodeId": "associative_grid",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -22,7 +22,7 @@
       "type": "associative.Grid",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -33,7 +33,7 @@
           "out": [
             {
               "nodeId": "temporal_transition",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -44,7 +44,7 @@
       "type": "temporal.Transition",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "associative_grid",
               "portName": "out"
@@ -55,7 +55,7 @@
           "out": [
             {
               "nodeId": "cognition_associate",
-              "portName": "in"
+              "portName": "current"
             }
           ]
         }
@@ -66,7 +66,7 @@
       "type": "cognition.Associate",
       "connections": {
         "inputs": {
-          "in": [
+          "current": [
             {
               "nodeId": "temporal_transition",
               "portName": "out"
@@ -74,10 +74,10 @@
           ]
         },
         "outputs": {
-          "out": [
+          "current": [
             {
               "nodeId": "cognition_reinforce",
-              "portName": "in"
+              "portName": "classBytes"
             }
           ]
         }
@@ -88,10 +88,10 @@
       "type": "cognition.Reinforce",
       "connections": {
         "inputs": {
-          "in": [
+          "classBytes": [
             {
               "nodeId": "cognition_associate",
-              "portName": "out"
+              "portName": "current"
             }
           ]
         },
@@ -99,7 +99,7 @@
           "out": [
             {
               "nodeId": "cognition_attractor",
-              "portName": "in"
+              "portName": "contextBytes"
             }
           ]
         }
@@ -110,7 +110,7 @@
       "type": "cognition.Attractor",
       "connections": {
         "inputs": {
-          "in": [
+          "contextBytes": [
             {
               "nodeId": "cognition_reinforce",
               "portName": "out"
@@ -118,10 +118,10 @@
           ]
         },
         "outputs": {
-          "out": [
+          "class": [
             {
               "nodeId": "cognition_classification",
-              "portName": "in"
+              "portName": "class"
             }
           ]
         }
@@ -132,18 +132,18 @@
       "type": "cognition.Classification",
       "connections": {
         "inputs": {
-          "in": [
+          "class": [
             {
               "nodeId": "cognition_attractor",
-              "portName": "out"
+              "portName": "class"
             }
           ]
         },
         "outputs": {
-          "out": [
+          "winner": [
             {
               "nodeId": "sink",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -154,10 +154,10 @@
       "type": "sink",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "cognition_classification",
-              "portName": "out"
+              "portName": "winner"
             }
           ]
         },

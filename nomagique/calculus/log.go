@@ -12,7 +12,7 @@ type LogServer struct {
 }
 
 func (srv *LogServer) Write(ctx context.Context, call Log_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 
 	if inVal <= 0 {
 		return errnie.Error(errnie.Err(

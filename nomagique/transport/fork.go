@@ -16,7 +16,7 @@ func NewFork() *ForkServer {
 }
 
 func (server *ForkServer) Write(ctx context.Context, call Fork_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

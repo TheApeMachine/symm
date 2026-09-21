@@ -19,7 +19,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.Absolute_write_Params) error {
-				params.SetIn(-42.5)
+				params.SetValue(-42.5)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -39,7 +39,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.Tanh_write_Params) error {
-				params.SetIn(0.5)
+				params.SetValue(0.5)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -59,7 +59,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.Square_write_Params) error {
-				params.SetIn(3.0)
+				params.SetValue(3.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -79,7 +79,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.Sqrt_write_Params) error {
-				params.SetIn(16.0)
+				params.SetValue(16.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -93,7 +93,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(results.Out(), ShouldEqual, 4.0)
 
 			err = client.Write(ctx, func(params calculus.Sqrt_write_Params) error {
-				params.SetIn(-1.0)
+				params.SetValue(-1.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -106,7 +106,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.Negate_write_Params) error {
-				params.SetIn(5.5)
+				params.SetValue(5.5)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -126,7 +126,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.Reciprocal_write_Params) error {
-				params.SetIn(4.0)
+				params.SetValue(4.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -140,7 +140,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(results.Out(), ShouldEqual, 0.25)
 
 			err = client.Write(ctx, func(params calculus.Reciprocal_write_Params) error {
-				params.SetIn(0.0)
+				params.SetValue(0.0)
 				return nil
 			})
 			So(err, ShouldBeNil)
@@ -197,7 +197,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.Bound_write_Params) error {
-				params.SetIn(50.0)
+				params.SetValue(50.0)
 				params.SetMin(0.0)
 				params.SetMax(10.0)
 				return nil
@@ -219,7 +219,7 @@ func TestCalculusPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params calculus.RelativeChange_write_Params) error {
-				params.SetIn(110.0)
+				params.SetValue(110.0)
 				params.SetPrev(100.0)
 				return nil
 			})

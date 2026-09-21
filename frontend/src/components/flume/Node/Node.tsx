@@ -6,9 +6,11 @@ import React from "react";
 import { createPortal } from "react-dom";
 import {
 	ConnectionRecalculateContext,
+	DiagnosticsContext,
 	FlumeGraphWorkerContext,
 	GraphIdContext,
 	NodeActionsContext,
+	NodeResultsContext,
 	NodeTypesContext,
 	PortTypesContext,
 	StageContext,
@@ -82,11 +84,26 @@ const Node = ({
 	};
 
 	const currentNodeType = nodeTypes[type];
+	const diagnostics = React.useContext(DiagnosticsContext) || [];
+	const results = React.useContext(NodeResultsContext) || {};
+
+	const isDefinitionNode = Boolean(
+		String(currentNodeType?.type ?? "").startsWith("definition:") ||
+			currentNodeType?.category === "Definitions",
+	);
+
 	const isBlock = Boolean(
 		currentNodeType?.defaultSubGraph ||
+			isDefinitionNode ||
 			currentNodeType?.category === "memory" ||
 			String(currentNodeType?.type ?? "").startsWith("block."),
 	);
+
+	const nodeDiagnostics = diagnostics.filter(
+		(d) => d.nodeId === id || (d.nodeType && d.nodeType === type),
+	);
+	const hasError = nodeDiagnostics.length > 0;
+	const nodeResult = results[id];
 
 	const {
 		label,
@@ -163,7 +180,9 @@ const Node = ({
 	// useLiveQuery subscribers on either side re-render off the same
 	// source of truth.
 	const parentGraphId = React.useContext(GraphIdContext);
-	const subgraphId = `${parentGraphId}:${id}`;
+	const subgraphId = isDefinitionNode
+		? currentNodeType.type
+		: `${parentGraphId}:${id}`;
 
 	const suppressEmbeddedPortControlPrep = React.useCallback(
 		(e: React.MouseEvent<HTMLDivElement>) => {
@@ -183,7 +202,7 @@ const Node = ({
 	const portalContainer =
 		typeof document !== "undefined" ? document.body : null;
 
-	const resolvedSubGraph = subGraph ?? currentNodeType?.defaultSubGraph;
+	const resolvedSubGraph = isBlock ? (subGraph ?? true) : undefined;
 
 	const subGraphEditor =
 		resolvedSubGraph !== undefined && subGraphOpen ? (
@@ -210,8 +229,8 @@ const Node = ({
 		subGraphFullscreen &&
 		portalContainer
 			? createPortal(
-					<div className="fixed inset-0 z-50 flex flex-col bg-(--bg)">
-						<div className="flex items-center gap-3 border-b px-4 py-2 text-sm text-(--f3)">
+					<Flex.Column className="fixed inset-0 z-50 bg-(--bg)">
+						<Flex.Row align="center" gap={3} className="border-b px-4 py-2 text-sm text-(--f3)">
 							<NetworkIcon className="size-4" />
 							<span className="font-medium text-(--f1)">{label}</span>
 							<span className="flex-1">{description}</span>
@@ -223,8 +242,8 @@ const Node = ({
 								<Minimize2Icon className="size-4" />
 								Exit full screen
 							</button>
-						</div>
-						<div className="min-h-0 flex-1">
+						</Flex.Row>
+						<Flex.Row className="min-h-0 flex-1">
 							<React.Suspense fallback={null}>
 								<NodeEditor
 									graphId={subgraphId}
@@ -234,8 +253,8 @@ const Node = ({
 									className="h-full w-full"
 								/>
 							</React.Suspense>
-						</div>
-					</div>,
+						</Flex.Row>
+					</Flex.Column>,
 					portalContainer,
 				)
 			: null;
@@ -269,7 +288,7 @@ const Node = ({
 			stageState={stageState}
 			stageRect={stageRect}
 		>
-			<Frame className="min-w-0 w-full">
+			<Frame className={`min-w-0 w-full transition-all ${hasError ? "ring-2 ring-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]" : ""}`}>
 				<FrameHeader>
 					{renderNodeHeader ? (
 						renderNodeHeader(FrameTitle, currentNodeType, {
@@ -291,10 +310,30 @@ const Node = ({
 					)}
 				</FrameHeader>
 
+				{hasError && (
+					<div
+						className="bg-red-950/80 border-y border-red-500/40 px-3 py-1.5 text-xs text-red-300 font-mono"
+						data-flume-node-error={id}
+					>
+						{nodeDiagnostics[0].message}
+					</div>
+				)}
+
+				{nodeResult && (
+					<div
+						className="bg-emerald-950/80 border-y border-emerald-500/40 px-3 py-1 text-xs text-emerald-300 font-mono"
+						data-flume-node-result={id}
+					>
+						{Object.entries(nodeResult)
+							.map(([k, v]) => `${k}: ${v}`)
+							.join(" | ")}
+					</div>
+				)}
+
 				<Card>
 					<CardPanel>
 						<Form>
-							<Flex.Column fullWidth gap={4}>
+							<Flex.Column gap={4}>
 								<IoPorts
 									nodeId={id}
 									inputs={inputs}

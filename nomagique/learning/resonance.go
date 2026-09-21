@@ -555,38 +555,6 @@ func (resonanceManifold *ResonanceManifoldServer) retentionVector() []float64 {
 	return nil
 }
 
-func (resonanceManifold *ResonanceManifoldServer) resetState(resetPrecision bool) {
-	for _, latent := range resonanceManifold.latentStates {
-		latent.Zero()
-	}
-	for latentIndex := range resonanceManifold.temporalOperators {
-		resonanceManifold.workspace.prevLatents[latentIndex].Zero()
-	}
-	resonanceManifold.temporalPriorsReady = false
-	resonanceManifold.settleAdvancedTemporal = false
-
-	if resetPrecision {
-		for layerIndex := 0; layerIndex < len(resonanceManifold.generativeWeights); layerIndex++ {
-			denseFill(resonanceManifold.errorVar[layerIndex], 1.0)
-			denseFill(resonanceManifold.precision[layerIndex], 1.0)
-		}
-		for latentIndex := range resonanceManifold.temporalOperators {
-			denseFill(resonanceManifold.temporalVar[latentIndex], 1.0)
-			denseFill(resonanceManifold.temporalPrecision[latentIndex], 1.0)
-		}
-
-		if resonanceManifold.taskRows > 0 {
-			denseFill(resonanceManifold.taskVar, 1.0)
-			resonanceManifold.taskScale.Zero()
-			denseFill(resonanceManifold.taskPrecision, 1.0)
-			resonanceManifold.taskModelLoss.Zero()
-			resonanceManifold.taskBaselineLoss.Zero()
-			denseFill(resonanceManifold.taskSkill, 1.0)
-			clear(resonanceManifold.taskScaleReady)
-			clear(resonanceManifold.taskSkillReady)
-		}
-	}
-}
 
 /*
 energy is the variational free energy combining precision-weighted error,
@@ -1271,51 +1239,6 @@ func (resonanceManifold *ResonanceManifoldServer) readoutVector() []float64 {
 	return vector
 }
 
-func (resonanceManifold *ResonanceManifoldServer) rolloutRetention(steps int) []float64 {
-	if len(resonanceManifold.temporalOperators) == 0 || steps < 1 {
-		return nil
-	}
-
-	numLatents := len(resonanceManifold.temporalOperators)
-	currentLatents := make([]*mat.VecDense, numLatents)
-	nextLatents := make([]*mat.VecDense, numLatents)
-	for i := range numLatents {
-		currentLatents[i] = mat.VecDenseCopyOf(resonanceManifold.latentStates[i+1])
-		nextLatents[i] = mat.NewVecDense(resonanceManifold.arch[i+1], nil)
-	}
-
-	initialNormSq := 0.0
-	for i := range numLatents {
-		norm := denseColNorm(currentLatents[i])
-		initialNormSq += norm * norm
-	}
-	initialNorm := math.Sqrt(initialNormSq)
-
-	retention := make([]float64, steps)
-
-	for step := range steps {
-		if step == 0 || initialNorm == 0 {
-			retention[step] = 1.0
-		} else {
-			normSq := 0.0
-			for i := range numLatents {
-				norm := denseColNorm(currentLatents[i])
-				normSq += norm * norm
-			}
-			retention[step] = math.Sqrt(normSq) / initialNorm
-		}
-
-		if step+1 < steps {
-			for i := range numLatents {
-				nextLatents[i].MulVec(resonanceManifold.temporalOperators[i], currentLatents[i])
-				denseApplyTanhInPlace(nextLatents[i])
-				currentLatents[i], nextLatents[i] = nextLatents[i], currentLatents[i]
-			}
-		}
-	}
-
-	return retention
-}
 
 /*
 rolloutTaskForecast returns one forecast per task row, evaluated at the current

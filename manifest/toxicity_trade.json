@@ -34,11 +34,11 @@
           "out": [
             {
               "nodeId": "extract_price",
-              "portName": "in"
+              "portName": "data"
             },
             {
               "nodeId": "extract_qty",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -54,7 +54,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -65,11 +65,11 @@
           "out": [
             {
               "nodeId": "trade_notional",
-              "portName": "in"
+              "portName": "a"
             },
             {
               "nodeId": "returns",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -85,7 +85,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -100,15 +100,15 @@
             },
             {
               "nodeId": "trade_notional",
-              "portName": "in"
+              "portName": "b"
             },
             {
               "nodeId": "flow_zscore",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "flow_baseline",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -139,11 +139,13 @@
       "type": "arithmetic.Multiply",
       "connections": {
         "inputs": {
-          "in": [
+          "a": [
             {
               "nodeId": "extract_price",
               "portName": "out"
-            },
+            }
+          ],
+          "b": [
             {
               "nodeId": "extract_qty",
               "portName": "out"
@@ -185,7 +187,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_price",
               "portName": "out"
@@ -227,7 +229,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_qty",
               "portName": "out"
@@ -269,7 +271,7 @@
       "type": "statistic.ResidualBaseline",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_qty",
               "portName": "out"

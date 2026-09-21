@@ -27,7 +27,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood build-cuda
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental catalog goodindahood build-cuda
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -56,13 +56,10 @@ bench:
 kill:
 	-lsof -t -i:8765 | xargs kill -9 || true
 
-metric-lineage:
-	go run ./tools/metriclineage . frontend/public/metric-lineage.json
+catalog:
+	go run ./nomagique/compiler/cmd/catalog
 
-metric-map:
-	go run ./tools/metricmap signal/metric_map.csv signal/metric_map.json
-
-run: metric-lineage
+run:
 	go run main.go
 
 experimental:

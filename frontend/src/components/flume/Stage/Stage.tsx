@@ -279,7 +279,9 @@ const Stage = ({
 	React.useEffect(() => {
 		if (!disableZoom) {
 			const stageWrapper = wrapper.current;
-			stageWrapper?.addEventListener("wheel", handleWheel);
+			stageWrapper?.addEventListener("wheel", handleWheel, {
+				passive: false,
+			});
 			return () => {
 				stageWrapper?.removeEventListener("wheel", handleWheel);
 			};

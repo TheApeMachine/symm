@@ -432,12 +432,12 @@ func (s Attractor_done_Results) SetProb(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s Attractor_done_Results) Count() uint64 {
-	return capnp.Struct(s).Uint64(8)
+func (s Attractor_done_Results) Count() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
 }
 
-func (s Attractor_done_Results) SetCount(v uint64) {
-	capnp.Struct(s).SetUint64(8, v)
+func (s Attractor_done_Results) SetCount(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
 // Attractor_done_Results_List is a list of Attractor_done_Results.

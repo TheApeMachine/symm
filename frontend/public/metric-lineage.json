@@ -5,18 +5,10 @@
       "source": "correlation",
       "metric": "absolute_correlation",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/correlation_ticker.json",
+      "file": "manifest/correlation_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 248
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -24,7 +16,7 @@
       "source": "correlation",
       "metric": "atanh",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/correlation_ticker.json",
+      "file": "manifest/correlation_ticker.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -35,18 +27,10 @@
       "source": "correlation",
       "metric": "correlation_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/correlation_ticker.json",
+      "file": "manifest/correlation_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 259
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -54,18 +38,10 @@
       "source": "correlation",
       "metric": "last_price",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/correlation_ticker.json",
+      "file": "manifest/correlation_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 277
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -73,18 +49,10 @@
       "source": "correlation",
       "metric": "relative_return_energy_baseline",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/correlation_ticker.json",
+      "file": "manifest/correlation_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 255
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -92,18 +60,10 @@
       "source": "correlation",
       "metric": "relative_return_energy_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/correlation_ticker.json",
+      "file": "manifest/correlation_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 252
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -111,18 +71,10 @@
       "source": "correlation",
       "metric": "signed_correlation",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/correlation_ticker.json",
+      "file": "manifest/correlation_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 245
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -130,18 +82,10 @@
       "source": "cvd",
       "metric": "gross_executed_quantity",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/cvd_trade.json",
+      "file": "manifest/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 320
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -149,18 +93,10 @@
       "source": "cvd",
       "metric": "gross_notional",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/cvd_trade.json",
+      "file": "manifest/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 319
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -168,18 +104,10 @@
       "source": "cvd",
       "metric": "mean_trade_notional",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/cvd_trade.json",
+      "file": "manifest/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 321
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -187,18 +115,10 @@
       "source": "cvd",
       "metric": "midpoint_log_return",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/cvd_trade.json",
+      "file": "manifest/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 330
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -206,18 +126,10 @@
       "source": "cvd",
       "metric": "signed_count_fraction",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/cvd_trade.json",
+      "file": "manifest/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 324
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -225,25 +137,10 @@
       "source": "cvd",
       "metric": "signed_net_fraction_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/cvd_trade.json",
+      "file": "manifest/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 309
-        },
-        {
-          "kind": "bound",
-          "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 578
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -251,18 +148,10 @@
       "source": "cvd",
       "metric": "trade_count",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/cvd_trade.json",
+      "file": "manifest/cvd_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 325
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -271,18 +160,10 @@
       "metric": "delete_count",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 391
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -291,18 +172,10 @@
       "metric": "delete_count",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 390
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -310,18 +183,10 @@
       "source": "depthflow",
       "metric": "observed_notional",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 395
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -330,18 +195,10 @@
       "metric": "observed_notional",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 397
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -350,18 +207,10 @@
       "metric": "observed_notional",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 396
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -369,18 +218,10 @@
       "source": "depthflow",
       "metric": "observed_notional_imbalance",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 382
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -388,18 +229,10 @@
       "source": "depthflow",
       "metric": "observed_notional_imbalance_baseline",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 383
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -407,25 +240,10 @@
       "source": "depthflow",
       "metric": "observed_notional_imbalance_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/depthflow_level3.json",
+      "file": "manifest/depthflow_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 380
-        },
-        {
-          "kind": "bound",
-          "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 581
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -433,18 +251,10 @@
       "source": "derivatives",
       "metric": "basis_rate",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_ticker.json",
+      "file": "manifest/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DerivativesDecoupling (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 514
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -452,18 +262,10 @@
       "source": "derivatives",
       "metric": "basis_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_ticker.json",
+      "file": "manifest/derivatives_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DerivativesDecoupling (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 513
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -471,7 +273,7 @@
       "source": "derivatives",
       "metric": "notional",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_trade.json",
+      "file": "manifest/derivatives_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -482,7 +284,7 @@
       "source": "derivatives",
       "metric": "notional_baseline",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_trade.json",
+      "file": "manifest/derivatives_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -493,7 +295,7 @@
       "source": "derivatives",
       "metric": "notional_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_trade.json",
+      "file": "manifest/derivatives_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -504,7 +306,7 @@
       "source": "derivatives",
       "metric": "price",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_ticker.json",
+      "file": "manifest/derivatives_ticker.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -515,7 +317,7 @@
       "source": "derivatives",
       "metric": "qty",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_trade.json",
+      "file": "manifest/derivatives_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -526,7 +328,7 @@
       "source": "derivatives",
       "metric": "qty_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_trade.json",
+      "file": "manifest/derivatives_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -537,30 +339,8 @@
       "source": "derivatives",
       "metric": "returns",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/derivatives_ticker.json",
+      "file": "manifest/derivatives_ticker.json",
       "line": 1,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "frame/qty",
-      "source": "frame",
-      "metric": "qty",
-      "package": "github.com/theapemachine/symm/tests/market",
-      "file": "tests/market/impulse.go",
-      "line": 43,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "frame/value",
-      "source": "frame",
-      "metric": "value",
-      "package": "github.com/theapemachine/symm/tests/market",
-      "file": "tests/market/impulse.go",
-      "line": 36,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -570,7 +350,7 @@
       "source": "hawkes",
       "metric": "arrivalRate",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -582,18 +362,10 @@
       "metric": "arrival_rate",
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Inertial (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 351
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -602,18 +374,10 @@
       "metric": "arrival_rate",
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Inertial (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 352
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -621,7 +385,7 @@
       "source": "hawkes",
       "metric": "buyCount",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -632,7 +396,7 @@
       "source": "hawkes",
       "metric": "buyFraction",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -644,18 +408,10 @@
       "metric": "conditional_intensity",
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Frenzy (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 339
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -664,18 +420,10 @@
       "metric": "conditional_intensity",
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Frenzy (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 340
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -683,7 +431,7 @@
       "source": "hawkes",
       "metric": "count",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -694,7 +442,7 @@
       "source": "hawkes",
       "metric": "sellCount",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -705,7 +453,7 @@
       "source": "hawkes",
       "metric": "sellFraction",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -716,7 +464,7 @@
       "source": "hawkes",
       "metric": "spectralRadius",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/hawkes_trade.json",
+      "file": "manifest/hawkes_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -727,18 +475,10 @@
       "source": "leadlag",
       "metric": "best_lag_correlation",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/leadlag_ticker.json",
+      "file": "manifest/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 288
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -746,18 +486,10 @@
       "source": "leadlag",
       "metric": "contemporaneous_correlation",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/leadlag_ticker.json",
+      "file": "manifest/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 287
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -765,18 +497,10 @@
       "source": "leadlag",
       "metric": "lag_peak_prominence",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/leadlag_ticker.json",
+      "file": "manifest/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 282
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -784,18 +508,10 @@
       "source": "leadlag",
       "metric": "lag_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/leadlag_ticker.json",
+      "file": "manifest/leadlag_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledMove (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 290
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -803,18 +519,10 @@
       "source": "liquidity",
       "metric": "best_ask_price",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 451
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -822,18 +530,10 @@
       "source": "liquidity",
       "metric": "best_bid_price",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 452
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -842,18 +542,10 @@
       "metric": "depth_ratio",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 439
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -862,18 +554,10 @@
       "metric": "depth_zscore",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 431
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -881,18 +565,10 @@
       "source": "liquidity",
       "metric": "midpoint",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 450
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -900,18 +576,10 @@
       "source": "liquidity",
       "metric": "relative_spread",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 429
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -919,18 +587,10 @@
       "source": "liquidity",
       "metric": "spread",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 449
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -939,18 +599,10 @@
       "metric": "touch_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/liquidity_ticker.json",
+      "file": "manifest/liquidity_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 440
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -958,18 +610,10 @@
       "source": "morphology",
       "metric": "book_shape_ks",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/morphology_level3.json",
+      "file": "manifest/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 568
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -978,18 +622,10 @@
       "metric": "concentration",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/morphology_level3.json",
+      "file": "manifest/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 572
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -998,18 +634,10 @@
       "metric": "concentration",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/morphology_level3.json",
+      "file": "manifest/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 571
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1018,18 +646,10 @@
       "metric": "entropy",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/morphology_level3.json",
+      "file": "manifest/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DenseNeutrality (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 570
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1038,18 +658,10 @@
       "metric": "entropy",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/morphology_level3.json",
+      "file": "manifest/morphology_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DenseNeutrality (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 569
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1057,18 +669,10 @@
       "source": "pumpdump",
       "metric": "best_ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_level3.json",
+      "file": "manifest/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 422
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1076,18 +680,10 @@
       "source": "pumpdump",
       "metric": "best_bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_level3.json",
+      "file": "manifest/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 423
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1095,18 +691,10 @@
       "source": "pumpdump",
       "metric": "midpoint",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_level3.json",
+      "file": "manifest/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 424
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1114,18 +702,10 @@
       "source": "pumpdump",
       "metric": "notional_rate_baseline",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:OrganicTrend (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 413
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1133,18 +713,10 @@
       "source": "pumpdump",
       "metric": "notional_rate_divergence",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 403
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1152,18 +724,10 @@
       "source": "pumpdump",
       "metric": "notional_rate_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 420
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1171,18 +735,10 @@
       "source": "pumpdump",
       "metric": "relative_spread",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_level3.json",
+      "file": "manifest/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CoiledCompression (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 406
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1190,18 +746,10 @@
       "source": "pumpdump",
       "metric": "spread",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_level3.json",
+      "file": "manifest/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CoiledCompression (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 410
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1209,18 +757,10 @@
       "source": "pumpdump",
       "metric": "spread_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_level3.json",
+      "file": "manifest/pumpdump_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CoiledCompression (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 407
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1228,18 +768,10 @@
       "source": "pumpdump",
       "metric": "trade_interval_seconds",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:OrganicTrend (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 411
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1247,18 +779,10 @@
       "source": "pumpdump",
       "metric": "trade_notional",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:FadedExhaustion (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 418
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1266,18 +790,10 @@
       "source": "pumpdump",
       "metric": "trade_price",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 421
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1285,18 +801,10 @@
       "source": "pumpdump",
       "metric": "trade_quantity",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:FadedExhaustion (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 419
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1304,27 +812,8 @@
       "source": "pumpdump",
       "metric": "volume_rate",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/pumpdump_trade.json",
+      "file": "manifest/pumpdump_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 401
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "quote/price",
-      "source": "quote",
-      "metric": "price",
-      "package": "github.com/theapemachine/symm/tests/market",
-      "file": "tests/market/training.go",
-      "line": 33,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1334,18 +823,10 @@
       "source": "sentiment",
       "metric": "breadth_zscore",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/sentiment_ticker.json",
+      "file": "manifest/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicSlump (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 463
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1353,18 +834,10 @@
       "source": "sentiment",
       "metric": "largest_signed_return",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/sentiment_ticker.json",
+      "file": "manifest/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RiskOnSurge (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 459
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1372,18 +845,10 @@
       "source": "sentiment",
       "metric": "median_return",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/sentiment_ticker.json",
+      "file": "manifest/sentiment_ticker.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RiskOnSurge (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 460
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1392,18 +857,10 @@
       "metric": "best_price",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 558
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1412,18 +869,10 @@
       "metric": "best_price",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 559
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1431,18 +880,10 @@
       "source": "toxicity",
       "metric": "bracket_trade_quantity",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_trade.json",
+      "file": "manifest/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:HiddenAbsorption (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 552
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1451,18 +892,10 @@
       "metric": "fill_fraction_baseline",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_trade.json",
+      "file": "manifest/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ThermalExhaustion (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 550
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1471,18 +904,10 @@
       "metric": "fill_fraction_zscore",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_trade.json",
+      "file": "manifest/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LiquidityVacuum (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 521
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1491,18 +916,10 @@
       "metric": "retreat_fraction",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LiquidityShock (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 540
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1511,18 +928,10 @@
       "metric": "retreat_fraction",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LiquidityShock (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 539
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1530,7 +939,7 @@
       "source": "toxicity",
       "metric": "returns",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_trade.json",
+      "file": "manifest/toxicity_trade.json",
       "line": 1,
       "consumers": [],
       "dead": true,
@@ -1542,18 +951,10 @@
       "metric": "touch_fill_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_trade.json",
+      "file": "manifest/toxicity_trade.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:HiddenAbsorption (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 554
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1562,18 +963,10 @@
       "metric": "touch_price_log_change",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:MechanicalCollapse (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 546
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1582,18 +975,10 @@
       "metric": "touch_price_log_change",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:MechanicalCollapse (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 545
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1602,18 +987,10 @@
       "metric": "touch_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 556
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1622,729 +999,21 @@
       "metric": "touch_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal",
-      "file": "signal/definitions/toxicity_level3.json",
+      "file": "manifest/toxicity_level3.json",
       "line": 1,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 557
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     }
   ],
-  "consumers": [
-    {
-      "consumer": "category:ActiveReversal (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 358,
-      "targets": [
-        "hawkes/excitation_decay:buy_from_sell",
-        "hawkes/excitation_decay:sell_from_buy",
-        "hawkes/excitation_timescale:buy_from_sell",
-        "hawkes/excitation_timescale:sell_from_buy",
-        "hawkes/offspring:buy_from_sell",
-        "hawkes/offspring:sell_from_buy",
-        "toxicity/fill_fraction_divergence:ask",
-        "toxicity/fill_fraction_divergence:bid"
-      ]
-    },
-    {
-      "consumer": "category:AdverseLeverageBuildup (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 509,
-      "targets": [
-        "derivatives/liquidation_notional_rate",
-        "derivatives/liquidation_share_velocity"
-      ]
-    },
-    {
-      "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 309,
-      "targets": [
-        "cvd/aggressive_notional:buy",
-        "cvd/aggressive_notional:sell",
-        "cvd/cumulative_notional_delta",
-        "cvd/cumulative_volume_delta",
-        "cvd/net_executed_quantity",
-        "cvd/net_notional",
-        "cvd/signed_net_fraction_divergence",
-        "cvd/signed_net_fraction_zscore"
-      ]
-    },
-    {
-      "consumer": "category:AnchorStall (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 293,
-      "targets": [
-        "leadlag/best_lag_correlation_zscore",
-        "leadlag/lag_velocity"
-      ]
-    },
-    {
-      "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 389,
-      "targets": [
-        "depthflow/delete_count:ask",
-        "depthflow/delete_count:bid",
-        "depthflow/mutation_activity_imbalance",
-        "depthflow/mutation_count:ask",
-        "depthflow/mutation_count:bid",
-        "depthflow/observed_notional_rate_divergence",
-        "liquidity/divergence_velocity:ask",
-        "liquidity/divergence_velocity:bid",
-        "liquidity/spread_divergence_velocity",
-        "morphology/book_shape_distance",
-        "morphology/book_shape_ks",
-        "morphology/morphology_change"
-      ]
-    },
-    {
-      "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 270,
-      "targets": [
-        "correlation/effective_sample_count",
-        "correlation/observation_count",
-        "correlation/overlap_density",
-        "correlation/overlap_pair_count",
-        "correlation/shared_time",
-        "correlation/supported_return_count:measured",
-        "correlation/supported_return_count:reference",
-        "cvd/cvd_epoch_from",
-        "hawkes/log_likelihood:hawkes",
-        "hawkes/log_likelihood:poisson",
-        "hawkes/log_likelihood:self_only",
-        "hawkes/log_likelihood_gain_per_event_vs_self_only",
-        "hawkes/log_likelihood_gain_vs_self_only",
-        "leadlag/effective_sample_count",
-        "leadlag/lag_noise_scale_seconds",
-        "leadlag/lag_search_resolution_seconds",
-        "leadlag/lag_search_span",
-        "leadlag/measured_return_count",
-        "leadlag/observation_count",
-        "leadlag/overlap_pair_count",
-        "leadlag/reference_return_count",
-        "leadlag/search_count",
-        "sentiment/asof_age_seconds",
-        "sentiment/cohort_horizon_seconds",
-        "sentiment/from_age_seconds",
-        "sentiment/max_asof_age_seconds",
-        "sentiment/median_asof_age_seconds",
-        "sentiment/median_from_age_seconds"
-      ]
-    },
-    {
-      "consumer": "category:CoiledCompression (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 405,
-      "targets": [
-        "pumpdump/relative_spread",
-        "pumpdump/relative_spread_baseline",
-        "pumpdump/spread",
-        "pumpdump/spread_zscore",
-        "pumpdump/volume_bar_duration",
-        "pumpdump/volume_bar_quantity"
-      ]
-    },
-    {
-      "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 252,
-      "targets": [
-        "correlation/focal_return_energy_rate",
-        "correlation/peer_return_energy_rate",
-        "correlation/relative_cohort_return_energy",
-        "correlation/relative_return_energy_baseline",
-        "correlation/relative_return_energy_divergence",
-        "correlation/relative_return_energy_velocity",
-        "correlation/relative_return_energy_zscore",
-        "sentiment/largest_absolute_return",
-        "sentiment/largest_move_ratio",
-        "sentiment/largest_move_ratio_baseline",
-        "sentiment/largest_move_share_baseline",
-        "sentiment/return"
-      ]
-    },
-    {
-      "consumer": "category:DecoupledMove (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 290,
-      "targets": [
-        "leadlag/best_lag_index",
-        "leadlag/lag_divergence_seconds",
-        "leadlag/lag_zscore"
-      ]
-    },
-    {
-      "consumer": "category:DenseNeutrality (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 386,
-      "targets": [
-        "depthflow/observed_notional_rate",
-        "depthflow/observed_notional_rate_baseline",
-        "depthflow/observed_notional_rate_zscore",
-        "morphology/entropy:ask",
-        "morphology/entropy:bid"
-      ]
-    },
-    {
-      "consumer": "category:DerivativesDecoupling (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 513,
-      "targets": [
-        "derivatives/basis_closure_error",
-        "derivatives/basis_rate",
-        "derivatives/basis_zscore",
-        "derivatives/open_interest_growth_baseline"
-      ]
-    },
-    {
-      "consumer": "category:DivergentMove (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 295,
-      "targets": [
-        "leadlag/lag_divergence_seconds",
-        "sentiment/median_absolute_return_zscore",
-        "sentiment/return_dispersion_zscore"
-      ]
-    },
-    {
-      "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 263,
-      "targets": [
-        "correlation/cohort_correlation_dispersion",
-        "correlation/correlation_divergence",
-        "correlation/correlation_velocity",
-        "correlation/return_energy_rate:measured",
-        "correlation/return_energy_rate:reference",
-        "sentiment/return_dispersion_baseline",
-        "sentiment/return_dispersion_ratio",
-        "sentiment/return_dispersion_velocity",
-        "sentiment/return_interquartile_range",
-        "sentiment/return_mad"
-      ]
-    },
-    {
-      "consumer": "category:EndogenousAlpha (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 476,
-      "targets": [
-        "sentiment/largest_move_mad_excess",
-        "sentiment/largest_move_ratio_zscore",
-        "sentiment/largest_move_share_zscore",
-        "sentiment/peer_magnitude_mad",
-        "sentiment/peer_median_absolute_return"
-      ]
-    },
-    {
-      "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 277,
-      "targets": [
-        "correlation/last_price",
-        "derivatives/derivative_price",
-        "derivatives/reference_price",
-        "leadlag/last_price",
-        "liquidity/best_ask_price",
-        "liquidity/best_bid_price",
-        "liquidity/midpoint",
-        "liquidity/spread",
-        "pumpdump/best_ask",
-        "pumpdump/best_bid",
-        "pumpdump/midpoint",
-        "pumpdump/midpoint:at",
-        "pumpdump/midpoint:from",
-        "pumpdump/trade_price",
-        "sentiment/opposite_direction_peer_count",
-        "sentiment/unchanged_count",
-        "sentiment/zero_return_peer_count",
-        "toxicity/best_price:ask",
-        "toxicity/best_price:bid",
-        "toxicity/previous_best_price:ask",
-        "toxicity/previous_best_price:bid"
-      ]
-    },
-    {
-      "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 396,
-      "targets": [
-        "depthflow/observed_notional:ask",
-        "depthflow/observed_notional:bid",
-        "liquidity/depth_divergence:ask",
-        "liquidity/depth_divergence:bid",
-        "liquidity/depth_zscore:ask",
-        "liquidity/depth_zscore:bid",
-        "liquidity/relative_spread",
-        "liquidity/spread_noise_scale",
-        "toxicity/touch_quantity:ask",
-        "toxicity/touch_quantity:bid"
-      ]
-    },
-    {
-      "consumer": "category:FadedExhaustion (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 416,
-      "targets": [
-        "pumpdump/midpoint_return_rate_divergence",
-        "pumpdump/midpoint_return_zscore",
-        "pumpdump/trade_notional",
-        "pumpdump/trade_quantity"
-      ]
-    },
-    {
-      "consumer": "category:FragileExpansion (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 491,
-      "targets": [
-        "sentiment/absolute_return",
-        "sentiment/largest_move_tie_count",
-        "sentiment/median_absolute_return_ratio"
-      ]
-    },
-    {
-      "consumer": "category:Frenzy (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 337,
-      "targets": [
-        "hawkes/conditional_intensity:buy",
-        "hawkes/conditional_intensity:sell",
-        "hawkes/count_innovation:buy",
-        "hawkes/count_innovation:sell",
-        "hawkes/excitation_amplitude:buy_from_buy",
-        "hawkes/excitation_amplitude:sell_from_sell",
-        "hawkes/excitation_intensity:buy",
-        "hawkes/excitation_intensity:sell",
-        "hawkes/excitation_mass:buy",
-        "hawkes/excitation_mass:sell",
-        "hawkes/excitation_share:buy",
-        "hawkes/excitation_share:sell"
-      ]
-    },
-    {
-      "consumer": "category:HardSupport (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 541,
-      "targets": [
-        "toxicity/net_replenished_quantity:ask",
-        "toxicity/net_replenishment_rate:ask",
-        "toxicity/previous_touch_quantity:ask",
-        "toxicity/previous_touch_quantity:bid"
-      ]
-    },
-    {
-      "consumer": "category:HiddenAbsorption (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 552,
-      "targets": [
-        "toxicity/bracket_trade_quantity",
-        "toxicity/touch_fill_fraction:ask",
-        "toxicity/touch_fill_quantity:ask",
-        "toxicity/touch_fill_rate:ask"
-      ]
-    },
-    {
-      "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 280,
-      "targets": [
-        "leadlag/absolute_correlation_gain",
-        "leadlag/correlation_gain_baseline",
-        "leadlag/correlation_gain_zscore",
-        "leadlag/correlation_p_value",
-        "leadlag/lag_baseline_seconds",
-        "leadlag/lag_peak_prominence",
-        "leadlag/search_adjusted_p_value"
-      ]
-    },
-    {
-      "consumer": "category:Inertial (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 347,
-      "targets": [
-        "hawkes/arrival_rate",
-        "hawkes/arrival_rate:buy",
-        "hawkes/arrival_rate:sell",
-        "hawkes/background_rate",
-        "hawkes/background_rate:buy",
-        "hawkes/background_rate:sell",
-        "hawkes/event_count"
-      ]
-    },
-    {
-      "consumer": "category:LeveragedIgnition (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 505,
-      "targets": [
-        "derivatives/open_interest_change",
-        "derivatives/open_interest_growth_rate",
-        "derivatives/open_interest_growth_zscore",
-        "derivatives/open_interest_log_change"
-      ]
-    },
-    {
-      "consumer": "category:LiquidityShock (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 533,
-      "targets": [
-        "toxicity/retreat_fraction:ask",
-        "toxicity/retreat_fraction:bid",
-        "toxicity/retreat_fraction_baseline:ask",
-        "toxicity/retreat_fraction_baseline:bid",
-        "toxicity/retreat_rate:ask",
-        "toxicity/retreat_rate:bid",
-        "toxicity/retreated_quantity:ask",
-        "toxicity/retreated_quantity:bid"
-      ]
-    },
-    {
-      "consumer": "category:LiquidityVacuum (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 521,
-      "targets": [
-        "toxicity/fill_fraction_zscore:ask",
-        "toxicity/fill_fraction_zscore:bid",
-        "toxicity/net_withdrawal_fraction:ask",
-        "toxicity/net_withdrawal_rate:ask",
-        "toxicity/net_withdrawn_quantity:ask",
-        "toxicity/net_withdrawn_quantity:bid",
-        "toxicity/retreat_fraction_zscore:ask",
-        "toxicity/retreat_fraction_zscore:bid",
-        "toxicity/withdrawal_fraction_baseline:ask",
-        "toxicity/withdrawal_fraction_baseline:bid",
-        "toxicity/withdrawal_fraction_divergence:ask",
-        "toxicity/withdrawal_fraction_divergence:bid"
-      ]
-    },
-    {
-      "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 380,
-      "targets": [
-        "depthflow/add_notional:ask",
-        "depthflow/add_notional:bid",
-        "depthflow/observed_notional_imbalance",
-        "depthflow/observed_notional_imbalance_baseline",
-        "depthflow/observed_notional_imbalance_divergence",
-        "depthflow/observed_notional_imbalance_zscore",
-        "morphology/concentration:ask",
-        "morphology/concentration:bid"
-      ]
-    },
-    {
-      "consumer": "category:LongDeleveraging (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 511,
-      "targets": [
-        "derivatives/liquidation_share",
-        "derivatives/net_liquidation_notional"
-      ]
-    },
-    {
-      "consumer": "category:MechanicalCollapse (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 354,
-      "targets": [
-        "hawkes/compensator:buy",
-        "hawkes/compensator:sell",
-        "hawkes/offspring:buy_from_buy",
-        "hawkes/offspring:sell_from_sell",
-        "toxicity/touch_price_log_change:ask",
-        "toxicity/touch_price_log_change:bid",
-        "toxicity/unfilled_residual_quantity:ask"
-      ]
-    },
-    {
-      "consumer": "category:OrganicTrend (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 411,
-      "targets": [
-        "pumpdump/midpoint_return_zscore",
-        "pumpdump/notional_rate_baseline",
-        "pumpdump/trade_interval_seconds",
-        "pumpdump/volume_bar_target_quantity",
-        "pumpdump/volume_bar_trade_count"
-      ]
-    },
-    {
-      "consumer": "category:PhysicalField (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 268,
-      "targets": [
-        "correlation/return_energy:measured",
-        "correlation/return_energy:reference"
-      ]
-    },
-    {
-      "consumer": "category:RiskOnSurge (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 455,
-      "targets": [
-        "sentiment/advance_count",
-        "sentiment/directional_agreement",
-        "sentiment/directional_consensus",
-        "sentiment/largest_signed_return",
-        "sentiment/median_return",
-        "sentiment/same_direction_peer_count"
-      ]
-    },
-    {
-      "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 395,
-      "targets": [
-        "depthflow/observed_notional",
-        "liquidity/depth_ratio:ask",
-        "liquidity/touch_notional:ask",
-        "liquidity/touch_notional_baseline:ask",
-        "liquidity/touch_notional_baseline:bid",
-        "liquidity/touch_quantity:ask",
-        "liquidity/two_sided_touch_notional"
-      ]
-    },
-    {
-      "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 322,
-      "targets": [
-        "cvd/executed_quantity:buy",
-        "cvd/executed_quantity:sell",
-        "cvd/flow_aligned_midpoint_return",
-        "cvd/midpoint_log_return",
-        "cvd/midpoint_return_rate_zscore",
-        "cvd/signed_count_fraction",
-        "cvd/trade_count",
-        "cvd/trade_count:buy",
-        "cvd/trade_count:sell"
-      ]
-    },
-    {
-      "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 259,
-      "targets": [
-        "correlation/correlation_baseline",
-        "correlation/correlation_p_value",
-        "correlation/correlation_standard_error_fisher",
-        "correlation/correlation_zscore",
-        "hawkes/event_count:buy",
-        "hawkes/event_count:sell",
-        "hawkes/excitation_share",
-        "liquidity/depth_noise_scale:ask",
-        "liquidity/depth_noise_scale:bid",
-        "liquidity/divergence_velocity_snr:ask",
-        "liquidity/divergence_velocity_snr:bid",
-        "liquidity/spread_divergence_velocity_snr"
-      ]
-    },
-    {
-      "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 287,
-      "targets": [
-        "leadlag/best_lag_correlation",
-        "leadlag/best_lag_correlation_baseline",
-        "leadlag/contemporaneous_correlation"
-      ]
-    },
-    {
-      "consumer": "category:SystemicBeta (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 472,
-      "targets": [
-        "sentiment/magnitude_mad",
-        "sentiment/mean_absolute_return",
-        "sentiment/median_absolute_return",
-        "sentiment/rms_return"
-      ]
-    },
-    {
-      "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 245,
-      "targets": [
-        "correlation/absolute_correlation",
-        "correlation/cohort_absolute_correlation",
-        "correlation/cohort_effective_peer_count",
-        "correlation/cohort_peer_count",
-        "correlation/cohort_signed_correlation",
-        "correlation/covariance",
-        "correlation/signed_correlation",
-        "sentiment/cohort_member_count",
-        "sentiment/excluded_member_count",
-        "sentiment/unchanged_fraction",
-        "sentiment/valid_member_count",
-        "sentiment/zero_return_peer_fraction"
-      ]
-    },
-    {
-      "consumer": "category:SystemicSlump (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 463,
-      "targets": [
-        "sentiment/breadth_zscore",
-        "sentiment/decline_count",
-        "sentiment/decline_fraction",
-        "sentiment/opposite_direction_peer_fraction"
-      ]
-    },
-    {
-      "consumer": "category:ThermalExhaustion (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 364,
-      "targets": [
-        "hawkes/excitation_decay:buy_from_buy",
-        "hawkes/excitation_decay:sell_from_sell",
-        "hawkes/excitation_timescale:buy_from_buy",
-        "hawkes/excitation_timescale:sell_from_sell",
-        "toxicity/fill_fraction_baseline:ask",
-        "toxicity/fill_fraction_baseline:bid"
-      ]
-    },
-    {
-      "consumer": "category:Turbulent (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 296,
-      "targets": [
-        "hawkes/branching_spectral_radius",
-        "hawkes/log_likelihood_gain_vs_poisson",
-        "hawkes/log_likelihood_per_event:hawkes",
-        "leadlag/correlation_gain_velocity",
-        "morphology/morphology_change",
-        "morphology/morphology_change_baseline"
-      ]
-    },
-    {
-      "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 400,
-      "targets": [
-        "cvd/signed_net_fraction_zscore",
-        "depthflow/observed_notional_imbalance_zscore",
-        "hawkes/branching_spectral_radius",
-        "hawkes/log_likelihood_gain_per_event_vs_poisson",
-        "pumpdump/midpoint_return_rate_zscore",
-        "pumpdump/notional_rate_divergence",
-        "pumpdump/notional_rate_zscore",
-        "pumpdump/volume_bar_notional",
-        "pumpdump/volume_bar_quantity",
-        "pumpdump/volume_rate"
-      ]
-    },
-    {
-      "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-      "kind": "bound",
-      "package": "github.com/theapemachine/symm/types",
-      "file": "types/category.go",
-      "line": 317,
-      "targets": [
-        "cvd/gross_executed_quantity",
-        "cvd/gross_notional",
-        "cvd/gross_notional_rate_divergence",
-        "cvd/mean_trade_notional",
-        "cvd/trade_rate"
-      ]
-    }
-  ],
+  "consumers": [],
   "unresolved": null,
   "summary": {
-    "totalProducers": 92,
-    "deadProducers": 19,
-    "referencedProducers": 73,
+    "totalProducers": 89,
+    "deadProducers": 89,
+    "referencedProducers": 0,
     "kernelOnlyProducers": 0,
-    "boundConsumerEdges": 313,
+    "boundConsumerEdges": 0,
     "catalogConsumerEdges": 0,
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,

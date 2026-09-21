@@ -303,7 +303,8 @@ export const JournalSurface = () => {
 			),
 		);
 
-		for (const record of history) {
+		const records = Array.isArray(history) ? history : Object.values(history ?? {});
+		for (const record of records) {
 			const entry = fromRecord(record);
 			if (!entry) continue;
 

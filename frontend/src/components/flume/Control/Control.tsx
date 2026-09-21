@@ -14,8 +14,9 @@ import type {
 	SelectOption,
 	ValueSetter,
 } from "#/components/flume/types";
-import { Input as InputPrimitive } from "#/components/ui/input";
-import styles from "./Control.module.css";
+import { Input } from "#/components/ui/input";
+import { Label } from "#/components/ui/label";
+import { Textarea } from "#/components/ui/textarea";
 
 interface CommonProps {
 	name: string;
@@ -33,6 +34,13 @@ interface CommonProps {
 
 interface TextInputProps extends CommonProps {
 	type: "text";
+	data: string;
+	defaultValue?: string;
+	placeholder?: string;
+}
+
+interface TextareaInputProps extends CommonProps {
+	type: "textarea";
 	data: string;
 	defaultValue?: string;
 	placeholder?: string;
@@ -85,6 +93,7 @@ interface CustomProps extends CommonProps {
 
 type ControlProps =
 	| TextInputProps
+	| TextareaInputProps
 	| NumberInputProps
 	| CheckboxProps
 	| SelectProps
@@ -168,57 +177,103 @@ const Control = (props: ControlProps) => {
 				const { placeholder } = props as TextInputProps;
 
 				return (
-					<InputPrimitive
-						className="w-full min-w-0"
-						data-flume-component="text-(--f2)-text"
-						value={(props.data as string) ?? ""}
-						onDragStart={(e) => {
-							e.stopPropagation();
-						}}
-						onMouseDown={handleResizeMouseDown}
-						onChange={(event) => {
-							commonProps.onChange(event.target.value);
-						}}
-						placeholder={placeholder}
-						size="s"
-					/>
+					<Input.Field
+						variant="box"
+						className="w-full min-w-0 bg-(--sunken) border-(--line2) rounded-[3px] hover:border-(--line) focus-within:border-(--acc) focus-within:ring-1 focus-within:ring-(--acc)/40 transition-colors shadow-inner"
+					>
+						<Input
+							className="w-full min-w-0 font-mono text-xs text-(--f1) placeholder:text-(--f4)"
+							data-flume-component="text-(--f2)-text"
+							value={(props.data as string) ?? ""}
+							onDragStart={(e) => {
+								e.stopPropagation();
+							}}
+							onMouseDown={handleResizeMouseDown}
+							onChange={(event) => {
+								commonProps.onChange(event.target.value);
+							}}
+							placeholder={placeholder || (calculatedLabel ? `Enter ${calculatedLabel}...` : "value")}
+							size="s"
+							mono
+						/>
+					</Input.Field>
+				);
+			}
+			case "textarea": {
+				const { placeholder } = props as TextareaInputProps;
+
+				return (
+					<Input.Field
+						variant="box"
+						className="w-full min-w-0 bg-(--sunken) border-(--line2) rounded-[3px] items-start py-1.5 hover:border-(--line) focus-within:border-(--acc) focus-within:ring-1 focus-within:ring-(--acc)/40 transition-colors shadow-inner"
+					>
+						<Textarea
+							className="w-full min-w-0 font-mono text-xs text-(--f1) placeholder:text-(--f4) resize-y min-h-[60px]"
+							data-flume-component="textarea-(--f2)"
+							value={(props.data as string) ?? ""}
+							onDragStart={(e) => {
+								e.stopPropagation();
+							}}
+							onMouseDown={handleResizeMouseDown}
+							onKeyDown={(e) => {
+								e.stopPropagation();
+							}}
+							onChange={(event) => {
+								commonProps.onChange(event.target.value);
+							}}
+							placeholder={
+								placeholder ||
+								(calculatedLabel
+									? `Enter ${calculatedLabel} (JSON)...`
+									: "JSON / bytes")
+							}
+							size="s"
+							mono
+						/>
+					</Input.Field>
 				);
 			}
 			case "number": {
 				const { step, placeholder } = props as NumberInputProps;
 
 				return (
-					<InputPrimitive
-						className="w-full min-w-0"
-						data-flume-component="text-(--f2)-number"
-						value={(props.data as number) ?? 0}
-						onDragStart={(e) => {
-							e.stopPropagation();
-						}}
-						onMouseDown={handleResizeMouseDown}
-						onKeyDown={(e) => {
-							if (e.key === "e" || e.key === "E") {
-								e.preventDefault();
-							}
-						}}
-						onBlur={(e) => {
-							if (!e.target.value) {
-								commonProps.onChange(0);
-							}
-						}}
-						onChange={(event) => {
-							const inputValue = event.target.value.replace(/e/g, "");
-							if (!inputValue) {
-								return;
-							}
-							const value = parseFloat(inputValue);
-							commonProps.onChange(Number.isNaN(value) ? 0 : value);
-						}}
-						step={step ?? 1}
-						type="number"
-						placeholder={placeholder}
-						size="s"
-					/>
+					<Input.Field
+						variant="box"
+						className="w-full min-w-0 bg-(--sunken) border-(--line2) rounded-[3px] hover:border-(--line) focus-within:border-(--acc) focus-within:ring-1 focus-within:ring-(--acc)/40 transition-colors shadow-inner"
+					>
+						<Input
+							className="w-full min-w-0 font-mono text-xs text-(--f1) placeholder:text-(--f4)"
+							data-flume-component="text-(--f2)-number"
+							value={(props.data as number) ?? 0}
+							onDragStart={(e) => {
+								e.stopPropagation();
+							}}
+							onMouseDown={handleResizeMouseDown}
+							onKeyDown={(e) => {
+								if (e.key === "e" || e.key === "E") {
+									e.preventDefault();
+								}
+							}}
+							onBlur={(e) => {
+								if (!e.target.value) {
+									commonProps.onChange(0);
+								}
+							}}
+							onChange={(event) => {
+								const inputValue = event.target.value.replace(/e/g, "");
+								if (!inputValue) {
+									return;
+								}
+								const value = parseFloat(inputValue);
+								commonProps.onChange(Number.isNaN(value) ? 0 : value);
+							}}
+							step={step ?? 1}
+							type="number"
+							placeholder={placeholder || "0"}
+							size="s"
+							mono
+						/>
+					</Input.Field>
 				);
 			}
 			case "checkbox":
@@ -270,14 +325,14 @@ const Control = (props: ControlProps) => {
 	};
 
 	return (
-		<div className={styles.wrapper} data-flume-component="control">
+		<div className="flex flex-col gap-1 w-full min-w-0" data-flume-component="control">
 			{calculatedLabel && type !== "checkbox" && type !== "custom" && (
-				<span
+				<Label
 					data-flume-component="control-label"
-					className={styles.controlLabel}
+					className="text-[10.5px] font-medium text-(--f3) select-none"
 				>
 					{calculatedLabel}
-				</span>
+				</Label>
 			)}
 			{getControlByType(type)}
 		</div>

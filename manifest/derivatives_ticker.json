@@ -29,7 +29,7 @@
           "out": [
             {
               "nodeId": "extract_last",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -45,7 +45,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -60,7 +60,7 @@
             },
             {
               "nodeId": "returns",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -91,7 +91,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_last",
               "portName": "out"
@@ -106,11 +106,11 @@
             },
             {
               "nodeId": "basis_tanh",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "basis_zscore",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -141,7 +141,7 @@
       "type": "calculus.Tanh",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"
@@ -156,11 +156,11 @@
             },
             {
               "nodeId": "basis_baseline",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "basis_divergence",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -191,7 +191,7 @@
       "type": "statistic.ResidualBaseline",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "basis_tanh",
               "portName": "out"
@@ -233,7 +233,7 @@
       "type": "statistic.ResidualDivergence",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "basis_tanh",
               "portName": "out"
@@ -275,7 +275,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "returns",
               "portName": "out"

@@ -16,7 +16,7 @@ func NewPace() *PaceServer {
 }
 
 func (server *PaceServer) Write(ctx context.Context, call Pace_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

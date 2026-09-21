@@ -11,7 +11,7 @@
           "out": [
             {
               "nodeId": "grid",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -27,7 +27,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -38,7 +38,7 @@
           "out": [
             {
               "nodeId": "sink",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -49,7 +49,7 @@
       "type": "sink",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "grid",
               "portName": "out"

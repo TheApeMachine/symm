@@ -15,7 +15,7 @@ func NewArrivalRate() *ArrivalRateServer {
 }
 
 func (server *ArrivalRateServer) Write(ctx context.Context, call ArrivalRate_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

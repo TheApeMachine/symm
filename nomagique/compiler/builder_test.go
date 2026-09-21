@@ -6,14 +6,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique/compiler"
-	"github.com/theapemachine/symm/signal"
 )
 
 func TestBuilderCompose(t *testing.T) {
 	Convey("Given signal definitions", t, func() {
-		ids, err := signal.ListDefinitions()
+		repo := compiler.DefaultRepository()
+		ids, err := repo.List()
 		So(err, ShouldBeNil)
 		So(len(ids), ShouldBeGreaterThan, 0)
 
@@ -27,7 +26,7 @@ func TestBuilderCompose(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(builder, ShouldNotBeNil)
 
-				pipeline, err := builder.Compose(definitions.Default())
+				pipeline, err := builder.Compose(repo)
 				if err != nil {
 					So(err.Error(), ShouldNotBeEmpty)
 					return

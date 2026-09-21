@@ -15,7 +15,7 @@ func NewConditionalIntensity() *ConditionalIntensityServer {
 }
 
 func (server *ConditionalIntensityServer) Write(ctx context.Context, call ConditionalIntensity_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

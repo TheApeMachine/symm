@@ -18,9 +18,9 @@ func NewPack() *PackServer {
 
 func (s *PackServer) Write(ctx context.Context, call Pack_write) error {
 	var pw [3]uint64
-	pw[0] = call.Args().Count()
-	pw[1] = call.Args().Mass()
-	pw[2] = call.Args().WriteStep()
+	pw[0] = uint64(call.Args().Count())
+	pw[1] = uint64(call.Args().Mass())
+	pw[2] = uint64(call.Args().WriteStep())
 
 	var buf bytes.Buffer
 	if err := binary.Write(&buf, binary.LittleEndian, pw); err != nil {

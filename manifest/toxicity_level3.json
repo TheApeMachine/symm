@@ -39,19 +39,19 @@
           "out": [
             {
               "nodeId": "extract_bid",
-              "portName": "in"
+              "portName": "data"
             },
             {
               "nodeId": "extract_ask",
-              "portName": "in"
+              "portName": "data"
             },
             {
               "nodeId": "extract_bid_qty",
-              "portName": "in"
+              "portName": "data"
             },
             {
               "nodeId": "extract_ask_qty",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -62,7 +62,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -73,11 +73,11 @@
           "out": [
             {
               "nodeId": "bid_change",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "retreat_bid",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -113,7 +113,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -124,11 +124,11 @@
           "out": [
             {
               "nodeId": "ask_change",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "retreat_ask",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -164,7 +164,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -204,7 +204,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -244,7 +244,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_bid",
               "portName": "out"
@@ -279,7 +279,7 @@
       "type": "temporal.LogReturns",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "extract_ask",
               "portName": "out"

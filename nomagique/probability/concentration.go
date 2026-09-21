@@ -15,7 +15,7 @@ func NewConcentration() *ConcentrationServer {
 }
 
 func (server *ConcentrationServer) Write(ctx context.Context, call Concentration_write) error {
-	val := call.Args().In()
+	val := call.Args().Value()
 	server.out = val * val
 	return nil
 }

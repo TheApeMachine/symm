@@ -11,7 +11,7 @@ type TransitionServer struct {
 }
 
 func (srv *TransitionServer) Write(ctx context.Context, call Transition_write) error {
-	data, err := call.Args().A()
+	data, err := call.Args().Data()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(

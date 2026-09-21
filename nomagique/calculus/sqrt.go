@@ -12,7 +12,7 @@ type SqrtServer struct {
 }
 
 func (srv *SqrtServer) Write(ctx context.Context, call Sqrt_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 
 	if inVal < 0 {
 		return errnie.Error(errnie.Err(

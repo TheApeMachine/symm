@@ -13,7 +13,7 @@ type ElapsedServer struct {
 }
 
 func (srv *ElapsedServer) Write(ctx context.Context, call Elapsed_write) error {
-	inVal := call.Args().A()
+	inVal := call.Args().Timestamp()
 
 	if !srv.initialized {
 		srv.previous = inVal

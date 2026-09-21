@@ -19,7 +19,7 @@
           "value": [
             {
               "nodeId": "stage_0",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -43,7 +43,7 @@
       },
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "src",
               "portName": "value"
@@ -51,10 +51,16 @@
           ]
         },
         "outputs": {
-          "out": [
+          "time": [
             {
               "nodeId": "stage_1",
-              "portName": "in"
+              "portName": "time"
+            }
+          ],
+          "mark": [
+            {
+              "nodeId": "stage_1",
+              "portName": "mark"
             }
           ]
         }
@@ -68,10 +74,16 @@
       "inputData": {},
       "connections": {
         "inputs": {
-          "in": [
+          "time": [
             {
               "nodeId": "stage_0",
-              "portName": "out"
+              "portName": "time"
+            }
+          ],
+          "mark": [
+            {
+              "nodeId": "stage_0",
+              "portName": "mark"
             }
           ]
         },

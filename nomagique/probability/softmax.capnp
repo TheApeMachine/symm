@@ -5,6 +5,6 @@ $Go.package("probability");
 $Go.import("github.com/theapemachine/symm/nomagique/probability");
 
 interface Softmax {
-  write @0 (in :Float64) -> stream;
+  write @0 (value :Float64) -> stream;
   done @1 () -> (out :Float64);
 }

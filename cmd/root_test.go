@@ -6,13 +6,12 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique/compiler"
 )
 
 func TestExecute(t *testing.T) {
 	Convey("Given the system pipeline definition", t, func() {
-		pipeline, err := compiler.CompileFile("../manifest/system.json", nil, definitions.Default())
+		pipeline, err := compiler.CompileFile("../manifest/system.json", nil, compiler.DefaultRepository())
 		So(err, ShouldBeNil)
 		So(pipeline, ShouldNotBeNil)
 

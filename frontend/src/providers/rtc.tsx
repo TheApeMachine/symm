@@ -1,50 +1,17 @@
 import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
-import { useEffect } from "react";
 import {
-	onlineAtom,
 	RingBuffer,
 	signals,
 	symbolsAtom,
 	updateClock,
 } from "#/collections/app";
-import { FluidRecordReader } from "#/components/fluid-3d/record";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
 import type { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
 import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
-
-const resonanceChannel = "resonance";
-
-// Backoff policy mirrors the websocket worker so both transports degrade at the
-// same pace instead of one silently giving up on a transient failure.
-const RECONNECT_BASE_MS = 500;
-const RECONNECT_MAX_MS = 10_000;
-
-/*
-Every connection attempt owns a fresh RTCPeerConnection. These lifecycle states
-all mean "this peer is no longer usable": destroy it and schedule a retry.
-*/
-const TERMINAL_CONNECTION_STATES: ReadonlySet<RTCPeerConnectionState> = new Set(
-	["failed", "disconnected", "closed"],
-);
-
-const signalingURL = () => {
-	if (import.meta.env.VITE_SYMM_WEBRTC_URL?.trim()) {
-		return import.meta.env.VITE_SYMM_WEBRTC_URL.trim();
-	}
-	const host =
-		typeof window !== "undefined" && window.location.hostname
-			? window.location.hostname
-			: "127.0.0.1";
-	return `http://${host}:8765/webrtc/manifold`;
-};
-
-const setTransport = (status: "ONLINE" | "CONNECTING" | "OFFLINE") => {
-	onlineAtom.set(status);
-};
 
 export const dispatchResonanceRow = (row: {
 	symbol: () => string | null;
@@ -134,24 +101,7 @@ export const dispatchResonanceBuffer = (buffer: flatbuffers.ByteBuffer) => {
 	});
 };
 
-const waitForIceGathering = (connection: RTCPeerConnection) => {
-	if (connection.iceGatheringState === "complete") {
-		return Promise.resolve();
-	}
 
-	return new Promise<void>((resolve) => {
-		const onState = () => {
-			if (connection.iceGatheringState !== "complete") {
-				return;
-			}
-
-			connection.removeEventListener("icegatheringstatechange", onState);
-			resolve();
-		};
-
-		connection.addEventListener("icegatheringstatechange", onState);
-	});
-};
 
 /*
 RtcFeed owns the global WebRTC transport for the two payload families that left

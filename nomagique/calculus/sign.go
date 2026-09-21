@@ -11,7 +11,7 @@ type SignServer struct {
 }
 
 func (srv *SignServer) Write(ctx context.Context, call Sign_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 
 	if inVal < 0 {
 		srv.out = -1

@@ -66,7 +66,7 @@ func TestExecutionPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params execution.Gate_write_Params) error {
-				return params.SetIn("enter")
+				return params.SetText("enter")
 			})
 			So(err, ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)

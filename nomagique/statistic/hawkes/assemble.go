@@ -20,7 +20,7 @@ func (s *AssembleServer) Write(ctx context.Context, call Assemble_write) error {
 	ts := float64(args.Timestamp())
 	sideStr, _ := args.Side()
 
-	if inData, err := args.In(); err == nil && len(inData) > 0 {
+	if inData, err := args.Data(); err == nil && len(inData) > 0 {
 		var in map[string]any
 		if err := sonic.Unmarshal(inData, &in); err == nil && in != nil {
 			if t, ok := in["timestamp"].(float64); ok {

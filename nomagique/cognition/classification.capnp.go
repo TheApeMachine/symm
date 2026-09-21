@@ -290,12 +290,12 @@ func (s Classification_write_Params) SetProb(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s Classification_write_Params) Support() uint64 {
-	return capnp.Struct(s).Uint64(8)
+func (s Classification_write_Params) Support() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
 }
 
-func (s Classification_write_Params) SetSupport(v uint64) {
-	capnp.Struct(s).SetUint64(8, v)
+func (s Classification_write_Params) SetSupport(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
 // Classification_write_Params_List is a list of Classification_write_Params.
@@ -469,12 +469,12 @@ func (s Classification_done_Results) SetContrast(v float64) {
 	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s Classification_done_Results) Support() uint64 {
-	return capnp.Struct(s).Uint64(16)
+func (s Classification_done_Results) Support() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
 }
 
-func (s Classification_done_Results) SetSupport(v uint64) {
-	capnp.Struct(s).SetUint64(16, v)
+func (s Classification_done_Results) SetSupport(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
 }
 
 func (s Classification_done_Results) Passed() bool {

@@ -20,7 +20,7 @@ func NewConstantServer(val []byte) *ConstantServer {
 }
 
 func (server *ConstantServer) Write(ctx context.Context, call Constant_write) error {
-	inData, err := call.Args().In()
+	inData, err := call.Args().Data()
 	if err == nil && len(inData) > 0 {
 		server.value = bytes.Clone(inData)
 	}

@@ -139,30 +139,27 @@ export function useDefinitions(): {
 	data: string[];
 	isPending: boolean;
 	isError: boolean;
+	refetch: () => void;
 } {
 	const [data, setData] = useState<string[]>([]);
 	const [isPending, setIsPending] = useState(true);
 	const [isError, setIsError] = useState(false);
 
-	useEffect(() => {
-		let live = true;
+	const load = () => {
 		fetchDefinitions()
 			.then((defs) => {
-				if (live) {
-					setData(defs);
-					setIsPending(false);
-				}
+				setData(defs);
+				setIsPending(false);
 			})
 			.catch(() => {
-				if (live) {
-					setIsError(true);
-					setIsPending(false);
-				}
+				setIsError(true);
+				setIsPending(false);
 			});
-		return () => {
-			live = false;
-		};
+	};
+
+	useEffect(() => {
+		load();
 	}, []);
 
-	return { data, isPending, isError };
+	return { data, isPending, isError, refetch: load };
 }

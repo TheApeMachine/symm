@@ -15,7 +15,7 @@ type ZScoreServer struct {
 }
 
 func (srv *ZScoreServer) Write(ctx context.Context, call ZScore_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	srv.count++
 	delta := inVal - srv.mean
 	srv.mean += delta / srv.count

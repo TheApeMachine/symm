@@ -18,7 +18,7 @@ func TestTransportPrimitives(t *testing.T) {
 			So(client.IsValid(), ShouldBeTrue)
 
 			err := client.Write(ctx, func(params transport.Process_write_Params) error {
-				params.SetIn([]byte("kraken_payload"))
+				params.SetData([]byte("kraken_payload"))
 				params.SetBinary("kraken")
 				params.SetArgs("paper")
 				return nil

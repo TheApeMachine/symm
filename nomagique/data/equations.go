@@ -16,7 +16,7 @@ func NewEquation() *EquationServer {
 }
 
 func (s *EquationServer) Write(ctx context.Context, call Equation_write) error {
-	in, err := call.Args().In()
+	in, err := call.Args().Data()
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "failed to read in", err))
 	}

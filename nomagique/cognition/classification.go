@@ -16,7 +16,7 @@ type ClassificationServer struct {
 type classificationItem struct {
 	name    []byte
 	prob    float64
-	support uint64
+	support int64
 }
 
 func NewClassification() *ClassificationServer {
@@ -77,7 +77,7 @@ func (s *ClassificationServer) Done(ctx context.Context, call Classification_don
 		_ = results.SetRunnerUp(runnerUp)
 		results.SetProb(winner.prob)
 		results.SetContrast(contrast)
-		results.SetSupport(winner.support)
+		results.SetSupport(int64(winner.support))
 		results.SetPassed(passed)
 	}
 

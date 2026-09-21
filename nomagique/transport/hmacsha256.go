@@ -16,7 +16,7 @@ func NewHMACSHA256() *HMACSHA256Server {
 }
 
 func (server *HMACSHA256Server) Write(ctx context.Context, call HMACSHA256_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

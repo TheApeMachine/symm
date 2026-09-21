@@ -12,7 +12,7 @@ type AbsoluteServer struct {
 }
 
 func (srv *AbsoluteServer) Write(ctx context.Context, call Absolute_write) error {
-	srv.out = math.Abs(call.Args().In())
+	srv.out = math.Abs(call.Args().Value())
 	return nil
 }
 

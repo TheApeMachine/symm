@@ -28,7 +28,7 @@ export const createHash = () => ({
 });
 export const URL = typeof window !== 'undefined' ? window.URL : function() {};
 
-const mockModule = {
+const mockModule: Record<string, unknown> = {
 	createConnection,
 	EventEmitter,
 	Socket,
@@ -50,6 +50,3 @@ export const createRequire = () => (modName: string) => {
 mockModule.createRequire = createRequire as any;
 
 export default mockModule;
-if (typeof module !== 'undefined') {
-	module.exports = mockModule;
-}

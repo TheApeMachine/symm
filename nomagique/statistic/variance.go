@@ -14,7 +14,7 @@ type VarianceServer struct {
 }
 
 func (srv *VarianceServer) Write(ctx context.Context, call Variance_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	srv.count++
 	delta := inVal - srv.mean
 	srv.mean += delta / srv.count

@@ -35,7 +35,7 @@ const encodeEquityFrame = (
 };
 
 const applyEquityFrame = (frame: EquityFrame) => {
-	updateEquity(frame.cash(), frame.unrealized(), frame.equity());
+	updateEquity(frame.cash() ?? "", frame.unrealized() ?? "", frame.equity() ?? "");
 };
 
 describe("Balance", () => {

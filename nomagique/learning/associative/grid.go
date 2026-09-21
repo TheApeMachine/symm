@@ -16,7 +16,7 @@ func NewGrid() *GridServer {
 }
 
 func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
-	in, _ := call.Args().In()
+	in, _ := call.Args().Data()
 	if len(in) > 0 {
 		server.out = bytes.Clone(in)
 	} else {

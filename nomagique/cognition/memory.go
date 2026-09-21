@@ -93,7 +93,7 @@ func (s *MemoryServer) GetStep(ctx context.Context, call Memory_getStep) error {
 	if s.StepCounter != nil {
 		step = s.StepCounter.Load()
 	}
-	results.SetStep(step)
+	results.SetStep(int64(step))
 	return nil
 }
 
@@ -107,7 +107,7 @@ func (s *MemoryServer) IncrementStep(ctx context.Context, call Memory_incrementS
 	if s.StepCounter != nil {
 		step = s.StepCounter.Add(1)
 	}
-	results.SetStep(step)
+	results.SetStep(int64(step))
 	return nil
 }
 

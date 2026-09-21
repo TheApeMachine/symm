@@ -8,6 +8,7 @@ import type {
 } from "#/components/flume/types";
 import usePrevious from "#/hooks/usePrevious";
 import { cn } from "@/lib/utils";
+import { Label } from "#/components/ui/label";
 import styles from "./IoPorts.module.css";
 import Port from "./Port";
 
@@ -70,6 +71,13 @@ const renderInputControl = ({
 
 	switch (control.type) {
 		case "text": {
+			const value =
+				(data[control.name] as string | undefined) ?? control.defaultValue;
+			return (
+				<Control key={control.name} {...control} {...shared} data={value} />
+			);
+		}
+		case "textarea": {
 			const value =
 				(data[control.name] as string | undefined) ?? control.defaultValue;
 			return (
@@ -169,9 +177,12 @@ const Input = ({
 				/>
 			) : null}
 			{showLabel ? (
-				<span data-flume-component="port-label" className={styles.portLabel}>
+				<Label
+					data-flume-component="port-label"
+					className="text-xs font-normal text-(--f2) select-none"
+				>
 					{label || defaultLabel}
-				</span>
+				</Label>
 			) : null}
 			{showControls ? (
 				<div className={styles.controls}>

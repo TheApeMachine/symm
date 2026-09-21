@@ -5,6 +5,6 @@ $Go.package("calculus");
 $Go.import("github.com/theapemachine/symm/nomagique/calculus");
 
 interface Bound {
-  write @0 (in :Float64, min :Float64, max :Float64) -> stream;
+  write @0 (value :Float64, min :Float64, max :Float64) -> stream;
   done @1 () -> (out :Float64);
 }

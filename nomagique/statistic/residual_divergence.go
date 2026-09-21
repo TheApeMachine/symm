@@ -11,7 +11,7 @@ type ResidualDivergenceServer struct {
 }
 
 func (srv *ResidualDivergenceServer) Write(ctx context.Context, call ResidualDivergence_write) error {
-	srv.out = call.Args().In()
+	srv.out = call.Args().Value()
 	return nil
 }
 

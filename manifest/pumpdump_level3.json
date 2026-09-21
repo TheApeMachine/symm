@@ -29,11 +29,11 @@
           "out": [
             {
               "nodeId": "extract_bid",
-              "portName": "in"
+              "portName": "data"
             },
             {
               "nodeId": "extract_ask",
-              "portName": "in"
+              "portName": "data"
             }
           ]
         }
@@ -44,7 +44,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -55,11 +55,11 @@
           "out": [
             {
               "nodeId": "spread",
-              "portName": "in"
+              "portName": "b"
             },
             {
               "nodeId": "midpoint",
-              "portName": "in"
+              "portName": "b"
             }
           ]
         }
@@ -95,7 +95,7 @@
       "type": "data.Extract",
       "connections": {
         "inputs": {
-          "in": [
+          "data": [
             {
               "nodeId": "source",
               "portName": "out"
@@ -106,11 +106,11 @@
           "out": [
             {
               "nodeId": "spread",
-              "portName": "in"
+              "portName": "a"
             },
             {
               "nodeId": "midpoint",
-              "portName": "in"
+              "portName": "a"
             }
           ]
         }
@@ -146,11 +146,13 @@
       "type": "arithmetic.Subtract",
       "connections": {
         "inputs": {
-          "in": [
+          "a": [
             {
               "nodeId": "extract_ask",
               "portName": "out"
-            },
+            }
+          ],
+          "b": [
             {
               "nodeId": "extract_bid",
               "portName": "out"
@@ -161,15 +163,15 @@
           "out": [
             {
               "nodeId": "relative_spread",
-              "portName": "in"
+              "portName": "a"
             },
             {
               "nodeId": "spread_baseline",
-              "portName": "in"
+              "portName": "value"
             },
             {
               "nodeId": "spread_zscore",
-              "portName": "in"
+              "portName": "value"
             }
           ]
         }
@@ -200,11 +202,13 @@
       "type": "arithmetic.Add",
       "connections": {
         "inputs": {
-          "in": [
+          "a": [
             {
               "nodeId": "extract_ask",
               "portName": "out"
-            },
+            }
+          ],
+          "b": [
             {
               "nodeId": "extract_bid",
               "portName": "out"
@@ -215,7 +219,7 @@
           "out": [
             {
               "nodeId": "relative_spread",
-              "portName": "in"
+              "portName": "b"
             }
           ]
         }
@@ -246,11 +250,13 @@
       "type": "arithmetic.Divide",
       "connections": {
         "inputs": {
-          "in": [
+          "a": [
             {
               "nodeId": "spread",
               "portName": "out"
-            },
+            }
+          ],
+          "b": [
             {
               "nodeId": "midpoint",
               "portName": "out"
@@ -285,7 +291,7 @@
       "type": "statistic.Mean",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "spread",
               "portName": "out"
@@ -320,7 +326,7 @@
       "type": "statistic.ZScore",
       "connections": {
         "inputs": {
-          "in": [
+          "value": [
             {
               "nodeId": "spread",
               "portName": "out"

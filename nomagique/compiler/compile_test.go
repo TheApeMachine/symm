@@ -148,7 +148,7 @@ func TestCompileFlume(t *testing.T) {
 						Type: "test.Float64Source",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
-								"out": {{NodeID: "atanh", PortName: "in"}},
+								"out": {{NodeID: "atanh", PortName: "value"}},
 							},
 						},
 					},

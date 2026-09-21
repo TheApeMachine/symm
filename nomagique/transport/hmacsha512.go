@@ -16,7 +16,7 @@ func NewHMACSHA512() *HMACSHA512Server {
 }
 
 func (server *HMACSHA512Server) Write(ctx context.Context, call HMACSHA512_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

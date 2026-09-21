@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFlumeConfigFromSchemas } from "./build-config-from-schemas";
+import { createFlumeConfig } from "./flume-config.generated";
 import { buildInitialNodes } from "./nodes-actions";
 import { pruneDanglingConnections, reconcileNodes } from "./nodes-helpers";
 import type { DefaultConnection, FlumeNode } from "./types";
@@ -14,7 +14,7 @@ still part of the public surface and remain unit-testable in isolation.
 
 describe("reconcileNodes via buildInitialNodes", () => {
 	it("normalizes persisted nodes missing connections", () => {
-		const config = buildFlumeConfigFromSchemas({});
+		const config = createFlumeConfig();
 
 		const nodes = buildInitialNodes({
 			initialNodes: {
@@ -38,7 +38,7 @@ describe("reconcileNodes via buildInitialNodes", () => {
 	});
 
 	it("drops nodes whose types are not in the current registry", () => {
-		const config = buildFlumeConfigFromSchemas({});
+		const config = createFlumeConfig();
 
 		const nodes = buildInitialNodes({
 			initialNodes: {
@@ -73,25 +73,10 @@ describe("reconcileNodes via buildInitialNodes", () => {
 	});
 
 	it("reconciles without throwing when registry shrinks", () => {
-		const fullConfig = buildFlumeConfigFromSchemas({
-			extra: {
-				kind: "operation",
-				category: "math",
-				op: "math.test",
-				package: "math",
-				builder: "New",
-				variadic: false,
-				name: "math.test",
-				label: "Test",
-				description: "Test op",
-				inputs: [{ name: "x", type: "tensor", description: "" }],
-				outputs: [{ name: "y", type: "tensor", description: "" }],
-				config: [],
-			},
-		});
+		const fullConfig = createFlumeConfig(["test_definition"]);
 
 		const initial = buildInitialNodes({
-			defaultNodes: [{ type: "math.test", x: 10, y: 10 }],
+			defaultNodes: [{ type: "definition:test_definition", x: 10, y: 10 }],
 			env: {
 				nodeTypes: fullConfig.nodeTypes,
 				portTypes: fullConfig.portTypes,
@@ -100,12 +85,12 @@ describe("reconcileNodes via buildInitialNodes", () => {
 		});
 
 		const extraNode = Object.values(initial).find(
-			(node) => node.type === "math.test",
+			(node) => node.type === "definition:test_definition",
 		);
 
 		expect(extraNode).toBeDefined();
 
-		const builtinConfig = buildFlumeConfigFromSchemas({});
+		const builtinConfig = createFlumeConfig([]);
 
 		expect(() =>
 			reconcileNodes(
@@ -124,27 +109,29 @@ describe("reconcileNodes via buildInitialNodes", () => {
 		);
 
 		expect(
-			Object.values(reconciled).some((node) => node.type === "math.test"),
+			Object.values(reconciled).some(
+				(node) => node.type === "definition:test_definition",
+			),
 		).toBe(false);
 	});
 
 	it("wires default demo connections with stable node ids", () => {
-		const config = buildFlumeConfigFromSchemas({});
+		const config = createFlumeConfig();
 		const demoConnections: DefaultConnection[] = [
 			{
-				output: { nodeType: "source", portName: "value" },
-				input: { nodeType: "gate", portName: "in" },
+				output: { nodeType: "source", portName: "out" },
+				input: { nodeType: "arithmetic.Add", portName: "a" },
 			},
 			{
-				output: { nodeType: "gate", portName: "out" },
-				input: { nodeType: "sink", portName: "value" },
+				output: { nodeType: "arithmetic.Add", portName: "out" },
+				input: { nodeType: "sink", portName: "in" },
 			},
 		];
 
 		const nodes = buildInitialNodes({
 			defaultNodes: [
 				{ type: "source", x: 120, y: 180 },
-				{ type: "gate", x: 420, y: 180 },
+				{ type: "arithmetic.Add", x: 420, y: 180 },
 				{ type: "sink", x: 720, y: 180 },
 			],
 			defaultConnections: demoConnections,
@@ -156,20 +143,22 @@ describe("reconcileNodes via buildInitialNodes", () => {
 		});
 
 		const source = Object.values(nodes).find((node) => node.type === "source");
-		const gate = Object.values(nodes).find((node) => node.type === "gate");
+		const testNode = Object.values(nodes).find(
+			(node) => node.type === "arithmetic.Add",
+		);
 		const sink = Object.values(nodes).find((node) => node.type === "sink");
 
 		expect(source).toBeDefined();
-		expect(gate).toBeDefined();
+		expect(testNode).toBeDefined();
 		expect(sink).toBeDefined();
 		expect(
 			Object.keys(nodes).some((nodeId) => nodeId.startsWith("default-")),
 		).toBe(false);
-		expect(gate?.connections.inputs.in).toEqual([
-			{ nodeId: source?.id, portName: "value" },
+		expect(testNode?.connections.inputs.a).toEqual([
+			{ nodeId: source?.id, portName: "out" },
 		]);
-		expect(sink?.connections.inputs.value).toEqual([
-			{ nodeId: gate?.id, portName: "out" },
+		expect(sink?.connections.inputs.in).toEqual([
+			{ nodeId: testNode?.id, portName: "out" },
 		]);
 	});
 });

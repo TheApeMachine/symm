@@ -14,7 +14,7 @@ type CausalMeanServer struct {
 }
 
 func (srv *CausalMeanServer) Write(ctx context.Context, call CausalMean_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 	ret := srv.prevMean
 	srv.count++
 	srv.sum += inVal

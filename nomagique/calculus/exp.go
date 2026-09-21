@@ -12,7 +12,7 @@ type ExpServer struct {
 }
 
 func (srv *ExpServer) Write(ctx context.Context, call Exp_write) error {
-	srv.out = math.Exp(call.Args().In())
+	srv.out = math.Exp(call.Args().Value())
 	return nil
 }
 

@@ -15,7 +15,7 @@ func NewBuyIntensity() *BuyIntensityServer {
 }
 
 func (server *BuyIntensityServer) Write(ctx context.Context, call BuyIntensity_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

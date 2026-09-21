@@ -138,11 +138,10 @@ func CompileWithPrevious(
 			if err != nil {
 				return nil, err
 			}
-		} else {
-			// Boundary node (source/sink)
-			isSource := isBoundarySource(id, node)
-			isSink := isBoundarySink(id, node)
-			ifaceSchema = makeBoundarySchema(isSource, isSink)
+		}
+
+		if factory.InterfaceID == 0 {
+			ifaceSchema = makeBoundarySchema()
 		}
 		schemasMap[i] = ifaceSchema
 
@@ -263,13 +262,7 @@ func CompileWithPrevious(
 					))
 				}
 
-				var fromField FieldInfo
-				var exists bool
-				if !isSink && inExists {
-					fromField, exists = resolveOutputField(uSchema, outPort, toField.Which)
-				} else {
-					fromField, exists = resolveOutputField(uSchema, outPort, schema.Type_Which_void)
-				}
+				fromField, exists := resolveOutputField(uSchema, outPort)
 				if !exists {
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
@@ -463,66 +456,46 @@ func resolveInputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, bo
 	if ifaceSchema == nil {
 		return FieldInfo{}, false
 	}
-	if fi, ok := ifaceSchema.Inputs[port]; ok {
-		return fi, true
+
+	fieldInfo, exists := ifaceSchema.Inputs[port]
+	if exists {
+		return fieldInfo, true
 	}
-	// Symmetrical aliasing: if port is "in" and only one input exists, or if first input exists
-	if port == "in" && len(ifaceSchema.Inputs) > 0 {
-		var all []FieldInfo
-		for _, fi := range ifaceSchema.Inputs {
-			all = append(all, fi)
+
+	index := strings.LastIndex(port, "_")
+	if index != -1 {
+		prefix := port[:index]
+		fieldInfo, exists := ifaceSchema.Inputs[prefix]
+		if exists {
+			return fieldInfo, true
 		}
-		sort.Slice(all, func(i, j int) bool {
-			return all[i].Offset < all[j].Offset
-		})
-		return all[0], true
 	}
+
 	return FieldInfo{}, false
 }
 
-func resolveOutputField(ifaceSchema *InterfaceSchema, port string, preferredType schema.Type_Which) (FieldInfo, bool) {
+func resolveOutputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, bool) {
 	if ifaceSchema == nil {
 		return FieldInfo{}, false
 	}
-	if fi, ok := ifaceSchema.Outputs[port]; ok {
-		return fi, true
-	}
-	// Symmetrical aliasing: if port is "out" and only one output exists, or if first output exists
-	if port == "out" && len(ifaceSchema.Outputs) > 0 {
-		var matching []FieldInfo
-		var all []FieldInfo
-		for _, fi := range ifaceSchema.Outputs {
-			all = append(all, fi)
-			if preferredType != schema.Type_Which_void && fi.Which == preferredType {
-				matching = append(matching, fi)
-			}
-		}
-		if len(matching) > 0 {
-			sort.Slice(matching, func(i, j int) bool {
-				return matching[i].Offset < matching[j].Offset
-			})
-			return matching[0], true
-		}
-		sort.Slice(all, func(i, j int) bool {
-			return all[i].Offset < all[j].Offset
-		})
-		return all[0], true
-	}
-	return FieldInfo{}, false
+	fi, ok := ifaceSchema.Outputs[port]
+	return fi, ok
 }
 
-func makeBoundarySchema(isSource, isSink bool) *InterfaceSchema {
+func makeBoundarySchema() *InterfaceSchema {
 	return &InterfaceSchema{
 		InterfaceID: 0,
 		WriteParams: capnp.ObjectSize{DataSize: 64, PointerCount: 8},
 		DoneResult:  capnp.ObjectSize{DataSize: 64, PointerCount: 8},
 		Inputs: map[string]FieldInfo{
-			"in":    {Name: "in", Offset: 0, Which: schema.Type_Which_data},
 			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
+			"data":  {Name: "data", Offset: 0, Which: schema.Type_Which_data},
+			"in":    {Name: "in", Offset: 0, Which: schema.Type_Which_data},
 		},
 		Outputs: map[string]FieldInfo{
 			"out":   {Name: "out", Offset: 0, Which: schema.Type_Which_data},
 			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
+			"data":  {Name: "data", Offset: 0, Which: schema.Type_Which_data},
 		},
 		HasDone: true,
 	}
@@ -566,6 +539,8 @@ func formatWhich(w schema.Type_Which) string {
 		return "Data"
 	case schema.Type_Which_bool:
 		return "Bool"
+	case schema.Type_Which_enum:
+		return "Enum"
 	default:
 		return fmt.Sprint(w)
 	}

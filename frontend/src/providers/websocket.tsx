@@ -15,8 +15,8 @@ import {
 	updateEquity,
 } from "#/collections/app";
 
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import type { MetricT } from "#/providers/telemetry/telemetry/metric";
+import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { MetricT } from "#/providers/telemetry/telemetry/metric";
 
 let globalWsWorker: Worker | null = null;
 
@@ -60,7 +60,6 @@ function decodeWireMeasurement(buffer: ArrayBuffer): MeasurementT {
 	const timestamp = root.getInt64(16);
 	const snr = root.getFloat64(32);
 	const maturity = root.getFloat64(40);
-	const separation = root.getFloat64(48);
 
 	const sourceIdx = root.getUint16(26);
 	const source = SOURCE_TYPES[sourceIdx] || 'unknown';
@@ -73,16 +72,13 @@ function decodeWireMeasurement(buffer: ArrayBuffer): MeasurementT {
 		for (let i = 0; i < mCount; i++) {
 			const mStruct = metricsList.getStruct(i);
 			if (!mStruct) continue;
-			metrics.push({
-				raw: mStruct.getFloat64(0),
-				normalized: mStruct.getFloat64(8),
-				standardized: mStruct.getFloat64(16),
-				center: mStruct.getFloat64(24),
-				support: mStruct.getFloat64(32),
-				variance: mStruct.getFloat64(40),
-				snr: mStruct.getFloat64(48),
-				hasNormalized: true,
-			});
+			metrics.push(new MetricT(
+				null,
+				mStruct.getFloat64(0),
+				mStruct.getFloat64(8),
+				true,
+				null,
+			));
 		}
 	}
 
@@ -117,25 +113,31 @@ function decodeWireMeasurement(buffer: ArrayBuffer): MeasurementT {
 		}
 	}
 
-	return {
+	return new MeasurementT(
 		id,
 		source,
 		symbol,
-		tick,
-		at,
-		snr,
+		BigInt(tick),
+		null,
+		BigInt(at || timestamp),
+		BigInt(0),
+		BigInt(0),
+		BigInt(0),
+		BigInt(0),
 		maturity,
-		separation,
+		snr,
+		snr > 0,
 		metrics,
-		metadata: metadata as any,
-	};
+		[],
+		[],
+		[],
+		null,
+	);
 }
 
 function dispatchMeasurement(row: MeasurementT) {
-	const source = row.source;
-	const symbol = row.symbol;
-
 	const symbolStr = (row.symbol as string) || "";
+	const source = (row.source as string) || "";
 	if (symbolStr && !symbolsAtom.get().includes(symbolStr)) {
 		symbolsAtom.set(Array.from(new Set([...symbolsAtom.get(), symbolStr])));
 	}

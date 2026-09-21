@@ -12,7 +12,7 @@ type AtanhServer struct {
 }
 
 func (srv *AtanhServer) Write(ctx context.Context, call Atanh_write) error {
-	srv.out = math.Atanh(call.Args().In())
+	srv.out = math.Atanh(call.Args().Value())
 	return nil
 }
 

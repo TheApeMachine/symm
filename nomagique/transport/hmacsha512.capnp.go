@@ -268,16 +268,16 @@ func (s HMACSHA512_write_Params) Message() *capnp.Message {
 func (s HMACSHA512_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HMACSHA512_write_Params) In() ([]byte, error) {
+func (s HMACSHA512_write_Params) Data() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s HMACSHA512_write_Params) HasIn() bool {
+func (s HMACSHA512_write_Params) HasData() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HMACSHA512_write_Params) SetIn(v []byte) error {
+func (s HMACSHA512_write_Params) SetData(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 

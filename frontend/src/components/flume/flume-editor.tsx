@@ -1,16 +1,22 @@
 "use client";
 
 import {
+	AlertTriangleIcon,
+	CheckCircleIcon,
+	CpuIcon,
 	DownloadIcon,
 	GitCommitVerticalIcon,
+	PlayIcon,
+	PlusIcon,
 	RefreshCwIcon,
+	SaveIcon,
 	SplineIcon,
 	UploadIcon,
 	WaypointsIcon,
+	XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pipelineGraphCollection } from "#/collections/pipeline_graph";
-import { usePipelineGraphRow } from "#/collections/pipeline_graph_row";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Modal } from "#/components/ui/modal";
@@ -18,12 +24,11 @@ import { Textarea } from "#/components/ui/textarea";
 import { toastManager } from "#/components/ui/toast";
 import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { Typography } from "#/components/ui/typography";
-import { useDefinitions, usePrimitives } from "#/service/compute";
-import {
-	buildFlumeConfigFromSchemas,
-	ensureNodeType,
-} from "./build-config-from-schemas";
+import { hubBaseUrl } from "#/lib/hub";
+import { useDefinitions } from "#/service/compute";
+import { createFlumeConfig } from "./flume-config.generated";
 import type { EdgeRoutingMode } from "./connectionCalculator";
+import type { CompilerDiagnostic } from "./context";
 import { setRoutingMode, useRoutingMode } from "./flume-editor.store";
 import {
 	type BackendGraph,
@@ -97,43 +102,40 @@ type FlumeEditorProps = {
 };
 
 export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
-	const { data: operations, isPending, isError, isSuccess } = usePrimitives();
-	const { data: definitions } = useDefinitions();
+	const { data: definitions, refetch: refetchDefinitions } = useDefinitions();
 
 	const [selectedGraph, setSelectedGraph] = useState<string>("system");
 	const [importModalOpen, setImportModalOpen] = useState(false);
+	const [newDefModalOpen, setNewDefModalOpen] = useState(false);
+	const [newDefName, setNewDefName] = useState("");
 	const [pastedJSON, setPastedJSON] = useState("");
+
+	const [diagnostics, setDiagnostics] = useState<CompilerDiagnostic[]>([]);
+	const [results, setResults] = useState<Record<string, Record<string, any>>>({});
+	const [isSaving, setIsSaving] = useState(false);
+	const [isCompiling, setIsCompiling] = useState(false);
+	const [isRunning, setIsRunning] = useState(false);
 
 	const graphId = projectId ?? LOCAL_GRAPH_ID;
 	const routingMode = useRoutingMode();
 	const editorHandleRef = useRef<NodeEditorHandle | null>(null);
 
-	const row = usePipelineGraphRow(graphId);
+	const allDefinitions = useMemo(() => {
+		return Array.from(
+			new Set(["system", "logic", "execution", ...(definitions ?? [])]),
+		);
+	}, [definitions]);
 
-	// Build FlumeConfig from backend operation schemas and ensure all nodes in current row exist
+	// Build authoritative FlumeConfig from generated primitive types and dynamic definitions
 	const flumeConfig = useMemo(() => {
-		const config = buildFlumeConfigFromSchemas(operations ?? {});
-		if (row?.nodes) {
-			for (const node of Object.values(row.nodes)) {
-				if (node && typeof node === "object" && "type" in node) {
-					ensureNodeType(config, String((node as { type: string }).type));
-				}
-			}
-		}
-		return config;
-	}, [operations, row?.nodes]);
-
-	const editorMode = isError || !isSuccess ? "builtin-only" : "full";
+		return createFlumeConfig(allDefinitions);
+	}, [allDefinitions]);
 
 	/*
 		Auto-import compiled architecture on initial visit:
 		If the canvas has no nodes or is empty, automatically load the master system graph.
 	*/
 	useEffect(() => {
-		if (isPending) {
-			return;
-		}
-
 		const existing = pipelineGraphCollection.get(graphId);
 		const isEmpty =
 			!existing ||
@@ -147,10 +149,12 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				},
 			);
 		}
-	}, [isPending, graphId, selectedGraph, projectId]);
+	}, [graphId, selectedGraph, projectId]);
 
 	const handleSwitchDefinition = async (nextDef: string) => {
 		setSelectedGraph(nextDef);
+		setDiagnostics([]);
+		setResults({});
 		try {
 			await fetchAndImportDefinition(nextDef, graphId, projectId ?? null);
 			toastManager.add({
@@ -170,6 +174,8 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 	};
 
 	const handleReloadDefinition = async () => {
+		setDiagnostics([]);
+		setResults({});
 		try {
 			await fetchAndImportDefinition(selectedGraph, graphId, projectId ?? null);
 			toastManager.add({
@@ -186,6 +192,190 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				timeout: 5000,
 			});
 		}
+	};
+
+	const handleSaveDefinition = async () => {
+		const currentRow = pipelineGraphCollection.get(graphId);
+		const nodes = currentRow?.nodes ?? {};
+
+		const payload = {
+			id: selectedGraph,
+			name: selectedGraph,
+			nodes,
+		};
+
+		setIsSaving(true);
+		try {
+			const res = await fetch(`${hubBaseUrl()}/workbench/signals/${selectedGraph}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			if (!res.ok) {
+				const errText = await res.text();
+				throw new Error(errText || res.statusText);
+			}
+
+			// Also update local storage collection row for the definition
+			pipelineGraphCollection.insert({
+				id: selectedGraph,
+				project_id: projectId ?? null,
+				schema_version: 1,
+				nodes,
+				comments: {},
+				viewport: { scale: 1, translate: { x: 0, y: 0 } },
+				updated_at: new Date(),
+			});
+
+			refetchDefinitions();
+			toastManager.add({
+				title: "Saved Definition",
+				description: `Definition ${selectedGraph} saved to backend (in-process)`,
+				type: "success",
+				timeout: 3000,
+			});
+		} catch (e) {
+			toastManager.add({
+				title: "Save Failed",
+				description: e instanceof Error ? e.message : String(e),
+				type: "error",
+				timeout: 5000,
+			});
+		} finally {
+			setIsSaving(false);
+		}
+	};
+
+	const handleCompile = async () => {
+		const currentRow = pipelineGraphCollection.get(graphId);
+		const nodes = currentRow?.nodes ?? {};
+
+		const payload = {
+			id: selectedGraph,
+			nodes,
+		};
+
+		setIsCompiling(true);
+		try {
+			const res = await fetch(`${hubBaseUrl()}/workbench/compile`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			const data = await res.json();
+			if (data.ok) {
+				setDiagnostics([]);
+				toastManager.add({
+					title: "Compilation Succeeded",
+					description: `Valid Cap'n Proto program (${data.nodeCount} nodes, ${data.routeCount} routes)`,
+					type: "success",
+					timeout: 4000,
+				});
+			} else {
+				const diags = data.diagnostics || [{ kind: "compile_error", message: data.error }];
+				setDiagnostics(diags);
+				toastManager.add({
+					title: "Compilation Failed",
+					description: data.error || "Compiler reported diagnostics",
+					type: "error",
+					timeout: 6000,
+				});
+			}
+		} catch (e) {
+			toastManager.add({
+				title: "Compile Request Failed",
+				description: e instanceof Error ? e.message : String(e),
+				type: "error",
+				timeout: 5000,
+			});
+		} finally {
+			setIsCompiling(false);
+		}
+	};
+
+	const handleRun = async () => {
+		const currentRow = pipelineGraphCollection.get(graphId);
+		const nodes = currentRow?.nodes ?? {};
+
+		const payload = {
+			id: selectedGraph,
+			nodes,
+		};
+
+		setIsRunning(true);
+		try {
+			const res = await fetch(`${hubBaseUrl()}/workbench/run`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			const data = await res.json();
+			if (data.ok) {
+				setDiagnostics([]);
+				setResults(data.results || {});
+				toastManager.add({
+					title: "Execution Succeeded",
+					description: "Evaluated 1 observation through real Cap'n Proto program",
+					type: "success",
+					timeout: 4000,
+				});
+			} else {
+				if (data.diagnostics && data.diagnostics.length > 0) {
+					setDiagnostics(data.diagnostics);
+				}
+				toastManager.add({
+					title: "Execution Failed",
+					description: data.error || "Program execution failed",
+					type: "error",
+					timeout: 6000,
+				});
+			}
+		} catch (e) {
+			toastManager.add({
+				title: "Run Request Failed",
+				description: e instanceof Error ? e.message : String(e),
+				type: "error",
+				timeout: 5000,
+			});
+		} finally {
+			setIsRunning(false);
+		}
+	};
+
+	const handleCreateNewDefinition = () => {
+		const cleanName = newDefName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+		if (!cleanName) return;
+
+		setSelectedGraph(cleanName);
+		setDiagnostics([]);
+		setResults({});
+
+		// Initialize empty graph row in collection
+		const emptyNodes = {};
+		pipelineGraphCollection.insert({
+			id: graphId,
+			project_id: projectId ?? null,
+			schema_version: 1,
+			nodes: emptyNodes,
+			comments: {},
+			viewport: { scale: 1, translate: { x: 0, y: 0 } },
+			updated_at: new Date(),
+		});
+
+		// Also update current draft in collection
+		pipelineGraphCollection.update(graphId, (draft) => {
+			draft.nodes = emptyNodes;
+			draft.updated_at = new Date();
+		});
+
+		setNewDefModalOpen(false);
+		setNewDefName("");
+		toastManager.add({
+			title: "Created Definition",
+			description: `Working on new definition: ${cleanName}`,
+			type: "success",
+			timeout: 3000,
+		});
 	};
 
 	const handleImportPastedJSON = () => {
@@ -253,37 +443,27 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 		);
 	};
 
-	if (isPending) {
-		return (
-			<div className="flex min-h-[75vh] flex-1 items-center justify-center text-(--f3) text-sm">
-				Loading operation schemas and architecture…
-			</div>
-		);
-	}
-
-	const allDefinitions = Array.from(
-		new Set(["system", "logic", "execution", ...(definitions ?? [])]),
-	);
-
 	return (
-		<div className="flex min-h-[75vh] flex-1 flex-col gap-3">
-			<Flex.Row className="shrink-0 items-center justify-between gap-3 rounded-sm border bg-(--raised)/48 px-3 py-2">
-				<Flex.Row className="items-center gap-3">
-					<div className="flex items-center gap-2">
+		<Flex.Column gap={2} className="min-h-[75vh] flex-1">
+			{/* Top action toolbar */}
+			<Flex.Row align="center" justify="between" gap={3} className="shrink-0 flex-wrap rounded-sm border bg-(--raised)/48 px-3 py-2">
+				<Flex.Row align="center" gap={2} className="flex-wrap">
+					<Flex.Row align="center" gap={2}>
 						<Typography.Label size="s" tone="f4">
-							Architecture
+							Definition
 						</Typography.Label>
 						<select
 							className="h-7 rounded border border-(--line2) bg-(--sunken) px-2 font-mono text-xs text-(--f1) outline-none focus:border-(--accent)"
 							onChange={(e) => handleSwitchDefinition(e.target.value)}
 							value={selectedGraph}
+							data-testid="definition-select"
 						>
-							<optgroup label="Orchestration & Stages">
-								<option value="system">system (Master Orchestration)</option>
-								<option value="logic">logic (Cognition & Attractors)</option>
-								<option value="execution">execution (Policy & Gating)</option>
+							<optgroup label="Architecture">
+								<option value="system">system</option>
+								<option value="logic">logic</option>
+								<option value="execution">execution</option>
 							</optgroup>
-							<optgroup label="Signal Extraction Graphs">
+							<optgroup label="Definitions">
 								{allDefinitions
 									.filter(
 										(d) =>
@@ -299,7 +479,66 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 									))}
 							</optgroup>
 						</select>
-					</div>
+
+						<Button
+							onClick={() => setNewDefModalOpen(true)}
+							size="s"
+							title="Create a new definition"
+							type="button"
+							variant="outline"
+							data-testid="new-definition-button"
+						>
+							<PlusIcon className="size-3.5" />
+							New
+						</Button>
+					</Flex.Row>
+
+					<div className="h-4 w-px bg-(--line)/40" />
+
+					{/* Workbench Primary Execution Actions */}
+					<Button
+						onClick={handleSaveDefinition}
+						disabled={isSaving}
+						size="s"
+						title="Save graph definition to backend"
+						type="button"
+						variant="solid"
+						className="bg-blue-600 hover:bg-blue-500 text-white font-medium"
+						data-testid="save-button"
+					>
+						<SaveIcon className="size-3.5" />
+						{isSaving ? "Saving…" : "Save"}
+					</Button>
+
+					<Button
+						onClick={handleCompile}
+						disabled={isCompiling}
+						size="s"
+						title="Compile with real Cap'n Proto compiler"
+						type="button"
+						variant="outline"
+						className="border-purple-500/50 text-purple-300 hover:bg-purple-950/40"
+						data-testid="compile-button"
+					>
+						<CpuIcon className="size-3.5" />
+						{isCompiling ? "Compiling…" : "Compile"}
+					</Button>
+
+					<Button
+						onClick={handleRun}
+						disabled={isRunning}
+						size="s"
+						title="Compile and evaluate 1 observation"
+						type="button"
+						variant="solid"
+						className="bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
+						data-testid="run-button"
+					>
+						<PlayIcon className="size-3.5" />
+						{isRunning ? "Running…" : "Run"}
+					</Button>
+
+					<div className="h-4 w-px bg-(--line)/40" />
 
 					<Button
 						onClick={handleReloadDefinition}
@@ -309,41 +548,97 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 						variant="quiet"
 					>
 						<RefreshCwIcon className="size-3.5" />
-						Reload Architecture
+						Reload
 					</Button>
 
 					<Button
 						onClick={() => setImportModalOpen(true)}
 						size="s"
-						title="Import any raw JSON graph definition"
+						title="Import raw JSON"
 						type="button"
 						variant="quiet"
 					>
 						<UploadIcon className="size-3.5" />
-						Import JSON
+						Import
 					</Button>
 
 					<Button
 						onClick={handleExportJSON}
 						size="s"
-						title="Copy current graph JSON to clipboard"
+						title="Export JSON to clipboard"
 						type="button"
 						variant="quiet"
 					>
 						<DownloadIcon className="size-3.5" />
-						Export JSON
+						Export
 					</Button>
-
-					<Typography.Span className="text-xs" variant="muted">
-						{Object.keys(flumeConfig.nodeTypes).length} node types
-					</Typography.Span>
 				</Flex.Row>
 
 				<EdgeRoutingToggle onChange={setRoutingMode} value={routingMode} />
 			</Flex.Row>
 
+			{/* Diagnostics Banner */}
+			{diagnostics.length > 0 && (
+				<Flex.Row align="center" justify="between"
+					className="rounded border border-red-500/50 bg-red-950/70 px-3 py-2 text-xs text-red-200"
+					data-testid="diagnostics-banner"
+				>
+					<Flex.Row align="center" gap={2}>
+						<AlertTriangleIcon className="size-4 shrink-0 text-red-400" />
+						<div>
+							<span className="font-semibold uppercase tracking-wider text-red-400">
+								Compiler Diagnostic [{diagnostics[0].kind}]:
+							</span>{" "}
+							<span className="font-mono">{diagnostics[0].message}</span>
+							{diagnostics[0].edgeFrom && (
+								<span className="ml-2 font-mono text-red-300">
+									({diagnostics[0].edgeFrom} &rarr; {diagnostics[0].edgeTo})
+								</span>
+							)}
+						</div>
+					</Flex.Row>
+					<button
+						type="button"
+						onClick={() => setDiagnostics([])}
+						className="text-red-400 hover:text-red-200"
+					>
+						<XIcon className="size-4" />
+					</button>
+				</Flex.Row>
+			)}
+
+			{/* Execution Result Banner */}
+			{Object.keys(results).length > 0 && (
+				<Flex.Row align="center" justify="between"
+					className="rounded border border-emerald-500/50 bg-emerald-950/70 px-3 py-2 text-xs text-emerald-200"
+					data-testid="results-banner"
+				>
+					<Flex.Row align="center" gap={2}>
+						<CheckCircleIcon className="size-4 shrink-0 text-emerald-400" />
+						<div>
+							<span className="font-semibold uppercase tracking-wider text-emerald-400">
+								Program Output:
+							</span>{" "}
+							<span className="font-mono">
+								{Object.entries(results)
+									.map(([nid, out]) => `${nid}: ${JSON.stringify(out)}`)
+									.join(" | ")}
+							</span>
+						</div>
+					</Flex.Row>
+					<button
+						type="button"
+						onClick={() => setResults({})}
+						className="text-emerald-400 hover:text-emerald-200"
+					>
+						<XIcon className="size-4" />
+					</button>
+				</Flex.Row>
+			)}
+
+			{/* Main Canvas Editor */}
 			<NodeEditor
-				key={`${editorMode}:${graphId}`}
+				key={graphId}
 				className="min-h-0 flex-1"
 				edgeRoutingMode={routingMode}
 				graphId={graphId}
@@ -351,9 +646,61 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 				portTypes={flumeConfig.portTypes}
 				projectId={projectId ?? null}
 				ref={editorHandleRef}
-				style={{ minHeight: isError ? "70vh" : "75vh" }}
+				diagnostics={diagnostics}
+				results={results}
+				style={{ minHeight: "75vh" }}
 			/>
 
+			{/* New Definition Modal */}
+			{newDefModalOpen && (
+				<Modal
+					open={newDefModalOpen}
+					onClose={() => setNewDefModalOpen(false)}
+					size="s"
+				>
+					<Modal.Header>
+						<span className="font-mono text-sm font-semibold text-(--f1)">
+							Create New Definition
+						</span>
+						<Modal.Close onClick={() => setNewDefModalOpen(false)} />
+					</Modal.Header>
+					<Modal.Body className="flex flex-col gap-3">
+						<p className="text-xs text-(--f3)">
+							Name your reusable graph definition. It can be composed as a node inside other graphs.
+						</p>
+						<input
+							type="text"
+							className="h-8 w-full rounded border border-(--line2) bg-(--sunken) px-3 font-mono text-xs text-(--f1) outline-none focus:border-(--accent)"
+							placeholder="e.g. inner, custom_signal, my_pipeline"
+							value={newDefName}
+							onChange={(e) => setNewDefName(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter") handleCreateNewDefinition();
+							}}
+							autoFocus
+							data-testid="new-definition-input"
+						/>
+					</Modal.Body>
+					<Modal.Footer>
+						<Button
+							onClick={() => setNewDefModalOpen(false)}
+							variant="outline"
+						>
+							Cancel
+						</Button>
+						<Button
+							disabled={!newDefName.trim()}
+							onClick={handleCreateNewDefinition}
+							variant="solid"
+							data-testid="create-definition-submit"
+						>
+							Create
+						</Button>
+					</Modal.Footer>
+				</Modal>
+			)}
+
+			{/* Import Modal */}
 			{importModalOpen && (
 				<Modal
 					open={importModalOpen}
@@ -368,8 +715,7 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					</Modal.Header>
 					<Modal.Body className="flex flex-col gap-2">
 						<p className="text-xs text-(--f3)">
-							Paste any declarative JSON graph definition below. Nodes and
-							connections will be automatically arranged by dependency rank.
+							Paste any declarative JSON graph definition below.
 						</p>
 						<Textarea
 							className="h-64 font-mono text-xs"
@@ -395,6 +741,6 @@ export const FlumeEditor = ({ projectId }: FlumeEditorProps) => {
 					</Modal.Footer>
 				</Modal>
 			)}
-		</div>
+		</Flex.Column>
 	);
 };

@@ -11,7 +11,7 @@ type NegateServer struct {
 }
 
 func (srv *NegateServer) Write(ctx context.Context, call Negate_write) error {
-	srv.out = -call.Args().In()
+	srv.out = -call.Args().Value()
 	return nil
 }
 

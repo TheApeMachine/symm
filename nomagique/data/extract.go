@@ -23,7 +23,7 @@ func (s *ExtractServer) Write(ctx context.Context, call Extract_write) error {
 		s.path = pathStr
 	}
 
-	dataBytes, err := call.Args().In()
+	dataBytes, err := call.Args().Data()
 	if err != nil || len(dataBytes) == 0 {
 		return nil
 	}

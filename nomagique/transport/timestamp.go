@@ -16,7 +16,7 @@ func NewTimestamp() *TimestampServer {
 }
 
 func (server *TimestampServer) Write(ctx context.Context, call Timestamp_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

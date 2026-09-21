@@ -14,6 +14,7 @@ import {
 } from "#/components/flume/flume-editor.store";
 import Node from "#/components/flume/Node/Node";
 import Stage from "#/components/flume/Stage/Stage";
+import type { CompilerDiagnostic } from "#/components/flume/context";
 import { portLayoutKey } from "#/components/flume/spatial-index";
 import { useFlumeGraphWorker } from "#/components/flume/useFlumeGraphWorker";
 import {
@@ -82,6 +83,8 @@ interface NodeEditorProps {
 	edgeRoutingMode?: EdgeRoutingMode;
 	graphLayoutMode?: GraphLayoutMode;
 	style?: React.CSSProperties;
+	diagnostics?: CompilerDiagnostic[];
+	results?: Record<string, Record<string, any>>;
 }
 
 export const NodeEditor = ({
@@ -104,6 +107,8 @@ export const NodeEditor = ({
 	style,
 	edgeRoutingMode = "smooth",
 	graphLayoutMode = "freeform",
+	diagnostics,
+	results,
 }: NodeEditorProps) => {
 	const editorId = useId() ?? "";
 	const cache = React.useRef(new Cache());
@@ -335,6 +340,8 @@ export const NodeEditor = ({
 					graphId,
 					editorId,
 					recalculateStageRect,
+					diagnostics,
+					results,
 				}}
 			>
 				<Stage

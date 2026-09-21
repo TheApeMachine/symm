@@ -22,7 +22,7 @@ func (server *DecideServer) Write(ctx context.Context, call Decide_write) error 
 	contrast := args.Contrast()
 	isBreak := args.IsBreak()
 
-	if inData, err := args.In(); err == nil && len(inData) > 0 {
+	if inData, err := args.Data(); err == nil && len(inData) > 0 {
 		var eval map[string]any
 		if err := sonic.Unmarshal(inData, &eval); err == nil && eval != nil {
 			if w, ok := eval["winner"].(string); ok {

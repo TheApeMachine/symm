@@ -15,7 +15,7 @@ func NewSellRate() *SellRateServer {
 }
 
 func (server *SellRateServer) Write(ctx context.Context, call SellRate_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

@@ -17,7 +17,7 @@ func TestAssociativeGrid(t *testing.T) {
 
 		Convey("When providing initial impulse, it evaluates and resets on Done", func() {
 			err := client.Write(ctx, func(params Grid_write_Params) error {
-				return params.SetIn([]byte("impulse"))
+				return params.SetData([]byte("impulse"))
 			})
 			So(err, ShouldBeNil)
 

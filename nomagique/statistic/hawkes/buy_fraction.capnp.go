@@ -269,11 +269,11 @@ func (s BuyFraction_write_Params) Message() *capnp.Message {
 func (s BuyFraction_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BuyFraction_write_Params) In() float64 {
+func (s BuyFraction_write_Params) Value() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s BuyFraction_write_Params) SetIn(v float64) {
+func (s BuyFraction_write_Params) SetValue(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 

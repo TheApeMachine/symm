@@ -115,3 +115,16 @@ export const SubGraphContext = React.createContext<
 
 // Re-export FlumeNode so callers that import from context don't need a second import.
 export type { FlumeNode, NodeMap };
+
+export type CompilerDiagnostic = {
+	nodeId?: string;
+	nodeType?: string;
+	portName?: string;
+	edgeFrom?: string;
+	edgeTo?: string;
+	kind: string;
+	message: string;
+};
+
+export const DiagnosticsContext = React.createContext<CompilerDiagnostic[]>([]);
+export const NodeResultsContext = React.createContext<Record<string, Record<string, any>>>({});

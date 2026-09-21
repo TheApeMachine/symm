@@ -12,7 +12,7 @@ type ErfcServer struct {
 }
 
 func (srv *ErfcServer) Write(ctx context.Context, call Erfc_write) error {
-	srv.out = math.Erfc(call.Args().In())
+	srv.out = math.Erfc(call.Args().Value())
 	return nil
 }
 

@@ -15,7 +15,7 @@ func NewSellCount() *SellCountServer {
 }
 
 func (server *SellCountServer) Write(ctx context.Context, call SellCount_write) error {
-	server.out = call.Args().In()
+	server.out = call.Args().Value()
 	return nil
 }
 

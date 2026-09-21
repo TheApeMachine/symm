@@ -14,7 +14,7 @@ type EMAServer struct {
 }
 
 func (srv *EMAServer) Write(ctx context.Context, call EMA_write) error {
-	inVal := call.Args().In()
+	inVal := call.Args().Value()
 
 	if srv.Alpha <= 0 {
 		srv.out = inVal

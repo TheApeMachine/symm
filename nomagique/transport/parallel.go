@@ -16,7 +16,7 @@ func NewParallel() *ParallelServer {
 }
 
 func (server *ParallelServer) Write(ctx context.Context, call Parallel_write) error {
-	data, _ := call.Args().In()
+	data, _ := call.Args().Data()
 	server.out = bytes.Clone(data)
 	return nil
 }

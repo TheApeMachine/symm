@@ -410,28 +410,28 @@ func (s Weight_done_Results) Message() *capnp.Message {
 func (s Weight_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Weight_done_Results) Count() uint64 {
-	return capnp.Struct(s).Uint64(0)
+func (s Weight_done_Results) Count() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s Weight_done_Results) SetCount(v uint64) {
-	capnp.Struct(s).SetUint64(0, v)
+func (s Weight_done_Results) SetCount(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
-func (s Weight_done_Results) Mass() uint64 {
-	return capnp.Struct(s).Uint64(8)
+func (s Weight_done_Results) Mass() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
 }
 
-func (s Weight_done_Results) SetMass(v uint64) {
-	capnp.Struct(s).SetUint64(8, v)
+func (s Weight_done_Results) SetMass(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
-func (s Weight_done_Results) WriteStep() uint64 {
-	return capnp.Struct(s).Uint64(16)
+func (s Weight_done_Results) WriteStep() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
 }
 
-func (s Weight_done_Results) SetWriteStep(v uint64) {
-	capnp.Struct(s).SetUint64(16, v)
+func (s Weight_done_Results) SetWriteStep(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
 }
 
 // Weight_done_Results_List is a list of Weight_done_Results.

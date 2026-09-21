@@ -1,14 +1,16 @@
 package cmd
 
 import (
-	"context"
+	"fmt"
+	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
+	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/definitions"
 	"github.com/theapemachine/symm/nomagique/compiler"
 )
 
@@ -23,18 +25,38 @@ var (
 			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			errnie.Info("[root] compiling system graph: " + graphPath)
-			pipeline, err := compiler.CompileFile(graphPath, nil, definitions.Default())
+			_, err := pyroscope.Start(pyroscope.Config{
+				ApplicationName: "symm.theapemachine.app",
+				ServerAddress:   "http://localhost:4040",
+				Logger:          nil,
+			})
+
 			if err != nil {
-				return errnie.Error(errnie.Err(errnie.Internal, "[root] compilation failed", err))
+				log.Fatalf("error starting pyroscope profiler: %v", err)
 			}
 
-			errnie.Info("[root] system ready; running pipeline")
+			errnie.Apply(&errnie.Config{
+				Level: "debug",
+			})
 
-			focusChan := make(chan string, 100)
-			ctx = context.WithValue(ctx, "focusChan", focusChan)
+			errnie.Info(fmt.Sprintf(
+				"[root] symm started with %d CPUs", runtime.NumCPU(),
+			))
 
-			pipeline.Start(ctx)
+			errnie.Info("[root] compiling system graph: " + graphPath)
+
+			graph, err := compiler.CompileFile(
+				graphPath, nil, compiler.DefaultRepository(),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal, "[root] compilation failed", err,
+				))
+			}
+
+			errnie.Info("[root] system ready; running graph")
+			graph.Start(ctx)
 
 			<-ctx.Done()
 			errnie.Info("[root] system terminated cleanly")
