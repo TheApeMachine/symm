@@ -456,6 +456,26 @@
         },
         "outputs": {}
       }
+    },
+    "6e01e001-0006-4000-8000-000000000001": {
+      "id": "6e01e001-0006-4000-8000-000000000001",
+      "type": "http.HTTPServer",
+      "width": 280,
+      "height": 172,
+      "x": 400.0,
+      "y": 1950.0,
+      "inputData": {
+        "path": {
+          "value": "/"
+        },
+        "status": {
+          "value": 200
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
     }
   }
 }
