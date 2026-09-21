@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import {
 	screenPointToCanvas,
@@ -58,3 +59,96 @@ describe("screenPointToCanvas", () => {
 		expect(canvasRect.height).toBe(12);
 	});
 });
+
+describe("syncConnectionElements", () => {
+	it("renders and updates connection elements in the stage container", async () => {
+		const editorId = "test-editor";
+		const container = document.createElement("div");
+		container.id = `__node_editor_connections__${editorId}`;
+		document.body.appendChild(container);
+
+		const { syncConnectionElements, deleteConnection } = await import(
+			"./connectionCalculator"
+		);
+
+		syncConnectionElements(
+			[
+				{
+					id: "conn-1",
+					outputNodeId: "node-1",
+					outputPortName: "out",
+					inputNodeId: "node-2",
+					inputPortName: "in",
+				},
+			],
+			editorId,
+			"smooth",
+		);
+
+		const line1 = container.querySelector<SVGPathElement>(
+			'[data-connection-id="conn-1"]',
+		);
+		expect(line1).not.toBeNull();
+		expect(line1?.parentElement?.tagName.toLowerCase()).toBe("svg");
+
+		// Re-sync with a second connection added
+		syncConnectionElements(
+			[
+				{
+					id: "conn-1",
+					outputNodeId: "node-1",
+					outputPortName: "out",
+					inputNodeId: "node-2",
+					inputPortName: "in",
+				},
+				{
+					id: "conn-2",
+					outputNodeId: "node-2",
+					outputPortName: "out",
+					inputNodeId: "node-3",
+					inputPortName: "in",
+				},
+			],
+			editorId,
+			"smooth",
+		);
+
+		expect(
+			container.querySelector('[data-connection-id="conn-1"]'),
+		).not.toBeNull();
+		expect(
+			container.querySelector('[data-connection-id="conn-2"]'),
+		).not.toBeNull();
+
+		// Remove conn-1 via roster sync
+		syncConnectionElements(
+			[
+				{
+					id: "conn-2",
+					outputNodeId: "node-2",
+					outputPortName: "out",
+					inputNodeId: "node-3",
+					inputPortName: "in",
+				},
+			],
+			editorId,
+			"smooth",
+		);
+
+		expect(
+			container.querySelector('[data-connection-id="conn-1"]'),
+		).toBeNull();
+		expect(
+			container.querySelector('[data-connection-id="conn-2"]'),
+		).not.toBeNull();
+
+		// Delete conn-2 explicitly
+		deleteConnection({ id: "conn-2" });
+		expect(
+			container.querySelector('[data-connection-id="conn-2"]'),
+		).toBeNull();
+
+		container.remove();
+	});
+});
+

@@ -6,7 +6,7 @@ interface ConnectionsProps {
 }
 
 const Connections = ({ editorId }: ConnectionsProps) => (
-	<svg className={styles.svgWrapper} id={`${CONNECTIONS_ID}${editorId}`} />
+	<div className={styles.svgWrapper} id={`${CONNECTIONS_ID}${editorId}`} />
 );
 
 export default Connections;
