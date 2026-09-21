@@ -7,8 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
+	capnp "capnproto.org/go/capnp/v3"
+	"capnproto.org/go/capnp/v3/schemas"
+	"capnproto.org/go/capnp/v3/std/capnp/schema"
 	"github.com/theapemachine/errnie"
 	"golang.org/x/tools/go/packages"
 )
@@ -334,6 +339,7 @@ func collectPackageSchemas(
 				hasDoneMethod := serverMethods[thing+"Server"]["Done"] || serverMethods[thing+"Impl"]["Done"]
 
 				schema := describePrimitive(
+					loadedPackage,
 					loadedPackage.Name,
 					loadedPackage.PkgPath,
 					dir,
@@ -387,6 +393,7 @@ func simplifyTypeName(t string) string {
 }
 
 func describePrimitive(
+	loadedPackage *packages.Package,
 	category string,
 	pkgPath string,
 	pkgDir string,
@@ -617,6 +624,19 @@ func describePrimitive(
 		})
 	}
 
+	// The compiled Cap'n Proto schema is the authority on a node's ports, so
+	// prefer it over whatever was derived from the .capnp text. A primitive
+	// whose schema is registered reports exactly the write parameters and done
+	// results it really has, including the capability ports and the interface
+	// it extends.
+	if reflectedInputs, reflectedOutputs, _, found := reflectPorts(
+		interfaceIDOf(loadedPackage, thing),
+	); found {
+		inputs = reflectedInputs
+		outputs = reflectedOutputs
+		capnpWrite = true
+	}
+
 	schema := Schema{
 		Kind:              "primitive",
 		Category:          category,
@@ -684,4 +704,216 @@ func isCapabilityType(portType string) bool {
 	}
 
 	return true
+}
+
+/*
+reflectPorts reads a primitive's ports from its compiled Cap'n Proto schema
+rather than from the text of its .capnp file. The schema registry is the
+authority on what a node's write parameters and done results actually are, so
+a port is never inferred from syntax the scanner happens to recognize.
+
+It reports whether the schema was found; a primitive whose schema is not
+registered keeps whatever the caller derived.
+*/
+func reflectPorts(interfaceID uint64) (inputs, outputs []Port, extends string, ok bool) {
+	if interfaceID == 0 {
+		return nil, nil, "", false
+	}
+
+	reflected, err := ReflectInterface(interfaceID)
+
+	if err != nil {
+		return nil, nil, "", false
+	}
+
+	inputs = portsOf(reflected.Inputs)
+	outputs = portsOf(reflected.Outputs)
+
+	if super := superclassOf(interfaceID); super != "" {
+		extends = super
+
+		outputs = append(outputs, Port{
+			Name:        "self",
+			Type:        "Capability",
+			RawType:     super,
+			Description: "This primitive as a " + super + ", to wire into a capability port",
+		})
+	}
+
+	return inputs, outputs, extends, true
+}
+
+/*
+portsOf converts reflected fields into catalog ports, ordered by name so the
+catalog is stable across runs.
+*/
+func portsOf(fields map[string]FieldInfo) []Port {
+	names := make([]string, 0, len(fields))
+
+	for name := range fields {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	ports := make([]Port, 0, len(names))
+
+	for _, name := range names {
+		field := fields[name]
+
+		ports = append(ports, Port{
+			Name:        name,
+			Type:        portTypeOf(field),
+			RawType:     field.Which.String(),
+			Description: "The " + name + " of this primitive",
+		})
+	}
+
+	return ports
+}
+
+/*
+portTypeOf names the editor port a reflected field is drawn as.
+*/
+func portTypeOf(field FieldInfo) string {
+	switch field.Which {
+	case schema.Type_Which_bool:
+		return "Bool"
+	case schema.Type_Which_text:
+		return "Text"
+	case schema.Type_Which_data, schema.Type_Which_structType,
+		schema.Type_Which_list, schema.Type_Which_anyPointer:
+		return "Data"
+	case schema.Type_Which_float32, schema.Type_Which_float64:
+		return "Float64"
+	case schema.Type_Which_interface:
+		return "Capability"
+	case schema.Type_Which_enum:
+		return "Status"
+	}
+
+	return "Int64"
+}
+
+/*
+superclassOf names the interface a given interface extends, so a node that is
+callable as something else can expose itself as that.
+*/
+func superclassOf(interfaceID uint64) string {
+	raw, err := schemas.DefaultRegistry.Find(interfaceID)
+
+	if err != nil {
+		return ""
+	}
+
+	message, err := capnp.Unmarshal(raw)
+
+	if err != nil {
+		return ""
+	}
+
+	root, err := schema.ReadRootCodeGeneratorRequest(message)
+
+	if err != nil {
+		return ""
+	}
+
+	nodes, err := root.Nodes()
+
+	if err != nil {
+		return ""
+	}
+
+	for index := 0; index < nodes.Len(); index++ {
+		node := nodes.At(index)
+
+		if node.Id() != interfaceID || node.Which() != schema.Node_Which_interface {
+			continue
+		}
+
+		superclasses, err := node.Interface().Superclasses()
+
+		if err != nil || superclasses.Len() == 0 {
+			return ""
+		}
+
+		return displayNameOf(nodes, superclasses.At(0).Id())
+	}
+
+	return ""
+}
+
+/*
+displayNameOf reads an interface's unqualified name out of the schema.
+*/
+func displayNameOf(nodes schema.Node_List, interfaceID uint64) string {
+	for index := 0; index < nodes.Len(); index++ {
+		node := nodes.At(index)
+
+		if node.Id() != interfaceID {
+			continue
+		}
+
+		name, err := node.DisplayName()
+
+		if err != nil {
+			return ""
+		}
+
+		if cut := strings.LastIndex(name, ":"); cut != -1 {
+			name = name[cut+1:]
+		}
+
+		return name
+	}
+
+	return ""
+}
+
+/*
+interfaceIDOf reads the <Name>_TypeID constant capnpc-go generates beside an
+interface, which is the key the schema registry is addressed by. Reading the
+generated constant means the scanner agrees with the compiler about which
+schema a node has, instead of re-deriving it.
+*/
+func interfaceIDOf(loadedPackage *packages.Package, interfaceName string) uint64 {
+	if loadedPackage == nil || loadedPackage.Types == nil {
+		return 0
+	}
+
+	declared := loadedPackage.Types.Scope().Lookup(interfaceName + "_TypeID")
+
+	if declared == nil {
+		return 0
+	}
+
+	constant, ok := declared.(*types.Const)
+
+	if !ok {
+		return 0
+	}
+
+	value, ok := constantUint64(constant)
+
+	if !ok {
+		return 0
+	}
+
+	return value
+}
+
+/*
+constantUint64 reads a generated type id, which capnpc-go emits as an
+untyped constant too large for an int64.
+*/
+func constantUint64(declared *types.Const) (uint64, bool) {
+	text := declared.Val().ExactString()
+
+	value, err := strconv.ParseUint(text, 10, 64)
+
+	if err != nil {
+		return 0, false
+	}
+
+	return value, true
 }

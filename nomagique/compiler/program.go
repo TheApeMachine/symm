@@ -271,6 +271,41 @@ func (p *Program) Float64Result(nodeID, fieldName string) (float64, error) {
 	return math.Float64frombits(res.Uint64(capnp.DataOffset(field.Offset * 8))), nil
 }
 
+/*
+arguments returns the argument struct a node is being given this observation,
+allocating it the first time something is written into it.
+*/
+func (p *Program) arguments(frames []nodeFrame, index NodeID) (capnp.Struct, error) {
+	if frames[index].args.IsValid() {
+		return frames[index].args, nil
+	}
+
+	node := &p.Nodes[index]
+
+	_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+
+	if err != nil {
+		return capnp.Struct{}, errnie.Error(errnie.Err(
+			errnie.Internal, "compiler: failed to allocate evaluation message", err,
+		))
+	}
+
+	arguments, err := capnp.NewRootStruct(segment, node.Write.ParamsSize)
+
+	if err != nil {
+		return capnp.Struct{}, errnie.Error(errnie.Err(
+			errnie.Internal, "compiler: failed to allocate argument struct", err,
+		))
+	}
+
+	if node.ArgsTemplate.IsValid() {
+		_ = arguments.CopyFrom(node.ArgsTemplate)
+	}
+
+	frames[index].args = arguments
+	return arguments, nil
+}
+
 type nodeFrame struct {
 	args     capnp.Struct
 	ready    uint64
@@ -301,24 +336,11 @@ func (p *Program) Execute(
 		}
 	}
 
-	// 1. Initialize per-node argument structs
-	for i := 0; i < nodeCount; i++ {
-		node := &p.Nodes[i]
-		if node.Client.IsValid() || node.Write.ParamsSize.DataSize > 0 || node.Write.ParamsSize.PointerCount > 0 {
-			_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-			if err != nil {
-				return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc evaluation message", err))
-			}
-			st, err := capnp.NewRootStruct(seg, node.Write.ParamsSize)
-			if err != nil {
-				return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc argument struct", err))
-			}
-			if node.ArgsTemplate.IsValid() {
-				_ = st.CopyFrom(node.ArgsTemplate)
-			}
-			frames[i].args = st
-		}
-	}
+	// 1. Argument structs are allocated when a node is about to be given
+	// something, not for every node on every observation. A graph is mostly
+	// idle at any instant — one venue reports while the rest are quiet — so
+	// allocating the whole graph's arguments per pass costs in proportion to
+	// the graph instead of to the traffic.
 
 	// 2. Populate initial inputs if supplied
 	for nodeIdx, initStruct := range initialInputs {
@@ -332,7 +354,14 @@ func (p *Program) Execute(
 		}
 	}
 
-	// 3. Find initial runnable nodes
+	// 3. Find initial runnable nodes.
+	//
+	// A node whose inputs are all wired waits for them: it runs when an
+	// upstream delivers, never on whatever its arguments held from a previous
+	// observation. A node with nothing wired into it is an origin — it owns a
+	// clock, a socket, a process — and runs every pass because only it knows
+	// whether it has something to report. Work is therefore proportional to
+	// what arrived rather than to the size of the graph.
 	var queue []NodeID
 	for i := 0; i < nodeCount; i++ {
 		node := &p.Nodes[i]
@@ -342,8 +371,13 @@ func (p *Program) Execute(
 			}
 			continue
 		}
-		req := node.RequiredMask
-		if (frames[i].ready & req) == req {
+
+		if _, seeded := initialInputs[NodeID(i)]; seeded {
+			queue = append(queue, NodeID(i))
+			continue
+		}
+
+		if node.RequiredMask == 0 {
 			queue = append(queue, NodeID(i))
 		}
 	}
@@ -363,6 +397,10 @@ func (p *Program) Execute(
 		var resStruct capnp.Struct
 
 		if client.IsValid() {
+			if _, err := p.arguments(frames, currIdx); err != nil {
+				return err
+			}
+
 			// Step A: SendStreamCall(write)
 			if frames[currIdx].args.IsValid() {
 				send := capnp.Send{
@@ -433,7 +471,14 @@ func (p *Program) Execute(
 					}
 
 					if r.Copy != nil {
-						if !resStruct.IsValid() || !frames[destIdx].args.IsValid() {
+						destArgs, err := p.arguments(frames, destIdx)
+
+						if err != nil {
+							release()
+							return err
+						}
+
+						if !resStruct.IsValid() {
 							release()
 							return errnie.Error(errnie.Err(
 								errnie.Internal,
@@ -441,7 +486,7 @@ func (p *Program) Execute(
 								nil,
 							))
 						}
-						if err := r.Copy(resStruct, frames[destIdx].args); err != nil {
+						if err := r.Copy(resStruct, destArgs); err != nil {
 							release()
 							return errnie.Error(errnie.Err(
 								errnie.Internal,
@@ -475,8 +520,14 @@ func (p *Program) Execute(
 						}
 					}
 
-					if r.Copy != nil && frames[currIdx].args.IsValid() && frames[destIdx].args.IsValid() {
-						_ = r.Copy(frames[currIdx].args, frames[destIdx].args)
+					destArgs, err := p.arguments(frames, destIdx)
+
+					if err != nil {
+						return err
+					}
+
+					if r.Copy != nil && frames[currIdx].args.IsValid() && destArgs.IsValid() {
+						_ = r.Copy(frames[currIdx].args, destArgs)
 					}
 					frames[destIdx].ready |= (1 << r.ToField)
 					destReq := p.Nodes[destIdx].RequiredMask
