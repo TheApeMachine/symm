@@ -351,6 +351,10 @@
             {
               "nodeId": "metric:trade_count",
               "portName": "raw"
+            },
+            {
+              "nodeId": "signed_count_fraction",
+              "portName": "b"
             }
           ]
         }
@@ -382,6 +386,10 @@
             {
               "nodeId": "metric:trade_count:buy",
               "portName": "raw"
+            },
+            {
+              "nodeId": "count_diff",
+              "portName": "a"
             }
           ]
         }
@@ -413,6 +421,10 @@
             {
               "nodeId": "metric:trade_count:sell",
               "portName": "raw"
+            },
+            {
+              "nodeId": "count_diff",
+              "portName": "b"
             }
           ]
         }
@@ -623,6 +635,10 @@
             {
               "nodeId": "metric:gross_notional",
               "portName": "raw"
+            },
+            {
+              "nodeId": "signed_net_fraction",
+              "portName": "b"
             }
           ]
         }
@@ -654,6 +670,10 @@
             {
               "nodeId": "metric:net_notional",
               "portName": "raw"
+            },
+            {
+              "nodeId": "signed_net_fraction",
+              "portName": "a"
             }
           ]
         }
@@ -1011,6 +1031,287 @@
           "raw": [
             {
               "nodeId": "cumulative_notional_delta",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "count_diff": {
+      "id": "count_diff",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": 600.0,
+      "y": -200.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "trade_count:buy",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "trade_count:sell",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "signed_count_fraction",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "signed_count_fraction": {
+      "id": "signed_count_fraction",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 900.0,
+      "y": -200.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "count_diff",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "trade_count",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:signed_count_fraction",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "signed_net_fraction": {
+      "id": "signed_net_fraction",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 600.0,
+      "y": 900.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "net_notional",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "gross_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:signed_net_fraction",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "signed_net_fraction_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "signed_net_fraction_divergence",
+              "portName": "value"
+            },
+            {
+              "nodeId": "signed_net_fraction_zscore",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "signed_net_fraction_baseline": {
+      "id": "signed_net_fraction_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 900.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signed_net_fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:signed_net_fraction_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "signed_net_fraction_divergence": {
+      "id": "signed_net_fraction_divergence",
+      "type": "statistic.ResidualDivergence",
+      "width": 280,
+      "height": 172,
+      "x": 900.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signed_net_fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:signed_net_fraction_divergence",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "signed_net_fraction_zscore": {
+      "id": "signed_net_fraction_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 900.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signed_net_fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:signed_net_fraction_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:signed_count_fraction": {
+      "id": "metric:signed_count_fraction",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 3800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "signed_count_fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:signed_net_fraction": {
+      "id": "metric:signed_net_fraction",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 3950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "signed_net_fraction",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:signed_net_fraction_baseline": {
+      "id": "metric:signed_net_fraction_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 4100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "signed_net_fraction_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:signed_net_fraction_divergence": {
+      "id": "metric:signed_net_fraction_divergence",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 4250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "signed_net_fraction_divergence",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:signed_net_fraction_zscore": {
+      "id": "metric:signed_net_fraction_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 4400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "signed_net_fraction_zscore",
               "portName": "out"
             }
           ]

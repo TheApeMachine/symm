@@ -788,6 +788,12 @@ func portTypeOf(field FieldInfo) string {
 			return "CapabilityList"
 		}
 
+		// A list of values gathers producers, so the editor draws one port per
+		// producer rather than a single opaque one.
+		if field.ValueList {
+			return "FanIn:" + portTypeOfWhich(field.ElementWhich)
+		}
+
 		return "Data"
 	case schema.Type_Which_data, schema.Type_Which_structType,
 		schema.Type_Which_anyPointer:
@@ -924,4 +930,11 @@ func constantUint64(declared *types.Const) (uint64, bool) {
 	}
 
 	return value, true
+}
+
+/*
+portTypeOfWhich names the editor port a Cap'n Proto type is drawn as.
+*/
+func portTypeOfWhich(which schema.Type_Which) string {
+	return portTypeOf(FieldInfo{Which: which})
 }

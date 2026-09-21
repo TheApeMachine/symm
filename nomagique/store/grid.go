@@ -27,6 +27,7 @@ type GridServer struct {
 	*runtime.System
 	interests []string
 	metrics   data.MetricService_List
+	values    []float64
 	out       []byte
 	delivered int64
 }
@@ -72,7 +73,7 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 		server.metrics = metrics
 	}
 
-	payload, err := call.Args().Data()
+	feeds, err := call.Args().Data()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -83,13 +84,40 @@ func (server *GridServer) Write(ctx context.Context, call Grid_write) error {
 	}
 
 	server.out = nil
+	server.values = nil
 	server.delivered = 0
 
-	if len(payload) == 0 {
+	if !feeds.IsValid() {
 		return nil
 	}
 
-	return server.resolve(payload)
+	// Every feed that landed is resolved in turn, because a grid observes all
+	// of them rather than whichever one happened to arrive last.
+	for index := range feeds.Len() {
+		payload, err := feeds.At(index)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.BadRequest,
+				"[store.grid.Write] failed to read a written feed",
+				err,
+			))
+		}
+
+		if len(payload) == 0 {
+			continue
+		}
+
+		if err := server.resolve(payload); err != nil {
+			return err
+		}
+
+		if server.delivered > 0 {
+			return nil
+		}
+	}
+
+	return nil
 }
 
 /*
@@ -109,6 +137,10 @@ func (server *GridServer) Done(ctx context.Context, call Grid_done) error {
 	results.SetStatus(runtime.Status(server.Status()))
 	results.SetDelivered(server.delivered)
 	results.SetMetrics(int64(server.metrics.Len()))
+
+	if err := server.deliver(results); err != nil {
+		return err
+	}
 
 	if len(server.out) == 0 {
 		return nil
@@ -181,7 +213,46 @@ func (server *GridServer) resolve(payload []byte) error {
 
 	server.out = encoded
 	server.delivered = int64(len(resolved))
+	server.values = make([]float64, 0, len(server.interests))
 
+	// The values come back in the order they were declared, so a metric reads
+	// the slot it asked for rather than searching for its field by name.
+	for _, interest := range server.interests {
+		value, numeric := resolved[interest].(float64)
+
+		if !numeric {
+			continue
+		}
+
+		server.values = append(server.values, value)
+	}
+
+	return nil
+}
+
+/*
+deliver hands back one value per declared interest.
+*/
+func (server *GridServer) deliver(results Grid_done_Results) error {
+	if len(server.values) == 0 {
+		return nil
+	}
+
+	delivered, err := results.NewValues(int32(len(server.values)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[store.grid.deliver] failed to allocate delivered values",
+			err,
+		))
+	}
+
+	for index, value := range server.values {
+		delivered.Set(index, value)
+	}
+
+	server.values = nil
 	return nil
 }
 

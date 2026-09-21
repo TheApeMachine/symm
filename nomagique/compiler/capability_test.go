@@ -29,13 +29,13 @@ func capabilityGraph(bodyProvider string) Graph {
 				Connections: Connections{
 					Inputs: map[string][]ConnectionTarget{},
 					Outputs: map[string][]ConnectionTarget{
-						"out": {{NodeID: "sink", PortName: "value"}},
+						"out": {{NodeID: "collect", PortName: "data"}},
 					},
 				},
 			},
-			"sink": {
-				ID:   "sink",
-				Type: "sink",
+			"collect": {
+				ID:   "collect",
+				Type: "store.Constant",
 				Connections: Connections{
 					Inputs:  map[string][]ConnectionTarget{},
 					Outputs: map[string][]ConnectionTarget{},

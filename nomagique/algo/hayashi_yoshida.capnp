@@ -11,6 +11,9 @@ struct Interval {
   from  @0 :Float64;
   to    @1 :Float64;
   value @2 :Float64;
+  # Energy per second over the span, kept with the interval so the typical
+  # activity of a path is read off the returns it actually retained.
+  rate  @3 :Float64;
 }
 
 # Accumulation is the estimator's retained history for one pair of paths.
@@ -27,6 +30,19 @@ struct Accumulation {
   support     @7 :Float64;
   leftEnergy  @8 :Float64;
   rightEnergy @9 :Float64;
+  leftFrom     @10 :Float64;
+  leftThrough  @11 :Float64;
+  rightFrom    @12 :Float64;
+  rightThrough @13 :Float64;
+  leftCount    @14 :Float64;
+  rightCount   @15 :Float64;
+  leftOpen     @16 :Bool;
+  rightOpen    @17 :Bool;
+  # Energy per second of every return each path contributed. The overlap
+  # working set is pruned as intervals stop being reachable, but a path's
+  # typical activity is a property of the path, so its rates are kept.
+  leftRates    @18 :List(Float64);
+  rightRates   @19 :List(Float64);
 }
 
 # HayashiYoshida is the asynchronous covariance of two return paths. It reports
@@ -47,12 +63,18 @@ interface HayashiYoshida {
     returns2     :Float64
   ) -> stream;
   done @1 () -> (
-    state       :Data,
-    correlation :Float64,
-    covariance  :Float64,
-    support     :Float64,
-    leftEnergy  :Float64,
-    rightEnergy :Float64,
-    status      :Status
+    state           :Data,
+    correlation     :Float64,
+    covariance      :Float64,
+    support         :Float64,
+    leftEnergy      :Float64,
+    rightEnergy     :Float64,
+    leftEnergyRate  :Float64,
+    rightEnergyRate :Float64,
+    leftReturns     :Float64,
+    rightReturns    :Float64,
+    sharedTime      :Float64,
+    overlapDensity  :Float64,
+    status          :Status
   );
 }

@@ -22,7 +22,6 @@ func TestCatalogAndRegistryConsistency(t *testing.T) {
 				"arithmetic.Divide",
 				"calculus.Square",
 				"calculus.Floor",
-				"data.Source",
 			}
 
 			for _, op := range coreOps {
@@ -185,24 +184,7 @@ func TestWorkbenchNestedDefinitionExpansion(t *testing.T) {
 						"a": map[string]any{"value": 2.0},
 						"b": map[string]any{"value": 3.0},
 					},
-					"connections": map[string]any{
-						"outputs": map[string]any{
-							"out": []map[string]any{
-								{"nodeId": "sink", "portName": "in"},
-							},
-						},
-					},
-				},
-				"sink": map[string]any{
-					"id":   "sink",
-					"type": "data.Sink",
-					"connections": map[string]any{
-						"inputs": map[string]any{
-							"in": []map[string]any{
-								{"nodeId": "add_node", "portName": "out"},
-							},
-						},
-					},
+					"connections": map[string]any{},
 				},
 			},
 		}
@@ -223,7 +205,7 @@ func TestWorkbenchNestedDefinitionExpansion(t *testing.T) {
 						"type": "definition:inner",
 						"connections": map[string]any{
 							"outputs": map[string]any{
-								"out": []map[string]any{
+								"add_node.out": []map[string]any{
 									{"nodeId": "sq_node", "portName": "value"},
 								},
 							},
@@ -235,7 +217,7 @@ func TestWorkbenchNestedDefinitionExpansion(t *testing.T) {
 						"connections": map[string]any{
 							"inputs": map[string]any{
 								"value": []map[string]any{
-									{"nodeId": "inner_node", "portName": "out"},
+									{"nodeId": "inner_node", "portName": "add_node.out"},
 								},
 							},
 						},

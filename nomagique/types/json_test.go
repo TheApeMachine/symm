@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -36,7 +37,15 @@ func TestJSONServer(t *testing.T) {
 
 				out, err := results.Out()
 				So(err, ShouldBeNil)
-				So(string(out), ShouldEqual, `{"event":"subscribe","pair":["BTC/USD"]}`)
+
+				// The document is compared by what it carries, not by the order
+				// the keys happen to come out in, which a map does not fix.
+				var carried map[string]any
+				So(sonic.Unmarshal(out, &carried), ShouldBeNil)
+				So(carried, ShouldResemble, map[string]any{
+					"event": "subscribe",
+					"pair":  []any{"BTC/USD"},
+				})
 			})
 		})
 

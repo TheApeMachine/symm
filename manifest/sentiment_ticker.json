@@ -161,6 +161,10 @@
             {
               "nodeId": "directional_consensus",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:directional_participation",
+              "portName": "raw"
             }
           ]
         }
@@ -209,6 +213,10 @@
             {
               "nodeId": "breadth_velocity",
               "portName": "val"
+            },
+            {
+              "nodeId": "metric:breadth",
+              "portName": "raw"
             }
           ]
         }
@@ -791,6 +799,44 @@
           "raw": [
             {
               "nodeId": "median_absolute_return_ratio",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:directional_participation": {
+      "id": "metric:directional_participation",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1700.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "directional_participation",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:breadth": {
+      "id": "metric:breadth",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "breadth",
               "portName": "out"
             }
           ]

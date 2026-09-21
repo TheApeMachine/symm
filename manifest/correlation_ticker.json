@@ -124,6 +124,62 @@
             {
               "nodeId": "metric:overlap_pair_count",
               "portName": "raw"
+            },
+            {
+              "nodeId": "metric:effective_sample_count",
+              "portName": "raw"
+            }
+          ],
+          "leftEnergy": [
+            {
+              "nodeId": "metric:return_energy:measured",
+              "portName": "raw"
+            }
+          ],
+          "rightEnergy": [
+            {
+              "nodeId": "metric:return_energy:reference",
+              "portName": "raw"
+            }
+          ],
+          "leftEnergyRate": [
+            {
+              "nodeId": "metric:return_energy_rate:measured",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "metric:focal_return_energy_rate",
+              "portName": "raw"
+            }
+          ],
+          "rightEnergyRate": [
+            {
+              "nodeId": "metric:return_energy_rate:reference",
+              "portName": "raw"
+            }
+          ],
+          "leftReturns": [
+            {
+              "nodeId": "metric:supported_return_count:measured",
+              "portName": "raw"
+            }
+          ],
+          "rightReturns": [
+            {
+              "nodeId": "metric:supported_return_count:reference",
+              "portName": "raw"
+            }
+          ],
+          "sharedTime": [
+            {
+              "nodeId": "metric:shared_time",
+              "portName": "raw"
+            }
+          ],
+          "overlapDensity": [
+            {
+              "nodeId": "metric:overlap_density",
+              "portName": "raw"
             }
           ]
         }
@@ -507,6 +563,196 @@
             {
               "nodeId": "velocity",
               "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_energy:measured": {
+      "id": "metric:return_energy:measured",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": -400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "leftEnergy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_energy:reference": {
+      "id": "metric:return_energy:reference",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": -250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "rightEnergy"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_energy_rate:measured": {
+      "id": "metric:return_energy_rate:measured",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "leftEnergyRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_energy_rate:reference": {
+      "id": "metric:return_energy_rate:reference",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": 50.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "rightEnergyRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:focal_return_energy_rate": {
+      "id": "metric:focal_return_energy_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "leftEnergyRate"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:supported_return_count:measured": {
+      "id": "metric:supported_return_count:measured",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "leftReturns"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:supported_return_count:reference": {
+      "id": "metric:supported_return_count:reference",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "rightReturns"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:shared_time": {
+      "id": "metric:shared_time",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "sharedTime"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:overlap_density": {
+      "id": "metric:overlap_density",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "overlapDensity"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:effective_sample_count": {
+      "id": "metric:effective_sample_count",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1460.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "hy",
+              "portName": "support"
             }
           ]
         },

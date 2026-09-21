@@ -20,6 +20,10 @@
             {
               "nodeId": "observed_notional_rate",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:observed_notional",
+              "portName": "raw"
             }
           ]
         }
@@ -39,6 +43,10 @@
             {
               "nodeId": "observed_notional_imbalance",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:observed_notional_diff",
+              "portName": "raw"
             }
           ]
         }
@@ -79,6 +87,10 @@
             {
               "nodeId": "observed_notional_imbalance_zscore",
               "portName": "value"
+            },
+            {
+              "nodeId": "metric:observed_notional_imbalance",
+              "portName": "raw"
             }
           ]
         }
@@ -98,6 +110,10 @@
             {
               "nodeId": "mutation_activity_imbalance",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:mutation_count",
+              "portName": "raw"
             }
           ]
         }
@@ -117,6 +133,10 @@
             {
               "nodeId": "mutation_activity_imbalance",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:mutation_count_diff",
+              "portName": "raw"
             }
           ]
         }
@@ -208,6 +228,10 @@
             {
               "nodeId": "observed_notional_rate_zscore",
               "portName": "value"
+            },
+            {
+              "nodeId": "metric:observed_notional_rate",
+              "portName": "raw"
             }
           ]
         }
@@ -495,6 +519,120 @@
           "raw": [
             {
               "nodeId": "observed_notional_rate_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional": {
+      "id": "metric:observed_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_diff": {
+      "id": "metric:observed_notional_diff",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 800.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observedDifference",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_imbalance": {
+      "id": "metric:observed_notional_imbalance",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 950.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:observed_notional_rate": {
+      "id": "metric:observed_notional_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "observed_notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:mutation_count": {
+      "id": "metric:mutation_count",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "mutation_total",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:mutation_count_diff": {
+      "id": "metric:mutation_count_diff",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "mutationDifference",
               "portName": "out"
             }
           ]

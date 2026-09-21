@@ -74,10 +74,22 @@ func CompileWithPrevious(
 	for id, node := range graph.Nodes {
 		for _, targets := range node.Connections.Outputs {
 			for _, target := range targets {
-				if _, exists := graph.Nodes[target.NodeID]; exists {
-					adjacency[id] = append(adjacency[id], target.NodeID)
-					inDegree[target.NodeID]++
+				consumer, exists := graph.Nodes[target.NodeID]
+
+				if !exists {
+					continue
 				}
+
+				// Handing a node to another is not a dependency on it. The
+				// consumer holds a reference and calls it when it decides to,
+				// so the two do not have to be ordered against each other and
+				// a node may be handed to something it also reads from.
+				if carriesCapability(registry, consumer, target.PortName) {
+					continue
+				}
+
+				adjacency[id] = append(adjacency[id], target.NodeID)
+				inDegree[target.NodeID]++
 			}
 		}
 	}
@@ -140,9 +152,6 @@ func CompileWithPrevious(
 			}
 		}
 
-		if factory.InterfaceID == 0 {
-			ifaceSchema = makeBoundarySchema()
-		}
 		schemasMap[i] = ifaceSchema
 
 		compiledNode := CompiledNode{
@@ -151,8 +160,6 @@ func CompileWithPrevious(
 			Inputs:       make(map[string]CompiledField),
 			Outputs:      make(map[string]CompiledField),
 			InputIndices: make(map[string]FieldID),
-			IsSource:     isBoundarySource(id, node),
-			IsSink:       isBoundarySink(id, node),
 		}
 
 		if ifaceSchema != nil {
@@ -233,6 +240,7 @@ func CompileWithPrevious(
 	// 5. Phase 7, 9 & 10: Validate edges, compile routes and readiness masks
 	var routes []Route
 	var capabilityEdges []capabilityEdge
+	var fanInEdges []fanInEdge
 
 	for uIdx, uID := range execOrder {
 		uNode := graph.Nodes[uID]
@@ -254,7 +262,7 @@ func CompileWithPrevious(
 				vSchema := schemasMap[vIdx]
 
 				toField, inExists := resolveInputField(vSchema, target.PortName)
-				isSink := isBoundarySink(vID, vNode) || vSchema.InterfaceID == 0
+				isSink := vSchema == nil || vSchema.InterfaceID == 0
 				if !inExists && !isSink {
 					return nil, errnie.Error(errnie.Err(
 						errnie.Validation,
@@ -325,8 +333,58 @@ func CompileWithPrevious(
 				// A boundary port carries whatever the definition routes through
 				// it, so it adopts the type of the field it feeds rather than
 				// forcing every metric input to be opaque data.
-				if uSchema != nil && uSchema.Boundary {
-					fromField.Which = toField.Which
+				if fromField.ValueList && !toField.ValueList {
+					slot, numbered := outputSlot(outPort)
+
+					if !numbered {
+						return nil, errnie.Error(errnie.Err(
+							errnie.Validation,
+							fmt.Sprintf(
+								"compiler: port %q of node %q hands back several values, so it is read as %s_<slot>",
+								outPort, uID, outPort,
+							),
+							nil,
+						))
+					}
+
+					copier, err := CompileFanOutCopier(fromField, toField, slot)
+
+					if err != nil {
+						return nil, errnie.Error(errnie.Err(
+							errnie.Validation,
+							fmt.Sprintf(
+								"compiler: type mismatch reading slot %d of %q", slot, outPort,
+							),
+							err,
+						))
+					}
+
+					routes = append(routes, Route{
+						FromNode:  NodeID(uIdx),
+						FromField: fromFieldID,
+						ToNode:    vIdx,
+						ToField:   toFieldID,
+						Copy:      copier,
+					})
+
+					compiledNodes[vIdx].RequiredMask |= (1 << toFieldID)
+					continue
+				}
+
+				// A gathering port holds every producer that lands on it, so
+				// its slots are handed out once they are all known.
+				if toField.ValueList {
+					fanInEdges = append(fanInEdges, fanInEdge{
+						fromNode:  NodeID(uIdx),
+						fromField: fromFieldID,
+						fromInfo:  fromField,
+						toNode:    vIdx,
+						toField:   toFieldID,
+						toInfo:    toField,
+						port:      target.PortName,
+					})
+
+					continue
 				}
 
 				// Compile typed Copier with type compatibility validation
@@ -414,6 +472,14 @@ func CompileWithPrevious(
 	// 6b. Bind capability edges now that every node owns a client. A
 	// capability is bound into the consumer's argument template, so it is
 	// present on every call rather than arriving with one observation.
+	gathered, err := compileFanIn(fanInEdges)
+
+	if err != nil {
+		return nil, err
+	}
+
+	routes = append(routes, gathered...)
+
 	if err := bindCapabilities(compiledNodes, capabilityEdges); err != nil {
 		return nil, err
 	}
@@ -513,10 +579,6 @@ func resolveInputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, bo
 		}
 	}
 
-	if ifaceSchema.Boundary {
-		return declareBoundaryField(ifaceSchema.Inputs, port), true
-	}
-
 	return FieldInfo{}, false
 }
 
@@ -524,52 +586,46 @@ func resolveOutputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, b
 	if ifaceSchema == nil {
 		return FieldInfo{}, false
 	}
+
 	fi, ok := ifaceSchema.Outputs[port]
 
 	if ok {
 		return fi, true
 	}
 
-	if ifaceSchema.Boundary {
-		return declareBoundaryField(ifaceSchema.Outputs, port), true
+	// A port handing back several values is read one numbered slot at a time.
+	base, _, numbered := strings.Cut(port, "_")
+
+	if !numbered {
+		return FieldInfo{}, false
 	}
 
-	return FieldInfo{}, false
+	fi, ok = ifaceSchema.Outputs[base]
+
+	if !ok || !fi.ValueList {
+		return FieldInfo{}, false
+	}
+
+	return fi, true
 }
 
 /*
-declareBoundaryField admits a port a definition declared on its boundary,
-giving it a slot of its own so routes through the boundary stay distinct.
+outputSlot reads the slot a numbered output port names.
 */
-func declareBoundaryField(fields map[string]FieldInfo, port string) FieldInfo {
-	declared := FieldInfo{
-		Name:   port,
-		Offset: uint32(len(fields)),
-		Which:  schema.Type_Which_data,
+func outputSlot(port string) (int, bool) {
+	_, suffix, numbered := strings.Cut(port, "_")
+
+	if !numbered {
+		return 0, false
 	}
 
-	fields[port] = declared
-	return declared
-}
+	slot, err := strconv.Atoi(suffix)
 
-func makeBoundarySchema() *InterfaceSchema {
-	return &InterfaceSchema{
-		InterfaceID: 0,
-		WriteParams: capnp.ObjectSize{DataSize: 64, PointerCount: 8},
-		DoneResult:  capnp.ObjectSize{DataSize: 64, PointerCount: 8},
-		Inputs: map[string]FieldInfo{
-			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
-			"data":  {Name: "data", Offset: 0, Which: schema.Type_Which_data},
-			"in":    {Name: "in", Offset: 0, Which: schema.Type_Which_data},
-		},
-		Outputs: map[string]FieldInfo{
-			"out":   {Name: "out", Offset: 0, Which: schema.Type_Which_data},
-			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
-			"data":  {Name: "data", Offset: 0, Which: schema.Type_Which_data},
-		},
-		HasDone:  true,
-		Boundary: true,
+	if err != nil {
+		return 0, false
 	}
+
+	return slot, true
 }
 
 func parseRawInputString(raw json.RawMessage) string {
@@ -617,23 +673,6 @@ func formatWhich(w schema.Type_Which) string {
 	}
 }
 
-/*
-isBoundarySource reports the node through which a definition receives its
-declared inputs. For a metric that is the grid, which delivers exactly the
-fields the metric registered an interest in.
-*/
-func isBoundarySource(id string, node Node) bool {
-	return node.Type == "grid" || node.Type == "source" || node.Type == "data.Source" || node.Type == "test.Float64Source" || id == "grid" || id == "source" || id == "src" || strings.HasPrefix(id, "source")
-}
-
-/*
-isBoundarySink reports the node through which a definition publishes what it
-computed. For a signal that is its metrics, one port each.
-*/
-func isBoundarySink(id string, node Node) bool {
-	return node.Type == "metrics" || node.Type == "sink" || node.Type == "data.Sink" || id == "metrics" || id == "sink" || strings.HasPrefix(id, "sink")
-}
-
 func expandDefinitions(
 	graph Graph,
 	repo DefinitionRepository,
@@ -670,55 +709,13 @@ func expandDefinitions(
 			))
 		}
 
-		var childSourceID string
-		var childSourceNode Node
-		var childSinkID string
-		var childSinkNode Node
-
-		for cid, cnode := range childGraph.Nodes {
-			if isBoundarySource(cid, cnode) {
-				childSourceID = cid
-				childSourceNode = cnode
-			}
-
-			if isBoundarySink(cid, cnode) {
-				childSinkID = cid
-				childSinkNode = cnode
-			}
-		}
-
 		prefix := defID + "__"
 
 		childIngressTargets := make(map[string][]ConnectionTarget)
-		if childSourceID != "" {
-			for outPort, targets := range childSourceNode.Connections.Outputs {
-				for _, t := range targets {
-					childIngressTargets[outPort] = append(childIngressTargets[outPort], ConnectionTarget{
-						NodeID:   prefix + t.NodeID,
-						PortName: t.PortName,
-					})
-				}
-			}
-		}
-
 		childEgressSources := make(map[string][]ConnectionTarget)
-		if childSinkID != "" {
-			for inPort, targets := range childSinkNode.Connections.Inputs {
-				for _, t := range targets {
-					childEgressSources[inPort] = append(childEgressSources[inPort], ConnectionTarget{
-						NodeID:   prefix + t.NodeID,
-						PortName: t.PortName,
-					})
-				}
-			}
-		}
 
-		// 1. Add all namespaced child nodes (except boundary source/sink)
+		// 1. Add all namespaced child nodes
 		for cid, cnode := range childGraph.Nodes {
-			if cid == childSourceID || cid == childSinkID {
-				continue
-			}
-
 			namespacedNode := Node{
 				ID:        prefix + cid,
 				Type:      cnode.Type,
@@ -731,63 +728,25 @@ func expandDefinitions(
 
 			for inPort, targets := range cnode.Connections.Inputs {
 				for _, target := range targets {
-					if target.NodeID == childSourceID {
-						parentWires := defNode.Connections.Inputs[inPort]
-						if len(parentWires) == 0 {
-							parentWires = defNode.Connections.Inputs["in"]
-						}
-
-						for _, pw := range parentWires {
-							namespacedNode.Connections.Inputs[inPort] = append(
-								namespacedNode.Connections.Inputs[inPort],
-								ConnectionTarget{
-									NodeID:   pw.NodeID,
-									PortName: pw.PortName,
-								},
-							)
-						}
-					}
-
-					if target.NodeID != childSourceID {
-						namespacedNode.Connections.Inputs[inPort] = append(
-							namespacedNode.Connections.Inputs[inPort],
-							ConnectionTarget{
-								NodeID:   prefix + target.NodeID,
-								PortName: target.PortName,
-							},
-						)
-					}
+					namespacedNode.Connections.Inputs[inPort] = append(
+						namespacedNode.Connections.Inputs[inPort],
+						ConnectionTarget{
+							NodeID:   prefix + target.NodeID,
+							PortName: target.PortName,
+						},
+					)
 				}
 			}
 
 			for outPort, targets := range cnode.Connections.Outputs {
 				for _, target := range targets {
-					if target.NodeID == childSinkID {
-						parentTargets := defNode.Connections.Outputs[outPort]
-						if len(parentTargets) == 0 {
-							parentTargets = defNode.Connections.Outputs["out"]
-						}
-
-						for _, pt := range parentTargets {
-							namespacedNode.Connections.Outputs[outPort] = append(
-								namespacedNode.Connections.Outputs[outPort],
-								ConnectionTarget{
-									NodeID:   pt.NodeID,
-									PortName: pt.PortName,
-								},
-							)
-						}
-					}
-
-					if target.NodeID != childSinkID {
-						namespacedNode.Connections.Outputs[outPort] = append(
-							namespacedNode.Connections.Outputs[outPort],
-							ConnectionTarget{
-								NodeID:   prefix + target.NodeID,
-								PortName: target.PortName,
-							},
-						)
-					}
+					namespacedNode.Connections.Outputs[outPort] = append(
+						namespacedNode.Connections.Outputs[outPort],
+						ConnectionTarget{
+							NodeID:   prefix + target.NodeID,
+							PortName: target.PortName,
+						},
+					)
 				}
 			}
 
@@ -1096,10 +1055,15 @@ func wireDefinitionPorts(
 	for port, targets := range defNode.Connections.Inputs {
 		childID, field, addressed := strings.Cut(port, ".")
 
-		// A port that names no node belongs to a graph that still declares an
-		// explicit boundary, which is wired separately.
 		if !addressed {
-			continue
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"compiler: definition node %q port %q must name the field it stands for, as <node>.<field>",
+					defID, port,
+				),
+				nil,
+			))
 		}
 
 		child, known := graph.Nodes[prefix+childID]
@@ -1135,10 +1099,15 @@ func wireDefinitionPorts(
 	for port, targets := range defNode.Connections.Outputs {
 		childID, field, addressed := strings.Cut(port, ".")
 
-		// A port that names no node belongs to a graph that still declares an
-		// explicit boundary, which is wired separately.
 		if !addressed {
-			continue
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"compiler: definition node %q port %q must name the field it stands for, as <node>.<field>",
+					defID, port,
+				),
+				nil,
+			))
 		}
 
 		child, known := graph.Nodes[prefix+childID]
@@ -1169,4 +1138,110 @@ func wireDefinitionPorts(
 	}
 
 	return nil
+}
+
+/*
+fanInEdge records a wire landing on a port that gathers several producers.
+*/
+type fanInEdge struct {
+	fromNode  NodeID
+	fromField FieldID
+	fromInfo  FieldInfo
+	toNode    NodeID
+	toField   FieldID
+	toInfo    FieldInfo
+	port      string
+}
+
+/*
+compileFanIn turns the wires landing on gathering ports into routes.
+
+Every producer on one port shares its list and is given a slot of its own, so
+several feeds land on a single input without overwriting one another. Slots are
+handed out in port-name order, which is the order the graph shows.
+*/
+func compileFanIn(edges []fanInEdge) ([]Route, error) {
+	grouped := make(map[capabilitySlot][]fanInEdge)
+
+	for _, edge := range edges {
+		slot := capabilitySlot{consumer: edge.toNode, field: uint16(edge.toField)}
+		grouped[slot] = append(grouped[slot], edge)
+	}
+
+	slots := make([]capabilitySlot, 0, len(grouped))
+
+	for slot := range grouped {
+		slots = append(slots, slot)
+	}
+
+	sort.Slice(slots, func(left, right int) bool {
+		if slots[left].consumer != slots[right].consumer {
+			return slots[left].consumer < slots[right].consumer
+		}
+
+		return slots[left].field < slots[right].field
+	})
+
+	routes := make([]Route, 0, len(edges))
+
+	for _, slot := range slots {
+		group := grouped[slot]
+
+		sort.Slice(group, func(left, right int) bool {
+			return group[left].port < group[right].port
+		})
+
+		for index, edge := range group {
+			copier, err := CompileFanInCopier(edge.fromInfo, edge.toInfo, index, len(group))
+
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf(
+						"compiler: type mismatch landing on gathering port %q",
+						edge.port,
+					),
+					err,
+				))
+			}
+
+			routes = append(routes, Route{
+				FromNode:       edge.fromNode,
+				FromField:      edge.fromField,
+				ToNode:         edge.toNode,
+				ToField:        edge.toField,
+				Copy:           copier,
+				FromInUnion:    edge.fromInfo.InUnion,
+				FromDiscVal:    edge.fromInfo.DiscriminantValue,
+				FromDiscOffset: edge.fromInfo.DiscriminantOffset,
+			})
+		}
+	}
+
+	return routes, nil
+}
+
+/*
+carriesCapability reports a port that receives a node rather than a value.
+*/
+func carriesCapability(registry *Registry, consumer Node, port string) bool {
+	factory, err := registry.Resolve(consumer.Type)
+
+	if err != nil || factory.InterfaceID == 0 {
+		return false
+	}
+
+	reflected, err := ReflectInterface(factory.InterfaceID)
+
+	if err != nil {
+		return false
+	}
+
+	field, resolved := resolveInputField(reflected, port)
+
+	if !resolved {
+		return false
+	}
+
+	return field.CapabilityList || field.Which == schema.Type_Which_interface
 }

@@ -64,8 +64,6 @@ type CompiledNode struct {
 	RequiredMask uint64
 	ArgsTemplate capnp.Struct
 	Identity     NodeIdentity
-	IsSource     bool
-	IsSink       bool
 }
 
 /*
@@ -365,12 +363,6 @@ func (p *Program) Execute(
 	var queue []NodeID
 	for i := 0; i < nodeCount; i++ {
 		node := &p.Nodes[i]
-		if node.IsSource {
-			if _, ok := initialInputs[NodeID(i)]; ok {
-				queue = append(queue, NodeID(i))
-			}
-			continue
-		}
 
 		if _, seeded := initialInputs[NodeID(i)]; seeded {
 			queue = append(queue, NodeID(i))

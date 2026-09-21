@@ -178,6 +178,10 @@
             {
               "nodeId": "contemporaneous_correlation",
               "portName": "value"
+            },
+            {
+              "nodeId": "metric:contemporaneous_correlation",
+              "portName": "raw"
             }
           ],
           "support": [
@@ -251,6 +255,18 @@
           "correlation": [
             {
               "nodeId": "best_lag_correlation",
+              "portName": "value"
+            },
+            {
+              "nodeId": "metric:best_lag_correlation",
+              "portName": "raw"
+            },
+            {
+              "nodeId": "best_lag_correlation_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "best_lag_correlation_zscore",
               "portName": "value"
             }
           ],
@@ -360,6 +376,18 @@
             {
               "nodeId": "metric:absolute_correlation_gain",
               "portName": "raw"
+            },
+            {
+              "nodeId": "correlation_gain_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "correlation_gain_zscore",
+              "portName": "value"
+            },
+            {
+              "nodeId": "correlation_gain_velocity",
+              "portName": "val"
             }
           ]
         }
@@ -560,6 +588,269 @@
           "raw": [
             {
               "nodeId": "overlap_pair_count",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "correlation_gain_baseline": {
+      "id": "correlation_gain_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 750.0,
+      "y": -350.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "absolute_correlation_gain",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:correlation_gain_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "correlation_gain_zscore": {
+      "id": "correlation_gain_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 750.0,
+      "y": -200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "absolute_correlation_gain",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:correlation_gain_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "correlation_gain_velocity": {
+      "id": "correlation_gain_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 750.0,
+      "y": -50.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "absolute_correlation_gain",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:correlation_gain_velocity",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "best_lag_correlation_baseline": {
+      "id": "best_lag_correlation_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 100.0,
+      "y": 480.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "lagged",
+              "portName": "correlation"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:best_lag_correlation_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "best_lag_correlation_zscore": {
+      "id": "best_lag_correlation_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 100.0,
+      "y": 630.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "lagged",
+              "portName": "correlation"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:best_lag_correlation_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:contemporaneous_correlation": {
+      "id": "metric:contemporaneous_correlation",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "contemporaneous",
+              "portName": "correlation"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:best_lag_correlation": {
+      "id": "metric:best_lag_correlation",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "lagged",
+              "portName": "correlation"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:correlation_gain_baseline": {
+      "id": "metric:correlation_gain_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "correlation_gain_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:correlation_gain_zscore": {
+      "id": "metric:correlation_gain_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "correlation_gain_zscore",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:correlation_gain_velocity": {
+      "id": "metric:correlation_gain_velocity",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1700.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "correlation_gain_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:best_lag_correlation_baseline": {
+      "id": "metric:best_lag_correlation_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "best_lag_correlation_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:best_lag_correlation_zscore": {
+      "id": "metric:best_lag_correlation_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "best_lag_correlation_zscore",
               "portName": "out"
             }
           ]

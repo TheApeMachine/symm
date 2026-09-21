@@ -199,6 +199,10 @@ func generateRegistrySource(schemas map[string]Schema) ([]byte, error) {
 }
 
 func tsPortBuilder(portType string) string {
+	if element, gathers := strings.CutPrefix(portType, "FanIn:"); gathers {
+		return tsPortBuilder(element)
+	}
+
 	switch strings.ToLower(portType) {
 	case "float64", "float32", "float":
 		return "ports.float64"
@@ -334,90 +338,8 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 	buf.WriteString("\t\t\t],\n")
 	buf.WriteString("\t\t});\n\n")
 
-	// Boundary Nodes
-	buf.WriteString("\t// 2. Boundary Nodes\n")
-
-	// The grid is the boundary through which a metric receives the fields it
-	// registered an interest in, so its ports are the interests it declared
-	// rather than one opaque stream.
-	buf.WriteString("\tconfig.addNodeType({\n")
-	buf.WriteString("\t\ttype: \"grid\",\n")
-	buf.WriteString("\t\tlabel: \"Grid\",\n")
-	buf.WriteString("\t\tcategory: \"Boundary\",\n")
-	buf.WriteString("\t\tdescription: \"Declared metric inputs delivered by the virtual grid\",\n")
-	buf.WriteString("\t\tinitialWidth: 260,\n")
-	buf.WriteString("\t\tinputs: (ports) => [\n")
-	buf.WriteString("\t\t\tports.string({ name: \"metric\", label: \"metric\", controls: [Controls.text({ name: \"metric\", label: \"Metric\", defaultValue: \"\" })] }),\n")
-	buf.WriteString("\t\t\tports.string({ name: \"interests\", label: \"interests\", controls: [Controls.text({ name: \"interests\", label: \"Interests\", defaultValue: \"\" })] }),\n")
-	buf.WriteString("\t\t],\n")
-	buf.WriteString("\t\toutputs: (ports) => (inputData) => {\n")
-	buf.WriteString("\t\t\tconst declared = String(inputData?.interests?.value ?? \"\")\n")
-	buf.WriteString("\t\t\t\t.split(\",\")\n")
-	buf.WriteString("\t\t\t\t.map((interest) => interest.trim())\n")
-	buf.WriteString("\t\t\t\t.filter((interest) => interest.length > 0);\n")
-	buf.WriteString("\t\t\treturn declared.map((interest) =>\n")
-	buf.WriteString("\t\t\t\tports.float64({ name: interest, label: interest }),\n")
-	buf.WriteString("\t\t\t);\n")
-	buf.WriteString("\t\t},\n")
-	buf.WriteString("\t});\n")
-
-	buf.WriteString("\tconfig.addNodeType({\n")
-	buf.WriteString("\t\ttype: \"data.Source\",\n")
-	buf.WriteString("\t\tlabel: \"Source\",\n")
-	buf.WriteString("\t\tcategory: \"Boundary\",\n")
-	buf.WriteString("\t\tdescription: \"Boundary data stream source\",\n")
-	buf.WriteString("\t\tinitialWidth: 260,\n")
-	buf.WriteString("\t\tinputs: [],\n")
-	buf.WriteString("\t\toutputs: (ports) => [ports.float64({ name: \"out\", label: \"out\" })],\n")
-	buf.WriteString("\t});\n")
-	buf.WriteString("\tconfig.addNodeType({\n")
-	buf.WriteString("\t\ttype: \"source\",\n")
-	buf.WriteString("\t\tlabel: \"Source\",\n")
-	buf.WriteString("\t\tcategory: \"Boundary\",\n")
-	buf.WriteString("\t\tdescription: \"Boundary data stream source\",\n")
-	buf.WriteString("\t\tinitialWidth: 260,\n")
-	buf.WriteString("\t\tinputs: [],\n")
-	buf.WriteString("\t\toutputs: (ports) => [ports.float64({ name: \"out\", label: \"out\" })],\n")
-	buf.WriteString("\t});\n")
-	// The metrics boundary is what a signal publishes, so it carries a port
-	// per metric rather than one opaque drain.
-	buf.WriteString("\tconfig.addNodeType({\n")
-	buf.WriteString("\t\ttype: \"metrics\",\n")
-	buf.WriteString("\t\tlabel: \"Metrics\",\n")
-	buf.WriteString("\t\tcategory: \"Boundary\",\n")
-	buf.WriteString("\t\tdescription: \"The metrics this signal publishes\",\n")
-	buf.WriteString("\t\tinitialWidth: 300,\n")
-	buf.WriteString("\t\tinputs: (ports) => (_inputData, connections) => {\n")
-	buf.WriteString("\t\t\tconst published = Object.keys(connections?.inputs ?? {});\n")
-	buf.WriteString("\t\t\tconst declared = published.length > 0 ? published : [\"metric\"];\n")
-	buf.WriteString("\t\t\treturn declared.map((metric) =>\n")
-	buf.WriteString("\t\t\t\tports.float64({ name: metric, label: metric }),\n")
-	buf.WriteString("\t\t\t);\n")
-	buf.WriteString("\t\t},\n")
-	buf.WriteString("\t\toutputs: [],\n")
-	buf.WriteString("\t});\n")
-
-	buf.WriteString("\tconfig.addNodeType({\n")
-	buf.WriteString("\t\ttype: \"data.Sink\",\n")
-	buf.WriteString("\t\tlabel: \"Sink\",\n")
-	buf.WriteString("\t\tcategory: \"Boundary\",\n")
-	buf.WriteString("\t\tdescription: \"Boundary data stream sink\",\n")
-	buf.WriteString("\t\tinitialWidth: 260,\n")
-	buf.WriteString("\t\tinputs: (ports) => [ports.float64({ name: \"in\", label: \"in\" })],\n")
-	buf.WriteString("\t\toutputs: [],\n")
-	buf.WriteString("\t});\n")
-	buf.WriteString("\tconfig.addNodeType({\n")
-	buf.WriteString("\t\ttype: \"sink\",\n")
-	buf.WriteString("\t\tlabel: \"Sink\",\n")
-	buf.WriteString("\t\tcategory: \"Boundary\",\n")
-	buf.WriteString("\t\tdescription: \"Boundary data stream sink\",\n")
-	buf.WriteString("\t\tinitialWidth: 260,\n")
-	buf.WriteString("\t\tinputs: (ports) => [ports.float64({ name: \"in\", label: \"in\" })],\n")
-	buf.WriteString("\t\toutputs: [],\n")
-	buf.WriteString("\t});\n\n")
-
 	// Primitive Nodes
-	buf.WriteString("\t// 3. Compiled Primitive Nodes\n")
+	buf.WriteString("\t// 2. Compiled Primitive Nodes\n")
 
 	var ops []string
 	for op := range schemas {
@@ -464,8 +386,8 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 		// A port carrying a list of capabilities grows: wiring one metric into
 		// the grid makes the next port appear, so the grid is as wide as the
 		// graph made it rather than as wide as this generator guessed.
-		if listed, port := capabilityListPort(s); listed {
-			emitDynamicCapabilityNodeType(&buf, s, port, label, category, width)
+		if listed := listPorts(s); len(listed) > 0 {
+			emitDynamicListNodeType(&buf, s, listed, label, category, width)
 			continue
 		}
 		fmt.Fprintf(&buf, "\tconfig.addNodeType({\n")
@@ -525,7 +447,7 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 	// primitive schemas are known: every input no edge feeds becomes a port on
 	// the left, every output nothing consumes a port on the right. That is what
 	// lets a whole signal collapse to one node in the system graph.
-	buf.WriteString("\n\t// 4. Reusable Sub-graph Definitions\n")
+	buf.WriteString("\n\t// 3. Reusable Sub-graph Definitions\n")
 	emitDefinitionNodeTypes(&buf, schemas)
 
 	buf.WriteString("\n\treturn config;\n")
@@ -760,27 +682,29 @@ func emitDefinitionPorts(buf *strings.Builder, side string, ports []definitionPo
 }
 
 /*
-capabilityListPort names the input that carries a list of capabilities, if the
-primitive has one.
+listPorts names the inputs that gather several producers, whether those are
+capabilities or values.
 */
-func capabilityListPort(schema Schema) (bool, string) {
+func listPorts(schema Schema) []Port {
+	gathering := make([]Port, 0, 2)
+
 	for _, input := range schema.Inputs {
-		if input.Type == "CapabilityList" {
-			return true, input.Name
+		if input.Type == "CapabilityList" || strings.HasPrefix(input.Type, "FanIn:") {
+			gathering = append(gathering, input)
 		}
 	}
 
-	return false, ""
+	return gathering
 }
 
 /*
-emitDynamicCapabilityNodeType writes a node whose capability-list port grows by
-one each time something is wired into it.
+emitDynamicListNodeType writes a node whose gathering ports each grow by one
+as something is wired into them, so the node is as wide as the graph made it.
 */
-func emitDynamicCapabilityNodeType(
+func emitDynamicListNodeType(
 	buf *strings.Builder,
 	schema Schema,
-	listPort string,
+	gathering []Port,
 	label string,
 	category string,
 	width int,
@@ -798,8 +722,14 @@ func emitDynamicCapabilityNodeType(
 	buf.WriteString("\t\tinputs: (ports) => (_inputData, connections) => {\n")
 	buf.WriteString("\t\t\tconst dynamicPorts = [\n")
 
+	skip := make(map[string]bool, len(gathering))
+
+	for _, port := range gathering {
+		skip[port.Name] = true
+	}
+
 	for _, input := range schema.Inputs {
-		if input.Name == listPort {
+		if skip[input.Name] {
 			continue
 		}
 
@@ -813,21 +743,39 @@ func emitDynamicCapabilityNodeType(
 	}
 
 	buf.WriteString("\t\t\t];\n")
-	fmt.Fprintf(
-		buf,
-		"\t\t\tconst wired = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith(%q));\n",
-		listPort,
-	)
-	buf.WriteString("\t\t\tconst count = Math.max(1, wired.length + 1);\n")
-	buf.WriteString("\t\t\tfor (let index = 0; index < count; index++) {\n")
-	fmt.Fprintf(
-		buf,
-		"\t\t\t\tconst portName = index === 0 ? %q : `%s_${index}`;\n",
-		listPort,
-		listPort,
-	)
-	buf.WriteString("\t\t\t\tdynamicPorts.push(ports.Capability({ name: portName, label: portName }));\n")
-	buf.WriteString("\t\t\t}\n")
+
+	for _, port := range gathering {
+		builder := "ports.Capability"
+
+		if strings.HasPrefix(port.Type, "FanIn:") {
+			builder = tsPortBuilder(port.Type)
+		}
+
+		fmt.Fprintf(
+			buf,
+			"\t\t\tconst wired%s = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith(%q));\n",
+			strings.Title(port.Name),
+			port.Name,
+		)
+		fmt.Fprintf(
+			buf,
+			"\t\t\tfor (let index = 0; index < Math.max(1, wired%s.length + 1); index++) {\n",
+			strings.Title(port.Name),
+		)
+		fmt.Fprintf(
+			buf,
+			"\t\t\t\tconst portName = index === 0 ? %q : `%s_${index}`;\n",
+			port.Name,
+			port.Name,
+		)
+		fmt.Fprintf(
+			buf,
+			"\t\t\t\tdynamicPorts.push(%s({ name: portName, label: portName }));\n",
+			builder,
+		)
+		buf.WriteString("\t\t\t}\n")
+	}
+
 	buf.WriteString("\t\t\treturn dynamicPorts;\n")
 	buf.WriteString("\t\t},\n")
 	buf.WriteString("\t\toutputs: (ports) => [\n")

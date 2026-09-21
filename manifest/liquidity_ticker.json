@@ -36,6 +36,10 @@
             {
               "nodeId": "spread_ratio",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:spread",
+              "portName": "raw"
             }
           ]
         }
@@ -86,6 +90,10 @@
             {
               "nodeId": "relative_spread",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:midpoint",
+              "portName": "raw"
             }
           ]
         }
@@ -161,6 +169,10 @@
             {
               "nodeId": "depth_ratio:bid",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:touch_notional:bid",
+              "portName": "raw"
             }
           ]
         }
@@ -204,6 +216,10 @@
             {
               "nodeId": "depth_ratio:ask",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:touch_notional:ask",
+              "portName": "raw"
             }
           ]
         }
@@ -236,6 +252,10 @@
             {
               "nodeId": "touch_notional_imbalance",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:two_sided_touch_notional",
+              "portName": "raw"
             }
           ]
         }
@@ -326,6 +346,10 @@
             {
               "nodeId": "spread_ratio",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:relative_spread_baseline",
+              "portName": "raw"
             }
           ]
         }
@@ -462,6 +486,10 @@
             {
               "nodeId": "depth_ratio:bid",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:touch_notional_baseline:bid",
+              "portName": "raw"
             }
           ]
         }
@@ -598,6 +626,10 @@
             {
               "nodeId": "depth_ratio:ask",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:touch_notional_baseline:ask",
+              "portName": "raw"
             }
           ]
         }
@@ -972,6 +1004,158 @@
           "raw": [
             {
               "nodeId": "depth_ratio:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread": {
+      "id": "metric:spread",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1700.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:midpoint": {
+      "id": "metric:midpoint",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "midpoint",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:touch_notional:bid": {
+      "id": "metric:touch_notional:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "touch_notional:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:touch_notional:ask": {
+      "id": "metric:touch_notional:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:two_sided_touch_notional": {
+      "id": "metric:two_sided_touch_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "two_sided_touch_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:relative_spread_baseline": {
+      "id": "metric:relative_spread_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2450.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:touch_notional_baseline:bid": {
+      "id": "metric:touch_notional_baseline:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2600.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "touch_notional_baseline:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:touch_notional_baseline:ask": {
+      "id": "metric:touch_notional_baseline:ask",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2750.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "touch_notional_baseline:ask",
               "portName": "out"
             }
           ]

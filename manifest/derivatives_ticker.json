@@ -28,6 +28,10 @@
             {
               "nodeId": "basis_velocity",
               "portName": "val"
+            },
+            {
+              "nodeId": "metric:basis",
+              "portName": "raw"
             }
           ]
         }
@@ -99,6 +103,10 @@
             {
               "nodeId": "basis_rate",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:basis_change",
+              "portName": "raw"
             }
           ]
         }
@@ -192,6 +200,10 @@
             {
               "nodeId": "open_interest_growth_rate",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:open_interest_log_change",
+              "portName": "raw"
             }
           ]
         }
@@ -232,6 +244,10 @@
             {
               "nodeId": "open_interest_growth_velocity",
               "portName": "val"
+            },
+            {
+              "nodeId": "metric:open_interest_growth_rate",
+              "portName": "raw"
             }
           ]
         }
@@ -251,6 +267,10 @@
             {
               "nodeId": "return_gap",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:derivative_log_return",
+              "portName": "raw"
             }
           ]
         }
@@ -270,6 +290,10 @@
             {
               "nodeId": "return_gap",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:reference_log_return",
+              "portName": "raw"
             }
           ]
         }
@@ -310,6 +334,10 @@
             {
               "nodeId": "return_gap_velocity",
               "portName": "val"
+            },
+            {
+              "nodeId": "metric:return_gap",
+              "portName": "raw"
             }
           ]
         }
@@ -770,6 +798,139 @@
           "raw": [
             {
               "nodeId": "return_gap_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:basis": {
+      "id": "metric:basis",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1400.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "basis",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:basis_change": {
+      "id": "metric:basis_change",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "basis_change",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:open_interest_log_change": {
+      "id": "metric:open_interest_log_change",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1700.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "open_interest_log_change",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:open_interest_growth_rate": {
+      "id": "metric:open_interest_growth_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1850.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "open_interest_growth_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:derivative_log_return": {
+      "id": "metric:derivative_log_return",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2000.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "derivative_log_return",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:reference_log_return": {
+      "id": "metric:reference_log_return",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2150.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "reference_log_return",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:return_gap": {
+      "id": "metric:return_gap",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 2300.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "return_gap",
               "portName": "out"
             }
           ]

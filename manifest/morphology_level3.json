@@ -16,6 +16,10 @@
             {
               "nodeId": "morphology_change",
               "portName": "value"
+            },
+            {
+              "nodeId": "metric:concentration:bid",
+              "portName": "raw"
             }
           ]
         }
@@ -155,6 +159,14 @@
             {
               "nodeId": "metric:morphology_change",
               "portName": "raw"
+            },
+            {
+              "nodeId": "morphology_change_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "morphology_change_zscore",
+              "portName": "value"
             }
           ]
         }
@@ -324,6 +336,115 @@
           "raw": [
             {
               "nodeId": "morphology_change",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "morphology_change_baseline": {
+      "id": "morphology_change_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 440.0,
+      "y": 60.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "morphology_change",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:morphology_change_baseline",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "morphology_change_zscore": {
+      "id": "morphology_change_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 440.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "morphology_change",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "metric:morphology_change_zscore",
+              "portName": "raw"
+            }
+          ]
+        }
+      }
+    },
+    "metric:concentration:bid": {
+      "id": "metric:concentration:bid",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": -550.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "concentration:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:morphology_change_baseline": {
+      "id": "metric:morphology_change_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "morphology_change_baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:morphology_change_zscore": {
+      "id": "metric:morphology_change_zscore",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "morphology_change_zscore",
               "portName": "out"
             }
           ]

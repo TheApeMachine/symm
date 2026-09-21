@@ -19,12 +19,12 @@ type Interval capnp.Struct
 const Interval_TypeID = 0xae1e7cf710c5c006
 
 func NewInterval(s *capnp.Segment) (Interval, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 0})
 	return Interval(st), err
 }
 
 func NewRootInterval(s *capnp.Segment) (Interval, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 0})
 	return Interval(st), err
 }
 
@@ -84,12 +84,20 @@ func (s Interval) SetValue(v float64) {
 	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
+func (s Interval) Rate() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s Interval) SetRate(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
 // Interval_List is a list of Interval.
 type Interval_List = capnp.StructList[Interval]
 
 // NewInterval creates a new list of Interval.
 func NewInterval_List(s *capnp.Segment, sz int32) (Interval_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 0}, sz)
 	return capnp.StructList[Interval](l), err
 }
 
@@ -107,12 +115,12 @@ type Accumulation capnp.Struct
 const Accumulation_TypeID = 0xc9d1602d3447ab1f
 
 func NewAccumulation(s *capnp.Segment) (Accumulation, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 4})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 6})
 	return Accumulation(st), err
 }
 
 func NewRootAccumulation(s *capnp.Segment) (Accumulation, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 40, PointerCount: 4})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 88, PointerCount: 6})
 	return Accumulation(st), err
 }
 
@@ -290,12 +298,123 @@ func (s Accumulation) SetRightEnergy(v float64) {
 	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
 }
 
+func (s Accumulation) LeftFrom() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(40))
+}
+
+func (s Accumulation) SetLeftFrom(v float64) {
+	capnp.Struct(s).SetUint64(40, math.Float64bits(v))
+}
+
+func (s Accumulation) LeftThrough() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(48))
+}
+
+func (s Accumulation) SetLeftThrough(v float64) {
+	capnp.Struct(s).SetUint64(48, math.Float64bits(v))
+}
+
+func (s Accumulation) RightFrom() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(56))
+}
+
+func (s Accumulation) SetRightFrom(v float64) {
+	capnp.Struct(s).SetUint64(56, math.Float64bits(v))
+}
+
+func (s Accumulation) RightThrough() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(64))
+}
+
+func (s Accumulation) SetRightThrough(v float64) {
+	capnp.Struct(s).SetUint64(64, math.Float64bits(v))
+}
+
+func (s Accumulation) LeftCount() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(72))
+}
+
+func (s Accumulation) SetLeftCount(v float64) {
+	capnp.Struct(s).SetUint64(72, math.Float64bits(v))
+}
+
+func (s Accumulation) RightCount() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(80))
+}
+
+func (s Accumulation) SetRightCount(v float64) {
+	capnp.Struct(s).SetUint64(80, math.Float64bits(v))
+}
+
+func (s Accumulation) LeftOpen() bool {
+	return capnp.Struct(s).Bit(2)
+}
+
+func (s Accumulation) SetLeftOpen(v bool) {
+	capnp.Struct(s).SetBit(2, v)
+}
+
+func (s Accumulation) RightOpen() bool {
+	return capnp.Struct(s).Bit(3)
+}
+
+func (s Accumulation) SetRightOpen(v bool) {
+	capnp.Struct(s).SetBit(3, v)
+}
+
+func (s Accumulation) LeftRates() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(4)
+	return capnp.Float64List(p.List()), err
+}
+
+func (s Accumulation) HasLeftRates() bool {
+	return capnp.Struct(s).HasPtr(4)
+}
+
+func (s Accumulation) SetLeftRates(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(4, v.ToPtr())
+}
+
+// NewLeftRates sets the leftRates field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s Accumulation) NewLeftRates(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(4, l.ToPtr())
+	return l, err
+}
+func (s Accumulation) RightRates() (capnp.Float64List, error) {
+	p, err := capnp.Struct(s).Ptr(5)
+	return capnp.Float64List(p.List()), err
+}
+
+func (s Accumulation) HasRightRates() bool {
+	return capnp.Struct(s).HasPtr(5)
+}
+
+func (s Accumulation) SetRightRates(v capnp.Float64List) error {
+	return capnp.Struct(s).SetPtr(5, v.ToPtr())
+}
+
+// NewRightRates sets the rightRates field to a newly
+// allocated capnp.Float64List, preferring placement in s's segment.
+func (s Accumulation) NewRightRates(n int32) (capnp.Float64List, error) {
+	l, err := capnp.NewFloat64List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.Float64List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(5, l.ToPtr())
+	return l, err
+}
+
 // Accumulation_List is a list of Accumulation.
 type Accumulation_List = capnp.StructList[Accumulation]
 
 // NewAccumulation creates a new list of Accumulation.
 func NewAccumulation_List(s *capnp.Segment, sz int32) (Accumulation_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 40, PointerCount: 4}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 88, PointerCount: 6}, sz)
 	return capnp.StructList[Accumulation](l), err
 }
 
@@ -510,7 +629,7 @@ func (c HayashiYoshida_done) Args() HayashiYoshida_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HayashiYoshida_done) AllocResults() (HayashiYoshida_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 48, PointerCount: 1})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 96, PointerCount: 1})
 	return HayashiYoshida_done_Results(r), err
 }
 
@@ -719,12 +838,12 @@ type HayashiYoshida_done_Results capnp.Struct
 const HayashiYoshida_done_Results_TypeID = 0x92dd6bc8b044acdc
 
 func NewHayashiYoshida_done_Results(s *capnp.Segment) (HayashiYoshida_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 96, PointerCount: 1})
 	return HayashiYoshida_done_Results(st), err
 }
 
 func NewRootHayashiYoshida_done_Results(s *capnp.Segment) (HayashiYoshida_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 96, PointerCount: 1})
 	return HayashiYoshida_done_Results(st), err
 }
 
@@ -813,12 +932,60 @@ func (s HayashiYoshida_done_Results) SetRightEnergy(v float64) {
 	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
 }
 
+func (s HayashiYoshida_done_Results) LeftEnergyRate() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(40))
+}
+
+func (s HayashiYoshida_done_Results) SetLeftEnergyRate(v float64) {
+	capnp.Struct(s).SetUint64(40, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) RightEnergyRate() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(48))
+}
+
+func (s HayashiYoshida_done_Results) SetRightEnergyRate(v float64) {
+	capnp.Struct(s).SetUint64(48, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) LeftReturns() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(56))
+}
+
+func (s HayashiYoshida_done_Results) SetLeftReturns(v float64) {
+	capnp.Struct(s).SetUint64(56, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) RightReturns() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(64))
+}
+
+func (s HayashiYoshida_done_Results) SetRightReturns(v float64) {
+	capnp.Struct(s).SetUint64(64, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) SharedTime() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(72))
+}
+
+func (s HayashiYoshida_done_Results) SetSharedTime(v float64) {
+	capnp.Struct(s).SetUint64(72, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) OverlapDensity() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(80))
+}
+
+func (s HayashiYoshida_done_Results) SetOverlapDensity(v float64) {
+	capnp.Struct(s).SetUint64(80, math.Float64bits(v))
+}
+
 func (s HayashiYoshida_done_Results) Status() runtime.Status {
-	return runtime.Status(capnp.Struct(s).Uint16(40))
+	return runtime.Status(capnp.Struct(s).Uint16(88))
 }
 
 func (s HayashiYoshida_done_Results) SetStatus(v runtime.Status) {
-	capnp.Struct(s).SetUint16(40, uint16(v))
+	capnp.Struct(s).SetUint16(88, uint16(v))
 }
 
 // HayashiYoshida_done_Results_List is a list of HayashiYoshida_done_Results.
@@ -826,7 +993,7 @@ type HayashiYoshida_done_Results_List = capnp.StructList[HayashiYoshida_done_Res
 
 // NewHayashiYoshida_done_Results creates a new list of HayashiYoshida_done_Results.
 func NewHayashiYoshida_done_Results_List(s *capnp.Segment, sz int32) (HayashiYoshida_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 96, PointerCount: 1}, sz)
 	return capnp.StructList[HayashiYoshida_done_Results](l), err
 }
 

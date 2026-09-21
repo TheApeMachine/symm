@@ -29,6 +29,11 @@ type FieldInfo struct {
 	// than one, so every node wired into it is kept instead of replacing the
 	// node wired before it.
 	CapabilityList bool
+	// ValueList marks a field that carries a list of values, which is how
+	// several producers land on one port without overwriting each other.
+	ValueList bool
+	// ElementWhich is the type carried by a list field's elements.
+	ElementWhich schema.Type_Which
 }
 
 /*
@@ -46,10 +51,6 @@ type InterfaceSchema struct {
 	DoneResult  capnp.ObjectSize
 	Outputs     map[string]FieldInfo
 	HasDone     bool
-	// Boundary marks a graph edge rather than a real capability. A boundary
-	// node names the fields a definition exchanges with its parent, so its
-	// ports are whatever the definition declared rather than a fixed set.
-	Boundary bool
 }
 
 /*
@@ -180,6 +181,8 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 							DiscriminantOffset: st.DiscriminantOffset(),
 							InterfaceID:        requiredInterface(t),
 							CapabilityList:     isCapabilityList(t),
+							ValueList:          isValueList(t),
+							ElementWhich:       elementWhich(t),
 						}
 					}
 				}
@@ -229,6 +232,8 @@ func ReflectInterface(interfaceID uint64) (*InterfaceSchema, error) {
 							DiscriminantOffset: st.DiscriminantOffset(),
 							InterfaceID:        requiredInterface(t),
 							CapabilityList:     isCapabilityList(t),
+							ValueList:          isValueList(t),
+							ElementWhich:       elementWhich(t),
 						}
 					}
 				}
@@ -524,4 +529,174 @@ isCapabilityList reports a field that carries a list of capabilities.
 func isCapabilityList(fieldType schema.Type) bool {
 	_, listed := capabilityElement(fieldType)
 	return listed
+}
+
+/*
+elementWhich names the type a list field's elements carry, and reports the
+field's own type when it is not a list.
+*/
+func elementWhich(fieldType schema.Type) schema.Type_Which {
+	if fieldType.Which() != schema.Type_Which_list {
+		return fieldType.Which()
+	}
+
+	element, err := fieldType.List().ElementType()
+
+	if err != nil {
+		return fieldType.Which()
+	}
+
+	return element.Which()
+}
+
+/*
+isValueList reports a field that carries a list of values, which several
+producers can land on at once.
+*/
+func isValueList(fieldType schema.Type) bool {
+	if fieldType.Which() != schema.Type_Which_list {
+		return false
+	}
+
+	return !isCapabilityList(fieldType)
+}
+
+/*
+CompileFanInCopier builds the transfer for one producer landing on a port that
+gathers several. The producers share the list, each writing the slot it was
+given, so arriving in any order leaves every value in place.
+*/
+func CompileFanInCopier(
+	fromField FieldInfo,
+	toField FieldInfo,
+	index int,
+	length int,
+) (Copier, error) {
+	if fromField.Which != toField.ElementWhich {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("compiler: type mismatch on field %s (%v) -> %s element (%v)",
+				fromField.Name, fromField.Which, toField.Name, toField.ElementWhich),
+			nil,
+		))
+	}
+
+	fromOffset := uint16(fromField.Offset)
+	toOffset := uint16(toField.Offset)
+
+	return func(src, dst capnp.Struct) error {
+		gathered, err := fanInList(dst, toOffset, length)
+
+		if err != nil {
+			return err
+		}
+
+		value, err := src.Ptr(fromOffset)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"compiler: failed to read value landing on a gathering port",
+				err,
+			))
+		}
+
+		if err := gathered.Set(index, value); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"compiler: failed to place value on a gathering port",
+				err,
+			))
+		}
+
+		return nil
+	}, nil
+}
+
+/*
+fanInList resolves the shared list a gathering port holds, allocating it the
+first time a producer lands on it.
+*/
+func fanInList(dst capnp.Struct, offset uint16, length int) (capnp.PointerList, error) {
+	existing, err := dst.Ptr(offset)
+
+	if err != nil {
+		return capnp.PointerList{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"compiler: failed to read a gathering port",
+			err,
+		))
+	}
+
+	if existing.IsValid() && existing.List().Len() == length {
+		return capnp.PointerList(existing.List()), nil
+	}
+
+	gathered, err := capnp.NewPointerList(dst.Segment(), int32(length))
+
+	if err != nil {
+		return capnp.PointerList{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"compiler: failed to allocate a gathering port",
+			err,
+		))
+	}
+
+	if err := dst.SetPtr(offset, gathered.ToPtr()); err != nil {
+		return capnp.PointerList{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"compiler: failed to attach a gathering port",
+			err,
+		))
+	}
+
+	return gathered, nil
+}
+
+/*
+CompileFanOutCopier builds the transfer for one consumer reading a single slot
+of a port that hands back several values.
+
+A producer that answers many questions at once numbers its answers, so a
+consumer takes the slot it asked for rather than the whole reply.
+*/
+func CompileFanOutCopier(
+	fromField FieldInfo,
+	toField FieldInfo,
+	index int,
+) (Copier, error) {
+	if fromField.ElementWhich != toField.Which {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("compiler: type mismatch on field %s element (%v) -> %s (%v)",
+				fromField.Name, fromField.ElementWhich, toField.Name, toField.Which),
+			nil,
+		))
+	}
+
+	fromOffset := uint16(fromField.Offset)
+	toOffset := capnp.DataOffset(toField.Offset * 8)
+
+	return func(src, dst capnp.Struct) error {
+		pointer, err := src.Ptr(fromOffset)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"compiler: failed to read a port handing back several values",
+				err,
+			))
+		}
+
+		handed := capnp.Float64List(pointer.List())
+
+		// A slot the producer did not fill is not a value: leaving it alone
+		// keeps the consumer waiting rather than reading a zero as evidence.
+		if !handed.IsValid() || index >= handed.Len() {
+			return nil
+		}
+
+		dst.SetUint64(toOffset, math.Float64bits(handed.At(index)))
+		return nil
+	}, nil
 }

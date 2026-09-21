@@ -43,6 +43,10 @@
             {
               "nodeId": "liquidation_share",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:gross_liquidation_notional",
+              "portName": "raw"
             }
           ]
         }
@@ -62,6 +66,10 @@
             {
               "nodeId": "liquidation_signed_fraction",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:net_liquidation_notional",
+              "portName": "raw"
             }
           ]
         }
@@ -150,6 +158,10 @@
             {
               "nodeId": "liquidation_share",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:gross_derivative_trade_notional",
+              "portName": "raw"
             }
           ]
         }
@@ -182,6 +194,10 @@
             {
               "nodeId": "liquidation_share_velocity",
               "portName": "val"
+            },
+            {
+              "nodeId": "metric:liquidation_share",
+              "portName": "raw"
             }
           ]
         }
@@ -263,6 +279,82 @@
           "raw": [
             {
               "nodeId": "liquidation_share_velocity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:gross_liquidation_notional": {
+      "id": "metric:gross_liquidation_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "gross_liquidation_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:net_liquidation_notional": {
+      "id": "metric:net_liquidation_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "net_liquidation_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:gross_derivative_trade_notional": {
+      "id": "metric:gross_derivative_trade_notional",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "gross_derivative_trade_notional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:liquidation_share": {
+      "id": "metric:liquidation_share",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "liquidation_share",
               "portName": "out"
             }
           ]

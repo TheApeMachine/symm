@@ -102,45 +102,6 @@ func DefaultRegistry() *Registry {
 		r := NewRegistry()
 		RegisterGeneratedPrimitives(r)
 
-		// Boundary primitives. "grid" is the boundary through which a metric
-		// receives the fields it registered an interest in.
-		r.Register("grid", Factory{
-			InterfaceID: 0,
-			New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
-				return capnp.Client{}, nil
-			},
-		})
-		r.Register("data.Source", Factory{
-			InterfaceID: 0,
-			New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
-				return capnp.Client{}, nil
-			},
-		})
-		r.Register("source", Factory{
-			InterfaceID: 0,
-			New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
-				return capnp.Client{}, nil
-			},
-		})
-		r.Register("metrics", Factory{
-			InterfaceID: 0,
-			New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
-				return capnp.Client{}, nil
-			},
-		})
-		r.Register("data.Sink", Factory{
-			InterfaceID: 0,
-			New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
-				return capnp.Client{}, nil
-			},
-		})
-		r.Register("sink", Factory{
-			InterfaceID: 0,
-			New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
-				return capnp.Client{}, nil
-			},
-		})
-
 		// Test sources
 		r.Register("test.Float64Source", Factory{
 			InterfaceID: calculus.Floor_TypeID,

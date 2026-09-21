@@ -2,21 +2,6 @@
   "id": "signals:stage",
   "name": "signals:stage",
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "grid",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
     "grid": {
       "id": "grid",
       "type": "store.Grid",
@@ -26,36 +11,7 @@
         }
       },
       "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink": {
-      "id": "sink",
-      "type": "sink",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "grid",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     }

@@ -6,12 +6,19 @@
       "id": "feed",
       "type": "websocket.WebSocketClient",
       "inputData": {
-        "endpoint": { "value": "wss://ws.kraken.com/v2" }
+        "endpoint": {
+          "value": "wss://ws.kraken.com/v2"
+        }
       },
       "connections": {
         "inputs": {},
         "outputs": {
-          "read": [{ "nodeId": "grid", "portName": "data" }]
+          "read": [
+            {
+              "nodeId": "grid",
+              "portName": "data"
+            }
+          ]
         }
       }
     },
@@ -19,13 +26,22 @@
       "id": "grid",
       "type": "store.Grid",
       "inputData": {
-        "metric": { "value": "cognition" },
-        "interests": { "value": "data.0.symbol,data.0.last" }
+        "metric": {
+          "value": "cognition"
+        },
+        "interests": {
+          "value": "data.0.symbol,data.0.last"
+        }
       },
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [{ "nodeId": "transition", "portName": "data" }]
+          "out": [
+            {
+              "nodeId": "transition",
+              "portName": "data"
+            }
+          ]
         }
       }
     },
@@ -35,7 +51,12 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [{ "nodeId": "associate", "portName": "current" }]
+          "out": [
+            {
+              "nodeId": "associate",
+              "portName": "current"
+            }
+          ]
         }
       }
     },
@@ -45,7 +66,12 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "current": [{ "nodeId": "reinforce", "portName": "classBytes" }]
+          "current": [
+            {
+              "nodeId": "reinforce",
+              "portName": "classBytes"
+            }
+          ]
         }
       }
     },
@@ -55,7 +81,12 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [{ "nodeId": "attractor", "portName": "contextBytes" }]
+          "out": [
+            {
+              "nodeId": "attractor",
+              "portName": "contextBytes"
+            }
+          ]
         }
       }
     },
@@ -65,7 +96,12 @@
       "connections": {
         "inputs": {},
         "outputs": {
-          "class": [{ "nodeId": "classification", "portName": "class" }]
+          "class": [
+            {
+              "nodeId": "classification",
+              "portName": "class"
+            }
+          ]
         }
       }
     },
@@ -74,15 +110,8 @@
       "type": "cognition.Classification",
       "connections": {
         "inputs": {},
-        "outputs": {
-          "winner": [{ "nodeId": "sink", "portName": "value" }]
-        }
+        "outputs": {}
       }
-    },
-    "sink": {
-      "id": "sink",
-      "type": "sink",
-      "connections": { "inputs": {}, "outputs": {} }
     }
   }
 }

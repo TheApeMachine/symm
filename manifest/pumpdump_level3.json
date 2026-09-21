@@ -16,6 +16,10 @@
             {
               "nodeId": "relative_spread",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:spread",
+              "portName": "raw"
             }
           ]
         }
@@ -66,6 +70,10 @@
             {
               "nodeId": "relative_spread",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:midpoint",
+              "portName": "raw"
             }
           ]
         }
@@ -114,6 +122,10 @@
             {
               "nodeId": "spread_ratio",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:relative_spread",
+              "portName": "raw"
             }
           ]
         }
@@ -140,6 +152,10 @@
             {
               "nodeId": "spread_ratio",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:relative_spread_baseline",
+              "portName": "raw"
             }
           ]
         }
@@ -324,6 +340,82 @@
           "raw": [
             {
               "nodeId": "spread_ratio",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:spread": {
+      "id": "metric:spread",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 200.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:midpoint": {
+      "id": "metric:midpoint",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 350.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "midpoint",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:relative_spread": {
+      "id": "metric:relative_spread",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 500.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "relative_spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:relative_spread_baseline": {
+      "id": "metric:relative_spread_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 650.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "relative_spread_baseline",
               "portName": "out"
             }
           ]

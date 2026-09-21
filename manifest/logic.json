@@ -2,33 +2,11 @@
   "id": "logic:stage",
   "name": "logic:stage",
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "associative_grid",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
     "associative_grid": {
       "id": "associative_grid",
       "type": "associative.Grid",
       "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
@@ -136,28 +114,6 @@
             {
               "nodeId": "cognition_attractor",
               "portName": "class"
-            }
-          ]
-        },
-        "outputs": {
-          "winner": [
-            {
-              "nodeId": "sink",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink": {
-      "id": "sink",
-      "type": "sink",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "cognition_classification",
-              "portName": "winner"
             }
           ]
         },

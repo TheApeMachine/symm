@@ -3,6 +3,7 @@ package algo
 import (
 	"context"
 	"math"
+	"sort"
 
 	capnp "capnproto.org/go/capnp/v3"
 	"github.com/theapemachine/errnie"
@@ -17,6 +18,7 @@ type span struct {
 	from  float64
 	to    float64
 	value float64
+	rate  float64
 }
 
 /*
@@ -26,16 +28,26 @@ Arrivals are ordered, so an interval is dropped once it ends at or before the
 newest start on the opposite path: nothing that follows can still overlap it.
 */
 type history struct {
-	left        []span
-	right       []span
-	lastLeft    span
-	lastRight   span
-	hasLeft     bool
-	hasRight    bool
-	covariance  float64
-	support     float64
-	leftEnergy  float64
-	rightEnergy float64
+	left         []span
+	right        []span
+	lastLeft     span
+	lastRight    span
+	hasLeft      bool
+	hasRight     bool
+	covariance   float64
+	support      float64
+	leftEnergy   float64
+	rightEnergy  float64
+	leftFrom     float64
+	leftThrough  float64
+	rightFrom    float64
+	rightThrough float64
+	leftCount    float64
+	rightCount   float64
+	leftOpen     bool
+	rightOpen    bool
+	leftRates    []float64
+	rightRates   []float64
 }
 
 /*
@@ -88,8 +100,8 @@ func (server *HayashiYoshidaServer) Write(ctx context.Context, call HayashiYoshi
 		return err
 	}
 
-	left := span{from: args.BoundsStart1(), to: args.BoundsEnd1(), value: args.Returns1()}
-	right := span{from: args.BoundsStart2(), to: args.BoundsEnd2(), value: args.Returns2()}
+	left := measured(args.BoundsStart1(), args.BoundsEnd1(), args.Returns1())
+	right := measured(args.BoundsStart2(), args.BoundsEnd2(), args.Returns2())
 
 	if left.to < left.from || right.to < right.from {
 		return errnie.Error(errnie.Err(
@@ -138,6 +150,15 @@ func (server *HayashiYoshidaServer) Done(ctx context.Context, call HayashiYoshid
 			math.Sqrt(server.current.leftEnergy*server.current.rightEnergy),
 	)
 
+	results.SetLeftReturns(server.current.leftCount)
+	results.SetRightReturns(server.current.rightCount)
+	results.SetLeftEnergyRate(medianRate(server.current.leftRates))
+	results.SetRightEnergyRate(medianRate(server.current.rightRates))
+
+	shared := server.current.shared()
+	results.SetSharedTime(shared)
+	results.SetOverlapDensity(server.current.support / shared)
+
 	encoded, err := encodeHistory(server.current)
 
 	if err != nil {
@@ -178,6 +199,14 @@ func (retained *history) admitLeft(arrival span) {
 	retained.left = append(retained.left, arrival)
 	retained.lastLeft = arrival
 	retained.hasLeft = true
+	retained.leftCount++
+	retained.leftRates = append(retained.leftRates, arrival.rate)
+	retained.leftThrough = arrival.to
+
+	if !retained.leftOpen {
+		retained.leftFrom = arrival.from
+		retained.leftOpen = true
+	}
 }
 
 /*
@@ -201,6 +230,14 @@ func (retained *history) admitRight(arrival span) {
 	retained.right = append(retained.right, arrival)
 	retained.lastRight = arrival
 	retained.hasRight = true
+	retained.rightCount++
+	retained.rightRates = append(retained.rightRates, arrival.rate)
+	retained.rightThrough = arrival.to
+
+	if !retained.rightOpen {
+		retained.rightFrom = arrival.from
+		retained.rightOpen = true
+	}
 }
 
 /*
@@ -288,12 +325,28 @@ func decodeHistory(encoded []byte) (history, error) {
 	}
 
 	restored := history{
-		hasLeft:     stored.LeftSeen(),
-		hasRight:    stored.RightSeen(),
-		covariance:  stored.Covariance(),
-		support:     stored.Support(),
-		leftEnergy:  stored.LeftEnergy(),
-		rightEnergy: stored.RightEnergy(),
+		hasLeft:      stored.LeftSeen(),
+		hasRight:     stored.RightSeen(),
+		covariance:   stored.Covariance(),
+		support:      stored.Support(),
+		leftEnergy:   stored.LeftEnergy(),
+		rightEnergy:  stored.RightEnergy(),
+		leftFrom:     stored.LeftFrom(),
+		leftThrough:  stored.LeftThrough(),
+		rightFrom:    stored.RightFrom(),
+		rightThrough: stored.RightThrough(),
+		leftCount:    stored.LeftCount(),
+		rightCount:   stored.RightCount(),
+		leftOpen:     stored.LeftOpen(),
+		rightOpen:    stored.RightOpen(),
+	}
+
+	if restored.leftRates, err = readRates(stored.LeftRates); err != nil {
+		return history{}, err
+	}
+
+	if restored.rightRates, err = readRates(stored.RightRates); err != nil {
+		return history{}, err
 	}
 
 	if restored.left, err = readSpans(stored.Left); err != nil {
@@ -337,6 +390,7 @@ func readSpans(read func() (Interval_List, error)) ([]span, error) {
 			from:  each.From(),
 			to:    each.To(),
 			value: each.Value(),
+			rate:  each.Rate(),
 		})
 	}
 
@@ -357,7 +411,12 @@ func readSpan(read func() (Interval, error)) (span, error) {
 		))
 	}
 
-	return span{from: stored.From(), to: stored.To(), value: stored.Value()}, nil
+	return span{
+		from:  stored.From(),
+		to:    stored.To(),
+		value: stored.Value(),
+		rate:  stored.Rate(),
+	}, nil
 }
 
 /*
@@ -390,6 +449,22 @@ func encodeHistory(retained history) ([]byte, error) {
 	stored.SetSupport(retained.support)
 	stored.SetLeftEnergy(retained.leftEnergy)
 	stored.SetRightEnergy(retained.rightEnergy)
+	stored.SetLeftFrom(retained.leftFrom)
+	stored.SetLeftThrough(retained.leftThrough)
+	stored.SetRightFrom(retained.rightFrom)
+	stored.SetRightThrough(retained.rightThrough)
+	stored.SetLeftCount(retained.leftCount)
+	stored.SetRightCount(retained.rightCount)
+	stored.SetLeftOpen(retained.leftOpen)
+	stored.SetRightOpen(retained.rightOpen)
+
+	if err := writeRates(retained.leftRates, stored.NewLeftRates); err != nil {
+		return nil, err
+	}
+
+	if err := writeRates(retained.rightRates, stored.NewRightRates); err != nil {
+		return nil, err
+	}
 
 	if err := writeSpans(retained.left, stored.NewLeft); err != nil {
 		return nil, err
@@ -439,6 +514,7 @@ func writeSpans(intervals []span, alloc func(int32) (Interval_List, error)) erro
 		target.SetFrom(each.from)
 		target.SetTo(each.to)
 		target.SetValue(each.value)
+		target.SetRate(each.rate)
 	}
 
 	return nil
@@ -461,6 +537,99 @@ func writeSpan(interval span, alloc func() (Interval, error)) error {
 	stored.SetFrom(interval.from)
 	stored.SetTo(interval.to)
 	stored.SetValue(interval.value)
+	stored.SetRate(interval.rate)
+
+	return nil
+}
+
+/*
+measured forms one return interval, carrying the energy per second it
+represents so a path's typical activity is read from the returns themselves.
+*/
+func measured(from, to, value float64) span {
+	arrival := span{from: from, to: to, value: value}
+	elapsed := to - from
+
+	if elapsed > 0 {
+		arrival.rate = (value * value) / elapsed
+	}
+
+	return arrival
+}
+
+/*
+shared reports the span both paths were observed across, which is what makes
+an overlap count comparable between pairs that ran for different lengths.
+*/
+func (retained *history) shared() float64 {
+	if !retained.leftOpen || !retained.rightOpen {
+		return 0
+	}
+
+	opened := math.Max(retained.leftFrom, retained.rightFrom)
+	closed := math.Min(retained.leftThrough, retained.rightThrough)
+
+	return math.Max(0, closed-opened)
+}
+
+/*
+medianRate is the central order statistic of a path's energy per second.
+
+The median rather than the mean, so one large move does not become the path's
+normal activity.
+*/
+func medianRate(observed []float64) float64 {
+	if len(observed) == 0 {
+		return 0
+	}
+
+	rates := append([]float64(nil), observed...)
+	sort.Float64s(rates)
+
+	count := len(rates)
+	return (rates[(count-1)/2] + rates[count/2]) * 0.5
+}
+
+/*
+readRates restores one path's retained energy rates.
+*/
+func readRates(read func() (capnp.Float64List, error)) ([]float64, error) {
+	stored, err := read()
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"algo.hayashiYoshida: failed to read retained rates",
+			err,
+		))
+	}
+
+	rates := make([]float64, 0, stored.Len())
+
+	for index := range stored.Len() {
+		rates = append(rates, stored.At(index))
+	}
+
+	return rates, nil
+}
+
+/*
+writeRates renders one path's retained energy rates.
+*/
+func writeRates(rates []float64, alloc func(int32) (capnp.Float64List, error)) error {
+	stored, err := alloc(int32(len(rates)))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"algo.hayashiYoshida: failed to allocate retained rates",
+			err,
+		))
+	}
+
+	for index, rate := range rates {
+		stored.Set(index, rate)
+	}
 
 	return nil
 }

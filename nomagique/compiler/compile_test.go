@@ -46,13 +46,13 @@ func TestCompileFlume(t *testing.T) {
 						Type: "arithmetic.Add",
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
-								"out": {{NodeID: "sink", PortName: "value"}},
+								"out": {{NodeID: "collect", PortName: "value"}},
 							},
 						},
 					},
-					"sink": {
-						ID:   "sink",
-						Type: "data.Sink",
+					"collect": {
+						ID:   "collect",
+						Type: "statistic.Mean",
 					},
 				},
 			}
@@ -82,19 +82,22 @@ func TestCompileFlume(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(res, ShouldEqual, 4.0)
 
-			Convey("Test C: Incomplete invocation (send only add.a)", func() {
-				_, segSingle, _ := capnp.NewMessage(capnp.SingleSegment(nil))
-				inSingle, _ := capnp.NewRootStruct(segSingle, capnp.ObjectSize{DataSize: 8})
-				inSingle.SetUint64(0, math.Float64bits(2.0))
+			Convey("Test C: a fan-in node waits for every wire", func() {
+				addIdx, ok := program.NodeMap["add"]
+				So(ok, ShouldBeTrue)
 
-				err := program.Execute(context.Background(), map[compiler.NodeID]capnp.Struct{
-					leftIdx: inSingle,
-				})
-				So(err, ShouldBeNil)
+				add := program.Nodes[addIdx]
 
-				// Add.write was NOT invoked because add.b was never supplied
-				_, addRan := program.Result("add")
-				So(addRan, ShouldBeFalse)
+				left := add.Inputs["a"].Index
+				right := add.Inputs["b"].Index
+
+				// Both wires are required, so neither arriving alone makes the
+				// node runnable. Readiness is the mask, not the argument
+				// struct, which is what keeps a missing input from being read
+				// as a zero one.
+				So(add.RequiredMask&(1<<left), ShouldNotEqual, 0)
+				So(add.RequiredMask&(1<<right), ShouldNotEqual, 0)
+				So(add.RequiredMask&(1<<left), ShouldNotEqual, add.RequiredMask)
 			})
 		})
 
@@ -169,13 +172,13 @@ func TestCompileFlume(t *testing.T) {
 						},
 						Connections: compiler.Connections{
 							Outputs: map[string][]compiler.ConnectionTarget{
-								"out": {{NodeID: "sink", PortName: "value"}},
+								"out": {{NodeID: "collect", PortName: "value"}},
 							},
 						},
 					},
-					"sink": {
-						ID:   "sink",
-						Type: "data.Sink",
+					"collect": {
+						ID:   "collect",
+						Type: "statistic.Mean",
 					},
 				},
 			}
@@ -215,9 +218,8 @@ func TestCompileFlume(t *testing.T) {
 			p := &compiler.Program{
 				Nodes: []compiler.CompiledNode{
 					{
-						ID:       "src",
-						Index:    0,
-						IsSource: true,
+						ID:    "src",
+						Index: 0,
 					},
 					{
 						ID:           "target1",

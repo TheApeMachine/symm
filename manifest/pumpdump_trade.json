@@ -233,6 +233,10 @@
             {
               "nodeId": "notional_rate_ratio",
               "portName": "a"
+            },
+            {
+              "nodeId": "metric:notional_rate",
+              "portName": "raw"
             }
           ]
         }
@@ -291,6 +295,10 @@
             {
               "nodeId": "notional_rate_ratio",
               "portName": "b"
+            },
+            {
+              "nodeId": "metric:notional_rate_baseline",
+              "portName": "raw"
             }
           ]
         }
@@ -513,6 +521,44 @@
           "raw": [
             {
               "nodeId": "notional_rate_ratio",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:notional_rate": {
+      "id": "metric:notional_rate",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1100.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "notional_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "metric:notional_rate_baseline": {
+      "id": "metric:notional_rate_baseline",
+      "type": "data.MetricService",
+      "width": 280,
+      "height": 172,
+      "x": 1400.0,
+      "y": 1250.0,
+      "connections": {
+        "inputs": {
+          "raw": [
+            {
+              "nodeId": "notional_rate_baseline",
               "portName": "out"
             }
           ]

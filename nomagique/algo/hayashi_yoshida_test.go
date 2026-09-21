@@ -300,3 +300,85 @@ func TestHayashiYoshidaDone(t *testing.T) {
 		})
 	})
 }
+
+/*
+The estimate travels with the diagnostics that make it auditable: how many
+returns each path contributed, how long they were observed together, and the
+typical energy each carried. Without those a correlation cannot be told apart
+from one formed on almost no evidence.
+*/
+func TestHayashiYoshidaDiagnostics(t *testing.T) {
+	Convey("Given two paths observed over the same span", t, func() {
+		ctx, client := newClient(t)
+		retained := pairStore{}
+
+		var last struct {
+			leftReturns    float64
+			rightReturns   float64
+			sharedTime     float64
+			overlapDensity float64
+			leftRate       float64
+		}
+
+		read := func() {
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+
+			last.leftReturns = results.LeftReturns()
+			last.rightReturns = results.RightReturns()
+			last.sharedTime = results.SharedTime()
+			last.overlapDensity = results.OverlapDensity()
+			last.leftRate = results.LeftEnergyRate()
+
+			state, err := results.State()
+			So(err, ShouldBeNil)
+			retained["pair"] = append([]byte(nil), state...)
+		}
+
+		write := func(from, to, left, right float64) {
+			err := client.Write(ctx, func(params HayashiYoshida_write_Params) error {
+				if err := params.SetState(retained["pair"]); err != nil {
+					return err
+				}
+
+				params.SetBoundsStart1(from)
+				params.SetBoundsEnd1(to)
+				params.SetReturns1(left)
+				params.SetBoundsStart2(from)
+				params.SetBoundsEnd2(to)
+				params.SetReturns2(right)
+				return nil
+			})
+			So(err, ShouldBeNil)
+			read()
+		}
+
+		Convey("When three returns arrive on each path", func() {
+			write(0, 1, 0.1, 0.1)
+			write(1, 2, 0.2, 0.2)
+			write(2, 4, 0.3, 0.3)
+
+			Convey("Then each path reports what it contributed", func() {
+				So(last.leftReturns, ShouldEqual, 3)
+				So(last.rightReturns, ShouldEqual, 3)
+			})
+
+			Convey("Then the span they were observed together is reported", func() {
+				So(last.sharedTime, ShouldEqual, 4)
+			})
+
+			Convey("Then overlap is reported against that span, not as a bare count", func() {
+				So(last.overlapDensity, ShouldAlmostEqual, 3.0/4.0, 1e-12)
+			})
+
+			Convey("Then activity is the typical rate, not the largest", func() {
+				// Rates are 0.01/1, 0.04/1 and 0.09/2: the middle one stands
+				// for the path, so one big move does not become its normal.
+				So(last.leftRate, ShouldAlmostEqual, 0.04, 1e-12)
+			})
+		})
+	})
+}

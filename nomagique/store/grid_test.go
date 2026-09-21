@@ -25,9 +25,16 @@ func TestGridWrite(t *testing.T) {
 			So(client.WaitStreaming(), ShouldBeNil)
 		}
 
+		// One feed landing on the gathering port, the way a single venue does.
 		publish := func(payload []byte) (out []byte, delivered int64) {
 			err := client.Write(ctx, func(params store.Grid_write_Params) error {
-				return params.SetData(payload)
+				feeds, err := params.NewData(1)
+
+				if err != nil {
+					return err
+				}
+
+				return feeds.Set(0, payload)
 			})
 			So(err, ShouldBeNil)
 			So(client.WaitStreaming(), ShouldBeNil)
@@ -80,6 +87,49 @@ func TestGridWrite(t *testing.T) {
 			Convey("Then nothing is delivered, because a partial reading is not a reading", func() {
 				So(delivered, ShouldEqual, 0)
 				So(len(out), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When several feeds land on the one data port", func() {
+			declare("trade.price")
+
+			first, err := sonic.Marshal(map[string]any{"unrelated": 1.0})
+			So(err, ShouldBeNil)
+
+			second, err := sonic.Marshal(map[string]any{"trade": map[string]any{"price": 42.0}})
+			So(err, ShouldBeNil)
+
+			err = client.Write(ctx, func(params store.Grid_write_Params) error {
+				feeds, err := params.NewData(2)
+
+				if err != nil {
+					return err
+				}
+
+				if err := feeds.Set(0, first); err != nil {
+					return err
+				}
+
+				return feeds.Set(1, second)
+			})
+			So(err, ShouldBeNil)
+			So(client.WaitStreaming(), ShouldBeNil)
+
+			future, release := client.Done(ctx, nil)
+			defer release()
+
+			results, err := future.Struct()
+			So(err, ShouldBeNil)
+
+			Convey("Then a feed carrying the declared field is observed, not just the first", func() {
+				So(results.Delivered(), ShouldEqual, 1)
+
+				resolved, err := results.Out()
+				So(err, ShouldBeNil)
+
+				var carried map[string]any
+				So(sonic.Unmarshal(resolved, &carried), ShouldBeNil)
+				So(carried["trade.price"], ShouldEqual, 42.0)
 			})
 		})
 
