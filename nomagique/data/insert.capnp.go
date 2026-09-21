@@ -23,7 +23,7 @@ func (c Insert) Write(ctx context.Context, params func(Insert_write_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xcad089c863652820,
 			MethodID:      0,
-			InterfaceName: "data/insert.capnp:Insert",
+			InterfaceName: "nomagique/data/insert.capnp:Insert",
 			MethodName:    "write",
 		},
 	}
@@ -42,7 +42,7 @@ func (c Insert) Done(ctx context.Context, params func(Insert_done_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0xcad089c863652820,
 			MethodID:      1,
-			InterfaceName: "data/insert.capnp:Insert",
+			InterfaceName: "nomagique/data/insert.capnp:Insert",
 			MethodName:    "done",
 		},
 	}
@@ -157,7 +157,7 @@ func Insert_Methods(methods []server.Method, s Insert_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xcad089c863652820,
 			MethodID:      0,
-			InterfaceName: "data/insert.capnp:Insert",
+			InterfaceName: "nomagique/data/insert.capnp:Insert",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -169,7 +169,7 @@ func Insert_Methods(methods []server.Method, s Insert_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xcad089c863652820,
 			MethodID:      1,
-			InterfaceName: "data/insert.capnp:Insert",
+			InterfaceName: "nomagique/data/insert.capnp:Insert",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

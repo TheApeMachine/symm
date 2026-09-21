@@ -6,153 +6,11 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
+	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
 )
-
-type ComponentType uint16
-
-// ComponentType_TypeID is the unique identifier for the type ComponentType.
-const ComponentType_TypeID = 0xc0511e7e52cee490
-
-// Values of ComponentType.
-const (
-	ComponentType_alert       ComponentType = 0
-	ComponentType_badge       ComponentType = 1
-	ComponentType_button      ComponentType = 2
-	ComponentType_callout     ComponentType = 3
-	ComponentType_canvas      ComponentType = 4
-	ComponentType_card        ComponentType = 5
-	ComponentType_checkbox    ComponentType = 6
-	ComponentType_chip        ComponentType = 7
-	ComponentType_collapsible ComponentType = 8
-	ComponentType_command     ComponentType = 9
-)
-
-// String returns the enum's constant name.
-func (c ComponentType) String() string {
-	switch c {
-	case ComponentType_alert:
-		return "alert"
-	case ComponentType_badge:
-		return "badge"
-	case ComponentType_button:
-		return "button"
-	case ComponentType_callout:
-		return "callout"
-	case ComponentType_canvas:
-		return "canvas"
-	case ComponentType_card:
-		return "card"
-	case ComponentType_checkbox:
-		return "checkbox"
-	case ComponentType_chip:
-		return "chip"
-	case ComponentType_collapsible:
-		return "collapsible"
-	case ComponentType_command:
-		return "command"
-
-	default:
-		return ""
-	}
-}
-
-// ComponentTypeFromString returns the enum value with a name,
-// or the zero value if there's no such value.
-func ComponentTypeFromString(c string) ComponentType {
-	switch c {
-	case "alert":
-		return ComponentType_alert
-	case "badge":
-		return ComponentType_badge
-	case "button":
-		return ComponentType_button
-	case "callout":
-		return ComponentType_callout
-	case "canvas":
-		return ComponentType_canvas
-	case "card":
-		return ComponentType_card
-	case "checkbox":
-		return ComponentType_checkbox
-	case "chip":
-		return ComponentType_chip
-	case "collapsible":
-		return ComponentType_collapsible
-	case "command":
-		return ComponentType_command
-
-	default:
-		return 0
-	}
-}
-
-type ComponentType_List = capnp.EnumList[ComponentType]
-
-func NewComponentType_List(s *capnp.Segment, sz int32) (ComponentType_List, error) {
-	return capnp.NewEnumList[ComponentType](s, sz)
-}
-
-type Variant uint16
-
-// Variant_TypeID is the unique identifier for the type Variant.
-const Variant_TypeID = 0x934a351856e10a83
-
-// Values of Variant.
-const (
-	Variant_brand   Variant = 0
-	Variant_info    Variant = 1
-	Variant_success Variant = 2
-	Variant_warning Variant = 3
-	Variant_error   Variant = 4
-)
-
-// String returns the enum's constant name.
-func (c Variant) String() string {
-	switch c {
-	case Variant_brand:
-		return "brand"
-	case Variant_info:
-		return "info"
-	case Variant_success:
-		return "success"
-	case Variant_warning:
-		return "warning"
-	case Variant_error:
-		return "error"
-
-	default:
-		return ""
-	}
-}
-
-// VariantFromString returns the enum value with a name,
-// or the zero value if there's no such value.
-func VariantFromString(c string) Variant {
-	switch c {
-	case "brand":
-		return Variant_brand
-	case "info":
-		return Variant_info
-	case "success":
-		return Variant_success
-	case "warning":
-		return Variant_warning
-	case "error":
-		return Variant_error
-
-	default:
-		return 0
-	}
-}
-
-type Variant_List = capnp.EnumList[Variant]
-
-func NewVariant_List(s *capnp.Segment, sz int32) (Variant_List, error) {
-	return capnp.NewEnumList[Variant](s, sz)
-}
 
 type Component capnp.Struct
 
@@ -160,12 +18,12 @@ type Component capnp.Struct
 const Component_TypeID = 0xed1b812f5ecbdd1d
 
 func NewComponent(s *capnp.Segment) (Component, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return Component(st), err
 }
 
 func NewRootComponent(s *capnp.Segment) (Component, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return Component(st), err
 }
 
@@ -201,33 +59,71 @@ func (s Component) Message() *capnp.Message {
 func (s Component) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s Component) Type() ComponentType {
-	return ComponentType(capnp.Struct(s).Uint16(0))
+func (s Component) Name() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
 }
 
-func (s Component) SetType(v ComponentType) {
-	capnp.Struct(s).SetUint16(0, uint16(v))
+func (s Component) HasName() bool {
+	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s Component) Variant() Variant {
-	return Variant(capnp.Struct(s).Uint16(2))
+func (s Component) NameBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-func (s Component) SetVariant(v Variant) {
-	capnp.Struct(s).SetUint16(2, uint16(v))
+func (s Component) SetName(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s Component) ClassName() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s Component) HasClassName() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s Component) ClassNameBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s Component) SetClassName(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s Component) PropsJson() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s Component) HasPropsJson() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s Component) PropsJsonBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s Component) SetPropsJson(v string) error {
+	return capnp.Struct(s).SetText(2, v)
 }
 
 func (s Component) Components() (Component_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
+	p, err := capnp.Struct(s).Ptr(3)
 	return Component_List(p.List()), err
 }
 
 func (s Component) HasComponents() bool {
-	return capnp.Struct(s).HasPtr(0)
+	return capnp.Struct(s).HasPtr(3)
 }
 
 func (s Component) SetComponents(v Component_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
 }
 
 // NewComponents sets the components field to a newly
@@ -237,7 +133,7 @@ func (s Component) NewComponents(n int32) (Component_List, error) {
 	if err != nil {
 		return Component_List{}, err
 	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
 	return l, err
 }
 
@@ -246,7 +142,7 @@ type Component_List = capnp.StructList[Component]
 
 // NewComponent creates a new list of Component.
 func NewComponent_List(s *capnp.Segment, sz int32) (Component_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4}, sz)
 	return capnp.StructList[Component](l), err
 }
 
@@ -273,7 +169,7 @@ func (c UIComponent) Write(ctx context.Context, params func(UIComponent_write_Pa
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 4}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(UIComponent_write_Params(s)) }
 	}
 
@@ -455,7 +351,7 @@ func (c UIComponent_done) Args() UIComponent_done_Params {
 
 // AllocResults allocates the results struct.
 func (c UIComponent_done) AllocResults() (UIComponent_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return UIComponent_done_Results(r), err
 }
 
@@ -474,12 +370,12 @@ type UIComponent_write_Params capnp.Struct
 const UIComponent_write_Params_TypeID = 0xf3316bbab1b9dc9e
 
 func NewUIComponent_write_Params(s *capnp.Segment) (UIComponent_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return UIComponent_write_Params(st), err
 }
 
 func NewRootUIComponent_write_Params(s *capnp.Segment) (UIComponent_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4})
 	return UIComponent_write_Params(st), err
 }
 
@@ -515,33 +411,71 @@ func (s UIComponent_write_Params) Message() *capnp.Message {
 func (s UIComponent_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s UIComponent_write_Params) Type() ComponentType {
-	return ComponentType(capnp.Struct(s).Uint16(0))
+func (s UIComponent_write_Params) Name() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
 }
 
-func (s UIComponent_write_Params) SetType(v ComponentType) {
-	capnp.Struct(s).SetUint16(0, uint16(v))
+func (s UIComponent_write_Params) HasName() bool {
+	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s UIComponent_write_Params) Variant() Variant {
-	return Variant(capnp.Struct(s).Uint16(2))
+func (s UIComponent_write_Params) NameBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-func (s UIComponent_write_Params) SetVariant(v Variant) {
-	capnp.Struct(s).SetUint16(2, uint16(v))
+func (s UIComponent_write_Params) SetName(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+func (s UIComponent_write_Params) ClassName() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
+}
+
+func (s UIComponent_write_Params) HasClassName() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s UIComponent_write_Params) ClassNameBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
+}
+
+func (s UIComponent_write_Params) SetClassName(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s UIComponent_write_Params) PropsJson() (string, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.Text(), err
+}
+
+func (s UIComponent_write_Params) HasPropsJson() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s UIComponent_write_Params) PropsJsonBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return p.TextBytes(), err
+}
+
+func (s UIComponent_write_Params) SetPropsJson(v string) error {
+	return capnp.Struct(s).SetText(2, v)
 }
 
 func (s UIComponent_write_Params) Components() (Component_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
+	p, err := capnp.Struct(s).Ptr(3)
 	return Component_List(p.List()), err
 }
 
 func (s UIComponent_write_Params) HasComponents() bool {
-	return capnp.Struct(s).HasPtr(0)
+	return capnp.Struct(s).HasPtr(3)
 }
 
 func (s UIComponent_write_Params) SetComponents(v Component_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+	return capnp.Struct(s).SetPtr(3, v.ToPtr())
 }
 
 // NewComponents sets the components field to a newly
@@ -551,7 +485,7 @@ func (s UIComponent_write_Params) NewComponents(n int32) (Component_List, error)
 	if err != nil {
 		return Component_List{}, err
 	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	err = capnp.Struct(s).SetPtr(3, l.ToPtr())
 	return l, err
 }
 
@@ -560,7 +494,7 @@ type UIComponent_write_Params_List = capnp.StructList[UIComponent_write_Params]
 
 // NewUIComponent_write_Params creates a new list of UIComponent_write_Params.
 func NewUIComponent_write_Params_List(s *capnp.Segment, sz int32) (UIComponent_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 4}, sz)
 	return capnp.StructList[UIComponent_write_Params](l), err
 }
 
@@ -643,12 +577,12 @@ type UIComponent_done_Results capnp.Struct
 const UIComponent_done_Results_TypeID = 0xa93d94e42a4151de
 
 func NewUIComponent_done_Results(s *capnp.Segment) (UIComponent_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return UIComponent_done_Results(st), err
 }
 
 func NewRootUIComponent_done_Results(s *capnp.Segment) (UIComponent_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return UIComponent_done_Results(st), err
 }
 
@@ -684,13 +618,36 @@ func (s UIComponent_done_Results) Message() *capnp.Message {
 func (s UIComponent_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s UIComponent_done_Results) Out() (Component, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return Component(p.Struct()), err
+}
+
+func (s UIComponent_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s UIComponent_done_Results) SetOut(v Component) error {
+	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+}
+
+// NewOut sets the out field to a newly
+// allocated Component struct, preferring placement in s's segment.
+func (s UIComponent_done_Results) NewOut() (Component, error) {
+	ss, err := NewComponent(capnp.Struct(s).Segment())
+	if err != nil {
+		return Component{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
+	return ss, err
+}
 
 // UIComponent_done_Results_List is a list of UIComponent_done_Results.
 type UIComponent_done_Results_List = capnp.StructList[UIComponent_done_Results]
 
 // NewUIComponent_done_Results creates a new list of UIComponent_done_Results.
 func NewUIComponent_done_Results_List(s *capnp.Segment, sz int32) (UIComponent_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[UIComponent_done_Results](l), err
 }
 
@@ -700,4 +657,72 @@ type UIComponent_done_Results_Future struct{ *capnp.Future }
 func (f UIComponent_done_Results_Future) Struct() (UIComponent_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return UIComponent_done_Results(p.Struct()), err
+}
+func (p UIComponent_done_Results_Future) Out() Component_Future {
+	return Component_Future{Future: p.Future.Field(0, nil)}
+}
+
+const schema_d4e5b2ed5b75bf08 = "x\xda\xd4TMh\x13[\x14>\xe7\xde;Iy\xa4" +
+	"/\xb9L\x1e\x8f\xf2\x08\xa1\x8f\xba0RkZ\x14," +
+	"HR\xaa\xd8\xd6(\xb9\x05E\xad(c;\xdah2" +
+	"\x93ff\xa8\x9b.\\\x15\xa1\xa0\x82\x1b\xbbP7\x82" +
+	"\xad\x14I\xc0E\x15Q\x11\x14t#\xe8\xa6\xa2.\xc4" +
+	"\xd2\x8d]\xa8\xab\xba\x19\xb9\x93\xe6\xc7R\xb5v\xa5\xbb" +
+	"{\xcf\xf9\xe6|\xe7|\xf7;\xb3%M\x92,\xdex" +
+	"\xde\x07D\xa4\x14\x9f\xbb\xf4!\x11\xca\xfccO\x00o" +
+	"F\x00\x85\xfa\x01:Zi\x01\x01\xd5\xed\xf4\x16\xa0\xdb" +
+	"\xb3\x94y\x9c\xba;pu\x19\x80\x120_\x06|\xa4" +
+	"\x09@\xf7\xad\xe8\x8a\xbd\xbf\xb4c\x0a\xf8\xc6*\x80\xb3" +
+	"\x92\x0443\x09\xb89q|\xf1F\xc07]\x060" +
+	"\x99\xefb\xd3\x08\xcc\x1d|\xa4\x9f\x98\x8b\x15K\xe5\xda" +
+	"^&\xceN\xc9\xcc\xa6\xe7\x93\x07f\xf6l{\x05<" +
+	"B\xdd\x86\xfb\xce\xc0bi\xfe%\x00vDX\x1f\xaa" +
+	"q\x09U[\xd9\xb8:&O\xae\xef\xe9\xc4\xc1\xb9\xd2" +
+	"\xb5w\xc0\x9b\xa8\xdbso\xeb\x828\xb7\xfb\x85D\xeb" +
+	"\xec/T\x1d\x0f=\xc2\xc6\xd5\x87\x1e:\xf2\xe6\xd9\xd1" +
+	"\xb6\xb3\xff-\x02\x8f`\xad\xb6\xe2\xd1O\xb1NTg" +
+	"\xbd\x0fn\xb3\x05@\xf7IX\x1f\xbb8\xf6\xef'\xe0" +
+	"MX+\xed\xe9\xa4^W\xbe\xa8EE\x9ef\x14)" +
+	"\xd5\x95\xd7\xb3\xc5;\xa7\xe3\x9f\x97\x95\xf0\x0a\x1e\xf2y" +
+	"Jd|\x0b0\xe4\x1afN;\x99\x19q\x98\xde\xe6" +
+	"d\xda\x0a\xa6c\xeb\x9b\x07\xb5\xbc\x91\xef\xdc\xdf\xdb\xef" +
+	"\xddF\x0b\x19[oIG\xb5\x82\x96\xb3D\x802\x00" +
+	"\x86\x00|W\x0c@$)\x8a\x14A\x8e\x18F\x19\xec" +
+	"m\x07\x10;)\x8a4ANH\x18\x09\x00\xdf{\x18" +
+	"@\xa4(\x8aa\x82\xc1\xbcf\x0fc\x00\x08\x06\x00\xa3" +
+	"v\xc6\xce\xea\x95\x9b;h\xe6\xf2\xa6\xa1\x1b@m\x0b" +
+	"\xff\x06LS\xc4PM\x1b@\x19\\C\xc7C\xa6\xa1" +
+	"\xb7\xf4\xebQ\xcb\xc9\xda\x96`\xd5\x8e\x1b\xff\x07\x10\x0d" +
+	"\x14E\x98\xa0\xdftl\x0c\xd5\xb4\x04\xc4P]q\xc5" +
+	"+^i\xc8\xae\x12tW#\xbf@R?\xc1:H" +
+	"\xd2ZPJ\xbf\xd6\xc1W\x87\xff\x80\x05 \x8d(\x1a" +
+	"\xa8\x02P\xf5\x0b\x1a\xc5\x07\xa3\x1d\x93\xc7.\xf3x;" +
+	"\x10\xbe\xc1\x8f\xb5\xa5\xc1\xcaz\xf1\xa6\x18\x10\xde\xe8\x8f" +
+	"z\x16IbP\xf2'1\x8d\xb5\x11\xe9\xf7z\xad'" +
+	"\xad,\xfcj\xa4\x95}\xc4\xca\xd2\xaf\x99t\xe5\xc4\xdd" +
+	"f.Q\x0eH\xe6P\xf5\xc14\xe9\xe3#ewV" +
+	"}\xac\xf7\x03\x88!\x8a\"_\xe7\xe3\x9c\x0cf)\x8a" +
+	"3\x049\xa5a\xa4\x00\xdc\x91\xe6\xb6)\x8a\x0b\x04\x83" +
+	"\x86\x96\xab\xb3sV\xb3\xac}Z\x0e\xb0\x16\xcb\x17\xcc" +
+	"\xbc\xd5g\x99\x80\xc6:mOV*\x9a\xe8\xf4\x04\x95" +
+	"C\xfd>\xcb\xf9sk\x7f\xfb[\xf9\xd3\x9e\xe3k\x00" +
+	"\x00\x00\xff\xff\x89\x11\xc7A"
+
+func RegisterSchema(reg *schemas.Registry) {
+	reg.Register(&schemas.Schema{
+		String: schema_d4e5b2ed5b75bf08,
+		Nodes: []uint64{
+			0x8c741569103fecf9,
+			0x9f5bbb4cc669f948,
+			0xa93d94e42a4151de,
+			0xaa060ca8ed628cab,
+			0xb2b12ad96665c363,
+			0xda364bad569ad02b,
+			0xe2a0b2d9588cca06,
+			0xed1b812f5ecbdd1d,
+			0xf2177d917d6514c7,
+			0xf3316bbab1b9dc9e,
+		},
+		Compressed: true,
+	})
 }

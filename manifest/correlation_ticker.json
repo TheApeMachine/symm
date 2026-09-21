@@ -1,207 +1,125 @@
 {
-  "id": "correlation:ticker",
+  "id": "correlation_ticker",
   "name": "correlation:ticker",
-  "source": "correlation:ticker",
-  "interests": [
-    [
-      "ticker",
-      "data",
-      "symbol"
-    ],
-    [
-      "ticker",
-      "data",
-      "last"
-    ],
-    [
-      "ticker",
-      "data",
-      "timestamp"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "prevTimestamp": {
+      "id": "prevTimestamp",
+      "type": "temporal.Delay",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 200.0,
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "lastPrice",
-              "portName": "data"
+              "nodeId": "hy",
+              "portName": "boundsStart1"
             }
           ]
         }
-      }
-    },
-    "lastPrice": {
-      "id": "lastPrice",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "last"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_lastPrice",
-              "portName": "value"
-            },
-            {
-              "nodeId": "returns",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_lastPrice": {
-      "id": "sink_lastPrice",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "last_price"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "lastPrice",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
       }
     },
     "returns": {
       "id": "returns",
       "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -100.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "lastPrice",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "corr",
-              "portName": "value"
-            },
-            {
-              "nodeId": "square",
-              "portName": "value"
+              "nodeId": "hy",
+              "portName": "returns1"
             }
           ]
         }
       }
     },
-    "corr": {
-      "id": "corr",
-      "type": "calculus.Tanh",
+    "referenceReturns": {
+      "id": "referenceReturns",
+      "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 40.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "hy",
+              "portName": "returns2"
+            }
+          ]
+        }
+      }
+    },
+    "hy": {
+      "id": "hy",
+      "type": "algo.HayashiYoshida",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
-          "value": [
+          "returns1": [
             {
               "nodeId": "returns",
+              "portName": "out"
+            }
+          ],
+          "returns2": [
+            {
+              "nodeId": "referenceReturns",
+              "portName": "out"
+            }
+          ],
+          "boundsStart1": [
+            {
+              "nodeId": "prevTimestamp",
+              "portName": "out"
+            }
+          ],
+          "boundsStart2": [
+            {
+              "nodeId": "prevReferenceTimestamp",
               "portName": "out"
             }
           ]
         },
         "outputs": {
-          "out": [
+          "correlation": [
             {
-              "nodeId": "sink_signed_correlation",
-              "portName": "value"
-            },
-            {
-              "nodeId": "abs",
+              "nodeId": "absolute",
               "portName": "value"
             },
             {
               "nodeId": "atanh",
               "portName": "value"
-            },
-            {
-              "nodeId": "zscore",
-              "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_signed_correlation": {
-      "id": "sink_signed_correlation",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "signed_correlation"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "corr",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "abs": {
-      "id": "abs",
+    "absolute": {
+      "id": "absolute",
       "type": "calculus.Absolute",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": -200.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "corr",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_absolute_correlation",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_absolute_correlation": {
-      "id": "sink_absolute_correlation",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "absolute_correlation"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "abs",
-              "portName": "out"
+              "nodeId": "hy",
+              "portName": "correlation"
             }
           ]
         },
@@ -211,11 +129,53 @@
     "atanh": {
       "id": "atanh",
       "type": "calculus.Atanh",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": -60.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "corr",
+              "nodeId": "hy",
+              "portName": "correlation"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "divergence",
+              "portName": "value"
+            },
+            {
+              "nodeId": "zscore",
+              "portName": "value"
+            },
+            {
+              "nodeId": "velocity",
+              "portName": "val"
+            }
+          ]
+        }
+      }
+    },
+    "baseline": {
+      "id": "baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 420.0,
+      "y": -200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "atanh",
               "portName": "out"
             }
           ]
@@ -223,21 +183,39 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_atanh",
+              "nodeId": "baselineCorrelation",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_atanh": {
-      "id": "sink_atanh",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "correlation_atanh"
-        }
-      },
+    "baselineCorrelation": {
+      "id": "baselineCorrelation",
+      "type": "calculus.Tanh",
+      "width": 280,
+      "height": 172,
+      "x": 740.0,
+      "y": -200.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "baseline",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "divergence": {
+      "id": "divergence",
+      "type": "statistic.ResidualDivergence",
+      "width": 280,
+      "height": 172,
+      "x": 420.0,
+      "y": -60.0,
       "connections": {
         "inputs": {
           "value": [
@@ -253,38 +231,15 @@
     "zscore": {
       "id": "zscore",
       "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 420.0,
+      "y": 80.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "corr",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_correlation_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_correlation_zscore": {
-      "id": "sink_correlation_zscore",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "correlation_zscore"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "zscore",
+              "nodeId": "atanh",
               "portName": "out"
             }
           ]
@@ -292,49 +247,18 @@
         "outputs": {}
       }
     },
-    "square": {
-      "id": "square",
-      "type": "calculus.Square",
+    "velocity": {
+      "id": "velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 420.0,
+      "y": 220.0,
       "connections": {
         "inputs": {
-          "value": [
+          "val": [
             {
-              "nodeId": "returns",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_relative_return_energy",
-              "portName": "value"
-            },
-            {
-              "nodeId": "energy_mean",
-              "portName": "value"
-            },
-            {
-              "nodeId": "energy_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_relative_return_energy": {
-      "id": "sink_relative_return_energy",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "relative_return_energy"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "square",
+              "nodeId": "atanh",
               "portName": "out"
             }
           ]
@@ -342,88 +266,23 @@
         "outputs": {}
       }
     },
-    "energy_mean": {
-      "id": "energy_mean",
-      "type": "statistic.Mean",
+    "prevReferenceTimestamp": {
+      "id": "prevReferenceTimestamp",
+      "type": "temporal.Delay",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 340.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "square",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_relative_return_energy_baseline",
-              "portName": "value"
+              "nodeId": "hy",
+              "portName": "boundsStart2"
             }
           ]
         }
-      }
-    },
-    "sink_relative_return_energy_baseline": {
-      "id": "sink_relative_return_energy_baseline",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "relative_return_energy_baseline"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "energy_mean",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "energy_zscore": {
-      "id": "energy_zscore",
-      "type": "statistic.ZScore",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "square",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_relative_return_energy_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_relative_return_energy_zscore": {
-      "id": "sink_relative_return_energy_zscore",
-      "type": "sink",
-      "inputData": {
-        "path": {
-          "metric": "relative_return_energy_zscore"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "energy_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
       }
     }
   }

@@ -22,7 +22,7 @@ func (c Quality) Write(ctx context.Context, params func(Quality_write_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xb64ac6d30eaf0c55,
 			MethodID:      0,
-			InterfaceName: "data/quality.capnp:Quality",
+			InterfaceName: "nomagique/data/quality.capnp:Quality",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +41,7 @@ func (c Quality) Done(ctx context.Context, params func(Quality_done_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xb64ac6d30eaf0c55,
 			MethodID:      1,
-			InterfaceName: "data/quality.capnp:Quality",
+			InterfaceName: "nomagique/data/quality.capnp:Quality",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +156,7 @@ func Quality_Methods(methods []server.Method, s Quality_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xb64ac6d30eaf0c55,
 			MethodID:      0,
-			InterfaceName: "data/quality.capnp:Quality",
+			InterfaceName: "nomagique/data/quality.capnp:Quality",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +168,7 @@ func Quality_Methods(methods []server.Method, s Quality_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xb64ac6d30eaf0c55,
 			MethodID:      1,
-			InterfaceName: "data/quality.capnp:Quality",
+			InterfaceName: "nomagique/data/quality.capnp:Quality",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

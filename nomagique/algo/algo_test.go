@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
 )
 
 func TestGaussJordan(t *testing.T) {
@@ -91,24 +90,6 @@ func TestOLS(t *testing.T) {
 			So(len(beta), ShouldEqual, 2)
 			So(beta[0], ShouldAlmostEqual, 1.0, 1e-9) // intercept = 1
 			So(beta[1], ShouldAlmostEqual, 2.0, 1e-9) // slope = 2
-		})
-	})
-}
-
-func TestHayashiYoshida(t *testing.T) {
-	Convey("Given Hayashi-Yoshida asynchronous covariance estimator", t, func() {
-		hy := NewHayashiYoshida()
-
-		Convey("Overlapping intervals accumulate returns", func() {
-			corr, err := hy.Evaluate(context.Background(), [2][2]int64{{0, 10}, {5, 15}})
-			So(err, ShouldBeNil)
-			So(corr, ShouldBeGreaterThan, 0.0)
-		})
-
-		Convey("Non-overlapping intervals do not accumulate covariance", func() {
-			corr, err := hy.Evaluate(context.Background(), [2][2]int64{{0, 5}, {10, 15}})
-			So(err, ShouldBeNil)
-			So(corr, ShouldBeLessThan, core.Unit)
 		})
 	})
 }

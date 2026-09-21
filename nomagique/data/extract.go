@@ -136,7 +136,7 @@ func (server *ExtractServer) read(payload []byte) (float64, bool, error) {
 		))
 	}
 
-	measurement, err := ReadRootWireMeasurement(msg)
+	measurement, err := ReadRootMeasurement(msg)
 
 	if err != nil {
 		return 0, false, errnie.Error(errnie.Err(
@@ -156,7 +156,7 @@ func (server *ExtractServer) read(payload []byte) (float64, bool, error) {
 		))
 	}
 
-	// WireMetric carries no label, so a measurement's metrics are addressed
+	// Metric carries no label, so a measurement's metrics are addressed
 	// positionally. Any other path cannot be resolved against this encoding.
 	index, indexed := arrayIndex(server.path)
 

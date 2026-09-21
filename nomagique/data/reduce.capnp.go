@@ -23,7 +23,7 @@ func (c Reduce) Write(ctx context.Context, params func(Reduce_write_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0x8b3a690434c9bbd7,
 			MethodID:      0,
-			InterfaceName: "data/reduce.capnp:Reduce",
+			InterfaceName: "nomagique/data/reduce.capnp:Reduce",
 			MethodName:    "write",
 		},
 	}
@@ -42,7 +42,7 @@ func (c Reduce) Done(ctx context.Context, params func(Reduce_done_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0x8b3a690434c9bbd7,
 			MethodID:      1,
-			InterfaceName: "data/reduce.capnp:Reduce",
+			InterfaceName: "nomagique/data/reduce.capnp:Reduce",
 			MethodName:    "done",
 		},
 	}
@@ -157,7 +157,7 @@ func Reduce_Methods(methods []server.Method, s Reduce_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x8b3a690434c9bbd7,
 			MethodID:      0,
-			InterfaceName: "data/reduce.capnp:Reduce",
+			InterfaceName: "nomagique/data/reduce.capnp:Reduce",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -169,7 +169,7 @@ func Reduce_Methods(methods []server.Method, s Reduce_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x8b3a690434c9bbd7,
 			MethodID:      1,
-			InterfaceName: "data/reduce.capnp:Reduce",
+			InterfaceName: "nomagique/data/reduce.capnp:Reduce",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

@@ -1,60 +1,112 @@
 package data
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"context"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
-Metric is one projected value of a measurement: a label, the raw observation,
-its normalized and standardized forms, and the physical unit and timescale.
+MetricServiceServer builds one metric out of the forms a signal derived for it.
 
-Exact retains the venue's original decimal for observations the venue printed
-exactly (prices, sizes). Ingest writes it and capture/audit reads it; the
-mathematics runs on Raw alone and never consults it. Derived facts leave it
-nil.
+A metric is not only its raw value: the normalized and standardized forms, and
+the center and scale they were formed against, travel with it so a reader can
+see what a value was compared to rather than trusting the comparison.
+
+Done emits the metric and clears it, because a metric describes one value.
 */
-type Metric[Value any] struct {
-	Label        string           `json:"label"`
-	Raw          Value            `json:"raw"`
-	Normalized   *Value           `json:"normalized,omitempty"`
-	Standardized *Value           `json:"standardized,omitempty"`
-	Exact        *decimal.Decimal `json:"exact,omitempty"`
-	Center       float64          `json:"center,omitempty"`
-	Scale        float64          `json:"scale,omitempty"`
-	Unit         Unit             `json:"unit,omitempty"`
-	Timescale    Timescale        `json:"timescale,omitempty"`
+type MetricServiceServer struct {
+	*runtime.System
+	metric Metric
+}
+
+func NewMetricService(ctx context.Context) *MetricServiceServer {
+	server := &MetricServiceServer{
+		System: runtime.NewSystem(ctx, "data.metric"),
+	}
+
+	server.Transition(runtime.READY)
+	return server
 }
 
 /*
-NewMetric builds a metric declaring its label, unit, timescale, and the
-center and scale its values are standardized against.
+Write records the derived forms of one metric.
 */
-func NewMetric[Value any](
-	label string, unit Unit, timescale Timescale, center, scale float64,
-) Metric[Value] {
-	return Metric[Value]{
-		Label:     label,
-		Center:    center,
-		Scale:     scale,
-		Unit:      unit,
-		Timescale: timescale,
+func (server *MetricServiceServer) Write(ctx context.Context, call MetricService_write) error {
+	args := call.Args()
+
+	_, segment, err := capnp.NewMessage(capnp.SingleSegment(nil))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[data.metric.Write] failed to create message",
+			err,
+		))
 	}
+
+	metric, err := NewRootMetric(segment)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[data.metric.Write] failed to create metric",
+			err,
+		))
+	}
+
+	metric.SetRaw(args.Raw())
+	metric.SetNormalized(args.Normalized())
+	metric.SetStandardized(args.Standardized())
+	metric.SetCenter(args.Center())
+	metric.SetScale(args.Scale())
+	metric.SetUnit(args.Unit())
+	metric.SetTimescale(args.Timescale())
+
+	server.metric = metric
+	return nil
 }
 
 /*
-Write sets the metric's raw value and its standardized form against the
-center and scale declared at registration.
+Done emits the metric as an encoded value the graph can route onward.
 */
-func (metric Metric[T]) Write(value T) Metric[T] {
-	metric.Raw = value
+func (server *MetricServiceServer) Done(ctx context.Context, call MetricService_done) error {
+	results, err := call.AllocResults()
 
-	if number, held := any(value).(float64); held {
-
-		if metric.Scale != 0 {
-			standard := (number - metric.Center) / metric.Scale
-			metric.Standardized = any(&standard).(*T)
-		}
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[data.metric.Done] failed to allocate results",
+			err,
+		))
 	}
 
-	return metric
+	results.SetStatus(runtime.Status(server.Status()))
+
+	if !server.metric.IsValid() {
+		return nil
+	}
+
+	encoded, err := server.metric.Message().Marshal()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[data.metric.Done] failed to marshal metric",
+			err,
+		))
+	}
+
+	if err := results.SetRead(encoded); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[data.metric.Done] failed to set read",
+			err,
+		))
+	}
+
+	server.metric = Metric{}
+	return nil
 }

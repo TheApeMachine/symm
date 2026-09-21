@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -24,6 +25,9 @@ type WebSocketClientServer struct {
 	conn     *gorillaws.Conn
 	endpoint string
 	incoming *lf.Queue[[]byte]
+	// dialing admits a single reconnect loop. Without it every failed dial
+	// would start another one and the retries would double each round.
+	dialing atomic.Bool
 }
 
 func NewWebSocketClient(ctx context.Context) *WebSocketClientServer {
@@ -52,8 +56,13 @@ func (server *WebSocketClientServer) Write(ctx context.Context, call WebSocketCl
 		server.Transition(runtime.WAITING)
 	}
 
-	if server.endpoint != "" && server.Status() != runtime.READY {
-		server.connect()
+	// The first attempt is made here so a write that carries both an endpoint
+	// and a frame still sends that frame. Once a dial loop is running, retrying
+	// belongs to it rather than to every write that arrives meanwhile.
+	if server.endpoint != "" && server.Status() != runtime.READY && !server.dialing.Load() {
+		if !server.connect() {
+			server.reconnect()
+		}
 	}
 
 	payload, err := call.Args().Write()
@@ -115,7 +124,12 @@ func (server *WebSocketClientServer) Done(ctx context.Context, call WebSocketCli
 	return results.SetRead(msg)
 }
 
-func (server *WebSocketClientServer) connect() {
+/*
+connect dials the endpoint once, reporting whether the connection is live. It
+never schedules its own retry: retrying belongs to the single loop that owns
+it, so a failed dial cannot multiply into more of them.
+*/
+func (server *WebSocketClientServer) connect() bool {
 	server.Info("connecting to %s", server.endpoint)
 
 	dialer := &gorillaws.Dialer{
@@ -132,8 +146,7 @@ func (server *WebSocketClientServer) connect() {
 			err,
 		))
 
-		go server.reconnect()
-		return
+		return false
 	}
 
 	server.conn = conn
@@ -141,6 +154,47 @@ func (server *WebSocketClientServer) connect() {
 	server.read()
 
 	server.Info("connected to %s", server.endpoint)
+	return true
+}
+
+/*
+reconnect keeps one dial loop running until the connection is live or the
+client is shut down. A second caller while a loop is already running is a no-op
+rather than another loop.
+*/
+func (server *WebSocketClientServer) reconnect() {
+	if !server.dialing.CompareAndSwap(false, true) {
+		return
+	}
+
+	go func() {
+		defer server.dialing.Store(false)
+
+		backoff := 50 * time.Millisecond
+		maxBackoff := 2 * time.Second
+
+		for {
+			if server.Context().Err() != nil {
+				return
+			}
+
+			if server.connect() {
+				return
+			}
+
+			select {
+			case <-server.Context().Done():
+				return
+			case <-time.After(backoff):
+			}
+
+			backoff *= 2
+
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}()
 }
 
 func (server *WebSocketClientServer) read() {
@@ -148,13 +202,12 @@ func (server *WebSocketClientServer) read() {
 		for {
 			select {
 			case <-server.Context().Done():
-				server.Close()
 				return
 			default:
-				if server.Status() != runtime.READY {
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
+			}
+
+			if server.Status() != runtime.READY {
+				return
 			}
 
 			_, message, err := server.conn.ReadMessage()
@@ -169,7 +222,11 @@ func (server *WebSocketClientServer) read() {
 					err,
 				))
 
-				server.Close()
+				// A dropped connection is not the end of the client: close the
+				// socket and let the dial loop take it up again. Closing the
+				// client itself would cancel its context for good, and every
+				// later dial would fail as cancelled without ever waiting.
+				server.drop()
 				return
 			}
 
@@ -178,22 +235,23 @@ func (server *WebSocketClientServer) read() {
 	}()
 }
 
-func (server *WebSocketClientServer) reconnect() {
-	backoff := 50 * time.Millisecond
-	maxBackoff := 2 * time.Second
-
-	for server.Status() != runtime.READY {
-		select {
-		case <-server.Context().Done():
-			server.Close()
-			return
-		case <-time.After(backoff):
-			server.connect()
-			backoff *= 2
-
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+/*
+drop releases the current connection and marks the client as waiting, so the
+next write starts a fresh dial loop.
+*/
+func (server *WebSocketClientServer) drop() {
+	if server.conn != nil {
+		if err := server.conn.Close(); err != nil {
+			server.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("[network.websocket.client.drop] close %s failed", server.endpoint),
+				err,
+			))
 		}
+
+		server.conn = nil
 	}
+
+	server.Transition(runtime.WAITING)
+	server.reconnect()
 }

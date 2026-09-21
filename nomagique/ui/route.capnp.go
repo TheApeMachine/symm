@@ -94,25 +94,25 @@ func (s Route) SetTitle(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
-func (s Route) Sections() (Section_List, error) {
+func (s Route) Components() (Component_List, error) {
 	p, err := capnp.Struct(s).Ptr(2)
-	return Section_List(p.List()), err
+	return Component_List(p.List()), err
 }
 
-func (s Route) HasSections() bool {
+func (s Route) HasComponents() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s Route) SetSections(v Section_List) error {
+func (s Route) SetComponents(v Component_List) error {
 	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
-// NewSections sets the sections field to a newly
-// allocated Section_List, preferring placement in s's segment.
-func (s Route) NewSections(n int32) (Section_List, error) {
-	l, err := NewSection_List(capnp.Struct(s).Segment(), n)
+// NewComponents sets the components field to a newly
+// allocated Component_List, preferring placement in s's segment.
+func (s Route) NewComponents(n int32) (Component_List, error) {
+	l, err := NewComponent_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return Section_List{}, err
+		return Component_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
@@ -332,7 +332,7 @@ func (c UIRoute_done) Args() UIRoute_done_Params {
 
 // AllocResults allocates the results struct.
 func (c UIRoute_done) AllocResults() (UIRoute_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return UIRoute_done_Results(r), err
 }
 
@@ -428,25 +428,25 @@ func (s UIRoute_write_Params) SetTitle(v string) error {
 	return capnp.Struct(s).SetText(1, v)
 }
 
-func (s UIRoute_write_Params) Sections() (Section_List, error) {
+func (s UIRoute_write_Params) Components() (Component_List, error) {
 	p, err := capnp.Struct(s).Ptr(2)
-	return Section_List(p.List()), err
+	return Component_List(p.List()), err
 }
 
-func (s UIRoute_write_Params) HasSections() bool {
+func (s UIRoute_write_Params) HasComponents() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s UIRoute_write_Params) SetSections(v Section_List) error {
+func (s UIRoute_write_Params) SetComponents(v Component_List) error {
 	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
-// NewSections sets the sections field to a newly
-// allocated Section_List, preferring placement in s's segment.
-func (s UIRoute_write_Params) NewSections(n int32) (Section_List, error) {
-	l, err := NewSection_List(capnp.Struct(s).Segment(), n)
+// NewComponents sets the components field to a newly
+// allocated Component_List, preferring placement in s's segment.
+func (s UIRoute_write_Params) NewComponents(n int32) (Component_List, error) {
+	l, err := NewComponent_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return Section_List{}, err
+		return Component_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
@@ -540,12 +540,12 @@ type UIRoute_done_Results capnp.Struct
 const UIRoute_done_Results_TypeID = 0x9f5bbb4cc669f948
 
 func NewUIRoute_done_Results(s *capnp.Segment) (UIRoute_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return UIRoute_done_Results(st), err
 }
 
 func NewRootUIRoute_done_Results(s *capnp.Segment) (UIRoute_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return UIRoute_done_Results(st), err
 }
 
@@ -581,13 +581,36 @@ func (s UIRoute_done_Results) Message() *capnp.Message {
 func (s UIRoute_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
+func (s UIRoute_done_Results) Out() (Route, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return Route(p.Struct()), err
+}
+
+func (s UIRoute_done_Results) HasOut() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s UIRoute_done_Results) SetOut(v Route) error {
+	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+}
+
+// NewOut sets the out field to a newly
+// allocated Route struct, preferring placement in s's segment.
+func (s UIRoute_done_Results) NewOut() (Route, error) {
+	ss, err := NewRoute(capnp.Struct(s).Segment())
+	if err != nil {
+		return Route{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
+	return ss, err
+}
 
 // UIRoute_done_Results_List is a list of UIRoute_done_Results.
 type UIRoute_done_Results_List = capnp.StructList[UIRoute_done_Results]
 
 // NewUIRoute_done_Results creates a new list of UIRoute_done_Results.
 func NewUIRoute_done_Results_List(s *capnp.Segment, sz int32) (UIRoute_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
 	return capnp.StructList[UIRoute_done_Results](l), err
 }
 
@@ -597,4 +620,7 @@ type UIRoute_done_Results_Future struct{ *capnp.Future }
 func (f UIRoute_done_Results_Future) Struct() (UIRoute_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return UIRoute_done_Results(p.Struct()), err
+}
+func (p UIRoute_done_Results_Future) Out() Route_Future {
+	return Route_Future{Future: p.Future.Field(0, nil)}
 }

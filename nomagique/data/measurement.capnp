@@ -3,9 +3,12 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("nomagique/data");
 
-using import "metric.capnp".WireMetric;
+using import "metric.capnp".Metric;
+using import "../runtime/status.capnp".Status;
 
-struct WireMap(Key, Value) {
+# Table is the metadata map. It is not named Map because data.Map is already
+# a primitive in this package.
+struct Table(Key, Value) {
     entries @0 :List(Entry);
 
     struct Entry {
@@ -14,7 +17,7 @@ struct WireMap(Key, Value) {
     }
 }
 
-struct MetadataValue {
+struct Metadata {
     union {
         id    @0 :Data;
         text  @1 :Text;
@@ -24,7 +27,7 @@ struct MetadataValue {
     }
 }
 
-struct WireMeasurement  {
+struct Measurement  {
     id         @0  :Data;
     epoch      @1  :Int64;
     tick       @2  :Int64;
@@ -35,8 +38,8 @@ struct WireMeasurement  {
     snr        @7  :Float64;
     maturity   @8  :Float64;
     separation @9  :Float64;
-    metrics    @10 :List(WireMetric);
-    metadata   @11 :WireMap(Text, MetadataValue);
+    metrics    @10 :List(Metric);
+    metadata   @11 :Table(Text, Metadata);
 
     enum EntityType {
         ticker       @0;
@@ -73,4 +76,22 @@ struct WireMeasurement  {
         manifold    @17;
         training    @18;
     }
+}
+
+interface MeasurementService {
+    write @0 (
+        id         :Data,
+        epoch      :Int64,
+        tick       :Int64,
+        timestamp  :Int64,
+        label      :Data,
+        entity     :Measurement.EntityType,
+        source     :Measurement.SourceType,
+        snr        :Float64,
+        maturity   :Float64,
+        separation :Float64,
+        metrics    :List(Metric),
+        metadata   :Table(Text, Metadata)
+    ) -> stream;
+    done @1 () -> (status :Status, read :Data);
 }

@@ -1,70 +1,117 @@
 {
-  "id": "toxicity:level3",
+  "id": "toxicity_level3",
   "name": "toxicity:level3",
-  "source": "toxicity:level3",
-  "interests": [
-    [
-      "level3",
-      "data",
-      "symbol"
-    ],
-    [
-      "level3",
-      "data",
-      "bid"
-    ],
-    [
-      "level3",
-      "data",
-      "ask"
-    ],
-    [
-      "level3",
-      "data",
-      "bid_qty"
-    ],
-    [
-      "level3",
-      "data",
-      "ask_qty"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "elapsed": {
+      "id": "elapsed",
+      "type": "temporal.Elapsed",
+      "width": 280,
+      "height": 172,
+      "x": -1200.0,
+      "y": 0.0,
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "extract_bid",
-              "portName": "data"
+              "nodeId": "net_withdrawal_rate:bid",
+              "portName": "b"
             },
             {
-              "nodeId": "extract_ask",
-              "portName": "data"
+              "nodeId": "net_replenishment_rate:bid",
+              "portName": "b"
             },
             {
-              "nodeId": "extract_bid_qty",
-              "portName": "data"
+              "nodeId": "retreat_rate:bid",
+              "portName": "b"
             },
             {
-              "nodeId": "extract_ask_qty",
-              "portName": "data"
+              "nodeId": "net_withdrawal_rate:ask",
+              "portName": "b"
+            },
+            {
+              "nodeId": "net_replenishment_rate:ask",
+              "portName": "b"
+            },
+            {
+              "nodeId": "retreat_rate:ask",
+              "portName": "b"
             }
           ]
         }
       }
     },
-    "extract_bid": {
-      "id": "extract_bid",
-      "type": "data.Extract",
+    "touch_price_log_change:bid": {
+      "id": "touch_price_log_change:bid",
+      "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -600.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "unfilled_residual_quantity:bid": {
+      "id": "unfilled_residual_quantity:bid",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -460.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "retreated_quantity:bid",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "quantityChange:bid": {
+      "id": "quantityChange:bid",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -320.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_withdrawn_quantity:bid",
+              "portName": "a"
+            },
+            {
+              "nodeId": "net_replenished_quantity:bid",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "net_withdrawn_quantity:bid": {
+      "id": "net_withdrawn_quantity:bid",
+      "type": "calculus.Maximum",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -320.0,
+      "inputData": {
+        "b": {
+          "value": 0
+        }
+      },
       "connections": {
         "inputs": {
-          "data": [
+          "a": [
             {
-              "nodeId": "source",
+              "nodeId": "quantityChange:bid",
               "portName": "out"
             }
           ]
@@ -72,50 +119,34 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "bid_change",
-              "portName": "value"
+              "nodeId": "net_withdrawal_fraction:bid",
+              "portName": "a"
             },
             {
-              "nodeId": "retreat_bid",
-              "portName": "value"
+              "nodeId": "net_withdrawal_rate:bid",
+              "portName": "a"
             }
           ]
         }
-      },
-      "inputData": {
-        "path": {
-          "string": "bid"
-        }
       }
     },
-    "sink_bid": {
-      "id": "sink_bid",
-      "type": "sink",
+    "net_replenished_quantity:bid": {
+      "id": "net_replenished_quantity:bid",
+      "type": "calculus.Minimum",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -180.0,
       "inputData": {
-        "metric": {
-          "string": "bid"
+        "b": {
+          "value": 0
         }
       },
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "extract_bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "extract_ask": {
-      "id": "extract_ask",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
+              "nodeId": "quantityChange:bid",
               "portName": "out"
             }
           ]
@@ -123,35 +154,59 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "ask_change",
-              "portName": "value"
+              "nodeId": "net_replenishment_fraction:bid",
+              "portName": "a"
             },
             {
-              "nodeId": "retreat_ask",
-              "portName": "value"
+              "nodeId": "net_replenishment_rate:bid",
+              "portName": "a"
             }
           ]
         }
-      },
-      "inputData": {
-        "path": {
-          "string": "ask"
+      }
+    },
+    "retreated_quantity:bid": {
+      "id": "retreated_quantity:bid",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -40.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "unfilled_residual_quantity:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "retreat_fraction:bid",
+              "portName": "a"
+            },
+            {
+              "nodeId": "retreat_rate:bid",
+              "portName": "a"
+            }
+          ]
         }
       }
     },
-    "sink_ask": {
-      "id": "sink_ask",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ask"
-        }
-      },
+    "net_withdrawal_fraction:bid": {
+      "id": "net_withdrawal_fraction:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": -320.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "extract_ask",
+              "nodeId": "net_withdrawn_quantity:bid",
               "portName": "out"
             }
           ]
@@ -159,39 +214,24 @@
         "outputs": {}
       }
     },
-    "extract_bid_qty": {
-      "id": "extract_bid_qty",
-      "type": "data.Extract",
+    "net_withdrawal_rate:bid": {
+      "id": "net_withdrawal_rate:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": -320.0,
       "connections": {
         "inputs": {
-          "data": [
+          "a": [
             {
-              "nodeId": "source",
+              "nodeId": "net_withdrawn_quantity:bid",
               "portName": "out"
             }
-          ]
-        },
-        "outputs": {}
-      },
-      "inputData": {
-        "path": {
-          "string": "bid_qty"
-        }
-      }
-    },
-    "sink_bid_qty": {
-      "id": "sink_bid_qty",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "bid_qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
+          ],
+          "b": [
             {
-              "nodeId": "extract_bid_qty",
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]
@@ -199,39 +239,18 @@
         "outputs": {}
       }
     },
-    "extract_ask_qty": {
-      "id": "extract_ask_qty",
-      "type": "data.Extract",
+    "net_replenishment_fraction:bid": {
+      "id": "net_replenishment_fraction:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": -260.0,
       "connections": {
         "inputs": {
-          "data": [
+          "a": [
             {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      },
-      "inputData": {
-        "path": {
-          "string": "ask_qty"
-        }
-      }
-    },
-    "sink_ask_qty": {
-      "id": "sink_ask_qty",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ask_qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_ask_qty",
+              "nodeId": "net_replenished_quantity:bid",
               "portName": "out"
             }
           ]
@@ -239,139 +258,354 @@
         "outputs": {}
       }
     },
-    "bid_change": {
-      "id": "bid_change",
+    "net_replenishment_rate:bid": {
+      "id": "net_replenishment_rate:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": -260.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "net_replenished_quantity:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "retreat_fraction:bid": {
+      "id": "retreat_fraction:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": -200.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "retreated_quantity:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "retreat_rate:bid": {
+      "id": "retreat_rate:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": -200.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "retreated_quantity:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "touch_price_log_change:ask": {
+      "id": "touch_price_log_change:ask",
       "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 200.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_bid",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     },
-    "sink_bid_log_change": {
-      "id": "sink_bid_log_change",
-      "type": "sink",
+    "unfilled_residual_quantity:ask": {
+      "id": "unfilled_residual_quantity:ask",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 340.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "retreated_quantity:ask",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "quantityChange:ask": {
+      "id": "quantityChange:ask",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 480.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_withdrawn_quantity:ask",
+              "portName": "a"
+            },
+            {
+              "nodeId": "net_replenished_quantity:ask",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "net_withdrawn_quantity:ask": {
+      "id": "net_withdrawn_quantity:ask",
+      "type": "calculus.Maximum",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 480.0,
       "inputData": {
-        "metric": {
-          "string": "bid_log_change"
+        "b": {
+          "value": 0
         }
       },
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "bid_change",
+              "nodeId": "quantityChange:ask",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
-      }
-    },
-    "ask_change": {
-      "id": "ask_change",
-      "type": "temporal.LogReturns",
-      "connections": {
-        "inputs": {
-          "value": [
+        "outputs": {
+          "out": [
             {
-              "nodeId": "extract_ask",
-              "portName": "out"
+              "nodeId": "net_withdrawal_fraction:ask",
+              "portName": "a"
+            },
+            {
+              "nodeId": "net_withdrawal_rate:ask",
+              "portName": "a"
             }
           ]
-        },
-        "outputs": {}
+        }
       }
     },
-    "sink_ask_log_change": {
-      "id": "sink_ask_log_change",
-      "type": "sink",
+    "net_replenished_quantity:ask": {
+      "id": "net_replenished_quantity:ask",
+      "type": "calculus.Minimum",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 620.0,
       "inputData": {
-        "metric": {
-          "string": "ask_log_change"
+        "b": {
+          "value": 0
         }
       },
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "ask_change",
+              "nodeId": "quantityChange:ask",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
-      }
-    },
-    "retreat_bid": {
-      "id": "retreat_bid",
-      "type": "calculus.RelativeChange",
-      "connections": {
-        "inputs": {
-          "in": [
+        "outputs": {
+          "out": [
             {
-              "nodeId": "extract_bid",
-              "portName": "out"
+              "nodeId": "net_replenishment_fraction:ask",
+              "portName": "a"
+            },
+            {
+              "nodeId": "net_replenishment_rate:ask",
+              "portName": "a"
             }
           ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_retreat_bid_fraction": {
-      "id": "sink_retreat_bid_fraction",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "retreat_bid_fraction"
         }
-      },
+      }
+    },
+    "retreated_quantity:ask": {
+      "id": "retreated_quantity:ask",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 760.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "retreat_bid",
+              "nodeId": "unfilled_residual_quantity:ask",
               "portName": "out"
             }
           ]
         },
-        "outputs": {}
-      }
-    },
-    "retreat_ask": {
-      "id": "retreat_ask",
-      "type": "calculus.RelativeChange",
-      "connections": {
-        "inputs": {
-          "in": [
+        "outputs": {
+          "out": [
             {
-              "nodeId": "extract_ask",
-              "portName": "out"
+              "nodeId": "retreat_fraction:ask",
+              "portName": "a"
+            },
+            {
+              "nodeId": "retreat_rate:ask",
+              "portName": "a"
             }
           ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_retreat_ask_fraction": {
-      "id": "sink_retreat_ask_fraction",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "retreat_ask_fraction"
         }
-      },
+      }
+    },
+    "net_withdrawal_fraction:ask": {
+      "id": "net_withdrawal_fraction:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": 480.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "retreat_ask",
+              "nodeId": "net_withdrawn_quantity:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "net_withdrawal_rate:ask": {
+      "id": "net_withdrawal_rate:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": 480.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "net_withdrawn_quantity:ask",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "net_replenishment_fraction:ask": {
+      "id": "net_replenishment_fraction:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": 540.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "net_replenished_quantity:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "net_replenishment_rate:ask": {
+      "id": "net_replenishment_rate:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": 540.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "net_replenished_quantity:ask",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "retreat_fraction:ask": {
+      "id": "retreat_fraction:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -260.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "retreated_quantity:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "retreat_rate:ask": {
+      "id": "retreat_rate:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 80.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "retreated_quantity:ask",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]

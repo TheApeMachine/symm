@@ -23,7 +23,7 @@ func (c Extract) Write(ctx context.Context, params func(Extract_write_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      0,
-			InterfaceName: "data/extract.capnp:Extract",
+			InterfaceName: "nomagique/data/extract.capnp:Extract",
 			MethodName:    "write",
 		},
 	}
@@ -42,7 +42,7 @@ func (c Extract) Done(ctx context.Context, params func(Extract_done_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      1,
-			InterfaceName: "data/extract.capnp:Extract",
+			InterfaceName: "nomagique/data/extract.capnp:Extract",
 			MethodName:    "done",
 		},
 	}
@@ -157,7 +157,7 @@ func Extract_Methods(methods []server.Method, s Extract_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      0,
-			InterfaceName: "data/extract.capnp:Extract",
+			InterfaceName: "nomagique/data/extract.capnp:Extract",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -169,7 +169,7 @@ func Extract_Methods(methods []server.Method, s Extract_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xdecff4685f1e8fa2,
 			MethodID:      1,
-			InterfaceName: "data/extract.capnp:Extract",
+			InterfaceName: "nomagique/data/extract.capnp:Extract",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

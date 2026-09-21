@@ -22,7 +22,7 @@ func (c Iterate) Write(ctx context.Context, params func(Iterate_write_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0x8757ea4ff8047148,
 			MethodID:      0,
-			InterfaceName: "data/iterate.capnp:Iterate",
+			InterfaceName: "nomagique/data/iterate.capnp:Iterate",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +41,7 @@ func (c Iterate) Done(ctx context.Context, params func(Iterate_done_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0x8757ea4ff8047148,
 			MethodID:      1,
-			InterfaceName: "data/iterate.capnp:Iterate",
+			InterfaceName: "nomagique/data/iterate.capnp:Iterate",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +156,7 @@ func Iterate_Methods(methods []server.Method, s Iterate_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0x8757ea4ff8047148,
 			MethodID:      0,
-			InterfaceName: "data/iterate.capnp:Iterate",
+			InterfaceName: "nomagique/data/iterate.capnp:Iterate",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +168,7 @@ func Iterate_Methods(methods []server.Method, s Iterate_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0x8757ea4ff8047148,
 			MethodID:      1,
-			InterfaceName: "data/iterate.capnp:Iterate",
+			InterfaceName: "nomagique/data/iterate.capnp:Iterate",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

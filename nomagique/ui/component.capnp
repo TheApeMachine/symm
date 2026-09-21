@@ -4,38 +4,19 @@ using Go = import "/go.capnp";
 $Go.package("ui");
 $Go.import("github.com/theapemachine/symm/nomagique/ui");
 
-enum ComponentType {
-	alert       @0;
-	badge       @1;
-	button      @2;
-	callout     @3;
-	canvas      @4;
-	card        @5;
-	checkbox    @6;
-	chip        @7;
-	collapsible @8;
-	command     @9;
-}
-
-enum Variant {
-	brand    @0;
-	info     @1;
-	success  @2;
-	warning  @3;
-	error    @4;
-}
-
 struct Component {
-	type       @0 :ComponentType;
-	variant    @1 :Variant;
-	components @2 :List(Component);
+	name       @0 :Text;
+	className  @1 :Text;
+	propsJson  @2 :Text;
+	components @3 :List(Component);
 }
 
 interface UIComponent {
 	write @0 (
-		type       :ComponentType,
-		variant    :Variant,
+		name       :Text,
+		className  :Text,
+		propsJson  :Text,
 		components :List(Component)
 	) -> stream;
-	done @1 ();
+	done @1 () -> (out :Component);
 }

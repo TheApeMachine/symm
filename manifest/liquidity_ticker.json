@@ -1,284 +1,16 @@
 {
-  "id": "liquidity:ticker",
+  "id": "liquidity_ticker",
   "name": "liquidity:ticker",
-  "source": "liquidity:ticker",
-  "interests": [
-    [
-      "ticker",
-      "data",
-      "symbol"
-    ],
-    [
-      "ticker",
-      "data",
-      "bid"
-    ],
-    [
-      "ticker",
-      "data",
-      "ask"
-    ],
-    [
-      "ticker",
-      "data",
-      "bid_qty"
-    ],
-    [
-      "ticker",
-      "data",
-      "ask_qty"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
-      "connections": {
-        "inputs": {},
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "extract_bid",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_ask",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_bid_qty",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_ask_qty",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "extract_bid": {
-      "id": "extract_bid",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "spread",
-              "portName": "b"
-            },
-            {
-              "nodeId": "midpoint",
-              "portName": "b"
-            },
-            {
-              "nodeId": "bid_notional",
-              "portName": "a"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "bid"
-        }
-      }
-    },
-    "sink_bid": {
-      "id": "sink_bid",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "bid"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "extract_ask": {
-      "id": "extract_ask",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "spread",
-              "portName": "a"
-            },
-            {
-              "nodeId": "midpoint",
-              "portName": "a"
-            },
-            {
-              "nodeId": "ask_notional",
-              "portName": "a"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "ask"
-        }
-      }
-    },
-    "sink_ask": {
-      "id": "sink_ask",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ask"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_ask",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "extract_bid_qty": {
-      "id": "extract_bid_qty",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "bid_notional",
-              "portName": "b"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "bid_qty"
-        }
-      }
-    },
-    "sink_bid_qty": {
-      "id": "sink_bid_qty",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "bid_qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_bid_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "extract_ask_qty": {
-      "id": "extract_ask_qty",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "ask_notional",
-              "portName": "b"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "ask_qty"
-        }
-      }
-    },
-    "sink_ask_qty": {
-      "id": "sink_ask_qty",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ask_qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_ask_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
     "spread": {
       "id": "spread",
       "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -300.0,
       "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "extract_ask",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "extract_bid",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
@@ -290,47 +22,61 @@
               "portName": "value"
             },
             {
-              "nodeId": "spread_z",
+              "nodeId": "spread_divergence",
               "portName": "value"
+            },
+            {
+              "nodeId": "spread_zscore",
+              "portName": "value"
+            },
+            {
+              "nodeId": "spread_divergence_velocity",
+              "portName": "val"
+            },
+            {
+              "nodeId": "spread_ratio",
+              "portName": "a"
             }
           ]
         }
       }
     },
-    "sink_spread": {
-      "id": "sink_spread",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "spread"
-        }
-      },
+    "midpointSum": {
+      "id": "midpointSum",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -120.0,
       "connections": {
-        "inputs": {
-          "value": [
+        "inputs": {},
+        "outputs": {
+          "out": [
             {
-              "nodeId": "spread",
-              "portName": "out"
+              "nodeId": "midpoint",
+              "portName": "a"
             }
           ]
-        },
-        "outputs": {}
+        }
       }
     },
     "midpoint": {
       "id": "midpoint",
-      "type": "arithmetic.Add",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -120.0,
+      "inputData": {
+        "b": {
+          "value": 2
+        }
+      },
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "extract_ask",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "extract_bid",
+              "nodeId": "midpointSum",
               "portName": "out"
             }
           ]
@@ -345,29 +91,13 @@
         }
       }
     },
-    "sink_midpoint": {
-      "id": "sink_midpoint",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "midpoint"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "midpoint",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
     "relative_spread": {
       "id": "relative_spread",
       "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": -120.0,
       "connections": {
         "inputs": {
           "a": [
@@ -386,19 +116,174 @@
         "outputs": {}
       }
     },
-    "sink_relative_spread": {
-      "id": "sink_relative_spread",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "relative_spread"
+    "touch_notional:bid": {
+      "id": "touch_notional:bid",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 80.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "two_sided_touch_notional",
+              "portName": "a"
+            },
+            {
+              "nodeId": "notionalDifference",
+              "portName": "a"
+            },
+            {
+              "nodeId": "touch_notional_baseline:bid",
+              "portName": "value"
+            },
+            {
+              "nodeId": "depth_divergence:bid",
+              "portName": "value"
+            },
+            {
+              "nodeId": "depth_zscore:bid",
+              "portName": "value"
+            },
+            {
+              "nodeId": "divergence_velocity:bid",
+              "portName": "val"
+            },
+            {
+              "nodeId": "depth_ratio:bid",
+              "portName": "a"
+            }
+          ]
         }
-      },
+      }
+    },
+    "touch_notional:ask": {
+      "id": "touch_notional:ask",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 240.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "two_sided_touch_notional",
+              "portName": "b"
+            },
+            {
+              "nodeId": "notionalDifference",
+              "portName": "b"
+            },
+            {
+              "nodeId": "touch_notional_baseline:ask",
+              "portName": "value"
+            },
+            {
+              "nodeId": "depth_divergence:ask",
+              "portName": "value"
+            },
+            {
+              "nodeId": "depth_zscore:ask",
+              "portName": "value"
+            },
+            {
+              "nodeId": "divergence_velocity:ask",
+              "portName": "val"
+            },
+            {
+              "nodeId": "depth_ratio:ask",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "two_sided_touch_notional": {
+      "id": "two_sided_touch_notional",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 160.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "relative_spread",
+              "nodeId": "touch_notional:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "touch_notional_imbalance",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "notionalDifference": {
+      "id": "notionalDifference",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_notional:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "touch_notional_imbalance",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "touch_notional_imbalance": {
+      "id": "touch_notional_imbalance",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "notionalDifference",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "two_sided_touch_notional",
               "portName": "out"
             }
           ]
@@ -408,7 +293,37 @@
     },
     "spread_baseline": {
       "id": "spread_baseline",
-      "type": "statistic.Mean",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": -900.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "spread_ratio",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "spread_divergence": {
+      "id": "spread_divergence",
+      "type": "statistic.ResidualDivergence",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": -760.0,
       "connections": {
         "inputs": {
           "value": [
@@ -421,17 +336,60 @@
         "outputs": {}
       }
     },
-    "sink_spread_baseline": {
-      "id": "sink_spread_baseline",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "spread_baseline"
-        }
-      },
+    "spread_zscore": {
+      "id": "spread_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": -620.0,
       "connections": {
         "inputs": {
           "value": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "spread_divergence_velocity": {
+      "id": "spread_divergence_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": -480.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "spread_ratio": {
+      "id": "spread_ratio",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 640.0,
+      "y": -900.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "spread",
+              "portName": "out"
+            }
+          ],
+          "b": [
             {
               "nodeId": "spread_baseline",
               "portName": "out"
@@ -441,55 +399,18 @@
         "outputs": {}
       }
     },
-    "spread_z": {
-      "id": "spread_z",
-      "type": "statistic.ZScore",
+    "touch_notional_baseline:bid": {
+      "id": "touch_notional_baseline:bid",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": -300.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "spread",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_spread_z": {
-      "id": "sink_spread_z",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "spread_z"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "spread_z",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "bid_notional": {
-      "id": "bid_notional",
-      "type": "arithmetic.Multiply",
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "extract_bid",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "extract_bid_qty",
+              "nodeId": "touch_notional:bid",
               "portName": "out"
             }
           ]
@@ -497,55 +418,25 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "imbalance",
-              "portName": "a"
-            }
-          ]
-        }
-      }
-    },
-    "ask_notional": {
-      "id": "ask_notional",
-      "type": "arithmetic.Multiply",
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "extract_ask",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "extract_ask_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "imbalance",
+              "nodeId": "depth_ratio:bid",
               "portName": "b"
             }
           ]
         }
       }
     },
-    "imbalance": {
-      "id": "imbalance",
-      "type": "arithmetic.Subtract",
+    "depth_divergence:bid": {
+      "id": "depth_divergence:bid",
+      "type": "statistic.ResidualDivergence",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": -160.0,
       "connections": {
         "inputs": {
-          "a": [
+          "value": [
             {
-              "nodeId": "bid_notional",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "ask_notional",
+              "nodeId": "touch_notional:bid",
               "portName": "out"
             }
           ]
@@ -553,19 +444,170 @@
         "outputs": {}
       }
     },
-    "sink_imbalance": {
-      "id": "sink_imbalance",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "imbalance"
-        }
-      },
+    "depth_zscore:bid": {
+      "id": "depth_zscore:bid",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": -20.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "imbalance",
+              "nodeId": "touch_notional:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "divergence_velocity:bid": {
+      "id": "divergence_velocity:bid",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": 120.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "touch_notional:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "depth_ratio:bid": {
+      "id": "depth_ratio:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 640.0,
+      "y": -300.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_notional:bid",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "touch_notional_baseline:bid",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "touch_notional_baseline:ask": {
+      "id": "touch_notional_baseline:ask",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": 300.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "depth_ratio:ask",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "depth_divergence:ask": {
+      "id": "depth_divergence:ask",
+      "type": "statistic.ResidualDivergence",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": 440.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "depth_zscore:ask": {
+      "id": "depth_zscore:ask",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": 580.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "divergence_velocity:ask": {
+      "id": "divergence_velocity:ask",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 300.0,
+      "y": 720.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "depth_ratio:ask": {
+      "id": "depth_ratio:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": 640.0,
+      "y": 300.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "touch_notional:ask",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "touch_notional_baseline:ask",
               "portName": "out"
             }
           ]

@@ -51,7 +51,32 @@ func (server *SeriesServer) Write(ctx context.Context, call Series_write) error 
 	val := args.Value()
 	query := args.Query()
 
-	reading := seriesReadingState{
+	if query {
+		server.reading = server.latest(key)
+		return nil
+	}
+
+	ring, exists := server.rings[key]
+
+	if !exists {
+		ring = &seriesRing{
+			sec:    make([]float64, server.capacity),
+			nsec:   make([]float64, server.capacity),
+			values: make([]float64, server.capacity),
+		}
+		server.rings[key] = ring
+	}
+
+	ring.sec[ring.next] = sec
+	ring.nsec[ring.next] = nsec
+	ring.values[ring.next] = val
+	ring.next = (ring.next + 1) % server.capacity
+
+	if ring.count < server.capacity {
+		ring.count++
+	}
+
+	server.reading = seriesReadingState{
 		key:   key,
 		sec:   sec,
 		nsec:  nsec,
@@ -59,28 +84,31 @@ func (server *SeriesServer) Write(ctx context.Context, call Series_write) error 
 		found: true,
 	}
 
-	if !query {
-		ring, exists := server.rings[key]
-		if !exists {
-			ring = &seriesRing{
-				sec:    make([]float64, server.capacity),
-				nsec:   make([]float64, server.capacity),
-				values: make([]float64, server.capacity),
-			}
-			server.rings[key] = ring
-		}
+	return nil
+}
 
-		ring.sec[ring.next] = sec
-		ring.nsec[ring.next] = nsec
-		ring.values[ring.next] = val
-		ring.next = (ring.next + 1) % server.capacity
-		if ring.count < server.capacity {
-			ring.count++
-		}
+/*
+latest reads back the newest sample retained under one key. A key nothing has
+been written under is reported as not found rather than as a zero sample, so a
+series that has never been observed stays distinguishable from one observing
+zero.
+*/
+func (server *SeriesServer) latest(key string) seriesReadingState {
+	ring, exists := server.rings[key]
+
+	if !exists || ring.count == 0 {
+		return seriesReadingState{key: key}
 	}
 
-	server.reading = reading
-	return nil
+	newest := (ring.next - 1 + server.capacity) % server.capacity
+
+	return seriesReadingState{
+		key:   key,
+		sec:   ring.sec[newest],
+		nsec:  ring.nsec[newest],
+		value: ring.values[newest],
+		found: true,
+	}
 }
 
 func (server *SeriesServer) Done(ctx context.Context, call Series_done) error {

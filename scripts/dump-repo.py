@@ -72,7 +72,8 @@ SKIP_FILE_NAMES: frozenset[str] = frozenset(
         "manifests.json",
         "manifest.json",
         "metric-lineage.json",
-        "advisors.json"
+        "advisors.json",
+        ".capnp.go"
     }
 )
 

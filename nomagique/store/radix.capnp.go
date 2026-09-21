@@ -21,12 +21,12 @@ func (c Radix) Write(ctx context.Context, params func(Radix_write_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      0,
-			InterfaceName: "store/radix.capnp:Radix",
+			InterfaceName: "nomagique/store/radix.capnp:Radix",
 			MethodName:    "write",
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 2}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 8, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Radix_write_Params(s)) }
 	}
 
@@ -40,7 +40,7 @@ func (c Radix) Done(ctx context.Context, params func(Radix_done_Params) error) (
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      1,
-			InterfaceName: "store/radix.capnp:Radix",
+			InterfaceName: "nomagique/store/radix.capnp:Radix",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      0,
-			InterfaceName: "store/radix.capnp:Radix",
+			InterfaceName: "nomagique/store/radix.capnp:Radix",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      1,
-			InterfaceName: "store/radix.capnp:Radix",
+			InterfaceName: "nomagique/store/radix.capnp:Radix",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -227,12 +227,12 @@ type Radix_write_Params capnp.Struct
 const Radix_write_Params_TypeID = 0xa32c90c355cc8c09
 
 func NewRadix_write_Params(s *capnp.Segment) (Radix_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Radix_write_Params(st), err
 }
 
 func NewRootRadix_write_Params(s *capnp.Segment) (Radix_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
 	return Radix_write_Params(st), err
 }
 
@@ -299,12 +299,20 @@ func (s Radix_write_Params) SetValue(v []byte) error {
 	return capnp.Struct(s).SetData(1, v)
 }
 
+func (s Radix_write_Params) Query() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s Radix_write_Params) SetQuery(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
 // Radix_write_Params_List is a list of Radix_write_Params.
 type Radix_write_Params_List = capnp.StructList[Radix_write_Params]
 
 // NewRadix_write_Params creates a new list of Radix_write_Params.
 func NewRadix_write_Params_List(s *capnp.Segment, sz int32) (Radix_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2}, sz)
 	return capnp.StructList[Radix_write_Params](l), err
 }
 

@@ -1,180 +1,109 @@
 {
-  "id": "toxicity:trade",
+  "id": "toxicity_trade",
   "name": "toxicity:trade",
-  "source": "toxicity:trade",
-  "interests": [
-    [
-      "trade",
-      "data",
-      "symbol"
-    ],
-    [
-      "trade",
-      "data",
-      "price"
-    ],
-    [
-      "trade",
-      "data",
-      "qty"
-    ],
-    [
-      "trade",
-      "data",
-      "timestamp"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "trade_quantity": {
+      "id": "trade_quantity",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -100.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "extract_price",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_qty",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "extract_price": {
-      "id": "extract_price",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "price"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trade_notional",
-              "portName": "a"
-            },
-            {
-              "nodeId": "returns",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "extract_qty": {
-      "id": "extract_qty",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_trade_qty",
-              "portName": "value"
-            },
-            {
-              "nodeId": "trade_notional",
+              "nodeId": "fill_fraction:bid",
               "portName": "b"
             },
             {
-              "nodeId": "flow_zscore",
-              "portName": "value"
-            },
-            {
-              "nodeId": "flow_baseline",
-              "portName": "value"
+              "nodeId": "fill_fraction:ask",
+              "portName": "b"
             }
           ]
         }
       }
     },
-    "sink_trade_qty": {
-      "id": "sink_trade_qty",
-      "type": "sink",
+    "matched_quantity:bid": {
+      "id": "matched_quantity:bid",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 60.0,
       "inputData": {
-        "metric": {
-          "string": "trade_qty"
+        "operator": {
+          "value": "sum"
         }
       },
       "connections": {
-        "inputs": {
-          "value": [
+        "inputs": {},
+        "outputs": {
+          "out": [
             {
-              "nodeId": "extract_qty",
-              "portName": "out"
+              "nodeId": "fill_fraction:bid",
+              "portName": "a"
+            },
+            {
+              "nodeId": "bracket_quantity",
+              "portName": "a"
             }
           ]
-        },
-        "outputs": {}
+        }
       }
     },
-    "trade_notional": {
-      "id": "trade_notional",
-      "type": "arithmetic.Multiply",
+    "matched_quantity:ask": {
+      "id": "matched_quantity:ask",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 220.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "fill_fraction:ask",
+              "portName": "a"
+            },
+            {
+              "nodeId": "bracket_quantity",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "fill_fraction:bid": {
+      "id": "fill_fraction:bid",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 60.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "extract_price",
+              "nodeId": "matched_quantity:bid",
               "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "extract_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_trade_notional",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_trade_notional": {
-      "id": "sink_trade_notional",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "trade_notional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trade_notional",
+              "nodeId": "trade_quantity",
               "portName": "out"
             }
           ]
@@ -182,41 +111,24 @@
         "outputs": {}
       }
     },
-    "returns": {
-      "id": "returns",
-      "type": "temporal.LogReturns",
+    "fill_fraction:ask": {
+      "id": "fill_fraction:ask",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 220.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "extract_price",
+              "nodeId": "matched_quantity:ask",
               "portName": "out"
             }
-          ]
-        },
-        "outputs": {
-          "out": [
+          ],
+          "b": [
             {
-              "nodeId": "sink_returns",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_returns": {
-      "id": "sink_returns",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "trade_returns"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "returns",
+              "nodeId": "trade_quantity",
               "portName": "out"
             }
           ]
@@ -224,83 +136,24 @@
         "outputs": {}
       }
     },
-    "flow_zscore": {
-      "id": "flow_zscore",
-      "type": "statistic.ZScore",
+    "bracket_quantity": {
+      "id": "bracket_quantity",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 400.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "extract_qty",
+              "nodeId": "matched_quantity:bid",
               "portName": "out"
             }
-          ]
-        },
-        "outputs": {
-          "out": [
+          ],
+          "b": [
             {
-              "nodeId": "sink_flow_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_flow_zscore": {
-      "id": "sink_flow_zscore",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "flow_zscore"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "flow_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "flow_baseline": {
-      "id": "flow_baseline",
-      "type": "statistic.ResidualBaseline",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_flow_baseline",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_flow_baseline": {
-      "id": "sink_flow_baseline",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "flow_baseline"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "flow_baseline",
+              "nodeId": "matched_quantity:ask",
               "portName": "out"
             }
           ]

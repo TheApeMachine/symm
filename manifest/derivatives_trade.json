@@ -1,213 +1,90 @@
 {
-  "id": "derivatives:trade",
+  "id": "derivatives_trade",
   "name": "derivatives:trade",
-  "source": "derivatives:trade",
-  "interests": [
-    [
-      "trade",
-      "data",
-      "symbol"
-    ],
-    [
-      "trade",
-      "data",
-      "side"
-    ],
-    [
-      "trade",
-      "data",
-      "price"
-    ],
-    [
-      "trade",
-      "data",
-      "qty"
-    ],
-    [
-      "trade",
-      "data",
-      "timestamp"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "elapsed": {
+      "id": "elapsed",
+      "type": "temporal.Elapsed",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 300.0,
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "extract_price",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_qty",
-              "portName": "data"
+              "nodeId": "liquidation_notional_rate",
+              "portName": "b"
             }
           ]
         }
       }
     },
-    "extract_price": {
-      "id": "extract_price",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "price"
-        }
-      },
+    "gross_liquidation_notional": {
+      "id": "gross_liquidation_notional",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -200.0,
       "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "trade_notional",
-              "portName": "a"
-            },
-            {
-              "nodeId": "returns",
-              "portName": "value"
-            },
-            {
-              "nodeId": "sink_price",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_price": {
-      "id": "sink_price",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_price"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_price",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "extract_qty": {
-      "id": "extract_qty",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trade_notional",
+              "nodeId": "liquidation_signed_fraction",
               "portName": "b"
             },
             {
-              "nodeId": "qty_zscore",
-              "portName": "value"
+              "nodeId": "liquidation_notional_rate",
+              "portName": "a"
             },
             {
-              "nodeId": "sink_qty",
-              "portName": "value"
+              "nodeId": "liquidation_share",
+              "portName": "a"
             }
           ]
         }
       }
     },
-    "sink_qty": {
-      "id": "sink_qty",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_qty"
-        }
-      },
+    "net_liquidation_notional": {
+      "id": "net_liquidation_notional",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -60.0,
       "connections": {
-        "inputs": {
-          "value": [
+        "inputs": {},
+        "outputs": {
+          "out": [
             {
-              "nodeId": "extract_qty",
-              "portName": "out"
+              "nodeId": "liquidation_signed_fraction",
+              "portName": "a"
             }
           ]
-        },
-        "outputs": {}
+        }
       }
     },
-    "trade_notional": {
-      "id": "trade_notional",
-      "type": "arithmetic.Multiply",
+    "liquidation_signed_fraction": {
+      "id": "liquidation_signed_fraction",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": -60.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "extract_price",
+              "nodeId": "net_liquidation_notional",
               "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "extract_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_notional",
-              "portName": "value"
-            },
-            {
-              "nodeId": "notional_zscore",
-              "portName": "value"
-            },
-            {
-              "nodeId": "notional_baseline",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_notional": {
-      "id": "sink_notional",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_notional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trade_notional",
+              "nodeId": "gross_liquidation_notional",
               "portName": "out"
             }
           ]
@@ -215,41 +92,24 @@
         "outputs": {}
       }
     },
-    "returns": {
-      "id": "returns",
-      "type": "temporal.LogReturns",
+    "liquidation_notional_rate": {
+      "id": "liquidation_notional_rate",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 120.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "extract_price",
+              "nodeId": "gross_liquidation_notional",
               "portName": "out"
             }
-          ]
-        },
-        "outputs": {
-          "out": [
+          ],
+          "b": [
             {
-              "nodeId": "sink_returns",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_returns": {
-      "id": "sink_returns",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_returns"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "returns",
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]
@@ -257,14 +117,48 @@
         "outputs": {}
       }
     },
-    "qty_zscore": {
-      "id": "qty_zscore",
-      "type": "statistic.ZScore",
+    "gross_derivative_trade_notional": {
+      "id": "gross_derivative_trade_notional",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 460.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "liquidation_share",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "liquidation_share": {
+      "id": "liquidation_share",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 460.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "extract_qty",
+              "nodeId": "gross_liquidation_notional",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "gross_derivative_trade_notional",
               "portName": "out"
             }
           ]
@@ -272,110 +166,25 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_qty_zscore",
-              "portName": "value"
+              "nodeId": "liquidation_share_velocity",
+              "portName": "val"
             }
           ]
         }
       }
     },
-    "sink_qty_zscore": {
-      "id": "sink_qty_zscore",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_qty_zscore"
-        }
-      },
+    "liquidation_share_velocity": {
+      "id": "liquidation_share_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 0.0,
+      "y": 460.0,
       "connections": {
         "inputs": {
-          "value": [
+          "val": [
             {
-              "nodeId": "qty_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "notional_zscore": {
-      "id": "notional_zscore",
-      "type": "statistic.ZScore",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trade_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_notional_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_notional_zscore": {
-      "id": "sink_notional_zscore",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_notional_zscore"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "notional_zscore",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "notional_baseline": {
-      "id": "notional_baseline",
-      "type": "statistic.ResidualBaseline",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trade_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_notional_baseline",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_notional_baseline": {
-      "id": "sink_notional_baseline",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_notional_baseline"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "notional_baseline",
+              "nodeId": "liquidation_share",
               "portName": "out"
             }
           ]

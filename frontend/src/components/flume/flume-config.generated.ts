@@ -118,6 +118,26 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 
 	// 2. Boundary Nodes
 	config.addNodeType({
+		type: "grid",
+		label: "Grid",
+		category: "Boundary",
+		description: "Declared metric inputs delivered by the virtual grid",
+		initialWidth: 260,
+		inputs: (ports) => [
+			ports.string({ name: "metric", label: "metric", controls: [Controls.text({ name: "metric", label: "Metric", defaultValue: "" })] }),
+			ports.string({ name: "interests", label: "interests", controls: [Controls.text({ name: "interests", label: "Interests", defaultValue: "" })] }),
+		],
+		outputs: (ports) => (inputData) => {
+			const declared = String(inputData?.interests?.value ?? "")
+				.split(",")
+				.map((interest) => interest.trim())
+				.filter((interest) => interest.length > 0);
+			return declared.map((interest) =>
+				ports.float64({ name: interest, label: interest }),
+			);
+		},
+	});
+	config.addNodeType({
 		type: "data.Source",
 		label: "Source",
 		category: "Boundary",
@@ -134,6 +154,21 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 260,
 		inputs: [],
 		outputs: (ports) => [ports.float64({ name: "out", label: "out" })],
+	});
+	config.addNodeType({
+		type: "metrics",
+		label: "Metrics",
+		category: "Boundary",
+		description: "The metrics this signal publishes",
+		initialWidth: 300,
+		inputs: (ports) => (inputData, connections) => {
+			const published = Object.keys(connections?.inputs ?? {});
+			const declared = published.length > 0 ? published : ["metric"];
+			return declared.map((metric) =>
+				ports.float64({ name: metric, label: metric }),
+			);
+		},
+		outputs: [],
 	});
 	config.addNodeType({
 		type: "data.Sink",
@@ -179,15 +214,22 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		category: "algo",
 		initialWidth: 340,
 		inputs: (ports) => [
-			ports.int64({ name: "boundsEnd1", label: "boundsEnd1" }),
-			ports.int64({ name: "boundsEnd2", label: "boundsEnd2" }),
-			ports.int64({ name: "boundsStart1", label: "boundsStart1" }),
-			ports.int64({ name: "boundsStart2", label: "boundsStart2" }),
+			ports.float64({ name: "boundsEnd1", label: "boundsEnd1" }),
+			ports.float64({ name: "boundsEnd2", label: "boundsEnd2" }),
+			ports.float64({ name: "boundsStart1", label: "boundsStart1" }),
+			ports.float64({ name: "boundsStart2", label: "boundsStart2" }),
 			ports.float64({ name: "returns1", label: "returns1" }),
 			ports.float64({ name: "returns2", label: "returns2" }),
+			ports.string({ name: "symbol1", label: "symbol1" }),
+			ports.string({ name: "symbol2", label: "symbol2" }),
 		],
 		outputs: (ports) => [
-			ports.float64({ name: "out", label: "out" }),
+			ports.float64({ name: "correlation", label: "correlation" }),
+			ports.float64({ name: "covariance", label: "covariance" }),
+			ports.float64({ name: "leftEnergy", label: "leftEnergy" }),
+			ports.float64({ name: "rightEnergy", label: "rightEnergy" }),
+			ports.Status({ name: "status", label: "status" }),
+			ports.float64({ name: "support", label: "support" }),
 		],
 	});
 	config.addNodeType({
@@ -953,6 +995,49 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		outputs: (ports) => [
 			ports.int64({ name: "count", label: "count" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
+		type: "data.MeasurementService",
+		label: "Measurement Service",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.Status({ name: "entity", label: "entity" }),
+			ports.int64({ name: "epoch", label: "epoch" }),
+			ports["[]byte"]({ name: "id", label: "id" }),
+			ports["[]byte"]({ name: "label", label: "label" }),
+			ports.float64({ name: "maturity", label: "maturity" }),
+			ports["[]byte"]({ name: "metadata", label: "metadata" }),
+			ports["[]byte"]({ name: "metrics", label: "metrics" }),
+			ports.float64({ name: "separation", label: "separation" }),
+			ports.float64({ name: "snr", label: "snr" }),
+			ports.Status({ name: "source", label: "source" }),
+			ports.int64({ name: "tick", label: "tick" }),
+			ports.int64({ name: "timestamp", label: "timestamp" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "read", label: "read" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
+		type: "data.MetricService",
+		label: "Metric Service",
+		category: "data",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports.float64({ name: "center", label: "center" }),
+			ports.float64({ name: "normalized", label: "normalized" }),
+			ports.float64({ name: "raw", label: "raw" }),
+			ports.float64({ name: "scale", label: "scale" }),
+			ports.float64({ name: "standardized", label: "standardized" }),
+			ports.Status({ name: "timescale", label: "timescale" }),
+			ports.Status({ name: "unit", label: "unit" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "read", label: "read" }),
 			ports.Status({ name: "status", label: "status" }),
 		],
 	});
@@ -1761,6 +1846,7 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => [
 			ports.string({ name: "key", label: "key" }),
+			ports.bool({ name: "query", label: "query" }),
 			ports["[]byte"]({ name: "value", label: "value" }),
 		],
 		outputs: (ports) => [
@@ -2057,6 +2143,53 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 			ports["[]byte"]({ name: "out", label: "out" }),
 		],
 	});
+	config.addNodeType({
+		type: "ui.UIComponent",
+		label: "Component",
+		category: "ui",
+		initialWidth: 280,
+		inputs: (ports) => (inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "className", label: "className" }),
+				ports.string({ name: "name", label: "name" }),
+				ports.string({ name: "propsJson", label: "propsJson" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+
+	config.addRootNodeType({
+		type: "ui.UIRoute",
+		label: "Route",
+		category: "ui",
+		initialWidth: 280,
+		inputs: (ports) => (inputData, connections) => {
+			const dynamicPorts = [
+				ports.string({ name: "path", label: "path" }),
+				ports.string({ name: "title", label: "title" }),
+			];
+			const connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith("components"));
+			const count = Math.max(1, connected.length + 1);
+			for (let index = 0; index < count; index++) {
+				const portName = index === 0 ? "components" : `components_${index}`;
+				dynamicPorts.push(ports.Capability({ name: portName, label: portName }));
+			}
+			return dynamicPorts;
+		},
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "out", label: "out" }),
+		],
+	});
+
 	config.addNodeType({
 		type: "webrtc.WebRTCServer",
 		label: "Web R T C Server",

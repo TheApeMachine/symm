@@ -5,270 +5,275 @@ package data
 import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
+	fc "capnproto.org/go/capnp/v3/flowcontrol"
+	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	runtime "github.com/theapemachine/symm/nomagique/runtime"
 	math "math"
 	strconv "strconv"
 )
 
-type WireMap capnp.Struct
+type Table capnp.Struct
 
-// WireMap_TypeID is the unique identifier for the type WireMap.
-const WireMap_TypeID = 0xe3fd08f61b09731a
+// Table_TypeID is the unique identifier for the type Table.
+const Table_TypeID = 0xd0f2226d18c93cbe
 
-func NewWireMap(s *capnp.Segment) (WireMap, error) {
+func NewTable(s *capnp.Segment) (Table, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireMap(st), err
+	return Table(st), err
 }
 
-func NewRootWireMap(s *capnp.Segment) (WireMap, error) {
+func NewRootTable(s *capnp.Segment) (Table, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return WireMap(st), err
+	return Table(st), err
 }
 
-func ReadRootWireMap(msg *capnp.Message) (WireMap, error) {
+func ReadRootTable(msg *capnp.Message) (Table, error) {
 	root, err := msg.Root()
-	return WireMap(root.Struct()), err
+	return Table(root.Struct()), err
 }
 
-func (s WireMap) String() string {
-	str, _ := text.Marshal(0xe3fd08f61b09731a, capnp.Struct(s))
+func (s Table) String() string {
+	str, _ := text.Marshal(0xd0f2226d18c93cbe, capnp.Struct(s))
 	return str
 }
 
-func (s WireMap) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Table) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (WireMap) DecodeFromPtr(p capnp.Ptr) WireMap {
-	return WireMap(capnp.Struct{}.DecodeFromPtr(p))
+func (Table) DecodeFromPtr(p capnp.Ptr) Table {
+	return Table(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s WireMap) ToPtr() capnp.Ptr {
+func (s Table) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s WireMap) IsValid() bool {
+func (s Table) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s WireMap) Message() *capnp.Message {
+func (s Table) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s WireMap) Segment() *capnp.Segment {
+func (s Table) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WireMap) Entries() (WireMap_Entry_List, error) {
+func (s Table) Entries() (Table_Entry_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return WireMap_Entry_List(p.List()), err
+	return Table_Entry_List(p.List()), err
 }
 
-func (s WireMap) HasEntries() bool {
+func (s Table) HasEntries() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WireMap) SetEntries(v WireMap_Entry_List) error {
+func (s Table) SetEntries(v Table_Entry_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewEntries sets the entries field to a newly
-// allocated WireMap_Entry_List, preferring placement in s's segment.
-func (s WireMap) NewEntries(n int32) (WireMap_Entry_List, error) {
-	l, err := NewWireMap_Entry_List(capnp.Struct(s).Segment(), n)
+// allocated Table_Entry_List, preferring placement in s's segment.
+func (s Table) NewEntries(n int32) (Table_Entry_List, error) {
+	l, err := NewTable_Entry_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return WireMap_Entry_List{}, err
+		return Table_Entry_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// WireMap_List is a list of WireMap.
-type WireMap_List = capnp.StructList[WireMap]
+// Table_List is a list of Table.
+type Table_List = capnp.StructList[Table]
 
-// NewWireMap creates a new list of WireMap.
-func NewWireMap_List(s *capnp.Segment, sz int32) (WireMap_List, error) {
+// NewTable creates a new list of Table.
+func NewTable_List(s *capnp.Segment, sz int32) (Table_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[WireMap](l), err
+	return capnp.StructList[Table](l), err
 }
 
-// WireMap_Future is a wrapper for a WireMap promised by a client call.
-type WireMap_Future struct{ *capnp.Future }
+// Table_Future is a wrapper for a Table promised by a client call.
+type Table_Future struct{ *capnp.Future }
 
-func (f WireMap_Future) Struct() (WireMap, error) {
+func (f Table_Future) Struct() (Table, error) {
 	p, err := f.Future.Ptr()
-	return WireMap(p.Struct()), err
+	return Table(p.Struct()), err
 }
 
-type WireMap_Entry capnp.Struct
+type Table_Entry capnp.Struct
 
-// WireMap_Entry_TypeID is the unique identifier for the type WireMap_Entry.
-const WireMap_Entry_TypeID = 0xd030e6f8405cb414
+// Table_Entry_TypeID is the unique identifier for the type Table_Entry.
+const Table_Entry_TypeID = 0xf0d3172d2b0b90a6
 
-func NewWireMap_Entry(s *capnp.Segment) (WireMap_Entry, error) {
+func NewTable_Entry(s *capnp.Segment) (Table_Entry, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireMap_Entry(st), err
+	return Table_Entry(st), err
 }
 
-func NewRootWireMap_Entry(s *capnp.Segment) (WireMap_Entry, error) {
+func NewRootTable_Entry(s *capnp.Segment) (Table_Entry, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return WireMap_Entry(st), err
+	return Table_Entry(st), err
 }
 
-func ReadRootWireMap_Entry(msg *capnp.Message) (WireMap_Entry, error) {
+func ReadRootTable_Entry(msg *capnp.Message) (Table_Entry, error) {
 	root, err := msg.Root()
-	return WireMap_Entry(root.Struct()), err
+	return Table_Entry(root.Struct()), err
 }
 
-func (s WireMap_Entry) String() string {
-	str, _ := text.Marshal(0xd030e6f8405cb414, capnp.Struct(s))
+func (s Table_Entry) String() string {
+	str, _ := text.Marshal(0xf0d3172d2b0b90a6, capnp.Struct(s))
 	return str
 }
 
-func (s WireMap_Entry) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Table_Entry) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (WireMap_Entry) DecodeFromPtr(p capnp.Ptr) WireMap_Entry {
-	return WireMap_Entry(capnp.Struct{}.DecodeFromPtr(p))
+func (Table_Entry) DecodeFromPtr(p capnp.Ptr) Table_Entry {
+	return Table_Entry(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s WireMap_Entry) ToPtr() capnp.Ptr {
+func (s Table_Entry) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s WireMap_Entry) IsValid() bool {
+func (s Table_Entry) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s WireMap_Entry) Message() *capnp.Message {
+func (s Table_Entry) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s WireMap_Entry) Segment() *capnp.Segment {
+func (s Table_Entry) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WireMap_Entry) Key() (capnp.Ptr, error) {
+func (s Table_Entry) Key() (capnp.Ptr, error) {
 	return capnp.Struct(s).Ptr(0)
 }
 
-func (s WireMap_Entry) HasKey() bool {
+func (s Table_Entry) HasKey() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WireMap_Entry) SetKey(v capnp.Ptr) error {
+func (s Table_Entry) SetKey(v capnp.Ptr) error {
 	return capnp.Struct(s).SetPtr(0, v)
 }
-func (s WireMap_Entry) Value() (capnp.Ptr, error) {
+func (s Table_Entry) Value() (capnp.Ptr, error) {
 	return capnp.Struct(s).Ptr(1)
 }
 
-func (s WireMap_Entry) HasValue() bool {
+func (s Table_Entry) HasValue() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s WireMap_Entry) SetValue(v capnp.Ptr) error {
+func (s Table_Entry) SetValue(v capnp.Ptr) error {
 	return capnp.Struct(s).SetPtr(1, v)
 }
 
-// WireMap_Entry_List is a list of WireMap_Entry.
-type WireMap_Entry_List = capnp.StructList[WireMap_Entry]
+// Table_Entry_List is a list of Table_Entry.
+type Table_Entry_List = capnp.StructList[Table_Entry]
 
-// NewWireMap_Entry creates a new list of WireMap_Entry.
-func NewWireMap_Entry_List(s *capnp.Segment, sz int32) (WireMap_Entry_List, error) {
+// NewTable_Entry creates a new list of Table_Entry.
+func NewTable_Entry_List(s *capnp.Segment, sz int32) (Table_Entry_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[WireMap_Entry](l), err
+	return capnp.StructList[Table_Entry](l), err
 }
 
-// WireMap_Entry_Future is a wrapper for a WireMap_Entry promised by a client call.
-type WireMap_Entry_Future struct{ *capnp.Future }
+// Table_Entry_Future is a wrapper for a Table_Entry promised by a client call.
+type Table_Entry_Future struct{ *capnp.Future }
 
-func (f WireMap_Entry_Future) Struct() (WireMap_Entry, error) {
+func (f Table_Entry_Future) Struct() (Table_Entry, error) {
 	p, err := f.Future.Ptr()
-	return WireMap_Entry(p.Struct()), err
+	return Table_Entry(p.Struct()), err
 }
-func (p WireMap_Entry_Future) Key() *capnp.Future {
+func (p Table_Entry_Future) Key() *capnp.Future {
 	return p.Future.Field(0, nil)
 }
-func (p WireMap_Entry_Future) Value() *capnp.Future {
+func (p Table_Entry_Future) Value() *capnp.Future {
 	return p.Future.Field(1, nil)
 }
 
-type MetadataValue capnp.Struct
-type MetadataValue_Which uint16
+type Metadata capnp.Struct
+type Metadata_Which uint16
 
 const (
-	MetadataValue_Which_id    MetadataValue_Which = 0
-	MetadataValue_Which_text  MetadataValue_Which = 1
-	MetadataValue_Which_int   MetadataValue_Which = 2
-	MetadataValue_Which_float MetadataValue_Which = 3
-	MetadataValue_Which_bool  MetadataValue_Which = 4
+	Metadata_Which_id    Metadata_Which = 0
+	Metadata_Which_text  Metadata_Which = 1
+	Metadata_Which_int   Metadata_Which = 2
+	Metadata_Which_float Metadata_Which = 3
+	Metadata_Which_bool  Metadata_Which = 4
 )
 
-func (w MetadataValue_Which) String() string {
+func (w Metadata_Which) String() string {
 	const s = "idtextintfloatbool"
 	switch w {
-	case MetadataValue_Which_id:
+	case Metadata_Which_id:
 		return s[0:2]
-	case MetadataValue_Which_text:
+	case Metadata_Which_text:
 		return s[2:6]
-	case MetadataValue_Which_int:
+	case Metadata_Which_int:
 		return s[6:9]
-	case MetadataValue_Which_float:
+	case Metadata_Which_float:
 		return s[9:14]
-	case MetadataValue_Which_bool:
+	case Metadata_Which_bool:
 		return s[14:18]
 
 	}
-	return "MetadataValue_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
+	return "Metadata_Which(" + strconv.FormatUint(uint64(w), 10) + ")"
 }
 
-// MetadataValue_TypeID is the unique identifier for the type MetadataValue.
-const MetadataValue_TypeID = 0xc390c9d1904c340c
+// Metadata_TypeID is the unique identifier for the type Metadata.
+const Metadata_TypeID = 0xfb65d43f452acb9a
 
-func NewMetadataValue(s *capnp.Segment) (MetadataValue, error) {
+func NewMetadata(s *capnp.Segment) (Metadata, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
-	return MetadataValue(st), err
+	return Metadata(st), err
 }
 
-func NewRootMetadataValue(s *capnp.Segment) (MetadataValue, error) {
+func NewRootMetadata(s *capnp.Segment) (Metadata, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
-	return MetadataValue(st), err
+	return Metadata(st), err
 }
 
-func ReadRootMetadataValue(msg *capnp.Message) (MetadataValue, error) {
+func ReadRootMetadata(msg *capnp.Message) (Metadata, error) {
 	root, err := msg.Root()
-	return MetadataValue(root.Struct()), err
+	return Metadata(root.Struct()), err
 }
 
-func (s MetadataValue) String() string {
-	str, _ := text.Marshal(0xc390c9d1904c340c, capnp.Struct(s))
+func (s Metadata) String() string {
+	str, _ := text.Marshal(0xfb65d43f452acb9a, capnp.Struct(s))
 	return str
 }
 
-func (s MetadataValue) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Metadata) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (MetadataValue) DecodeFromPtr(p capnp.Ptr) MetadataValue {
-	return MetadataValue(capnp.Struct{}.DecodeFromPtr(p))
+func (Metadata) DecodeFromPtr(p capnp.Ptr) Metadata {
+	return Metadata(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s MetadataValue) ToPtr() capnp.Ptr {
+func (s Metadata) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
 
-func (s MetadataValue) Which() MetadataValue_Which {
-	return MetadataValue_Which(capnp.Struct(s).Uint16(0))
+func (s Metadata) Which() Metadata_Which {
+	return Metadata_Which(capnp.Struct(s).Uint16(0))
 }
-func (s MetadataValue) IsValid() bool {
+func (s Metadata) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s MetadataValue) Message() *capnp.Message {
+func (s Metadata) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s MetadataValue) Segment() *capnp.Segment {
+func (s Metadata) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s MetadataValue) Id() ([]byte, error) {
+func (s Metadata) Id() ([]byte, error) {
 	if capnp.Struct(s).Uint16(0) != 0 {
 		panic("Which() != id")
 	}
@@ -276,19 +281,19 @@ func (s MetadataValue) Id() ([]byte, error) {
 	return []byte(p.Data()), err
 }
 
-func (s MetadataValue) HasId() bool {
+func (s Metadata) HasId() bool {
 	if capnp.Struct(s).Uint16(0) != 0 {
 		return false
 	}
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s MetadataValue) SetId(v []byte) error {
+func (s Metadata) SetId(v []byte) error {
 	capnp.Struct(s).SetUint16(0, 0)
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s MetadataValue) Text() (string, error) {
+func (s Metadata) Text() (string, error) {
 	if capnp.Struct(s).Uint16(0) != 1 {
 		panic("Which() != text")
 	}
@@ -296,324 +301,324 @@ func (s MetadataValue) Text() (string, error) {
 	return p.Text(), err
 }
 
-func (s MetadataValue) HasText() bool {
+func (s Metadata) HasText() bool {
 	if capnp.Struct(s).Uint16(0) != 1 {
 		return false
 	}
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s MetadataValue) TextBytes() ([]byte, error) {
+func (s Metadata) TextBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.TextBytes(), err
 }
 
-func (s MetadataValue) SetText(v string) error {
+func (s Metadata) SetText(v string) error {
 	capnp.Struct(s).SetUint16(0, 1)
 	return capnp.Struct(s).SetText(0, v)
 }
 
-func (s MetadataValue) Int() int64 {
+func (s Metadata) Int() int64 {
 	if capnp.Struct(s).Uint16(0) != 2 {
 		panic("Which() != int")
 	}
 	return int64(capnp.Struct(s).Uint64(8))
 }
 
-func (s MetadataValue) SetInt(v int64) {
+func (s Metadata) SetInt(v int64) {
 	capnp.Struct(s).SetUint16(0, 2)
 	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
-func (s MetadataValue) Float() float64 {
+func (s Metadata) Float() float64 {
 	if capnp.Struct(s).Uint16(0) != 3 {
 		panic("Which() != float")
 	}
 	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-func (s MetadataValue) SetFloat(v float64) {
+func (s Metadata) SetFloat(v float64) {
 	capnp.Struct(s).SetUint16(0, 3)
 	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s MetadataValue) Bool() bool {
+func (s Metadata) Bool() bool {
 	if capnp.Struct(s).Uint16(0) != 4 {
 		panic("Which() != bool")
 	}
 	return capnp.Struct(s).Bit(64)
 }
 
-func (s MetadataValue) SetBool(v bool) {
+func (s Metadata) SetBool(v bool) {
 	capnp.Struct(s).SetUint16(0, 4)
 	capnp.Struct(s).SetBit(64, v)
 }
 
-// MetadataValue_List is a list of MetadataValue.
-type MetadataValue_List = capnp.StructList[MetadataValue]
+// Metadata_List is a list of Metadata.
+type Metadata_List = capnp.StructList[Metadata]
 
-// NewMetadataValue creates a new list of MetadataValue.
-func NewMetadataValue_List(s *capnp.Segment, sz int32) (MetadataValue_List, error) {
+// NewMetadata creates a new list of Metadata.
+func NewMetadata_List(s *capnp.Segment, sz int32) (Metadata_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
-	return capnp.StructList[MetadataValue](l), err
+	return capnp.StructList[Metadata](l), err
 }
 
-// MetadataValue_Future is a wrapper for a MetadataValue promised by a client call.
-type MetadataValue_Future struct{ *capnp.Future }
+// Metadata_Future is a wrapper for a Metadata promised by a client call.
+type Metadata_Future struct{ *capnp.Future }
 
-func (f MetadataValue_Future) Struct() (MetadataValue, error) {
+func (f Metadata_Future) Struct() (Metadata, error) {
 	p, err := f.Future.Ptr()
-	return MetadataValue(p.Struct()), err
+	return Metadata(p.Struct()), err
 }
 
-type WireMeasurement capnp.Struct
+type Measurement capnp.Struct
 
-// WireMeasurement_TypeID is the unique identifier for the type WireMeasurement.
-const WireMeasurement_TypeID = 0xbd1a69fd2ea47626
+// Measurement_TypeID is the unique identifier for the type Measurement.
+const Measurement_TypeID = 0x9b10da1415a7b4bb
 
-func NewWireMeasurement(s *capnp.Segment) (WireMeasurement, error) {
+func NewMeasurement(s *capnp.Segment) (Measurement, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
-	return WireMeasurement(st), err
+	return Measurement(st), err
 }
 
-func NewRootWireMeasurement(s *capnp.Segment) (WireMeasurement, error) {
+func NewRootMeasurement(s *capnp.Segment) (Measurement, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
-	return WireMeasurement(st), err
+	return Measurement(st), err
 }
 
-func ReadRootWireMeasurement(msg *capnp.Message) (WireMeasurement, error) {
+func ReadRootMeasurement(msg *capnp.Message) (Measurement, error) {
 	root, err := msg.Root()
-	return WireMeasurement(root.Struct()), err
+	return Measurement(root.Struct()), err
 }
 
-func (s WireMeasurement) String() string {
-	str, _ := text.Marshal(0xbd1a69fd2ea47626, capnp.Struct(s))
+func (s Measurement) String() string {
+	str, _ := text.Marshal(0x9b10da1415a7b4bb, capnp.Struct(s))
 	return str
 }
 
-func (s WireMeasurement) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Measurement) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (WireMeasurement) DecodeFromPtr(p capnp.Ptr) WireMeasurement {
-	return WireMeasurement(capnp.Struct{}.DecodeFromPtr(p))
+func (Measurement) DecodeFromPtr(p capnp.Ptr) Measurement {
+	return Measurement(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s WireMeasurement) ToPtr() capnp.Ptr {
+func (s Measurement) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s WireMeasurement) IsValid() bool {
+func (s Measurement) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s WireMeasurement) Message() *capnp.Message {
+func (s Measurement) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s WireMeasurement) Segment() *capnp.Segment {
+func (s Measurement) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WireMeasurement) Id() ([]byte, error) {
+func (s Measurement) Id() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s WireMeasurement) HasId() bool {
+func (s Measurement) HasId() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s WireMeasurement) SetId(v []byte) error {
+func (s Measurement) SetId(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s WireMeasurement) Epoch() int64 {
+func (s Measurement) Epoch() int64 {
 	return int64(capnp.Struct(s).Uint64(0))
 }
 
-func (s WireMeasurement) SetEpoch(v int64) {
+func (s Measurement) SetEpoch(v int64) {
 	capnp.Struct(s).SetUint64(0, uint64(v))
 }
 
-func (s WireMeasurement) Tick() int64 {
+func (s Measurement) Tick() int64 {
 	return int64(capnp.Struct(s).Uint64(8))
 }
 
-func (s WireMeasurement) SetTick(v int64) {
+func (s Measurement) SetTick(v int64) {
 	capnp.Struct(s).SetUint64(8, uint64(v))
 }
 
-func (s WireMeasurement) Timestamp() int64 {
+func (s Measurement) Timestamp() int64 {
 	return int64(capnp.Struct(s).Uint64(16))
 }
 
-func (s WireMeasurement) SetTimestamp(v int64) {
+func (s Measurement) SetTimestamp(v int64) {
 	capnp.Struct(s).SetUint64(16, uint64(v))
 }
 
-func (s WireMeasurement) Label() ([]byte, error) {
+func (s Measurement) Label() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return []byte(p.Data()), err
 }
 
-func (s WireMeasurement) HasLabel() bool {
+func (s Measurement) HasLabel() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s WireMeasurement) SetLabel(v []byte) error {
+func (s Measurement) SetLabel(v []byte) error {
 	return capnp.Struct(s).SetData(1, v)
 }
 
-func (s WireMeasurement) Entity() WireMeasurement_EntityType {
-	return WireMeasurement_EntityType(capnp.Struct(s).Uint16(24))
+func (s Measurement) Entity() Measurement_EntityType {
+	return Measurement_EntityType(capnp.Struct(s).Uint16(24))
 }
 
-func (s WireMeasurement) SetEntity(v WireMeasurement_EntityType) {
+func (s Measurement) SetEntity(v Measurement_EntityType) {
 	capnp.Struct(s).SetUint16(24, uint16(v))
 }
 
-func (s WireMeasurement) Source() WireMeasurement_SourceType {
-	return WireMeasurement_SourceType(capnp.Struct(s).Uint16(26))
+func (s Measurement) Source() Measurement_SourceType {
+	return Measurement_SourceType(capnp.Struct(s).Uint16(26))
 }
 
-func (s WireMeasurement) SetSource(v WireMeasurement_SourceType) {
+func (s Measurement) SetSource(v Measurement_SourceType) {
 	capnp.Struct(s).SetUint16(26, uint16(v))
 }
 
-func (s WireMeasurement) Snr() float64 {
+func (s Measurement) Snr() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(32))
 }
 
-func (s WireMeasurement) SetSnr(v float64) {
+func (s Measurement) SetSnr(v float64) {
 	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
 }
 
-func (s WireMeasurement) Maturity() float64 {
+func (s Measurement) Maturity() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(40))
 }
 
-func (s WireMeasurement) SetMaturity(v float64) {
+func (s Measurement) SetMaturity(v float64) {
 	capnp.Struct(s).SetUint64(40, math.Float64bits(v))
 }
 
-func (s WireMeasurement) Separation() float64 {
+func (s Measurement) Separation() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(48))
 }
 
-func (s WireMeasurement) SetSeparation(v float64) {
+func (s Measurement) SetSeparation(v float64) {
 	capnp.Struct(s).SetUint64(48, math.Float64bits(v))
 }
 
-func (s WireMeasurement) Metrics() (WireMetric_List, error) {
+func (s Measurement) Metrics() (Metric_List, error) {
 	p, err := capnp.Struct(s).Ptr(2)
-	return WireMetric_List(p.List()), err
+	return Metric_List(p.List()), err
 }
 
-func (s WireMeasurement) HasMetrics() bool {
+func (s Measurement) HasMetrics() bool {
 	return capnp.Struct(s).HasPtr(2)
 }
 
-func (s WireMeasurement) SetMetrics(v WireMetric_List) error {
+func (s Measurement) SetMetrics(v Metric_List) error {
 	return capnp.Struct(s).SetPtr(2, v.ToPtr())
 }
 
 // NewMetrics sets the metrics field to a newly
-// allocated WireMetric_List, preferring placement in s's segment.
-func (s WireMeasurement) NewMetrics(n int32) (WireMetric_List, error) {
-	l, err := NewWireMetric_List(capnp.Struct(s).Segment(), n)
+// allocated Metric_List, preferring placement in s's segment.
+func (s Measurement) NewMetrics(n int32) (Metric_List, error) {
+	l, err := NewMetric_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return WireMetric_List{}, err
+		return Metric_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
 	return l, err
 }
-func (s WireMeasurement) Metadata() (WireMap, error) {
+func (s Measurement) Metadata() (Table, error) {
 	p, err := capnp.Struct(s).Ptr(3)
-	return WireMap(p.Struct()), err
+	return Table(p.Struct()), err
 }
 
-func (s WireMeasurement) HasMetadata() bool {
+func (s Measurement) HasMetadata() bool {
 	return capnp.Struct(s).HasPtr(3)
 }
 
-func (s WireMeasurement) SetMetadata(v WireMap) error {
+func (s Measurement) SetMetadata(v Table) error {
 	return capnp.Struct(s).SetPtr(3, capnp.Struct(v).ToPtr())
 }
 
 // NewMetadata sets the metadata field to a newly
-// allocated WireMap struct, preferring placement in s's segment.
-func (s WireMeasurement) NewMetadata() (WireMap, error) {
-	ss, err := NewWireMap(capnp.Struct(s).Segment())
+// allocated Table struct, preferring placement in s's segment.
+func (s Measurement) NewMetadata() (Table, error) {
+	ss, err := NewTable(capnp.Struct(s).Segment())
 	if err != nil {
-		return WireMap{}, err
+		return Table{}, err
 	}
 	err = capnp.Struct(s).SetPtr(3, capnp.Struct(ss).ToPtr())
 	return ss, err
 }
 
-// WireMeasurement_List is a list of WireMeasurement.
-type WireMeasurement_List = capnp.StructList[WireMeasurement]
+// Measurement_List is a list of Measurement.
+type Measurement_List = capnp.StructList[Measurement]
 
-// NewWireMeasurement creates a new list of WireMeasurement.
-func NewWireMeasurement_List(s *capnp.Segment, sz int32) (WireMeasurement_List, error) {
+// NewMeasurement creates a new list of Measurement.
+func NewMeasurement_List(s *capnp.Segment, sz int32) (Measurement_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4}, sz)
-	return capnp.StructList[WireMeasurement](l), err
+	return capnp.StructList[Measurement](l), err
 }
 
-// WireMeasurement_Future is a wrapper for a WireMeasurement promised by a client call.
-type WireMeasurement_Future struct{ *capnp.Future }
+// Measurement_Future is a wrapper for a Measurement promised by a client call.
+type Measurement_Future struct{ *capnp.Future }
 
-func (f WireMeasurement_Future) Struct() (WireMeasurement, error) {
+func (f Measurement_Future) Struct() (Measurement, error) {
 	p, err := f.Future.Ptr()
-	return WireMeasurement(p.Struct()), err
+	return Measurement(p.Struct()), err
 }
-func (p WireMeasurement_Future) Metadata() WireMap_Future {
-	return WireMap_Future{Future: p.Future.Field(3, nil)}
+func (p Measurement_Future) Metadata() Table_Future {
+	return Table_Future{Future: p.Future.Field(3, nil)}
 }
 
-type WireMeasurement_EntityType uint16
+type Measurement_EntityType uint16
 
-// WireMeasurement_EntityType_TypeID is the unique identifier for the type WireMeasurement_EntityType.
-const WireMeasurement_EntityType_TypeID = 0xc2633ddb0b0d6f97
+// Measurement_EntityType_TypeID is the unique identifier for the type Measurement_EntityType.
+const Measurement_EntityType_TypeID = 0x84a6332cbd56766c
 
-// Values of WireMeasurement_EntityType.
+// Values of Measurement_EntityType.
 const (
-	WireMeasurement_EntityType_ticker       WireMeasurement_EntityType = 0
-	WireMeasurement_EntityType_trade        WireMeasurement_EntityType = 1
-	WireMeasurement_EntityType_level3       WireMeasurement_EntityType = 2
-	WireMeasurement_EntityType_instrument   WireMeasurement_EntityType = 3
-	WireMeasurement_EntityType_order        WireMeasurement_EntityType = 4
-	WireMeasurement_EntityType_balance      WireMeasurement_EntityType = 5
-	WireMeasurement_EntityType_execution    WireMeasurement_EntityType = 6
-	WireMeasurement_EntityType_tradeHistory WireMeasurement_EntityType = 7
-	WireMeasurement_EntityType_openOrders   WireMeasurement_EntityType = 8
-	WireMeasurement_EntityType_tradeBalance WireMeasurement_EntityType = 9
-	WireMeasurement_EntityType_tradeVolume  WireMeasurement_EntityType = 10
+	Measurement_EntityType_ticker       Measurement_EntityType = 0
+	Measurement_EntityType_trade        Measurement_EntityType = 1
+	Measurement_EntityType_level3       Measurement_EntityType = 2
+	Measurement_EntityType_instrument   Measurement_EntityType = 3
+	Measurement_EntityType_order        Measurement_EntityType = 4
+	Measurement_EntityType_balance      Measurement_EntityType = 5
+	Measurement_EntityType_execution    Measurement_EntityType = 6
+	Measurement_EntityType_tradeHistory Measurement_EntityType = 7
+	Measurement_EntityType_openOrders   Measurement_EntityType = 8
+	Measurement_EntityType_tradeBalance Measurement_EntityType = 9
+	Measurement_EntityType_tradeVolume  Measurement_EntityType = 10
 )
 
 // String returns the enum's constant name.
-func (c WireMeasurement_EntityType) String() string {
+func (c Measurement_EntityType) String() string {
 	switch c {
-	case WireMeasurement_EntityType_ticker:
+	case Measurement_EntityType_ticker:
 		return "ticker"
-	case WireMeasurement_EntityType_trade:
+	case Measurement_EntityType_trade:
 		return "trade"
-	case WireMeasurement_EntityType_level3:
+	case Measurement_EntityType_level3:
 		return "level3"
-	case WireMeasurement_EntityType_instrument:
+	case Measurement_EntityType_instrument:
 		return "instrument"
-	case WireMeasurement_EntityType_order:
+	case Measurement_EntityType_order:
 		return "order"
-	case WireMeasurement_EntityType_balance:
+	case Measurement_EntityType_balance:
 		return "balance"
-	case WireMeasurement_EntityType_execution:
+	case Measurement_EntityType_execution:
 		return "execution"
-	case WireMeasurement_EntityType_tradeHistory:
+	case Measurement_EntityType_tradeHistory:
 		return "tradeHistory"
-	case WireMeasurement_EntityType_openOrders:
+	case Measurement_EntityType_openOrders:
 		return "openOrders"
-	case WireMeasurement_EntityType_tradeBalance:
+	case Measurement_EntityType_tradeBalance:
 		return "tradeBalance"
-	case WireMeasurement_EntityType_tradeVolume:
+	case Measurement_EntityType_tradeVolume:
 		return "tradeVolume"
 
 	default:
@@ -621,112 +626,112 @@ func (c WireMeasurement_EntityType) String() string {
 	}
 }
 
-// WireMeasurement_EntityTypeFromString returns the enum value with a name,
+// Measurement_EntityTypeFromString returns the enum value with a name,
 // or the zero value if there's no such value.
-func WireMeasurement_EntityTypeFromString(c string) WireMeasurement_EntityType {
+func Measurement_EntityTypeFromString(c string) Measurement_EntityType {
 	switch c {
 	case "ticker":
-		return WireMeasurement_EntityType_ticker
+		return Measurement_EntityType_ticker
 	case "trade":
-		return WireMeasurement_EntityType_trade
+		return Measurement_EntityType_trade
 	case "level3":
-		return WireMeasurement_EntityType_level3
+		return Measurement_EntityType_level3
 	case "instrument":
-		return WireMeasurement_EntityType_instrument
+		return Measurement_EntityType_instrument
 	case "order":
-		return WireMeasurement_EntityType_order
+		return Measurement_EntityType_order
 	case "balance":
-		return WireMeasurement_EntityType_balance
+		return Measurement_EntityType_balance
 	case "execution":
-		return WireMeasurement_EntityType_execution
+		return Measurement_EntityType_execution
 	case "tradeHistory":
-		return WireMeasurement_EntityType_tradeHistory
+		return Measurement_EntityType_tradeHistory
 	case "openOrders":
-		return WireMeasurement_EntityType_openOrders
+		return Measurement_EntityType_openOrders
 	case "tradeBalance":
-		return WireMeasurement_EntityType_tradeBalance
+		return Measurement_EntityType_tradeBalance
 	case "tradeVolume":
-		return WireMeasurement_EntityType_tradeVolume
+		return Measurement_EntityType_tradeVolume
 
 	default:
 		return 0
 	}
 }
 
-type WireMeasurement_EntityType_List = capnp.EnumList[WireMeasurement_EntityType]
+type Measurement_EntityType_List = capnp.EnumList[Measurement_EntityType]
 
-func NewWireMeasurement_EntityType_List(s *capnp.Segment, sz int32) (WireMeasurement_EntityType_List, error) {
-	return capnp.NewEnumList[WireMeasurement_EntityType](s, sz)
+func NewMeasurement_EntityType_List(s *capnp.Segment, sz int32) (Measurement_EntityType_List, error) {
+	return capnp.NewEnumList[Measurement_EntityType](s, sz)
 }
 
-type WireMeasurement_SourceType uint16
+type Measurement_SourceType uint16
 
-// WireMeasurement_SourceType_TypeID is the unique identifier for the type WireMeasurement_SourceType.
-const WireMeasurement_SourceType_TypeID = 0xfe9401b54f7ee13d
+// Measurement_SourceType_TypeID is the unique identifier for the type Measurement_SourceType.
+const Measurement_SourceType_TypeID = 0xf6c264646d0567c6
 
-// Values of WireMeasurement_SourceType.
+// Values of Measurement_SourceType.
 const (
-	WireMeasurement_SourceType_public      WireMeasurement_SourceType = 0
-	WireMeasurement_SourceType_private     WireMeasurement_SourceType = 1
-	WireMeasurement_SourceType_level3      WireMeasurement_SourceType = 2
-	WireMeasurement_SourceType_correlation WireMeasurement_SourceType = 3
-	WireMeasurement_SourceType_csv         WireMeasurement_SourceType = 4
-	WireMeasurement_SourceType_depthflow   WireMeasurement_SourceType = 5
-	WireMeasurement_SourceType_derivatives WireMeasurement_SourceType = 6
-	WireMeasurement_SourceType_hawkes      WireMeasurement_SourceType = 7
-	WireMeasurement_SourceType_leadlag     WireMeasurement_SourceType = 8
-	WireMeasurement_SourceType_liquidity   WireMeasurement_SourceType = 9
-	WireMeasurement_SourceType_morphology  WireMeasurement_SourceType = 10
-	WireMeasurement_SourceType_pumpdump    WireMeasurement_SourceType = 11
-	WireMeasurement_SourceType_sentiment   WireMeasurement_SourceType = 12
-	WireMeasurement_SourceType_toxicity    WireMeasurement_SourceType = 13
-	WireMeasurement_SourceType_category    WireMeasurement_SourceType = 14
-	WireMeasurement_SourceType_cognition   WireMeasurement_SourceType = 15
-	WireMeasurement_SourceType_resonance   WireMeasurement_SourceType = 16
-	WireMeasurement_SourceType_manifold    WireMeasurement_SourceType = 17
-	WireMeasurement_SourceType_training    WireMeasurement_SourceType = 18
+	Measurement_SourceType_public      Measurement_SourceType = 0
+	Measurement_SourceType_private     Measurement_SourceType = 1
+	Measurement_SourceType_level3      Measurement_SourceType = 2
+	Measurement_SourceType_correlation Measurement_SourceType = 3
+	Measurement_SourceType_csv         Measurement_SourceType = 4
+	Measurement_SourceType_depthflow   Measurement_SourceType = 5
+	Measurement_SourceType_derivatives Measurement_SourceType = 6
+	Measurement_SourceType_hawkes      Measurement_SourceType = 7
+	Measurement_SourceType_leadlag     Measurement_SourceType = 8
+	Measurement_SourceType_liquidity   Measurement_SourceType = 9
+	Measurement_SourceType_morphology  Measurement_SourceType = 10
+	Measurement_SourceType_pumpdump    Measurement_SourceType = 11
+	Measurement_SourceType_sentiment   Measurement_SourceType = 12
+	Measurement_SourceType_toxicity    Measurement_SourceType = 13
+	Measurement_SourceType_category    Measurement_SourceType = 14
+	Measurement_SourceType_cognition   Measurement_SourceType = 15
+	Measurement_SourceType_resonance   Measurement_SourceType = 16
+	Measurement_SourceType_manifold    Measurement_SourceType = 17
+	Measurement_SourceType_training    Measurement_SourceType = 18
 )
 
 // String returns the enum's constant name.
-func (c WireMeasurement_SourceType) String() string {
+func (c Measurement_SourceType) String() string {
 	switch c {
-	case WireMeasurement_SourceType_public:
+	case Measurement_SourceType_public:
 		return "public"
-	case WireMeasurement_SourceType_private:
+	case Measurement_SourceType_private:
 		return "private"
-	case WireMeasurement_SourceType_level3:
+	case Measurement_SourceType_level3:
 		return "level3"
-	case WireMeasurement_SourceType_correlation:
+	case Measurement_SourceType_correlation:
 		return "correlation"
-	case WireMeasurement_SourceType_csv:
+	case Measurement_SourceType_csv:
 		return "csv"
-	case WireMeasurement_SourceType_depthflow:
+	case Measurement_SourceType_depthflow:
 		return "depthflow"
-	case WireMeasurement_SourceType_derivatives:
+	case Measurement_SourceType_derivatives:
 		return "derivatives"
-	case WireMeasurement_SourceType_hawkes:
+	case Measurement_SourceType_hawkes:
 		return "hawkes"
-	case WireMeasurement_SourceType_leadlag:
+	case Measurement_SourceType_leadlag:
 		return "leadlag"
-	case WireMeasurement_SourceType_liquidity:
+	case Measurement_SourceType_liquidity:
 		return "liquidity"
-	case WireMeasurement_SourceType_morphology:
+	case Measurement_SourceType_morphology:
 		return "morphology"
-	case WireMeasurement_SourceType_pumpdump:
+	case Measurement_SourceType_pumpdump:
 		return "pumpdump"
-	case WireMeasurement_SourceType_sentiment:
+	case Measurement_SourceType_sentiment:
 		return "sentiment"
-	case WireMeasurement_SourceType_toxicity:
+	case Measurement_SourceType_toxicity:
 		return "toxicity"
-	case WireMeasurement_SourceType_category:
+	case Measurement_SourceType_category:
 		return "category"
-	case WireMeasurement_SourceType_cognition:
+	case Measurement_SourceType_cognition:
 		return "cognition"
-	case WireMeasurement_SourceType_resonance:
+	case Measurement_SourceType_resonance:
 		return "resonance"
-	case WireMeasurement_SourceType_manifold:
+	case Measurement_SourceType_manifold:
 		return "manifold"
-	case WireMeasurement_SourceType_training:
+	case Measurement_SourceType_training:
 		return "training"
 
 	default:
@@ -734,56 +739,620 @@ func (c WireMeasurement_SourceType) String() string {
 	}
 }
 
-// WireMeasurement_SourceTypeFromString returns the enum value with a name,
+// Measurement_SourceTypeFromString returns the enum value with a name,
 // or the zero value if there's no such value.
-func WireMeasurement_SourceTypeFromString(c string) WireMeasurement_SourceType {
+func Measurement_SourceTypeFromString(c string) Measurement_SourceType {
 	switch c {
 	case "public":
-		return WireMeasurement_SourceType_public
+		return Measurement_SourceType_public
 	case "private":
-		return WireMeasurement_SourceType_private
+		return Measurement_SourceType_private
 	case "level3":
-		return WireMeasurement_SourceType_level3
+		return Measurement_SourceType_level3
 	case "correlation":
-		return WireMeasurement_SourceType_correlation
+		return Measurement_SourceType_correlation
 	case "csv":
-		return WireMeasurement_SourceType_csv
+		return Measurement_SourceType_csv
 	case "depthflow":
-		return WireMeasurement_SourceType_depthflow
+		return Measurement_SourceType_depthflow
 	case "derivatives":
-		return WireMeasurement_SourceType_derivatives
+		return Measurement_SourceType_derivatives
 	case "hawkes":
-		return WireMeasurement_SourceType_hawkes
+		return Measurement_SourceType_hawkes
 	case "leadlag":
-		return WireMeasurement_SourceType_leadlag
+		return Measurement_SourceType_leadlag
 	case "liquidity":
-		return WireMeasurement_SourceType_liquidity
+		return Measurement_SourceType_liquidity
 	case "morphology":
-		return WireMeasurement_SourceType_morphology
+		return Measurement_SourceType_morphology
 	case "pumpdump":
-		return WireMeasurement_SourceType_pumpdump
+		return Measurement_SourceType_pumpdump
 	case "sentiment":
-		return WireMeasurement_SourceType_sentiment
+		return Measurement_SourceType_sentiment
 	case "toxicity":
-		return WireMeasurement_SourceType_toxicity
+		return Measurement_SourceType_toxicity
 	case "category":
-		return WireMeasurement_SourceType_category
+		return Measurement_SourceType_category
 	case "cognition":
-		return WireMeasurement_SourceType_cognition
+		return Measurement_SourceType_cognition
 	case "resonance":
-		return WireMeasurement_SourceType_resonance
+		return Measurement_SourceType_resonance
 	case "manifold":
-		return WireMeasurement_SourceType_manifold
+		return Measurement_SourceType_manifold
 	case "training":
-		return WireMeasurement_SourceType_training
+		return Measurement_SourceType_training
 
 	default:
 		return 0
 	}
 }
 
-type WireMeasurement_SourceType_List = capnp.EnumList[WireMeasurement_SourceType]
+type Measurement_SourceType_List = capnp.EnumList[Measurement_SourceType]
 
-func NewWireMeasurement_SourceType_List(s *capnp.Segment, sz int32) (WireMeasurement_SourceType_List, error) {
-	return capnp.NewEnumList[WireMeasurement_SourceType](s, sz)
+func NewMeasurement_SourceType_List(s *capnp.Segment, sz int32) (Measurement_SourceType_List, error) {
+	return capnp.NewEnumList[Measurement_SourceType](s, sz)
+}
+
+type MeasurementService capnp.Client
+
+// MeasurementService_TypeID is the unique identifier for the type MeasurementService.
+const MeasurementService_TypeID = 0xd0a93c3d666bc199
+
+func (c MeasurementService) Write(ctx context.Context, params func(MeasurementService_write_Params) error) error {
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd0a93c3d666bc199,
+			MethodID:      0,
+			InterfaceName: "nomagique/data/measurement.capnp:MeasurementService",
+			MethodName:    "write",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 56, PointerCount: 4}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(MeasurementService_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c MeasurementService) Done(ctx context.Context, params func(MeasurementService_done_Params) error) (MeasurementService_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd0a93c3d666bc199,
+			MethodID:      1,
+			InterfaceName: "nomagique/data/measurement.capnp:MeasurementService",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(MeasurementService_done_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return MeasurementService_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c MeasurementService) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c MeasurementService) String() string {
+	return "MeasurementService(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c MeasurementService) AddRef() MeasurementService {
+	return MeasurementService(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c MeasurementService) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c MeasurementService) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c MeasurementService) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (MeasurementService) DecodeFromPtr(p capnp.Ptr) MeasurementService {
+	return MeasurementService(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c MeasurementService) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c MeasurementService) IsSame(other MeasurementService) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c MeasurementService) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c MeasurementService) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A MeasurementService_Server is a MeasurementService with a local implementation.
+type MeasurementService_Server interface {
+	Write(context.Context, MeasurementService_write) error
+
+	Done(context.Context, MeasurementService_done) error
+}
+
+// MeasurementService_NewServer creates a new Server from an implementation of MeasurementService_Server.
+func MeasurementService_NewServer(s MeasurementService_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(MeasurementService_Methods(nil, s), s, c)
+}
+
+// MeasurementService_ServerToClient creates a new Client from an implementation of MeasurementService_Server.
+// The caller is responsible for calling Release on the returned Client.
+func MeasurementService_ServerToClient(s MeasurementService_Server) MeasurementService {
+	return MeasurementService(capnp.NewClient(MeasurementService_NewServer(s)))
+}
+
+// MeasurementService_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func MeasurementService_Methods(methods []server.Method, s MeasurementService_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 2)
+	}
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd0a93c3d666bc199,
+			MethodID:      0,
+			InterfaceName: "nomagique/data/measurement.capnp:MeasurementService",
+			MethodName:    "write",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Write(ctx, MeasurementService_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd0a93c3d666bc199,
+			MethodID:      1,
+			InterfaceName: "nomagique/data/measurement.capnp:MeasurementService",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, MeasurementService_done{call})
+		},
+	})
+
+	return methods
+}
+
+// MeasurementService_write holds the state for a server call to MeasurementService.write.
+// See server.Call for documentation.
+type MeasurementService_write struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c MeasurementService_write) Args() MeasurementService_write_Params {
+	return MeasurementService_write_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c MeasurementService_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// MeasurementService_done holds the state for a server call to MeasurementService.done.
+// See server.Call for documentation.
+type MeasurementService_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c MeasurementService_done) Args() MeasurementService_done_Params {
+	return MeasurementService_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c MeasurementService_done) AllocResults() (MeasurementService_done_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return MeasurementService_done_Results(r), err
+}
+
+// MeasurementService_List is a list of MeasurementService.
+type MeasurementService_List = capnp.CapList[MeasurementService]
+
+// NewMeasurementService_List creates a new list of MeasurementService.
+func NewMeasurementService_List(s *capnp.Segment, sz int32) (MeasurementService_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[MeasurementService](l), err
+}
+
+type MeasurementService_write_Params capnp.Struct
+
+// MeasurementService_write_Params_TypeID is the unique identifier for the type MeasurementService_write_Params.
+const MeasurementService_write_Params_TypeID = 0xbdd3896350dd5474
+
+func NewMeasurementService_write_Params(s *capnp.Segment) (MeasurementService_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
+	return MeasurementService_write_Params(st), err
+}
+
+func NewRootMeasurementService_write_Params(s *capnp.Segment) (MeasurementService_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4})
+	return MeasurementService_write_Params(st), err
+}
+
+func ReadRootMeasurementService_write_Params(msg *capnp.Message) (MeasurementService_write_Params, error) {
+	root, err := msg.Root()
+	return MeasurementService_write_Params(root.Struct()), err
+}
+
+func (s MeasurementService_write_Params) String() string {
+	str, _ := text.Marshal(0xbdd3896350dd5474, capnp.Struct(s))
+	return str
+}
+
+func (s MeasurementService_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MeasurementService_write_Params) DecodeFromPtr(p capnp.Ptr) MeasurementService_write_Params {
+	return MeasurementService_write_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MeasurementService_write_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MeasurementService_write_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MeasurementService_write_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MeasurementService_write_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s MeasurementService_write_Params) Id() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s MeasurementService_write_Params) HasId() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s MeasurementService_write_Params) SetId(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+func (s MeasurementService_write_Params) Epoch() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s MeasurementService_write_Params) SetEpoch(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s MeasurementService_write_Params) Tick() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s MeasurementService_write_Params) SetTick(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
+func (s MeasurementService_write_Params) Timestamp() int64 {
+	return int64(capnp.Struct(s).Uint64(16))
+}
+
+func (s MeasurementService_write_Params) SetTimestamp(v int64) {
+	capnp.Struct(s).SetUint64(16, uint64(v))
+}
+
+func (s MeasurementService_write_Params) Label() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
+}
+
+func (s MeasurementService_write_Params) HasLabel() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s MeasurementService_write_Params) SetLabel(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
+func (s MeasurementService_write_Params) Entity() Measurement_EntityType {
+	return Measurement_EntityType(capnp.Struct(s).Uint16(24))
+}
+
+func (s MeasurementService_write_Params) SetEntity(v Measurement_EntityType) {
+	capnp.Struct(s).SetUint16(24, uint16(v))
+}
+
+func (s MeasurementService_write_Params) Source() Measurement_SourceType {
+	return Measurement_SourceType(capnp.Struct(s).Uint16(26))
+}
+
+func (s MeasurementService_write_Params) SetSource(v Measurement_SourceType) {
+	capnp.Struct(s).SetUint16(26, uint16(v))
+}
+
+func (s MeasurementService_write_Params) Snr() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s MeasurementService_write_Params) SetSnr(v float64) {
+	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
+}
+
+func (s MeasurementService_write_Params) Maturity() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(40))
+}
+
+func (s MeasurementService_write_Params) SetMaturity(v float64) {
+	capnp.Struct(s).SetUint64(40, math.Float64bits(v))
+}
+
+func (s MeasurementService_write_Params) Separation() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(48))
+}
+
+func (s MeasurementService_write_Params) SetSeparation(v float64) {
+	capnp.Struct(s).SetUint64(48, math.Float64bits(v))
+}
+
+func (s MeasurementService_write_Params) Metrics() (Metric_List, error) {
+	p, err := capnp.Struct(s).Ptr(2)
+	return Metric_List(p.List()), err
+}
+
+func (s MeasurementService_write_Params) HasMetrics() bool {
+	return capnp.Struct(s).HasPtr(2)
+}
+
+func (s MeasurementService_write_Params) SetMetrics(v Metric_List) error {
+	return capnp.Struct(s).SetPtr(2, v.ToPtr())
+}
+
+// NewMetrics sets the metrics field to a newly
+// allocated Metric_List, preferring placement in s's segment.
+func (s MeasurementService_write_Params) NewMetrics(n int32) (Metric_List, error) {
+	l, err := NewMetric_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return Metric_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(2, l.ToPtr())
+	return l, err
+}
+func (s MeasurementService_write_Params) Metadata() (Table, error) {
+	p, err := capnp.Struct(s).Ptr(3)
+	return Table(p.Struct()), err
+}
+
+func (s MeasurementService_write_Params) HasMetadata() bool {
+	return capnp.Struct(s).HasPtr(3)
+}
+
+func (s MeasurementService_write_Params) SetMetadata(v Table) error {
+	return capnp.Struct(s).SetPtr(3, capnp.Struct(v).ToPtr())
+}
+
+// NewMetadata sets the metadata field to a newly
+// allocated Table struct, preferring placement in s's segment.
+func (s MeasurementService_write_Params) NewMetadata() (Table, error) {
+	ss, err := NewTable(capnp.Struct(s).Segment())
+	if err != nil {
+		return Table{}, err
+	}
+	err = capnp.Struct(s).SetPtr(3, capnp.Struct(ss).ToPtr())
+	return ss, err
+}
+
+// MeasurementService_write_Params_List is a list of MeasurementService_write_Params.
+type MeasurementService_write_Params_List = capnp.StructList[MeasurementService_write_Params]
+
+// NewMeasurementService_write_Params creates a new list of MeasurementService_write_Params.
+func NewMeasurementService_write_Params_List(s *capnp.Segment, sz int32) (MeasurementService_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 56, PointerCount: 4}, sz)
+	return capnp.StructList[MeasurementService_write_Params](l), err
+}
+
+// MeasurementService_write_Params_Future is a wrapper for a MeasurementService_write_Params promised by a client call.
+type MeasurementService_write_Params_Future struct{ *capnp.Future }
+
+func (f MeasurementService_write_Params_Future) Struct() (MeasurementService_write_Params, error) {
+	p, err := f.Future.Ptr()
+	return MeasurementService_write_Params(p.Struct()), err
+}
+func (p MeasurementService_write_Params_Future) Metadata() Table_Future {
+	return Table_Future{Future: p.Future.Field(3, nil)}
+}
+
+type MeasurementService_done_Params capnp.Struct
+
+// MeasurementService_done_Params_TypeID is the unique identifier for the type MeasurementService_done_Params.
+const MeasurementService_done_Params_TypeID = 0xb24d6568ca9911a1
+
+func NewMeasurementService_done_Params(s *capnp.Segment) (MeasurementService_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return MeasurementService_done_Params(st), err
+}
+
+func NewRootMeasurementService_done_Params(s *capnp.Segment) (MeasurementService_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return MeasurementService_done_Params(st), err
+}
+
+func ReadRootMeasurementService_done_Params(msg *capnp.Message) (MeasurementService_done_Params, error) {
+	root, err := msg.Root()
+	return MeasurementService_done_Params(root.Struct()), err
+}
+
+func (s MeasurementService_done_Params) String() string {
+	str, _ := text.Marshal(0xb24d6568ca9911a1, capnp.Struct(s))
+	return str
+}
+
+func (s MeasurementService_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MeasurementService_done_Params) DecodeFromPtr(p capnp.Ptr) MeasurementService_done_Params {
+	return MeasurementService_done_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MeasurementService_done_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MeasurementService_done_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MeasurementService_done_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MeasurementService_done_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// MeasurementService_done_Params_List is a list of MeasurementService_done_Params.
+type MeasurementService_done_Params_List = capnp.StructList[MeasurementService_done_Params]
+
+// NewMeasurementService_done_Params creates a new list of MeasurementService_done_Params.
+func NewMeasurementService_done_Params_List(s *capnp.Segment, sz int32) (MeasurementService_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[MeasurementService_done_Params](l), err
+}
+
+// MeasurementService_done_Params_Future is a wrapper for a MeasurementService_done_Params promised by a client call.
+type MeasurementService_done_Params_Future struct{ *capnp.Future }
+
+func (f MeasurementService_done_Params_Future) Struct() (MeasurementService_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return MeasurementService_done_Params(p.Struct()), err
+}
+
+type MeasurementService_done_Results capnp.Struct
+
+// MeasurementService_done_Results_TypeID is the unique identifier for the type MeasurementService_done_Results.
+const MeasurementService_done_Results_TypeID = 0x95758e4f587bcd10
+
+func NewMeasurementService_done_Results(s *capnp.Segment) (MeasurementService_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return MeasurementService_done_Results(st), err
+}
+
+func NewRootMeasurementService_done_Results(s *capnp.Segment) (MeasurementService_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return MeasurementService_done_Results(st), err
+}
+
+func ReadRootMeasurementService_done_Results(msg *capnp.Message) (MeasurementService_done_Results, error) {
+	root, err := msg.Root()
+	return MeasurementService_done_Results(root.Struct()), err
+}
+
+func (s MeasurementService_done_Results) String() string {
+	str, _ := text.Marshal(0x95758e4f587bcd10, capnp.Struct(s))
+	return str
+}
+
+func (s MeasurementService_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MeasurementService_done_Results) DecodeFromPtr(p capnp.Ptr) MeasurementService_done_Results {
+	return MeasurementService_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MeasurementService_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MeasurementService_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MeasurementService_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MeasurementService_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s MeasurementService_done_Results) Status() runtime.Status {
+	return runtime.Status(capnp.Struct(s).Uint16(0))
+}
+
+func (s MeasurementService_done_Results) SetStatus(v runtime.Status) {
+	capnp.Struct(s).SetUint16(0, uint16(v))
+}
+
+func (s MeasurementService_done_Results) Read() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s MeasurementService_done_Results) HasRead() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s MeasurementService_done_Results) SetRead(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+// MeasurementService_done_Results_List is a list of MeasurementService_done_Results.
+type MeasurementService_done_Results_List = capnp.StructList[MeasurementService_done_Results]
+
+// NewMeasurementService_done_Results creates a new list of MeasurementService_done_Results.
+func NewMeasurementService_done_Results_List(s *capnp.Segment, sz int32) (MeasurementService_done_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	return capnp.StructList[MeasurementService_done_Results](l), err
+}
+
+// MeasurementService_done_Results_Future is a wrapper for a MeasurementService_done_Results promised by a client call.
+type MeasurementService_done_Results_Future struct{ *capnp.Future }
+
+func (f MeasurementService_done_Results_Future) Struct() (MeasurementService_done_Results, error) {
+	p, err := f.Future.Ptr()
+	return MeasurementService_done_Results(p.Struct()), err
 }

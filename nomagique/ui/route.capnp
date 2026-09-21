@@ -4,19 +4,19 @@ using Go = import "/go.capnp";
 $Go.package("ui");
 $Go.import("github.com/theapemachine/symm/nomagique/ui");
 
-using import "section.capnp".Section;
+using import "component.capnp".Component;
 
 struct Route {
-	path     @0 :Text;
-	title    @1 :Text;
-	sections @2 :List(Section);
+	path       @0 :Text;
+	title      @1 :Text;
+	components @2 :List(Component);
 }
 
 interface UIRoute {
 	write @0 (
-		path :Text,
-		title :Text,
-		sections :List(Section)
+		path       :Text,
+		title      :Text,
+		components :List(Component)
 	) -> stream;
-	done @1 ();
+	done @1 () -> (out :Route);
 }

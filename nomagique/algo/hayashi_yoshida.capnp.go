@@ -9,6 +9,7 @@ import (
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
+	runtime "github.com/theapemachine/symm/nomagique/runtime"
 	math "math"
 )
 
@@ -27,7 +28,7 @@ func (c HayashiYoshida) Write(ctx context.Context, params func(HayashiYoshida_wr
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 48, PointerCount: 0}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 48, PointerCount: 2}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(HayashiYoshida_write_Params(s)) }
 	}
 
@@ -209,7 +210,7 @@ func (c HayashiYoshida_done) Args() HayashiYoshida_done_Params {
 
 // AllocResults allocates the results struct.
 func (c HayashiYoshida_done) AllocResults() (HayashiYoshida_done_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 48, PointerCount: 0})
 	return HayashiYoshida_done_Results(r), err
 }
 
@@ -228,12 +229,12 @@ type HayashiYoshida_write_Params capnp.Struct
 const HayashiYoshida_write_Params_TypeID = 0xa8ed6160fd19f0e2
 
 func NewHayashiYoshida_write_Params(s *capnp.Segment) (HayashiYoshida_write_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 2})
 	return HayashiYoshida_write_Params(st), err
 }
 
 func NewRootHayashiYoshida_write_Params(s *capnp.Segment) (HayashiYoshida_write_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 2})
 	return HayashiYoshida_write_Params(st), err
 }
 
@@ -269,43 +270,79 @@ func (s HayashiYoshida_write_Params) Message() *capnp.Message {
 func (s HayashiYoshida_write_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HayashiYoshida_write_Params) BoundsStart1() int64 {
-	return int64(capnp.Struct(s).Uint64(0))
+func (s HayashiYoshida_write_Params) Symbol1() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
 }
 
-func (s HayashiYoshida_write_Params) SetBoundsStart1(v int64) {
-	capnp.Struct(s).SetUint64(0, uint64(v))
+func (s HayashiYoshida_write_Params) HasSymbol1() bool {
+	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s HayashiYoshida_write_Params) BoundsEnd1() int64 {
-	return int64(capnp.Struct(s).Uint64(8))
+func (s HayashiYoshida_write_Params) Symbol1Bytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
 }
 
-func (s HayashiYoshida_write_Params) SetBoundsEnd1(v int64) {
-	capnp.Struct(s).SetUint64(8, uint64(v))
+func (s HayashiYoshida_write_Params) SetSymbol1(v string) error {
+	return capnp.Struct(s).SetText(0, v)
 }
 
-func (s HayashiYoshida_write_Params) BoundsStart2() int64 {
-	return int64(capnp.Struct(s).Uint64(16))
+func (s HayashiYoshida_write_Params) Symbol2() (string, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.Text(), err
 }
 
-func (s HayashiYoshida_write_Params) SetBoundsStart2(v int64) {
-	capnp.Struct(s).SetUint64(16, uint64(v))
+func (s HayashiYoshida_write_Params) HasSymbol2() bool {
+	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s HayashiYoshida_write_Params) BoundsEnd2() int64 {
-	return int64(capnp.Struct(s).Uint64(24))
+func (s HayashiYoshida_write_Params) Symbol2Bytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return p.TextBytes(), err
 }
 
-func (s HayashiYoshida_write_Params) SetBoundsEnd2(v int64) {
-	capnp.Struct(s).SetUint64(24, uint64(v))
+func (s HayashiYoshida_write_Params) SetSymbol2(v string) error {
+	return capnp.Struct(s).SetText(1, v)
+}
+
+func (s HayashiYoshida_write_Params) BoundsStart1() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s HayashiYoshida_write_Params) SetBoundsStart1(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_write_Params) BoundsEnd1() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s HayashiYoshida_write_Params) SetBoundsEnd1(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
 func (s HayashiYoshida_write_Params) Returns1() float64 {
-	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
 func (s HayashiYoshida_write_Params) SetReturns1(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_write_Params) BoundsStart2() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s HayashiYoshida_write_Params) SetBoundsStart2(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_write_Params) BoundsEnd2() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s HayashiYoshida_write_Params) SetBoundsEnd2(v float64) {
 	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
 }
 
@@ -322,7 +359,7 @@ type HayashiYoshida_write_Params_List = capnp.StructList[HayashiYoshida_write_Pa
 
 // NewHayashiYoshida_write_Params creates a new list of HayashiYoshida_write_Params.
 func NewHayashiYoshida_write_Params_List(s *capnp.Segment, sz int32) (HayashiYoshida_write_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 2}, sz)
 	return capnp.StructList[HayashiYoshida_write_Params](l), err
 }
 
@@ -405,12 +442,12 @@ type HayashiYoshida_done_Results capnp.Struct
 const HayashiYoshida_done_Results_TypeID = 0x92dd6bc8b044acdc
 
 func NewHayashiYoshida_done_Results(s *capnp.Segment) (HayashiYoshida_done_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
 	return HayashiYoshida_done_Results(st), err
 }
 
 func NewRootHayashiYoshida_done_Results(s *capnp.Segment) (HayashiYoshida_done_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
 	return HayashiYoshida_done_Results(st), err
 }
 
@@ -446,12 +483,52 @@ func (s HayashiYoshida_done_Results) Message() *capnp.Message {
 func (s HayashiYoshida_done_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s HayashiYoshida_done_Results) Out() float64 {
+func (s HayashiYoshida_done_Results) Correlation() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s HayashiYoshida_done_Results) SetOut(v float64) {
+func (s HayashiYoshida_done_Results) SetCorrelation(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) Covariance() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s HayashiYoshida_done_Results) SetCovariance(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) Support() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s HayashiYoshida_done_Results) SetSupport(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) LeftEnergy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s HayashiYoshida_done_Results) SetLeftEnergy(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) RightEnergy() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s HayashiYoshida_done_Results) SetRightEnergy(v float64) {
+	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
+}
+
+func (s HayashiYoshida_done_Results) Status() runtime.Status {
+	return runtime.Status(capnp.Struct(s).Uint16(40))
+}
+
+func (s HayashiYoshida_done_Results) SetStatus(v runtime.Status) {
+	capnp.Struct(s).SetUint16(40, uint16(v))
 }
 
 // HayashiYoshida_done_Results_List is a list of HayashiYoshida_done_Results.
@@ -459,7 +536,7 @@ type HayashiYoshida_done_Results_List = capnp.StructList[HayashiYoshida_done_Res
 
 // NewHayashiYoshida_done_Results creates a new list of HayashiYoshida_done_Results.
 func NewHayashiYoshida_done_Results_List(s *capnp.Segment, sz int32) (HayashiYoshida_done_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
 	return capnp.StructList[HayashiYoshida_done_Results](l), err
 }
 

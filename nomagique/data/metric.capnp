@@ -3,7 +3,9 @@ using Go = import "/go.capnp";
 $Go.package("data");
 $Go.import("nomagique/data");
 
-struct WireMetric {
+using import "../runtime/status.capnp".Status;
+
+struct Metric {
     raw          @0 :Float64;
     normalized   @1 :Float64;
     standardized @2 :Float64;
@@ -30,4 +32,17 @@ struct WireMetric {
         perHour       @3;
         perDay        @4;
     }
+}
+
+interface MetricService {
+    write @0 (
+        raw          :Float64,
+        normalized   :Float64,
+        standardized :Float64,
+        center       :Float64,
+        scale        :Float64,
+        unit         :Metric.UnitType,
+        timescale    :Metric.Timescale
+    ) -> stream;
+    done @1 () -> (status :Status, read :Data);
 }

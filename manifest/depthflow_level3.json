@@ -1,372 +1,67 @@
 {
-  "id": "depthflow:level3",
+  "id": "depthflow_level3",
   "name": "depthflow:level3",
-  "source": "depthflow:level3",
-  "interests": [
-    [
-      "level3",
-      "data",
-      "symbol"
-    ],
-    [
-      "level3",
-      "data",
-      "bid"
-    ],
-    [
-      "level3",
-      "data",
-      "ask"
-    ],
-    [
-      "level3",
-      "data",
-      "bid_qty"
-    ],
-    [
-      "level3",
-      "data",
-      "ask_qty"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "observed_notional": {
+      "id": "observed_notional",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -200.0,
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "extract_bid",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_ask",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_bid_qty",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_ask_qty",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "extract_bid": {
-      "id": "extract_bid",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "bid_notional",
-              "portName": "a"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "bid"
-        }
-      }
-    },
-    "extract_ask": {
-      "id": "extract_ask",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "ask_notional",
-              "portName": "a"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "ask"
-        }
-      }
-    },
-    "extract_bid_qty": {
-      "id": "extract_bid_qty",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "bid_notional",
+              "nodeId": "observed_notional_imbalance",
               "portName": "b"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "bid_qty"
-        }
-      }
-    },
-    "extract_ask_qty": {
-      "id": "extract_ask_qty",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "ask_notional",
-              "portName": "b"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "ask_qty"
-        }
-      }
-    },
-    "bid_notional": {
-      "id": "bid_notional",
-      "type": "arithmetic.Multiply",
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "extract_bid",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "extract_bid_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "book_notional",
-              "portName": "a"
             },
             {
-              "nodeId": "diff",
+              "nodeId": "observed_notional_rate",
               "portName": "a"
             }
           ]
         }
       }
     },
-    "sink_bid_notional": {
-      "id": "sink_bid_notional",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "bid_notional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "bid_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "ask_notional": {
-      "id": "ask_notional",
-      "type": "arithmetic.Multiply",
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "extract_ask",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "extract_ask_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "book_notional",
-              "portName": "b"
-            },
-            {
-              "nodeId": "diff",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
-    "sink_ask_notional": {
-      "id": "sink_ask_notional",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ask_notional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "ask_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "book_notional": {
-      "id": "book_notional",
-      "type": "arithmetic.Add",
-      "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "bid_notional",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "ask_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "imbalance",
-              "portName": "b"
-            }
-          ]
-        }
-      }
-    },
-    "sink_book_notional": {
-      "id": "sink_book_notional",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "book_notional"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "book_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "diff": {
-      "id": "diff",
+    "observedDifference": {
+      "id": "observedDifference",
       "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 0.0,
       "connections": {
-        "inputs": {
-          "a": [
-            {
-              "nodeId": "bid_notional",
-              "portName": "out"
-            }
-          ],
-          "b": [
-            {
-              "nodeId": "ask_notional",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "imbalance",
+              "nodeId": "observed_notional_imbalance",
               "portName": "a"
-            },
-            {
-              "nodeId": "removed_bid",
-              "portName": "value"
-            },
-            {
-              "nodeId": "removed_ask",
-              "portName": "value"
             }
           ]
         }
       }
     },
-    "imbalance": {
-      "id": "imbalance",
+    "observed_notional_imbalance": {
+      "id": "observed_notional_imbalance",
       "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 0.0,
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "diff",
+              "nodeId": "observedDifference",
               "portName": "out"
             }
           ],
           "b": [
             {
-              "nodeId": "book_notional",
+              "nodeId": "observed_notional",
               "portName": "out"
             }
           ]
@@ -374,30 +69,77 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "imbalance_zscore",
+              "nodeId": "observed_notional_imbalance_baseline",
               "portName": "value"
             },
             {
-              "nodeId": "imbalance_baseline",
+              "nodeId": "observed_notional_imbalance_divergence",
+              "portName": "value"
+            },
+            {
+              "nodeId": "observed_notional_imbalance_zscore",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_book_imbalance": {
-      "id": "sink_book_imbalance",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "book_imbalance"
+    "mutation_total": {
+      "id": "mutation_total",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 240.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "mutation_activity_imbalance",
+              "portName": "b"
+            }
+          ]
         }
-      },
+      }
+    },
+    "mutationDifference": {
+      "id": "mutationDifference",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 400.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "mutation_activity_imbalance",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "mutation_activity_imbalance": {
+      "id": "mutation_activity_imbalance",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 400.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "imbalance",
+              "nodeId": "mutationDifference",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "mutation_total",
               "portName": "out"
             }
           ]
@@ -405,14 +147,115 @@
         "outputs": {}
       }
     },
-    "imbalance_zscore": {
-      "id": "imbalance_zscore",
+    "elapsed": {
+      "id": "elapsed",
+      "type": "temporal.Elapsed",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 640.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "observed_notional_rate",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "observed_notional_rate": {
+      "id": "observed_notional_rate",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 640.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "observed_notional",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "observed_notional_rate_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "observed_notional_rate_divergence",
+              "portName": "value"
+            },
+            {
+              "nodeId": "observed_notional_rate_zscore",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "observed_notional_imbalance_baseline": {
+      "id": "observed_notional_imbalance_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -300.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "observed_notional_imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "observed_notional_imbalance_divergence": {
+      "id": "observed_notional_imbalance_divergence",
+      "type": "statistic.ResidualDivergence",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -160.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "observed_notional_imbalance",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "observed_notional_imbalance_zscore": {
+      "id": "observed_notional_imbalance_zscore",
       "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -20.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "imbalance",
+              "nodeId": "observed_notional_imbalance",
               "portName": "out"
             }
           ]
@@ -420,19 +263,18 @@
         "outputs": {}
       }
     },
-    "sink_imbalance_zscore": {
-      "id": "sink_imbalance_zscore",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "imbalance_zscore"
-        }
-      },
+    "observed_notional_rate_baseline": {
+      "id": "observed_notional_rate_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 300.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "imbalance_zscore",
+              "nodeId": "observed_notional_rate",
               "portName": "out"
             }
           ]
@@ -440,14 +282,18 @@
         "outputs": {}
       }
     },
-    "imbalance_baseline": {
-      "id": "imbalance_baseline",
-      "type": "statistic.Mean",
+    "observed_notional_rate_divergence": {
+      "id": "observed_notional_rate_divergence",
+      "type": "statistic.ResidualDivergence",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 440.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "imbalance",
+              "nodeId": "observed_notional_rate",
               "portName": "out"
             }
           ]
@@ -455,89 +301,18 @@
         "outputs": {}
       }
     },
-    "sink_imbalance_baseline": {
-      "id": "sink_imbalance_baseline",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "imbalance_baseline"
-        }
-      },
+    "observed_notional_rate_zscore": {
+      "id": "observed_notional_rate_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 580.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "imbalance_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "removed_bid": {
-      "id": "removed_bid",
-      "type": "calculus.Absolute",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "diff",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_removed_bid": {
-      "id": "sink_removed_bid",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "removed_bid"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "removed_bid",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "removed_ask": {
-      "id": "removed_ask",
-      "type": "calculus.Absolute",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "diff",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_removed_ask": {
-      "id": "sink_removed_ask",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "removed_ask"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "removed_ask",
+              "nodeId": "observed_notional_rate",
               "portName": "out"
             }
           ]

@@ -337,6 +337,31 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 
 	// Boundary Nodes
 	buf.WriteString("\t// 2. Boundary Nodes\n")
+
+	// The grid is the boundary through which a metric receives the fields it
+	// registered an interest in, so its ports are the interests it declared
+	// rather than one opaque stream.
+	buf.WriteString("\tconfig.addNodeType({\n")
+	buf.WriteString("\t\ttype: \"grid\",\n")
+	buf.WriteString("\t\tlabel: \"Grid\",\n")
+	buf.WriteString("\t\tcategory: \"Boundary\",\n")
+	buf.WriteString("\t\tdescription: \"Declared metric inputs delivered by the virtual grid\",\n")
+	buf.WriteString("\t\tinitialWidth: 260,\n")
+	buf.WriteString("\t\tinputs: (ports) => [\n")
+	buf.WriteString("\t\t\tports.string({ name: \"metric\", label: \"metric\", controls: [Controls.text({ name: \"metric\", label: \"Metric\", defaultValue: \"\" })] }),\n")
+	buf.WriteString("\t\t\tports.string({ name: \"interests\", label: \"interests\", controls: [Controls.text({ name: \"interests\", label: \"Interests\", defaultValue: \"\" })] }),\n")
+	buf.WriteString("\t\t],\n")
+	buf.WriteString("\t\toutputs: (ports) => (inputData) => {\n")
+	buf.WriteString("\t\t\tconst declared = String(inputData?.interests?.value ?? \"\")\n")
+	buf.WriteString("\t\t\t\t.split(\",\")\n")
+	buf.WriteString("\t\t\t\t.map((interest) => interest.trim())\n")
+	buf.WriteString("\t\t\t\t.filter((interest) => interest.length > 0);\n")
+	buf.WriteString("\t\t\treturn declared.map((interest) =>\n")
+	buf.WriteString("\t\t\t\tports.float64({ name: interest, label: interest }),\n")
+	buf.WriteString("\t\t\t);\n")
+	buf.WriteString("\t\t},\n")
+	buf.WriteString("\t});\n")
+
 	buf.WriteString("\tconfig.addNodeType({\n")
 	buf.WriteString("\t\ttype: \"data.Source\",\n")
 	buf.WriteString("\t\tlabel: \"Source\",\n")
@@ -355,6 +380,24 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 	buf.WriteString("\t\tinputs: [],\n")
 	buf.WriteString("\t\toutputs: (ports) => [ports.float64({ name: \"out\", label: \"out\" })],\n")
 	buf.WriteString("\t});\n")
+	// The metrics boundary is what a signal publishes, so it carries a port
+	// per metric rather than one opaque drain.
+	buf.WriteString("\tconfig.addNodeType({\n")
+	buf.WriteString("\t\ttype: \"metrics\",\n")
+	buf.WriteString("\t\tlabel: \"Metrics\",\n")
+	buf.WriteString("\t\tcategory: \"Boundary\",\n")
+	buf.WriteString("\t\tdescription: \"The metrics this signal publishes\",\n")
+	buf.WriteString("\t\tinitialWidth: 300,\n")
+	buf.WriteString("\t\tinputs: (ports) => (inputData, connections) => {\n")
+	buf.WriteString("\t\t\tconst published = Object.keys(connections?.inputs ?? {});\n")
+	buf.WriteString("\t\t\tconst declared = published.length > 0 ? published : [\"metric\"];\n")
+	buf.WriteString("\t\t\treturn declared.map((metric) =>\n")
+	buf.WriteString("\t\t\t\tports.float64({ name: metric, label: metric }),\n")
+	buf.WriteString("\t\t\t);\n")
+	buf.WriteString("\t\t},\n")
+	buf.WriteString("\t\toutputs: [],\n")
+	buf.WriteString("\t});\n")
+
 	buf.WriteString("\tconfig.addNodeType({\n")
 	buf.WriteString("\t\ttype: \"data.Sink\",\n")
 	buf.WriteString("\t\tlabel: \"Sink\",\n")
@@ -414,6 +457,10 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 			width = 340
 		}
 
+		if s.Op == "ui.UIRoute" || s.Op == "ui.UIComponent" {
+			emitUINodeType(&buf, s)
+			continue
+		}
 		fmt.Fprintf(&buf, "\tconfig.addNodeType({\n")
 		fmt.Fprintf(&buf, "\t\ttype: %q,\n", s.Op)
 		fmt.Fprintf(&buf, "\t\tlabel: %q,\n", label)
@@ -527,4 +574,88 @@ func generateFlumeConfigSource(schemas map[string]Schema) string {
 	buf.WriteString("};\n")
 
 	return buf.String()
+}
+
+/*
+uiChildrenPort is the Cap'n Proto field through which a UI primitive receives
+its structural children. It is the one input the Flume editor must expand into
+a variable number of ports, because React children are graph structure rather
+than a scalar control.
+*/
+const uiChildrenPort = "components"
+
+/*
+emitUINodeType writes the Flume node type for a UI primitive.
+
+Every port other than the structural children list comes from the primitive's
+own Cap'n Proto input fields, so a schema change is the only edit a new UI
+field requires. Component identity travels as a plain name resolved against the
+generated frontend registry, which is why no component catalog appears here.
+*/
+func emitUINodeType(buf *strings.Builder, schema Schema) {
+	register := "addNodeType"
+
+	if schema.Op == "ui.UIRoute" {
+		register = "addRootNodeType"
+	}
+
+	fmt.Fprintf(buf, "\tconfig.%s({\n", register)
+	fmt.Fprintf(buf, "\t\ttype: %q,\n", schema.Op)
+	fmt.Fprintf(buf, "\t\tlabel: %q,\n", strings.TrimPrefix(schema.Op, "ui.UI"))
+	buf.WriteString("\t\tcategory: \"ui\",\n")
+
+	if schema.Description != "" {
+		fmt.Fprintf(buf, "\t\tdescription: %q,\n", schema.Description)
+	}
+
+	buf.WriteString("\t\tinitialWidth: 280,\n")
+	buf.WriteString("\t\tinputs: (ports) => (inputData, connections) => {\n")
+	buf.WriteString("\t\t\tconst dynamicPorts = [\n")
+
+	for _, input := range schema.Inputs {
+		if input.Name == uiChildrenPort {
+			continue
+		}
+
+		fmt.Fprintf(
+			buf,
+			"\t\t\t\t%s({ name: %q, label: %q }),\n",
+			tsPortBuilder(input.Type),
+			input.Name,
+			input.Name,
+		)
+	}
+
+	buf.WriteString("\t\t\t];\n")
+	fmt.Fprintf(
+		buf,
+		"\t\t\tconst connected = Object.keys(connections?.inputs ?? {}).filter((key) => key.startsWith(%q));\n",
+		uiChildrenPort,
+	)
+	buf.WriteString("\t\t\tconst count = Math.max(1, connected.length + 1);\n")
+	buf.WriteString("\t\t\tfor (let index = 0; index < count; index++) {\n")
+	fmt.Fprintf(
+		buf,
+		"\t\t\t\tconst portName = index === 0 ? %q : `%s_${index}`;\n",
+		uiChildrenPort,
+		uiChildrenPort,
+	)
+	buf.WriteString("\t\t\t\tdynamicPorts.push(ports.Capability({ name: portName, label: portName }));\n")
+	buf.WriteString("\t\t\t}\n")
+	buf.WriteString("\t\t\treturn dynamicPorts;\n")
+	buf.WriteString("\t\t},\n")
+	buf.WriteString("\t\toutputs: (ports) => [\n")
+
+	for _, output := range schema.Outputs {
+		fmt.Fprintf(
+			buf,
+			"\t\t\t%s({ name: %q, label: %q }),\n",
+			tsPortBuilder(output.Type),
+			output.Name,
+			output.Name,
+		)
+	}
+
+	buf.WriteString("\t\t],\n")
+	buf.WriteString("\t});\n\n")
 }

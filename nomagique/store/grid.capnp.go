@@ -22,7 +22,7 @@ func (c Grid) Write(ctx context.Context, params func(Grid_write_Params) error) e
 		Method: capnp.Method{
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      0,
-			InterfaceName: "store/grid.capnp:Grid",
+			InterfaceName: "nomagique/store/grid.capnp:Grid",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +41,7 @@ func (c Grid) Done(ctx context.Context, params func(Grid_done_Params) error) (Gr
 		Method: capnp.Method{
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      1,
-			InterfaceName: "store/grid.capnp:Grid",
+			InterfaceName: "nomagique/store/grid.capnp:Grid",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +156,7 @@ func Grid_Methods(methods []server.Method, s Grid_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      0,
-			InterfaceName: "store/grid.capnp:Grid",
+			InterfaceName: "nomagique/store/grid.capnp:Grid",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +168,7 @@ func Grid_Methods(methods []server.Method, s Grid_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xc6618673c2949b62,
 			MethodID:      1,
-			InterfaceName: "store/grid.capnp:Grid",
+			InterfaceName: "nomagique/store/grid.capnp:Grid",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

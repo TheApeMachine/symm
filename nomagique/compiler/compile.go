@@ -321,6 +321,13 @@ func CompileWithPrevious(
 
 				toFieldID := compiledNodes[vIdx].Inputs[toField.Name].Index
 
+				// A boundary port carries whatever the definition routes through
+				// it, so it adopts the type of the field it feeds rather than
+				// forcing every metric input to be opaque data.
+				if uSchema != nil && uSchema.Boundary {
+					fromField.Which = toField.Which
+				}
+
 				// Compile typed Copier with type compatibility validation
 				copier, err := CompileCopier(fromField, toField)
 				if err != nil {
@@ -505,6 +512,10 @@ func resolveInputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, bo
 		}
 	}
 
+	if ifaceSchema.Boundary {
+		return declareBoundaryField(ifaceSchema.Inputs, port), true
+	}
+
 	return FieldInfo{}, false
 }
 
@@ -513,7 +524,31 @@ func resolveOutputField(ifaceSchema *InterfaceSchema, port string) (FieldInfo, b
 		return FieldInfo{}, false
 	}
 	fi, ok := ifaceSchema.Outputs[port]
-	return fi, ok
+
+	if ok {
+		return fi, true
+	}
+
+	if ifaceSchema.Boundary {
+		return declareBoundaryField(ifaceSchema.Outputs, port), true
+	}
+
+	return FieldInfo{}, false
+}
+
+/*
+declareBoundaryField admits a port a definition declared on its boundary,
+giving it a slot of its own so routes through the boundary stay distinct.
+*/
+func declareBoundaryField(fields map[string]FieldInfo, port string) FieldInfo {
+	declared := FieldInfo{
+		Name:   port,
+		Offset: uint32(len(fields)),
+		Which:  schema.Type_Which_data,
+	}
+
+	fields[port] = declared
+	return declared
 }
 
 func makeBoundarySchema() *InterfaceSchema {
@@ -531,7 +566,8 @@ func makeBoundarySchema() *InterfaceSchema {
 			"value": {Name: "value", Offset: 0, Which: schema.Type_Which_data},
 			"data":  {Name: "data", Offset: 0, Which: schema.Type_Which_data},
 		},
-		HasDone: true,
+		HasDone:  true,
+		Boundary: true,
 	}
 }
 
@@ -580,12 +616,21 @@ func formatWhich(w schema.Type_Which) string {
 	}
 }
 
+/*
+isBoundarySource reports the node through which a definition receives its
+declared inputs. For a metric that is the grid, which delivers exactly the
+fields the metric registered an interest in.
+*/
 func isBoundarySource(id string, node Node) bool {
-	return node.Type == "source" || node.Type == "data.Source" || node.Type == "test.Float64Source" || id == "source" || id == "src" || strings.HasPrefix(id, "source")
+	return node.Type == "grid" || node.Type == "source" || node.Type == "data.Source" || node.Type == "test.Float64Source" || id == "grid" || id == "source" || id == "src" || strings.HasPrefix(id, "source")
 }
 
+/*
+isBoundarySink reports the node through which a definition publishes what it
+computed. For a signal that is its metrics, one port each.
+*/
 func isBoundarySink(id string, node Node) bool {
-	return node.Type == "sink" || node.Type == "data.Sink" || id == "sink" || strings.HasPrefix(id, "sink")
+	return node.Type == "metrics" || node.Type == "sink" || node.Type == "data.Sink" || id == "metrics" || id == "sink" || strings.HasPrefix(id, "sink")
 }
 
 func expandDefinitions(

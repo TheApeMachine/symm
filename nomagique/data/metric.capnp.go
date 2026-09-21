@@ -5,164 +5,169 @@ package data
 import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
+	fc "capnproto.org/go/capnp/v3/flowcontrol"
+	server "capnproto.org/go/capnp/v3/server"
+	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
+	context "context"
+	runtime "github.com/theapemachine/symm/nomagique/runtime"
 	math "math"
 )
 
-type WireMetric capnp.Struct
+type Metric capnp.Struct
 
-// WireMetric_TypeID is the unique identifier for the type WireMetric.
-const WireMetric_TypeID = 0xa9902da846d2106b
+// Metric_TypeID is the unique identifier for the type Metric.
+const Metric_TypeID = 0xa5148b16f233329b
 
-func NewWireMetric(s *capnp.Segment) (WireMetric, error) {
+func NewMetric(s *capnp.Segment) (Metric, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
-	return WireMetric(st), err
+	return Metric(st), err
 }
 
-func NewRootWireMetric(s *capnp.Segment) (WireMetric, error) {
+func NewRootMetric(s *capnp.Segment) (Metric, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
-	return WireMetric(st), err
+	return Metric(st), err
 }
 
-func ReadRootWireMetric(msg *capnp.Message) (WireMetric, error) {
+func ReadRootMetric(msg *capnp.Message) (Metric, error) {
 	root, err := msg.Root()
-	return WireMetric(root.Struct()), err
+	return Metric(root.Struct()), err
 }
 
-func (s WireMetric) String() string {
-	str, _ := text.Marshal(0xa9902da846d2106b, capnp.Struct(s))
+func (s Metric) String() string {
+	str, _ := text.Marshal(0xa5148b16f233329b, capnp.Struct(s))
 	return str
 }
 
-func (s WireMetric) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s Metric) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (WireMetric) DecodeFromPtr(p capnp.Ptr) WireMetric {
-	return WireMetric(capnp.Struct{}.DecodeFromPtr(p))
+func (Metric) DecodeFromPtr(p capnp.Ptr) Metric {
+	return Metric(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s WireMetric) ToPtr() capnp.Ptr {
+func (s Metric) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s WireMetric) IsValid() bool {
+func (s Metric) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s WireMetric) Message() *capnp.Message {
+func (s Metric) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s WireMetric) Segment() *capnp.Segment {
+func (s Metric) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s WireMetric) Raw() float64 {
+func (s Metric) Raw() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(0))
 }
 
-func (s WireMetric) SetRaw(v float64) {
+func (s Metric) SetRaw(v float64) {
 	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
 }
 
-func (s WireMetric) Normalized() float64 {
+func (s Metric) Normalized() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(8))
 }
 
-func (s WireMetric) SetNormalized(v float64) {
+func (s Metric) SetNormalized(v float64) {
 	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
 }
 
-func (s WireMetric) Standardized() float64 {
+func (s Metric) Standardized() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(16))
 }
 
-func (s WireMetric) SetStandardized(v float64) {
+func (s Metric) SetStandardized(v float64) {
 	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
 }
 
-func (s WireMetric) Center() float64 {
+func (s Metric) Center() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(24))
 }
 
-func (s WireMetric) SetCenter(v float64) {
+func (s Metric) SetCenter(v float64) {
 	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
 }
 
-func (s WireMetric) Scale() float64 {
+func (s Metric) Scale() float64 {
 	return math.Float64frombits(capnp.Struct(s).Uint64(32))
 }
 
-func (s WireMetric) SetScale(v float64) {
+func (s Metric) SetScale(v float64) {
 	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
 }
 
-func (s WireMetric) Unit() WireMetric_UnitType {
-	return WireMetric_UnitType(capnp.Struct(s).Uint16(40))
+func (s Metric) Unit() Metric_UnitType {
+	return Metric_UnitType(capnp.Struct(s).Uint16(40))
 }
 
-func (s WireMetric) SetUnit(v WireMetric_UnitType) {
+func (s Metric) SetUnit(v Metric_UnitType) {
 	capnp.Struct(s).SetUint16(40, uint16(v))
 }
 
-func (s WireMetric) Timescale() WireMetric_Timescale {
-	return WireMetric_Timescale(capnp.Struct(s).Uint16(42))
+func (s Metric) Timescale() Metric_Timescale {
+	return Metric_Timescale(capnp.Struct(s).Uint16(42))
 }
 
-func (s WireMetric) SetTimescale(v WireMetric_Timescale) {
+func (s Metric) SetTimescale(v Metric_Timescale) {
 	capnp.Struct(s).SetUint16(42, uint16(v))
 }
 
-// WireMetric_List is a list of WireMetric.
-type WireMetric_List = capnp.StructList[WireMetric]
+// Metric_List is a list of Metric.
+type Metric_List = capnp.StructList[Metric]
 
-// NewWireMetric creates a new list of WireMetric.
-func NewWireMetric_List(s *capnp.Segment, sz int32) (WireMetric_List, error) {
+// NewMetric creates a new list of Metric.
+func NewMetric_List(s *capnp.Segment, sz int32) (Metric_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
-	return capnp.StructList[WireMetric](l), err
+	return capnp.StructList[Metric](l), err
 }
 
-// WireMetric_Future is a wrapper for a WireMetric promised by a client call.
-type WireMetric_Future struct{ *capnp.Future }
+// Metric_Future is a wrapper for a Metric promised by a client call.
+type Metric_Future struct{ *capnp.Future }
 
-func (f WireMetric_Future) Struct() (WireMetric, error) {
+func (f Metric_Future) Struct() (Metric, error) {
 	p, err := f.Future.Ptr()
-	return WireMetric(p.Struct()), err
+	return Metric(p.Struct()), err
 }
 
-type WireMetric_UnitType uint16
+type Metric_UnitType uint16
 
-// WireMetric_UnitType_TypeID is the unique identifier for the type WireMetric_UnitType.
-const WireMetric_UnitType_TypeID = 0xcb862f4328863be5
+// Metric_UnitType_TypeID is the unique identifier for the type Metric_UnitType.
+const Metric_UnitType_TypeID = 0xa7acaf911955d805
 
-// Values of WireMetric_UnitType.
+// Values of Metric_UnitType.
 const (
-	WireMetric_UnitType_dimensionless WireMetric_UnitType = 0
-	WireMetric_UnitType_count         WireMetric_UnitType = 1
-	WireMetric_UnitType_rate          WireMetric_UnitType = 2
-	WireMetric_UnitType_duration      WireMetric_UnitType = 3
-	WireMetric_UnitType_percent       WireMetric_UnitType = 4
-	WireMetric_UnitType_second        WireMetric_UnitType = 5
-	WireMetric_UnitType_perSecond     WireMetric_UnitType = 6
-	WireMetric_UnitType_nat           WireMetric_UnitType = 7
+	Metric_UnitType_dimensionless Metric_UnitType = 0
+	Metric_UnitType_count         Metric_UnitType = 1
+	Metric_UnitType_rate          Metric_UnitType = 2
+	Metric_UnitType_duration      Metric_UnitType = 3
+	Metric_UnitType_percent       Metric_UnitType = 4
+	Metric_UnitType_second        Metric_UnitType = 5
+	Metric_UnitType_perSecond     Metric_UnitType = 6
+	Metric_UnitType_nat           Metric_UnitType = 7
 )
 
 // String returns the enum's constant name.
-func (c WireMetric_UnitType) String() string {
+func (c Metric_UnitType) String() string {
 	switch c {
-	case WireMetric_UnitType_dimensionless:
+	case Metric_UnitType_dimensionless:
 		return "dimensionless"
-	case WireMetric_UnitType_count:
+	case Metric_UnitType_count:
 		return "count"
-	case WireMetric_UnitType_rate:
+	case Metric_UnitType_rate:
 		return "rate"
-	case WireMetric_UnitType_duration:
+	case Metric_UnitType_duration:
 		return "duration"
-	case WireMetric_UnitType_percent:
+	case Metric_UnitType_percent:
 		return "percent"
-	case WireMetric_UnitType_second:
+	case Metric_UnitType_second:
 		return "second"
-	case WireMetric_UnitType_perSecond:
+	case Metric_UnitType_perSecond:
 		return "perSecond"
-	case WireMetric_UnitType_nat:
+	case Metric_UnitType_nat:
 		return "nat"
 
 	default:
@@ -170,64 +175,64 @@ func (c WireMetric_UnitType) String() string {
 	}
 }
 
-// WireMetric_UnitTypeFromString returns the enum value with a name,
+// Metric_UnitTypeFromString returns the enum value with a name,
 // or the zero value if there's no such value.
-func WireMetric_UnitTypeFromString(c string) WireMetric_UnitType {
+func Metric_UnitTypeFromString(c string) Metric_UnitType {
 	switch c {
 	case "dimensionless":
-		return WireMetric_UnitType_dimensionless
+		return Metric_UnitType_dimensionless
 	case "count":
-		return WireMetric_UnitType_count
+		return Metric_UnitType_count
 	case "rate":
-		return WireMetric_UnitType_rate
+		return Metric_UnitType_rate
 	case "duration":
-		return WireMetric_UnitType_duration
+		return Metric_UnitType_duration
 	case "percent":
-		return WireMetric_UnitType_percent
+		return Metric_UnitType_percent
 	case "second":
-		return WireMetric_UnitType_second
+		return Metric_UnitType_second
 	case "perSecond":
-		return WireMetric_UnitType_perSecond
+		return Metric_UnitType_perSecond
 	case "nat":
-		return WireMetric_UnitType_nat
+		return Metric_UnitType_nat
 
 	default:
 		return 0
 	}
 }
 
-type WireMetric_UnitType_List = capnp.EnumList[WireMetric_UnitType]
+type Metric_UnitType_List = capnp.EnumList[Metric_UnitType]
 
-func NewWireMetric_UnitType_List(s *capnp.Segment, sz int32) (WireMetric_UnitType_List, error) {
-	return capnp.NewEnumList[WireMetric_UnitType](s, sz)
+func NewMetric_UnitType_List(s *capnp.Segment, sz int32) (Metric_UnitType_List, error) {
+	return capnp.NewEnumList[Metric_UnitType](s, sz)
 }
 
-type WireMetric_Timescale uint16
+type Metric_Timescale uint16
 
-// WireMetric_Timescale_TypeID is the unique identifier for the type WireMetric_Timescale.
-const WireMetric_Timescale_TypeID = 0xd185e5e87939ff78
+// Metric_Timescale_TypeID is the unique identifier for the type Metric_Timescale.
+const Metric_Timescale_TypeID = 0xf5fc7e717ea6da11
 
-// Values of WireMetric_Timescale.
+// Values of Metric_Timescale.
 const (
-	WireMetric_Timescale_instantaneous WireMetric_Timescale = 0
-	WireMetric_Timescale_perSecond     WireMetric_Timescale = 1
-	WireMetric_Timescale_perMinute     WireMetric_Timescale = 2
-	WireMetric_Timescale_perHour       WireMetric_Timescale = 3
-	WireMetric_Timescale_perDay        WireMetric_Timescale = 4
+	Metric_Timescale_instantaneous Metric_Timescale = 0
+	Metric_Timescale_perSecond     Metric_Timescale = 1
+	Metric_Timescale_perMinute     Metric_Timescale = 2
+	Metric_Timescale_perHour       Metric_Timescale = 3
+	Metric_Timescale_perDay        Metric_Timescale = 4
 )
 
 // String returns the enum's constant name.
-func (c WireMetric_Timescale) String() string {
+func (c Metric_Timescale) String() string {
 	switch c {
-	case WireMetric_Timescale_instantaneous:
+	case Metric_Timescale_instantaneous:
 		return "instantaneous"
-	case WireMetric_Timescale_perSecond:
+	case Metric_Timescale_perSecond:
 		return "perSecond"
-	case WireMetric_Timescale_perMinute:
+	case Metric_Timescale_perMinute:
 		return "perMinute"
-	case WireMetric_Timescale_perHour:
+	case Metric_Timescale_perHour:
 		return "perHour"
-	case WireMetric_Timescale_perDay:
+	case Metric_Timescale_perDay:
 		return "perDay"
 
 	default:
@@ -235,28 +240,508 @@ func (c WireMetric_Timescale) String() string {
 	}
 }
 
-// WireMetric_TimescaleFromString returns the enum value with a name,
+// Metric_TimescaleFromString returns the enum value with a name,
 // or the zero value if there's no such value.
-func WireMetric_TimescaleFromString(c string) WireMetric_Timescale {
+func Metric_TimescaleFromString(c string) Metric_Timescale {
 	switch c {
 	case "instantaneous":
-		return WireMetric_Timescale_instantaneous
+		return Metric_Timescale_instantaneous
 	case "perSecond":
-		return WireMetric_Timescale_perSecond
+		return Metric_Timescale_perSecond
 	case "perMinute":
-		return WireMetric_Timescale_perMinute
+		return Metric_Timescale_perMinute
 	case "perHour":
-		return WireMetric_Timescale_perHour
+		return Metric_Timescale_perHour
 	case "perDay":
-		return WireMetric_Timescale_perDay
+		return Metric_Timescale_perDay
 
 	default:
 		return 0
 	}
 }
 
-type WireMetric_Timescale_List = capnp.EnumList[WireMetric_Timescale]
+type Metric_Timescale_List = capnp.EnumList[Metric_Timescale]
 
-func NewWireMetric_Timescale_List(s *capnp.Segment, sz int32) (WireMetric_Timescale_List, error) {
-	return capnp.NewEnumList[WireMetric_Timescale](s, sz)
+func NewMetric_Timescale_List(s *capnp.Segment, sz int32) (Metric_Timescale_List, error) {
+	return capnp.NewEnumList[Metric_Timescale](s, sz)
+}
+
+type MetricService capnp.Client
+
+// MetricService_TypeID is the unique identifier for the type MetricService.
+const MetricService_TypeID = 0x81ddfb685c8ba9ee
+
+func (c MetricService) Write(ctx context.Context, params func(MetricService_write_Params) error) error {
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0x81ddfb685c8ba9ee,
+			MethodID:      0,
+			InterfaceName: "nomagique/data/metric.capnp:MetricService",
+			MethodName:    "write",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 48, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(MetricService_write_Params(s)) }
+	}
+
+	return capnp.Client(c).SendStreamCall(ctx, s)
+
+}
+
+func (c MetricService) Done(ctx context.Context, params func(MetricService_done_Params) error) (MetricService_done_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0x81ddfb685c8ba9ee,
+			MethodID:      1,
+			InterfaceName: "nomagique/data/metric.capnp:MetricService",
+			MethodName:    "done",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(MetricService_done_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return MetricService_done_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c MetricService) WaitStreaming() error {
+	return capnp.Client(c).WaitStreaming()
+}
+
+// String returns a string that identifies this capability for debugging
+// purposes.  Its format should not be depended on: in particular, it
+// should not be used to compare clients.  Use IsSame to compare clients
+// for equality.
+func (c MetricService) String() string {
+	return "MetricService(" + capnp.Client(c).String() + ")"
+}
+
+// AddRef creates a new Client that refers to the same capability as c.
+// If c is nil or has resolved to null, then AddRef returns nil.
+func (c MetricService) AddRef() MetricService {
+	return MetricService(capnp.Client(c).AddRef())
+}
+
+// Release releases a capability reference.  If this is the last
+// reference to the capability, then the underlying resources associated
+// with the capability will be released.
+//
+// Release will panic if c has already been released, but not if c is
+// nil or resolved to null.
+func (c MetricService) Release() {
+	capnp.Client(c).Release()
+}
+
+// Resolve blocks until the capability is fully resolved or the Context
+// expires.
+func (c MetricService) Resolve(ctx context.Context) error {
+	return capnp.Client(c).Resolve(ctx)
+}
+
+func (c MetricService) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Client(c).EncodeAsPtr(seg)
+}
+
+func (MetricService) DecodeFromPtr(p capnp.Ptr) MetricService {
+	return MetricService(capnp.Client{}.DecodeFromPtr(p))
+}
+
+// IsValid reports whether c is a valid reference to a capability.
+// A reference is invalid if it is nil, has resolved to null, or has
+// been released.
+func (c MetricService) IsValid() bool {
+	return capnp.Client(c).IsValid()
+}
+
+// IsSame reports whether c and other refer to a capability created by the
+// same call to NewClient.  This can return false negatives if c or other
+// are not fully resolved: use Resolve if this is an issue.  If either
+// c or other are released, then IsSame panics.
+func (c MetricService) IsSame(other MetricService) bool {
+	return capnp.Client(c).IsSame(capnp.Client(other))
+}
+
+// Update the flowcontrol.FlowLimiter used to manage flow control for
+// this client. This affects all future calls, but not calls already
+// waiting to send. Passing nil sets the value to flowcontrol.NopLimiter,
+// which is also the default.
+func (c MetricService) SetFlowLimiter(lim fc.FlowLimiter) {
+	capnp.Client(c).SetFlowLimiter(lim)
+}
+
+// Get the current flowcontrol.FlowLimiter used to manage flow control
+// for this client.
+func (c MetricService) GetFlowLimiter() fc.FlowLimiter {
+	return capnp.Client(c).GetFlowLimiter()
+}
+
+// A MetricService_Server is a MetricService with a local implementation.
+type MetricService_Server interface {
+	Write(context.Context, MetricService_write) error
+
+	Done(context.Context, MetricService_done) error
+}
+
+// MetricService_NewServer creates a new Server from an implementation of MetricService_Server.
+func MetricService_NewServer(s MetricService_Server) *server.Server {
+	c, _ := s.(server.Shutdowner)
+	return server.New(MetricService_Methods(nil, s), s, c)
+}
+
+// MetricService_ServerToClient creates a new Client from an implementation of MetricService_Server.
+// The caller is responsible for calling Release on the returned Client.
+func MetricService_ServerToClient(s MetricService_Server) MetricService {
+	return MetricService(capnp.NewClient(MetricService_NewServer(s)))
+}
+
+// MetricService_Methods appends Methods to a slice that invoke the methods on s.
+// This can be used to create a more complicated Server.
+func MetricService_Methods(methods []server.Method, s MetricService_Server) []server.Method {
+	if cap(methods) == 0 {
+		methods = make([]server.Method, 0, 2)
+	}
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0x81ddfb685c8ba9ee,
+			MethodID:      0,
+			InterfaceName: "nomagique/data/metric.capnp:MetricService",
+			MethodName:    "write",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Write(ctx, MetricService_write{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0x81ddfb685c8ba9ee,
+			MethodID:      1,
+			InterfaceName: "nomagique/data/metric.capnp:MetricService",
+			MethodName:    "done",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.Done(ctx, MetricService_done{call})
+		},
+	})
+
+	return methods
+}
+
+// MetricService_write holds the state for a server call to MetricService.write.
+// See server.Call for documentation.
+type MetricService_write struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c MetricService_write) Args() MetricService_write_Params {
+	return MetricService_write_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c MetricService_write) AllocResults() (stream.StreamResult, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return stream.StreamResult(r), err
+}
+
+// MetricService_done holds the state for a server call to MetricService.done.
+// See server.Call for documentation.
+type MetricService_done struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c MetricService_done) Args() MetricService_done_Params {
+	return MetricService_done_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c MetricService_done) AllocResults() (MetricService_done_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return MetricService_done_Results(r), err
+}
+
+// MetricService_List is a list of MetricService.
+type MetricService_List = capnp.CapList[MetricService]
+
+// NewMetricService_List creates a new list of MetricService.
+func NewMetricService_List(s *capnp.Segment, sz int32) (MetricService_List, error) {
+	l, err := capnp.NewPointerList(s, sz)
+	return capnp.CapList[MetricService](l), err
+}
+
+type MetricService_write_Params capnp.Struct
+
+// MetricService_write_Params_TypeID is the unique identifier for the type MetricService_write_Params.
+const MetricService_write_Params_TypeID = 0xde4b1b520471b93d
+
+func NewMetricService_write_Params(s *capnp.Segment) (MetricService_write_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	return MetricService_write_Params(st), err
+}
+
+func NewRootMetricService_write_Params(s *capnp.Segment) (MetricService_write_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0})
+	return MetricService_write_Params(st), err
+}
+
+func ReadRootMetricService_write_Params(msg *capnp.Message) (MetricService_write_Params, error) {
+	root, err := msg.Root()
+	return MetricService_write_Params(root.Struct()), err
+}
+
+func (s MetricService_write_Params) String() string {
+	str, _ := text.Marshal(0xde4b1b520471b93d, capnp.Struct(s))
+	return str
+}
+
+func (s MetricService_write_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MetricService_write_Params) DecodeFromPtr(p capnp.Ptr) MetricService_write_Params {
+	return MetricService_write_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MetricService_write_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MetricService_write_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MetricService_write_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MetricService_write_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s MetricService_write_Params) Raw() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(0))
+}
+
+func (s MetricService_write_Params) SetRaw(v float64) {
+	capnp.Struct(s).SetUint64(0, math.Float64bits(v))
+}
+
+func (s MetricService_write_Params) Normalized() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(8))
+}
+
+func (s MetricService_write_Params) SetNormalized(v float64) {
+	capnp.Struct(s).SetUint64(8, math.Float64bits(v))
+}
+
+func (s MetricService_write_Params) Standardized() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(16))
+}
+
+func (s MetricService_write_Params) SetStandardized(v float64) {
+	capnp.Struct(s).SetUint64(16, math.Float64bits(v))
+}
+
+func (s MetricService_write_Params) Center() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(24))
+}
+
+func (s MetricService_write_Params) SetCenter(v float64) {
+	capnp.Struct(s).SetUint64(24, math.Float64bits(v))
+}
+
+func (s MetricService_write_Params) Scale() float64 {
+	return math.Float64frombits(capnp.Struct(s).Uint64(32))
+}
+
+func (s MetricService_write_Params) SetScale(v float64) {
+	capnp.Struct(s).SetUint64(32, math.Float64bits(v))
+}
+
+func (s MetricService_write_Params) Unit() Metric_UnitType {
+	return Metric_UnitType(capnp.Struct(s).Uint16(40))
+}
+
+func (s MetricService_write_Params) SetUnit(v Metric_UnitType) {
+	capnp.Struct(s).SetUint16(40, uint16(v))
+}
+
+func (s MetricService_write_Params) Timescale() Metric_Timescale {
+	return Metric_Timescale(capnp.Struct(s).Uint16(42))
+}
+
+func (s MetricService_write_Params) SetTimescale(v Metric_Timescale) {
+	capnp.Struct(s).SetUint16(42, uint16(v))
+}
+
+// MetricService_write_Params_List is a list of MetricService_write_Params.
+type MetricService_write_Params_List = capnp.StructList[MetricService_write_Params]
+
+// NewMetricService_write_Params creates a new list of MetricService_write_Params.
+func NewMetricService_write_Params_List(s *capnp.Segment, sz int32) (MetricService_write_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 48, PointerCount: 0}, sz)
+	return capnp.StructList[MetricService_write_Params](l), err
+}
+
+// MetricService_write_Params_Future is a wrapper for a MetricService_write_Params promised by a client call.
+type MetricService_write_Params_Future struct{ *capnp.Future }
+
+func (f MetricService_write_Params_Future) Struct() (MetricService_write_Params, error) {
+	p, err := f.Future.Ptr()
+	return MetricService_write_Params(p.Struct()), err
+}
+
+type MetricService_done_Params capnp.Struct
+
+// MetricService_done_Params_TypeID is the unique identifier for the type MetricService_done_Params.
+const MetricService_done_Params_TypeID = 0x9be56a1b3d3184eb
+
+func NewMetricService_done_Params(s *capnp.Segment) (MetricService_done_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return MetricService_done_Params(st), err
+}
+
+func NewRootMetricService_done_Params(s *capnp.Segment) (MetricService_done_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return MetricService_done_Params(st), err
+}
+
+func ReadRootMetricService_done_Params(msg *capnp.Message) (MetricService_done_Params, error) {
+	root, err := msg.Root()
+	return MetricService_done_Params(root.Struct()), err
+}
+
+func (s MetricService_done_Params) String() string {
+	str, _ := text.Marshal(0x9be56a1b3d3184eb, capnp.Struct(s))
+	return str
+}
+
+func (s MetricService_done_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MetricService_done_Params) DecodeFromPtr(p capnp.Ptr) MetricService_done_Params {
+	return MetricService_done_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MetricService_done_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MetricService_done_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MetricService_done_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MetricService_done_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// MetricService_done_Params_List is a list of MetricService_done_Params.
+type MetricService_done_Params_List = capnp.StructList[MetricService_done_Params]
+
+// NewMetricService_done_Params creates a new list of MetricService_done_Params.
+func NewMetricService_done_Params_List(s *capnp.Segment, sz int32) (MetricService_done_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[MetricService_done_Params](l), err
+}
+
+// MetricService_done_Params_Future is a wrapper for a MetricService_done_Params promised by a client call.
+type MetricService_done_Params_Future struct{ *capnp.Future }
+
+func (f MetricService_done_Params_Future) Struct() (MetricService_done_Params, error) {
+	p, err := f.Future.Ptr()
+	return MetricService_done_Params(p.Struct()), err
+}
+
+type MetricService_done_Results capnp.Struct
+
+// MetricService_done_Results_TypeID is the unique identifier for the type MetricService_done_Results.
+const MetricService_done_Results_TypeID = 0x83dde77dedc4fc3d
+
+func NewMetricService_done_Results(s *capnp.Segment) (MetricService_done_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return MetricService_done_Results(st), err
+}
+
+func NewRootMetricService_done_Results(s *capnp.Segment) (MetricService_done_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return MetricService_done_Results(st), err
+}
+
+func ReadRootMetricService_done_Results(msg *capnp.Message) (MetricService_done_Results, error) {
+	root, err := msg.Root()
+	return MetricService_done_Results(root.Struct()), err
+}
+
+func (s MetricService_done_Results) String() string {
+	str, _ := text.Marshal(0x83dde77dedc4fc3d, capnp.Struct(s))
+	return str
+}
+
+func (s MetricService_done_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (MetricService_done_Results) DecodeFromPtr(p capnp.Ptr) MetricService_done_Results {
+	return MetricService_done_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s MetricService_done_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s MetricService_done_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s MetricService_done_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s MetricService_done_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s MetricService_done_Results) Status() runtime.Status {
+	return runtime.Status(capnp.Struct(s).Uint16(0))
+}
+
+func (s MetricService_done_Results) SetStatus(v runtime.Status) {
+	capnp.Struct(s).SetUint16(0, uint16(v))
+}
+
+func (s MetricService_done_Results) Read() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return []byte(p.Data()), err
+}
+
+func (s MetricService_done_Results) HasRead() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s MetricService_done_Results) SetRead(v []byte) error {
+	return capnp.Struct(s).SetData(0, v)
+}
+
+// MetricService_done_Results_List is a list of MetricService_done_Results.
+type MetricService_done_Results_List = capnp.StructList[MetricService_done_Results]
+
+// NewMetricService_done_Results creates a new list of MetricService_done_Results.
+func NewMetricService_done_Results_List(s *capnp.Segment, sz int32) (MetricService_done_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	return capnp.StructList[MetricService_done_Results](l), err
+}
+
+// MetricService_done_Results_Future is a wrapper for a MetricService_done_Results promised by a client call.
+type MetricService_done_Results_Future struct{ *capnp.Future }
+
+func (f MetricService_done_Results_Future) Struct() (MetricService_done_Results, error) {
+	p, err := f.Future.Ptr()
+	return MetricService_done_Results(p.Struct()), err
 }

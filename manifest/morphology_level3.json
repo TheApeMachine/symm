@@ -1,322 +1,98 @@
 {
-  "id": "morphology:level3",
+  "id": "morphology_level3",
   "name": "morphology:level3",
-  "source": "morphology:level3",
-  "interests": [
-    [
-      "level3",
-      "data",
-      "symbol"
-    ],
-    [
-      "level3",
-      "data",
-      "bids"
-    ],
-    [
-      "level3",
-      "data",
-      "asks"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "concentration:bid": {
+      "id": "concentration:bid",
+      "type": "probability.Concentration",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": -300.0,
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "extract_bids",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_asks",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "extract_bids": {
-      "id": "extract_bids",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "bid_dist",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "bids"
-        }
-      }
-    },
-    "extract_asks": {
-      "id": "extract_asks",
-      "type": "data.Extract",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "ask_dist",
-              "portName": "value"
-            }
-          ]
-        }
-      },
-      "inputData": {
-        "path": {
-          "string": "asks"
-        }
-      }
-    },
-    "bid_dist": {
-      "id": "bid_dist",
-      "type": "probability.Distribution",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_bids",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "bid_entropy",
-              "portName": "value"
-            },
-            {
-              "nodeId": "bid_concentration",
+              "nodeId": "morphology_change",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "ask_dist": {
-      "id": "ask_dist",
-      "type": "probability.Distribution",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_asks",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "ask_entropy",
-              "portName": "value"
-            },
-            {
-              "nodeId": "ask_concentration",
-              "portName": "value"
-            },
-            {
-              "nodeId": "ks",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "bid_entropy": {
-      "id": "bid_entropy",
+    "entropy:bid": {
+      "id": "entropy:bid",
       "type": "probability.Entropy",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": -140.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "bid_dist",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     },
-    "sink_bid_entropy": {
-      "id": "sink_bid_entropy",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "bid_entropy"
-        }
-      },
+    "concentration:ask": {
+      "id": "concentration:ask",
+      "type": "probability.Concentration",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 100.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "bid_entropy",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     },
-    "ask_entropy": {
-      "id": "ask_entropy",
+    "entropy:ask": {
+      "id": "entropy:ask",
       "type": "probability.Entropy",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 260.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "ask_dist",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     },
-    "sink_ask_entropy": {
-      "id": "sink_ask_entropy",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ask_entropy"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "ask_entropy",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "bid_concentration": {
-      "id": "bid_concentration",
-      "type": "probability.Concentration",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "bid_dist",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_bid_concentration": {
-      "id": "sink_bid_concentration",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "bid_concentration"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "bid_concentration",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "ask_concentration": {
-      "id": "ask_concentration",
-      "type": "probability.Concentration",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "ask_dist",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "sink_ask_concentration": {
-      "id": "sink_ask_concentration",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ask_concentration"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "ask_concentration",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "ks": {
-      "id": "ks",
+    "book_shape_ks": {
+      "id": "book_shape_ks",
       "type": "probability.KolmogorovSmirnov",
+      "width": 280,
+      "height": 172,
+      "x": 100.0,
+      "y": -300.0,
       "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "ask_dist",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {}
       }
     },
-    "sink_ks_distance": {
-      "id": "sink_ks_distance",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "ks_distance"
-        }
-      },
+    "book_shape_distance": {
+      "id": "book_shape_distance",
+      "type": "probability.Distribution",
+      "width": 280,
+      "height": 172,
+      "x": 100.0,
+      "y": -120.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "morphology_change": {
+      "id": "morphology_change",
+      "type": "calculus.RelativeChange",
+      "width": 280,
+      "height": 172,
+      "x": 100.0,
+      "y": 120.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "ks",
+              "nodeId": "concentration:bid",
               "portName": "out"
             }
           ]

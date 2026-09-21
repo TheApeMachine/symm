@@ -22,7 +22,7 @@ func (c Series) Write(ctx context.Context, params func(Series_write_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xcea07e45ce782962,
 			MethodID:      0,
-			InterfaceName: "data/series.capnp:Series",
+			InterfaceName: "nomagique/data/series.capnp:Series",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +41,7 @@ func (c Series) Done(ctx context.Context, params func(Series_done_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0xcea07e45ce782962,
 			MethodID:      1,
-			InterfaceName: "data/series.capnp:Series",
+			InterfaceName: "nomagique/data/series.capnp:Series",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +156,7 @@ func Series_Methods(methods []server.Method, s Series_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xcea07e45ce782962,
 			MethodID:      0,
-			InterfaceName: "data/series.capnp:Series",
+			InterfaceName: "nomagique/data/series.capnp:Series",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +168,7 @@ func Series_Methods(methods []server.Method, s Series_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xcea07e45ce782962,
 			MethodID:      1,
-			InterfaceName: "data/series.capnp:Series",
+			InterfaceName: "nomagique/data/series.capnp:Series",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

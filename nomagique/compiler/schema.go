@@ -42,6 +42,10 @@ type InterfaceSchema struct {
 	DoneResult  capnp.ObjectSize
 	Outputs     map[string]FieldInfo
 	HasDone     bool
+	// Boundary marks a graph edge rather than a real capability. A boundary
+	// node names the fields a definition exchanges with its parent, so its
+	// ports are whatever the definition declared rather than a fixed set.
+	Boundary bool
 }
 
 /*

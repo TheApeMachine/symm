@@ -22,7 +22,7 @@ func (c Key) Write(ctx context.Context, params func(Key_write_Params) error) err
 		Method: capnp.Method{
 			InterfaceID:   0xabd0aec8491cb8ba,
 			MethodID:      0,
-			InterfaceName: "store/key.capnp:Key",
+			InterfaceName: "nomagique/store/key.capnp:Key",
 			MethodName:    "write",
 		},
 	}
@@ -41,7 +41,7 @@ func (c Key) Done(ctx context.Context, params func(Key_done_Params) error) (Key_
 		Method: capnp.Method{
 			InterfaceID:   0xabd0aec8491cb8ba,
 			MethodID:      1,
-			InterfaceName: "store/key.capnp:Key",
+			InterfaceName: "nomagique/store/key.capnp:Key",
 			MethodName:    "done",
 		},
 	}
@@ -156,7 +156,7 @@ func Key_Methods(methods []server.Method, s Key_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xabd0aec8491cb8ba,
 			MethodID:      0,
-			InterfaceName: "store/key.capnp:Key",
+			InterfaceName: "nomagique/store/key.capnp:Key",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -168,7 +168,7 @@ func Key_Methods(methods []server.Method, s Key_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xabd0aec8491cb8ba,
 			MethodID:      1,
-			InterfaceName: "store/key.capnp:Key",
+			InterfaceName: "nomagique/store/key.capnp:Key",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

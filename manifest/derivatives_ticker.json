@@ -1,134 +1,69 @@
 {
-  "id": "derivatives:ticker",
+  "id": "derivatives_ticker",
   "name": "derivatives:ticker",
-  "source": "derivatives:ticker",
-  "interests": [
-    [
-      "ticker",
-      "data",
-      "symbol"
-    ],
-    [
-      "ticker",
-      "data",
-      "last"
-    ],
-    [
-      "ticker",
-      "data",
-      "timestamp"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "basis": {
+      "id": "basis",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -300.0,
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "extract_last",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "extract_last": {
-      "id": "extract_last",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "last"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_price",
+              "nodeId": "basis_change",
               "portName": "value"
             },
             {
-              "nodeId": "returns",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_price": {
-      "id": "sink_price",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_price"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_last",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "returns": {
-      "id": "returns",
-      "type": "temporal.LogReturns",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_last",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_returns",
-              "portName": "value"
-            },
-            {
-              "nodeId": "basis_tanh",
+              "nodeId": "basis_baseline",
               "portName": "value"
             },
             {
               "nodeId": "basis_zscore",
               "portName": "value"
+            },
+            {
+              "nodeId": "basis_velocity",
+              "portName": "val"
             }
           ]
         }
       }
     },
-    "sink_returns": {
-      "id": "sink_returns",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "derivative_returns"
+    "priceRatio": {
+      "id": "priceRatio",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -140.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "log_basis",
+              "portName": "value"
+            }
+          ]
         }
-      },
+      }
+    },
+    "log_basis": {
+      "id": "log_basis",
+      "type": "calculus.Log",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -140.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "returns",
+              "nodeId": "priceRatio",
               "portName": "out"
             }
           ]
@@ -136,14 +71,18 @@
         "outputs": {}
       }
     },
-    "basis_tanh": {
-      "id": "basis_tanh",
-      "type": "calculus.Tanh",
+    "basis_change": {
+      "id": "basis_change",
+      "type": "calculus.RelativeChange",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -300.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "returns",
+              "nodeId": "basis",
               "portName": "out"
             }
           ]
@@ -151,118 +90,222 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_basis",
-              "portName": "value"
-            },
-            {
-              "nodeId": "basis_baseline",
-              "portName": "value"
-            },
-            {
-              "nodeId": "basis_divergence",
-              "portName": "value"
+              "nodeId": "basis_rate",
+              "portName": "a"
             }
           ]
         }
       }
     },
-    "sink_basis": {
-      "id": "sink_basis",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "basis"
+    "elapsed": {
+      "id": "elapsed",
+      "type": "temporal.Elapsed",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 40.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "basis_rate",
+              "portName": "b"
+            },
+            {
+              "nodeId": "open_interest_growth_rate",
+              "portName": "b"
+            }
+          ]
         }
-      },
+      }
+    },
+    "basis_rate": {
+      "id": "basis_rate",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": -300.0,
       "connections": {
         "inputs": {
-          "value": [
+          "a": [
             {
-              "nodeId": "basis_tanh",
+              "nodeId": "basis_change",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
               "portName": "out"
             }
           ]
         },
         "outputs": {}
+      }
+    },
+    "open_interest_change": {
+      "id": "open_interest_change",
+      "type": "calculus.RelativeChange",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 220.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "open_interest_log_change": {
+      "id": "open_interest_log_change",
+      "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 360.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "open_interest_growth_rate",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "open_interest_growth_rate": {
+      "id": "open_interest_growth_rate",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 360.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "open_interest_log_change",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "elapsed",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "open_interest_growth_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "open_interest_growth_zscore",
+              "portName": "value"
+            },
+            {
+              "nodeId": "open_interest_growth_velocity",
+              "portName": "val"
+            }
+          ]
+        }
+      }
+    },
+    "derivative_log_return": {
+      "id": "derivative_log_return",
+      "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 560.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "return_gap",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "reference_log_return": {
+      "id": "reference_log_return",
+      "type": "temporal.LogReturns",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 700.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "return_gap",
+              "portName": "b"
+            }
+          ]
+        }
+      }
+    },
+    "return_gap": {
+      "id": "return_gap",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": 620.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "derivative_log_return",
+              "portName": "out"
+            }
+          ],
+          "b": [
+            {
+              "nodeId": "reference_log_return",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "return_gap_baseline",
+              "portName": "value"
+            },
+            {
+              "nodeId": "return_gap_zscore",
+              "portName": "value"
+            },
+            {
+              "nodeId": "return_gap_velocity",
+              "portName": "val"
+            }
+          ]
+        }
       }
     },
     "basis_baseline": {
       "id": "basis_baseline",
       "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -400.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "basis_tanh",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_basis_baseline",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_basis_baseline": {
-      "id": "sink_basis_baseline",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "basis_baseline"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "basis_baseline",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "basis_divergence": {
-      "id": "basis_divergence",
-      "type": "statistic.ResidualDivergence",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "basis_tanh",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_basis_divergence",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_basis_divergence": {
-      "id": "sink_basis_divergence",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "basis_divergence"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "basis_divergence",
+              "nodeId": "basis",
               "portName": "out"
             }
           ]
@@ -273,38 +316,148 @@
     "basis_zscore": {
       "id": "basis_zscore",
       "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -260.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "returns",
+              "nodeId": "basis",
               "portName": "out"
             }
           ]
         },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_basis_zscore",
-              "portName": "value"
-            }
-          ]
-        }
+        "outputs": {}
       }
     },
-    "sink_basis_zscore": {
-      "id": "sink_basis_zscore",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "basis_zscore"
-        }
-      },
+    "basis_velocity": {
+      "id": "basis_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -120.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "basis",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "open_interest_growth_baseline": {
+      "id": "open_interest_growth_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 100.0,
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "basis_zscore",
+              "nodeId": "open_interest_growth_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "open_interest_growth_zscore": {
+      "id": "open_interest_growth_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 240.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "open_interest_growth_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "open_interest_growth_velocity": {
+      "id": "open_interest_growth_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 380.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "open_interest_growth_rate",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "return_gap_baseline": {
+      "id": "return_gap_baseline",
+      "type": "statistic.ResidualBaseline",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 600.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "return_gap",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "return_gap_zscore": {
+      "id": "return_gap_zscore",
+      "type": "statistic.ZScore",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 740.0,
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "return_gap",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "return_gap_velocity": {
+      "id": "return_gap_velocity",
+      "type": "temporal.Velocity",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 880.0,
+      "connections": {
+        "inputs": {
+          "val": [
+            {
+              "nodeId": "return_gap",
               "portName": "out"
             }
           ]

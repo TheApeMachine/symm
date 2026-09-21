@@ -24,7 +24,7 @@ func (c Transform) Apply(ctx context.Context, params func(Transform_apply_Params
 		Method: capnp.Method{
 			InterfaceID:   0xbb92b2e20f85e9e6,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Transform",
+			InterfaceName: "nomagique/data/map.capnp:Transform",
 			MethodName:    "apply",
 		},
 	}
@@ -137,7 +137,7 @@ func Transform_Methods(methods []server.Method, s Transform_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0xbb92b2e20f85e9e6,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Transform",
+			InterfaceName: "nomagique/data/map.capnp:Transform",
 			MethodName:    "apply",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -328,7 +328,7 @@ func (c Scale) Write(ctx context.Context, params func(Scale_write_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0x86f70cdd2abc442f,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Scale",
+			InterfaceName: "nomagique/data/map.capnp:Scale",
 			MethodName:    "write",
 		},
 	}
@@ -347,7 +347,7 @@ func (c Scale) Done(ctx context.Context, params func(Scale_done_Params) error) (
 		Method: capnp.Method{
 			InterfaceID:   0x86f70cdd2abc442f,
 			MethodID:      1,
-			InterfaceName: "data/map.capnp:Scale",
+			InterfaceName: "nomagique/data/map.capnp:Scale",
 			MethodName:    "done",
 		},
 	}
@@ -367,7 +367,7 @@ func (c Scale) Apply(ctx context.Context, params func(Transform_apply_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xbb92b2e20f85e9e6,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Transform",
+			InterfaceName: "nomagique/data/map.capnp:Transform",
 			MethodName:    "apply",
 		},
 	}
@@ -484,7 +484,7 @@ func Scale_Methods(methods []server.Method, s Scale_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x86f70cdd2abc442f,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Scale",
+			InterfaceName: "nomagique/data/map.capnp:Scale",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -496,7 +496,7 @@ func Scale_Methods(methods []server.Method, s Scale_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x86f70cdd2abc442f,
 			MethodID:      1,
-			InterfaceName: "data/map.capnp:Scale",
+			InterfaceName: "nomagique/data/map.capnp:Scale",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -508,7 +508,7 @@ func Scale_Methods(methods []server.Method, s Scale_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xbb92b2e20f85e9e6,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Transform",
+			InterfaceName: "nomagique/data/map.capnp:Transform",
 			MethodName:    "apply",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -781,7 +781,7 @@ func (c Map) Write(ctx context.Context, params func(Map_write_Params) error) err
 		Method: capnp.Method{
 			InterfaceID:   0x8fb0247f30be6781,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Map",
+			InterfaceName: "nomagique/data/map.capnp:Map",
 			MethodName:    "write",
 		},
 	}
@@ -800,7 +800,7 @@ func (c Map) Done(ctx context.Context, params func(Map_done_Params) error) (Map_
 		Method: capnp.Method{
 			InterfaceID:   0x8fb0247f30be6781,
 			MethodID:      1,
-			InterfaceName: "data/map.capnp:Map",
+			InterfaceName: "nomagique/data/map.capnp:Map",
 			MethodName:    "done",
 		},
 	}
@@ -915,7 +915,7 @@ func Map_Methods(methods []server.Method, s Map_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x8fb0247f30be6781,
 			MethodID:      0,
-			InterfaceName: "data/map.capnp:Map",
+			InterfaceName: "nomagique/data/map.capnp:Map",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -927,7 +927,7 @@ func Map_Methods(methods []server.Method, s Map_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x8fb0247f30be6781,
 			MethodID:      1,
-			InterfaceName: "data/map.capnp:Map",
+			InterfaceName: "nomagique/data/map.capnp:Map",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

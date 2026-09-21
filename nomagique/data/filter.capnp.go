@@ -23,7 +23,7 @@ func (c Filter) Write(ctx context.Context, params func(Filter_write_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xfa8c68240ca79b46,
 			MethodID:      0,
-			InterfaceName: "data/filter.capnp:Filter",
+			InterfaceName: "nomagique/data/filter.capnp:Filter",
 			MethodName:    "write",
 		},
 	}
@@ -42,7 +42,7 @@ func (c Filter) Done(ctx context.Context, params func(Filter_done_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0xfa8c68240ca79b46,
 			MethodID:      1,
-			InterfaceName: "data/filter.capnp:Filter",
+			InterfaceName: "nomagique/data/filter.capnp:Filter",
 			MethodName:    "done",
 		},
 	}
@@ -157,7 +157,7 @@ func Filter_Methods(methods []server.Method, s Filter_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xfa8c68240ca79b46,
 			MethodID:      0,
-			InterfaceName: "data/filter.capnp:Filter",
+			InterfaceName: "nomagique/data/filter.capnp:Filter",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -169,7 +169,7 @@ func Filter_Methods(methods []server.Method, s Filter_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xfa8c68240ca79b46,
 			MethodID:      1,
-			InterfaceName: "data/filter.capnp:Filter",
+			InterfaceName: "nomagique/data/filter.capnp:Filter",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

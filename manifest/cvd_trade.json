@@ -1,182 +1,293 @@
 {
-  "id": "cvd:trade",
+  "id": "cvd_trade",
   "name": "cvd:trade",
-  "source": "cvd:trade",
-  "interests": [
-    [
-      "trade",
-      "data",
-      "symbol"
-    ],
-    [
-      "trade",
-      "data",
-      "side"
-    ],
-    [
-      "trade",
-      "data",
-      "price"
-    ],
-    [
-      "trade",
-      "data",
-      "qty"
-    ],
-    [
-      "trade",
-      "data",
-      "timestamp"
-    ]
-  ],
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "buyShare": {
+      "id": "buyShare",
+      "type": "arithmetic.Add",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -300.0,
+      "inputData": {
+        "b": {
+          "value": 1
+        }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
           "out": [
             {
-              "nodeId": "extract_price",
-              "portName": "data"
-            },
-            {
-              "nodeId": "extract_qty",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "extract_price": {
-      "id": "extract_price",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "price"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trade_notional",
+              "nodeId": "buyIndicator",
               "portName": "a"
-            },
-            {
-              "nodeId": "returns",
-              "portName": "value"
-            },
-            {
-              "nodeId": "sink_price",
-              "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_price": {
-      "id": "sink_price",
-      "type": "sink",
+    "buyIndicator": {
+      "id": "buyIndicator",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -300.0,
       "inputData": {
-        "metric": {
-          "string": "price"
+        "b": {
+          "value": 2
         }
       },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_price",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "extract_qty": {
-      "id": "extract_qty",
-      "type": "data.Extract",
-      "inputData": {
-        "path": {
-          "string": "qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "trade_notional",
-              "portName": "b"
-            },
-            {
-              "nodeId": "qty_zscore",
-              "portName": "value"
-            },
-            {
-              "nodeId": "qty_mean",
-              "portName": "value"
-            },
-            {
-              "nodeId": "sink_qty",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_qty": {
-      "id": "sink_qty",
-      "type": "sink",
-      "inputData": {
-        "metric": {
-          "string": "qty"
-        }
-      },
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {}
-      }
-    },
-    "trade_notional": {
-      "id": "trade_notional",
-      "type": "arithmetic.Multiply",
       "connections": {
         "inputs": {
           "a": [
             {
-              "nodeId": "extract_price",
+              "nodeId": "buyShare",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buyQuantity",
+              "portName": "b"
+            },
+            {
+              "nodeId": "buyTradeNotional",
+              "portName": "b"
+            },
+            {
+              "nodeId": "trade_count:buy",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sellShare": {
+      "id": "sellShare",
+      "type": "arithmetic.Subtract",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": -100.0,
+      "inputData": {
+        "a": {
+          "value": 1
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sellIndicator",
+              "portName": "a"
+            }
+          ]
+        }
+      }
+    },
+    "sellIndicator": {
+      "id": "sellIndicator",
+      "type": "arithmetic.Divide",
+      "width": 280,
+      "height": 172,
+      "x": -600.0,
+      "y": -100.0,
+      "inputData": {
+        "b": {
+          "value": 2
+        }
+      },
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "sellShare",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "sellQuantity",
+              "portName": "b"
+            },
+            {
+              "nodeId": "sellTradeNotional",
+              "portName": "b"
+            },
+            {
+              "nodeId": "trade_count:sell",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "tradeNotional": {
+      "id": "tradeNotional",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -900.0,
+      "y": 120.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "buyTradeNotional",
+              "portName": "a"
+            },
+            {
+              "nodeId": "sellTradeNotional",
+              "portName": "a"
+            },
+            {
+              "nodeId": "signedNotional",
+              "portName": "a"
+            },
+            {
+              "nodeId": "gross_notional",
+              "portName": "value"
+            },
+            {
+              "nodeId": "mean_trade_notional",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "buyQuantity": {
+      "id": "buyQuantity",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": -300.0,
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "buyIndicator",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "executed_quantity:buy",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sellQuantity": {
+      "id": "sellQuantity",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": -100.0,
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "sellIndicator",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "executed_quantity:sell",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "signedQuantity": {
+      "id": "signedQuantity",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 80.0,
+      "connections": {
+        "inputs": {},
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_executed_quantity",
+              "portName": "value"
+            },
+            {
+              "nodeId": "cumulative_volume_delta",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "buyTradeNotional": {
+      "id": "buyTradeNotional",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 260.0,
+      "connections": {
+        "inputs": {
+          "b": [
+            {
+              "nodeId": "buyIndicator",
               "portName": "out"
             }
           ],
+          "a": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "aggressive_notional:buy",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "sellTradeNotional": {
+      "id": "sellTradeNotional",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 440.0,
+      "connections": {
+        "inputs": {
           "b": [
             {
-              "nodeId": "extract_qty",
+              "nodeId": "sellIndicator",
+              "portName": "out"
+            }
+          ],
+          "a": [
+            {
+              "nodeId": "tradeNotional",
               "portName": "out"
             }
           ]
@@ -184,34 +295,77 @@
         "outputs": {
           "out": [
             {
-              "nodeId": "sink_notional",
+              "nodeId": "aggressive_notional:sell",
+              "portName": "value"
+            }
+          ]
+        }
+      }
+    },
+    "signedNotional": {
+      "id": "signedNotional",
+      "type": "arithmetic.Multiply",
+      "width": 280,
+      "height": 172,
+      "x": -300.0,
+      "y": 620.0,
+      "connections": {
+        "inputs": {
+          "a": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {
+          "out": [
+            {
+              "nodeId": "net_notional",
               "portName": "value"
             },
             {
-              "nodeId": "notional_zscore",
-              "portName": "value"
-            },
-            {
-              "nodeId": "notional_mean",
+              "nodeId": "cumulative_notional_delta",
               "portName": "value"
             }
           ]
         }
       }
     },
-    "sink_notional": {
-      "id": "sink_notional",
-      "type": "sink",
+    "trade_count": {
+      "id": "trade_count",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -400.0,
       "inputData": {
-        "metric": {
-          "string": "notional"
+        "operator": {
+          "value": "count"
+        }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
+      }
+    },
+    "trade_count:buy": {
+      "id": "trade_count:buy",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -260.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "trade_notional",
+              "nodeId": "buyIndicator",
               "portName": "out"
             }
           ]
@@ -219,41 +373,23 @@
         "outputs": {}
       }
     },
-    "returns": {
-      "id": "returns",
-      "type": "temporal.LogReturns",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_price",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_returns",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_returns": {
-      "id": "sink_returns",
-      "type": "sink",
+    "trade_count:sell": {
+      "id": "trade_count:sell",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": -120.0,
       "inputData": {
-        "metric": {
-          "string": "returns"
+        "operator": {
+          "value": "sum"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "returns",
+              "nodeId": "sellIndicator",
               "portName": "out"
             }
           ]
@@ -261,41 +397,23 @@
         "outputs": {}
       }
     },
-    "qty_zscore": {
-      "id": "qty_zscore",
-      "type": "statistic.ZScore",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_qty_zscore",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_qty_zscore": {
-      "id": "sink_qty_zscore",
-      "type": "sink",
+    "executed_quantity:buy": {
+      "id": "executed_quantity:buy",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 20.0,
       "inputData": {
-        "metric": {
-          "string": "qty_zscore"
+        "operator": {
+          "value": "sum"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "qty_zscore",
+              "nodeId": "buyQuantity",
               "portName": "out"
             }
           ]
@@ -303,41 +421,23 @@
         "outputs": {}
       }
     },
-    "qty_mean": {
-      "id": "qty_mean",
-      "type": "statistic.Mean",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "extract_qty",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_qty_mean",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_qty_mean": {
-      "id": "sink_qty_mean",
-      "type": "sink",
+    "executed_quantity:sell": {
+      "id": "executed_quantity:sell",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 160.0,
       "inputData": {
-        "metric": {
-          "string": "qty_mean"
+        "operator": {
+          "value": "sum"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "qty_mean",
+              "nodeId": "sellQuantity",
               "portName": "out"
             }
           ]
@@ -345,41 +445,40 @@
         "outputs": {}
       }
     },
-    "notional_zscore": {
-      "id": "notional_zscore",
-      "type": "statistic.ZScore",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trade_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_notional_zscore",
-              "portName": "value"
-            }
-          ]
+    "gross_executed_quantity": {
+      "id": "gross_executed_quantity",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 300.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
         }
+      },
+      "connections": {
+        "inputs": {},
+        "outputs": {}
       }
     },
-    "sink_notional_zscore": {
-      "id": "sink_notional_zscore",
-      "type": "sink",
+    "net_executed_quantity": {
+      "id": "net_executed_quantity",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 440.0,
       "inputData": {
-        "metric": {
-          "string": "notional_zscore"
+        "operator": {
+          "value": "sum"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "notional_zscore",
+              "nodeId": "signedQuantity",
               "portName": "out"
             }
           ]
@@ -387,41 +486,167 @@
         "outputs": {}
       }
     },
-    "notional_mean": {
-      "id": "notional_mean",
-      "type": "statistic.Mean",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "trade_notional",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "sink_notional_mean",
-              "portName": "value"
-            }
-          ]
-        }
-      }
-    },
-    "sink_notional_mean": {
-      "id": "sink_notional_mean",
-      "type": "sink",
+    "aggressive_notional:buy": {
+      "id": "aggressive_notional:buy",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 580.0,
       "inputData": {
-        "metric": {
-          "string": "notional_mean"
+        "operator": {
+          "value": "sum"
         }
       },
       "connections": {
         "inputs": {
           "value": [
             {
-              "nodeId": "notional_mean",
+              "nodeId": "buyTradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "aggressive_notional:sell": {
+      "id": "aggressive_notional:sell",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 720.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "sellTradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "gross_notional": {
+      "id": "gross_notional",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 860.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "net_notional": {
+      "id": "net_notional",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 1000.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signedNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "mean_trade_notional": {
+      "id": "mean_trade_notional",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 1140.0,
+      "inputData": {
+        "operator": {
+          "value": "mean"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "tradeNotional",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "cumulative_volume_delta": {
+      "id": "cumulative_volume_delta",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 1280.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signedQuantity",
+              "portName": "out"
+            }
+          ]
+        },
+        "outputs": {}
+      }
+    },
+    "cumulative_notional_delta": {
+      "id": "cumulative_notional_delta",
+      "type": "data.Reduce",
+      "width": 280,
+      "height": 172,
+      "x": 200.0,
+      "y": 1420.0,
+      "inputData": {
+        "operator": {
+          "value": "sum"
+        }
+      },
+      "connections": {
+        "inputs": {
+          "value": [
+            {
+              "nodeId": "signedNotional",
               "portName": "out"
             }
           ]
