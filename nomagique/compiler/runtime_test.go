@@ -154,7 +154,7 @@ func TestRuntimeConcurrentQuiescentBarrier(t *testing.T) {
 
 		// Recompile repeatedly across barrier
 		for i := 0; i < 20; i++ {
-			recompJSON := []byte(fmt.Sprintf(`{
+			recompJSON := fmt.Appendf(nil, `{
 				"nodes": {
 					"n1": {
 						"id": "n1",
@@ -165,7 +165,7 @@ func TestRuntimeConcurrentQuiescentBarrier(t *testing.T) {
 						}
 					}
 				}
-			}`, i, i))
+			}`, i, i)
 
 			prog, err := rt.RecompileJSON(ctx, recompJSON)
 			So(err, ShouldBeNil)

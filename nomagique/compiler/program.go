@@ -195,7 +195,7 @@ func (p *Program) Execute(
 	// 1. Initialize per-node argument structs
 	for i := 0; i < nodeCount; i++ {
 		node := &p.Nodes[i]
-		if node.Write.ParamsSize.DataSize > 0 || node.Write.ParamsSize.PointerCount > 0 {
+		if node.Client.IsValid() || node.Write.ParamsSize.DataSize > 0 || node.Write.ParamsSize.PointerCount > 0 {
 			_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 			if err != nil {
 				return errnie.Error(errnie.Err(errnie.Internal, "failed to alloc evaluation message", err))

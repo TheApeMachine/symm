@@ -111,6 +111,7 @@ func DefaultRegistry() *Registry {
 		temporal.RegisterSchema(reg)
 		transport.RegisterSchema(reg)
 		ui.RegisterSchema(reg)
+		RegisterSchema(reg)
 
 		r := NewRegistry()
 

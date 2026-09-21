@@ -243,6 +243,9 @@ func CompileCopier(fromField FieldInfo, toField FieldInfo) (Copier, error) {
 	toOffset := toField.Offset
 
 	switch which {
+	case schema.Type_Which_void:
+		return nil, nil
+
 	case schema.Type_Which_bool:
 		fromBit := capnp.BitOffset(fromOffset)
 		toBit := capnp.BitOffset(toOffset)

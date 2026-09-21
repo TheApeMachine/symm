@@ -12,7 +12,7 @@ import (
 
 func TestExecute(t *testing.T) {
 	Convey("Given the system pipeline definition", t, func() {
-		pipeline, err := compiler.CompileFile("../signal/definitions/system.json", nil, definitions.Default())
+		pipeline, err := compiler.CompileFile("../manifest/system.json", nil, definitions.Default())
 		So(err, ShouldBeNil)
 		So(pipeline, ShouldNotBeNil)
 

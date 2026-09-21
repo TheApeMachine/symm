@@ -275,5 +275,108 @@ func TestCompileFlume(t *testing.T) {
 			_, target2Ran := p.Result("target2")
 			So(target2Ran, ShouldBeFalse)
 		})
+
+		Convey("Test I: Compiled Flume graph with real Cap'n Proto union primitive only activates selected route", func() {
+			ctx := context.Background()
+
+			runScenario := func(chooseYes bool) (targetYesRan bool, targetNoRan bool) {
+				reg := compiler.DefaultRegistry()
+				branchServer := compiler.NewTestUnionServer(chooseYes)
+				reg.Register("test.Branch", compiler.Factory{
+					InterfaceID: compiler.TestUnion_TypeID,
+					New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
+						return capnp.Client(compiler.TestUnion_ServerToClient(branchServer)), nil
+					},
+				})
+				voidSink := compiler.NewTestSinkVoidServer()
+				reg.Register("test.SinkVoid", compiler.Factory{
+					InterfaceID: compiler.TestSinkVoid_TypeID,
+					New: func(ctx context.Context, cfg []byte) (capnp.Client, error) {
+						return capnp.Client(compiler.TestSinkVoid_ServerToClient(voidSink)), nil
+					},
+				})
+
+				flumeJSON := `{
+					"nodes": {
+						"src": {
+							"id": "src",
+							"type": "test.Float64Source",
+							"connections": {
+								"outputs": {
+									"out": [{"nodeId": "branch", "portName": "in"}]
+								}
+							}
+						},
+						"branch": {
+							"id": "branch",
+							"type": "test.Branch",
+							"connections": {
+								"inputs": {
+									"in": [{"nodeId": "src", "portName": "out"}]
+								},
+								"outputs": {
+									"yes": [{"nodeId": "target_yes", "portName": "a"}],
+									"no": [{"nodeId": "target_no", "portName": "in"}]
+								}
+							}
+						},
+						"target_yes": {
+							"id": "target_yes",
+							"type": "arithmetic.Add",
+							"inputData": {
+								"b": {"float": 1.0}
+							},
+							"connections": {
+								"inputs": {
+									"a": [{"nodeId": "branch", "portName": "yes"}]
+								}
+							}
+						},
+						"target_no": {
+							"id": "target_no",
+							"type": "test.SinkVoid",
+							"connections": {
+								"inputs": {
+									"in": [{"nodeId": "branch", "portName": "no"}]
+								}
+							}
+						}
+					}
+				}`
+
+				var graph compiler.Graph
+				unmarshalErr := json.Unmarshal([]byte(flumeJSON), &graph)
+				So(unmarshalErr, ShouldBeNil)
+
+				prog, compErr := compiler.CompileWithPrevious(graph, reg, nil, nil)
+				So(compErr, ShouldBeNil)
+				So(prog, ShouldNotBeNil)
+
+				_, seg, msgErr := capnp.NewMessage(capnp.SingleSegment(nil))
+				So(msgErr, ShouldBeNil)
+				srcStruct, stErr := capnp.NewRootStruct(seg, capnp.ObjectSize{DataSize: 8})
+				So(stErr, ShouldBeNil)
+				srcStruct.SetUint64(0, math.Float64bits(42.0))
+
+				execErr := prog.Execute(ctx, map[compiler.NodeID]capnp.Struct{
+					prog.NodeMap["src"]: srcStruct,
+				})
+				So(execErr, ShouldBeNil)
+
+				_, yesOk := prog.Result("target_yes")
+				_, noOk := prog.Result("target_no")
+				return yesOk, noOk
+			}
+
+			// When branch selects 'yes': only target_yes executes
+			yesRan, noRan := runScenario(true)
+			So(yesRan, ShouldBeTrue)
+			So(noRan, ShouldBeFalse)
+
+			// When branch selects 'no': only target_no executes
+			yesRan2, noRan2 := runScenario(false)
+			So(yesRan2, ShouldBeFalse)
+			So(noRan2, ShouldBeTrue)
+		})
 	})
 }
