@@ -21,7 +21,7 @@ func (c Pace) Write(ctx context.Context, params func(Pace_write_Params) error) e
 		Method: capnp.Method{
 			InterfaceID:   0xa609f38f68ba2a7b,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/pace.capnp:Pace",
+			InterfaceName: "transport/pace.capnp:Pace",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Pace) Done(ctx context.Context, params func(Pace_done_Params) error) (Pa
 		Method: capnp.Method{
 			InterfaceID:   0xa609f38f68ba2a7b,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/pace.capnp:Pace",
+			InterfaceName: "transport/pace.capnp:Pace",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Pace_Methods(methods []server.Method, s Pace_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xa609f38f68ba2a7b,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/pace.capnp:Pace",
+			InterfaceName: "transport/pace.capnp:Pace",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Pace_Methods(methods []server.Method, s Pace_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xa609f38f68ba2a7b,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/pace.capnp:Pace",
+			InterfaceName: "transport/pace.capnp:Pace",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

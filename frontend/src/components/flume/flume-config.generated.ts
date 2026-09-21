@@ -1728,6 +1728,26 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		],
 	});
 	config.addNodeType({
+		type: "transport.Disruptor",
+		label: "Disruptor",
+		category: "transport",
+		initialWidth: 340,
+		inputs: (ports) => [
+			ports["[]byte"]({ name: "data", label: "data" }),
+			ports.int64({ name: "capacity", label: "capacity" }),
+			ports.int64({ name: "writers", label: "writers" }),
+			ports.bool({ name: "admit", label: "admit" }),
+		],
+		outputs: (ports) => [
+			ports["[]byte"]({ name: "stage1", label: "stage1" }),
+			ports["[]byte"]({ name: "stage2", label: "stage2" }),
+			ports["[]byte"]({ name: "stage3", label: "stage3" }),
+			ports["[]byte"]({ name: "stage4", label: "stage4" }),
+			ports.int64({ name: "backlog", label: "backlog" }),
+			ports.Status({ name: "status", label: "status" }),
+		],
+	});
+	config.addNodeType({
 		type: "transport.Fan",
 		label: "Fan",
 		category: "transport",

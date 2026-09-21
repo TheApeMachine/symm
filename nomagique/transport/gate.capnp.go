@@ -21,7 +21,7 @@ func (c Gate) Write(ctx context.Context, params func(Gate_write_Params) error) e
 		Method: capnp.Method{
 			InterfaceID:   0x9c279b3ef22d2982,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/gate.capnp:Gate",
+			InterfaceName: "transport/gate.capnp:Gate",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Gate) Done(ctx context.Context, params func(Gate_done_Params) error) (Ga
 		Method: capnp.Method{
 			InterfaceID:   0x9c279b3ef22d2982,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/gate.capnp:Gate",
+			InterfaceName: "transport/gate.capnp:Gate",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Gate_Methods(methods []server.Method, s Gate_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x9c279b3ef22d2982,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/gate.capnp:Gate",
+			InterfaceName: "transport/gate.capnp:Gate",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Gate_Methods(methods []server.Method, s Gate_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0x9c279b3ef22d2982,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/gate.capnp:Gate",
+			InterfaceName: "transport/gate.capnp:Gate",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

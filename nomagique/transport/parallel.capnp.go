@@ -21,7 +21,7 @@ func (c Parallel) Write(ctx context.Context, params func(Parallel_write_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0x951c5be10a03b055,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/parallel.capnp:Parallel",
+			InterfaceName: "transport/parallel.capnp:Parallel",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Parallel) Done(ctx context.Context, params func(Parallel_done_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0x951c5be10a03b055,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/parallel.capnp:Parallel",
+			InterfaceName: "transport/parallel.capnp:Parallel",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Parallel_Methods(methods []server.Method, s Parallel_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0x951c5be10a03b055,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/parallel.capnp:Parallel",
+			InterfaceName: "transport/parallel.capnp:Parallel",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Parallel_Methods(methods []server.Method, s Parallel_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0x951c5be10a03b055,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/parallel.capnp:Parallel",
+			InterfaceName: "transport/parallel.capnp:Parallel",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

@@ -21,7 +21,7 @@ func (c Fork) Write(ctx context.Context, params func(Fork_write_Params) error) e
 		Method: capnp.Method{
 			InterfaceID:   0xdc4ea46ab497f513,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/fork.capnp:Fork",
+			InterfaceName: "transport/fork.capnp:Fork",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Fork) Done(ctx context.Context, params func(Fork_done_Params) error) (Fo
 		Method: capnp.Method{
 			InterfaceID:   0xdc4ea46ab497f513,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/fork.capnp:Fork",
+			InterfaceName: "transport/fork.capnp:Fork",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Fork_Methods(methods []server.Method, s Fork_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xdc4ea46ab497f513,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/fork.capnp:Fork",
+			InterfaceName: "transport/fork.capnp:Fork",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Fork_Methods(methods []server.Method, s Fork_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xdc4ea46ab497f513,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/fork.capnp:Fork",
+			InterfaceName: "transport/fork.capnp:Fork",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

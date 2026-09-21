@@ -21,7 +21,7 @@ func (c Discard) Write(ctx context.Context, params func(Discard_write_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xa62d175a6f252e42,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/discard.capnp:Discard",
+			InterfaceName: "transport/discard.capnp:Discard",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Discard) Done(ctx context.Context, params func(Discard_done_Params) erro
 		Method: capnp.Method{
 			InterfaceID:   0xa62d175a6f252e42,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/discard.capnp:Discard",
+			InterfaceName: "transport/discard.capnp:Discard",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Discard_Methods(methods []server.Method, s Discard_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xa62d175a6f252e42,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/discard.capnp:Discard",
+			InterfaceName: "transport/discard.capnp:Discard",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Discard_Methods(methods []server.Method, s Discard_Server) []server.Method 
 		Method: capnp.Method{
 			InterfaceID:   0xa62d175a6f252e42,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/discard.capnp:Discard",
+			InterfaceName: "transport/discard.capnp:Discard",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

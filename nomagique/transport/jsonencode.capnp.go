@@ -21,7 +21,7 @@ func (c JSONEncode) Write(ctx context.Context, params func(JSONEncode_write_Para
 		Method: capnp.Method{
 			InterfaceID:   0xa4e92a91b6736d0e,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/jsonencode.capnp:JSONEncode",
+			InterfaceName: "transport/jsonencode.capnp:JSONEncode",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c JSONEncode) Done(ctx context.Context, params func(JSONEncode_done_Params
 		Method: capnp.Method{
 			InterfaceID:   0xa4e92a91b6736d0e,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/jsonencode.capnp:JSONEncode",
+			InterfaceName: "transport/jsonencode.capnp:JSONEncode",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func JSONEncode_Methods(methods []server.Method, s JSONEncode_Server) []server.M
 		Method: capnp.Method{
 			InterfaceID:   0xa4e92a91b6736d0e,
 			MethodID:      0,
-			InterfaceName: "nomagique/transport/jsonencode.capnp:JSONEncode",
+			InterfaceName: "transport/jsonencode.capnp:JSONEncode",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func JSONEncode_Methods(methods []server.Method, s JSONEncode_Server) []server.M
 		Method: capnp.Method{
 			InterfaceID:   0xa4e92a91b6736d0e,
 			MethodID:      1,
-			InterfaceName: "nomagique/transport/jsonencode.capnp:JSONEncode",
+			InterfaceName: "transport/jsonencode.capnp:JSONEncode",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
