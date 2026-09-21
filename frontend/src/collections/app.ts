@@ -90,4 +90,8 @@ export const evictStaleSymbols = () => {
 	symbolsAtom.set(Array.from(current));
 };
 
-export const updateEquity = (cash: string, unrealized: string, equity: string) => { cashAtom.set(cash); unrealizedAtom.set(unrealized); equityAtom.set(equity); };
+export const updateEquity = (cash: string, unrealized: string, equity: string) => {
+	if (cash !== "") cashAtom.set(cash);
+	if (unrealized !== "") unrealizedAtom.set(unrealized);
+	if (equity !== "") equityAtom.set(equity);
+};

@@ -31,7 +31,8 @@ func SetDefaultDefinitionRepository(repo DefinitionRepository) {
 
 func getDefaultDefinitionRepository() DefinitionRepository {
 	defaultDefRepoMu.RLock()
-	defaultDefRepoMu.RUnlock()
+	defer defaultDefRepoMu.RUnlock()
+
 	return defaultDefRepo
 }
 
@@ -264,6 +265,26 @@ func extractFieldValue(st capnp.Struct, field CompiledField) any {
 			return ""
 		}
 		return p.Text()
+	case schema.Type_Which_data:
+		p, err := st.Ptr(uint16(field.Offset))
+		if err != nil || !p.IsValid() {
+			return nil
+		}
+		return p.Data()
+	case schema.Type_Which_structType:
+		p, err := st.Ptr(uint16(field.Offset))
+		if err != nil || !p.IsValid() {
+			return nil
+		}
+		return "<struct>"
+	case schema.Type_Which_list:
+		p, err := st.Ptr(uint16(field.Offset))
+		if err != nil || !p.IsValid() {
+			return nil
+		}
+		return fmt.Sprintf("<list:%d>", p.List().Len())
+	case schema.Type_Which_enum:
+		return st.Uint16(capnp.DataOffset(field.Offset * 2))
 	case schema.Type_Which_void:
 		return "void"
 	default:

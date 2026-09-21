@@ -15,7 +15,7 @@ import {
 	Typography,
 } from "#/components/ui";
 import { cn, memoizedQuery, renderValue } from "#/lib/utils";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { WireMeasurement } from "#/types/capnp/measurement";
 
 const KernelRow = ({
 	source,
@@ -40,12 +40,12 @@ const KernelRow = ({
 		const barEl = memoizedQuery(btn, '[data-k="bar"]') as HTMLElement;
 		const valueEl = memoizedQuery(btn, '[data-k="value"]') as HTMLElement;
 
-		const cursor = new RingCursor<MeasurementT>();
+		const cursor = new RingCursor<WireMeasurement>();
 		const values: number[] = [];
-		let observedRing: RingBuffer<MeasurementT> | undefined;
+		let observedRing: RingBuffer<WireMeasurement> | undefined;
 		let generation = -1;
 
-		const update = (ring: RingBuffer<MeasurementT>) => {
+		const update = (ring: RingBuffer<WireMeasurement>) => {
 			if (observedRing !== ring || generation !== ring.generation) {
 				values.length = 0;
 				observedRing = ring;

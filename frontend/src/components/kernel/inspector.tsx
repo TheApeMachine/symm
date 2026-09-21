@@ -18,9 +18,6 @@ import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
 import { Typography } from "#/components/ui/typography";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
-
-const metricObj = new Metric();
 
 const isResonance = (source: string) => source === "resonance";
 
@@ -110,21 +107,6 @@ const metricValues = (
 		return out;
 	}
 
-	if (typeof row.metricsLength === "function") {
-		for (let j = 0; j < row.metricsLength(); j++) {
-			const m = row.metrics(j, metricObj);
-			if (!m) continue;
-
-			const name = m.name();
-			if (!name || !names.includes(name)) continue;
-
-			out[name] = {
-				raw: m.raw(),
-				normalized: m.normalized(),
-			};
-		}
-	}
-
 	return out;
 };
 
@@ -138,15 +120,13 @@ export const KernelInspector = () => {
 	const resonance = active && isResonance(source);
 
 	const resonanceReadings = useSelector(signals.resonance, (state) => state);
-	// The metric grid holds each metric's most recent value across the whole
-	// buffer, not just the latest row: backend rows are sparse, so metric X may
-	// be absent from the newest update while still carrying a real, current
-	// value in a slightly older row. Reading the latest row alone would flicker
-	// X to a dash and back whenever a row without it lands.
-	const measurementState = useSelector(
+	const rawState = useSelector(
 		(signals[active && !resonance ? source : "" as keyof typeof signals] || signals.cvd),
 		(state) => state,
 	);
+	const measurementState = (rawState as any)?.getBufferLength
+		? rawState
+		: (rawState as any)?.[focusSymbol] ?? (rawState as any)?.[""] ?? Object.values(rawState || {})[0] ?? null;
 
 	if (!active) {
 		return null;

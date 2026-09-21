@@ -5,7 +5,7 @@ import { focusAtom, RingBuffer, signals } from "#/collections/app";
 import { LearningDevelopmentT } from "#/providers/telemetry/telemetry/learning-development";
 import { LearningQuantityT } from "#/providers/telemetry/telemetry/learning-quantity";
 import { LearningRegionT } from "#/providers/telemetry/telemetry/learning-region";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { WireMeasurement } from "#/types/capnp/measurement";
 import { LearningDashboard } from "./dashboard";
 
 afterEach(() => {
@@ -16,9 +16,21 @@ afterEach(() => {
 describe("LearningDashboard", () => {
 	it("renders received coordinates and basin IDs instead of grouping sources", () => {
 		focusAtom.set("BTC/USD");
-		const measurement = new MeasurementT();
-		measurement.source = "training";
-		measurement.symbol = "BTC/USD";
+		const measurement: any = {
+			id: "meas-learn-1",
+			source: "training",
+			symbol: "BTC/USD",
+			tick: 1n,
+			at: 1000n,
+			timestamp: 1000n,
+			entity: 1,
+			maturity: 0.9,
+			snr: 1.0,
+			separation: 0,
+			metrics: [],
+			metadata: {},
+			provenance: [],
+		};
 		measurement.grid = new LearningDevelopmentT();
 		measurement.grid.symbol = "BTC/USD";
 		const left = new LearningQuantityT();
@@ -45,7 +57,7 @@ describe("LearningDashboard", () => {
 		Object.assign(basin, { id: 101n, strength: 3, authority: 0.8, members: 2 });
 		measurement.grid.quantities = [left, right];
 		measurement.grid.regions = [basin];
-		const ring = new RingBuffer<MeasurementT>(4);
+		const ring = new RingBuffer<WireMeasurement>(4);
 		ring.add(measurement);
 		signals.training.setState(() => ({ "BTC/USD": ring }));
 		const { container } = render(<LearningDashboard />);

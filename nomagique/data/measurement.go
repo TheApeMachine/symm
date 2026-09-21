@@ -2,9 +2,15 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"maps"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
+
+	capnp "capnproto.org/go/capnp/v3"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -292,3 +298,382 @@ func NewFinalizer[Value any]() Finalizer[Value] {
 		return measurement
 	}
 }
+
+/*
+MarshalCapnp serializes the measurement into authoritative Cap'n Proto WireMeasurement binary framing.
+*/
+func (measurement *Measurement[T]) MarshalCapnp() ([]byte, error) {
+	if measurement == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"data.measurement: cannot marshal nil measurement",
+			nil,
+		))
+	}
+
+	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"data.measurement: failed to allocate capnp message",
+			err,
+		))
+	}
+
+	wire, err := NewRootWireMeasurement(seg)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"data.measurement: failed to allocate root wire measurement",
+			err,
+		))
+	}
+
+	idStr := fmt.Sprint(measurement.ID)
+	_ = wire.SetId([]byte(idStr))
+	_ = wire.SetLabel([]byte(measurement.Label))
+	wire.SetTick(measurement.SeqIdx)
+	wire.SetTimestamp(measurement.Timestamp)
+
+	if measurement.At.UnixNano() > 0 {
+		wire.SetEpoch(measurement.At.UnixNano())
+	}
+
+	wire.SetSource(parseSourceType(measurement.Source))
+	wire.SetSnr(measurement.SNR)
+	wire.SetMaturity(measurement.Maturity)
+
+	if len(measurement.Metrics) > 0 {
+		metricsList, err := wire.NewMetrics(int32(len(measurement.Metrics)))
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"data.measurement: failed to allocate metrics list",
+				err,
+			))
+		}
+
+		keys := make([]string, 0, len(measurement.Metrics))
+		for metricKey := range measurement.Metrics {
+			keys = append(keys, metricKey)
+		}
+		sort.Strings(keys)
+
+		for index, metricKey := range keys {
+			metricItem := measurement.Metrics[metricKey]
+			item := metricsList.At(index)
+			item.SetRaw(toFloat64(metricItem.Raw))
+
+			if metricItem.Normalized != nil {
+				item.SetNormalized(toFloat64(*metricItem.Normalized))
+			}
+
+			if metricItem.Standardized != nil {
+				item.SetStandardized(toFloat64(*metricItem.Standardized))
+			}
+		}
+	}
+
+	if len(measurement.Metadata) > 0 {
+		wireMap, err := wire.NewMetadata()
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"data.measurement: failed to allocate metadata wire map",
+				err,
+			))
+		}
+
+		entriesList, err := wireMap.NewEntries(int32(len(measurement.Metadata)))
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"data.measurement: failed to allocate metadata entries list",
+				err,
+			))
+		}
+
+		metaKeys := make([]string, 0, len(measurement.Metadata))
+		for metaKey := range measurement.Metadata {
+			metaKeys = append(metaKeys, metaKey)
+		}
+		sort.Strings(metaKeys)
+
+		for index, metaKey := range metaKeys {
+			entry := entriesList.At(index)
+			textPtr, err := capnp.NewText(seg, metaKey)
+
+			if err == nil {
+				_ = entry.SetKey(textPtr.ToPtr())
+			}
+
+			valStr := measurement.Metadata[metaKey]
+			metadataVal, err := NewMetadataValue(seg)
+
+			if err == nil {
+				_ = metadataVal.SetText(valStr)
+				_ = entry.SetValue(metadataVal.ToPtr())
+			}
+		}
+	}
+
+	return msg.Marshal()
+}
+
+/*
+UnmarshalMeasurement decodes a Cap'n Proto WireMeasurement binary payload into an identified Measurement.
+*/
+func UnmarshalMeasurement(payload []byte) (*Measurement[string], error) {
+	if len(payload) == 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"data.measurement: empty payload",
+			nil,
+		))
+	}
+
+	msg, err := capnp.Unmarshal(payload)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"data.measurement: unmarshal capnp message failed",
+			err,
+		))
+	}
+
+	wire, err := ReadRootWireMeasurement(msg)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"data.measurement: read root wire measurement failed",
+			err,
+		))
+	}
+
+	idBytes, _ := wire.Id()
+	labelBytes, _ := wire.Label()
+
+	m := &Measurement[string]{
+		ID:         string(idBytes),
+		Label:      string(labelBytes),
+		Source:     formatSourceType(wire.Source()),
+		SeqIdx:     wire.Tick(),
+		Timestamp:  wire.Timestamp(),
+		Maturity:   wire.Maturity(),
+		SNR:        wire.Snr(),
+		SNRDefined: wire.Snr() > 0,
+		Metrics:    make(map[string]Metric[string]),
+		Metadata:   make(map[string]string),
+		Provenance: make(map[string]string),
+	}
+
+	if wire.Epoch() > 0 {
+		m.At = time.Unix(0, wire.Epoch())
+	}
+
+	metricsList, err := wire.Metrics()
+
+	if err == nil && metricsList.Len() > 0 {
+		count := metricsList.Len()
+
+		for index := 0; index < count; index++ {
+			item := metricsList.At(index)
+			key := fmt.Sprintf("metric_%d", index)
+			rawVal := item.Raw()
+			normVal := item.Normalized()
+			stdVal := item.Standardized()
+
+			m.Metrics[key] = Metric[string]{
+				Raw: fmt.Sprintf("%f", rawVal),
+			}
+
+			if normVal != 0 {
+				normStr := fmt.Sprintf("%f", normVal)
+				m.Metrics[key] = Metric[string]{
+					Raw:        fmt.Sprintf("%f", rawVal),
+					Normalized: &normStr,
+				}
+			}
+
+			if stdVal != 0 {
+				stdStr := fmt.Sprintf("%f", stdVal)
+				curr := m.Metrics[key]
+				curr.Standardized = &stdStr
+				m.Metrics[key] = curr
+			}
+		}
+	}
+
+	wireMap, err := wire.Metadata()
+
+	if err == nil && wireMap.IsValid() {
+		entries, err := wireMap.Entries()
+
+		if err == nil && entries.Len() > 0 {
+			count := entries.Len()
+
+			for index := 0; index < count; index++ {
+				entry := entries.At(index)
+				keyPtr, err := entry.Key()
+
+				if err != nil || !keyPtr.IsValid() {
+					continue
+				}
+
+				keyStr := keyPtr.Text()
+				valPtr, err := entry.Value()
+
+				if err != nil || !valPtr.IsValid() {
+					continue
+				}
+
+				valStruct := MetadataValue(valPtr.Struct())
+				which := valStruct.Which()
+
+				switch which {
+				case MetadataValue_Which_text:
+					textVal, err := valStruct.Text()
+
+					if err == nil {
+						m.Metadata[keyStr] = textVal
+					}
+				case MetadataValue_Which_int:
+					m.Metadata[keyStr] = strconv.FormatInt(valStruct.Int(), 10)
+				case MetadataValue_Which_float:
+					m.Metadata[keyStr] = strconv.FormatFloat(valStruct.Float(), 'f', -1, 64)
+				case MetadataValue_Which_bool:
+					m.Metadata[keyStr] = strconv.FormatBool(valStruct.Bool())
+				case MetadataValue_Which_id:
+					dataVal, err := valStruct.Id()
+
+					if err == nil {
+						m.Metadata[keyStr] = string(dataVal)
+					}
+				}
+			}
+		}
+	}
+
+	return m, nil
+}
+
+func parseSourceType(source string) WireMeasurement_SourceType {
+	switch strings.ToLower(source) {
+	case "public":
+		return WireMeasurement_SourceType_public
+	case "private":
+		return WireMeasurement_SourceType_private
+	case "level3":
+		return WireMeasurement_SourceType_level3
+	case "correlation":
+		return WireMeasurement_SourceType_correlation
+	case "csv":
+		return WireMeasurement_SourceType_csv
+	case "depthflow":
+		return WireMeasurement_SourceType_depthflow
+	case "derivatives":
+		return WireMeasurement_SourceType_derivatives
+	case "hawkes":
+		return WireMeasurement_SourceType_hawkes
+	case "leadlag":
+		return WireMeasurement_SourceType_leadlag
+	case "liquidity":
+		return WireMeasurement_SourceType_liquidity
+	case "morphology":
+		return WireMeasurement_SourceType_morphology
+	case "pumpdump":
+		return WireMeasurement_SourceType_pumpdump
+	case "sentiment":
+		return WireMeasurement_SourceType_sentiment
+	case "toxicity":
+		return WireMeasurement_SourceType_toxicity
+	case "category":
+		return WireMeasurement_SourceType_category
+	case "cognition":
+		return WireMeasurement_SourceType_cognition
+	case "resonance":
+		return WireMeasurement_SourceType_resonance
+	case "manifold":
+		return WireMeasurement_SourceType_manifold
+	case "training":
+		return WireMeasurement_SourceType_training
+	default:
+		return WireMeasurement_SourceType_public
+	}
+}
+
+func formatSourceType(source WireMeasurement_SourceType) string {
+	switch source {
+	case WireMeasurement_SourceType_public:
+		return "public"
+	case WireMeasurement_SourceType_private:
+		return "private"
+	case WireMeasurement_SourceType_level3:
+		return "level3"
+	case WireMeasurement_SourceType_correlation:
+		return "correlation"
+	case WireMeasurement_SourceType_csv:
+		return "csv"
+	case WireMeasurement_SourceType_depthflow:
+		return "depthflow"
+	case WireMeasurement_SourceType_derivatives:
+		return "derivatives"
+	case WireMeasurement_SourceType_hawkes:
+		return "hawkes"
+	case WireMeasurement_SourceType_leadlag:
+		return "leadlag"
+	case WireMeasurement_SourceType_liquidity:
+		return "liquidity"
+	case WireMeasurement_SourceType_morphology:
+		return "morphology"
+	case WireMeasurement_SourceType_pumpdump:
+		return "pumpdump"
+	case WireMeasurement_SourceType_sentiment:
+		return "sentiment"
+	case WireMeasurement_SourceType_toxicity:
+		return "toxicity"
+	case WireMeasurement_SourceType_category:
+		return "category"
+	case WireMeasurement_SourceType_cognition:
+		return "cognition"
+	case WireMeasurement_SourceType_resonance:
+		return "resonance"
+	case WireMeasurement_SourceType_manifold:
+		return "manifold"
+	case WireMeasurement_SourceType_training:
+		return "training"
+	default:
+		return "public"
+	}
+}
+
+func toFloat64(val any) float64 {
+	switch number := val.(type) {
+	case float64:
+		return number
+	case float32:
+		return float64(number)
+	case int:
+		return float64(number)
+	case int64:
+		return float64(number)
+	case string:
+		parsed, err := strconv.ParseFloat(number, 64)
+
+		if err != nil {
+			return 0
+		}
+
+		return parsed
+	default:
+		return 0
+	}
+}
+

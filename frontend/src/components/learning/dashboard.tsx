@@ -6,7 +6,7 @@ import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { memoizedQuery, renderValue } from "#/lib/utils";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { WireMeasurement } from "#/types/capnp/measurement";
 import { basis, percent } from "./format";
 import { ForwardView } from "./forward-view";
 import { type HotRegion, type ImpulsePoint, ImpulseView } from "./impulse-view";
@@ -36,10 +36,10 @@ export const LearningDashboard = () => {
 		const root = containerRef.current;
 		if (!root) return;
 
-		const seen = new WeakSet<MeasurementT>();
-		const cursor = new RingCursor<MeasurementT>();
+		const seen = new WeakSet<WireMeasurement>();
+		const cursor = new RingCursor<WireMeasurement>();
 
-		const update = (ring: RingBuffer<MeasurementT>) => {
+		const update = (ring: RingBuffer<WireMeasurement>) => {
 			if (!ring || ring.isEmpty()) return;
 
 			cursor.read(ring, (measurement) => {
@@ -217,8 +217,8 @@ export const LearningDashboard = () => {
 		};
 
 		const getTrainingRing = (
-			records?: Record<string, RingBuffer<MeasurementT>>,
-		): RingBuffer<MeasurementT> | null => {
+			records?: Record<string, RingBuffer<WireMeasurement>>,
+		): RingBuffer<WireMeasurement> | null => {
 			if (!records) return null;
 			return (
 				records[focusSymbol] ??

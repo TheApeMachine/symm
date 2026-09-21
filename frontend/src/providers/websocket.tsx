@@ -1,6 +1,5 @@
 import { batch as storeBatch } from "@tanstack/react-store";
 import { useEffect } from "react";
-import { MessageReader } from "@naeemo/capnp";
 import {
 	evictStaleSymbols,
 	evictSymbol,
@@ -14,9 +13,10 @@ import {
 	updateClock,
 	updateEquity,
 } from "#/collections/app";
-
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
+import {
+	readWireMeasurement,
+	type WireMeasurement,
+} from "#/types/capnp/measurement";
 
 let globalWsWorker: Worker | null = null;
 
@@ -43,101 +43,9 @@ const defaultWsUrl = () => {
 	return `${protocol}//${host}:8765/ws`;
 };
 
-const SOURCE_TYPES = ['manifold', 'decision', 'strategy', 'equity', 'balance', 'stream'];
-
-function decodeWireMeasurement(buffer: ArrayBuffer): MeasurementT {
-	const reader = new MessageReader(buffer);
-	const root = reader.getRoot(7, 4); 
-
-	const idData = root.getData(0);
-	const id = new TextDecoder().decode(idData);
-
-	const symbolData = root.getData(1);
-	const symbol = new TextDecoder().decode(symbolData);
-
-	const tick = root.getInt64(8);
-	const at = root.getInt64(0);
-	const timestamp = root.getInt64(16);
-	const snr = root.getFloat64(32);
-	const maturity = root.getFloat64(40);
-
-	const sourceIdx = root.getUint16(26);
-	const source = SOURCE_TYPES[sourceIdx] || 'unknown';
-
-	// Parse metrics
-	const metrics: MetricT[] = [];
-	const metricsList = root.getList(2);
-	if (metricsList) {
-		const mCount = metricsList.length;
-		for (let i = 0; i < mCount; i++) {
-			const mStruct = metricsList.getStruct(i);
-			if (!mStruct) continue;
-			metrics.push(new MetricT(
-				null,
-				mStruct.getFloat64(0),
-				mStruct.getFloat64(8),
-				true,
-				null,
-			));
-		}
-	}
-
-	// Parse metadata map
-	const metadata: Record<string, string | number | boolean> = {};
-	const metadataStruct = root.getStruct(3);
-	if (metadataStruct) {
-		const entriesList = metadataStruct.getList(0);
-		if (entriesList) {
-			const eCount = entriesList.length;
-			for (let i = 0; i < eCount; i++) {
-				const entryStruct = entriesList.getStruct(i);
-				if (!entryStruct) continue;
-				
-				const keyData = entryStruct.getText(0);
-				const key = keyData || "";
-
-				const valueStruct = entryStruct.getStruct(1);
-				if (valueStruct) {
-					const tag = valueStruct.getUint16(0);
-					if (tag === 1) { // text
-						metadata[key] = valueStruct.getText(0) || "";
-					} else if (tag === 2) { // int
-						metadata[key] = Number(valueStruct.getInt64(8));
-					} else if (tag === 3) { // float
-						metadata[key] = valueStruct.getFloat64(8);
-					} else if (tag === 4) { // bool
-						metadata[key] = valueStruct.getUint8(8) !== 0;
-					}
-				}
-			}
-		}
-	}
-
-	return new MeasurementT(
-		id,
-		source,
-		symbol,
-		BigInt(tick),
-		null,
-		BigInt(at || timestamp),
-		BigInt(0),
-		BigInt(0),
-		BigInt(0),
-		BigInt(0),
-		maturity,
-		snr,
-		snr > 0,
-		metrics,
-		[],
-		[],
-		[],
-		null,
-	);
-}
-
-function dispatchMeasurement(row: MeasurementT) {
-	const symbolStr = (row.symbol as string) || "";
-	const source = (row.source as string) || "";
+function dispatchMeasurement(row: WireMeasurement) {
+	const symbolStr = row.symbol || "";
+	const source = row.source || "";
 	if (symbolStr && !symbolsAtom.get().includes(symbolStr)) {
 		symbolsAtom.set(Array.from(new Set([...symbolsAtom.get(), symbolStr])));
 	}
@@ -159,10 +67,11 @@ function dispatchMeasurement(row: MeasurementT) {
 	}
 
 	if (source === "decision" || source === "strategy") {
-		const meta = (row as any).metadata || {};
-		let action = String(meta["action"] || "wait");
-		let reason = String(meta["reason"] || "attractor transition basin");
-		let confidence = meta["confidence"] !== undefined ? Number(meta["confidence"]) : row.snr;
+		const meta = row.metadata || {};
+		const action = String(meta["action"] || "wait");
+		const reason = String(meta["reason"] || "attractor transition basin");
+		const confidence =
+			meta["confidence"] !== undefined ? Number(meta["confidence"]) : row.snr;
 
 		signals.strategy.setState(() => [
 			{
@@ -181,35 +90,36 @@ function dispatchMeasurement(row: MeasurementT) {
 	}
 
 	if (source === "equity" || source === "balance") {
-		const meta = (row as any).metadata || {};
-		let cashVal = String(meta["cash"] || "");
-		let unrealizedVal = String(meta["unrealized"] || "");
-		let equityVal = String(meta["equity"] || "");
+		const meta = row.metadata || {};
+		const cashVal = String(meta["cash"] || "");
+		const unrealizedVal = String(meta["unrealized"] || "");
+		const equityVal = String(meta["equity"] || "");
 		updateEquity(cashVal, unrealizedVal, equityVal);
 		return;
 	}
 
-	const sourceStr = (row.source as string) || "";
-	const signalStore = signals[sourceStr as keyof typeof signals];
+	const signalStore = signals[source as keyof typeof signals];
 	if (!signalStore) {
 		return;
 	}
 
-	let ring = signalStore.state[symbolStr as string];
+	let ring = signalStore.state[symbolStr];
 
 	if (!ring) {
-		ring = new RingBuffer<MeasurementT>(50);
-		signalStore.state[symbolStr as string] = ring;
+		ring = new RingBuffer<WireMeasurement>(50);
+		signalStore.state[symbolStr] = ring;
 	}
 
 	ring.add(row);
-	
+
 	if (source === "training") {
 		signalStore.state[""] = ring;
 		signalStore.state["learner"] = ring;
 	}
-	
-	signals[sourceStr as keyof typeof signals]?.setState((prev: any) => ({ ...prev }));
+
+	signals[source as keyof typeof signals]?.setState((prev: any) => ({
+		...prev,
+	}));
 }
 
 export const WsFeed = () => {
@@ -245,7 +155,7 @@ export const WsFeed = () => {
 
 			if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
 				try {
-					const row = decodeWireMeasurement(data.buffer);
+					const row = readWireMeasurement(data.buffer);
 					storeBatch(() => {
 						dispatchMeasurement(row);
 					});

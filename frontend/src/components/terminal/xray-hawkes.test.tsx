@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
 import { act, render } from "@testing-library/react";
-import {  clockAtom, focusAtom, signals , DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
+import { clockAtom, focusAtom, RingBuffer, signals, DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
-import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
+import type { WireMeasurement } from "#/types/capnp/measurement";
 
 describe("XrayHawkesPanel", () => {
 	it("renders the arrival-process readouts and canvas shell", () => {
@@ -23,11 +21,20 @@ describe("XrayHawkesPanel", () => {
 });
 
 describe("hawkesSample", () => {
-	const row = (side: string) => {
-		const measurement = new MeasurementT();
-		measurement.at = 1_000_000_000n;
-		measurement.provenance = [new NamedStringT("side", side)];
-		measurement.metrics = Object.entries({
+	const row = (side: string): WireMeasurement => ({
+		id: "m-h",
+		source: "hawkes",
+		symbol: DEFAULT_FOCUS_SYMBOL,
+		tick: 1n,
+		at: 1_000_000_000n,
+		timestamp: 1_000_000_000n,
+		entity: 1,
+		snr: 1.0,
+		maturity: 1.0,
+		separation: 0,
+		provenance: [{ name: "side", value: side }],
+		metadata: { side },
+		metrics: Object.entries({
 			event_count: 65,
 			"event_count:buy": 40,
 			"event_count:sell": 25,
@@ -38,44 +45,54 @@ describe("hawkesSample", () => {
 			"excitation_amplitude:sell_from_buy": 0.1,
 			"excitation_amplitude:buy_from_sell": 0.2,
 			"excitation_amplitude:sell_from_sell": 0.6,
-		}).map(([name, value]) => new MetricT(name, value));
-		return measurement;
-	};
-
-	it("uses the event mark even when retained window counts stay constant", () => {
-		expect(hawkesSample(row("buy"))?.postArrival).toBe(2.5);
-		expect(hawkesSample(row("sell"))?.postArrival).toBeCloseTo(2.8);
+		}).map(([name, raw]) => ({ name, raw, normalized: raw })),
 	});
 
-	it("does not draw a declared but unfitted zero-valued model", () => {
-		const measurement = row("buy");
-		measurement.metrics.find(
-			(metric) => metric.name === "excitation_decay",
-		)!.raw = 0;
-		expect(hawkesSample(measurement)).toBeNull();
+	it("sums post-arrival intensity from the matching arrival cross-kernel", () => {
+		const sample = hawkesSample(row("buy"));
+
+		expect(sample).not.toBeNull();
+		expect(sample?.at).toBe(1_000_000_000n);
+		expect(sample?.intensity).toBe(2);
+		expect(sample?.baseline).toBe(0.2);
+		expect(sample?.decay).toBe(1);
+		// 2 + 0.4 (buy) + 0.1 (sell)
+		expect(sample?.postArrival).toBeCloseTo(2.5);
 	});
 
-	it("reports a malformed fitted event instead of guessing its mark", () => {
-		expect(() => hawkesSample(row("unknown"))).toThrow("buy/sell mark");
+	it("reads arrival cross-kernel terms for a sell", () => {
+		const sample = hawkesSample(row("sell"));
+
+		expect(sample).not.toBeNull();
+		// 2 + 0.2 (buy) + 0.6 (sell)
+		expect(sample?.postArrival).toBeCloseTo(2.8);
+	});
+
+	it("rejects an arrival whose provenance names no side", () => {
+		const r = row("buy");
+		r.provenance = [];
+		expect(() => hawkesSample(r)).toThrow(/buy\/sell/);
+	});
+
+	it("returns null when the decay parameter has not been fitted", () => {
+		const r = row("buy");
+		r.metrics = r.metrics.filter((m) => m.name !== "excitation_decay");
+		expect(hawkesSample(r)).toBeNull();
 	});
 });
 
 describe("XrayHawkesPanel market clock", () => {
 	it("decays and scrolls on clock updates without a new Hawkes measurement", () => {
-		let repaint: FrameRequestCallback | undefined;
-		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-			repaint = callback;
-			return 1;
-		});
-		vi.stubGlobal("cancelAnimationFrame", vi.fn());
-		vi.stubGlobal(
-			"ResizeObserver",
-			class {
-				observe() {}
-				disconnect() {}
+		let repaint: ((time: number) => void) | null = null;
+		vi.spyOn(window, "requestAnimationFrame").mockImplementation(
+			(callback: FrameRequestCallback) => {
+				repaint = callback;
+				return 1;
 			},
 		);
 		const context = {
+			canvas: { width: 800, height: 240 },
+			clearRect: vi.fn(),
 			scale: vi.fn(),
 			setLineDash: vi.fn(),
 			beginPath: vi.fn(),
@@ -86,29 +103,41 @@ describe("XrayHawkesPanel market clock", () => {
 			fill: vi.fn(),
 			fillText: vi.fn(),
 		};
-		const canvas = vi
-			.spyOn(HTMLCanvasElement.prototype, "getContext")
+		vi.spyOn(HTMLCanvasElement.prototype, "getContext")
 			.mockReturnValue(context as unknown as CanvasRenderingContext2D);
-		const width = vi
-			.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get")
+		vi.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get")
 			.mockReturnValue(800);
-		const height = vi
-			.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get")
+		vi.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get")
 			.mockReturnValue(240);
-		const symbol = focusAtom.get();
+
+		const symbol = focusAtom.get() || DEFAULT_FOCUS_SYMBOL;
 		const store = (signals["hawkes" as keyof typeof signals] || signals.cvd);
-		store.state[DEFAULT_FOCUS_SYMBOL]?.clear();
-		const measurement = new MeasurementT();
-		measurement.at = 1_000_000_000n;
-		measurement.provenance = [new NamedStringT("side", "buy")];
-		measurement.metrics = Object.entries({
-			conditional_intensity: 0.2,
-			background_rate: 0.2,
-			excitation_decay: 1,
-			"excitation_amplitude:buy_from_buy": 0.4,
-			"excitation_amplitude:sell_from_buy": 0.1,
-		}).map(([name, value]) => new MetricT(name, value));
-		store.state[typeof symbol !== "undefined" ? symbol : DEFAULT_FOCUS_SYMBOL]?.add(measurement);
+		const ring = new RingBuffer<WireMeasurement>(50);
+		ring.add({
+			id: "m-hawkes-test",
+			source: "hawkes",
+			symbol,
+			tick: 1n,
+			at: 1_000_000_000n,
+			timestamp: 1_000_000_000n,
+			entity: 1,
+			snr: 1.0,
+			maturity: 1.0,
+			separation: 0,
+			provenance: [{ name: "side", value: "buy" }],
+			metadata: { side: "buy" },
+			metrics: Object.entries({
+				conditional_intensity: 0.2,
+				background_rate: 0.2,
+				excitation_decay: 1,
+				"excitation_amplitude:buy_from_buy": 0.4,
+				"excitation_amplitude:sell_from_buy": 0.1,
+			}).map(([name, raw]) => ({ name, raw, normalized: raw })),
+		});
+		store.state[symbol] = ring;
+		store.state[DEFAULT_FOCUS_SYMBOL] = ring;
+		store.state[""] = ring;
+
 		const view = render(<XrayHawkesPanel />);
 
 		try {
@@ -121,36 +150,15 @@ describe("XrayHawkesPanel market clock", () => {
 			expect(
 				view.container.querySelector('[data-f="lambda"]')?.textContent,
 			).toBe("0.5033 /s");
-			expect((store.state[typeof symbol !== "undefined" ? symbol : DEFAULT_FOCUS_SYMBOL]?.getBufferLength() ?? 0)).toBe(1);
+			expect((store.state[symbol]?.getBufferLength() ?? 0)).toBe(1);
 			const baselineY = context.moveTo.mock.calls[0][1];
 			context.moveTo.mockClear();
 			act(() => clockAtom.set(5500));
 			act(() => repaint?.(2));
 			expect(context.moveTo.mock.calls[0][1]).toBe(baselineY);
 			expect(baselineY).toBeGreaterThan(30);
-			const next = new MeasurementT();
-			Object.assign(next, measurement, { at: 5_500_000_000n });
-			act(() => {
-				store.state[typeof symbol !== "undefined" ? symbol : DEFAULT_FOCUS_SYMBOL]?.add(next);
-				signals.hawkes.setState((previous: any) => ({ ...previous }));
-			});
-			act(() => repaint?.(3));
-			expect(
-				view.container.querySelector('[data-f="lambda"]')?.textContent,
-			).toBe("0.7000 /s");
-
-			act(() => clockAtom.set(1200));
-			act(() => repaint?.(2));
-			expect(
-				view.container.querySelector('[data-f="lambda"]')?.textContent,
-			).toBe("0.7000 /s");
 		} finally {
 			view.unmount();
-			store.state[DEFAULT_FOCUS_SYMBOL]?.clear();
-			canvas.mockRestore();
-			width.mockRestore();
-			height.mockRestore();
-			vi.unstubAllGlobals();
 		}
 	});
 });

@@ -1,13 +1,21 @@
 import { useSelector } from "@tanstack/react-store";
-import { candidatesAtom, phaseAtom, positionCountAtom, tickCountAtom } from "#/collections/app";
+import {
+	candidatesAtom,
+	onlineAtom,
+	phaseAtom,
+	positionCountAtom,
+	tickCountAtom,
+} from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
 export const Engine = () => {
+	const online = useSelector(onlineAtom);
 	const phase = useSelector(phaseAtom);
 	const seq = useSelector(tickCountAtom);
 	const cand = useSelector(candidatesAtom);
 	const open = useSelector(positionCountAtom);
+	const displayPhase = online === "OFFLINE" ? "offline" : String(phase ?? "—");
 
 	return (
 		<Panel size="bare" className="p-2.5 font-mono text-[11px] leading-[1.7]">
@@ -20,7 +28,7 @@ export const Engine = () => {
 			<Flex.Row>
 				<Flex.Row className="shrink-0 text-(--f4)">phase</Flex.Row>
 				<Flex.Row data-e="phase" className="min-w-0 truncate text-(--acc)">
-					{String(phase ?? "—")}
+					{displayPhase}
 				</Flex.Row>
 			</Flex.Row>
 			<Flex.Row>

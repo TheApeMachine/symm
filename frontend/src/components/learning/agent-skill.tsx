@@ -5,7 +5,7 @@ import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import { memoizedQuery } from "#/lib/utils";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { WireMeasurement } from "#/types/capnp/measurement";
 import { basis, percent } from "./format";
 
 export const AgentSkill = () => {
@@ -16,7 +16,7 @@ export const AgentSkill = () => {
 		const root = ref.current;
 		if (!root) return;
 
-		const update = (ring: RingBuffer<MeasurementT>) => {
+		const update = (ring: RingBuffer<WireMeasurement>) => {
 			if (!ring || ring.isEmpty()) return;
 			const len = ring.getBufferLength();
 
