@@ -1729,10 +1729,15 @@ export const createFlumeConfig = (definitions: string[] = []): FlumeConfig => {
 		initialWidth: 340,
 		inputs: (ports) => [
 			ports["[]byte"]({ name: "data", label: "data" }),
-			ports.string({ name: "metrics", label: "metrics" }),
+			ports.string({ name: "interests", label: "interests" }),
+			ports.string({ name: "metric", label: "metric" }),
 		],
 		outputs: (ports) => [
+			ports.int64({ name: "delivered", label: "delivered" }),
+			ports.string({ name: "metric", label: "metric" }),
+			ports.int64({ name: "metrics", label: "metrics" }),
 			ports["[]byte"]({ name: "out", label: "out" }),
+			ports.Status({ name: "status", label: "status" }),
 		],
 	});
 	config.addNodeType({

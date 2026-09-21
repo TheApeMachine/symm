@@ -21,7 +21,7 @@ func (c Radix) Write(ctx context.Context, params func(Radix_write_Params) error)
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      0,
-			InterfaceName: "nomagique/store/radix.capnp:Radix",
+			InterfaceName: "store/radix.capnp:Radix",
 			MethodName:    "write",
 		},
 	}
@@ -40,7 +40,7 @@ func (c Radix) Done(ctx context.Context, params func(Radix_done_Params) error) (
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      1,
-			InterfaceName: "nomagique/store/radix.capnp:Radix",
+			InterfaceName: "store/radix.capnp:Radix",
 			MethodName:    "done",
 		},
 	}
@@ -155,7 +155,7 @@ func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      0,
-			InterfaceName: "nomagique/store/radix.capnp:Radix",
+			InterfaceName: "store/radix.capnp:Radix",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -167,7 +167,7 @@ func Radix_Methods(methods []server.Method, s Radix_Server) []server.Method {
 		Method: capnp.Method{
 			InterfaceID:   0xd5ab1698d577655d,
 			MethodID:      1,
-			InterfaceName: "nomagique/store/radix.capnp:Radix",
+			InterfaceName: "store/radix.capnp:Radix",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {

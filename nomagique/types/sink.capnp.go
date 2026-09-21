@@ -6,7 +6,6 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	text "capnproto.org/go/capnp/v3/encoding/text"
 	fc "capnproto.org/go/capnp/v3/flowcontrol"
-	schemas "capnproto.org/go/capnp/v3/schemas"
 	server "capnproto.org/go/capnp/v3/server"
 	stream "capnproto.org/go/capnp/v3/std/capnp/stream"
 	context "context"
@@ -23,7 +22,7 @@ func (c Float64Sink) Write(ctx context.Context, params func(Float64Sink_write_Pa
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
+			InterfaceName: "types/sink.capnp:Float64Sink",
 			MethodName:    "write",
 		},
 	}
@@ -42,7 +41,7 @@ func (c Float64Sink) Done(ctx context.Context, params func(Float64Sink_done_Para
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
+			InterfaceName: "types/sink.capnp:Float64Sink",
 			MethodName:    "done",
 		},
 	}
@@ -157,7 +156,7 @@ func Float64Sink_Methods(methods []server.Method, s Float64Sink_Server) []server
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
+			InterfaceName: "types/sink.capnp:Float64Sink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -169,7 +168,7 @@ func Float64Sink_Methods(methods []server.Method, s Float64Sink_Server) []server
 		Method: capnp.Method{
 			InterfaceID:   0xf51e560e1d6ca5fa,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:Float64Sink",
+			InterfaceName: "types/sink.capnp:Float64Sink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -443,7 +442,7 @@ func (c Int64Sink) Write(ctx context.Context, params func(Int64Sink_write_Params
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
+			InterfaceName: "types/sink.capnp:Int64Sink",
 			MethodName:    "write",
 		},
 	}
@@ -462,7 +461,7 @@ func (c Int64Sink) Done(ctx context.Context, params func(Int64Sink_done_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
+			InterfaceName: "types/sink.capnp:Int64Sink",
 			MethodName:    "done",
 		},
 	}
@@ -577,7 +576,7 @@ func Int64Sink_Methods(methods []server.Method, s Int64Sink_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
+			InterfaceName: "types/sink.capnp:Int64Sink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -589,7 +588,7 @@ func Int64Sink_Methods(methods []server.Method, s Int64Sink_Server) []server.Met
 		Method: capnp.Method{
 			InterfaceID:   0xa6d64c3763e62cc0,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:Int64Sink",
+			InterfaceName: "types/sink.capnp:Int64Sink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -863,7 +862,7 @@ func (c TextSink) Write(ctx context.Context, params func(TextSink_write_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:TextSink",
+			InterfaceName: "types/sink.capnp:TextSink",
 			MethodName:    "write",
 		},
 	}
@@ -882,7 +881,7 @@ func (c TextSink) Done(ctx context.Context, params func(TextSink_done_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:TextSink",
+			InterfaceName: "types/sink.capnp:TextSink",
 			MethodName:    "done",
 		},
 	}
@@ -997,7 +996,7 @@ func TextSink_Methods(methods []server.Method, s TextSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:TextSink",
+			InterfaceName: "types/sink.capnp:TextSink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1009,7 +1008,7 @@ func TextSink_Methods(methods []server.Method, s TextSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xaf6c7731e95ab265,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:TextSink",
+			InterfaceName: "types/sink.capnp:TextSink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1293,7 +1292,7 @@ func (c BoolSink) Write(ctx context.Context, params func(BoolSink_write_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
+			InterfaceName: "types/sink.capnp:BoolSink",
 			MethodName:    "write",
 		},
 	}
@@ -1312,7 +1311,7 @@ func (c BoolSink) Done(ctx context.Context, params func(BoolSink_done_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
+			InterfaceName: "types/sink.capnp:BoolSink",
 			MethodName:    "done",
 		},
 	}
@@ -1427,7 +1426,7 @@ func BoolSink_Methods(methods []server.Method, s BoolSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
+			InterfaceName: "types/sink.capnp:BoolSink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1439,7 +1438,7 @@ func BoolSink_Methods(methods []server.Method, s BoolSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0xb7f2b491a692a9d8,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:BoolSink",
+			InterfaceName: "types/sink.capnp:BoolSink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1713,7 +1712,7 @@ func (c DataSink) Write(ctx context.Context, params func(DataSink_write_Params) 
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:DataSink",
+			InterfaceName: "types/sink.capnp:DataSink",
 			MethodName:    "write",
 		},
 	}
@@ -1732,7 +1731,7 @@ func (c DataSink) Done(ctx context.Context, params func(DataSink_done_Params) er
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:DataSink",
+			InterfaceName: "types/sink.capnp:DataSink",
 			MethodName:    "done",
 		},
 	}
@@ -1847,7 +1846,7 @@ func DataSink_Methods(methods []server.Method, s DataSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      0,
-			InterfaceName: "nomagique/types/sink.capnp:DataSink",
+			InterfaceName: "types/sink.capnp:DataSink",
 			MethodName:    "write",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1859,7 +1858,7 @@ func DataSink_Methods(methods []server.Method, s DataSink_Server) []server.Metho
 		Method: capnp.Method{
 			InterfaceID:   0x94f3e5a48b27b3fd,
 			MethodID:      1,
-			InterfaceName: "nomagique/types/sink.capnp:DataSink",
+			InterfaceName: "types/sink.capnp:DataSink",
 			MethodName:    "done",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -2126,106 +2125,4 @@ type DataSink_done_Results_Future struct{ *capnp.Future }
 func (f DataSink_done_Results_Future) Struct() (DataSink_done_Results, error) {
 	p, err := f.Future.Ptr()
 	return DataSink_done_Results(p.Struct()), err
-}
-
-const schema_d3478951e737bd48 = "x\xda\xb4V]l\x14\xd5\x17?gfg\xee\xf2/" +
-	"\xcbf\x18\xfe\xb1\x0d\xd1\xd2\xa6\x9bJ\x83\x96~\x08\x16" +
-	"%\xad\xc4\x88\x12\x02;]\xe5\x81\x84\xd4\xa1\x9d\xe0\xca" +
-	"v\xb7v\xa7ny2\x12q\x15\xe2\xc7\xf2aB\x95" +
-	"T+\xad\xa0\x0fhQ\xfb\xa2\x06\x12kM\x9a54" +
-	"\xa6~%\x90\xf8\xb0*\xc1\xaa(\xd5\xa0\x921\xf7v" +
-	"\xef\xec\xec\x07\xdb-\xd1\xb7\x9d\xbd\xf7\x9c\xf3;\xbf\xdf" +
-	"\xef\x9c\x99\xd5~\xb1\xcd\xd5\xe0\xe9(\x03A{J\x92" +
-	"\xadFR.OlL>\x0dJ\x0d\x02\xb8\x08@\xd3" +
-	"\x11i?\x82\xcb\xda:xX^\xba\xba\xf7\x19P\x96" +
-	"\x8bVr\xcb\xa6+\xffo|\xe1\x07\x00l\xda'\x09" +
-	"\xa8&$\x02\xa0>'\xc5\xd5\xf3\xf4\x975\xbam\xc7" +
-	"\x8f\xa3\x15\x1f%@\xa9\xe5y\xc6\xa5\x01\x9a\xe7\xda\xe9" +
-	"\xda\x03\xc7S\xbf\x1dfy\xee\xffp\xed\xf7\xda\xb3\x1b" +
-	"?\xa7y\xde\x93\xaaQ\x1dgy\xceJqU\x91i" +
-	"\x9e\xf5\x83S\xc6gW\x0e\xbd\x04\xca\x0a\x04\x90\x90&" +
-	"\xba*=\x8a\x80\xaa$\xb7\x02Z;\x1f:Q\xfe\xf3" +
-	"\xd8\xb9a\xd0jQHW\xf2\xc9C\xf4\xc2\x1dr\x0c" +
-	"\xd0:\xb3\xea\xbb\xce\xb5\x9b\xbf\x18\xc9\xabwD\xaeC" +
-	"u\x98VQ_\x93\xe3\xeaeV/p\xe1\xd8\x8ep" +
-	"\xc5\x9b'\x1c\xfd\x7f-\xef\xa5\xb8\x8d\xd1\xed\x17\x1bb" +
-	"\xa1Syy\xc6\xe5jT\xa7Y\x9e)9\xaeV\x11" +
-	"\x9a\xe7\x97\xc1\xa4q\xb7\xfa\xfaiG\x9eE\x84\xe59" +
-	"u\xfcPM\xe5\x13w\x8d9Nfe\xc6\xf0W'" +
-	"\x0f\x8e$\xde\xfdu,\xafB\x8aV\x98e\x15.\xcb" +
-	"q\xf5\x1eV\xa1e\xe8\xea\x1fK&\x93\x9f\x80V\x83" +
-	"65+\xc9~\xday\x0b\xa1\x9d\x1f\xfb\xe6\xa7\x89\xd6" +
-	"O\xadI\xd0|65G\xc9Az\xe1$\xbb\xf0r" +
-	"\xedR\xff\x9e\xa6\xb7\xa7\x9c \xdd\x0c\xe4\xe6\xff\xc5\xea" +
-	"\xdbS\x03\x17@\xf1\xd9 i\xa4\xcb\x9a\xb8\xe9\xf9\xb7" +
-	"H\xf5\xbeo\x1d1)\xc2\xe0\x8f\x94w\xfc%\xacx" +
-	"%5'\x15;\x99&;\xe9\xc9\x07\x8f\xeczuf" +
-	"\xf9\xdeKN\x11\xcf\x12&b\x92P\x11\xc7;;n" +
-	"\x8b\xc56\xcc8\xdc2C\x86h\xe8\x9f\xc3\xa1\x9b\x97" +
-	"l\xbbe6\x8f\x93\xf3d\x1d\xaa3\x94\x09\xf5\"\x89" +
-	"\xab-n\xca\x89o\xb2\xff\xd2\xfa7\x12\xbf;`W" +
-	"\xb9\x19\xb8/\xcf%\xa6\x1b\x0e\xb4\xffM\xd9\xe2\\(" +
-	"nFV\x95\x9br\xd1\xffq\xe0\xc5\x87\xaf\xbdoe" +
-	"\xd1\xf9\xe4\xdc\x8d\x84;\x06]V8\xd2\xad\xef\x0a>" +
-	"\xd6'\x19\xf5\xe6\x9e\x1e#Z\x1f\x0d\x86w\xdf\xde\xa9" +
-	"\xf7\x84{\xd6\xdd\xab\x9bz\x80>vE\xc2FM\xbb" +
-	"\x11\xed\x0b\x99Q\x00;F\xe41]\xba\xa9\xa7c6" +
-	"\x05\xb6n\x01?\xa2\xe6\x16%\x00\x9b$\x0c\xbfs&" +
-	"\xd64\xd0qTih\x04A\xf1\x11D\x9bZ\xe4\xe3" +
-	"\xa0T\xd4\x81\xa0xHe\xac7h\x1am\xe8\xa5u" +
-	"\xdb\xd0\x8fX\x14\xe6}\xa1\x88n\xaei\xce \xf5\xeb" +
-	"\xbd\xba\xd8\x1d\xcd\xc7\x99\xdb\x1b\x09\x86wg\xb0r\xef" +
-	"\x15\xc2\xca\x9d\x8f|\x95\x94\x80\xd5u\x1dzl:\xbd" +
-	"\x94O\xcd%\xba\x00\\\x08\xa0x\xaa\x014\xb7\x88\xda" +
-	"2\x01I\xa4\xcfD\x0f\x08\xe8\x81\xd2\xbbgXh\xfb" +
-	"D\xef\x8ejn;\xf1\xca\xed\x00\xda\xad\"j\xcd\x02" +
-	"*\x88\xcb\xa8\x17hs\xa0\xad\x12Q\xbbS@\xcbx" +
-	"\\\x0f\xf5\xe9f\x10\xc4H\x18%\x10P\x02\xac\xa4\xff" +
-	"\x19X\x06\x02\x969@\x14b\xf3\x81\xb0\xb9\xa6\xd9\x1b" +
-	"\xc8\xa2\x93\x0fj!:\xb9\xa5\x91\x8fd\x09t.*" +
-	"PwC$\x12\xca\xd6\xbd;\x0a<\xa0\xc0\xfd\x07\x8d" +
-	"~3Gu>\"\x85`\xf2U\x82|\xbd\x95\x00\xb3" +
-	"l\xdeA*\x11f)\x83\x97KEvk|=\x14" +
-	"j\x8d\xbf\x12\x90\xaf\xbe\x1b\x1c>\xbb5\xdb{\xb47" +
-	"\xb8\x8e\xf9\x16\xea\xbdR\x06\x80y/\x17\x02\xfek\xf6" +
-	"O?\x15\xd57[\xaf\xf9\xf5\xcd@v\x08\x8c\xd1\xa2" +
-	"mf[=\xdf\x13\xc5\xb7Mz'\xcc\x7f\x9bs\xe8" +
-	"\xa5=8wS]f7yM\xa3\xdf\xc4\xc5 \xe0" +
-	"bX\xe0j\xa6\xb8I\xc8,\xbe\x9bYT\xeb\\X" +
-	"\xc6\xcd\xfc\x9b\xa8\x90\x9b\xf9\x87\x19\xf2w\xee\x0d\xba9" +
-	"G\x18\xee\xe6\xd2\x84)i\x02\x14l[\x98\xff\x10\x04" +
-	"\xc4yh\xb6\xfd\xf7\x9f\x0caZ\xe8\x7f\x02\x00\x00\xff" +
-	"\xff\x18%e\x18"
-
-func RegisterSchema(reg *schemas.Registry) {
-	reg.Register(&schemas.Schema{
-		String: schema_d3478951e737bd48,
-		Nodes: []uint64{
-			0x86cd47c706180732,
-			0x8872301206949f4f,
-			0x91be19b2ec5d56b2,
-			0x94f3e5a48b27b3fd,
-			0x9693f4ce65d19f3d,
-			0xa5d0b7ef18a85562,
-			0xa6d64c3763e62cc0,
-			0xa8aa196e5d9dde53,
-			0xaf6c7731e95ab265,
-			0xb3a3133c65cd9ff0,
-			0xb73b7f1f2493a4af,
-			0xb7f2b491a692a9d8,
-			0xc6cdcb0ef7f9a239,
-			0xcbffc83fc7eeda9d,
-			0xd1b033795012279b,
-			0xde9ae5522f770a4c,
-			0xe1852207ab8e17c7,
-			0xe59c2002fb5f18a6,
-			0xeb821beda06768bc,
-			0xed4277772d5f63c5,
-			0xf51e560e1d6ca5fa,
-			0xf691a73deb78cb25,
-			0xfc528b31d591d0d7,
-			0xffb6fd609053c478,
-		},
-		Compressed: true,
-	})
 }

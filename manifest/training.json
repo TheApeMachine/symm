@@ -1,190 +1,88 @@
 {
-  "id": "training:pipeline",
-  "name": "training:pipeline",
+  "id": "training",
+  "name": "training",
   "nodes": {
-    "source": {
-      "id": "source",
-      "type": "data.Source",
+    "feed": {
+      "id": "feed",
+      "type": "websocket.WebSocketClient",
+      "inputData": {
+        "endpoint": { "value": "wss://ws.kraken.com/v2" }
+      },
       "connections": {
         "inputs": {},
         "outputs": {
-          "out": [
-            {
-              "nodeId": "signals",
-              "portName": "in"
-            }
-          ]
+          "read": [{ "nodeId": "grid", "portName": "data" }]
         }
       }
     },
-    "signals": {
-      "id": "signals",
-      "type": "definition:signals",
+    "grid": {
+      "id": "grid",
+      "type": "store.Grid",
+      "inputData": {
+        "metric": { "value": "cognition" },
+        "interests": { "value": "data.0.symbol,data.0.last" }
+      },
       "connections": {
-        "inputs": {
-          "in": [
-            {
-              "nodeId": "source",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
-          "out": [
-            {
-              "nodeId": "associative_grid",
-              "portName": "data"
-            }
-          ]
+          "out": [{ "nodeId": "transition", "portName": "data" }]
         }
       }
     },
-    "associative_grid": {
-      "id": "associative_grid",
-      "type": "associative.Grid",
-      "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "signals",
-              "portName": "out"
-            }
-          ]
-        },
-        "outputs": {
-          "out": [
-            {
-              "nodeId": "temporal_transition",
-              "portName": "data"
-            }
-          ]
-        }
-      }
-    },
-    "temporal_transition": {
-      "id": "temporal_transition",
+    "transition": {
+      "id": "transition",
       "type": "temporal.Transition",
       "connections": {
-        "inputs": {
-          "data": [
-            {
-              "nodeId": "associative_grid",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
-          "out": [
-            {
-              "nodeId": "cognition_associate",
-              "portName": "current"
-            }
-          ]
+          "out": [{ "nodeId": "associate", "portName": "current" }]
         }
       }
     },
-    "cognition_associate": {
-      "id": "cognition_associate",
+    "associate": {
+      "id": "associate",
       "type": "cognition.Associate",
       "connections": {
-        "inputs": {
-          "current": [
-            {
-              "nodeId": "temporal_transition",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
-          "current": [
-            {
-              "nodeId": "cognition_reinforce",
-              "portName": "classBytes"
-            }
-          ]
+          "current": [{ "nodeId": "reinforce", "portName": "classBytes" }]
         }
       }
     },
-    "cognition_reinforce": {
-      "id": "cognition_reinforce",
+    "reinforce": {
+      "id": "reinforce",
       "type": "cognition.Reinforce",
       "connections": {
-        "inputs": {
-          "classBytes": [
-            {
-              "nodeId": "cognition_associate",
-              "portName": "current"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
-          "out": [
-            {
-              "nodeId": "cognition_attractor",
-              "portName": "contextBytes"
-            }
-          ]
+          "out": [{ "nodeId": "attractor", "portName": "contextBytes" }]
         }
       }
     },
-    "cognition_attractor": {
-      "id": "cognition_attractor",
+    "attractor": {
+      "id": "attractor",
       "type": "cognition.Attractor",
       "connections": {
-        "inputs": {
-          "contextBytes": [
-            {
-              "nodeId": "cognition_reinforce",
-              "portName": "out"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
-          "class": [
-            {
-              "nodeId": "cognition_classification",
-              "portName": "class"
-            }
-          ]
+          "class": [{ "nodeId": "classification", "portName": "class" }]
         }
       }
     },
-    "cognition_classification": {
-      "id": "cognition_classification",
+    "classification": {
+      "id": "classification",
       "type": "cognition.Classification",
       "connections": {
-        "inputs": {
-          "class": [
-            {
-              "nodeId": "cognition_attractor",
-              "portName": "class"
-            }
-          ]
-        },
+        "inputs": {},
         "outputs": {
-          "winner": [
-            {
-              "nodeId": "sink",
-              "portName": "value"
-            }
-          ]
+          "winner": [{ "nodeId": "sink", "portName": "value" }]
         }
       }
     },
     "sink": {
       "id": "sink",
       "type": "sink",
-      "connections": {
-        "inputs": {
-          "value": [
-            {
-              "nodeId": "cognition_classification",
-              "portName": "winner"
-            }
-          ]
-        },
-        "outputs": {}
-      }
+      "connections": { "inputs": {}, "outputs": {} }
     }
   }
 }
